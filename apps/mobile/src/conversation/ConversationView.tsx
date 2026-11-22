@@ -46,7 +46,7 @@ import { Card } from "./Card.tsx";
 import { Composer, type MentionCandidate } from "./Composer.tsx";
 import { ConversationHeader } from "./Header.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
-import { NoticeLine } from "./NoticeLine.tsx";
+import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { EntryWidths } from "./widths.ts";
 import { WorkFold } from "./WorkFold.tsx";
 
@@ -81,6 +81,8 @@ const orderOf = (row: TimelineItem): EntryOrder | null => {
       return row.message._tag === "message" ? row.message.order : null;
     case "card":
       return row.entry.order;
+    case "unknown":
+      return row.order;
   }
 };
 
@@ -402,7 +404,10 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
   );
 }
 
-/** One row of the conversation: a time, a message, a card, a fold or a notice. */
+/**
+ * One row of the conversation: a time, a message, a card, a fold or a
+ * notice, or a line for one of a kind this version does not know.
+ */
 function Row({
   row,
   room,
@@ -451,6 +456,8 @@ function Row({
           return <Card entry={entry} onOpenBot={onOpenBot} onOpenDetails={onOpenDetails} />;
       }
     }
+    case "unknown":
+      return <NeedsUpdateLine />;
   }
 }
 

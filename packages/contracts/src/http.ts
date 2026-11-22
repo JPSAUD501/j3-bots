@@ -10,9 +10,12 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
 
 /**
  * Bumped when a change to the contract would break a client built against the
- * previous version. Clients compare it with `GET /api/server` before anything else.
+ * previous version. Clients compare it with `GET /api/server` before anything
+ * else. 6 is the first whose clients pass over a kind of entry or notice, or a
+ * failure class, they do not know: from 6 on, adding one needs no bump.
+ * docs/architecture/clients.md, "Protocol compatibility", says what does.
  */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export const HTTP_PATHS = {
   /** `GET`, no credential. Answers `ServerInfo`. */

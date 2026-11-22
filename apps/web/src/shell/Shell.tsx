@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Entry, EntryId, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type { EntryId, ReceivedEntry, RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
 import {
   addressed,
@@ -244,7 +244,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const shownTarget = item === null ? null : rosterTarget(rosterKeyOf(item));
   const shownItems = shownTarget === null ? null : data.conversation(shownTarget).items;
   useNewestSeen(timeline, (id) => {
-    const seen = shownItems?.find((i): i is Entry => i._tag !== "outgoing" && i.id === id);
+    const seen = shownItems?.find((i): i is ReceivedEntry => i._tag !== "outgoing" && i.id === id);
     if (shownTarget !== null && seen !== undefined) intents.markRead(shownTarget, seen.order);
   });
 

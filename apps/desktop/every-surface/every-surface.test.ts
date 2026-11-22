@@ -6,7 +6,6 @@ import {
   type Bot,
   type BotId,
   CommandId,
-  type Entry,
   type EntryId,
   type EntryTarget,
   HTTP_PATHS,
@@ -17,6 +16,7 @@ import {
   PairRequest,
   PairResult,
   type QuestionEntry,
+  type ReceivedEntry,
 } from "@j3-bots/contracts";
 import { DEFAULT_SHORTCUT } from "@j3-bots/desktop-bridge";
 import { assert, it } from "@effect/vitest";
@@ -121,7 +121,7 @@ const entriesOf = (client: Client, target: EntryTarget) =>
 const markAllRead = (client: Client, target: EntryTarget) =>
   entriesOf(client, target).pipe(
     Effect.flatMap((entries) => {
-      const last = entries.reduce<Entry | undefined>(
+      const last = entries.reduce<ReceivedEntry | undefined>(
         (latest, entry) => (latest === undefined || entry.order > latest.order ? entry : latest),
         undefined,
       );
@@ -132,10 +132,10 @@ const markAllRead = (client: Client, target: EntryTarget) =>
   );
 
 /** The first entry of `target` that `matches`, as soon as there is one. */
-const awaitEntry = <A extends Entry>(
+const awaitEntry = <A extends ReceivedEntry>(
   client: Client,
   target: EntryTarget,
-  matches: (entry: Entry) => entry is A,
+  matches: (entry: ReceivedEntry) => entry is A,
   what: string,
 ) =>
   client["entries.subscribe"]({ target, after: null }).pipe(
@@ -153,7 +153,7 @@ const awaitEntry = <A extends Entry>(
 
 const operatorSaid =
   (text: string) =>
-  (entry: Entry): entry is MessageEntry =>
+  (entry: ReceivedEntry): entry is MessageEntry =>
     entry._tag === "message" &&
     entry.author._tag === "operator" &&
     entry.text === text &&
@@ -161,13 +161,13 @@ const operatorSaid =
 
 const botSaid =
   (text: string) =>
-  (entry: Entry): entry is MessageEntry =>
+  (entry: ReceivedEntry): entry is MessageEntry =>
     entry._tag === "message" && entry.author._tag === "bot" && entry.text === text;
 
-const pendingQuestion = (entry: Entry): entry is QuestionEntry =>
+const pendingQuestion = (entry: ReceivedEntry): entry is QuestionEntry =>
   entry._tag === "question" && entry.status._tag === "pending";
 
-const pendingApproval = (entry: Entry): entry is ApprovalEntry =>
+const pendingApproval = (entry: ReceivedEntry): entry is ApprovalEntry =>
   entry._tag === "approval" && entry.status._tag === "pending";
 
 /** Once the bot has been idle for three seconds running: no turn left to steer into. */

@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { noticeText } from "@j3-bots/client-runtime/wording";
 import type { NoticeEntry } from "@j3-bots/contracts";
-import { CircleAlert, CirclePause, CornerDownRight, OctagonPause } from "lucide-react-native";
+import {
+  CircleAlert,
+  CircleArrowUp,
+  CirclePause,
+  CornerDownRight,
+  OctagonPause,
+} from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
 import { Icon } from "../components/Icon.tsx";
 import { usePresentation } from "../presentation.tsx";
@@ -63,6 +69,17 @@ export function NoticeLine({
           <Text className="text-xs text-accent">{t("notice.openConversation")}</Text>
         </Pressable>
       )}
+    </View>
+  );
+}
+
+/** In place of an entry, or a notice, of a kind added after this version of the app. */
+export function NeedsUpdateLine() {
+  const { t } = usePresentation().i18n;
+  return (
+    <View className="my-2 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
+      <Icon icon={CircleArrowUp} size={14} color="accent-muted-foreground" />
+      <Text className="text-center text-xs text-muted-foreground">{t("entry.needsUpdate")}</Text>
     </View>
   );
 }

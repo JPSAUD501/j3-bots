@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { avatarShapeNames, botColors } from "@j3-bots/design-tokens/names";
 import * as Schema from "effect/Schema";
-import { BotId, EntryId, Label, ModelId, ProviderId } from "./base.ts";
+import { BotId, EntryId, Label, ModelId, OpenLiterals, ProviderId } from "./base.ts";
 
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
 
@@ -72,6 +72,13 @@ export const FailureClass = Schema.Literals([
 ]);
 export type FailureClass = typeof FailureClass.Type;
 
+/**
+ * A failure class as a client receives it: one added after this build reads
+ * as `unknown`, a failure the client words without naming it. The server
+ * writes and stores only a `FailureClass`.
+ */
+export const ReceivedFailureClass = OpenLiterals(FailureClass.literals);
+
 const since = { since: Schema.DateTimeUtc };
 /**
  * Set by the server when the turn has shown no activity for long enough that it
@@ -99,7 +106,8 @@ export const BotState = Schema.Union([
   Schema.TaggedStruct("waiting", { entryId: EntryId }),
   /** The turn cannot continue. */
   Schema.TaggedStruct("blocked", {
-    failure: FailureClass,
+    /** Open: the server builds a bot's state and never reads one back. */
+    failure: ReceivedFailureClass,
     /** When a usage limit resets, if the provider said. */
     retryAt: Schema.NullOr(Schema.DateTimeUtc),
   }),

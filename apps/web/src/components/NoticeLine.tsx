@@ -2,6 +2,7 @@
 import type { NoticeEntry } from "@j3-bots/contracts";
 import {
   CircleAlertIcon,
+  CircleArrowUpIcon,
   CirclePauseIcon,
   CornerDownRightIcon,
   OctagonPauseIcon,
@@ -62,6 +63,17 @@ export function NoticeLine({
           {t("notice.openConversation")}
         </Button>
       )}
+    </div>
+  );
+}
+
+/** In place of an entry, or a notice, of a kind added after this version of the app. */
+export function NeedsUpdateLine() {
+  const { t } = usePresentation().i18n;
+  return (
+    <div className="my-2 flex items-center justify-center gap-x-2 text-center text-xs text-muted-foreground">
+      <CircleArrowUpIcon aria-hidden className="size-3.5 shrink-0" />
+      <span>{t("entry.needsUpdate")}</span>
     </div>
   );
 }

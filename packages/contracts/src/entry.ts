@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 import { Attachment } from "./attachment.ts";
 import {
   BotId,
@@ -8,11 +9,13 @@ import {
   EntryOrder,
   Label,
   NonNegativeInt,
+  OpenLiterals,
   RoomId,
   RoutineId,
+  UnknownLiteral,
   WorkStepId,
 } from "./base.ts";
-import { FailureClass } from "./bot.ts";
+import { FailureClass, ReceivedFailureClass } from "./bot.ts";
 import { RoutineTrigger } from "./routine.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
@@ -318,57 +321,98 @@ export const WorkStep = Schema.Struct({
 });
 export type WorkStep = typeof WorkStep.Type;
 
+/**
+ * Every kind of notice, with the failure class a failed turn's notice takes:
+ * the closed one where the server writes, the open one where a client reads.
+ */
+const notices = <Failure extends Schema.Top>(failure: Failure) =>
+  [
+    /** A chain of bot-to-bot wakes hit a budget. */
+    Schema.TaggedStruct("chain-stopped", { limit: Schema.Literals(["hops", "fan-out"]) }),
+    /** A turn failed. Retryable with `notice.retry`. */
+    Schema.TaggedStruct("turn-failed", { failure }),
+    /**
+     * Urgent teammate messages from `senders` never reached this bot: J3 Bots
+     * gave up waking it with them. Retryable with `notice.retry`.
+     */
+    Schema.TaggedStruct("handoff-failed", { senders: Schema.NonEmptyArray(BotId) }),
+    /** A turn the operator started ended twice without delivering anything. Retryable. */
+    Schema.TaggedStruct("undelivered", {}),
+    /** In a room: this bot is waiting on the operator in its own conversation. */
+    Schema.TaggedStruct("waiting-in-conversation", { botId: BotId }),
+    /**
+     * The engine no longer has the bot's working session. Messages wait until
+     * the bot is given a new one.
+     */
+    Schema.TaggedStruct("session-lost", {}),
+    /**
+     * The bot's new model or permission mode waits for background work its
+     * session runs, which applying it would end; its messages wait too. A Stop
+     * ends that work, and the change applies then.
+     */
+    Schema.TaggedStruct("settings-held", {}),
+    /**
+     * J3 Bots could not apply what the engine reported for the bot, and keeps
+     * trying. What the bot shows may be behind until it succeeds.
+     */
+    Schema.TaggedStruct("observation-failed", {}),
+    /**
+     * Something the bot was to be told before its next turn (a teammate's held
+     * message, what a routine said) was too long to pass on, and was left out.
+     */
+    Schema.TaggedStruct("too-long", {}),
+    /**
+     * J3 Bots paused one of the bot's routines because it could not read when
+     * the routine runs next. The operator edits it to turn it back on.
+     */
+    Schema.TaggedStruct("routine-paused", { routineId: RoutineId, name: Label }),
+  ] as const;
+
 /** A quiet line where something stopped. Nothing is dropped silently. */
-export const Notice = Schema.Union([
-  /** A chain of bot-to-bot wakes hit a budget. */
-  Schema.TaggedStruct("chain-stopped", { limit: Schema.Literals(["hops", "fan-out"]) }),
-  /** A turn failed. Retryable with `notice.retry`. */
-  Schema.TaggedStruct("turn-failed", { failure: FailureClass }),
-  /**
-   * Urgent teammate messages from `senders` never reached this bot: J3 Bots
-   * gave up waking it with them. Retryable with `notice.retry`.
-   */
-  Schema.TaggedStruct("handoff-failed", { senders: Schema.NonEmptyArray(BotId) }),
-  /** A turn the operator started ended twice without delivering anything. Retryable. */
-  Schema.TaggedStruct("undelivered", {}),
-  /** In a room: this bot is waiting on the operator in its own conversation. */
-  Schema.TaggedStruct("waiting-in-conversation", { botId: BotId }),
-  /**
-   * The engine no longer has the bot's working session. Messages wait until
-   * the bot is given a new one.
-   */
-  Schema.TaggedStruct("session-lost", {}),
-  /**
-   * The bot's new model or permission mode waits for background work its
-   * session runs, which applying it would end; its messages wait too. A Stop
-   * ends that work, and the change applies then.
-   */
-  Schema.TaggedStruct("settings-held", {}),
-  /**
-   * J3 Bots could not apply what the engine reported for the bot, and keeps
-   * trying. What the bot shows may be behind until it succeeds.
-   */
-  Schema.TaggedStruct("observation-failed", {}),
-  /**
-   * Something the bot was to be told before its next turn (a teammate's held
-   * message, what a routine said) was too long to pass on, and was left out.
-   */
-  Schema.TaggedStruct("too-long", {}),
-  /**
-   * J3 Bots paused one of the bot's routines because it could not read when
-   * the routine runs next. The operator edits it to turn it back on.
-   */
-  Schema.TaggedStruct("routine-paused", { routineId: RoutineId, name: Label }),
-]);
+export const Notice = Schema.Union(notices(FailureClass));
 export type Notice = typeof Notice.Type;
 
+/**
+ * A notice of a kind added after this build, as a client receives it. The
+ * client shows one line saying it needs a newer version of the app, and
+ * offers no Try again: the operator could not tell what it would run again.
+ */
+export const UnknownNotice = Schema.Struct({
+  _tag: UnknownLiteral(Notice.members.map((member) => member.fields._tag.schema.literal)),
+}).pipe(
+  Schema.decodeTo(Schema.toType(Schema.TaggedStruct("unknown", { kind: Schema.String })), {
+    decode: SchemaGetter.transform(({ _tag }: { readonly _tag: string }) => ({
+      _tag: "unknown" as const,
+      kind: _tag,
+    })),
+    encode: SchemaGetter.transform(({ kind }: { readonly kind: string }) => ({ _tag: kind })),
+  }),
+);
+export type UnknownNotice = typeof UnknownNotice.Type;
+
+const retryable = {
+  /** Whether `notice.retry` is still accepted for it. */
+  retryable: Schema.Boolean,
+};
+
+/** A notice the server writes: always of a kind this build knows. */
 export const NoticeEntry = Schema.TaggedStruct("notice", {
   ...entry,
   notice: Notice,
-  /** Whether `notice.retry` is still accepted for it. */
-  retryable: Schema.Boolean,
+  ...retryable,
 });
 export type NoticeEntry = typeof NoticeEntry.Type;
+
+/**
+ * A notice entry as a client receives it, of any kind, known or not, and a
+ * failed turn's of any failure class.
+ */
+export const ReceivedNoticeEntry = Schema.TaggedStruct("notice", {
+  ...entry,
+  notice: Schema.Union([...notices(ReceivedFailureClass), UnknownNotice]),
+  ...retryable,
+});
+export type ReceivedNoticeEntry = typeof ReceivedNoticeEntry.Type;
 
 /** Where a teammate message stands (`HandoffEntry.state`). */
 export const HandoffState = Schema.Literals(["sent", "not-delivered", "stopped", "unconfirmed"]);
@@ -428,6 +472,55 @@ export const Entry = Schema.Union([
 ]);
 export type Entry = typeof Entry.Type;
 
+/** Every kind of entry this build knows. */
+const entryKinds = Entry.members.map((member) => member.fields._tag.schema.literal);
+
+/** What keeps an entry in its place in a conversation. */
+const placement = { id: EntryId, order: EntryOrder, createdAt: Schema.DateTimeUtc };
+
+const UnknownEntryWire = Schema.Struct({ _tag: UnknownLiteral(entryKinds), ...placement });
+const UnknownEntryValue = Schema.TaggedStruct("unknown", { kind: Schema.String, ...placement });
+
+/**
+ * An entry of a kind added after this build, as a client receives it: its
+ * kind, and only what keeps it in its place, so the rest of the conversation
+ * stays readable and the read mark can pass it. The client shows one line
+ * saying it needs a newer version of the app.
+ */
+export const UnknownEntry = UnknownEntryWire.pipe(
+  Schema.decodeTo(Schema.toType(UnknownEntryValue), {
+    decode: SchemaGetter.transform(({ _tag: kind, ...placed }: typeof UnknownEntryWire.Type) => ({
+      _tag: "unknown" as const,
+      kind,
+      ...placed,
+    })),
+    encode: SchemaGetter.transform(
+      ({ kind, _tag: _, ...placed }: typeof UnknownEntryValue.Type) => ({ _tag: kind, ...placed }),
+    ),
+  }),
+);
+export type UnknownEntry = typeof UnknownEntry.Type;
+
+/**
+ * An entry as a client receives it. The kinds of entry, and of notice, stay
+ * open: a server newer than the client may add one, which the client decodes
+ * as `UnknownEntry` or `UnknownNotice` instead of refusing the conversation
+ * that holds it (docs/architecture/clients.md, "Protocol compatibility").
+ * The server only ever writes an `Entry`.
+ */
+export const ReceivedEntry = Schema.Union([
+  MessageEntry,
+  QuestionEntry,
+  ApprovalEntry,
+  SecretRequestEntry,
+  WorkFoldEntry,
+  ReceivedNoticeEntry,
+  HandoffEntry,
+  RoutineChangeEntry,
+  UnknownEntry,
+]);
+export type ReceivedEntry = typeof ReceivedEntry.Type;
+
 /** The most text an `EntryPreview` carries. */
 export const PREVIEW_LENGTH = 200;
 
@@ -462,16 +555,8 @@ export const entryText = (entry: Entry): string => {
  */
 export const EntryPreview = Schema.Struct({
   entryId: EntryId,
-  kind: Schema.Literals([
-    "message",
-    "question",
-    "approval",
-    "secret-request",
-    "work-fold",
-    "notice",
-    "handoff",
-    "routine-change",
-  ]),
+  /** The entry's kind; `unknown` for one added after this build. */
+  kind: OpenLiterals(entryKinds),
   author: Author,
   text: Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH)),
   /** A teammate message's recipient; `null` for every other entry. */

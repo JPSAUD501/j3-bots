@@ -45,6 +45,7 @@ const sentences = {
   "summary.askedSecret": "Pediu uma credencial: {label}",
   "summary.workFold": "Trabalhou um pouco",
   "summary.notice": "Deixou um aviso",
+  "summary.cannotShow": "Algo que esta versão do app não consegue mostrar",
   "summary.handoffTo": "Para {name}: {text}",
   "summary.handoffSent": "Para um colega: {text}",
   "summary.handoffFrom": "De {name}: {text}",
@@ -163,6 +164,7 @@ const sentences = {
   "work.stepDone": "Concluído",
   "work.stepFailed": "Falhou",
 
+  "entry.needsUpdate": "Isto precisa de uma versão mais nova do app.",
   "notice.chainHops": "Os bots pararam de responder uns aos outros aqui. A sala espera por você.",
   "notice.chainFanOut": "Nem todos os bots foram chamados: uma mensagem só pode acordar alguns.",
   "notice.undelivered": "Uma resposta não chegou",

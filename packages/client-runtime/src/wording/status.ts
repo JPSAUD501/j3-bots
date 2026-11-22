@@ -124,6 +124,8 @@ function previewSummary(
     }
     case "routine-change":
       return text === "" ? t("summary.routineChanged") : t("summary.routine", { name: text });
+    case "unknown":
+      return t("summary.cannotShow");
   }
 }
 

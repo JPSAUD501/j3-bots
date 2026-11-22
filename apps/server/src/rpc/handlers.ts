@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type AttachmentId, type BotId, J3Rpcs, NotFound, USAGE_PERIOD } from "@j3-bots/contracts";
+import {
+  type AttachmentId,
+  type BotId,
+  type Entry,
+  J3Rpcs,
+  NotFound,
+  USAGE_PERIOD,
+} from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type * as Stream from "effect/Stream";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import { Devices } from "../devices/Devices.ts";
-import { Entries } from "../entries/Entries.ts";
+import { Entries, type EntryFrame } from "../entries/Entries.ts";
 import { ServerConfig } from "../config.ts";
 import { Listener } from "../listener.ts";
 import { Memory } from "../memory/Memory.ts";
@@ -82,8 +90,16 @@ export const handlers = ServedRpcs.toLayer(
 
     return {
       "roster.subscribe": () => roster.subscribe,
-      "entries.subscribe": ({ target, after }) => entries.subscribe(target, after),
-      "entries.history": (input) => entries.history(input),
+      // Typed to answer only an `Entry`: the contract takes any `ReceivedEntry`,
+      // but the server never sends a kind it does not know.
+      "entries.subscribe": ({ target, after }): Stream.Stream<EntryFrame, NotFound> =>
+        entries.subscribe(target, after),
+      "entries.history": (
+        input,
+      ): Effect.Effect<
+        { readonly entries: ReadonlyArray<Entry>; readonly hasOlder: boolean },
+        NotFound
+      > => entries.history(input),
       "entries.markRead": ({ target, through }) => entries.markRead(target, through),
       "entries.workSteps": ({ entryId }) => workSteps.follow(entryId),
       "message.send": (input) => pipeline.sendMessage(input),
