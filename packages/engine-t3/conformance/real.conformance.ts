@@ -394,9 +394,16 @@ describe("Engine conformance, real engine only", () => {
           retired = yield* retire;
         }
         yield* Effect.log(`Retired after ${round} more rounds`);
+        // A thread that is gone counts as retired too: read that it is archived.
+        const rpc = yield* foreignRpc;
+        const { thread } = yield* rpc["orchestration.getThreadProjection"]({
+          threadId: ThreadId.make(sessionId),
+        });
 
         assert.isFalse(first);
         assert.isTrue(retired);
+        assert.isNotNull(thread.archivedAt);
+        assert.isNull(thread.deletedAt);
       }).pipe(
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),

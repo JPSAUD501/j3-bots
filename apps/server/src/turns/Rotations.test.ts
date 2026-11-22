@@ -424,7 +424,7 @@ it.effect("opens a bot's main session under a fresh key after the engine refused
 );
 
 it.effect(
-  "tells a bot's conversation once that its main session is not ready, while it keeps trying",
+  "tells a bot's conversation once per outage that its main session is not ready, and delivers what waited",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
@@ -437,6 +437,7 @@ it.effect(
       yield* control.failNextOpenSessions(4);
       yield* control.loseSession(session);
       yield* replacementUnopened(bot.id);
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
       yield* TestClock.adjust("5 seconds");
       yield* rotations.rotateDue;
       assert.strictEqual(yield* notReady, 0);
@@ -449,8 +450,27 @@ it.effect(
       yield* rotations.rotateDue;
       yield* TestClock.adjust("40 seconds");
       yield* rotations.rotateDue;
-      yield* sessionAfter(bot.id, session);
+      const replacement = yield* sessionAfter(bot.id, session);
+      const turnId = yield* nextTurn(bot.id);
+      yield* deliveryIs(waiting, "delivered");
+      assert.strictEqual(yield* timesSent(replacement, "Plan the launch."), 1);
+      yield* finish(bot.id, replacement, turnId);
       assert.strictEqual(yield* notReady, 1);
+
+      // Ready again in between, so the next outage is told again.
+      yield* control.failNextOpenSessions(3);
+      yield* control.loseSession(replacement);
+      yield* replacementUnopened(bot.id);
+      yield* TestClock.adjust("5 seconds");
+      yield* rotations.rotateDue;
+      yield* TestClock.adjust("10 seconds");
+      yield* rotations.rotateDue;
+      assert.strictEqual(yield* notReady, 2);
+      yield* TestClock.adjust("20 seconds");
+      yield* rotations.rotateDue;
+      yield* sessionAfter(bot.id, replacement);
+      assert.strictEqual(yield* notReady, 2);
+      assert.strictEqual(yield* timesSent(session, "Plan the launch."), 0);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

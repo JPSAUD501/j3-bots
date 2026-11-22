@@ -54,6 +54,15 @@ const retryAfter = (failures: number) =>
  */
 const NOT_READY_AFTER = 3;
 
+/**
+ * Drops the backoff of every bot or session a pass no longer has to work on:
+ * deleted, lost, or done by another path meanwhile.
+ */
+const forgetAllBut = <K, V>(failures: Map<K, V>, current: ReadonlyArray<K>) => {
+  const kept = new Set(current);
+  for (const key of failures.keys()) if (!kept.has(key)) failures.delete(key);
+};
+
 /** How many entries a digest reads at a time, going back until it is full. */
 const DIGEST_PAGE = 100;
 
@@ -481,7 +490,12 @@ export const layer = Layer.effect(
           if (result === "deferred") outcome.defer();
           if (result === "replaced") replaced = true;
         }
-        for (const { id, opened } of yield* unprovisioned(undefined).pipe(Effect.orDie)) {
+        const toOpen = yield* unprovisioned(undefined).pipe(Effect.orDie);
+        forgetAllBut(
+          openFailures,
+          toOpen.map(({ id }) => id),
+        );
+        for (const { id, opened } of toOpen) {
           if ((yield* open(id, opened, outcome)) === "unavailable") {
             return { _tag: "unavailable" } as const;
           }
@@ -490,7 +504,12 @@ export const layer = Layer.effect(
         // if the engine took it.
         if (replaced) yield* signals.dispatch.fire;
         const now = yield* DateTime.now;
-        for (const session of yield* retiredInUse(undefined).pipe(Effect.orDie)) {
+        const toArchive = yield* retiredInUse(undefined).pipe(Effect.orDie);
+        forgetAllBut(
+          retireFailures,
+          toArchive.map(({ id }) => id),
+        );
+        for (const session of toArchive) {
           const failed = retireFailures.get(session.id);
           if (failed !== undefined && DateTime.isGreaterThan(failed.at, now)) {
             outcome.until(failed.at);

@@ -173,7 +173,7 @@ export const en = {
   "notice.waitingInConversation": "{name} is waiting on you in its own conversation.",
   "notice.sessionLost": "Lost its working context. New messages wait until it has a new one.",
   "notice.sessionNotReady":
-    "Couldn’t get its working context ready, and keeps trying. New messages wait until then.",
+    "Couldn’t get its working context ready, and keeps trying; new messages wait. If this doesn’t clear, edit it and check its model.",
   "notice.settingsHeld":
     "Its new settings apply once its background work ends, and messages wait until then. Stop it to apply them now.",
   "notice.observationFailed":

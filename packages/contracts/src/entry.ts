@@ -348,7 +348,8 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
     /**
      * J3 Bots could not open the bot's working session, or bring it to the
      * bot's settings, several times in a row, and keeps trying. Messages wait
-     * until it is ready.
+     * until it is ready. A model the engine no longer offers keeps it so until
+     * the operator chooses another.
      */
     Schema.TaggedStruct("session-not-ready", {}),
     /**
