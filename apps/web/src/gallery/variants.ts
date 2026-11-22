@@ -45,11 +45,19 @@ export function galleryVariants(now: DateTime.Utc) {
   const states: ReadonlyArray<readonly [string, BotState, boolean]> = [
     ["idle", { _tag: "idle" }, false],
     ["thinking", { _tag: "thinking", since: ago(0), stalled: false }, false],
-    ["working", { _tag: "working", since: ago(2), stalled: false, activity: null }, false],
+    [
+      "working",
+      { _tag: "working", since: ago(2), stalled: false, activity: null, tool: null },
+      false,
+    ],
     ["waiting", { _tag: "waiting", entryId: id("question") }, false],
     ["blocked", { _tag: "blocked", failure: "usage-limit", retryAt: ahead(90) }, false],
     ["done", { _tag: "idle" }, true],
-    ["stalled", { _tag: "working", since: ago(12), stalled: true, activity: null }, false],
+    [
+      "stalled",
+      { _tag: "working", since: ago(12), stalled: true, activity: null, tool: null },
+      false,
+    ],
   ];
 
   const message = (
@@ -395,9 +403,11 @@ export function galleryVariants(now: DateTime.Utc) {
     kind: WorkStep["kind"],
     label: string,
     status: WorkStep["status"] = "completed",
+    tool: WorkStep["tool"] = null,
   ): WorkStep => ({
     id: WorkStepId.make(`variant-${label}`),
     kind,
+    tool,
     label,
     status,
     startedAt: ago(4),
@@ -418,7 +428,17 @@ export function galleryVariants(now: DateTime.Utc) {
       open: true,
     },
     {
-      entry: fold("fold-done", { _tag: "finished", finishedAt: ago(1), ending: "completed" }, 4),
+      entry: fold(
+        "fold-done",
+        {
+          _tag: "finished",
+          finishedAt: ago(1),
+          ending: "completed",
+          waitedMs: 0,
+          background: false,
+        },
+        4,
+      ),
       steps: [
         step("read", "invoices/2026-03.json"),
         step("tool", "Bank statement lookup"),
@@ -429,8 +449,32 @@ export function galleryVariants(now: DateTime.Utc) {
     },
     {
       entry: fold(
+        "fold-background",
+        {
+          _tag: "finished",
+          finishedAt: ago(2),
+          ending: "completed",
+          waitedMs: 0,
+          background: true,
+        },
+        2,
+      ),
+      steps: [
+        step("read", "invoices/2026-04.json"),
+        step("tool", "Started a background task", "completed", "background-task"),
+      ],
+      open: true,
+    },
+    {
+      entry: fold(
         "fold-loading",
-        { _tag: "finished", finishedAt: ago(3), ending: "completed" },
+        {
+          _tag: "finished",
+          finishedAt: ago(3),
+          ending: "completed",
+          waitedMs: 0,
+          background: false,
+        },
         12,
       ),
       steps: null,
@@ -439,14 +483,24 @@ export function galleryVariants(now: DateTime.Utc) {
     {
       entry: fold(
         "fold-stopped",
-        { _tag: "finished", finishedAt: ago(2), ending: "interrupted" },
+        {
+          _tag: "finished",
+          finishedAt: ago(2),
+          ending: "interrupted",
+          waitedMs: 0,
+          background: false,
+        },
         2,
       ),
       steps: [],
       open: false,
     },
     {
-      entry: fold("fold-failed", { _tag: "finished", finishedAt: ago(0), ending: "failed" }, 1),
+      entry: fold(
+        "fold-failed",
+        { _tag: "finished", finishedAt: ago(0), ending: "failed", waitedMs: 0, background: false },
+        1,
+      ),
       steps: [step("web", "Read the vendor’s status page", "failed")],
       open: true,
     },

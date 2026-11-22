@@ -39,5 +39,7 @@ export const previewOf = (entry: Entry): EntryPreview => ({
   author: entry.author,
   text: previewText(entry).slice(0, PREVIEW_LENGTH),
   recipientId: entry._tag === "handoff" ? entry.recipientId : null,
+  step: null,
+  notice: entry._tag === "notice" ? entry.notice : null,
   createdAt: entry.createdAt,
 });

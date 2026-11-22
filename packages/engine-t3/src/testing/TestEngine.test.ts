@@ -395,6 +395,7 @@ describe("TestEngine", () => {
       const step = {
         id: WorkStepId.make("step-1"),
         kind: "command",
+        tool: null,
         label: "pnpm test",
         status: "running",
         startedAt: now,

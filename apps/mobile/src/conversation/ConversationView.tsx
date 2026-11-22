@@ -12,7 +12,12 @@ import {
   type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
 import { useConversation, useDraft, useJ3Client, useSelected } from "@j3-bots/client-runtime/react";
-import { addresseeLine, dividerTime, resendLabel } from "@j3-bots/client-runtime/wording";
+import {
+  addresseeLine,
+  dividerTime,
+  quietConversationText,
+  resendLabel,
+} from "@j3-bots/client-runtime/wording";
 import type {
   Bot,
   BotId,
@@ -387,19 +392,15 @@ export function Gone({ onBack }: { readonly onBack: () => void }) {
 
 /** A bot's conversation before anything is said in it. */
 function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) {
-  const { t } = usePresentation().i18n;
-  const name = bot.profile.name;
-  const gettingReady = bot.state._tag === "thinking" || bot.state._tag === "working";
+  const ctx = usePresentation();
   return (
     <View
       className="flex-1 items-center justify-center gap-4 px-6"
       style={{ paddingBottom: bottom }}
     >
       <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
-      <Title>{name}</Title>
-      <Body>
-        {gettingReady ? t("empty.quiet.speaksFirst", { name }) : t("empty.quiet.body", { name })}
-      </Body>
+      <Title>{bot.profile.name}</Title>
+      <Body>{quietConversationText(bot, ctx)}</Body>
     </View>
   );
 }

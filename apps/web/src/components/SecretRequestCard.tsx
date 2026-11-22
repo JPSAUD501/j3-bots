@@ -124,7 +124,7 @@ function SecretForm({
         spellCheck={false}
         className="h-9 rounded-md border border-input bg-surface px-3 font-mono text-sm placeholder:font-sans placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent pointer-coarse:h-11"
       />
-      <p className="text-xs text-muted-foreground">{t("secret.notKept")}</p>
+      <p className="text-xs text-muted-foreground">{t("secret.unseen")}</p>
       <div className="flex flex-wrap items-center gap-2">
         {link !== null && (
           <a

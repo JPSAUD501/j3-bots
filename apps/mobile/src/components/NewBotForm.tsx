@@ -9,12 +9,14 @@ import { Problem, SwitchRow, TextField } from "./form.tsx";
 
 /**
  * A name, and whether the bot becomes the primary one; the bot asks the rest
- * itself. `onCreated` gets the new bot once it exists.
+ * itself. `onCreating` is told when Create is pressed, and told again if the
+ * bot was not created; `onCreated` gets the new bot once it exists.
  */
 export function NewBotForm(props: {
   /** Whether "primary" starts on: the first bot is the primary one unless the operator says otherwise. */
   readonly primaryAtFirst: boolean;
   readonly onCreated: (botId: BotId) => void;
+  readonly onCreating?: (creating: boolean) => void;
   /** Told whether a name is typed and not created yet. */
   readonly onNameChange?: (typed: boolean) => void;
   /** Before Create, as Cancel; absent where there is nothing to go back to. */
@@ -57,12 +59,14 @@ export function NewBotForm(props: {
           onPress={() => {
             if (!ready) return;
             setState("creating");
+            props.onCreating?.(true);
             void client.createBot({ name: trimmed, primary }).then((result) => {
               if (result._tag === "done") {
                 setState("editing");
                 props.onCreated(result.value.id);
               } else {
                 setState("failed");
+                props.onCreating?.(false);
               }
             });
           }}

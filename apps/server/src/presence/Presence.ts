@@ -66,7 +66,7 @@ const kindOf = (
 /** The entry's first line, when the operator allows previews and it has one. */
 const previewText = (entry: Entry, settings: NotificationSettings): string | null => {
   if (!settings.previews) return null;
-  const line = (previewOf(entry).text.split("\n")[0] ?? "").trim();
+  const line = (previewOf(entry, null).text.split("\n")[0] ?? "").trim();
   return line === "" ? null : line;
 };
 

@@ -246,9 +246,16 @@ export function BotDetails({
           <p className="text-xs text-muted-foreground">
             {t("details.freshStartHint", { name })} {t("details.freshStartStops", { name })}
           </p>
-          <Button size="sm" onClick={intents.freshStart}>
+          <Confirm
+            trigger={<Button size="sm" />}
+            title={t("details.freshStart.title", { name })}
+            body={t("details.freshStart.body", { name })}
+            cancel={t("details.freshStart.cancel")}
+            confirm={t("details.freshStart")}
+            onConfirm={intents.freshStart}
+          >
             {t("details.freshStart")}
-          </Button>
+          </Confirm>
         </div>
       </DetailsSection>
 

@@ -318,7 +318,13 @@ function AvatarsSection() {
             <BotAvatar
               key={color}
               avatar={{ shape: "circle", color }}
-              state={{ _tag: "working", since: SAMPLE_NOW, stalled: false, activity: null }}
+              state={{
+                _tag: "working",
+                since: SAMPLE_NOW,
+                stalled: false,
+                activity: null,
+                tool: null,
+              }}
               size={36}
             />
           ))}

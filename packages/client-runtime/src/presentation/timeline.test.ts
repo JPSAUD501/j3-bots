@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, CommandId, EntryId, EntryOrder } from "@j3-bots/contracts";
+import {
+  BotId,
+  CommandId,
+  EntryId,
+  EntryOrder,
+  type RoutineChangeEntry,
+  RoutineId,
+} from "@j3-bots/contracts";
 import type { OutgoingMessage } from "../stores/Conversations.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, message } from "../../test/fixtures.ts";
@@ -97,5 +104,64 @@ describe("buildTimeline", () => {
       message("2026-11-20T10:01:00Z", { _tag: "operator" }, "hello", { commandId }),
     ]);
     expect(arrived.at(-1)?.key).toBe(sending.at(-1)?.key);
+  });
+
+  describe("routine changes", () => {
+    let order = 0;
+    const change = (
+      iso: string,
+      routine: string,
+      kind: RoutineChangeEntry["change"],
+      author: RoutineChangeEntry["author"] = scout,
+    ): RoutineChangeEntry => {
+      order += 1;
+      return {
+        _tag: "routine-change",
+        id: EntryId.make(`change-${order}`),
+        order: EntryOrder.make(order),
+        author,
+        createdAt: at(iso),
+        routineId: RoutineId.make(routine),
+        name: `${routine} ${order}`,
+        change: kind,
+        trigger: { _tag: "webhook" },
+      };
+    };
+    const cards = (items: ReturnType<typeof buildTimeline>) =>
+      items.flatMap((i) =>
+        i.kind === "card" && i.entry._tag === "routine-change"
+          ? [`${i.key} ${i.entry.routineId} ${i.entry.change} ${i.entry.name}`]
+          : [],
+      );
+
+    it("folds a run of changes to one routine into one card that shows the latest", () => {
+      const items = buildTimeline([
+        change("2026-11-20T10:00:00Z", "digest", "created"),
+        change("2026-11-20T10:00:10Z", "backup", "created"),
+        change("2026-11-20T10:00:20Z", "digest", "updated"),
+        change("2026-11-20T10:00:30Z", "digest", "updated"),
+        change("2026-11-20T10:00:40Z", "backup", "paused"),
+      ]);
+      expect(cards(items)).toEqual([
+        "change-1 digest created digest 4",
+        "change-2 backup paused backup 5",
+      ]);
+    });
+
+    it("keeps changes apart that something else, an author or a pause separates", () => {
+      const items = buildTimeline([
+        change("2026-11-20T11:00:00Z", "digest", "updated"),
+        message("2026-11-20T11:00:05Z", scout),
+        change("2026-11-20T11:00:10Z", "digest", "updated"),
+        change("2026-11-20T11:00:20Z", "digest", "paused", { _tag: "operator" }),
+        change("2026-11-20T11:30:00Z", "digest", "resumed", { _tag: "operator" }),
+      ]);
+      expect(cards(items).map((card) => card.split(" ")[2])).toEqual([
+        "updated",
+        "updated",
+        "paused",
+        "resumed",
+      ]);
+    });
   });
 });

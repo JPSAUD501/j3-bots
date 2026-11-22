@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { refusedWith } from "@j3-bots/client-runtime";
-import { assembleAnswers, type QuestionDraft } from "@j3-bots/client-runtime/presentation";
+import {
+  assembleAnswers,
+  optionDescription,
+  type QuestionDraft,
+} from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { Question, QuestionAnswers, QuestionEntry, QuestionOption } from "@j3-bots/contracts";
 import { Check, MessageCircleQuestionMark } from "lucide-react-native";
@@ -271,10 +275,11 @@ function Indicator({
   );
 }
 
-/** An option's label, what the bot says of it in words, and its description. */
+/** An option's label, what the bot says of it in words, and what its description adds. */
 function OptionText({ option }: { readonly option: QuestionOption }) {
   const { t } = useI18n();
   const destructive = option.style === "destructive";
+  const description = optionDescription(option);
   return (
     <View className="min-w-0 flex-1">
       <View className="flex-row flex-wrap items-baseline gap-x-2">
@@ -288,9 +293,7 @@ function OptionText({ option }: { readonly option: QuestionOption }) {
           <Text className="text-2xs font-medium text-blocked">{t("question.destructive")}</Text>
         )}
       </View>
-      {option.description !== null && option.description !== "" && (
-        <Text className="text-xs text-muted-foreground">{option.description}</Text>
-      )}
+      {description !== null && <Text className="text-xs text-muted-foreground">{description}</Text>}
     </View>
   );
 }

@@ -139,6 +139,7 @@ it.effect("reconciles a replaced history by its ids, applying each ended turn on
       step: {
         id: WorkStepId.make("step-1"),
         kind: "command",
+        tool: null,
         label: "git switch -c release",
         status: "completed",
         startedAt: at,
@@ -227,6 +228,7 @@ it.effect("streams a fold's steps as they change, until its turn ends", () =>
     const running = {
       id: WorkStepId.make("step-1"),
       kind: "command",
+      tool: null,
       label: "pnpm test",
       status: "running",
       startedAt,
@@ -548,6 +550,7 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
         step: {
           id: WorkStepId.make(id),
           kind: "command",
+          tool: null,
           label,
           status,
           startedAt: at,
@@ -678,6 +681,7 @@ it.effect("shows an event that cannot be applied once, and applies it when it ca
       step: {
         id: WorkStepId.make("step-1"),
         kind: "command",
+        tool: null,
         label: "npm test",
         status: "running",
         startedAt: at,
@@ -787,6 +791,7 @@ it.effect(
         step: {
           id: WorkStepId.make("step-1"),
           kind: "command",
+          tool: null,
           label: "npm test",
           status: "running",
           startedAt: yield* DateTime.now,

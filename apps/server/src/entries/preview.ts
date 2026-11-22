@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type Entry, type EntryPreview, entryText, PREVIEW_LENGTH } from "@j3-bots/contracts";
+import {
+  type Entry,
+  type EntryPreview,
+  entryText,
+  PREVIEW_LENGTH,
+  type WorkStep,
+} from "@j3-bots/contracts";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
@@ -18,12 +24,20 @@ const cut = (text: string, length: number): string => {
   return text.slice(0, end);
 };
 
-/** What the roster shows of an entry: its text, cut short. */
-export const previewOf = (entry: Entry): EntryPreview => ({
+/**
+ * What the roster shows of an entry: its text, cut short; a notice's own
+ * words; and for a work fold, `step`, the step that says what it did.
+ */
+export const previewOf = (entry: Entry, step: WorkStep | null): EntryPreview => ({
   entryId: entry.id,
   kind: entry._tag,
   author: entry.author,
   text: cut(entryText(entry), PREVIEW_LENGTH),
   recipientId: entry._tag === "handoff" ? entry.recipientId : null,
+  step:
+    entry._tag === "work-fold" && step !== null
+      ? { kind: step.kind, tool: step.tool, label: step.label }
+      : null,
+  notice: entry._tag === "notice" ? entry.notice : null,
   createdAt: entry.createdAt,
 });

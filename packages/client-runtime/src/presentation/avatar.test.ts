@@ -10,10 +10,10 @@ const states: ReadonlyArray<readonly [BotState, boolean]> = [
   [{ _tag: "idle" }, false],
   [{ _tag: "idle" }, true],
   [{ _tag: "thinking", since, stalled: false }, false],
-  [{ _tag: "working", since, stalled: false, activity: null }, false],
+  [{ _tag: "working", since, stalled: false, activity: null, tool: null }, false],
   [{ _tag: "waiting", entryId: EntryId.make("q") }, false],
   [{ _tag: "blocked", failure: "unknown", retryAt: null }, false],
-  [{ _tag: "working", since, stalled: true, activity: null }, false],
+  [{ _tag: "working", since, stalled: true, activity: null, tool: null }, false],
 ];
 
 describe("avatarAppearance", () => {
@@ -24,17 +24,21 @@ describe("avatarAppearance", () => {
 
   it("stops a stalled turn's motion, thinking or working alike", () => {
     expect(avatarAppearance({ _tag: "thinking", since, stalled: true }, false)).toEqual(
-      avatarAppearance({ _tag: "working", since, stalled: true, activity: "Reading" }, false),
+      avatarAppearance(
+        { _tag: "working", since, stalled: true, activity: "Reading", tool: null },
+        false,
+      ),
     );
     expect(
-      avatarAppearance({ _tag: "working", since, stalled: true, activity: null }, false).motion,
+      avatarAppearance({ _tag: "working", since, stalled: true, activity: null, tool: null }, false)
+        .motion,
     ).toBe("none");
   });
 });
 
 describe("notificationLook", () => {
   const about = (kind: NotificationKind) => ({ kind, entryId: EntryId.make("e") });
-  const working: BotState = { _tag: "working", since, stalled: false, activity: null };
+  const working: BotState = { _tag: "working", since, stalled: false, activity: null, tool: null };
   const look = (kind: NotificationKind, state: BotState) => {
     const { mark, badge } = notificationLook(about(kind), state);
     return { mark, badge };

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
 import { Attachment } from "./attachment.ts";
@@ -17,6 +18,7 @@ import {
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { RoutineTrigger } from "./routine.ts";
+import { StepTool } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
 export const EntryTarget = Schema.Union([
@@ -290,13 +292,32 @@ export type SecretRequestEntry = typeof SecretRequestEntry.Type;
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
 export type TurnEnding = typeof TurnEnding.Type;
 
-/** One turn's work, folded into a line. Its steps are read with `entries.workSteps`. */
+/**
+ * One turn's work, folded into a line. Its steps are read with
+ * `entries.workSteps`. The line says how long the bot worked: from the fold's
+ * first step to the end of its turn, less `waitedMs`.
+ */
 export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
   ...entry,
   stepCount: NonNegativeInt,
   status: Schema.Union([
     Schema.TaggedStruct("running", {}),
-    Schema.TaggedStruct("finished", { finishedAt: Schema.DateTimeUtc, ending: TurnEnding }),
+    Schema.TaggedStruct("finished", {
+      finishedAt: Schema.DateTimeUtc,
+      ending: TurnEnding,
+      /**
+       * How long of it the turn waited on the operator: for a card it asked
+       * them to answer (an approval, a question, a credential), from the
+       * card's arrival until it closed.
+       */
+      waitedMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
+      /**
+       * Work the turn handed off still runs, as the engine last reported:
+       * a background task it started, say. The fold's steps go on changing
+       * until it ends.
+       */
+      background: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    }),
   ]),
 });
 export type WorkFoldEntry = typeof WorkFoldEntry.Type;
@@ -314,12 +335,26 @@ export const WorkStep = Schema.Struct({
     "delegation",
     "other",
   ]),
+  /**
+   * For a `tool` step, the tool in J3 Bots' words, which a client shows in
+   * place of the label; `null` for a tool it cannot name, and for every other
+   * kind.
+   */
+  tool: StepTool,
+  /**
+   * The step in one line: a command, a path, a search. For a tool J3 Bots
+   * names, a short English phrase, for a client that predates `tool`.
+   */
   label: Label,
   status: Schema.Literals(["running", "completed", "failed"]),
   startedAt: Schema.DateTimeUtc,
   finishedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type WorkStep = typeof WorkStep.Type;
+
+/** What a client needs to say a step in a line: its kind, its tool and its label. */
+export const StepSummary = WorkStep.mapFields(({ kind, tool, label }) => ({ kind, tool, label }));
+export type StepSummary = typeof StepSummary.Type;
 
 /**
  * Every kind of notice, with the failure class a failed turn's notice takes:
@@ -588,6 +623,18 @@ export const EntryPreview = Schema.Struct({
   text: Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH)),
   /** A teammate message's recipient; `null` for every other entry. */
   recipientId: Schema.NullOr(BotId),
+  /**
+   * A work fold's last step, which says what the bot did; `null` for a fold
+   * with none, for every other entry, and from a server that predates it.
+   */
+  step: Schema.NullOr(StepSummary).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * A notice's own words, of any kind; `null` for every other entry, and
+   * from a server that predates it.
+   */
+  notice: Schema.NullOr(ReceivedNoticeEntry.fields.notice).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   createdAt: Schema.DateTimeUtc,
 });
 export type EntryPreview = typeof EntryPreview.Type;

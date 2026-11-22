@@ -45,6 +45,26 @@ export function RosterScreen({ navigation, route }: Props) {
   const sideBySide = useSideBySide();
   useNotificationTaps(useOpenConversation());
   const selected = route.params?.item ?? null;
+  // The first bot's conversation opens straight from the first run: the first run stays from the
+  // press of Create until the conversation covers the roster, or opens beside it, so the roster
+  // never shows in between.
+  const [openingFirstBot, setOpeningFirstBot] = useState(false);
+  const openedBeside =
+    sideBySide &&
+    selected !== null &&
+    roster._tag === "ready" &&
+    roster.value.some((item) => rosterKeyText(rosterKeyOf(item)) === rosterKeyText(selected));
+  if (openingFirstBot && openedBeside) setOpeningFirstBot(false);
+  useEffect(() => {
+    if (!openingFirstBot) return;
+    // Once the conversation pushed over it is in place, or the roster is shown again.
+    const covered = navigation.addListener("transitionEnd", () => setOpeningFirstBot(false));
+    const shown = navigation.addListener("focus", () => setOpeningFirstBot(false));
+    return () => {
+      covered();
+      shown();
+    };
+  }, [openingFirstBot, navigation]);
   useEffect(() => {
     if (sideBySide || selected === null) return;
     // The conversation goes on its own screen, under what was open over it.
@@ -60,7 +80,9 @@ export function RosterScreen({ navigation, route }: Props) {
     });
   }, [sideBySide, selected, navigation]);
   // Before the first bot there is nothing to list or open: the first run takes the whole screen.
-  if (roster._tag === "ready" && roster.value.length === 0) return <FirstRun />;
+  if ((roster._tag === "ready" && roster.value.length === 0) || openingFirstBot) {
+    return <FirstRun onCreating={setOpeningFirstBot} />;
+  }
   if (!sideBySide) return <RosterList selected={null} />;
   return (
     <View className="flex-1 flex-row bg-background">

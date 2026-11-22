@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Question, QuestionAnswer, QuestionAnswers } from "@j3-bots/contracts";
+import type { Question, QuestionAnswer, QuestionAnswers, QuestionOption } from "@j3-bots/contracts";
 
 /** What the operator has picked and typed for one question so far. */
 export interface QuestionDraft {
@@ -31,4 +31,23 @@ export function assembleAnswers(
     answers[question.id] = { optionIds, text: text === "" ? null : text };
   }
   return answers;
+}
+
+/** Text as a reader compares it: case, spacing and closing punctuation set aside. */
+const compared = (text: string): string =>
+  text
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[\s.!?…:;,]+$/u, "")
+    .trim();
+
+/**
+ * What an option's description adds to its label, or null when it adds
+ * nothing: absent, blank, or the label said again.
+ */
+export function optionDescription(option: QuestionOption): string | null {
+  const description = option.description?.trim() ?? "";
+  if (description === "") return null;
+  return compared(description) === compared(option.label) ? null : description;
 }

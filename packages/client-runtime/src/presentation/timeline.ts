@@ -7,6 +7,7 @@ import type {
   HandoffEntry,
   MessageEntry,
   ReceivedEntry,
+  RoutineChangeEntry,
 } from "@j3-bots/contracts";
 import type { ConversationItem, OutgoingMessage } from "../stores/Conversations.ts";
 import * as DateTime from "effect/DateTime";
@@ -106,15 +107,41 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
       items.push({ kind: "message", key, message: entry, position: joins ? "last" : "single" });
     } else {
       const card = known(entry);
-      items.push(
-        card === null
-          ? { kind: "unknown", key, id: entry.id, order: entry.order }
-          : { kind: "card", key, entry: card },
-      );
+      if (card === null) items.push({ kind: "unknown", key, id: entry.id, order: entry.order });
+      else if (card._tag === "routine-change") placeRoutineChange(items, key, card);
+      else items.push({ kind: "card", key, entry: card });
     }
     previous = entry;
   }
   return items;
+}
+
+const sameAuthorOf = (a: RoutineChangeEntry, b: RoutineChangeEntry) =>
+  a.author._tag === b.author._tag &&
+  (a.author._tag !== "bot" || (b.author._tag === "bot" && a.author.botId === b.author.botId));
+
+/**
+ * A routine change, folded into the one before it when both change the same
+ * routine, by the same author, in a run of routine changes nothing else
+ * breaks: a bot setting up its routines leaves one card for each, not one
+ * for every save. The card shows the latest change, with the routine's name
+ * and trigger as that change saved them, except that one created in the run
+ * and then only edited still reads as created. It stays where the run's first
+ * change of that routine was, under that change's key, so it keeps its
+ * element as the run grows.
+ */
+function placeRoutineChange(items: TimelineItem[], key: string, entry: RoutineChangeEntry) {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index];
+    if (item?.kind !== "card" || item.entry._tag !== "routine-change") break;
+    const earlier = item.entry;
+    if (earlier.routineId !== entry.routineId || !sameAuthorOf(earlier, entry)) continue;
+    const change =
+      earlier.change === "created" && entry.change === "updated" ? "created" : entry.change;
+    items[index] = { ...item, entry: { ...entry, change } };
+    return;
+  }
+  items.push({ kind: "card", key, entry });
 }
 
 /** The other bot of a teammate message: the recipient of one sent, the sender of one received. */

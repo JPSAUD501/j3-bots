@@ -82,6 +82,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             ? selected._tag === "bot" && i.bot.id === selected.botId
             : selected._tag === "room" && i.room.id === selected.roomId,
         ) ?? null);
+  // The first bot's conversation opens straight from the first run: the first run stays from the
+  // press of Create until the new bot is in the roster and open, so the home never shows in
+  // between.
+  const [openingFirstBot, setOpeningFirstBot] = useState(false);
+  if (openingFirstBot && item !== null) setOpeningFirstBot(false);
   const active: Region = item === null ? "roster" : detailsOpen ? "details" : "conversation";
   // Below `wide` the details are a modal dialog: it owns focus and every key, Escape
   // included, and the shell's shortcuts wait until it closes.
@@ -248,7 +253,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     if (shownTarget !== null && seen !== undefined) intents.markRead(shownTarget, seen.order);
   });
 
-  if (data.roster === null || data.roster.length === 0) {
+  if (data.roster === null || data.roster.length === 0 || openingFirstBot) {
     return (
       <div className="flex h-full flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
         {data.roster === null ? (
@@ -256,11 +261,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         ) : (
           <FirstRun
             engine={data.engine}
-            onCreateBot={(name, primary) =>
-              intents
-                .createBot(name, primary)
-                .then((botId) => navigation.select({ _tag: "bot", botId }))
-            }
+            onCreateBot={(name, primary) => {
+              setOpeningFirstBot(true);
+              return intents.createBot(name, primary).then(
+                (botId) => navigation.select({ _tag: "bot", botId }),
+                (error: unknown) => {
+                  setOpeningFirstBot(false);
+                  throw error;
+                },
+              );
+            }}
           />
         )}
         {/*

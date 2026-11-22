@@ -128,6 +128,7 @@ export function sampleTeam(now: DateTime.Utc) {
       hidden: extra.hidden ?? false,
       state,
       settingsHeld: false,
+      opening: false,
       createdAt: ago(60 * 24 * 30),
     };
   }
@@ -144,6 +145,7 @@ export function sampleTeam(now: DateTime.Utc) {
         since: ago(3),
         stalled: false,
         activity: "Checking which of the three the shop has in stock",
+        tool: null,
       },
       { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
     ),
@@ -168,6 +170,7 @@ export function sampleTeam(now: DateTime.Utc) {
       since: ago(14),
       stalled: true,
       activity: "Comparing prices",
+      tool: null,
     }),
     iris: bot(ids.iris, "Iris", "Travel", "burst", "indigo", {
       _tag: "waiting",
@@ -252,7 +255,13 @@ export function sampleTeam(now: DateTime.Utc) {
       author: by(ids.scout),
       createdAt: ago(60 * 26 - 1),
       stepCount: 6,
-      status: { _tag: "finished", finishedAt: ago(60 * 26 - 3), ending: "completed" },
+      status: {
+        _tag: "finished",
+        finishedAt: ago(60 * 26 - 3),
+        ending: "completed",
+        waitedMs: 0,
+        background: false,
+      },
     },
     message(
       by(ids.scout),
@@ -303,6 +312,7 @@ export function sampleTeam(now: DateTime.Utc) {
     [foldId]: [
       step(0, {
         kind: "search",
+        tool: null,
         label: "e-bike long-term review steep hill commute",
         status: "completed",
         startedAt: ago(60 * 26 - 1),
@@ -310,6 +320,7 @@ export function sampleTeam(now: DateTime.Utc) {
       }),
       step(1, {
         kind: "web",
+        tool: null,
         label: "Read example.com/ebikes/long-term",
         status: "completed",
         startedAt: ago(60 * 26 - 1),
@@ -317,6 +328,7 @@ export function sampleTeam(now: DateTime.Utc) {
       }),
       step(2, {
         kind: "web",
+        tool: null,
         label: "Read three owner forums",
         status: "completed",
         startedAt: ago(60 * 26 - 2),
@@ -324,6 +336,7 @@ export function sampleTeam(now: DateTime.Utc) {
       }),
       step(3, {
         kind: "command",
+        tool: null,
         label:
           "python3 compare.py --specs specs.csv --reviews owner-reviews.csv --sort range_km --out 'E-bike shortlist.pdf'",
         status: "completed",
@@ -332,6 +345,7 @@ export function sampleTeam(now: DateTime.Utc) {
       }),
       step(4, {
         kind: "edit",
+        tool: null,
         label: "memory/log/2026-11.md",
         status: "completed",
         startedAt: ago(60 * 26 - 3),
@@ -339,6 +353,7 @@ export function sampleTeam(now: DateTime.Utc) {
       }),
       step(5, {
         kind: "delegation",
+        tool: null,
         label: "Asked Juniper whether the shop had replied",
         status: "failed",
         startedAt: ago(60 * 26 - 3),

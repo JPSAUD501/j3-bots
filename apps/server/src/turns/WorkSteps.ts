@@ -14,7 +14,7 @@ import { json } from "../persistence/columns.ts";
 
 /**
  * What `entries.workSteps` streams: every step so far, then each step as it
- * changes, until the fold's turn ends.
+ * changes, until the fold's turn ends and the work it handed off with it.
  */
 export type WorkStepsFrame =
   | { readonly _tag: "snapshot"; readonly steps: ReadonlyArray<WorkStep> }
@@ -34,9 +34,18 @@ export class WorkSteps extends Context.Service<
   {
     /** Tells followers about a step the observer just committed. */
     readonly changed: (entryId: EntryId, step: WorkStep) => Effect.Effect<void>;
-    /** Tells followers the fold's turn ended: its steps change no more. */
+    /**
+     * Tells followers the fold's turn ended, and the work it handed off with
+     * it: its steps change no more.
+     */
     readonly finished: (entryId: EntryId) => Effect.Effect<void>;
     readonly follow: (entryId: EntryId) => Stream.Stream<WorkStepsFrame, NotFound>;
+    /**
+     * The step that says what the fold's work is doing or did: the newest
+     * one still running, since steps run in parallel and a later one may
+     * finish first; else the newest.
+     */
+    readonly shown: (entryId: EntryId) => Effect.Effect<Option.Option<WorkStep>>;
   }
 >()("@j3-bots/server/turns/WorkSteps") {}
 
@@ -55,6 +64,18 @@ export const layer = Layer.effect(
       `,
     });
 
+    const shownRow = SqlSchema.findOneOption({
+      Request: EntryId,
+      Result: Schema.Struct({ step_json: json(WorkStep) }),
+      execute: (entryId) => sql`
+        SELECT step_json FROM work_steps WHERE entry_id = ${entryId}
+        ORDER BY json_extract(step_json, '$.status') = 'running' DESC, position DESC LIMIT 1
+      `,
+    });
+
+    const shown = (entryId: EntryId) =>
+      shownRow(entryId).pipe(Effect.map(Option.map((row) => row.step_json)), Effect.orDie);
+
     const changed = (entryId: EntryId, step: WorkStep) =>
       PubSub.publish(pubsub, { _tag: "step", entryId, step }).pipe(Effect.asVoid);
 
@@ -72,7 +93,8 @@ export const layer = Layer.effect(
           }
           const steps = (yield* stepsOf(entryId).pipe(Effect.orDie)).map((row) => row.step_json);
           const snapshot = Stream.succeed<WorkStepsFrame>({ _tag: "snapshot", steps });
-          if (fold.value.entry.status._tag === "finished") return snapshot;
+          const { status } = fold.value.entry;
+          if (status._tag === "finished" && !status.background) return snapshot;
           return Stream.concat(
             snapshot,
             Stream.fromSubscription(live).pipe(
@@ -87,6 +109,6 @@ export const layer = Layer.effect(
         }),
       );
 
-    return WorkSteps.of({ changed, finished, follow });
+    return WorkSteps.of({ changed, finished, follow, shown });
   }),
 );

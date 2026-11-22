@@ -56,6 +56,7 @@ import {
 } from "./approvalDetail.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
+import { toolStep } from "./toolNames.ts";
 import { hasPersistentFlag, type ToolPersistence } from "./toolPersistence.ts";
 
 // The engine's thread, mirrored entity by entity, and the J3 Bots events it
@@ -1138,10 +1139,19 @@ const stepLabel = (item: Item): string => {
     case "subagent":
       return label(item.title ?? item.prompt, "Delegated task");
     case "dynamic_tool":
-      return label(item.title ?? item.toolName, "Tool");
+      return label(dynamicToolStep(item).label, "Tool");
     default:
       return label(item.title, item.type);
   }
+};
+
+/**
+ * A tool call in J3 Bots' words. A harness may give only a title, which then
+ * carries the tool's name in the same forms.
+ */
+const dynamicToolStep = (item: DynamicTool) => {
+  const step = toolStep(item.toolName ?? item.title, item.viewedImagePath !== undefined);
+  return step.label === null && item.title !== null ? { tool: step.tool, label: item.title } : step;
 };
 
 const stepStatus = (item: Item): WorkStep["status"] =>
@@ -1153,6 +1163,7 @@ const stepOf = (item: Item): WorkStep | undefined => {
   return {
     id: WorkStepId.make(localIdFor(item.id)),
     kind,
+    tool: item.type === "dynamic_tool" ? dynamicToolStep(item).tool : null,
     label: stepLabel(item),
     status: stepStatus(item),
     startedAt: item.startedAt ?? item.updatedAt,
@@ -1167,7 +1178,7 @@ const stepsOf = (mirror: Mirror, run: Run) =>
   });
 
 const fingerprint = (step: WorkStep) =>
-  `${step.status}|${step.label}|${step.finishedAt === null ? "" : DateTime.formatIso(step.finishedAt)}`;
+  `${step.status}|${step.tool ?? ""}|${step.label}|${step.finishedAt === null ? "" : DateTime.formatIso(step.finishedAt)}`;
 
 const SpeechInput = Schema.Struct({ message: Schema.String });
 const decodeSpeechInput = Schema.decodeUnknownOption(SpeechInput);

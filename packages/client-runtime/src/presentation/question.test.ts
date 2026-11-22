@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Question } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { assembleAnswers, type QuestionDraft } from "./question.ts";
+import { assembleAnswers, optionDescription, type QuestionDraft } from "./question.ts";
 
 const question = (id: string, extra: Partial<Question> = {}): Question => ({
   id,
@@ -46,5 +46,20 @@ describe("assembleAnswers", () => {
     expect(
       assembleAnswers([question("one")], drafts({ one: { optionIds: [], text: "maybe" } })),
     ).toBeNull();
+  });
+});
+
+describe("optionDescription", () => {
+  const option = (label: string, description: string | null) =>
+    ({ id: "o", label, description, style: "default" }) as const;
+
+  it("leaves out a description that only says the label again", () => {
+    expect(optionDescription(option("Red", "Red"))).toBeNull();
+    expect(optionDescription(option("Red", " red. "))).toBeNull();
+    expect(optionDescription(option("Red", "   "))).toBeNull();
+  });
+
+  it("keeps a description that says more", () => {
+    expect(optionDescription(option("Red", "Red, the warmer one"))).toBe("Red, the warmer one");
   });
 });

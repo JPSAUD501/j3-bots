@@ -6,7 +6,12 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
-import { engineProblem, providerLine, type ProviderTone } from "@j3-bots/client-runtime/wording";
+import {
+  engineProblem,
+  providerLine,
+  type ProviderTone,
+  quietConversationText,
+} from "@j3-bots/client-runtime/wording";
 import { BotAvatar } from "./BotAvatar";
 import { useConnectionLineShown } from "./ConnectionBanner";
 import { NewBotForm } from "./NewBotForm";
@@ -245,20 +250,14 @@ export function NoSelection({ nextShortcut }: { nextShortcut: string }) {
 
 /** A conversation with nothing in it yet. A new bot speaks first, so this is usually brief. */
 export function QuietConversation({ bot }: { bot: Bot }) {
-  const { t } = useI18n();
+  const ctx = usePresentation();
   const name = bot.profile.name;
-  const gettingReady = bot.state._tag === "thinking" || bot.state._tag === "working";
   return (
     <Centered>
       <span className="[--avatar-cutout:var(--background)]">
         <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
       </span>
-      <Heading
-        title={name}
-        body={
-          gettingReady ? t("empty.quiet.speaksFirst", { name }) : t("empty.quiet.body", { name })
-        }
-      />
+      <Heading title={name} body={quietConversationText(bot, ctx)} />
     </Centered>
   );
 }

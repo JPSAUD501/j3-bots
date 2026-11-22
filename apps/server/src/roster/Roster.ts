@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   Bot,
+  Entry,
   Room,
   RoomId,
   RoomWorkState,
@@ -19,6 +20,7 @@ import { previewOf } from "../entries/preview.ts";
 import { ChangeLog, type ChangeScope } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { RoomStates } from "../turns/RoomStates.ts";
+import { WorkSteps } from "../turns/WorkSteps.ts";
 
 export type RosterFrame =
   | { readonly _tag: "snapshot"; readonly items: ReadonlyArray<RosterItem> }
@@ -74,6 +76,14 @@ export const layer = Layer.effect(
     const entries = yield* Entries;
     const changes = yield* ChangeLog;
     const roomStates = yield* RoomStates;
+    const workSteps = yield* WorkSteps;
+
+    /** The last entry as the roster shows it; a work fold with the step that says what it did. */
+    const preview = Effect.fn("Roster.preview")(function* (last: Entry | null) {
+      if (last === null) return null;
+      const step = last._tag === "work-fold" ? yield* workSteps.shown(last.id) : Option.none();
+      return previewOf(last, Option.getOrNull(step));
+    });
 
     const botItem = Effect.fn("Roster.botItem")(function* (bot: Bot) {
       const summary = yield* entries.summary({ _tag: "conversation", botId: bot.id });
@@ -81,7 +91,7 @@ export const layer = Layer.effect(
       return {
         _tag: "bot",
         bot,
-        lastEntry: last === null ? null : previewOf(last),
+        lastEntry: yield* preview(last),
         lastActivityAt: last?.createdAt ?? null,
         unread: summary.unread,
       } satisfies RosterItem;
@@ -93,7 +103,7 @@ export const layer = Layer.effect(
       return {
         _tag: "room",
         room,
-        lastEntry: last === null ? null : previewOf(last),
+        lastEntry: yield* preview(last),
         lastActivityAt: last?.createdAt ?? null,
         unread: summary.unread,
       } satisfies RosterItem;

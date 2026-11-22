@@ -49,6 +49,11 @@ export class BotStates extends Context.Service<
      * main session, which a Stop ends (`EngineSessions`, Settings alignment).
      */
     readonly settingsHeld: (botId: BotId) => Effect.Effect<boolean>;
+    /**
+     * Whether the bot's opening is still to come or under way: its
+     * `first-run` wake waits or is with the engine (`Bot.opening`).
+     */
+    readonly opening: (botId: BotId) => Effect.Effect<boolean>;
     /** Tells the roster about turns that just went quiet long enough to look stalled. */
     readonly watchStalls: Effect.Effect<never>;
   }
@@ -136,6 +141,21 @@ export const layer = Layer.effect(
       return Option.isSome(yield* heldSession(botId));
     }, Effect.orDie);
 
+    const openingWake = SqlSchema.findOneOption({
+      Request: BotId,
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (botId) => sql`
+        SELECT id FROM wakes
+        WHERE bot_id = ${botId} AND status IN ('pending', 'dispatched')
+          AND json_extract(payload_json, '$._tag') = 'first-run'
+        LIMIT 1
+      `,
+    });
+
+    const opening = Effect.fn("BotStates.opening")(function* (botId: BotId) {
+      return Option.isSome(yield* openingWake(botId));
+    }, Effect.orDie);
+
     const of = Effect.fn("BotStates.of")(function* (botId: BotId) {
       const card = yield* engineCard(botId);
       if (Option.isSome(card)) return { _tag: "waiting", entryId: card.value.entry_id } as const;
@@ -152,11 +172,13 @@ export const layer = Layer.effect(
         const step = fold === null ? Option.none() : yield* shownStep(fold);
         if (Option.isNone(step)) return { _tag: "thinking", since, stalled } as const;
         const latest = step.value.step_json;
+        const running = latest.status === "running";
         return {
           _tag: "working",
           since,
           stalled,
-          activity: latest.status === "running" ? latest.label : null,
+          activity: running ? latest.label : null,
+          tool: running ? latest.tool : null,
         } as const;
       }
 
@@ -220,6 +242,6 @@ export const layer = Layer.effect(
       Effect.andThen(Effect.never),
     );
 
-    return BotStates.of({ of, settingsHeld, watchStalls });
+    return BotStates.of({ of, settingsHeld, opening, watchStalls });
   }),
 );

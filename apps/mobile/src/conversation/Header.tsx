@@ -105,22 +105,27 @@ export function ConversationHeader({
             </Text>
             <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />
           </View>
-          {line !== null && (
-            <Text numberOfLines={1} className={`text-2xs ${toneClass[line.tone]}`}>
-              {line.text}
-            </Text>
-          )}
+          {/* The line keeps its place when it says nothing, so the name never moves as the bot's
+              state changes. */}
+          <Text
+            numberOfLines={1}
+            className={`text-2xs ${line === null ? "" : toneClass[line.tone]}`}
+            importantForAccessibility={line === null ? "no" : "auto"}
+          >
+            {line?.text ?? " "}
+          </Text>
         </View>
       </Pressable>
       {waitingOn !== null && (
+        // The line under the name already says "Waiting for you": this is the whole target that
+        // brings the card into view, apart from the name that opens the details.
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t("presence.waiting.goTo")}
           onPress={() => onGoToWaiting(waitingOn)}
-          className="min-h-11 flex-row items-center gap-1 px-2"
+          className="size-11 items-center justify-center"
         >
-          <Text className="text-sm text-waiting">{t("presence.waiting")}</Text>
-          <Icon icon={CornerDownRight} size={16} color="accent-waiting" />
+          <Icon icon={CornerDownRight} size={18} color="accent-waiting" />
         </Pressable>
       )}
       {(botStop || roomStopping !== "hidden") && (

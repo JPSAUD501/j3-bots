@@ -47,7 +47,7 @@ export {
   type OpenedNotification,
   pushOpening,
 } from "./notificationOpening.ts";
-export { assembleAnswers, type QuestionDraft } from "./question.ts";
+export { assembleAnswers, optionDescription, type QuestionDraft } from "./question.ts";
 export {
   blankRoomForm,
   followRoom,

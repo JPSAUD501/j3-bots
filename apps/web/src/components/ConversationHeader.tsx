@@ -161,26 +161,29 @@ export function ConversationHeader({
               className="size-3.5 shrink-0 text-muted-foreground @tablet:hidden"
             />
           </button>
-          {line &&
-            (waitingOn !== null ? (
-              // On touch screens this line is the button at the end of the header instead. Only a coarse
-              // pointer hides it: with no pointer at all (keyboard only, a TV), it stays.
-              <button
-                type="button"
-                onClick={() => onGoToWaiting(waitingOn)}
-                aria-label={t("presence.waiting.goTo")}
-                className={cn(
-                  "relative z-10 block max-w-full truncate rounded-sm text-2xs underline underline-offset-2 pointer-coarse:hidden",
-                  toneClass[line.tone],
-                )}
-              >
-                {line.text}
-              </button>
-            ) : (
-              <span className={cn("max-w-full truncate text-2xs", toneClass[line.tone])}>
-                {line.text}
-              </span>
-            ))}
+          {/* The line keeps its place when it says nothing, so the name never moves as the bot's
+              state changes. */}
+          {line === null ? (
+            <span aria-hidden className="min-h-[1lh] text-2xs" />
+          ) : waitingOn !== null ? (
+            // On touch screens this line is the button at the end of the header instead. Only a coarse
+            // pointer hides it: with no pointer at all (keyboard only, a TV), it stays.
+            <button
+              type="button"
+              onClick={() => onGoToWaiting(waitingOn)}
+              aria-label={t("presence.waiting.goTo")}
+              className={cn(
+                "relative z-10 block max-w-full truncate rounded-sm text-2xs underline underline-offset-2 pointer-coarse:invisible",
+                toneClass[line.tone],
+              )}
+            >
+              {line.text}
+            </button>
+          ) : (
+            <span className={cn("max-w-full truncate text-2xs", toneClass[line.tone])}>
+              {line.text}
+            </span>
+          )}
         </span>
       </div>
       <span className="ms-auto flex shrink-0 items-center gap-1">
