@@ -9,6 +9,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./names": {
+      "types": "./src/names.ts",
+      "import": "./src/names.ts"
+    },
     "./raster": {
       "types": "./src/raster/index.ts",
       "import": "./src/raster/index.ts"

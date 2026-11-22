@@ -7,6 +7,7 @@
  * Colors are `#rrggbb` or `oklch(L C H)`, optionally with `/ alpha`. The
  * reasoning behind the values is in docs/design/design-language.md.
  */
+import type { BotColor } from "./names.ts";
 
 export interface Themed {
   readonly light: string;
@@ -70,11 +71,7 @@ export const botPalette = {
   violet: themed("oklch(0.622 0.183 295)", "oklch(0.523 0.148 298)"),
   pink: themed("oklch(0.451 0.136 336)", "oklch(0.584 0.094 349)"),
   gray: themed("oklch(0.532 0 0)", "oklch(0.93 0 0)"),
-} as const satisfies Record<string, Themed>;
-
-export type BotColor = keyof typeof botPalette;
-
-export const botColors = Object.keys(botPalette) as ReadonlyArray<BotColor>;
+} as const satisfies Record<BotColor, Themed>;
 
 export const fonts = {
   sans: '-apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, "Inter Variable", sans-serif',

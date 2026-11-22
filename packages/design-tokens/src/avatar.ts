@@ -9,8 +9,9 @@
  * mark's parts as given, with no motion. Which state shows which mark and
  * motion is the client runtime's decision.
  */
-import { avatarShapes, type AvatarShapeName } from "./avatarShapes.ts";
-import { botPalette, type BotColor, type ColorRole } from "./tokens.ts";
+import { avatarShapes } from "./avatarShapes.ts";
+import type { AvatarShapeName, BotColor } from "./names.ts";
+import { botPalette, type ColorRole } from "./tokens.ts";
 
 /** One piece of a mark, drawn in the `avatar-ink` color. */
 export type AvatarMarkPart =

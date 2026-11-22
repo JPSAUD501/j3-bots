@@ -397,6 +397,9 @@ importers:
       '@j3-bots/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@j3-bots/design-tokens':
+        specifier: workspace:*
+        version: link:../../packages/design-tokens
       '@j3-bots/engine-t3':
         specifier: workspace:*
         version: link:../../packages/engine-t3
@@ -545,6 +548,9 @@ importers:
 
   packages/contracts:
     dependencies:
+      '@j3-bots/design-tokens':
+        specifier: workspace:*
+        version: link:../design-tokens
       effect:
         specifier: 4.1.3
         version: 4.1.3

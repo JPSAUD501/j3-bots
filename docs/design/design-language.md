@@ -104,6 +104,8 @@ Destructive actions use `blocked`: there is no separate destructive red. Every t
 
 Each bot has one color, chosen by the operator from ten: red, orange, yellow, green, teal, blue, indigo, violet, pink and gray. Each has a light and a dark value.
 
+A bot created without an avatar gets one from the server, which chooses from these same tokens (`avatarShapeNames` and `botHues` in `packages/design-tokens`): the first of the shape and color pairs fewest bots use, walking the ten shapes and the nine hues in step. Ten and nine share no factor, so the walk meets all ninety pairs before any repeats, and bots created one after another differ in both color and shape: the first nine bots have nine shapes and nine colors. The server never chooses gray, which is also what a client draws for a color it does not know. The operator, or a bot asked to change its avatar, can choose only these names: the server refuses any other.
+
 Ten hues cannot all have the same lightness and still be told apart by someone with a color vision deficiency: protanopia and deuteranopia collapse red, orange, yellow and green onto one axis. The palette therefore varies lightness on purpose and gives up equal perceived weight. What it guarantees instead, and what the tests check:
 
 - every fill reaches 3:1 against `background`, `surface`, `sidebar` and `muted`, and against `avatar-ink`, so both the avatar's silhouette and its inner mark are legible (measured minimum 3.05 in light, 3.06 in dark);

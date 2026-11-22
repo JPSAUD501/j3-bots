@@ -16,7 +16,7 @@ import {
   RoutineRunId,
   Sequence,
 } from "./base.ts";
-import { Avatar, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
+import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
 import { Device, PairingCode, PushRegistration } from "./device.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
@@ -246,7 +246,7 @@ export const EntryRpcs = RpcGroup.make(
 const ProfileChanges = Schema.Struct({
   name: Schema.optionalKey(Profile.fields.name),
   title: Schema.optionalKey(Profile.fields.title),
-  avatar: Schema.optionalKey(Avatar),
+  avatar: Schema.optionalKey(AvatarChoice),
   job: Schema.optionalKey(Profile.fields.job),
 });
 /** The profile fields `bot.update` changes. Fields left out keep their value. */
@@ -259,7 +259,7 @@ export const BotRpcs = RpcGroup.make(
       ...command,
       name: Profile.fields.name,
       title: Schema.optionalKey(Profile.fields.title),
-      avatar: Schema.optionalKey(Avatar),
+      avatar: Schema.optionalKey(AvatarChoice),
       job: Schema.optionalKey(Profile.fields.job),
       model: Schema.optionalKey(ModelChoice),
       permissionMode: Schema.optionalKey(PermissionMode),

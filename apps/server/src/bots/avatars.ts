@@ -1,30 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Avatar } from "@j3-bots/contracts";
+import type { Avatar, AvatarChoice } from "@j3-bots/contracts";
+import { avatarShapeNames, botHues } from "@j3-bots/design-tokens/names";
+
+/** `items` over and over. */
+function* cycle<T>(items: readonly [T, ...T[]]): Generator<T, never> {
+  for (;;) yield* items;
+}
 
 /**
- * The avatars the server gives a bot created without one. The values are
- * design tokens the clients render (`docs/design/design-language.md`, Avatars);
- * the avatar system is still being explored, so this palette is provisional.
+ * The avatar the server gives a bot created without one: the first of the
+ * least used, walking the shapes and the hues (`docs/design/design-language.md`,
+ * Bot palette) in step. Ten shapes and nine hues share no factor, so the walk
+ * meets every pair once, and any two of the first nine bots differ in both
+ * shape and color. Gray stays the operator's to choose: it is also what a
+ * client draws for a color it does not know.
  */
-const SHAPES = ["circle", "square", "hexagon", "triangle", "diamond"] as const;
-const COLORS = ["teal", "amber", "violet", "rose", "sky", "lime", "orange", "indigo"] as const;
-
-/**
- * The first avatar of the palette no bot uses, colors first so neighbours in a
- * roster differ in color. When every one is taken, the least used.
- */
-export const freeAvatar = (taken: ReadonlyArray<Avatar>): Avatar => {
+export const freeAvatar = (taken: ReadonlyArray<Avatar>): AvatarChoice => {
   const uses = new Map<string, number>();
   for (const { shape, color } of taken) {
     const key = `${shape}/${color}`;
     uses.set(key, (uses.get(key) ?? 0) + 1);
   }
-  let best: { readonly avatar: Avatar; readonly uses: number } | undefined;
-  for (const shape of SHAPES) {
-    for (const color of COLORS) {
-      const count = uses.get(`${shape}/${color}`) ?? 0;
-      if (best === undefined || count < best.uses) best = { avatar: { shape, color }, uses: count };
-    }
+  const usesOf = ({ shape, color }: AvatarChoice) => uses.get(`${shape}/${color}`) ?? 0;
+  const shapes = cycle(avatarShapeNames);
+  const hues = cycle(botHues);
+  const next = (): AvatarChoice => ({ shape: shapes.next().value, color: hues.next().value });
+  let best = next();
+  for (let pair = 1; pair < avatarShapeNames.length * botHues.length; pair++) {
+    const avatar = next();
+    if (usesOf(avatar) < usesOf(best)) best = avatar;
   }
-  return best?.avatar ?? { shape: SHAPES[0], color: COLORS[0] };
+  return best;
 };

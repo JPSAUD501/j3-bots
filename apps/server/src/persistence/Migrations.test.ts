@@ -52,6 +52,18 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
           ${now}, ${now}
         )
       `;
+      // A bot given a color the clients' palette does not have, and one the
+      // operator made gray.
+      yield* sql`
+        INSERT INTO bots (
+          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+          permission_mode, workspace_path, created_at, updated_at
+        ) VALUES
+          ('scribe', 'scribe', '', 'circle', 'amber', '', 'claude', 'haiku', 'auto', '/bots/scribe',
+            ${now}, ${now}),
+          ('keeper', 'keeper', '', 'square', 'gray', '', 'claude', 'haiku', 'auto', '/bots/keeper',
+            ${now}, ${now})
+      `;
       yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
       yield* sql`
         INSERT INTO sessions (id, bot_id, purpose, engine_session_id, prompt_version, created_at)
@@ -70,7 +82,7 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         INSERT INTO attachments (id, sha256, name, media_type, source, entry_id, created_at)
         VALUES ('file-1', 'abc', 'notes.txt', 'text/plain', 'operator', 'entry-1', ${now})
       `;
-      const created = JSON.stringify({
+      const scout = {
         id: "scout",
         profile: { name: "scout", title: "", avatar: { shape: "circle", color: "blue" }, job: "" },
         model: { providerId: "claude", modelId: "haiku" },
@@ -80,10 +92,22 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         hidden: false,
         state: { _tag: "idle" },
         createdAt: now,
+      };
+      const created = JSON.stringify(scout);
+      const scribe = JSON.stringify({
+        ...scout,
+        id: "scribe",
+        profile: {
+          name: "scribe",
+          title: "",
+          avatar: { shape: "circle", color: "amber" },
+          job: "",
+        },
       });
       yield* sql`
         INSERT INTO command_receipts (command_id, method, payload_hash, result_json, created_at)
-        VALUES ('command-1', 'bot.create', 'hash', ${created}, ${now})
+        VALUES ('command-1', 'bot.create', 'hash', ${created}, ${now}),
+          ('command-2', 'bot.create', 'hash', ${scribe}, ${now})
       `;
       yield* sql`
         INSERT INTO devices (id, name, token_hash, paired_at)
@@ -94,6 +118,23 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
     // This release opens it.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      // A color the clients draw stays, gray too; one they do not becomes the
+      // first free one for the bot's shape, also in the receipt of its creation.
+      const avatars = yield* sql<{
+        readonly id: string;
+        readonly avatar_shape: string;
+        readonly avatar_color: string;
+      }>`SELECT id, avatar_shape, avatar_color FROM bots ORDER BY id`;
+      assert.deepStrictEqual(avatars, [
+        { id: "keeper", avatar_shape: "square", avatar_color: "gray" },
+        { id: "scout", avatar_shape: "circle", avatar_color: "blue" },
+        { id: "scribe", avatar_shape: "circle", avatar_color: "red" },
+      ]);
+      const [scribeReceipt] = yield* sql<{ readonly result_json: string }>`
+        SELECT result_json FROM command_receipts WHERE command_id = 'command-2'
+      `;
+      const scribe = yield* Schema.decodeUnknownEffect(json(Bot))(scribeReceipt?.result_json);
+      assert.deepStrictEqual(scribe.profile.avatar, { shape: "circle", color: "red" });
       const sessions = yield* sql<{ readonly bot_id: string; readonly provider_id: string }>`
         SELECT bot_id, provider_id FROM sessions WHERE id = 'session-1'
       `;

@@ -15,6 +15,7 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@j3-bots/design-tokens": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
