@@ -20,8 +20,9 @@ import { complete } from "./model.ts";
  * whose answer is known, worded in ways a keyword match would miss and
  * including the opposite claim: a judge that drifts fails those, and the run
  * shows it. Its answers are sampled at temperature 0, and a reply that did not
- * finish on its own, called a tool, or whose last line is not exactly `yes` or
- * `no`, fails the case as unclear instead of counting either way. Temperature 0 through a proxy
+ * finish on its own, called a tool, or whose last line is not yes or no (in
+ * any case, with trailing punctuation allowed), is unclear: the report counts
+ * it apart from the bot's failures, never either way. Temperature 0 through a proxy
  * is not deterministic (the same message has drawn both answers), so each
  * question is answered three times and the majority decides, for the fixed
  * messages as for a bot's.
@@ -31,7 +32,7 @@ const JUDGE_MODEL = Config.String("J3_EVAL_JUDGE_MODEL").pipe(
   Config.withDefault("claude-haiku-5-5"),
 );
 
-/** The judge's reply was cut off, or did not end on a line that is exactly yes or no. */
+/** The judge's reply was cut off, or did not end on a line that reads yes or no. */
 class JudgeUnclear extends Schema.TaggedError<JudgeUnclear>()("JudgeUnclear", {
   message: Schema.String,
 }) {}
@@ -63,14 +64,21 @@ const verdict = Effect.fn("evals.verdict")(function* (
     { temperature: 0 },
   );
   const text = reply.content ?? "";
-  const last = text.trimEnd().split("\n").at(-1)?.trim();
+  const last = text
+    .trimEnd()
+    .split("\n")
+    .at(-1)
+    ?.trim()
+    .toLowerCase()
+    .replace(/[.!*_`]+$/u, "")
+    .replace(/^[*_`]+/u, "");
   if (
     reply.finishReason !== "stop" ||
     reply.toolCalls.length > 0 ||
     (last !== "yes" && last !== "no")
   ) {
     return yield* new JudgeUnclear({
-      message: `The judge's reply is unclear: it must finish on its own (finish_reason ${reply.finishReason ?? "(none)"}), call no tools (it called ${reply.toolCalls.length}) and end on a line that is exactly yes or no: ${text === "" ? "(no text)" : text}`,
+      message: `The judge's reply is unclear: it must finish on its own (finish_reason ${reply.finishReason ?? "(none)"}), call no tools (it called ${reply.toolCalls.length}) and end on a line that reads yes or no: ${text === "" ? "(no text)" : text}`,
     });
   }
   return last === "yes";
@@ -82,7 +90,7 @@ const VOTES = 3;
 /**
  * Whether `message`, the bot's answer to `asked`, plainly says what
  * `question` asks, as the majority of {@link VOTES} judge replies reads it.
- * Every reply must be clear: one unclear reply fails the case.
+ * Every reply must be clear: one unclear reply makes the verdict {@link JudgeUnclear}.
  */
 export const judge = Effect.fn("evals.judge")(function* (
   asked: string,

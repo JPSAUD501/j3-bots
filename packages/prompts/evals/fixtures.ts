@@ -120,10 +120,16 @@ type Recorder = (event: GhEvent | Unavailable) => void;
 const notAvailable = (what: string): Outcome =>
   fail(`gh: ${what} is not available in this workspace.`);
 
-/** An error for what this `gh` does not offer, reported as unavailable. */
+/**
+ * An error for what this `gh` does not offer, reported as unavailable. It
+ * names the command as what is missing, and lists what is offered: "gh repo
+ * is not available" alone reads as the repository being out of reach.
+ */
 const notHere = (record: Recorder, what: string): Outcome => {
   record({ type: "unavailable", what: `gh: ${what}` });
-  return notAvailable(what);
+  return fail(
+    `gh: \`${what}\` is not available in this workspace; it offers gh auth status, gh run list, gh run view, gh pr list, gh pr view and reads through gh api.`,
+  );
 };
 
 // Flags.

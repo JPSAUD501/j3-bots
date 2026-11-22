@@ -82,7 +82,7 @@ const SayInput = toolInput({
   to: Schema.optionalKey(
     described(
       Schema.Literal("dm"),
-      "Only during a room turn: send privately to your user instead of to the room.",
+      "In a room turn only: deliver it to your user privately, not to the room.",
     ),
   ),
   mention: Schema.optionalKey(
@@ -119,7 +119,7 @@ const AskInput = toolInput({
   prompt: described(text(1, 2_000), "The question, in one or two sentences."),
   options: described(
     Schema.Array(AskOption).check(Schema.isMinLength(1), Schema.isMaxLength(6)),
-    "One to six real choices you have checked.",
+    "One to six next steps you have confirmed you can take.",
   ),
   allow_custom: Schema.optionalKey(
     described(Schema.Boolean, "Also accept a typed answer. Defaults to false."),
@@ -279,11 +279,11 @@ export const tools = {
   say: define(
     "say",
     [
-      "Send a message to your user. This is the only way they hear you: reply text outside this tool reaches nobody.",
+      "Send a message to your user. Nothing else you write reaches them: reply text outside this tool goes nowhere.",
       'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead.',
       "In a room, the members you list in `mention` are woken to answer; nobody else is. Mention a member only to hand them work they must do next, usually one: your user limits how many one message may mention, and how long a chain of turns between bots may run since they last spoke. Mentioning nobody lets the room settle. A name typed with @ in the text is only shown; `mention` is what wakes a member.",
       "Attach files you produced, rather than linking workspace paths they cannot open.",
-      "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, only the record update and the `pause` its instruction names may follow it. Then end your turn.",
+      "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, only reads, the record of what it reported and the `pause` its instruction names may follow it. Then end your turn.",
       "Returns once the message is recorded.",
       BOT_ONLY,
     ],
@@ -294,7 +294,7 @@ export const tools = {
     [
       "Put one question to your user as a card with options to tap, for a decision that needs a structured answer.",
       "Use it when a wrong guess would cost something real or only they know the answer; otherwise decide, and say what you assumed.",
-      "Offer only real choices you have checked are possible, none of which hands the work back to your user, and let each option's description say what it would change. Context longer than the question goes in a `say` first.",
+      "Each option is a next step you can actually carry out and have confirmed you can; leaving the choice or the work to your user is not one. Its description says what picking it leads to. Background that needs more than the question's sentence or two goes in a `say` before it.",
       "Calling it ends your turn: their answer arrives as your next turn, and a dismissed card means no. Do not ask the same thing again.",
       "Not in a routine run: put the question in a `say` there.",
       BOT_ONLY,
@@ -305,9 +305,9 @@ export const tools = {
     "message_bot",
     [
       "Send a message to one teammate, by a bot id from `list_teammates`. Your user sees it in both conversations.",
-      "Only an `urgent` message wakes the teammate now. Any other waits: they read it at the start of their next turn, whenever that comes.",
+      "Only an `urgent` message wakes the teammate now. Any other is queued until the teammate's next turn begins, however long that takes.",
       "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender. Answer a question once; an FYI or a thanks needs no answer.",
-      "Returns an acknowledgement only. A reply, if any, arrives later as its own turn.",
+      "Returns an acknowledgement only. Any reply comes in a later turn of yours.",
       "Every message spends your user's allowance: send it only when it serves what your user wants. Your user limits how long a chain of messages between bots may run since they last spoke, and how many teammates a turn may bring in besides those it answers; past either, nothing is sent.",
       BOT_ONLY,
     ],
@@ -355,7 +355,7 @@ export const tools = {
       "During a routine run the only `set_routine` action allowed is `pause` of that routine, by the id in the wake with no lookup, so it can stop itself once its job is done; when the instruction asks for a message first, pause only after that `say` has returned, and when a recent run already sent that message, pause without another.",
       "Use `webhook` when the calling system can reach this server. In your confirmation, say the routine is waiting for its first delivery; confirm a delivery later from the sender's own delivery result, since a run started on demand is recorded too. Use a schedule instead only when the sender cannot reach this server and checking on a schedule does the job.",
       'A webhook routine\'s address is a secret: anyone who has it can start the routine. Configure the calling system with it yourself when your user asked and you have access; otherwise give it to your user privately in your closing `say` (`to: "dm"` in a room). Never put it in a room, a teammate message, memory or another file.',
-      'Each run starts in a fresh session without this conversation, so the instruction must stand alone: what to look at, what counts as worth reporting, the names, places and thresholds involved, and a last line saying what to send your user. A reminder, or a report your user wants every time, is sent when due; a report that depends on a condition is sent only when it holds, and otherwise the run ends without a message. A watch for one event ("let me know when X") checks on a schedule until X happens, not once at a guessed time, and ends with it or on an end date: the one your user named or implied, otherwise 14 days after you create it. Its delivery line reads: "Once X has happened, tell your user in one short message, then pause this routine; if a recent run already told them, just pause. If X has not happened by <date>, tell your user once that you stopped watching, then pause this routine." Name that date in your confirmation. A recurring check or report never pauses itself.',
+      'Each run starts in a fresh session without this conversation, so the instruction must stand alone: what to look at, what counts as worth reporting, the names, places and thresholds involved, and a last line saying what to send your user. A reminder, or a report your user wants every time, is sent when due; a report that depends on a condition is sent only when it holds, and otherwise the run ends without a message. A watch for one event ("let me know when X") checks on a schedule until X happens, not once at a guessed time, and has a cutoff: a date your user named for it or a deadline they stated, otherwise 14 days after you create it; a date when X is only expected ("it should land today") sets none. Its delivery line reads: "Before <cutoff>: once X has happened, tell your user in one short message, then pause this routine; if a recent run already told them, just pause. At or after <cutoff>, the watch is over, even if the source cannot be reached: if X happened before the cutoff and no recent run told them, tell them that; otherwise tell them once that the watch has ended, unless a recent run already did, and an X after the cutoff does not count. Then pause this routine." Name the cutoff in your confirmation. A recurring check or report never pauses itself.',
       "A run that fails before it says anything is retried without knowing what the failed attempt did, so every other send or change in the instruction must be safe to repeat, as `j3-routines` describes, or your user must accept the risk before you save it.",
       "A file under `files/` keeps what the next run needs; a record of what was reported is written only after the `say` that reported it has returned.",
       "Returns the routine as saved, with its id and next run; tell your user the exact schedule.",

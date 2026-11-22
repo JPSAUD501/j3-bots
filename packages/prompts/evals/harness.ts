@@ -30,11 +30,11 @@ import type { Workspace } from "./shell.ts";
  *
  * The model gets what a bot's session gives it: the rendered base prompt,
  * profile and pinned memory, one wake envelope, and the `j3` tools as MCP
- * lists them. Two things stand in for the harness: the shipped skills, given
+ * lists them. Three things stand in for the harness: the shipped skills, given
  * as already read when a run includes them (the harness's own listing and
- * reading of them is not what is measured), and `run_command`, a stand-in
- * shell whose workspace and programs the scenario fixes (`shell.ts`,
- * `fixtures.ts`).
+ * reading of them is not what is measured); `run_command`, a stand-in shell
+ * whose workspace and programs the scenario fixes (`shell.ts`, `fixtures.ts`);
+ * and `request_secret`, which the engine offers every bot ({@link SECRET_TOOL}).
  *
  * Every case runs with the skills and without them. Nothing links them into a
  * harness yet, and a session that never reads one still has to behave, so a
@@ -77,6 +77,31 @@ const systemPrompt = (model: string, skills: Skills, setup: BotSetup): string =>
 
 const HOST_TOOL = "run_command";
 
+/**
+ * The engine's tool for a secret, as far as these scenarios need it. At the
+ * engine's pinned commit (Read, T3 Code 59651c1,
+ * `apps/server/src/mcp/OrchestratorMcpService.ts`), a `value` the
+ * user pasted is saved to a file only its owner can read, and the result names
+ * that file; without one, the user gets a card, and `delivery: "file"`
+ * returns a file holding what they typed. The stand-in saves the file under
+ * {@link SECRET_FOLDER} and answers a card with the scenario's
+ * `secretAnswer`, or as a card left unanswered when it has none. The
+ * description is this repository's own wording, not the engine's.
+ */
+const SECRET_TOOL = "request_secret";
+
+/** Where the stand-in `request_secret` keeps the secrets it saves. */
+export const SECRET_FOLDER = "/run/secrets";
+
+const decodeSecretInput = Schema.decodeUnknownOption(
+  Schema.Struct({
+    label: Schema.String,
+    reason: Schema.String,
+    value: Schema.optionalKey(Schema.String),
+    delivery: Schema.optionalKey(Schema.Literals(["secretRef", "file"])),
+  }),
+);
+
 /** What `run_command` says about the programs signed in, unless a scenario says otherwise. */
 const GH_SIGNED_IN = "The GitHub CLI, gh, is signed in.";
 
@@ -89,6 +114,25 @@ const functionTools = (
     type: "function",
     function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
   })),
+  {
+    type: "function",
+    function: {
+      name: SECRET_TOOL,
+      description:
+        'Get one secret, such as a token or password, without it entering the conversation. With `label` and `reason` alone, your user sees a card to type it into, and the result is a one-use reference for this host\'s own tools; with `delivery: "file"`, it is a private file for a command to read. If your user already pasted the secret here, pass it as `value`: it is saved to a private file, and the result names the file.',
+      parameters: {
+        type: "object",
+        properties: {
+          label: { type: "string" },
+          reason: { type: "string" },
+          value: { type: "string" },
+          delivery: { type: "string", enum: ["secretRef", "file"] },
+        },
+        required: ["label", "reason"],
+        additionalProperties: false,
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -190,6 +234,8 @@ export interface Scenario {
   readonly bot?: BotSetup;
   /** What `run_command` says about the programs signed in, when not only `gh`. */
   readonly shell?: string;
+  /** What the user types into a `request_secret` card; none leaves the card unanswered. */
+  readonly secretAnswer?: string;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -470,6 +516,7 @@ type Answer = Pick<Call, "output" | "events" | "refused">;
 const answer = (
   routines: HeldRoutines,
   workspace: Workspace<ProgramEvent>,
+  scenario: Scenario,
   request: Request,
 ): Answer => {
   const reply = (output: string): Answer => ({ output, events: [] });
@@ -494,6 +541,28 @@ const answer = (
       return reply(json({ recorded: true }));
     case "list_teammates":
       return reply(json({ bots: [], rooms: [] }));
+    case SECRET_TOOL: {
+      const input = decodeSecretInput(request.input);
+      if (input._tag === "None")
+        return reply(json({ error: "`label` and `reason` are required." }));
+      const saved = (secret: string) => {
+        const file = `${SECRET_FOLDER}/secret-${request.step}`;
+        workspace.store(file, secret);
+        return file;
+      };
+      const { value, delivery } = input.value;
+      if (value !== undefined) return reply(json({ status: "saved", file: saved(value) }));
+      if (scenario.secretAnswer === undefined) {
+        return reply(json({ status: "timed_out", note: "Your user did not answer the card." }));
+      }
+      return reply(
+        json(
+          delivery === "file"
+            ? { status: "saved", file: saved(scenario.secretAnswer) }
+            : { status: "saved", secretRef: `secret-ref-${request.step}` },
+        ),
+      );
+    }
     case HOST_TOOL: {
       const input = decodeShellInput(request.input);
       return input._tag === "Some"
@@ -585,7 +654,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
           toolCall.function.name,
           parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
         );
-        const call: Call = { ...request, ...answer(routines, workspace, request) };
+        const call: Call = { ...request, ...answer(routines, workspace, scenario, request) };
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });
       }

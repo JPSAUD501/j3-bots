@@ -233,7 +233,7 @@ export const CLOSING_LINES: { readonly [K in Exclude<WakeKind, "room">]: string 
   user: "Reply with `say`; nothing else reaches them. Your last call is a `say` with `done: true` (the result, or that delegated work is underway) or an `ask`.",
   bot: "`say` reaches your user, not the sender. Answer the sender with `message_bot`, and only if you were asked something or have a result.",
   routine:
-    "Nobody is waiting: send no progress message. After the work, follow the delivery line: one `say` with `done: true`, or none if its condition fails. Once it returns, write only the record the instruction names, then any `pause` it asks for, by the id above; no second `say`. Never pause a one-time routine. If the instruction pauses after a message a recent run already sent, just pause. If the work was blocked, say in one sentence what blocks it and what would fix it, unless `recent-runs` already says so.",
+    "Nobody is waiting: send no progress message. Do the work, then follow the delivery line: one `say` with `done: true`, or none if its condition fails; a question for your user goes inside it. An observation the instruction keeps may be saved either way. After the `say` returns, you may still read, but change only the record of what it reported and any `pause` the instruction asks for, by the id above; no second `say`. Never pause a one-time routine. If the instruction pauses after a message a recent run already sent, just pause. If the work was blocked and `recent-runs` does not already say so, say in one sentence what blocks it and what would fix it, whatever the delivery line says.",
   system:
     "This is an event, not a message from your user. Respond only as your instructions say for it.",
 };

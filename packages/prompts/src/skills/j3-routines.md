@@ -5,7 +5,7 @@ description: Set up, change or check a routine (work that runs on its own on a s
 
 # Routines
 
-A routine is a saved instruction plus a trigger. When the trigger fires, J3 Bots starts a fresh session of you that has your instructions, your memory and your files, and none of the conversation in which the routine was made. That session does the work, and either sends your user one message or ends without a word.
+A routine pairs a saved instruction with a trigger. When the trigger fires, J3 Bots starts a fresh session of you that has your instructions, your memory and your files, and none of the conversation in which the routine was made. That session does the work, and either sends your user one message or ends without a word.
 
 ## When a routine is the answer
 
@@ -20,7 +20,7 @@ Do not create one when:
 
 - The request is for now, however urgent or time-related it sounds. "Is the build green?" is answered in this turn, and so is "check the build and tell me if it's red": an immediate check is done now, even when your user only wants to hear about a problem.
 - It is a standing preference about how you work ("always answer in Portuguese"). That is pinned memory.
-- You noticed a pattern your user never asked to automate. Offer it in one sentence and wait.
+- You noticed a pattern your user never asked to automate. Mention once, in a sentence, that you could, and leave it there.
 
 ## What you need first
 
@@ -29,14 +29,14 @@ Do not create one when:
 - **What is worth reporting,** and what counts as nothing new.
 - **Who receives the result.** Normally your user. Anyone else is a send, covered below.
 
-Fill a gap with a sensible default and state it in your confirmation ("every weekday at 8:07"). Ask only when a wrong guess would cost something: messages to other people, money, deletions, or checking more often than every 15 minutes.
+Fill a gap with a sensible default and state it in your confirmation ("every weekday at 8:07"). Ask only when guessing wrong would cost something: messages to other people, money, deletions, or checking more often than every 15 minutes.
 
 ## Choosing the trigger
 
 **`schedule`: five-field cron** (minute, hour, day of month, month, weekday), read in your user's zone. J3 Bots stores that zone with the routine, so never convert to UTC.
 
 - Keep the times your user gave exactly: "at 8" is `0 8 * * *`.
-- Where they left the time open, choose the least frequent schedule that still does the job, at an hour when the result is useful, and off the top of the hour: `7 8 * * *` rather than `0 8 * * *`.
+- Where they left the time open, pick the sparsest schedule that does the job, at an hour when the result is useful, and off the top of the hour: `7 8 * * *` rather than `0 8 * * *`.
 - Where they left the days open, run a work subject (a build, a repository, a work inbox) on weekdays and a personal one (a reminder, a price, the weather) every day, and say which you chose. Words that already name the days, such as "every day" or "every morning", keep every day.
 - **The five-minute rule:** a schedule that would run twice within five minutes is refused, for example `*/2 * * * *` or `0,3 9 * * *`. Five minutes apart is the floor, and anything that frequent spends allowance all day. For "keep checking", use every 15 or 30 minutes within their waking hours unless the subject truly needs otherwise, and say what you chose.
 - A seconds field and dates that never occur (`0 9 31 2 *`) are refused too.
@@ -45,7 +45,7 @@ Fill a gap with a sensible default and state it in your confirmation ("every wee
 | --- | --- |
 | "every weekday at 8" | `0 8 * * 1-5` |
 | "every morning" | `7 8 * * *` |
-| "watch the docs build in the mornings" | `7 8 * * 1-5` (work, days left open) |
+| "keep an eye on the docs build" | `7 8 * * 1-5` (work, days left open) |
 | "Mondays and Thursdays around lunch" | `12 12 * * 1,4` |
 | "every half hour during work hours" | `4,34 9-16 * * 1-5` (9:04 to 16:34) |
 | "first of the month" | `17 9 1 * *` |
@@ -98,7 +98,7 @@ The delivery line decides whether a run speaks. Write it explicitly, because the
 - **Conditional reports** (watching, checks, "tell me if"): speak only when the condition holds. When it does not, the run ends without calling `say` at all: no "all clear", no summary of what it checked. This is the usual case, and a silent run is a successful run. A run judges "nothing new" against the state file its instruction names, otherwise against what the recent runs said; when it cannot tell, it does not claim nothing changed.
 - **Digests:** speak only when there is something to list, unless your user asked for one every time. Say which you chose in your confirmation.
 - **Blocked:** whatever the delivery line says, a run that could not do its work (access lost, a source gone) tells your user, in one `say` of one sentence, what blocked it and what would let the next run continue; otherwise lost access would look like a quiet week. When one of the recent runs already said so, the run ends silently. A wake lists at most the five newest settled runs, so a lasting blocker is reported again about once every six runs. For a frequent check that is often, so the sentence also says the report will return until the blocker is fixed and that your user can pause the routine.
-- **Until an event:** for "let me know when X", a watch checks on a schedule until X happens (not once at a guessed time) and then ends. It also gets an end date: the one your user named or implied ("before the release"), otherwise 14 days after you create it. The delivery line reads: "Once X has happened, tell your user in one short message, then pause this routine; if a recent run already told them, just pause. If X has not happened by <date>, tell your user once that you stopped watching, then pause this routine." Your confirmation names that date. Such a watch needs no state file: the pause ends it, and the recent runs show what it said. The pause waits until the message has returned; during a run, `pause` of the current routine, by the id in the wake with no lookup, is the only `set_routine` action available.
+- **Until an event:** for "let me know when X", a watch checks on a schedule until X happens (not once at a guessed time) and then ends. It also gets a cutoff: a date your user named for the watch ("watch it until Friday") or a deadline they stated ("it has to merge by the 30th"), otherwise 14 days after you create it. A date when X is only expected ("it should merge this week", "she thinks it lands today") sets no cutoff. The delivery line reads: "Before <cutoff>: once X has happened, tell your user in one short message, then pause this routine; if a recent run already told them, just pause. At or after <cutoff>, the watch is over, even if the source cannot be reached: if X happened before the cutoff and no recent run told them, tell them that; otherwise tell them once that the watch has ended, unless a recent run already did, and an X after the cutoff does not count. Then pause this routine." Your confirmation names the cutoff. Such a watch needs no state file: the pause ends it, and the recent runs show what it said. The pause waits until the message has returned; during a run, `pause` of the current routine, by the id in the wake with no lookup, is the only `set_routine` action available.
 
 When a run speaks, it sends one short `say` after the work, phrased the way you would mention something you took care of, not as an alert. It never opens with a progress note: nobody is waiting, and a run that has said anything counts as delivered and is not retried if it then fails. A run cannot use `ask`: a question goes inside its message, and the answer arrives in your main conversation.
 
@@ -123,7 +123,7 @@ A routine your user asked for needs nothing further, as long as its instruction 
 3. Choose the trigger and write the instruction.
 4. If it helps, check quickly that the sources are reachable, reading only, and preview a report locally if that is useful. Leave every delivery and every change to the scheduled run.
 5. Call `set_routine`, unless you are reusing an enabled one as it is.
-6. Close with a `say` carrying `done: true`. Confirm, in your user's zone, the schedule of the routine as saved (what the tool returned, or the one you reused or resumed) ("Every weekday at 8:00 I'll check the docs build and tell you only if it's broken."). If the tool refused, say what failed and whether anything was saved. For a watch, say the date it ends. For a webhook, follow the rules above for its address.
+6. Close with a `say` carrying `done: true`. Confirm, in your user's zone, the schedule of the routine as saved (what the tool returned, or the one you reused or resumed) ("Every weekday at 8:00 I'll check the docs build and tell you only if it's broken."). If the tool refused, say what failed and whether anything was saved. For a watch, name its cutoff. For a webhook, follow the rules above for its address.
 
 ## Verifying it works
 

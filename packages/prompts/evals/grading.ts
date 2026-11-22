@@ -135,38 +135,116 @@ export const after = (
 export const reported = (heading: string, turn: Turn, problems: ReadonlyArray<string>) =>
   problems.length === 0 ? [] : [`${heading}: ${problems.join("; ")}\n${transcript(turn)}`];
 
-export interface Case {
+/** What grading a turn may fail with: a replayed turn that did not finish, or a judge reply. */
+type GradeError = Effect.Error<ReturnType<typeof runTurn | typeof judge>>;
+
+/** The model and skill column a case runs under. */
+interface RunOf {
+  readonly model: string;
+  readonly skills: Skills;
+}
+
+/** What is wrong with a turn, or with one part of it; empty when it passes. */
+type Problems = Effect.Effect<ReadonlyArray<string>, GradeError>;
+
+/** One part of a case's grade, counted on its own in the report. */
+export interface Grade {
+  readonly name: string;
+  readonly problems: Problems;
+}
+
+/**
+ * A case: a scenario, and either its `problems` as one grade, or `grades`
+ * that the report counts one by one.
+ */
+export type Case = {
   readonly name: string;
   readonly scenario: Scenario;
-  /** What is wrong with the turn; empty when it passes. */
-  readonly problems: (
-    turn: Turn,
-    run: { readonly model: string; readonly skills: Skills },
-  ) => Effect.Effect<
-    ReadonlyArray<string>,
-    Effect.Error<ReturnType<typeof runTurn | typeof judge>>
-  >;
-}
+} & (
+  | { readonly problems: (turn: Turn, run: RunOf) => Problems; readonly grades?: never }
+  | { readonly grades: (turn: Turn, run: RunOf) => ReadonlyArray<Grade>; readonly problems?: never }
+);
 
 /** A case whose problems the turn's own calls show, with no judge. */
 export const fromCalls =
-  (problems: (calls: ReadonlyArray<Call>) => ReadonlyArray<string>): Case["problems"] =>
-  (turn) =>
+  (problems: (calls: ReadonlyArray<Call>) => ReadonlyArray<string>) =>
+  (turn: Turn): Problems =>
     Effect.succeed(problems(turn.calls));
+
+/** A grade the turn's own calls show, with no judge. */
+export const gradeFromCalls = (name: string, problems: ReadonlyArray<string>): Grade => ({
+  name,
+  problems: Effect.succeed(problems),
+});
 
 const SKILL_COLUMNS: ReadonlyArray<Skills> = ["with the skill", "without the skill"];
 
-/** Runs every case for every model, with the shipped skills as read and without them. */
+type Outcome = "passed" | "failed" | "judge unclear";
+
+interface Graded {
+  readonly name: string;
+  readonly outcome: Outcome;
+  readonly problems: ReadonlyArray<string>;
+}
+
+const graded = (grade: Grade) =>
+  grade.problems.pipe(
+    Effect.map((problems): Graded => ({
+      name: grade.name,
+      outcome: problems.length === 0 ? "passed" : "failed",
+      problems,
+    })),
+    Effect.catchTag("JudgeUnclear", (error) =>
+      Effect.succeed<Graded>({
+        name: grade.name,
+        outcome: "judge unclear",
+        problems: [error.message],
+      }),
+    ),
+  );
+
+/**
+ * Runs every case for every model, with the shipped skills as read and
+ * without them, and records each grade's outcome in the test's metadata. A
+ * case fails when any of its grades finds a problem; when
+ * none does but the judge could not give a clear answer on one, it is
+ * skipped and counted apart, since that says nothing about the bot.
+ */
 export const runCases = (cases: ReadonlyArray<Case>): void => {
   describe.each(MODELS)("%s", (model) => {
     describe.each(SKILL_COLUMNS)("%s", (skills) => {
-      it.concurrent.each(cases)("$name", async ({ scenario, problems }) => {
-        const turn = await Effect.runPromise(runTurn(model, skills, scenario));
-        expect(
-          await Effect.runPromise(problems(turn, { model, skills })),
-          transcript(turn),
-        ).toEqual([]);
-      });
+      // One `it` per case by its full name: a `$name` template is cut short in reports.
+      for (const grading of cases) {
+        it.concurrent(grading.name, async (context) => {
+          const turn = await Effect.runPromise(runTurn(model, skills, grading.scenario));
+          const run = { model, skills };
+          const grades =
+            grading.grades === undefined
+              ? [{ name: "all", problems: grading.problems(turn, run) }]
+              : grading.grades(turn, run);
+          const results = await Effect.runPromise(
+            Effect.forEach(grades, graded, { concurrency: "unbounded" }),
+          );
+          // Each part's outcome, in the test's metadata, so a JSON report counts
+          // how often each part passed, failed or got an unclear judge.
+          Object.assign(context.task.meta, {
+            grades: results.map(({ name, outcome }) => ({ name, outcome })),
+          });
+          const failed = results.filter((result) => result.outcome === "failed");
+          const unclear = results.filter((result) => result.outcome === "judge unclear");
+          if (failed.length === 0 && unclear.length > 0) {
+            context.skip(
+              `judge unclear: ${unclear.flatMap((result) => result.problems).join("; ")}`,
+            );
+          }
+          expect(
+            failed.flatMap((result) =>
+              result.problems.map((problem) => `${result.name}: ${problem}`),
+            ),
+            transcript(turn),
+          ).toEqual([]);
+        });
+      }
     });
   });
 };

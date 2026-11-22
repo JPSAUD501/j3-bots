@@ -677,6 +677,16 @@ export class Workspace<E> {
     return this.#files.get(normalize(path.startsWith("/") ? path : `${HOME}/${path}`));
   }
 
+  /**
+   * Writes a file outside any command, as the host does when it saves a
+   * secret: nothing a command ran records it.
+   */
+  store(path: string, content: string): void {
+    const absolute = normalize(path);
+    this.#files.set(absolute, content);
+    for (let dir = parent(absolute); dir !== "/"; dir = parent(dir)) this.#directories.add(dir);
+  }
+
   /** Every file as it stands now, by absolute path. */
   get files(): ReadonlyMap<string, string> {
     return new Map(this.#files);
