@@ -60,8 +60,9 @@ import {
   EngineIndeterminate,
   EngineUnavailable,
   ModelUnavailable,
-  ProjectNotFound,
+  OpenRejected,
   RequestClosed,
+  RetireRejected,
   SessionBusy,
   SessionNotFound,
   StopRejected,
@@ -805,7 +806,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   }) {
     const sessionId = SessionId.make(threadIdFor(input.key));
     const selection = yield* modelSelection(input.model);
-    const result = yield* command({
+    // Settled by the key's receipt, as a dispatch is: the engine keeps a
+    // refusal for the key, so a refused opening is never sent again.
+    const sent = yield* sendByReceipt({
       type: "thread.create",
       commandId: commandId("session", input.key),
       threadId: ThreadId.make(sessionId),
@@ -818,38 +821,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       worktreePath: null,
       createdBy: "system",
       creationSource: "server",
-    }).pipe(
-      Effect.as(Option.none<OrchestrationV2DispatchCommandError>()),
-      Effect.catchTags({
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        OrchestrationV2DispatchCommandError: (error) => Effect.succeedSome(error),
-      }),
-    );
-    if (Option.isSome(result)) {
-      const message = result.value.message;
-      if (/project/i.test(message) && /not|missing|unknown/i.test(message)) {
-        return yield* new ProjectNotFound({ projectId: input.projectId });
-      }
-      return yield* refused(result.value);
-    }
+    });
+    if (sent === "rejected") return yield* new OpenRejected({ key: input.key });
     return sessionId;
   });
 
-  const sendSessionCommand = (sessionId: SessionId, input: OrchestrationV2Command) =>
-    command(input).pipe(
-      Effect.catchTags({
-        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
-        // A refusal for a missing thread is `SessionNotFound`; anything else is a bug.
-        OrchestrationV2DispatchCommandError: (error) =>
-          afterSending(projection(sessionId)).pipe(Effect.andThen(refused(error))),
-      }),
-      Effect.asVoid,
-    );
-
   /**
-   * Sends a change of a session's settings. The engine's refusal to end
-   * background work the change would end is `BackgroundWorkRunning`; any other
-   * refusal is handled as `sendSessionCommand` handles it.
+   * Sends a change of a session's settings, under a key of its own: a refusal
+   * is never sent again, and the next alignment sends what still differs. The
+   * engine's refusal to end background work the change would end is
+   * `BackgroundWorkRunning`, a refusal for a missing thread `SessionNotFound`,
+   * and any other a bug.
    */
   const sendSettingsCommand = (sessionId: SessionId, input: OrchestrationV2Command) =>
     command(input).pipe(
@@ -1017,20 +999,31 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
   });
 
+  /**
+   * Archives the session's thread, settled by its key's receipt. A refusal is
+   * done when the thread is archived by now, as by an earlier archive whose
+   * reply was lost; `SessionNotFound` when it is gone; and `RetireRejected`
+   * otherwise: the engine refuses an archive while delegated tasks run there,
+   * which the Stop before it only queued to end.
+   */
+  const archive = Effect.fnUntraced(function* (key: IdempotencyKey, sessionId: SessionId) {
+    const sent = yield* sendByReceipt({
+      type: "thread.archive",
+      commandId: commandId("archive", key),
+      threadId: ThreadId.make(sessionId),
+    });
+    if (sent === "applied") return;
+    if (isRetired(yield* projection(sessionId))) return;
+    return yield* new RetireRejected({ sessionId });
+  });
+
   const retireSession = Effect.fn("Engine.retireSession")(function* (sessionId: SessionId) {
-    // A fresh key on every call: a Stop the engine refused spends its key.
+    // Fresh keys on every call: the engine keeps a refusal for its key, and a
+    // refused Stop or archive may pass later.
     const key = IdempotencyKey.make(`retire:${sessionId}:${yield* uniqueKey}`);
     const retire = stop({ key, sessionId }).pipe(
-      Effect.catchTag("StopRejected", () => Effect.fail(new EngineIndeterminate())),
-      Effect.andThen(
-        afterSending(
-          sendSessionCommand(sessionId, {
-            type: "thread.archive",
-            commandId: commandId("archive", sessionId),
-            threadId: ThreadId.make(sessionId),
-          }),
-        ),
-      ),
+      Effect.catchTag("StopRejected", () => Effect.fail(new RetireRejected({ sessionId }))),
+      Effect.andThen(afterSending(archive(key, sessionId))),
     );
     // Already gone counts as retired.
     yield* retire.pipe(Effect.catchTag("SessionNotFound", () => Effect.void));

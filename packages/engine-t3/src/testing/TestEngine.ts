@@ -36,8 +36,9 @@ import {
   EngineIndeterminate,
   EngineUnavailable,
   ModelUnavailable,
-  ProjectNotFound,
+  OpenRejected,
   RequestClosed,
+  RetireRejected,
   SessionBusy,
   SessionNotFound,
   StopRejected,
@@ -87,7 +88,8 @@ import { toolInputDigest } from "../toolCaller.ts";
 // with their turn, and whose card can change while they are open; host
 // speech; replies lost after a command was applied; staged files that expire;
 // calls held in flight, a Stop whose effects lag its acknowledgment, a Stop
-// refused while its work can still run, a turn whose provider is slow to
+// refused while its work can still run, an opening refused for good under its
+// key, a retirement refused for now, a turn whose provider is slow to
 // start it, and a dispatch that waits in the startup queue and lands late;
 // synchronization markers; and resume by cursor with replay or a replacement
 // that repeats turns already seen end, as the real engine may. The adapter's
@@ -215,6 +217,20 @@ export class TestEngineControl extends Context.Service<
      * for. A later call under the same key opens the session.
      */
     readonly refuseNextOpenSessionModels: (count: number) => Effect.Effect<void>;
+    /**
+     * The engine refuses the next `openSession` it receives, opening nothing
+     * and keeping a rejected receipt: it and every later call under its key
+     * fail with `OpenRejected`. A call under another key opens a session.
+     */
+    readonly rejectNextOpenSession: Effect.Effect<void>;
+    /**
+     * The next `count` calls of `retireSession` on a session still in use
+     * fail with `RetireRejected`, applying nothing, as while delegated tasks
+     * its Stop has not ended yet still run there.
+     */
+    readonly rejectNextRetirements: (count: number) => Effect.Effect<void>;
+    /** Every session the engine opened, retired ones included, oldest first. */
+    readonly openedSessions: Effect.Effect<ReadonlyArray<SessionId>>;
     /** The model a session runs, as it was opened or last configured. */
     readonly sessionModel: (sessionId: SessionId) => Effect.Effect<ModelChoice>;
     /** The permission mode a session runs, as it was opened or last configured. */
@@ -519,7 +535,8 @@ interface SessionRecord {
 }
 
 type AppliedKey =
-  | { readonly command: "openSession"; readonly sessionId: SessionId }
+  /** `null`: the engine refused it. */
+  | { readonly command: "openSession"; readonly sessionId: SessionId | null }
   | {
       readonly command: "dispatch";
       readonly sessionId: SessionId;
@@ -548,6 +565,8 @@ const make = Effect.gen(function* () {
   let failingOpenSessions = 0;
   let losingOpenSessionReply = false;
   let refusingOpenSessionModels = 0;
+  let rejectOpenSession = false;
+  let rejectingRetirements = 0;
   let rejectStop = false;
   const holds = new Map<
     HeldMethod,
@@ -1178,7 +1197,10 @@ const make = Effect.gen(function* () {
       command(
         Effect.gen(function* () {
           const previous = yield* priorUse(key, "openSession");
-          if (previous?.command === "openSession") return previous.sessionId;
+          if (previous?.command === "openSession") {
+            if (previous.sessionId === null) return yield* new OpenRejected({ key });
+            return previous.sessionId;
+          }
           if (failingOpenSessions > 0) {
             failingOpenSessions--;
             return yield* new EngineIndeterminate();
@@ -1190,8 +1212,10 @@ const make = Effect.gen(function* () {
               modelId: model.modelId,
             });
           }
-          if (![...projects.values()].includes(projectId)) {
-            return yield* new ProjectNotFound({ projectId });
+          if (rejectOpenSession) {
+            rejectOpenSession = false;
+            keys.set(key, { command: "openSession", sessionId: null });
+            return yield* new OpenRejected({ key });
           }
           const sessionId = SessionId.make(newId("session"));
           keys.set(key, { command: "openSession", sessionId });
@@ -1264,6 +1288,10 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const session = sessions.get(sessionId);
           if (session === undefined || session.retired) return;
+          if (rejectingRetirements > 0) {
+            rejectingRetirements--;
+            return yield* new RetireRejected({ sessionId });
+          }
           retire(session, yield* DateTime.now);
         }),
       ),
@@ -1664,6 +1692,17 @@ const make = Effect.gen(function* () {
       Effect.sync(() => {
         refusingOpenSessionModels = count;
       }),
+
+    rejectNextOpenSession: Effect.sync(() => {
+      rejectOpenSession = true;
+    }),
+
+    rejectNextRetirements: (count) =>
+      Effect.sync(() => {
+        rejectingRetirements = count;
+      }),
+
+    openedSessions: Effect.sync(() => [...sessions.keys()]),
 
     sessionModel: (sessionId) =>
       Effect.suspend(() => {

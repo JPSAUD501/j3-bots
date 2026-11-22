@@ -799,6 +799,33 @@ it.effect("tries an attempt again after its delay when the engine refuses the bo
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "tries an attempt again in a fresh side session when the engine refuses to open one",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      yield* engineSession(bot.id);
+      const routine = yield* routineOf(bot.id);
+
+      // The engine keeps the refusal for its key: sent again, it is refused again.
+      yield* control.rejectNextOpenSession;
+      yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
+      yield* retryRecorded(routine.id);
+      assert.deepStrictEqual(yield* sideSessions(bot.id), []);
+
+      yield* TestClock.adjust(retryDelay(1));
+      const side = yield* sideTurn(routine.id);
+      yield* control.finishTurn({
+        sessionId: side.engine_session_id,
+        turnId: side.admitted_turn_id,
+        outcome: { _tag: "completed" },
+      });
+      const run = yield* settled(routine);
+      assert.deepStrictEqual([run.status, run.attempts], ["silent", 2]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("tells the bot's session after a fresh start nothing routine runs said before it", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

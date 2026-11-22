@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
-import { EngineProjectId, IdempotencyKey, RequestId, SessionId, TurnId } from "./ids.ts";
+import { IdempotencyKey, RequestId, SessionId, TurnId } from "./ids.ts";
 
 /**
  * The engine cannot take commands right now: it is starting, restarting, or its
@@ -51,14 +51,6 @@ export class EngineIncompatible extends Schema.TaggedError<EngineIncompatible>()
 ) {
   override get message(): string {
     return `The engine runs version ${this.runningVersion}, but J3 Bots is pinned to ${this.pinnedVersion}.`;
-  }
-}
-
-export class ProjectNotFound extends Schema.TaggedError<ProjectNotFound>()("ProjectNotFound", {
-  projectId: EngineProjectId,
-}) {
-  override get message(): string {
-    return `The engine has no project ${this.projectId}.`;
   }
 }
 
@@ -197,6 +189,49 @@ export class AnswerRejected extends Schema.TaggedError<AnswerRejected>()("Answer
 }) {
   override get message(): string {
     return `The engine refused the answer ${this.key} to the open request ${this.requestId}.`;
+  }
+}
+
+/**
+ * The engine refused to open a session under the key, and nothing was
+ * opened. The adapter reports it only once a resend of the key found its
+ * rejected receipt (`OrchestratorCommandPreviouslyRejectedError`), as for
+ * `DispatchRejected`, so the key is spent: sent again, it is refused again
+ * (**Verified** on `0.1.11`, in the conformance suite). The engine plans a new
+ * thread by checking only that its id is free, which the key's own thread id
+ * is unless another client took it, so what it refuses is otherwise a
+ * projection read that failed while planning: a cause that passes. **Read**
+ * at `59651c1`, `Orchestrator.ts` (`dispatchThreadCreate`, and
+ * `dispatchWithReceiptEffect`, which commits a rejected receipt for every
+ * error while planning).
+ *
+ * The caller never sends the key again: it opens the session later under a
+ * fresh key, which names a thread of its own.
+ */
+export class OpenRejected extends Schema.TaggedError<OpenRejected>()("OpenRejected", {
+  key: IdempotencyKey,
+}) {
+  override get message(): string {
+    return `The engine refused to open a session under ${this.key}; nothing was opened.`;
+  }
+}
+
+/**
+ * The engine refused a retirement's Stop round or its archive, and the
+ * session is neither archived nor gone. Nothing was archived. The engine
+ * refuses an archive while the thread has delegated tasks running, and the
+ * Stop before it only queues their end, so an archive sent at once can meet
+ * them still running (**Read** at `59651c1`, `Orchestrator.ts`,
+ * `dispatchThreadMutation` and `dispatchThreadStop`). Every retirement sends
+ * keys of its own.
+ *
+ * The caller retires the session again later.
+ */
+export class RetireRejected extends Schema.TaggedError<RetireRejected>()("RetireRejected", {
+  sessionId: SessionId,
+}) {
+  override get message(): string {
+    return `The engine refused to retire the session ${this.sessionId} for now.`;
   }
 }
 

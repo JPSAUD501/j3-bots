@@ -20,8 +20,9 @@ import type {
   EngineDown,
   EngineIncompatible,
   ModelUnavailable,
-  ProjectNotFound,
+  OpenRejected,
   RequestClosed,
+  RetireRejected,
   SessionBusy,
   SessionNotFound,
   StopRejected,
@@ -351,10 +352,15 @@ export class Engine extends Context.Service<
     readonly removeProject: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
 
     /**
-     * A new, idle session in the project. `key` is the server's own id for the
-     * session, written before this call, so a retry returns the same session:
-     * with the model and permission mode it was first opened with, which a
-     * retry with other settings does not change. `configureSession` sets them.
+     * A new, idle session in the project. `key` is written by the server
+     * before this call, so a retry returns the same session: with the model
+     * and permission mode it was first opened with, which a retry with other
+     * settings does not change. `configureSession` sets them. The session's id
+     * is derived from the key, so another key opens another session.
+     *
+     * `OpenRejected`: the engine refused it and keeps that refusal for the
+     * key, which is spent. The caller opens the session later under a fresh
+     * key.
      */
     readonly openSession: (input: {
       readonly key: IdempotencyKey;
@@ -362,7 +368,7 @@ export class Engine extends Context.Service<
       readonly title: string;
       readonly model: ModelChoice;
       readonly permissionMode: PermissionMode;
-    }) => Effect.Effect<SessionId, EngineDown | ProjectNotFound | ModelUnavailable>;
+    }) => Effect.Effect<SessionId, EngineDown | ModelUnavailable | OpenRejected>;
 
     /**
      * Changes the model or permission mode of a session, from its next turn.
@@ -392,9 +398,16 @@ export class Engine extends Context.Service<
     /**
      * Takes a replaced session out of use, as a rotation does: stops what runs
      * in it as `stop` does and archives it. Its history stays in the engine.
-     * Succeeds if it is already retired.
+     * Succeeds if it is already retired. Each call sends keys of its own, so
+     * calling again after any failure is safe.
+     *
+     * `RetireRejected`: the engine refused the Stop or the archive while the
+     * session still has work the Stop has not ended yet. The caller retires
+     * it again later.
      */
-    readonly retireSession: (sessionId: SessionId) => Effect.Effect<void, EngineDown>;
+    readonly retireSession: (
+      sessionId: SessionId,
+    ) => Effect.Effect<void, EngineDown | RetireRejected>;
 
     /**
      * Sends a message into a session for the first time: the caller has never

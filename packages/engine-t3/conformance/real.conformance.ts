@@ -4,7 +4,7 @@ import * as NodeProcess from "node:process";
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it, layer } from "@effect/vitest";
-import { CommandId, MessageId, ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
@@ -23,8 +23,10 @@ import { IdempotencyKey, SyncToken, type TurnId } from "../src/ids.ts";
 import { makeEngineRpc } from "../src/t3/Connection.ts";
 import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
+import { threadIdFor } from "../src/t3/Keys.ts";
 import { pin } from "../src/t3/Pin.ts";
 import { makePrivateFiles } from "../src/t3/PrivateFiles.ts";
+import { instanceIdFor } from "../src/t3/Provision.ts";
 import { layer as engineLayer } from "../src/t3/T3Engine.ts";
 import { workInShell } from "../src/t3/Translate.ts";
 import { type Act, Bench } from "./Bench.ts";
@@ -306,6 +308,106 @@ describe("Engine conformance, real engine only", () => {
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),
     { timeout: 120_000 },
+  );
+
+  it.live(
+    "refuses an opening again under the key it refused",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const projectId = yield* engine.ensureProject({
+          workspacePath: bench.workspacePath,
+          title: "refused-opening",
+        });
+        const key = bench.key("session-refused-opening");
+        // Another client takes the thread the key names: the engine refuses
+        // the opening, and keeps that refusal for the key.
+        const rpc = yield* foreignRpc;
+        yield* rpc["orchestration.dispatchCommand"]({
+          type: "thread.create",
+          commandId: CommandId.make(bench.key("refused-opening-taken")),
+          threadId: ThreadId.make(threadIdFor(key)),
+          projectId: ProjectId.make(projectId),
+          title: "Taken",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make(instanceIdFor(PROVIDER)),
+            model: bench.model.modelId,
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        }).pipe(Effect.orDie);
+        const open = engine
+          .openSession({
+            key,
+            projectId,
+            title: "refused-opening",
+            model: bench.model,
+            permissionMode: "supervised",
+          })
+          .pipe(Effect.flip);
+
+        const first = yield* open;
+        const again = yield* open;
+
+        assert.strictEqual(first._tag, "OpenRejected");
+        assert.strictEqual(again._tag, "OpenRejected");
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 120_000 },
+  );
+
+  it.live(
+    "retires a session whose archive it refused while a delegated task ran, once the task is gone",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const { sessionId, queue } = yield* openWatched("retire-delegated");
+        const delegating = yield* engine.dispatch({
+          key: bench.key("retire-delegated"),
+          sessionId,
+          text: "[[script:delegate child=slow]]",
+          attachments: [],
+          delivery: { _tag: "start", freshContext: false },
+        });
+        yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(delegating));
+        const retire = engine.retireSession(sessionId).pipe(
+          Effect.as(true),
+          Effect.catchTag("RetireRejected", () => Effect.succeed(false)),
+          Effect.orDie,
+        );
+
+        // The retirement's Stop only queues the delegated task's end, and the
+        // engine refuses an archive while the task runs. Each retirement
+        // sends keys of its own, so a later one is not refused for good.
+        const first = yield* retire;
+        let retired = first;
+        let round = 0;
+        for (; !retired && round < 150; round++) {
+          yield* Effect.sleep("1 second");
+          retired = yield* retire;
+        }
+        yield* Effect.log(`Retired after ${round} more rounds`);
+        // A thread that is gone counts as retired too: read that it is archived.
+        const rpc = yield* foreignRpc;
+        const { thread } = yield* rpc["orchestration.getThreadProjection"]({
+          threadId: ThreadId.make(sessionId),
+        });
+
+        assert.isFalse(first);
+        assert.isTrue(retired);
+        assert.isNotNull(thread.archivedAt);
+        assert.isNull(thread.deletedAt);
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 240_000 },
   );
 
   it.live(

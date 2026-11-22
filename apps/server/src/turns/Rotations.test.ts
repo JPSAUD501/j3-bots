@@ -407,6 +407,73 @@ it.effect("opens a bot's main session again after a failed opening, with no engi
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("opens a bot's main session under a fresh key after the engine refused to open it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    // The engine keeps the refusal for its key: sent again, it is refused again.
+    yield* control.rejectNextOpenSession;
+    yield* control.loseSession(session);
+    yield* replacementUnopened(bot.id);
+
+    yield* TestClock.adjust("10 seconds");
+    yield* (yield* Rotations).rotateDue;
+    yield* sessionAfter(bot.id, session);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "tells a bot's conversation once per outage that its main session is not ready, and delivers what waited",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const rotations = yield* Rotations;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      const notReady = noticesOf(bot.id).pipe(
+        Effect.map((tags) => tags.filter((tag) => tag === "session-not-ready").length),
+      );
+      yield* control.failNextOpenSessions(4);
+      yield* control.loseSession(session);
+      yield* replacementUnopened(bot.id);
+      const waiting = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* TestClock.adjust("5 seconds");
+      yield* rotations.rotateDue;
+      assert.strictEqual(yield* notReady, 0);
+
+      // The third failure in a row is told, and the fourth adds nothing.
+      yield* TestClock.adjust("10 seconds");
+      yield* rotations.rotateDue;
+      assert.strictEqual(yield* notReady, 1);
+      yield* TestClock.adjust("20 seconds");
+      yield* rotations.rotateDue;
+      yield* TestClock.adjust("40 seconds");
+      yield* rotations.rotateDue;
+      const replacement = yield* sessionAfter(bot.id, session);
+      const turnId = yield* nextTurn(bot.id);
+      yield* deliveryIs(waiting, "delivered");
+      assert.strictEqual(yield* timesSent(replacement, "Plan the launch."), 1);
+      yield* finish(bot.id, replacement, turnId);
+      assert.strictEqual(yield* notReady, 1);
+
+      // Ready again in between, so the next outage is told again.
+      yield* control.failNextOpenSessions(3);
+      yield* control.loseSession(replacement);
+      yield* replacementUnopened(bot.id);
+      yield* TestClock.adjust("5 seconds");
+      yield* rotations.rotateDue;
+      yield* TestClock.adjust("10 seconds");
+      yield* rotations.rotateDue;
+      assert.strictEqual(yield* notReady, 2);
+      yield* TestClock.adjust("20 seconds");
+      yield* rotations.rotateDue;
+      yield* sessionAfter(bot.id, replacement);
+      assert.strictEqual(yield* notReady, 2);
+      assert.strictEqual(yield* timesSent(session, "Plan the launch."), 0);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "opens a bot's session with the permission mode it has now, after the reply to an opening was lost",
   () =>
@@ -420,16 +487,20 @@ it.effect(
         commandId: command(),
         draft: { name: "Ana", job: "", permissionMode: "full-access" },
       });
+      const opened = yield* control.openedSessions;
       yield* bots.update({
         commandId: command(),
         botId: bot.id,
         changes: { permissionMode: "supervised" },
       });
 
-      // Opened again under its key, the engine answers with that session.
+      // Opened again under its key, the engine answers with that session,
+      // and opens no second one.
       yield* TestClock.adjust("1 minute");
       yield* (yield* Rotations).rotateDue;
       const session = yield* engineSession(bot.id);
+      assert.deepStrictEqual(opened, [session]);
+      assert.deepStrictEqual(yield* control.openedSessions, [session]);
       assert.strictEqual(yield* control.sessionPermissionMode(session), "supervised");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
@@ -837,6 +908,28 @@ it.effect("replaces a session that reached its run limit", () =>
     yield* (yield* Rotations).rotateDue;
     yield* sessionAfter(bot.id, session);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "archives a replaced session the engine refused to retire later, and the bot works meanwhile",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* control.rejectNextRetirements(1);
+      yield* (yield* Bots).freshStart({ commandId: command(), botId: bot.id });
+      const replacement = yield* sessionAfter(bot.id, session);
+      assert.isFalse(yield* retiredInEngine(session));
+
+      const message = yield* sendToBot(bot.id, "Plan the launch.");
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(message, "delivered");
+      assert.strictEqual(yield* timesSent(replacement, "Plan the launch."), 1);
+
+      yield* TestClock.adjust("5 seconds");
+      assert.isTrue(yield* retiredInEngine(session));
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("ends a turn still open in a replaced session once the engine archives it", () =>

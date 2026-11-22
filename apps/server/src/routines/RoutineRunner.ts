@@ -391,7 +391,9 @@ export const layer = Layer.effect(
      * Opens the side session in the engine, in the bot's project, with the
      * bot's model and permission mode, on the provider its row names. The
      * row's id is the request's key, so a retried opening returns the same
-     * engine session, with the settings of its first attempt.
+     * engine session, with the settings of its first attempt. An opening the
+     * engine refused spends the key: the attempt fails unsent, and its retry
+     * opens a fresh side session, under a key of its own.
      */
     const openInEngine = Effect.fn("RoutineRunner.openInEngine")(function* (
       attempt: Attempt,
@@ -413,19 +415,22 @@ export const layer = Layer.effect(
           case "EngineUnavailable":
             return "unavailable";
           case "ModelUnavailable":
-            // The engine does not offer the bot's model: the attempt fails,
+          case "OpenRejected":
+            // The engine does not offer the bot's model, or refused the
+            // opening and keeps that refusal for the key: the attempt fails,
             // and the run tries again after its delay, as for a failed turn.
             // Its dispatch is certainly never sent, yet fails `unresolved`:
             // `rejected` would fail the run at once, and a routine's
             // envelope consumes nothing a failure would have to give back.
-            yield* Effect.logWarning("A routine's side session was refused its model", {
+            yield* Effect.logWarning("The engine refused to open a routine's side session", {
               routineId: attempt.routine_id,
+              reason: opened.failure._tag,
             });
             yield* writeDispatch(attempt, sessionId, "unresolved");
             return "done";
           default:
-            // Not now: the bot's project is being made again, or the engine's
-            // answer was lost. The same key is sent again.
+            // Not now: the engine's answer was lost. The same key is sent
+            // again.
             yield* Effect.logWarning("A routine's side session could not be opened yet", {
               routineId: attempt.routine_id,
               reason: opened.failure._tag,
