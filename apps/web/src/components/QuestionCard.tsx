@@ -6,7 +6,11 @@ import { RadioGroup } from "@base-ui/react/radio-group";
 import type { Question, QuestionAnswers, QuestionEntry, QuestionOption } from "@j3-bots/contracts";
 import { CheckIcon, MessageCircleQuestionIcon } from "lucide-react";
 import { useId, useState } from "react";
-import { assembleAnswers, type QuestionDraft } from "@j3-bots/client-runtime/presentation";
+import {
+  assembleAnswers,
+  optionDescription,
+  type QuestionDraft,
+} from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { type FocusWatch, useFocusAfterActions } from "../lib/useFocusAfterActions";
@@ -276,6 +280,7 @@ function QuestionFields({
 
 function OptionText({ option }: { option: QuestionOption }) {
   const { t } = useI18n();
+  const description = optionDescription(option);
   return (
     <span className="flex flex-col">
       <span className="flex flex-wrap items-baseline gap-x-2">
@@ -287,9 +292,7 @@ function OptionText({ option }: { option: QuestionOption }) {
           <span className="text-2xs font-medium text-blocked">{t("question.destructive")}</span>
         )}
       </span>
-      {option.description && (
-        <span className="text-xs text-muted-foreground">{option.description}</span>
-      )}
+      {description !== null && <span className="text-xs text-muted-foreground">{description}</span>}
     </span>
   );
 }

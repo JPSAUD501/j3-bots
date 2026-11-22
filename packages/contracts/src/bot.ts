@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { avatarShapeNames, botColors } from "@j3-bots/design-tokens/names";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { BotId, EntryId, Label, ModelId, OpenLiterals, ProviderId } from "./base.ts";
+import { StepTool } from "./work.ts";
 
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
 
@@ -101,6 +103,11 @@ export const BotState = Schema.Union([
     ...stalled,
     /** One line saying what it is doing right now. */
     activity: Schema.NullOr(Label),
+    /**
+     * The tool it is using, when J3 Bots names it: clients say that in place
+     * of `activity`, which then carries an English phrase for older clients.
+     */
+    tool: StepTool,
   }),
   /** The bot asked a question or needs an approval: the card awaiting the operator. */
   Schema.TaggedStruct("waiting", { entryId: EntryId }),
@@ -132,6 +139,13 @@ export const Bot = Schema.Struct({
    * Clients offer the Stop while it is true, whatever the state.
    */
   settingsHeld: Schema.Boolean,
+  /**
+   * The bot's opening, the first turn in which it speaks first, is still to
+   * come or under way. While it is and the conversation is empty, clients say
+   * the bot is getting ready, whatever its state between turns. False from a
+   * server that predates it.
+   */
+  opening: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   createdAt: Schema.DateTimeUtc,
 });
 export type Bot = typeof Bot.Type;

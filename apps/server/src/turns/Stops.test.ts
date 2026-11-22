@@ -879,6 +879,7 @@ it.effect(
         step: {
           id: WorkStepId.make("step-1"),
           kind: "command",
+          tool: null,
           label: "npm test",
           status: "running",
           startedAt: yield* DateTime.now,

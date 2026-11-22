@@ -378,6 +378,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           hidden: false,
           state: { _tag: "idle" },
           settingsHeld: false,
+          opening: false,
           createdAt: now(),
         };
         return {

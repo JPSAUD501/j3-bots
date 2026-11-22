@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { millisBetween, shortDuration } from "@j3-bots/client-runtime/presentation";
 import { useWorkSteps } from "@j3-bots/client-runtime/react";
-import { workFoldTitle } from "@j3-bots/client-runtime/wording";
+import { stepText, workFoldTitle } from "@j3-bots/client-runtime/wording";
 import type { WorkFoldEntry, WorkStep } from "@j3-bots/contracts";
 import {
   Bot,
@@ -40,14 +40,11 @@ const stepIcon = {
  */
 export function WorkFold({ entry }: { readonly entry: WorkFoldEntry }) {
   const ctx = usePresentation();
-  const { t, plural } = ctx.i18n;
+  const { plural } = ctx.i18n;
   const { status } = entry;
   const [open, setOpen] = useState(false);
   const failed = status._tag === "finished" && status.ending === "failed";
-  const title =
-    status._tag === "running"
-      ? t("presence.working")
-      : workFoldTitle(status.ending, millisBetween(entry.createdAt, status.finishedAt), ctx);
+  const title = workFoldTitle(entry, ctx);
   const count = entry.stepCount > 0 ? plural("work.steps", entry.stepCount) : null;
   return (
     <View className="mt-2 px-4">
@@ -76,7 +73,8 @@ export function WorkFold({ entry }: { readonly entry: WorkFoldEntry }) {
 }
 
 function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
-  const { t } = usePresentation().i18n;
+  const { i18n } = usePresentation();
+  const { t } = i18n;
   const state = useWorkSteps(foldId);
   if (state === null || state.phase === "loading") {
     return <Text className="py-2 ps-5 text-xs text-muted-foreground">{t("work.loading")}</Text>;
@@ -99,7 +97,7 @@ function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
             </Text>
           ) : (
             <Text selectable className="flex-1 text-xs text-foreground">
-              {step.label}
+              {stepText(step, i18n)}
             </Text>
           )}
           <StepStatus step={step} />

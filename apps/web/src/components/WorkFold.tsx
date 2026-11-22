@@ -19,7 +19,7 @@ import { millisBetween, shortDuration } from "@j3-bots/client-runtime/presentati
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
-import { workFoldTitle } from "@j3-bots/client-runtime/wording";
+import { stepText, workFoldTitle } from "@j3-bots/client-runtime/wording";
 import { CodeLines } from "./CodeLines";
 
 const stepIcon: Record<WorkStep["kind"], typeof TerminalIcon> = {
@@ -45,15 +45,15 @@ interface WorkFoldProps {
   readonly defaultOpen?: boolean;
 }
 
-/** A turn's work in one line, "Worked for 2m", that opens to every step. Never opens by itself. */
+/**
+ * A turn's work in one line, "Worked for 2m" once it ends, that opens to
+ * every step. Never opens by itself.
+ */
 export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: WorkFoldProps) {
   const ctx = usePresentation();
   const { t, plural } = ctx.i18n;
   const { status } = entry;
-  const title =
-    status._tag === "running"
-      ? t("presence.working")
-      : workFoldTitle(status.ending, millisBetween(entry.createdAt, status.finishedAt), ctx);
+  const title = workFoldTitle(entry, ctx);
   const [open, setOpen] = useState(defaultOpen);
   const report = useEffectEvent(onOpenChange);
   useEffect(() => {
@@ -101,7 +101,9 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
                       <CodeLines text={step.label} />
                     </span>
                   ) : (
-                    <span className="min-w-0 flex-1 wrap-break-word">{step.label}</span>
+                    <span className="min-w-0 flex-1 wrap-break-word">
+                      {stepText(step, ctx.i18n)}
+                    </span>
                   )}
                   <StepStatus step={step} />
                 </li>

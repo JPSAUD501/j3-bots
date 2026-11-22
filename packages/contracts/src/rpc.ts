@@ -145,7 +145,8 @@ export const EntryRpcs = RpcGroup.make(
   /**
    * The steps of a work fold while the operator has it open: every step so far,
    * then each step as it is added or changes (upsert by id). The stream ends
-   * once the fold's turn has finished and its last step was sent.
+   * once the fold's turn has finished, and any work it handed off with it
+   * (`background`), and its last step was sent.
    */
   Rpc.make("entries.workSteps", {
     payload: { entryId: EntryId },

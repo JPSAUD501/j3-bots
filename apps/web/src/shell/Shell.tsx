@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EntryId, ReceivedEntry, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type { EntryId, RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
 import {
   addressed,
@@ -7,6 +7,7 @@ import {
   canStop,
   filterRoster,
   orderRoster,
+  readThrough,
   rosterKeyOf,
   rosterKeyText,
   rosterTarget,
@@ -30,7 +31,7 @@ import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
 import type { ShellData, ShellIntents } from "./data";
 import { isCovered, useCovered } from "../lib/covered";
-import { useNewestSeen } from "../lib/useNewestSeen";
+import { useSeenEntries } from "../lib/useSeenEntries";
 import { addresseeLine, botModelName } from "@j3-bots/client-runtime/wording";
 import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
@@ -82,6 +83,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             ? selected._tag === "bot" && i.bot.id === selected.botId
             : selected._tag === "room" && i.room.id === selected.roomId,
         ) ?? null);
+  // The first bot's conversation opens straight from the first run: the first run stays from the
+  // press of Create until the new bot is in the roster and open, so the home never shows in
+  // between.
+  const [openingFirstBot, setOpeningFirstBot] = useState(false);
+  if (openingFirstBot && item !== null) setOpeningFirstBot(false);
   const active: Region = item === null ? "roster" : detailsOpen ? "details" : "conversation";
   // Below `wide` the details are a modal dialog: it owns focus and every key, Escape
   // included, and the shell's shortcuts wait until it closes.
@@ -243,12 +249,15 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // What the operator can see of the open conversation, they have read.
   const shownTarget = item === null ? null : rosterTarget(rosterKeyOf(item));
   const shownItems = shownTarget === null ? null : data.conversation(shownTarget).items;
-  useNewestSeen(timeline, (id) => {
-    const seen = shownItems?.find((i): i is ReceivedEntry => i._tag !== "outgoing" && i.id === id);
-    if (shownTarget !== null && seen !== undefined) intents.markRead(shownTarget, seen.order);
+  useSeenEntries(timeline, (ids) => {
+    if (shownTarget === null || shownItems === null) return;
+    const order = readThrough(
+      shownItems.map((i) => (i._tag !== "outgoing" && ids.has(i.id) ? i.order : null)),
+    );
+    if (order !== null) intents.markRead(shownTarget, order);
   });
 
-  if (data.roster === null || data.roster.length === 0) {
+  if (data.roster === null || data.roster.length === 0 || openingFirstBot) {
     return (
       <div className="flex h-full flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
         {data.roster === null ? (
@@ -256,11 +265,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         ) : (
           <FirstRun
             engine={data.engine}
-            onCreateBot={(name, primary) =>
-              intents
-                .createBot(name, primary)
-                .then((botId) => navigation.select({ _tag: "bot", botId }))
-            }
+            onCreateBot={(name, primary) => {
+              setOpeningFirstBot(true);
+              return intents.createBot(name, primary).then(
+                (botId) => navigation.select({ _tag: "bot", botId }),
+                (error: unknown) => {
+                  setOpeningFirstBot(false);
+                  throw error;
+                },
+              );
+            }}
           />
         )}
         {/*

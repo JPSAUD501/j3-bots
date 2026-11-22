@@ -29,7 +29,7 @@ import { type ReactElement, useMemo } from "react";
 import { Pressable, ScrollView, Switch, Text, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
-import { DeleteButton, Quiet, Section } from "../components/form.tsx";
+import { confirm, DeleteButton, Quiet, Section } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { usePresentation } from "../presentation.tsx";
@@ -158,7 +158,18 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
           {t("details.freshStartHint", { name })} {t("details.freshStartStops", { name })}
         </Quiet>
         <View className="items-start">
-          <Button label={t("details.freshStart")} onPress={() => actions.freshStart(bot)} />
+          <Button
+            label={t("details.freshStart")}
+            onPress={() =>
+              confirm({
+                title: t("details.freshStart.title", { name }),
+                body: t("details.freshStart.body", { name }),
+                cancel: t("details.freshStart.cancel"),
+                confirm: t("details.freshStart"),
+                onConfirm: () => actions.freshStart(bot),
+              })
+            }
+          />
         </View>
       </Section>
 

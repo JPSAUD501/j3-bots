@@ -104,7 +104,7 @@ function SecretForm({
         accessibilityHint={entry.reason === "" ? undefined : entry.reason}
         className="min-h-11 rounded-md border border-input bg-surface px-3 text-base text-foreground"
       />
-      <Text className="text-xs text-muted-foreground">{t("secret.notKept")}</Text>
+      <Text className="text-xs text-muted-foreground">{t("secret.unseen")}</Text>
       <View className="flex-row flex-wrap items-center gap-2">
         {link !== null && (
           <Pressable

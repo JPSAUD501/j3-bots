@@ -15,6 +15,7 @@ import { firstLine } from "../presentation/roster.ts";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { permissionModeText } from "./details.ts";
 import { timeInSentence, type TimeContext } from "./time.ts";
+import { activityText, workDoneText } from "./work.ts";
 
 export interface PresentationContext extends TimeContext {
   /** A bot's display name, or null if it no longer exists. */
@@ -89,7 +90,7 @@ function failureText(
  * received.
  */
 function previewSummary(
-  preview: Pick<EntryPreview, "kind" | "author" | "text" | "recipientId">,
+  preview: Pick<EntryPreview, "kind" | "author" | "text" | "recipientId" | "step" | "notice">,
   ctx: PresentationContext,
   { owner, current }: { readonly owner: BotId | null; readonly current: boolean },
 ): string {
@@ -113,9 +114,12 @@ function previewSummary(
     case "secret-request":
       return t(current ? "summary.needsSecret" : "summary.askedSecret", { label: text });
     case "work-fold":
-      return t("summary.workFold");
+      return workDoneText(preview.step, ctx.i18n);
     case "notice":
-      return t("summary.notice");
+      if (preview.notice === null) return t("summary.notice");
+      return preview.notice._tag === "unknown"
+        ? t("summary.cannotShow")
+        : noticeText(preview.notice, ctx);
     case "handoff": {
       const nameOf = (id: BotId | null) =>
         (id === null ? null : ctx.botName(id)) ?? t("bot.unknown");
@@ -127,23 +131,6 @@ function previewSummary(
       return text === "" ? t("summary.routineChanged") : t("summary.routine", { name: text });
     case "unknown":
       return t("summary.cannotShow");
-  }
-}
-
-export function workFoldTitle(
-  ending: "completed" | "interrupted" | "failed",
-  durationMs: number,
-  ctx: PresentationContext,
-): string {
-  const duration = shortDuration(durationMs, ctx.i18n);
-  const { t } = ctx.i18n;
-  switch (ending) {
-    case "completed":
-      return t("work.workedFor", { duration });
-    case "interrupted":
-      return t("work.stoppedAfter", { duration });
-    case "failed":
-      return t("work.failedAfter", { duration });
   }
 }
 
@@ -224,6 +211,8 @@ export function entrySummary(
       author: entry.author,
       text: entryText(entry),
       recipientId: entry._tag === "handoff" ? entry.recipientId : null,
+      step: null,
+      notice: entry._tag === "notice" ? entry.notice : null,
     },
     ctx,
     { owner, current },
@@ -263,8 +252,11 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
       case "working":
         return state.stalled
           ? stalledLine(state.since, ctx)
-          : { text: state.activity ?? t("presence.working"), tone: "default" };
+          : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
       case "idle":
+        if (lastEntry === null && item.bot.opening) {
+          return { text: t("roster.gettingReady"), tone: "default" };
+        }
         break;
     }
   }
@@ -279,6 +271,26 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
     : { text: t("roster.noMessages"), tone: "empty" };
 }
 
+/**
+ * Whether a bot whose conversation is empty is about to speak first: a turn
+ * runs, or it is idle with its opening still to come. A new bot's state
+ * passes through idle while its first turn is set up, so the state alone
+ * would say "nothing yet" and then "getting ready" again. A blocked bot is
+ * not getting ready, whatever its opening: it waits on what blocks it.
+ */
+const speaksFirst = (bot: Bot) =>
+  bot.state._tag === "thinking" ||
+  bot.state._tag === "working" ||
+  (bot.state._tag === "idle" && bot.opening);
+
+/** What a bot's conversation says before anything is said in it. */
+export function quietConversationText(bot: Bot, ctx: PresentationContext): string {
+  const name = bot.profile.name;
+  return speaksFirst(bot)
+    ? ctx.i18n.t("empty.quiet.speaksFirst", { name })
+    : ctx.i18n.t("empty.quiet.body", { name });
+}
+
 /** The line under a bot's name in its conversation: what it is doing now. */
 export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | null {
   const { t } = ctx.i18n;
@@ -291,7 +303,7 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
     case "working":
       return state.stalled
         ? stalledLine(state.since, ctx)
-        : { text: state.activity ?? t("presence.working"), tone: "default" };
+        : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
     case "waiting":
       return { text: t("presence.waiting"), tone: "waiting" };
     case "blocked":

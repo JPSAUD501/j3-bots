@@ -29,10 +29,10 @@ export {
   noticeText,
   type PresentationContext,
   presenceLine,
+  quietConversationText,
   rosterLine,
   type StatusLine,
   usageLimitText,
-  workFoldTitle,
 } from "./status.ts";
 export { scheduleInWords } from "./schedule.ts";
 export {
@@ -43,3 +43,4 @@ export {
   upcomingTime,
 } from "./time.ts";
 export { windowText, type WindowText } from "./usage.ts";
+export { stepText, workFoldTitle } from "./work.ts";

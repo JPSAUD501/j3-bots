@@ -1226,3 +1226,51 @@ describe("a turn told after it ran", () => {
     assert.deepStrictEqual(times, [startedAt, finishedAt]);
   });
 });
+
+// Claude Code's own tools reach the engine as dynamic tools, titled by the
+// adapter (**Read** in T3 Code at `59651c17`, `ClaudeAdapterV2.ts`,
+// `CLAUDE_KNOWN_TOOL_CLASSIFICATIONS` and `formatReadToolLabel`).
+describe("a Claude Code tool's step", () => {
+  const steps = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((event) =>
+      event._tag === "step"
+        ? [{ kind: event.step.kind, tool: event.step.tool, label: event.step.label }]
+        : [],
+    );
+  const stepOfCall = (id: string, toolName: string, title: string, input: unknown) => {
+    const mirror = emptyMirror();
+    applyEvent(mirror, run("running", 1, { providerInstanceId: "claudeAgent" }));
+    const { view } = replacement(mirror, false, at);
+    applyEvent(
+      mirror,
+      item({
+        id,
+        type: "dynamic_tool",
+        toolName,
+        title,
+        input,
+        status: "completed",
+        completedAt: at,
+      }),
+    );
+    return steps(diff(mirror, view, at));
+  };
+
+  it("reads a file it read as the file, and a search as what it looked for", () => {
+    assert.deepStrictEqual(
+      stepOfCall("item-read", "Read", "Read src/app.ts", { file_path: "src/app.ts" }),
+      [{ kind: "read", tool: null, label: "src/app.ts" }],
+    );
+    assert.deepStrictEqual(
+      stepOfCall("item-grep", "Grep", "Searched for TODO in src", { pattern: "TODO", path: "src" }),
+      [{ kind: "search", tool: null, label: "TODO" }],
+    );
+  });
+
+  it("keeps the title the engine gave a tool J3 Bots does not name", () => {
+    assert.deepStrictEqual(
+      stepOfCall("item-skill", "Skill", "Skill: release-notes", { skill: "release-notes" }),
+      [{ kind: "tool", tool: null, label: "Skill: release-notes" }],
+    );
+  });
+});

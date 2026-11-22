@@ -2,7 +2,7 @@
 import { EntryId, RoomId, type Bot, type EntryPreview, type RosterItem } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, context, plain, preview } from "../../test/fixtures.ts";
-import { presenceLine, rosterLine } from "./status.ts";
+import { presenceLine, quietConversationText, rosterLine } from "./status.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", { scout: "Scout", wren: "Wren" });
 
@@ -107,12 +107,38 @@ describe("rosterLine", () => {
     );
   });
 
+  it("keeps a new bot getting ready through the idle moment before its first turn", () => {
+    const opening = bot("Scout", { _tag: "idle" }, { opening: true });
+    const thinking = bot("Scout", {
+      _tag: "thinking",
+      since: at("2026-11-20T14:59:00Z"),
+      stalled: false,
+    });
+    const quiet = [opening, thinking, opening].map((b) => quietConversationText(b, ctx));
+    expect(new Set(quiet).size).toBe(1);
+    expect(quiet[0]).not.toBe(quietConversationText(bot("Scout"), ctx));
+    expect(rosterLine(row(opening), ctx).text).not.toBe(rosterLine(row(bot("Scout")), ctx).text);
+  });
+
+  it("never says a blocked bot is getting ready, whatever its opening", () => {
+    const blocked = bot(
+      "Scout",
+      { _tag: "blocked", failure: "usage-limit", retryAt: null },
+      { opening: true },
+    );
+    expect(quietConversationText(blocked, ctx)).toBe(
+      quietConversationText(bot("Scout", blocked.state), ctx),
+    );
+    expect(rosterLine(row(blocked), ctx).tone).toBe("blocked");
+  });
+
   it("says how long a stalled turn has been quiet", () => {
     const stalled = bot("Scout", {
       _tag: "working",
       since: at("2026-11-20T14:48:00Z"),
       stalled: true,
       activity: "Reading",
+      tool: null,
     });
     expect(rosterLine(row(stalled), ctx)).toEqual({ text: "No activity for 12m", tone: "waiting" });
   });

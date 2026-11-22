@@ -55,6 +55,8 @@ export function preview(
     author,
     text,
     recipientId,
+    step: null,
+    notice: null,
     createdAt: at(createdAt),
   };
 }
@@ -74,6 +76,7 @@ export function bot(
     hidden: false,
     state,
     settingsHeld: false,
+    opening: false,
     createdAt: at("2026-01-01T00:00:00Z"),
     ...extra,
   };

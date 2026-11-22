@@ -39,7 +39,12 @@ function Ensemble() {
  * the bot's settings; the bot asks the rest itself. Settings stays in reach,
  * as the roster's header has it.
  */
-export function FirstRun() {
+export function FirstRun({
+  onCreating,
+}: {
+  /** Told when Create is pressed, and again if the first bot was not created. */
+  readonly onCreating: (creating: boolean) => void;
+}) {
   const insets = useSafeAreaInsets();
   const status = useEngineStatus();
   return (
@@ -48,12 +53,22 @@ export function FirstRun() {
       <View className="flex-row justify-end pe-2 pt-3">
         <SettingsEntry />
       </View>
-      {status._tag === "ready" ? <FirstRunBody engine={status.value} /> : <Connecting />}
+      {status._tag === "ready" ? (
+        <FirstRunBody engine={status.value} onCreating={onCreating} />
+      ) : (
+        <Connecting />
+      )}
     </View>
   );
 }
 
-function FirstRunBody({ engine }: { readonly engine: EngineStatus }) {
+function FirstRunBody({
+  engine,
+  onCreating,
+}: {
+  readonly engine: EngineStatus;
+  readonly onCreating: (creating: boolean) => void;
+}) {
   const i18n = useI18n();
   const { t } = i18n;
   const insets = useSafeAreaInsets();
@@ -108,6 +123,7 @@ function FirstRunBody({ engine }: { readonly engine: EngineStatus }) {
       {problem === null && ready && (
         <NewBotForm
           primaryAtFirst
+          onCreating={onCreating}
           onCreated={(botId) => openConversation({ _tag: "bot", botId })}
         />
       )}

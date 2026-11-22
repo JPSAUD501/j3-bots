@@ -20,13 +20,16 @@ const SEEN_SHARE = 0.5;
 const middleLine = (height: number) => `${-height / 2}px 0px ${-height / 2}px 0px`;
 
 /**
- * Calls `onSeen` with the id of the newest entry the operator can see in the
- * timeline `root` scrolls: enough of it on screen, in a shown window that has
- * focus, with no dialog over it. A window in the background reports no view
- * to the server either, so what arrives there both notifies and stays unread.
- * Entries carry `data-seen-id`, oldest first.
+ * Calls `onSeen` with the ids of the entries the operator can see in the
+ * timeline `root` scrolls: enough of each on screen, in a shown window that
+ * has focus, with no dialog over it. A window in the background reports no
+ * view to the server either, so what arrives there both notifies and stays
+ * unread. Entries carry `data-seen-id`.
  */
-export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => void) {
+export function useSeenEntries(
+  root: HTMLElement | null,
+  onSeen: (ids: ReadonlySet<string>) => void,
+) {
   const report = useEffectEvent(onSeen);
   useEffect(() => {
     if (root === null) return;
@@ -36,11 +39,12 @@ export function useNewestSeen(root: HTMLElement | null, onSeen: (id: string) => 
       if (document.visibilityState !== "visible" || !document.hasFocus() || isCovered(root)) {
         return;
       }
-      const newest = [...root.querySelectorAll(`[${SEEN_ID}]`)].findLast(
-        (entry) => halfShown.has(entry) || onMiddle.has(entry),
-      );
-      const id = newest?.getAttribute(SEEN_ID) ?? null;
-      if (id !== null) report(id);
+      const ids = new Set<string>();
+      for (const entry of [...halfShown, ...onMiddle]) {
+        const id = entry.isConnected ? entry.getAttribute(SEEN_ID) : null;
+        if (id !== null) ids.add(id);
+      }
+      if (ids.size > 0) report(ids);
     };
     /** Keeps `meeting` to the entries that meet `rule` as `options` observes them. */
     const follow = (

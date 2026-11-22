@@ -13,6 +13,8 @@ import * as Redacted from "effect/Redacted";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { BotStore } from "../bots/BotStore.ts";
+import { EngineSessions } from "../bots/EngineSessions.ts";
 import * as Domain from "../domain.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -21,6 +23,7 @@ import {
   concurrentTurns,
   conversation,
   createBot,
+  createNewBot,
   deliveryIs,
   engineSession,
   eventually,
@@ -139,6 +142,7 @@ it.effect("reconciles a replaced history by its ids, applying each ended turn on
       step: {
         id: WorkStepId.make("step-1"),
         kind: "command",
+        tool: null,
         label: "git switch -c release",
         status: "completed",
         startedAt: at,
@@ -227,6 +231,7 @@ it.effect("streams a fold's steps as they change, until its turn ends", () =>
     const running = {
       id: WorkStepId.make("step-1"),
       kind: "command",
+      tool: null,
       label: "pnpm test",
       status: "running",
       startedAt,
@@ -548,6 +553,7 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
         step: {
           id: WorkStepId.make(id),
           kind: "command",
+          tool: null,
           label,
           status,
           startedAt: at,
@@ -678,6 +684,7 @@ it.effect("shows an event that cannot be applied once, and applies it when it ca
       step: {
         id: WorkStepId.make("step-1"),
         kind: "command",
+        tool: null,
         label: "npm test",
         status: "running",
         startedAt: at,
@@ -787,6 +794,7 @@ it.effect(
         step: {
           id: WorkStepId.make("step-1"),
           kind: "command",
+          tool: null,
           label: "npm test",
           status: "running",
           startedAt: yield* DateTime.now,
@@ -832,4 +840,109 @@ it.effect("opens a session's stream again when opening it failed", () =>
       yield* deliveryIs(message, "delivered");
     }).pipe(Effect.provide(Domain.layer));
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+/** The status of the bot's `first-run` wake. */
+const openingWake = (botId: BotId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly status: string }>`
+      SELECT status FROM wakes
+      WHERE bot_id = ${botId} AND json_extract(payload_json, '$._tag') = 'first-run'
+    `.pipe(Effect.orDie);
+    return rows.map((row) => row.status);
+  });
+
+const opening = (botId: BotId) =>
+  Effect.gen(function* () {
+    const found = yield* (yield* BotStore).find(botId);
+    return Option.getOrThrow(found).bot.opening;
+  });
+
+it.effect("says a bot is opening from its first wake's wait until its first turn ends", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    // Created while the engine is down, so its opening waits for it.
+    yield* control.setReachable(false);
+    const bot = yield* createNewBot("Ana");
+    assert.deepStrictEqual(yield* openingWake(bot.id), ["pending"]);
+    assert.isTrue(yield* opening(bot.id));
+
+    yield* control.setReachable(true);
+    yield* (yield* EngineSessions).provision(bot.id);
+    const session = yield* engineSession(bot.id);
+    yield* flushed(bot.id);
+    const turnId = yield* nextTurn(bot.id);
+    assert.deepStrictEqual(yield* openingWake(bot.id), ["dispatched"]);
+    assert.isTrue(yield* opening(bot.id));
+
+    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    yield* turnEnded(bot.id);
+    yield* until(opening(bot.id).pipe(Effect.map((still) => !still)));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/**
+ * A turn that ran a step and handed off to background work, now ended, with
+ * its fold's steps followed.
+ */
+const handedOff = Effect.gen(function* () {
+  const control = yield* TestEngineControl;
+  const bot = yield* createBot("Ana");
+  const session = yield* engineSession(bot.id);
+  yield* sendToBot(bot.id, "Start the dev server.");
+  const turnId = yield* nextTurn(bot.id);
+  const at = yield* DateTime.now;
+  yield* control.step({
+    sessionId: session,
+    turnId,
+    step: {
+      id: WorkStepId.make("step-1"),
+      kind: "command",
+      tool: null,
+      label: "pnpm dev",
+      status: "completed",
+      startedAt: at,
+      finishedAt: at,
+    },
+  });
+  yield* control.startBackgroundWork({ sessionId: session, turnId });
+  yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+  yield* turnEnded(bot.id);
+  const backgroundOf = awaitEntry(bot.id, "work-fold").pipe(
+    Effect.map((fold) => (fold.status._tag === "finished" ? fold.status.background : null)),
+  );
+  assert.isTrue(yield* backgroundOf);
+  const fold = yield* awaitEntry(bot.id, "work-fold");
+  const following = yield* (yield* WorkSteps)
+    .follow(fold.id)
+    .pipe(Stream.runCollect, Effect.forkChild({ startImmediately: true }));
+  return { control, session, backgroundOf, following };
+});
+
+it.effect(
+  "ends a fold's background work, and its steps' stream, when the engine lists it no more",
+  () =>
+    Effect.gen(function* () {
+      const { control, session, backgroundOf, following } = yield* handedOff;
+      yield* control.endBackgroundWork(session);
+      // The check waits for the session's events to be caught up.
+      const stops = yield* Stops;
+      yield* until(
+        stops.runPending.pipe(
+          Effect.andThen(backgroundOf),
+          Effect.map((background) => background === false),
+        ),
+      );
+      yield* Fiber.join(following);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("ends a fold's background work, and its steps' stream, when its session is lost", () =>
+  Effect.gen(function* () {
+    const { control, session, backgroundOf, following } = yield* handedOff;
+    yield* control.loseSession(session);
+    yield* Fiber.join(following);
+    assert.isFalse(yield* backgroundOf);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
