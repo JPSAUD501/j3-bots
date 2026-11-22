@@ -335,6 +335,21 @@ export const fetchPinned = Effect.fn("engine.fetchPinned")(function* (options: {
   };
 });
 
+/** The engine releases whose install finished under `home`, by version. */
+export const installedRuntimes = Effect.fn("engine.installedRuntimes")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const runtime = engineFolders(path, home).runtime;
+  const installed: Array<string> = [];
+  for (const version of yield* fs.readDirectory(runtime).pipe(Effect.orElseSucceed(() => []))) {
+    const finished = yield* fs
+      .exists(path.join(runtime, version, INSTALLED_MARKER))
+      .pipe(Effect.orElseSucceed(() => false));
+    if (finished) installed.push(version);
+  }
+  return installed;
+});
+
 /**
  * Removes each engine release installed under `home` that is not one of
  * `keep`, by version: what an update of J3 Bots leaves is the engine of the
@@ -347,21 +362,15 @@ export const pruneRuntimes = Effect.fn("engine.pruneRuntimes")(function* (option
   readonly keep: ReadonlyArray<string>;
   readonly isPrivate: (location: string) => Effect.Effect<boolean>;
 }) {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtime = engineFolders(path, options.home).runtime;
   const files = yield* makePrivateFiles(options.isPrivate).pipe(
     Effect.provide(SecureRandom.layerWebCrypto),
   );
   const removed: Array<string> = [];
-  for (const version of yield* fs.readDirectory(runtime).pipe(Effect.orElseSucceed(() => []))) {
+  for (const version of yield* installedRuntimes(options.home)) {
     if (options.keep.includes(version)) continue;
-    const folder = path.join(runtime, version);
-    const finished = yield* fs
-      .exists(path.join(folder, INSTALLED_MARKER))
-      .pipe(Effect.orElseSucceed(() => false));
-    if (!finished) continue;
-    yield* files.remove(folder);
+    yield* files.remove(path.join(runtime, version));
     removed.push(version);
   }
   return removed;

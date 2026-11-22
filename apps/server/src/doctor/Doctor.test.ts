@@ -20,6 +20,8 @@ import { type Check, type CheckStatus, diagnose } from "./Doctor.ts";
 
 const GIB = 1024 ** 3;
 
+const SCRIPTED_AGENT = `${import.meta.dirname}/../../../../packages/engine-t3/scripted-agent/agent.ts`;
+
 const provider = (harness: "claude-code" | "codex", status: string) => ({
   id: harness,
   name: harness === "codex" ? "Codex" : "Claude Code",
@@ -500,6 +502,15 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         Option.getOrElse(named(codexSignedOut.checks, "Codex").fix, () => ""),
         "`j3-bots provider login codex --device-auth`",
       );
+    }),
+  );
+
+  it.effect("warns while a scripted agent answers instead of a model", () =>
+    Effect.gen(function* () {
+      const { checks } = yield* diagnoseIn({
+        configFile: Option.some(JSON.stringify({ scriptedAgent: SCRIPTED_AGENT })),
+      });
+      assertFlagged(named(checks, "Scripted agent"), "warning", "scripted-agent/agent.ts");
     }),
   );
 

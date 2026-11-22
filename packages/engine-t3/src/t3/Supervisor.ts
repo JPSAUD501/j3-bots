@@ -84,6 +84,9 @@ const decodeDescriptor = HttpClientResponse.schemaBodyJson(ExecutionEnvironmentD
 
 export const baseUrl = (port: number) => `http://127.0.0.1:${port}`;
 
+/** Where the engine on `port` describes itself, without authentication (docs/architecture/engine.md). */
+export const descriptorUrl = (port: number) => `${baseUrl(port)}/.well-known/t3/environment`;
+
 /** What answers on the port. */
 type Probe =
   | { readonly _tag: "down" }
@@ -97,7 +100,7 @@ type Probe =
 /** What the engine on `port` answers at its environment descriptor. */
 const probe = Effect.fn("engine.probe")(function* (port: number) {
   const client = yield* HttpClient.HttpClient;
-  return yield* client.get(`${baseUrl(port)}/.well-known/t3/environment`).pipe(
+  return yield* client.get(descriptorUrl(port)).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap(decodeDescriptor),
     Effect.timeout(Duration.seconds(3)),

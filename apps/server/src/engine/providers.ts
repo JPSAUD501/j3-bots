@@ -13,9 +13,9 @@ import { homeLayout } from "../home/entries.ts";
  * provider connection the operator sets with `j3-bots provider connect`, or
  * through a sign-in made into their home (`docs/architecture/engine.md#provisioning`).
  *
- * With `J3_SCRIPTED_AGENT` set, the scripted agent comes first, so a bot
- * created without a model runs on it: a development aid that spends no
- * allowance.
+ * With a scripted agent configured (`scriptedAgent`, or `J3_SCRIPTED_AGENT`),
+ * it comes first, so a bot created without a model runs on it: for
+ * development and test installs, spending no allowance.
  */
 export const engineProviders = (
   path: Path.Path,

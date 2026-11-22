@@ -125,6 +125,30 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("takes a scripted agent only where its file is, a path in the file from the home", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* freshHome;
+      const agent = path.join(home, "checkout", "agent.ts");
+      yield* fs.makeDirectory(path.dirname(agent));
+      yield* fs.writeFileString(agent, "");
+      yield* writeConfigFile(home, JSON.stringify({ scriptedAgent: "checkout/agent.ts" }));
+      const config = yield* withEnvironment(load, { J3_HOME: home });
+      assert.deepStrictEqual(config.scriptedAgent, Option.some(agent));
+
+      for (const missing of ["checkout/other.ts", "checkout"]) {
+        yield* writeConfigFile(home, JSON.stringify({ scriptedAgent: missing }));
+        const refused = yield* withEnvironment(load, { J3_HOME: home }).pipe(Effect.exit);
+        assert.deepInclude(
+          failure(refused),
+          { _tag: "ConfigRefused", reason: "scripted-agent-missing" },
+          missing,
+        );
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("writes every default on first run, and never rewrites the operator's file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

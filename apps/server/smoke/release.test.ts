@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- a free port is found by listening on port 0, which only node:net does.
-import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { CommandId, HTTP_PATHS, J3Rpcs, PairRequest, PairResult } from "@j3-bots/contracts";
@@ -26,7 +24,7 @@ import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as AdminClient from "../src/admin/AdminClient.ts";
 import { RELEASE_MANIFEST, ReleaseManifest } from "../src/installation.ts";
-import { runToEnd, searchPathWithoutNode } from "./host.ts";
+import { freePort, runToEnd, searchPathWithoutNode } from "./host.ts";
 
 // A release archive, as `pnpm release` builds it, run as a stranger would run
 // it: unpacked anywhere, with no Node on PATH. Its doctor runs; it fetches the
@@ -39,16 +37,6 @@ const ENGINE_READY_WITHIN = Duration.minutes(2);
 const TURN_WITHIN = Duration.minutes(1);
 
 const SCRIPTED_AGENT = `${import.meta.dirname}/../../../packages/engine-t3/scripted-agent/agent.ts`;
-
-/** A port no one listens on now: every port setting names a fixed one. */
-const freePort = Effect.callback<number>((resume) => {
-  const server = NodeNet.createServer();
-  server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
-    const port = address !== null && typeof address === "object" ? address.port : 0;
-    server.close(() => resume(Effect.succeed(port)));
-  });
-});
 
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseManifest));
 

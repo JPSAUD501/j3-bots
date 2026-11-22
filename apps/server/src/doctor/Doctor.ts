@@ -389,6 +389,17 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
   }
 });
 
+/** A scripted agent set: it answers bots' turns instead of a model. */
+const scriptedAgentCheck = (config: ServerConfig.ServerConfigShape) =>
+  Option.map(config.scriptedAgent, (agent) =>
+    check(
+      "Scripted agent",
+      "warning",
+      `A scripted agent answers instead of a real model: ${agent} is offered to bots first, so new bots run on it. It is for test installs, never for real use.`,
+      `Remove scriptedAgent from ${config.configFile}, or unset J3_SCRIPTED_AGENT, and restart the server.`,
+    ),
+  );
+
 const providerCheck = Effect.fn("doctor.provider")(function* (
   id: Harness,
   status: Option.Option<AdminStatus>,
@@ -822,6 +833,8 @@ export const diagnose = Effect.gen(function* () {
       checks.push(yield* freePortsCheck(config));
   }
   checks.push(yield* engineCheck(config, status, live._tag === "none"));
+  const scripted = scriptedAgentCheck(config);
+  if (Option.isSome(scripted)) checks.push(scripted.value);
   const servicePath = Unit.servicePathOf(unitText);
   for (const harness of PROVIDER_HOMES) {
     checks.push(yield* providerCheck(harness, status, servicePath, Unit.serviceHomeOf(unitText)));
