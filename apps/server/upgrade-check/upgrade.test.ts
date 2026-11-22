@@ -17,7 +17,7 @@ import {
   Routine,
   RoutineRun,
 } from "@j3-bots/contracts";
-import { databaseMigration } from "@j3-bots/engine-t3/testing";
+import { databaseMigration, installedRuntimes } from "@j3-bots/engine-t3/testing";
 import { assert, it } from "@effect/vitest";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
@@ -58,9 +58,10 @@ import { execStartOf } from "../src/service/unit.ts";
 // reply, an approval and a question. Then `j3-bots update` to B, `update
 // --rollback` to A and `update` to B again. After each: every entry, the
 // roster, the routine and its runs are what the release that now runs should
-// show; the engine reports the database migration it should; the update left
-// no rollback marked and no lock held, the command and the unit run the same
-// release, and `j3-bots doctor` finds nothing wrong but the scripted agent;
+// show; the engine reports the database migration it should; the update kept
+// both releases, their engines and at most two snapshots, left no rollback
+// marked and no lock held, the command and the unit run the same release, and
+// `j3-bots doctor` finds nothing wrong but the scripted agent;
 // and the bot's next turn runs in the same engine session, with no rotation
 // and no session lost. Last, `uninstall --delete-data` removes it all, the
 // unit included.
@@ -113,6 +114,18 @@ const decodeCount = Schema.decodeUnknownEffect(Count);
 
 /** A line of `j3-bots doctor`'s report: its mark and the check's name. */
 const DOCTOR_LINE = /^([✓!✗-]) (\S(?:.*?\S)?) {2,}/u;
+
+/** The checks of `j3-bots doctor` an update or a rollback answers for: each must be in its report. */
+const DOCTOR_REQUIRED = [
+  "Configuration",
+  "Snapshot",
+  "Server",
+  "Engine",
+  "Service",
+  "Command",
+  "Pairing",
+  "Scripted agent",
+];
 
 /**
  * The checks of `j3-bots doctor` about the machine the check runs on, not the
@@ -422,25 +435,76 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
           Effect.catch(() => Effect.die("The engine reports no database migration.")),
         );
 
-        /** The newest snapshot is the update's from A to B, naming both releases' engines. */
-        const assertSnapshot = Effect.gen(function* () {
+        /** The engine release `version` pins, as its `release.json` names it. */
+        const pinOf = (version: string) =>
+          manifestOf(version).pipe(
+            Effect.flatMap((manifest) =>
+              manifest.engine === undefined
+                ? Effect.die(`J3 Bots ${version}'s release.json names no engine.`)
+                : Effect.succeed(manifest.engine),
+            ),
+          );
+
+        /**
+         * The newest snapshot is the one an update from A to B just took,
+         * naming both releases' engines: its folder, which no earlier update's is.
+         */
+        const newSnapshot = Effect.gen(function* () {
           const [newest] = yield* listSnapshots(data);
           if (newest === undefined) return yield* Effect.die("the update kept no snapshot");
           const { from: was, to: is } = newest.manifest;
           assert.strictEqual(was.version, from.version);
-          assert.strictEqual(was.engine, (yield* manifestOf(from.version)).engine);
+          assert.strictEqual(was.engine, yield* pinOf(from.version));
           assert.strictEqual(is.version, to.version);
-          assert.strictEqual(is.engine, (yield* manifestOf(to.version)).engine);
+          assert.strictEqual(is.engine, yield* pinOf(to.version));
+          return newest.folder;
         });
 
+        /** Names in `folder`, sorted; none when it does not exist. */
+        const namesIn = (folder: string) =>
+          fs.readDirectory(folder).pipe(
+            Effect.orElseSucceed((): ReadonlyArray<string> => []),
+            Effect.map((names) => [...names].sort()),
+          );
+
         /**
-         * What an update or a rollback leaves once it has finished: no snapshot
+         * What an update or a rollback leaves once it has finished: the
+         * releases and engines it keeps, at most two snapshots, none of them
          * marked as a rollback not finished, `update.lock` free, the command
          * and the unit on `version`, and a `doctor` that finds nothing wrong
          * with the install but the scripted agent.
          */
-        const settled = Effect.fn("upgradeCheck.settled")(function* (version: string) {
-          for (const snapshot of yield* listSnapshots(data)) {
+        const settled = Effect.fn("upgradeCheck.settled")(function* (
+          version: string,
+          /** Whether an update has run, which keeps both releases and their engines. */
+          updated: boolean,
+        ) {
+          // What an update keeps (decision 0016), read from disk: pruning that
+          // fails only warns, so its exit code says nothing of it.
+          const releases = updated ? [from.version, to.version] : [from.version];
+          assert.deepStrictEqual(
+            yield* namesIn(path.join(install, VERSIONS)),
+            [...releases].sort(),
+            "versions/",
+          );
+          const pins = new Set<string>();
+          for (const release of releases) pins.add(yield* pinOf(release));
+          assert.deepStrictEqual(
+            [...(yield* installedRuntimes(path.join(data, HOME_ENTRIES.engine)))].sort(),
+            [...pins].sort(),
+            "the engine's runtimes",
+          );
+          const snapshots = yield* listSnapshots(data);
+          assert.isAtMost(snapshots.length, 2, "snapshots kept");
+          assert.deepStrictEqual(
+            (yield* namesIn(path.join(data, HOME_ENTRIES.backups))).filter(
+              (name) => name !== UPDATE_LOCK,
+            ),
+            snapshots.map((snapshot) => path.basename(snapshot.folder)).sort(),
+            "backups/ holds the snapshots and the lock only",
+          );
+
+          for (const snapshot of snapshots) {
             assert.isTrue(
               Option.isNone(snapshot.restoring),
               `${snapshot.folder} is still marked as a rollback`,
@@ -471,7 +535,10 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
             const [, mark, name] = DOCTOR_LINE.exec(line) ?? [];
             return mark === undefined || name === undefined ? [] : [{ mark, name }];
           });
-          assert.isAbove(lines.length, 0, report);
+          const named = new Set(lines.map((line) => line.name));
+          for (const name of DOCTOR_REQUIRED) {
+            assert.isTrue(named.has(name), `doctor says nothing of ${name}:\n${report}`);
+          }
           for (const { mark, name } of lines) {
             if (ABOUT_THE_MACHINE.has(name)) continue;
             const expected = name === "Scripted agent" ? "!" : "✓";
@@ -534,7 +601,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
         );
 
         // Paired, the install has nothing wrong but the scripted agent.
-        yield* settled(from.version);
+        yield* settled(from.version, false);
 
         /** In a client of its own, for as long as `use` runs. */
         const withClient = <A, E, R>(use: (client: Client) => Effect.Effect<A, E, R>) =>
@@ -738,24 +805,36 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
             assert.deepInclude(decided, { status: { _tag: "decided", decision: "allow-once" } });
             const answered = entries.find((entry) => entry.id === asked.id);
             assert.strictEqual(answered?._tag === "question" && answered.status._tag, "answered");
-            return { bots: [keeper.id, second.id], keeper: keeper.id, room: room.id };
+            return {
+              bots: [keeper.id, second.id],
+              keeper: keeper.id,
+              second: second.id,
+              room: room.id,
+            };
           }),
         );
 
         const onA = {
           view: yield* view(made.bots, made.room),
           session: yield* mainSession(made.keeper),
+          second: yield* mainSession(made.second),
           migration: yield* engineMigration,
         };
+
+        /** Second took no turn since A: it still has the main session it had, live, as it was. */
+        const secondKept = mainSession(made.second).pipe(
+          Effect.map((session) => assert.deepStrictEqual(session, onA.second, "Second's session")),
+        );
         yield* report(`${from.version} before the update`, onA.view, onA.session, onA.migration);
 
         // ---- Update to B ---------------------------------------------------------
 
         yield* j3(["update", "--yes"]);
         yield* runningRelease(to.version, STARTED_WITHIN);
-        yield* settled(to.version);
+        yield* settled(to.version, true);
         assert.deepStrictEqual((yield* view(made.bots, made.room)).encoded, onA.view.encoded);
-        yield* assertSnapshot;
+        const firstSnapshot = yield* newSnapshot;
+        yield* secondKept;
         const migrationB = yield* engineMigration;
         assert.isAtLeast(migrationB, onA.migration);
         const onB = yield* nextTurn(made.keeper, onA.session, "after-update");
@@ -765,9 +844,10 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
 
         yield* j3(["update", "--rollback", "--yes"]);
         yield* runningRelease(from.version, STARTED_WITHIN);
-        yield* settled(from.version);
+        yield* settled(from.version, true);
         assert.deepStrictEqual((yield* view(made.bots, made.room)).encoded, onA.view.encoded);
         assert.strictEqual(yield* engineMigration, onA.migration);
+        yield* secondKept;
         const rolledBack = yield* nextTurn(made.keeper, onA.session, "after-rollback");
         const onA2 = { view: yield* view(made.bots, made.room), session: rolledBack };
         yield* report(`${from.version} after the rollback`, onA2.view, rolledBack, onA.migration);
@@ -776,9 +856,14 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
 
         yield* j3(["update", "--yes"]);
         yield* runningRelease(to.version, STARTED_WITHIN);
-        yield* settled(to.version);
+        yield* settled(to.version, true);
         assert.deepStrictEqual((yield* view(made.bots, made.room)).encoded, onA2.view.encoded);
-        yield* assertSnapshot;
+        assert.notStrictEqual(
+          yield* newSnapshot,
+          firstSnapshot,
+          "the second update took no snapshot",
+        );
+        yield* secondKept;
         assert.strictEqual(yield* engineMigration, migrationB);
         const again = yield* nextTurn(made.keeper, onA2.session, "forward-again");
         yield* report(`${to.version} after the update again`, onA2.view, again, migrationB);
