@@ -3,8 +3,8 @@ import { PairingLink, type PairingLinkTarget } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { useRef, useState } from "react";
-import { Linking, Modal, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { AppState, Linking, Modal, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
 import { Body, Button, Centered } from "../ui.tsx";
@@ -17,7 +17,9 @@ const decodeLink = Schema.decodeUnknownOption(PairingLink);
  * fill in the pairing screen: it never pairs by itself. The camera is asked
  * for once, as the scanner opens. Refused, the scanner says so and offers to
  * ask again, or, once the system no longer lets the app ask (on Android 11
- * and later, after a second refusal), the phone's settings.
+ * and later, after a second refusal), the phone's settings. The permission is
+ * read again each time the app comes back to the foreground, so a camera
+ * allowed in the phone's settings opens on return.
  */
 export function PairingScanner(props: {
   readonly onScanned: (target: PairingLinkTarget) => void;
@@ -25,7 +27,13 @@ export function PairingScanner(props: {
 }) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
-  const [permission, requestPermission] = useCameraPermissions({ request: true });
+  const [permission, requestPermission, readPermission] = useCameraPermissions({ request: true });
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") void readPermission();
+    });
+    return () => subscription.remove();
+  }, [readPermission]);
   // A code that is not a pairing link says so, until one that is comes into view.
   const [wrongCode, setWrongCode] = useState(false);
   const handed = useRef(false);
