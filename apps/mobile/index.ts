@@ -9,8 +9,9 @@ import { applyAppearance } from "./src/preferences.ts";
 import { receiveShares } from "./src/share/incoming.ts";
 
 // The splash screen stays until the first screen has drawn in the operator's
-// theme (App.tsx), which is set before anything renders.
-void SplashScreen.preventAutoHideAsync();
+// theme (App.tsx), which is set before anything renders. If it cannot be
+// kept, it hides as the app first renders: nothing to handle.
+SplashScreen.preventAutoHideAsync().catch(() => undefined);
 applyAppearance();
 void session.start();
 receiveShares();

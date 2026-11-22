@@ -4,7 +4,7 @@
 
 Each surface was checked in light and dark, and with a chosen appearance that differs from the system's:
 
-- **Web**, in Chromium at 1280 and 390 px, against a server with the scripted agent: the gallery, pairing, the first run, a conversation, a bot's details and Settings. A scan of every drawn line of text found none below the contrast in [Accessibility](#accessibility) apart from disabled controls, every focusable control showed the accent ring on itself or on the field around it, and no surface took the other theme's colors.
+- **Web**, in Chromium at 1280 and 390 px, against a server with the scripted agent: the gallery, pairing, the first run, a conversation, a bot's details and Settings. A scan of every drawn line of text found none below the contrast in [Accessibility](#accessibility) apart from disabled controls, which those rules exempt, every focusable control showed the accent ring on itself or on the field around it, and no surface took the other theme's colors.
 - **Desktop**, the Linux development build under Xvfb with GTK's Adwaita and Adwaita dark: with each of the three choices kept, the window's first frame was the canvas of the theme it opened in, the page painted in that theme, and the theme the app draws its tray and notification icons in stayed the system's. The deb installs the app's icons.
 - **Android**, a release build on a Pixel 8 emulator (Android 16): the splash, pairing, the first run, the roster, a conversation, a bot's details and its editor, the New alert and Settings. From a cold start the splash, the system bars and the first frame are in the chosen theme, with no frame of the other.
 
@@ -107,7 +107,7 @@ Neutrals carry the interface. One accent marks focus and links. Semantic colors 
 | `avatar-ink` | `#ffffff` | `#0b0b0c` | The mark inside an avatar |
 | `scrim` | black at 32% | black at 60% | Behind a pane or sheet that lies over content |
 
-Destructive actions use `blocked`: there is no separate destructive red. Every text color reaches 4.5:1 on the fills it is used on, code reaches 4.5:1 inside both bubbles, and `waiting`, `blocked`, `success`, `accent` and `control-off` reach 3:1 on every canvas and on `muted`. Text is never drawn with a text token at reduced opacity, since that would put it below the measured contrast.
+Destructive actions use `blocked`: there is no separate destructive red. Every text color reaches 4.5:1 on the fills it is used on, code reaches 4.5:1 inside both bubbles, and `waiting`, `blocked`, `success`, `accent` and `control-off` reach 3:1 on every canvas and on `muted`. Text is never drawn with a text token at reduced opacity, since that would put it below the measured contrast; the one exception is a disabled control (see [Accessibility](#accessibility)).
 
 ### Bot palette
 
@@ -174,7 +174,7 @@ J3 Bots has **its own** avatar system. Existing products use friendly blob chara
 
 Every platform's icon is the row of three avatars the first run shows (a teal hexagon, a violet circle and an orange triangle, idle), drawn by the avatars' own renderer, so the app has no art of its own. `pnpm --filter @j3-bots/design-tokens generate` writes them to `packages/design-tokens/generated/icons`, and a test fails when they are stale:
 
-- **Desktop:** the row on a rounded plate in the light canvas, from 16 to 1024 px. At 48 px and under the plate holds the violet circle alone, as the tray does, since three shapes at that size read as noise. macOS gets its own plate, inset as its icons are.
+- **Desktop:** the row on a rounded plate in the light canvas, from 16 to 1024 px for Linux and macOS, and in one icon file with each size Windows draws, from 16 to 256 px. At 48 px and under the plate holds the violet circle alone, as the tray does, since three shapes at that size read as noise. macOS gets its own plate, inset as its icons are.
 - **Android:** an adaptive icon, the row over the light canvas, and a monochrome silhouette for themed icons. The splash shows the row on each theme's canvas.
 - **iOS:** the row on the light canvas, on no background for the dark icon, and as a silhouette for the tinted one.
 - **Web:** the same icons, drawn as the web client builds. The favicon is the row as SVG, in the palette of the theme the browser is in, since a tab strip is drawn in it.
@@ -257,6 +257,7 @@ Every interface sentence goes through the translation layer as a whole sentence 
 ## Accessibility
 
 - Text contrast of at least 4.5:1, and 3:1 for large text and interface marks, in both themes.
+- Disabled controls are exempt from those minimums, as WCAG 1.4.3 exempts inactive components: a disabled control is drawn at half opacity, which is what marks it disabled, and it keeps its name for a screen reader.
 - State is never carried by color alone: the avatar's form or a mark changes too.
 - Every action is reachable by keyboard on desktop and by screen reader on every platform, with the same name it has on screen.
 - Touch targets are at least 44 px. On touch screens a compact control grows to a real 44 px box, so controls that sit side by side or wrap onto a second line never cover one another; pointer devices keep the compact size. Menu rows, such as New, do the same.

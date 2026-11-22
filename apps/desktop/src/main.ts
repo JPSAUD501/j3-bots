@@ -328,8 +328,11 @@ const program = Effect.gen(function* () {
     show: false,
     title: "J3 Bots",
     backgroundColor: appearance.windowBackground(),
-    // What Linux shows for the window; the packages carry their own icons.
-    icon: nativeImage.createFromBuffer(Buffer.from(renderAppIcon(desktopIcon(256)))),
+    // Linux shows the window with the icon it is given. Windows takes the
+    // executable's, the icon file with each size it draws; macOS the bundle's.
+    ...(process.platform === "linux"
+      ? { icon: nativeImage.createFromBuffer(Buffer.from(renderAppIcon(desktopIcon(256)))) }
+      : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(app.getAppPath(), "dist", "preload.cjs"),

@@ -2,12 +2,14 @@
 /**
  * The icons that native builds read as files, which `scripts/generate.ts`
  * writes under `generated/icons`: electron-builder's for the desktop
- * packages, and Expo's for the phone's launcher icon and splash screen. The
+ * packages (a set of PNGs for Linux, an icon file for Windows, a plate for
+ * macOS), and Expo's for the phone's launcher icon and splash screen. The
  * web app draws its own as it builds, with the same `renderAppIcon`.
  */
 import { hexColor } from "../color.ts";
 import { colors } from "../tokens.ts";
 import { desktopIcon, macIcon, renderAppIcon, type AppIcon } from "./appIcon.ts";
+import { icoFile } from "./ico.ts";
 
 /**
  * Android's adaptive icon is a 108 dp square of which only a 66 dp circle is
@@ -25,8 +27,11 @@ const SPLASH_WIDTH = 0.6;
 /** The side of an image a build scales down from. */
 const SOURCE = 1024;
 
-/** The sizes of the Linux icon set; Windows takes the 256 px one. */
+/** The sizes of the Linux icon set. */
 const DESKTOP_SIZES = [16, 24, 32, 48, 64, 128, 256, 512, 1024] as const;
+
+/** The sizes in the Windows icon file: those Windows draws, up to the largest it holds. */
+const WINDOWS_SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256] as const;
 
 const png = (icon: AppIcon) => () => renderAppIcon(icon);
 
@@ -35,6 +40,10 @@ export const nativeIconFiles: ReadonlyArray<
   readonly [path: string, body: () => string | Uint8Array]
 > = [
   ...DESKTOP_SIZES.map((size) => [`desktop/${size}x${size}.png`, png(desktopIcon(size))] as const),
+  [
+    "desktop.ico",
+    () => icoFile(WINDOWS_SIZES.map((size) => ({ size, png: renderAppIcon(desktopIcon(size)) }))),
+  ],
   ["mac.png", png(macIcon(SOURCE))],
   [
     "square.png",

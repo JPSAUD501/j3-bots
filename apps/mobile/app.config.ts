@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- Expo reads this config in its Node process, outside any Effect program.
+import * as NodePath from "node:path";
 import nativeColors from "@j3-bots/design-tokens/icons/colors.json";
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
@@ -24,9 +26,12 @@ const CAMERA_USE = "J3 Bots uses the camera to read the QR code that pairs this 
 
 /**
  * An icon generated from the design tokens (`pnpm --filter
- * @j3-bots/design-tokens generate`), as a path prebuild reads.
+ * @j3-bots/design-tokens generate`), as a path from the project's root, which
+ * prebuild reads. Expo embeds the config in the app, so an absolute path would
+ * carry the machine that built it.
  */
-const icon = (name: string) => require.resolve(`@j3-bots/design-tokens/icons/${name}`);
+const iconIn = (projectRoot: string) => (name: string) =>
+  NodePath.relative(projectRoot, require.resolve(`@j3-bots/design-tokens/icons/${name}`));
 
 /**
  * The canvas the app opens on, in each theme: its first screen, and what
@@ -47,8 +52,9 @@ const variantOf = (value: string | undefined): keyof typeof VARIANTS => {
   }
 };
 
-export default ({ config }: ConfigContext): ExpoConfig => {
+export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   const variant = VARIANTS[variantOf(process.env.APP_VARIANT)];
+  const icon = iconIn(projectRoot);
   return {
     ...config,
     name: variant.name,
