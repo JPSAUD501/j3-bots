@@ -1,15 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { avatarShapeNames, botColors } from "@j3-bots/design-tokens/names";
 import * as Schema from "effect/Schema";
 import { BotId, EntryId, Label, ModelId, ProviderId } from "./base.ts";
 
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
 
-/** Two choices the operator makes. The values are design tokens the clients render. */
+/**
+ * A bot's avatar as the server sends it: two design tokens the clients render.
+ * They are any token, so a client older than the server still decodes a shape
+ * or color it does not know, and draws its fallback (`resolveAvatar`).
+ */
 export const Avatar = Schema.Struct({
   shape: Token,
   color: Token,
 });
 export type Avatar = typeof Avatar.Type;
+
+/** An avatar as the operator or a bot chooses it: a shape and a color this version has. */
+export const AvatarChoice = Schema.Struct({
+  shape: Schema.Literals(avatarShapeNames),
+  color: Schema.Literals(botColors),
+});
+export type AvatarChoice = typeof AvatarChoice.Type;
 
 /** The longest text each profile field takes. */
 export const PROFILE_LIMITS = { name: 40, title: 40, job: 2_000 } as const;

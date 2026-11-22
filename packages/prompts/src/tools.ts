@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Avatar, Profile, RoutineInstruction } from "@j3-bots/contracts";
+import { AvatarChoice, Profile, RoutineInstruction } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -254,7 +254,10 @@ const UpdateProfileInput = toolInput({
   name: Schema.optionalKey(Profile.fields.name),
   title: Schema.optionalKey(Profile.fields.title),
   avatar: Schema.optionalKey(
-    described(Avatar, "The shape and color your user chose, by the names they gave."),
+    described(
+      AvatarChoice,
+      `The shape and color your user chose, as the names that match their words. Shapes: ${AvatarChoice.fields.shape.literals.join(", ")}. Colors: ${AvatarChoice.fields.color.literals.join(", ")}.`,
+    ),
   ),
 });
 

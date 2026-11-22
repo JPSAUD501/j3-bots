@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { AvatarShapeName } from "./names.ts";
+
 /**
  * Avatar silhouettes, as SVG path data in a 100 × 100 box. A bot's avatar is
  * one of these shapes filled with its palette color, with a single mark inside
@@ -145,8 +147,4 @@ export const avatarShapes = {
     path: "M50 5L89 5Q95 5 95 11L95 50A45 45 0 0 1 50 95L11 95Q5 95 5 89L5 50A45 45 0 0 1 50 5Z",
     mark: center,
   },
-} as const satisfies Record<string, AvatarShape>;
-
-export type AvatarShapeName = keyof typeof avatarShapes;
-
-export const avatarShapeNames = Object.keys(avatarShapes) as ReadonlyArray<AvatarShapeName>;
+} as const satisfies Record<AvatarShapeName, AvatarShape>;

@@ -2,7 +2,8 @@
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
 import { avatarMarkNames, avatarProportions } from "../avatar.ts";
-import { avatarShapeNames, avatarShapes } from "../avatarShapes.ts";
+import { avatarShapes } from "../avatarShapes.ts";
+import { avatarShapeNames } from "../names.ts";
 import { contrastRatio, parseColor, toSrgb8 } from "../color.ts";
 import { botPalette, colors } from "../tokens.ts";
 import { drawAvatar, renderStillAvatar, renderStillRoomAvatar } from "./avatarRaster.ts";

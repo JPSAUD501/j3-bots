@@ -548,6 +548,9 @@ importers:
 
   packages/contracts:
     dependencies:
+      '@j3-bots/design-tokens':
+        specifier: workspace:*
+        version: link:../design-tokens
       effect:
         specifier: 4.1.3
         version: 4.1.3
