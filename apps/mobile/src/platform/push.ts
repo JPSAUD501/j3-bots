@@ -96,10 +96,14 @@ const createChannels = async (language: Language) => {
 /** The language the channels were last named in. */
 let channelsNamedIn: Language | null = null;
 
-/** Names the channels in the language the app shows, unless they already are. */
+/**
+ * Names the channels in the language the app shows, unless they already are.
+ * A build that cannot receive pushes makes none: the system's settings would
+ * list kinds of notification the app never shows.
+ */
 const nameChannels = (): void => {
   const language = shownLanguage();
-  if (Platform.OS !== "android" || language === channelsNamedIn) return;
+  if (Platform.OS !== "android" || pushProject() === null || language === channelsNamedIn) return;
   channelsNamedIn = language;
   createChannels(language).catch((error: unknown) => {
     channelsNamedIn = null;
