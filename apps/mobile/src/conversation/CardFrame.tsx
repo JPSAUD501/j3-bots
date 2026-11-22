@@ -1,41 +1,84 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { entrySummary } from "@j3-bots/client-runtime/wording";
-import type { BotId, Entry, MessageEntry, NoticeEntry, WorkFoldEntry } from "@j3-bots/contracts";
-import { use } from "react";
-import { Text, View } from "react-native";
-import { usePresentation } from "../presentation.tsx";
-import { EntryWidths } from "./MessageBubble.tsx";
+import { useCardAction } from "@j3-bots/client-runtime/react";
+import type { EntryId } from "@j3-bots/contracts";
+import { layout } from "@j3-bots/design-tokens";
+import type { LucideIcon } from "lucide-react-native";
+import { type ComponentRef, type ReactNode, use, useEffect, useRef } from "react";
+import { AccessibilityInfo, Text, View } from "react-native";
+import { Icon } from "../components/Icon.tsx";
+import { EntryWidths } from "./widths.ts";
 
-/** The entries that are cards: what the bot asks, a teammate message, a routine changed. */
-export type CardEntry = Exclude<Entry, MessageEntry | NoticeEntry | WorkFoldEntry>;
+/** Whether an answer to the card is on its way: it then takes no second one. */
+export const useSubmitting = (entryId: EntryId): boolean =>
+  useCardAction(entryId)?._tag === "submitting";
 
 /**
- * A card in one line, as the roster says it: "Asks: …" while the bot waits on
- * it, in the waiting color. The phone's cards that take an answer come later;
- * until then this says what each one is.
+ * Once the card no longer waits, moves a screen reader from the control the
+ * operator pressed, which goes, to the line that says how the card closed.
+ * `answered` marks that the operator answered here; a card closed elsewhere
+ * moves nothing. Give `outcome` to that line.
+ */
+export function useOutcomeFocus(pending: boolean) {
+  const outcome = useRef<ComponentRef<typeof Text>>(null);
+  const answeredHere = useRef(false);
+  const wasPending = useRef(pending);
+  useEffect(() => {
+    const closed = wasPending.current && !pending;
+    wasPending.current = pending;
+    if (closed && answeredHere.current && outcome.current !== null) {
+      AccessibilityInfo.sendAccessibilityEvent(outcome.current, "focus");
+    }
+  }, [pending]);
+  return {
+    outcome,
+    answered: () => {
+      answeredHere.current = true;
+    },
+  };
+}
+
+/**
+ * The frame of a card that asks the operator for something. `attention`
+ * marks one still waiting, in the waiting color, and its title says so in
+ * words as well. In a column narrower than a tablet the card takes the
+ * whole column.
  */
 export function CardFrame({
-  entry,
-  owner,
-  current,
+  icon,
+  title,
+  attention,
+  children,
 }: {
-  readonly entry: CardEntry;
-  /** The bot whose conversation it is, null in a room. */
-  readonly owner: BotId | null;
-  /** The bot waits on this card now. */
-  readonly current: boolean;
+  readonly icon: LucideIcon;
+  readonly title: string;
+  readonly attention: boolean;
+  readonly children: ReactNode;
 }) {
-  const ctx = usePresentation();
   const widths = use(EntryWidths);
+  const full = widths.column < layout.breakpoints.tablet;
   return (
     <View className="mt-2 px-4">
       <View
-        style={{ maxWidth: widths.card }}
-        className={`self-start rounded-md border px-3 py-2 ${current ? "border-waiting bg-waiting-surface" : "border-border bg-surface"}`}
+        style={full ? undefined : { maxWidth: widths.card }}
+        // The frame clips its header, so the header's fill follows the card's rounded border.
+        className={`overflow-hidden rounded-md border bg-surface ${full ? "self-stretch" : "self-start"} ${attention ? "border-waiting/45" : "border-border"}`}
       >
-        <Text className={`text-base ${current ? "text-waiting" : "text-foreground"}`}>
-          {entrySummary(entry, ctx, { owner, current })}
-        </Text>
+        <View
+          className={`flex-row items-center gap-2 border-b px-3 py-2 ${attention ? "border-waiting/25 bg-waiting-surface" : "border-border"}`}
+        >
+          <Icon
+            icon={icon}
+            size={14}
+            color={attention ? "accent-waiting" : "accent-muted-foreground"}
+          />
+          <Text
+            accessibilityRole="header"
+            className={`text-xs font-medium ${attention ? "text-waiting" : "text-muted-foreground"}`}
+          >
+            {title}
+          </Text>
+        </View>
+        <View className="gap-3 p-3">{children}</View>
       </View>
     </View>
   );

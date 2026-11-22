@@ -40,9 +40,13 @@ export class AttachmentUnavailable extends Schema.TaggedError<AttachmentUnavaila
   }
 }
 
-/** A file's bytes, ready for the platform to show or save. */
+/**
+ * A file's bytes, ready for the platform to show or save. Plain bytes rather
+ * than a `Blob`: React Native's `Blob` cannot be made from bytes, so each
+ * platform wraps them as it shows or saves them.
+ */
 export interface Download {
-  readonly body: Blob;
+  readonly bytes: Uint8Array<ArrayBuffer>;
   readonly mediaType: string;
 }
 
@@ -196,9 +200,9 @@ export const layer = Layer.effect(
         if (!fromServer(response.url, url.pathname)) return yield* unreachable;
         switch (response.status) {
           case 200: {
-            const bytes = yield* response.arrayBuffer;
+            const bytes = new Uint8Array(yield* response.arrayBuffer);
             const mediaType = response.headers["content-type"] ?? "application/octet-stream";
-            return { body: new Blob([bytes], { type: mediaType }), mediaType };
+            return { bytes, mediaType };
           }
           case 401:
             return yield* isNotAuthenticated(yield* response.text) ? new NotPaired() : unreachable;

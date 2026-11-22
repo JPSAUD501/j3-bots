@@ -50,6 +50,8 @@ export interface SessionDevice {
   readonly storedServer: Effect.Effect<Option.Option<string>, CredentialStorageError>;
   /** Deletes the stored pairing, readable or not, with its drafts and unsent messages. */
   readonly forget: Effect.Effect<void, CredentialStorageError>;
+  /** Deletes the files the app opened from its server, which leave the phone with it. */
+  readonly forgetFiles: Effect.Effect<void>;
   readonly makePlatform: (origin: URL) => Layer.Layer<Platform>;
 }
 
@@ -87,13 +89,14 @@ export interface Session {
    * Leaves the server the app runs a client for, so the operator can pair
    * with another: signs this phone out (on the server only if it is
    * connected), which deletes the pairing's drafts, unsent messages and
-   * credential here. Resolves `false` when the credential could not be
+   * credential here, and deletes the files opened from it. Resolves `false` when the credential could not be
    * deleted, and the server is kept.
    */
   readonly changeServer: () => Promise<boolean>;
   /**
    * Forgets this phone's sign-in when it cannot be read: deletes the stored
-   * credential, with the pairing's drafts and unsent messages, and lets go of
+   * credential, with the pairing's drafts, unsent messages and the files
+   * opened from it, and lets go of
    * any client, so the pairing screen opens. Resolves `false` when the
    * credential could not be deleted.
    */
@@ -154,8 +157,10 @@ export const makeSession = (device: SessionDevice): Session => {
           if (origin !== null) await open(origin);
           // A server the app no longer accepts: its pairing goes before the
           // pairing screen opens, or pairing again would leave it behind.
-          else if (await succeeds(device.forget)) await close();
-          else state.set({ _tag: "unreadable" });
+          else if (await succeeds(device.forget)) {
+            await Effect.runPromise(device.forgetFiles);
+            await close();
+          } else state.set({ _tag: "unreadable" });
         }
       }),
 
@@ -188,6 +193,7 @@ export const makeSession = (device: SessionDevice): Session => {
               return true;
             case "signed-out":
             case "still-listed":
+              await Effect.runPromise(device.forgetFiles);
               await current.client.dispose();
               state.set({ _tag: "none" });
               return true;
@@ -200,6 +206,7 @@ export const makeSession = (device: SessionDevice): Session => {
     forget: () =>
       serially(async () => {
         if (!(await succeeds(device.forget))) return false;
+        await Effect.runPromise(device.forgetFiles);
         await close();
         return true;
       }),

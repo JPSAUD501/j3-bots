@@ -26,32 +26,48 @@ export function Body(props: { readonly children: ReactNode }) {
   return <Text className="text-center text-base text-muted-foreground">{props.children}</Text>;
 }
 
-/** A button at least 44 px tall, the touch target. */
+const buttonLook = {
+  /** The one action a screen or card exists for. */
+  primary: { box: "bg-accent", text: "font-medium text-accent-foreground" },
+  plain: { box: "", text: "text-accent" },
+  /** One of several actions of the same weight, such as Deny beside Allow for session. */
+  outline: { box: "border border-input bg-surface", text: "text-foreground" },
+  /** An action that says no, such as Dismiss, quieter than the rest. */
+  quiet: { box: "", text: "text-muted-foreground" },
+} as const;
+
+/**
+ * A button at least 44 px tall, the touch target. A `held` button keeps its
+ * place and its focus but takes no press, as while an answer it sent is on
+ * its way.
+ */
 export function Button(props: {
   readonly label: string;
   /** What a screen reader says, when the label alone does not name what it acts on. */
   readonly accessibilityLabel?: string;
+  /** What a screen reader says after the name: what pressing it does from then on. */
+  readonly accessibilityHint?: string;
   readonly onPress: () => void;
-  readonly variant?: "primary" | "plain";
+  readonly variant?: keyof typeof buttonLook;
   readonly disabled?: boolean;
+  readonly held?: boolean;
+  /** Takes its share of a row it shares with other buttons. */
+  readonly grow?: boolean;
 }) {
-  const primary = props.variant === "primary";
+  const look = buttonLook[props.variant ?? "plain"];
+  const disabled = props.disabled === true;
+  const held = props.held === true;
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={props.accessibilityLabel ?? props.label}
-      accessibilityState={{ disabled: props.disabled === true }}
-      disabled={props.disabled === true}
-      onPress={props.onPress}
-      className={`min-h-11 items-center justify-center rounded-md px-4 ${primary ? "bg-accent" : ""} ${props.disabled === true ? "opacity-50" : ""}`}
+      accessibilityHint={props.accessibilityHint}
+      accessibilityState={{ disabled: disabled || held }}
+      disabled={disabled}
+      onPress={held ? undefined : props.onPress}
+      className={`min-h-11 items-center justify-center rounded-md px-4 ${look.box} ${props.grow === true ? "grow" : ""} ${disabled || held ? "opacity-50" : ""}`}
     >
-      <Text
-        className={
-          primary ? "text-base font-medium text-accent-foreground" : "text-base text-accent"
-        }
-      >
-        {props.label}
-      </Text>
+      <Text className={`text-base ${look.text}`}>{props.label}</Text>
     </Pressable>
   );
 }

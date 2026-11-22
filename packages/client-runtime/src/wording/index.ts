@@ -25,6 +25,7 @@ export {
   usageLimitText,
   workFoldTitle,
 } from "./status.ts";
+export { scheduleInWords } from "./schedule.ts";
 export {
   activityTime,
   dividerTime,

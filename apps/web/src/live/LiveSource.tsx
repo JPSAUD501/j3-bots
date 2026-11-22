@@ -867,7 +867,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       const reserved = reserveWindow(attachment);
       j3.download(attachment).then((result) => {
         if (result._tag === "done") {
-          deliverFile(attachment, result.value.body, reserved);
+          deliverFile(attachment, result.value.bytes, reserved);
           return;
         }
         reserved?.close();

@@ -40,11 +40,12 @@ import { BotAvatar } from "../components/Avatar.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
-import { CardFrame } from "./CardFrame.tsx";
+import { Card } from "./Card.tsx";
 import { Composer, type MentionCandidate } from "./Composer.tsx";
 import { ConversationHeader } from "./Header.tsx";
-import { EntryWidths, MessageBubble } from "./MessageBubble.tsx";
+import { MessageBubble } from "./MessageBubble.tsx";
 import { NoticeLine } from "./NoticeLine.tsx";
+import { EntryWidths } from "./widths.ts";
 import { WorkFold } from "./WorkFold.tsx";
 
 /** Whether the app is in the foreground. */
@@ -199,13 +200,15 @@ export function ConversationView({
   const [column, setColumn] = useState(0);
   const widths = useMemo(() => {
     const { max, bubbleShare, cardShare } = layout.entryWidth;
-    return { bubble: Math.min(max, column * bubbleShare), card: Math.min(max, column * cardShare) };
+    return {
+      bubble: Math.min(max, column * bubbleShare),
+      card: Math.min(max, column * cardShare),
+      compactCard: Math.min(layout.compactCardWidth, column * cardShare),
+      column,
+    };
   }, [column]);
 
   const room = item._tag === "room" ? item.room : null;
-  const owner = item._tag === "bot" ? item.bot.id : null;
-  const waitingOn =
-    item._tag === "bot" && item.bot.state._tag === "waiting" ? item.bot.state.entryId : null;
   const nameOf = (botId: BotId) => bots.get(botId)?.profile.name;
 
   const draft = useDraft(target);
@@ -284,13 +287,12 @@ export function ConversationView({
                     <Row
                       row={row}
                       room={room}
-                      owner={owner}
-                      waitingOn={waitingOn}
                       onOpenBot={onOpenBot}
+                      onOpenDetails={onOpenDetails}
                     />
                   </View>
                 )}
-                extraData={{ room, waitingOn, widths }}
+                extraData={{ room, widths }}
                 alignItemsAtEnd
                 initialScrollAtEnd
                 maintainScrollAtEnd
@@ -387,17 +389,14 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
 function Row({
   row,
   room,
-  owner,
-  waitingOn,
   onOpenBot,
+  onOpenDetails,
 }: {
   readonly row: TimelineItem;
   /** In a room, its members and host now; null in a bot's conversation. */
   readonly room: Pick<Room, "members" | "hostId"> | null;
-  readonly owner: BotId | null;
-  /** The card the bot waits on now. */
-  readonly waitingOn: EntryId | null;
   readonly onOpenBot: (botId: BotId) => void;
+  readonly onOpenDetails: () => void;
 }) {
   const ctx = usePresentation();
   const client = useJ3Client();
@@ -432,7 +431,7 @@ function Row({
             />
           );
         default:
-          return <CardFrame entry={entry} owner={owner} current={entry.id === waitingOn} />;
+          return <Card entry={entry} onOpenBot={onOpenBot} onOpenDetails={onOpenDetails} />;
       }
     }
   }

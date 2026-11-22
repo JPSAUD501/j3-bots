@@ -24,6 +24,7 @@ import * as ExpoNetwork from "expo-network";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import { makeSession } from "../session.ts";
+import { forgetOpenedFiles } from "./openFile.ts";
 import { makeUploader } from "./upload.ts";
 import {
   forgetPairing,
@@ -156,5 +157,6 @@ const makePlatform = (origin: URL): Layer.Layer<Platform> =>
 export const session = makeSession({
   storedServer: storedServer(secureCredential),
   forget: forgetPairing(sqlite, secureCredential),
+  forgetFiles: Effect.sync(forgetOpenedFiles),
   makePlatform,
 });

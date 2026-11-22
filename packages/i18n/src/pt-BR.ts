@@ -82,6 +82,7 @@ const sentences = {
   "message.retry.to": "Enviar para {names}",
 
   "file.open": "Abrir {name}",
+  "file.opening": "Abrindo…",
   "file.kindAndSize": "{kind} · {size}",
 
   "question.title": "Pergunta",
@@ -453,6 +454,7 @@ const sentences = {
 
   "file.gone": "{name} não está mais no servidor.",
   "file.unreachable": "Não deu para abrir {name}. Verifique a conexão e tente de novo.",
+  "file.cannotOpen": "Não deu para abrir {name} neste aparelho.",
 
   "connection.offline": "Você está sem internet. O que enviar sai quando a conexão voltar.",
   "connection.reconnecting": "Reconectando…",

@@ -23,8 +23,12 @@ import { useState, type ReactElement, type ReactNode, type Ref } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import type { KeyWith } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
-import { scheduleInWords } from "../lib/schedule";
-import { activityTime, fileSize, timeInSentence } from "@j3-bots/client-runtime/wording";
+import {
+  activityTime,
+  fileSize,
+  scheduleInWords,
+  timeInSentence,
+} from "@j3-bots/client-runtime/wording";
 import { BotAvatar } from "./BotAvatar";
 import { FileCard } from "./FileCard";
 import { Button } from "./ui/button";

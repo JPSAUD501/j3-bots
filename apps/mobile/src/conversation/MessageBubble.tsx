@@ -1,30 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { messageStatus } from "@j3-bots/client-runtime";
-import {
-  fileIcon,
-  type FileIcon,
-  type GroupPosition,
-  type TimelineMessage,
-} from "@j3-bots/client-runtime/presentation";
-import { deliveryLine, fileDetail } from "@j3-bots/client-runtime/wording";
-import type { Attachment, Bot } from "@j3-bots/contracts";
-import {
-  File,
-  FileArchive,
-  FileCode,
-  FileImage,
-  FileText,
-  type LucideIcon,
-} from "lucide-react-native";
-import { createContext, use, useEffect, useRef } from "react";
+import { type GroupPosition, type TimelineMessage } from "@j3-bots/client-runtime/presentation";
+import { deliveryLine } from "@j3-bots/client-runtime/wording";
+import type { Bot } from "@j3-bots/contracts";
+import { use, useEffect, useRef } from "react";
 import { AccessibilityInfo, Pressable, Text, View } from "react-native";
 import { AvatarShape } from "../components/Avatar.tsx";
-import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
+import { FileCard } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
-
-/** The widest a bubble and a card grow in the conversation's column, in px. */
-export const EntryWidths = createContext({ bubble: 0, card: 0 });
+import { EntryWidths } from "./widths.ts";
 
 // Only the corners where bubbles of one group meet tighten, on the speaker's side.
 const operatorCorners = {
@@ -143,7 +128,7 @@ export function MessageBubble({
         </View>
       )}
       {message.attachments.map((attachment) => (
-        <AttachmentRow key={attachment.id} attachment={attachment} />
+        <FileCard key={attachment.id} attachment={attachment} />
       ))}
       {delivery !== null && (
         <View
@@ -167,36 +152,6 @@ export function MessageBubble({
           )}
         </View>
       )}
-    </View>
-  );
-}
-
-const kindIcons = {
-  image: FileImage,
-  text: FileText,
-  archive: FileArchive,
-  code: FileCode,
-  other: File,
-} as const satisfies Record<FileIcon, LucideIcon>;
-
-/** A file in the conversation: name, kind and size. */
-function AttachmentRow({ attachment }: { readonly attachment: Attachment }) {
-  const i18n = useI18n();
-  const widths = use(EntryWidths);
-  return (
-    <View
-      style={{ width: Math.min(256, widths.bubble) }}
-      className="flex-row items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
-    >
-      <View className="size-8 items-center justify-center rounded-md bg-muted">
-        <Icon icon={kindIcons[fileIcon(attachment.mediaType)]} color="accent-muted-foreground" />
-      </View>
-      <View className="min-w-0 flex-1">
-        <Text numberOfLines={1} className="text-sm font-medium text-foreground">
-          {attachment.name}
-        </Text>
-        <Text className="text-xs text-muted-foreground">{fileDetail(attachment, i18n)}</Text>
-      </View>
     </View>
   );
 }

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { RoutineTrigger } from "@j3-bots/contracts";
+import type { I18n } from "@j3-bots/i18n";
 import {
-  fullTime,
   minuteText,
   readCron,
   timeOfDayText,
   weekdayList,
   zoneName,
-} from "@j3-bots/client-runtime/presentation";
-import type { I18n } from "@j3-bots/i18n";
-import type { TimeContext } from "@j3-bots/client-runtime/wording";
+} from "../presentation/schedule.ts";
+import { fullTime } from "../presentation/time.ts";
+import type { TimeContext } from "./time.ts";
 
 /**
  * A routine's trigger written out, as the operator would say it: "Weekdays at
