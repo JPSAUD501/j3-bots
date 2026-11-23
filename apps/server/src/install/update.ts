@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type { SignatureCheck } from "@j3-bots/release";
 import { AdminClient } from "../admin/AdminClient.ts";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
@@ -28,7 +29,7 @@ import {
   VERSIONS,
   writeLauncher,
 } from "./layout.ts";
-import { fetchRelease, isRelease, targetVersion } from "./release.ts";
+import { type FetchStage, fetchRelease, isRelease, targetVersion } from "./release.ts";
 import { type ServerProbe } from "../transition/readiness.ts";
 import { readRuntimeRecord } from "../transition/record.ts";
 import { type Side, StepFailed } from "../transition/switch.ts";
@@ -87,11 +88,14 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
     "restore-unfinished",
     "busy",
     "backups-elsewhere",
+    "moved",
   ]),
   detail: Schema.String,
 }) {
   override get message(): string {
     switch (this.reason) {
+      case "moved":
+        return `Another update ran first: J3 Bots ${this.detail} runs now, not the release this update was asked from, so nothing was changed. Ask for an update again if one is still wanted.`;
       case "checkout":
         return "This j3-bots runs from a checkout, which updates with Git: `git pull`, `pnpm install --frozen-lockfile`, `pnpm build`, then `j3-bots service install`.";
       case "unpacked":
@@ -105,7 +109,7 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
       case "disk":
         return this.detail;
       case "engine-fetch":
-        return `J3 Bots ${this.detail} could not install the engine it is pinned to: see above. The release that runs now was not touched.`;
+        return `J3 Bots ${this.detail} could not install the engine it is pinned to. The release that runs now was not touched.`;
       case "no-snapshot":
         return `No update has taken a snapshot in ${this.detail} yet, so there is nothing to roll back to.`;
       case "snapshot-elsewhere":
@@ -346,7 +350,7 @@ const serviceSteps = (
           : Effect.fail(
               new StepFailed({
                 step: side === "new" ? "start-new" : "start-old",
-                reason: `\`j3-bots service install\` of J3 Bots ${releases[side].version} failed: see above`,
+                reason: `J3 Bots ${releases[side].version} did not start as the service`,
               }),
             ),
       ),
@@ -409,7 +413,10 @@ const releaseOf = Effect.fn("update.releaseOf")(function* (root: string) {
     );
 });
 
-type UpdateResult =
+/** The stages of an update a client follows. */
+export type UpdateStage = FetchStage | { readonly _tag: "restarting" };
+
+export type UpdateResult =
   | { readonly _tag: "current"; readonly version: string }
   /** The service ran `version` already; the command now runs it too. */
   | { readonly _tag: "repointed"; readonly version: string }
@@ -479,11 +486,23 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   readonly version: Option.Option<string>;
   readonly confirm: (bots: Option.Option<number>) => Effect.Effect<boolean, never, R>;
   readonly say: (line: string) => Effect.Effect<void, never, R>;
+  /** Told as the update reaches each stage, for a client that asked for it (`--run`). */
+  readonly progress: (stage: UpdateStage) => Effect.Effect<void, never, R>;
+  /** What a release's signature must pass: the release keys this install trusts. */
+  readonly check: SignatureCheck;
+  /**
+   * The release the update must start from: the one that ran when a client
+   * asked for it. Another update may have run before this one took the lock.
+   */
+  readonly from: Option.Option<string>;
 }) {
   const { installed, lock } = yield* lockedInstall;
   const path = yield* Path.Path;
   yield* checkNoUnfinishedRollback(installed.home);
   const from = installed.release;
+  if (Option.isSome(options.from) && options.from.value !== from.version) {
+    return yield* new UpdateRefused({ reason: "moved", detail: from.version });
+  }
   const version = yield* targetVersion(options.version);
   // An update cut off after its snapshot is carried on, even to the release that runs.
   const recorded = yield* readRuntimeRecord(installed.home);
@@ -512,6 +531,10 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
     install: installed.install,
     version,
     platform: from.platform,
+    check: options.check,
+    progress: options.progress,
+    // A client's update installs only what is proven signed, whatever this install holds.
+    provenOnly: Option.isSome(options.from),
   });
   yield* options.say(
     fetched.alreadyThere
@@ -524,6 +547,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   const to = Option.getOrUndefined(yield* releaseOf(fetched.root));
 
   if (yield* serviceRunning(installed)) {
+    // With none running, the server holds new work until the service stops.
     const socket = path.join(installed.home, HOME_ENTRIES.adminSocket);
     const work = yield* (yield* AdminClient).runningWork(socket).pipe(
       Effect.map(Option.map(({ bots }) => bots)),
@@ -534,6 +558,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
     }
   }
 
+  yield* options.progress({ _tag: "restarting" });
   const fromRelease: SnapshotRelease = { version: from.version, ...engineOf(from) };
   const toRelease: SnapshotRelease = { version, ...(to === undefined ? {} : engineOf(to)) };
   yield* options.say(

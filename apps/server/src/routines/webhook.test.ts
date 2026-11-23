@@ -18,6 +18,7 @@ import * as Domain from "../domain.ts";
 import * as Http from "../http.ts";
 import * as Listener from "../listener.ts";
 import * as TestDomain from "../testing/domain.ts";
+import * as TestUpdates from "../testing/update.ts";
 import { command, createNewBot } from "../testing/turns.ts";
 import * as WebClient from "../web/WebClient.ts";
 import { WEBHOOK_RUNS_PER_MINUTE } from "./RoutineRuns.ts";
@@ -96,6 +97,7 @@ it.layer(
   Http.serve(Listener.layer, { logAddress: false }).pipe(
     Layer.provide(recordLogs),
     Layer.provide(WebClient.statusLayer),
+    Layer.provide(TestUpdates.layer),
     Layer.provideMerge(TestDomain.servedLayer),
     Layer.merge(FetchHttpClient.layer),
   ),

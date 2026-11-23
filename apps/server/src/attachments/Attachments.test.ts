@@ -18,10 +18,11 @@ import { Layout } from "../Layout.ts";
 import { Attachments } from "./Attachments.ts";
 import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
+import * as TestUpdates from "../testing/update.ts";
 import * as WebClient from "../web/WebClient.ts";
 
 const server = Ports.serve(Http.app, NodeHttpServer.layerTest, { logAddress: false }).pipe(
-  Layer.provide(WebClient.statusLayer),
+  Layer.provide(Layer.merge(WebClient.statusLayer, TestUpdates.layer)),
   Layer.provideMerge(TestDomain.layer),
 );
 

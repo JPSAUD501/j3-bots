@@ -182,6 +182,7 @@ export class AdminClient extends Context.Service<
     readonly readiness: (
       channel: AdminChannel,
     ) => Effect.Effect<Option.Option<ServerReadiness>, AdminRequestFailed>;
+    /** What a stop of the server would stop; with none, no work begins until it stops (`ADMIN_PATHS.runningWork`). */
     readonly runningWork: (
       channel: AdminChannel,
     ) => Effect.Effect<Option.Option<RunningWorkReply>, AdminRequestFailed>;
@@ -293,7 +294,7 @@ export const layer = Layer.effect(
         )(channel);
       }),
       readiness: ask(ADMIN_PATHS.status, "GET", json(ServerReadiness), false),
-      runningWork: ask(ADMIN_PATHS.runningWork, "GET", json(RunningWorkReply), false),
+      runningWork: ask(ADMIN_PATHS.runningWork, "POST", json(RunningWorkReply), false),
       startPairing: Effect.fn("AdminClient.startPairing")(function* (
         channel: AdminChannel,
         options: { readonly unlock: boolean },

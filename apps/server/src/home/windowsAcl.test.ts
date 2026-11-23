@@ -8,6 +8,7 @@ import {
   createPrivateFolder,
   type FolderAcl,
   judgeAcl,
+  judgeWriteAcl,
   powerShellWord,
   readFolderAcl,
   repairCommand,
@@ -153,6 +154,38 @@ describe("judgeAcl", () => {
     // Without DELETE, the generic rights do not add up to Modify.
     assert.strictEqual(judgeAcl(only(0xe0000000 | 0)), "closed-to-owner");
     assert.strictEqual(judgeAcl(only(0x80000000 | 0)), "closed-to-owner");
+  });
+});
+
+describe("judgeWriteAcl", () => {
+  it("takes a folder others may read and run from, as an install folder on Unix", () => {
+    assert.strictEqual(judgeWriteAcl(privateAcl), "own");
+    assert.strictEqual(judgeWriteAcl(withRules(rule(USERS, READ_AND_EXECUTE))), "own");
+    assert.strictEqual(judgeWriteAcl({ ...privateAcl, owner: ADMINISTRATORS }), "own");
+  });
+
+  it("refuses a folder another user owns", () => {
+    assert.strictEqual(judgeWriteAcl({ ...privateAcl, owner: ANOTHER_USER }), "not-owned");
+  });
+
+  it("refuses a folder another account may write in, also only in what is made inside it, or through generic rights", () => {
+    assert.strictEqual(judgeWriteAcl(withRules(rule(USERS, WRITE_DATA))), "writable-by-others");
+    assert.strictEqual(
+      judgeWriteAcl(withRules(rule(AUTHENTICATED_USERS, MODIFY, { inheritOnly: true }))),
+      "writable-by-others",
+    );
+    assert.strictEqual(judgeWriteAcl(withRules(rule(EVERYONE, GENERIC_ALL))), "writable-by-others");
+  });
+
+  it("is not opened to writing by a rule that denies, nor by one for whoever creates a file there", () => {
+    assert.strictEqual(
+      judgeWriteAcl(withRules(rule(USERS, FULL_CONTROL, { allow: false }))),
+      "own",
+    );
+    assert.strictEqual(
+      judgeWriteAcl(withRules(rule(CREATOR_OWNER, FULL_CONTROL, { inheritOnly: true }))),
+      "own",
+    );
   });
 });
 

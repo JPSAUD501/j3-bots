@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { signatureCheck } from "@j3-bots/release/node";
+import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import type * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Stdio from "effect/Stdio";
 import { Command, Flag, Prompt } from "effect/cli";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { takenAt } from "../install/snapshot.ts";
+import { trustedReleaseKeys } from "../releases/keys.ts";
+import type { UpdateFailure } from "@j3-bots/contracts";
 import type { StepFailed } from "../transition/switch.ts";
-import { rollBack, update } from "../install/update.ts";
+import { rollBack, update, type UpdateResult, type UpdateStage } from "../install/update.ts";
+import * as ServerConfig from "../config.ts";
+import { updateUnit } from "../update/launch.ts";
+import { advanceRun, endRun, type Ending, isUnderway, readRun } from "../update/run.ts";
 import { refuse, userFacing } from "./errors.ts";
 
 const versionFlag = Flag.String("version").pipe(
@@ -29,6 +40,13 @@ const rollbackFlag = Flag.Boolean("rollback").pipe(
   Flag.withDescription(
     "Put back the release that ran before the last update, and the databases as they were when it updated. Asks first.",
   ),
+);
+
+const runFlag = Flag.String("run").pipe(
+  Flag.withDescription(
+    "Carry out the update a client asked for, which the server recorded as this run, and record each stage and how it ended. The server starts this itself; it needs --version, and stops bots' work only if the client said so.",
+  ),
+  Flag.optional,
 );
 
 const LOG = "Read why with `journalctl --user -u j3-bots -n 100`.";
@@ -105,26 +123,92 @@ const unrecorded = (recording: Option.Option<string>, to: string) =>
 const failure = (step: StepFailed) =>
   /[.!?]$/.test(step.reason) ? step.reason : `${step.reason}.`;
 
-const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<string>, yes: boolean) {
-  const result = yield* userFacing(
-    update({
-      version,
-      confirm: (count) =>
-        yes ? Effect.succeed(true) : ask(`${bots(count)}, and the update stops it. Update now?`),
-      say: (line) => Console.log(line),
-    }),
-  );
+/** How often a download's progress is written to its run, at most. */
+const PROGRESS_EVERY = Duration.seconds(1);
+
+/**
+ * What records each stage of run `id` in `home`: every stage as it comes,
+ * and a download's bytes at most once a `PROGRESS_EVERY`, and when it ends.
+ */
+const recordStages = Effect.fnUntraced(function* (home: string, id: string) {
+  const written = yield* Ref.make(0);
+  return (stage: UpdateStage): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path> =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      if (
+        stage._tag === "downloading" &&
+        stage.receivedBytes > 0 &&
+        stage.receivedBytes !== stage.totalBytes &&
+        now - (yield* Ref.get(written)) < Duration.toMillis(PROGRESS_EVERY)
+      ) {
+        return;
+      }
+      yield* Ref.set(written, now);
+      yield* advanceRun(home, id, stage).pipe(Effect.ignore);
+    });
+});
+
+/** What a step that failed means for a client: the new release never became ready, or another step failed. */
+const failureOf = (step: StepFailed): UpdateFailure =>
+  step.step === "start-new" || step.step === "await-new" ? "health-check" : "other";
+
+/** Why an update stopped before it changed anything, for a client. */
+const refusalOf = (error: Effect.Error<ReturnType<typeof update>>): UpdateFailure => {
+  switch (error._tag) {
+    case "ReleaseNotFetched":
+      switch (error.reason) {
+        case "checksum":
+        case "unsigned":
+          return "verification";
+        case "latest-unreadable":
+        case "latest-not-stable":
+        case "checksums-unreadable":
+        case "no-archive":
+        case "download":
+          return "download";
+        default:
+          return "other";
+      }
+    case "UpdateRefused":
+      return error.reason === "engine-fetch"
+        ? "engine"
+        : error.reason === "disk"
+          ? "disk"
+          : "other";
+    default:
+      return "other";
+  }
+};
+
+/** What an update came to: what the operator reads, and how a client's run of it ended. */
+interface Report {
+  readonly ending: Ending;
+  readonly text: string;
+}
+
+/** The report of an update that ran to `result`. */
+const reportOf = (result: UpdateResult): Report => {
   switch (result._tag) {
     case "current":
-      return yield* Console.log(`J3 Bots ${result.version} is installed already.`);
+      return {
+        ending: { _tag: "done" },
+        text: `J3 Bots ${result.version} is installed already.`,
+      };
     case "repointed":
-      return yield* Console.log(
-        `The service runs J3 Bots ${result.version} already; the j3-bots command now runs it too.`,
-      );
+      return {
+        ending: { _tag: "done" },
+        text: `The service runs J3 Bots ${result.version} already; the j3-bots command now runs it too.`,
+      };
     case "declined":
-      return yield* refuse(
-        "Bots have work running, which the update would stop, so nothing was changed. Run this again once it is done, or with --yes to stop it.",
-      );
+      return {
+        ending: {
+          _tag: "rolled-back",
+          reason: "other",
+          detail:
+            "Bots had work running when the update was ready to stop the service, and it was not to stop it, so nothing was changed. Update again once the work is done, or let the update stop it.",
+        },
+        text: "Bots have work running, which the update would stop, so nothing was changed. Run this again once it is done, or with --yes to stop it.",
+      };
     case "switched":
       break;
   }
@@ -139,17 +223,24 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
   });
   switch (outcome._tag) {
     case "cut-off-rolled-back":
-      return yield* Console.log(
-        [
+      return {
+        ending: { _tag: "done" },
+        text: [
           ...cutOff,
           result.service
             ? `J3 Bots ${from} runs again, and its engine is ready.`
             : `J3 Bots ${from} is installed again. Start the server with \`j3-bots serve\`.`,
         ].join("\n"),
-      );
-    case "cut-off-rollback-failed":
-      return yield* refuse(
-        [
+      };
+    case "cut-off-rollback-failed": {
+      const reason = `Rolling back an earlier update that was cut off, to J3 Bots ${from}, failed: ${failure(outcome.rollback)}`;
+      const unfinished =
+        outcome.rollback.step === "mark" || outcome.rollback.step === "adopt"
+          ? []
+          : unfinishedRollback(outcome.rollback);
+      return {
+        ending: { _tag: "failed", reason: "other", detail: reason },
+        text: [
           ...Option.match(result.interrupted, {
             onNone: () => [],
             onSome: (release) => [
@@ -158,12 +249,13 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
           }),
           `Rolling it back to J3 Bots ${from} failed: ${failure(outcome.rollback)}`,
           `The databases as they were before it are in ${outcome.snapshot.folder}.`,
-          ...(outcome.rollback.step === "mark" || outcome.rollback.step === "adopt"
-            ? [`\`j3-bots update --version ${to}\` tries again.`]
-            : unfinishedRollback(outcome.rollback)),
+          ...(unfinished.length > 0
+            ? unfinished
+            : [`\`j3-bots update --version ${to}\` tries again.`]),
           LOG,
         ].join("\n"),
-      );
+      };
+    }
     case "updated": {
       const lines = [
         ...cutOff,
@@ -181,11 +273,16 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
         lines.push(`Removing older releases and snapshots failed: ${result.pruning.value}`);
       }
       lines.push(...unrecorded(result.recording, to));
-      return yield* Console.log(lines.join("\n"));
+      return { ending: { _tag: "done" }, text: lines.join("\n") };
     }
     case "rolled-back":
-      return yield* refuse(
-        [
+      return {
+        ending: {
+          _tag: "rolled-back",
+          reason: failureOf(outcome.failed),
+          detail: failure(outcome.failed),
+        },
+        text: [
           ...cutOff,
           `The update to J3 Bots ${to} did not finish: ${failure(outcome.failed)}`,
           ...Option.match(outcome.restored, {
@@ -201,10 +298,19 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
             ],
           }),
         ].join("\n"),
-      );
-    case "rollback-failed":
-      return yield* refuse(
-        [
+      };
+    case "rollback-failed": {
+      const unfinished = Option.match(outcome.snapshot, {
+        onNone: () => [],
+        onSome: () => unfinishedRollback(outcome.rollback),
+      });
+      return {
+        ending: {
+          _tag: "failed",
+          reason: failureOf(outcome.failed),
+          detail: `The update to J3 Bots ${to} did not finish: ${failure(outcome.failed)} Bringing J3 Bots ${from} back failed too: ${failure(outcome.rollback)}`,
+        },
+        text: [
           ...cutOff,
           `The update to J3 Bots ${to} did not finish: ${failure(outcome.failed)}`,
           `Bringing J3 Bots ${from} back failed too: ${failure(outcome.rollback)}`,
@@ -212,13 +318,116 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
             onNone: () => ["The databases were not changed."],
             onSome: (snapshot) => [
               `The databases as they were before the update are in ${snapshot.folder}.`,
-              ...unfinishedRollback(outcome.rollback),
+              ...unfinished,
             ],
           }),
           LOG,
         ].join("\n"),
-      );
+      };
+    }
   }
+};
+
+/**
+ * The run `id` a client asked for, recorded in the home as underway to
+ * `version`: what `--run` carries out, and nothing else.
+ */
+const clientRun = Effect.fn("update.clientRun")(function* (
+  id: string,
+  version: Option.Option<string>,
+) {
+  const home = yield* ServerConfig.resolveHome;
+  const recorded = yield* readRun(home);
+  if (recorded._tag !== "recorded" || recorded.run.id !== id || !isUnderway(recorded.run)) {
+    return yield* refuse(`${home} records no update underway as ${id}, so nothing was changed.`);
+  }
+  const { run } = recorded;
+  if (
+    !Option.contains(
+      Option.map(version, (wanted) => wanted.replace(/^v/, "")),
+      run.to,
+    )
+  ) {
+    return yield* refuse(
+      `The update ${id} installs J3 Bots ${run.to}; --version must name it. Nothing was changed.`,
+    );
+  }
+  return { home, id, stopWork: run.stopWork, from: run.from };
+});
+
+/**
+ * Whether the update may stop the work bots have running, `count` of them when
+ * the server could say, asked once
+ * it is ready to stop the service. A client's run answers with what the
+ * client sent, whatever else was given: work begun after it asked is stopped
+ * only if it said so. Otherwise `--yes` answers, or the operator does.
+ */
+export const stopsWork =
+  <E, R>(
+    tracked: Option.Option<{ readonly stopWork: boolean }>,
+    yes: boolean,
+    ask: (count: Option.Option<number>) => Effect.Effect<boolean, E, R>,
+  ) =>
+  (count: Option.Option<number>): Effect.Effect<boolean, E, R> =>
+    Option.match(tracked, {
+      onSome: ({ stopWork }) => Effect.succeed(stopWork),
+      onNone: () => (yes ? Effect.succeed(true) : ask(count)),
+    });
+
+/**
+ * Runs an update and reports it. With `run`, the update is the one a client
+ * asked for (`../update/UpdateRuns.ts`): only the run the home records as
+ * underway, to exactly `version`, is carried out, and its record is told each
+ * stage and how it ended.
+ */
+const runUpdate = Effect.fn("update.run")(function* (
+  version: Option.Option<string>,
+  yes: boolean,
+  run: Option.Option<string>,
+) {
+  const tracked = Option.isSome(run)
+    ? Option.some(yield* clientRun(run.value, version))
+    : Option.none();
+  // A client reads how it ended away from this output, which goes to the unit's journal.
+  const end = (ending: Ending) =>
+    Option.match(tracked, {
+      onNone: () => Effect.void,
+      onSome: ({ home, id }) =>
+        endRun(
+          home,
+          id,
+          ending._tag === "done"
+            ? ending
+            : {
+                ...ending,
+                detail: `${ending.detail} What the update printed is in \`journalctl --user -u ${updateUnit(id)}\`.`,
+              },
+        ).pipe(Effect.ignore),
+    });
+  const progress = Option.isSome(tracked)
+    ? yield* recordStages(tracked.value.home, tracked.value.id)
+    : () => Effect.void;
+  const check = signatureCheck(yield* trustedReleaseKeys);
+  const result = yield* update({
+    version,
+    confirm: stopsWork(tracked, yes, (count) =>
+      ask(`${bots(count)}, and the update stops it. Update now?`),
+    ),
+    say: (line) => Console.log(line),
+    progress,
+    check,
+    from: Option.map(tracked, ({ from }) => from),
+  }).pipe(
+    // Nothing was changed: the release before runs, on the data as it was.
+    Effect.tapError((error) =>
+      end({ _tag: "rolled-back", reason: refusalOf(error), detail: error.message }),
+    ),
+    userFacing,
+  );
+  const report = reportOf(result);
+  yield* end(report.ending);
+  if (report.ending._tag === "done") return yield* Console.log(report.text);
+  return yield* refuse(report.text);
 });
 
 const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
@@ -270,13 +479,17 @@ export const updateCommand = Command.make("update", {
   version: versionFlag,
   yes: yesFlag,
   rollback: rollbackFlag,
+  run: runFlag,
 }).pipe(
   Command.withDescription(
     "Update J3 Bots, installed with install.sh, to the latest release or to --version. It copies the databases first, and if the new release does not start, puts them and the release before back by itself. --rollback puts them back on request.",
   ),
-  Command.withHandler(({ version, yes, rollback }) =>
+  Command.withHandler(({ version, yes, rollback, run }) =>
     Effect.gen(function* () {
-      if (!rollback) return yield* runUpdate(version, yes);
+      if (!rollback) return yield* runUpdate(version, yes, run);
+      if (Option.isSome(run)) {
+        return yield* refuse("--rollback is asked for on the server's machine; it takes no --run.");
+      }
       if (Option.isSome(version)) {
         return yield* refuse(
           "--rollback puts back the release before the last update; it takes no --version.",

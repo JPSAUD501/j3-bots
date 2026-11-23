@@ -148,6 +148,26 @@ A release refuses a database a newer release migrated, naming the migration it d
 
 An update records in `~/.j3-bots/state/runtime.json` the release that runs: before the new release starts, the update itself, pending, with its snapshot; then the new release once it is ready, or after a rollback the release rolled back to, and the one it rolled back from. The service does not read it: the unit names the release it runs. An update cut off before the new release was recorded, by a power cut or a failure to write the file, stays pending: `j3-bots update --version <new>` carries it on from the release before, with the same snapshot, and records it. An update to any other release first rolls the cut-off one back to the release before, with that snapshot, and says so, then updates from there. A rollback whose record cannot be written stops with its mark kept: `j3-bots update --rollback` starts the earlier release again and records it, without copying the snapshot again.
 
+### From a client
+
+A client can update the server too: it offers the release the server found ([Server: release feed](../architecture/server.md#release-feed)), and the update is this same `j3-bots update`, run for you ([Server: updating from a client](../architecture/server.md#updating-from-a-client)). It asks before it stops bots' work, as the command does. The client follows it through the restart, and every client then shows how it ended: the new release runs, or it rolled back and why, or the rollback itself failed and `j3-bots update --rollback` finishes it.
+
+It needs what the command needs, and two things more, since the update stops the service it was asked through and so runs beside it, as a unit of your systemd user manager:
+
+- **The service started the server.** A server you run with `j3-bots serve` is updated by hand.
+- **`systemd-run`**, which comes with systemd.
+- **Lingering**, so your user manager, and the update with it, carries on when you log out: `sudo loginctl enable-linger "$(id -un)"`, once. Without it, a client says the server cannot update itself and shows that command.
+
+The server the desktop app runs is updated with the app ([above](#the-server-the-desktop-app-runs)); a client says so instead of offering an update.
+
+Each update runs as `j3-bots-update-<id>.service`, as you, with your service's environment, `J3_RELEASE_BASE_URL` and `J3_RELEASE_PUBLIC_KEY` included, and is removed when it ends. What it printed stays in the journal:
+
+```sh
+journalctl --user -u 'j3-bots-update-*'
+```
+
+Where it stands, and how the last one ended, are in `~/.j3-bots/state/update.json`, which the server reads after the restart. Only one update runs at a time, from a client or a shell: while one runs, the other is refused.
+
 ### From a checkout
 
 A checkout keeps no snapshot: [back up](#back-up) first.
