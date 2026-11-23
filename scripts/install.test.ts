@@ -176,7 +176,12 @@ describe("install.sh", () => {
   it("downloads a nightly from its tag, which is its version with no v", async () => {
     const signer = keyPair();
     const site = await mirror(release(signer, {}, NIGHTLY));
-    const result = await install(site.url, { J3_RELEASE_PUBLIC_KEY: signer.publicKey }, {}, NIGHTLY);
+    const result = await install(
+      site.url,
+      { J3_RELEASE_PUBLIC_KEY: signer.publicKey },
+      {},
+      NIGHTLY,
+    );
     expect(result.code, result.output).toBe(0);
     expect(installed(result.home, NIGHTLY)).toBe(true);
     expect(site.served).toEqual([
