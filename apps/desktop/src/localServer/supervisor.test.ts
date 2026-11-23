@@ -8,7 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import type { AdminChannel, StatusReply } from "./adminChannel.ts";
+import { type AdminChannel, AdminRefused, type StatusReply } from "./adminChannel.ts";
 import * as Supervisor from "./supervisor.ts";
 
 /** A server process that does what the test tells it, and records what was done to it. */
@@ -17,8 +17,16 @@ const fakeServer = (
   options: {
     /** The pid its status answers with: its own unless told otherwise. */
     readonly statusPid?: number;
-    /** Whether it stops when asked on its admin channel. */
-    readonly stopsWhenAsked?: boolean;
+    /** Whether its status answers at all; a server still starting does not. */
+    readonly answers?: boolean;
+    /**
+     * What a `/shutdown` on its admin channel does: stop it (the default),
+     * nothing (`ignored`), never answer (`stalls`), or fail at once, its pipe
+     * closed (`unreachable`).
+     */
+    readonly whenAsked?: "stops" | "ignored" | "stalls" | "unreachable";
+    /** Whether the system has a graceful signal for it: not on Windows. */
+    readonly graceful?: boolean;
     readonly logTail?: string;
   } = {},
 ) => {
@@ -30,12 +38,23 @@ const fakeServer = (
     pid: options.statusPid ?? pid,
     listener: { port: 3747 },
   };
+  const whenAsked = options.whenAsked ?? "stops";
   const admin: AdminChannel = {
-    status: () => Effect.succeed(status),
+    status: () => (options.answers === false ? Effect.never : Effect.succeed(status)),
     localDevice: () => Effect.die("not used here"),
-    shutdown: Effect.sync(() => {
+    shutdown: Effect.suspend(() => {
       done.push("shutdown");
-      if (options.stopsWhenAsked ?? true) end({ code: 0, signal: null });
+      switch (whenAsked) {
+        case "stops":
+          end({ code: 0, signal: null });
+          return Effect.void;
+        case "ignored":
+          return Effect.void;
+        case "stalls":
+          return Effect.never;
+        case "unreachable":
+          return Effect.fail(new AdminRefused({ route: "/shutdown", status: 0 }));
+      }
     }),
   };
   const server: Supervisor.RunningServer = {
@@ -43,7 +62,10 @@ const fakeServer = (
     admin,
     exited: Deferred.await(exited),
     logTail: Effect.succeed(options.logTail ?? ""),
-    terminate: Effect.sync(() => done.push("terminate")),
+    terminate: Effect.sync(() => {
+      done.push("terminate");
+      return options.graceful ?? true;
+    }),
     kill: Effect.sync(() => {
       done.push("kill");
       end({ code: null, signal: "SIGKILL" });
@@ -143,30 +165,32 @@ describe("the local server's supervisor", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("never starts again a server that refused to start, and shows its message", () =>
-    Effect.gen(function* () {
-      const refusing = fakeServer(401, {
-        logTail:
-          '{"level":"INFO","message":"starting"}\nOther users on this machine can open /data. Run `chmod 700 /data`.\n',
-      });
-      const fixed = fakeServer(402);
-      const { supervisor, launches } = yield* supervising([refusing, fixed]);
-      yield* supervisor.start;
-      yield* reach(supervisor, isReady);
-      refusing.crash(Supervisor.START_REFUSED);
-      const failed = yield* reach(supervisor, (state) => state.state === "failed");
-      assert.strictEqual(
-        failed.reason,
-        "Other users on this machine can open /data. Run `chmod 700 /data`.",
-      );
-      yield* TestClock.adjust(Duration.minutes(5));
-      assert.strictEqual(launches(), 1);
-      // The operator repaired it, and tries again.
-      yield* supervisor.retry;
-      yield* reach(supervisor, isReady);
-      assert.strictEqual(launches(), 2);
-    }).pipe(Effect.scoped),
-  );
+  for (const refusal of [
+    "Other users on this machine can open /data. Run `chmod 700 /data`.",
+    'Port 3747, for the server, is in use by another program. Stop that program, or set "port" in /data/config.json to a free port.',
+  ]) {
+    it.effect(`never starts again a server that refused to start: ${refusal.slice(0, 24)}…`, () =>
+      Effect.gen(function* () {
+        const refusing = fakeServer(401, {
+          logTail: `{"level":"INFO","message":"starting"}\n${refusal}\n`,
+        });
+        const fixed = fakeServer(402);
+        const { supervisor, launches } = yield* supervising([refusing, fixed]);
+        yield* supervisor.start;
+        yield* reach(supervisor, isReady);
+        refusing.crash(Supervisor.START_REFUSED);
+        const failed = yield* reach(supervisor, (state) => state.state === "failed");
+        assert.strictEqual(failed.reason, refusal);
+        yield* TestClock.adjust(Duration.minutes(5));
+        assert.strictEqual(launches(), 1);
+        assert.strictEqual((yield* supervisor.state).state, "failed");
+        // The operator repaired it, and tries again.
+        yield* supervisor.retry;
+        yield* reach(supervisor, isReady);
+        assert.strictEqual(launches(), 2);
+      }).pipe(Effect.scoped),
+    );
+  }
 
   it.effect("never starts again a launch the app refused, such as a home others can open", () =>
     Effect.gen(function* () {
@@ -214,7 +238,7 @@ describe("the local server's supervisor", () => {
 
   it.effect("kills a server that has not stopped thirty seconds after it was asked", () =>
     Effect.gen(function* () {
-      const stubborn = fakeServer(801, { stopsWhenAsked: false });
+      const stubborn = fakeServer(801, { whenAsked: "ignored" });
       const { supervisor } = yield* supervising([stubborn]);
       yield* supervisor.start;
       yield* reach(supervisor, isReady);
@@ -224,6 +248,41 @@ describe("the local server's supervisor", () => {
       yield* TestClock.adjust(Duration.seconds(1));
       yield* Fiber.join(stopping);
       assert.deepStrictEqual(stubborn.done, ["shutdown", "kill"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "kills a server thirty seconds after the stop began, when asking it never answers",
+    () =>
+      Effect.gen(function* () {
+        const stalled = fakeServer(811, { whenAsked: "stalls" });
+        const { supervisor } = yield* supervising([stalled]);
+        yield* supervisor.start;
+        yield* reach(supervisor, isReady);
+        const stopping = yield* Effect.forkChild(supervisor.stop);
+        yield* TestClock.adjust(Duration.seconds(29));
+        assert.deepStrictEqual(stalled.done, ["shutdown"]);
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Fiber.join(stopping);
+        assert.deepStrictEqual(stalled.done, ["shutdown", "kill"]);
+        assert.strictEqual((yield* supervisor.state).state, "stopped");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("kills at once a server still starting that it has no way to ask (Windows)", () =>
+    Effect.gen(function* () {
+      const starting = fakeServer(821, {
+        answers: false,
+        whenAsked: "unreachable",
+        graceful: false,
+      });
+      const { supervisor, launches } = yield* supervising([starting]);
+      yield* supervisor.start;
+      while (launches() === 0) yield* Effect.yieldNow;
+      // No clock moves: the stop must not wait out a deadline.
+      yield* supervisor.stop;
+      assert.deepStrictEqual(starting.done, ["shutdown", "terminate", "kill"]);
+      assert.strictEqual((yield* supervisor.state).state, "stopped");
     }).pipe(Effect.scoped),
   );
 

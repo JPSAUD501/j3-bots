@@ -34,8 +34,11 @@ export interface RunningServer {
   readonly exited: Effect.Effect<ServerExit>;
   /** The last lines this start of it wrote to its log. */
   readonly logTail: Effect.Effect<string>;
-  /** Asks the system to end it gracefully, where it can (SIGTERM on Unix). */
-  readonly terminate: Effect.Effect<void>;
+  /**
+   * Asks the system to end it gracefully, where there is a way to (SIGTERM on
+   * Unix): whether it could ask. Windows has none.
+   */
+  readonly terminate: Effect.Effect<boolean>;
   /** Ends it, and what it started, at once. */
   readonly kill: Effect.Effect<void>;
 }
@@ -161,15 +164,24 @@ export interface Supervisor {
 }
 
 /**
- * Stops `server`: asks it on its admin channel, or, where it cannot be asked,
- * by the system's graceful signal; kills it if it has not stopped by
- * `STOP_DEADLINE`.
+ * Stops `server`: asks it on its admin channel, or, where it cannot be asked
+ * there, by the system's graceful signal, and kills it if it has not stopped
+ * `STOP_DEADLINE` after the stop began, however long the asking took. Where
+ * it can be asked neither way (Windows, its pipe already closed), it is
+ * killed at once.
  */
 const stopServer = Effect.fn("Supervisor.stopServer")(function* (server: RunningServer) {
-  yield* server.admin.shutdown.pipe(Effect.catch(() => server.terminate));
-  const stopped = yield* server.exited.pipe(Effect.timeoutOption(STOP_DEADLINE));
-  if (Option.isNone(stopped)) {
-    yield* Effect.logWarning("The local server did not stop in time, so it was killed");
+  const stopped = yield* Effect.gen(function* () {
+    const asked = yield* server.admin.shutdown.pipe(
+      Effect.as(true),
+      Effect.catch(() => server.terminate),
+    );
+    if (!asked) return false;
+    yield* server.exited;
+    return true;
+  }).pipe(Effect.timeoutOption(STOP_DEADLINE), Effect.map(Option.getOrElse(() => false)));
+  if (!stopped) {
+    yield* Effect.logWarning("The local server did not stop when asked, so it was killed");
     yield* server.kill;
     yield* server.exited.pipe(Effect.timeoutOption(Duration.seconds(5)));
   }

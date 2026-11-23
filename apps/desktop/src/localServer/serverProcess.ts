@@ -162,7 +162,9 @@ export const launch = (spec: LaunchSpec): Effect.Effect<RunningServer, LaunchFai
       terminate: Effect.sync(() => {
         // Windows has no signal a process can handle: there, the admin
         // channel's `/shutdown` is the only graceful stop.
-        if (spec.platform !== "win32") child.kill("SIGTERM");
+        if (spec.platform === "win32") return false;
+        child.kill("SIGTERM");
+        return true;
       }),
       kill: killTree(pid, spec.platform),
     } satisfies RunningServer;
