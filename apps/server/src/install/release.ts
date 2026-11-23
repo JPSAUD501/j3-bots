@@ -25,6 +25,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { RELEASE_MANIFEST, ReleaseManifest } from "../installation.ts";
 import { checkOwnFolder, VERSIONS } from "./layout.ts";
+import { onlyToReleaseHosts } from "../releases/hosts.ts";
 
 // A release of J3 Bots from its releases page, found, downloaded and checked
 // as `scripts/install.sh` does (docs/decisions/0015-a-release-is-a-self-contained-archive.md),
@@ -114,7 +115,7 @@ export class ReleaseNotFetched extends Schema.TaggedError<ReleaseNotFetched>()(
 
 /** The latest stable release on the releases page at `base`. */
 const latestVersion = Effect.fn("release.latestVersion")(function* (base: string) {
-  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
+  const client = (yield* HttpClient.HttpClient).pipe(onlyToReleaseHosts([base]));
   const latest = yield* client
     .execute(
       HttpClientRequest.get(`${base}/latest`).pipe(
@@ -214,7 +215,8 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(opti
   const download = `${base}/download/${releaseTag(version)}`;
   const stem = `j3-bots-${version}-${platform}`;
   const archive = `${stem}.tar.gz`;
-  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
+  // Only to the releases page and where it sends downloads: a redirect elsewhere is refused.
+  const client = (yield* HttpClient.HttpClient).pipe(onlyToReleaseHosts([base]));
   const get = (file: string) =>
     client
       .execute(HttpClientRequest.get(`${download}/${file}`))
