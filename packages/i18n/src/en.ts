@@ -1427,6 +1427,7 @@ export const en = {
     "Enter the issuer as an https:// address, as the service's guide gives it.",
   "connect.redirect": "Redirect address",
   "connect.redirect.hint": "If the app asks where sign-ins return, add this address.",
+  "connect.redirect.copy": "Copy the redirect address",
   "connect.clientId": "Client ID",
   "connect.clientSecret": "Client secret",
   "connect.client.hint": "From the app you registered at the service for J3 Bots.",

@@ -21,8 +21,9 @@ import type {
   ListingRef,
 } from "@j3-bots/contracts";
 import { ExternalLinkIcon } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useI18n } from "../../app/context";
+import { CommandLine } from "../CommandLine";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm";
 import { SkeletonRows } from "../ui/skeleton";
@@ -103,6 +104,32 @@ export function ListingPage({
           </PageSection>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * The address to register on the operator's app, in full, to copy: a field
+ * would cut it short.
+ */
+function RedirectAddress({ address }: { address: string }) {
+  const { t } = useI18n();
+  const labelId = useId();
+  const hintId = useId();
+  return (
+    <div
+      role="group"
+      aria-labelledby={labelId}
+      aria-describedby={hintId}
+      className="flex flex-col gap-1"
+    >
+      <p id={labelId} className="text-xs">
+        {t("connect.redirect")}
+      </p>
+      <CommandLine command={address} copyLabel={t("connect.redirect.copy")} />
+      <p id={hintId} className="text-xs text-muted-foreground">
+        {t("connect.redirect.hint")}
+      </p>
     </div>
   );
 }
@@ -229,14 +256,7 @@ function ConnectForm({
       )}
       {ownApp && (
         <>
-          {redirect !== null && (
-            <LineField
-              label={t("connect.redirect")}
-              hint={t("connect.redirect.hint")}
-              value={redirect}
-              mono
-            />
-          )}
+          {redirect !== null && <RedirectAddress address={redirect} />}
           {knownIssuer === null && (
             <LineField
               label={t("connect.issuer")}

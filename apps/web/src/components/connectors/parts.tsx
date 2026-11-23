@@ -267,8 +267,7 @@ export function LineField({
   hint?: string | null | undefined;
   problem?: string | null | undefined;
   value: string;
-  /** Without it the field only shows its value, to read or copy. */
-  onChange?: (value: string) => void;
+  onChange: (value: string) => void;
   type?: "text" | "password" | "url";
   placeholder?: string | undefined;
   readOnly?: boolean;
@@ -282,9 +281,9 @@ export function LineField({
           {...control}
           type={input.type ?? "text"}
           value={input.value}
-          onChange={(event) => input.onChange?.(event.currentTarget.value)}
+          onChange={(event) => input.onChange(event.currentTarget.value)}
           placeholder={input.placeholder}
-          readOnly={input.readOnly === true || input.onChange === undefined}
+          readOnly={input.readOnly}
           autoFocus={input.autoFocus}
           autoComplete="off"
           spellCheck={false}
