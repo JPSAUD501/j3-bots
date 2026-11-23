@@ -156,13 +156,21 @@ export function RowLift({
   const scaled = useAnimatedStyle(() => ({
     transform: [{ scale: 1 + (lift.scale - 1) * raised.get() }],
   }));
-  const ground = useAnimatedStyle(() => ({ opacity: raised.get() }));
+  // The ground is whole as soon as the row lifts, so the rows it passes never show through it;
+  // only its shadow comes and goes with the lift.
+  const ground = useAnimatedStyle(() => ({ opacity: raised.get() > 0.01 ? 1 : 0 }));
+  const shadow = useAnimatedStyle(() => ({ opacity: raised.get() }));
   return (
     <Animated.View style={scaled}>
       <Animated.View
         pointerEvents="none"
+        className="absolute inset-y-0 inset-x-2 rounded-lg"
+        style={[{ boxShadow: shadows.lift[theme] }, shadow]}
+      />
+      <Animated.View
+        pointerEvents="none"
         className={`absolute inset-y-0 inset-x-2 rounded-lg ${selected ? "bg-muted" : "bg-background"}`}
-        style={[{ boxShadow: shadows.lift[theme] }, ground]}
+        style={ground}
       />
       {children(avatar)}
     </Animated.View>

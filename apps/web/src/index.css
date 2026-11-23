@@ -92,7 +92,7 @@
 /*
  * A roster row that changes place (components/ReorderList.tsx) lifts while it travels: a little
  * larger, over an opaque ground with the lift shadow, above the rows it passes. Its travel is a
- * transform the list plays; the lift is `scale` and an opacity, so neither lays anything out.
+ * transform the list plays; the lift is `scale` and opacities, so neither lays anything out.
  * Under reduced motion no row is ever lifted.
  */
 @layer components {
@@ -102,17 +102,27 @@
     transition: scale var(--duration-soft) var(--ease-soft);
   }
 
-  .reorder-row::before {
+  /* The ground under a lifted row: opaque at once, so the rows it passes never show through it. */
+  .reorder-row::before,
+  .reorder-row::after {
     content: "";
     position: absolute;
     inset: 0;
-    z-index: -1;
     border-radius: var(--radius-lg);
-    background: var(--sidebar);
-    box-shadow: var(--elevation-lift);
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--duration-soft) var(--ease-out);
+  }
+
+  .reorder-row::before {
+    z-index: -1;
+    background: var(--sidebar);
+  }
+
+  /* Its shadow, which fades in and out. */
+  .reorder-row::after {
+    z-index: -2;
+    box-shadow: var(--elevation-lift);
   }
 
   .reorder-row[data-lifted] {
@@ -121,6 +131,11 @@
   }
 
   .reorder-row[data-lifted]::before {
+    opacity: 1;
+    transition-duration: 0s;
+  }
+
+  .reorder-row[data-lifted]::after {
     opacity: 1;
   }
 }
