@@ -33,7 +33,9 @@ export const layer = Layer.effect(
     const current = yield* SubscriptionRef.make(yield* render);
     return BasePrompt.of({
       text: SubscriptionRef.changes(current).pipe(Stream.changes),
-      refresh: Effect.flatMap(render, (text) => SubscriptionRef.set(current, text)),
+      // The read holds the ref's permit, so two refreshes close together
+      // leave the later name's text.
+      refresh: SubscriptionRef.updateEffect(current, () => render),
     });
   }),
 );

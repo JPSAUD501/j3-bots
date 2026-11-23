@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  type Budgets,
   type CommandError,
   type CommandId,
   Invalid,
   keepsUtcClock,
   NotificationSettings,
-  type NotificationSettingsChange,
   Settings,
+  type SettingsChange,
   type TimeZone,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -24,12 +23,7 @@ import { BasePrompt } from "./BasePrompt.ts";
 import { SettingsStore } from "./SettingsStore.ts";
 
 /** The changes `settings.update` may ask for. */
-export interface SettingsChanges {
-  readonly operatorName?: string | null;
-  readonly timeZone?: TimeZone;
-  readonly budgets?: Budgets;
-  readonly notifications?: NotificationSettingsChange;
-}
+export type SettingsChanges = SettingsChange;
 
 /**
  * The settings a `settings.update` receipt holds. A receipt written before
@@ -100,8 +94,12 @@ export const layer = Layer.effect(
     const basePrompt = yield* BasePrompt;
     const current = yield* SubscriptionRef.make(yield* store.get);
 
-    /** Tells `changes`' subscribers the settings as committed now. */
-    const publish = Effect.flatMap(store.get, (settings) => SubscriptionRef.set(current, settings));
+    /**
+     * Tells `changes`' subscribers the settings as committed now. The read
+     * holds the ref's permit, so of two writes close together the later
+     * publish reads, and leaves, the later value.
+     */
+    const publish = SubscriptionRef.updateEffect(current, () => store.get);
 
     const save = Effect.fn("SettingsService.save")(function* (changes: SettingsChanges) {
       if (
