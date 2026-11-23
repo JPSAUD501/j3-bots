@@ -172,11 +172,14 @@ export const layer = Layer.effect(
         WHERE id = ${routine.id}
       `;
       yield* changes.record({ _tag: "routines", botId: routine.bot_id }, routine.id);
-      yield* Effect.logInfo("A routine's runs came due while J3 Bots was not running; it waits for its next run", {
-        routineId: routine.id,
-        missed: plan.missed,
-        nextRunAt: timeText(plan.next),
-      });
+      yield* Effect.logInfo(
+        "A routine's runs came due while J3 Bots was not running; it waits for its next run",
+        {
+          routineId: routine.id,
+          missed: plan.missed,
+          nextRunAt: timeText(plan.next),
+        },
+      );
     });
 
     /**

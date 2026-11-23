@@ -348,8 +348,7 @@ export const layer = Layer.effect(
         runCount: row.run_count,
         // Missed runs another version of the server wrote in a form this one
         // cannot read are left out.
-        missed:
-          row.missed_json === null ? null : Option.getOrNull(decodeMissed(row.missed_json)),
+        missed: row.missed_json === null ? null : Option.getOrNull(decodeMissed(row.missed_json)),
       });
     }, Effect.orDie);
 

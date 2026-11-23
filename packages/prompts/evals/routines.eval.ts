@@ -154,8 +154,7 @@ const reminderWake: RoutineWake = {
 /** Where the evening briefing reads the user's appointments, listed under each date. */
 const AGENDA_FILE = "files/agenda.md";
 const AGENDA_PATH = `${HOME}/${AGENDA_FILE}`;
-const BRIEFING =
-  `Read ${AGENDA_FILE}, which lists your user's appointments under each date, and send your user one short message listing what is on their calendar tomorrow. If nothing is listed for tomorrow, say so.`;
+const BRIEFING = `Read ${AGENDA_FILE}, which lists your user's appointments under each date, and send your user one short message listing what is on their calendar tomorrow. If nothing is listed for tomorrow, say so.`;
 
 /**
  * The evening briefing, due at 23:00 yesterday, runs at 01:30: J3 Bots was not

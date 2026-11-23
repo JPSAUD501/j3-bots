@@ -69,14 +69,20 @@ describe("routineLines", () => {
   it("says how many runs it missed while J3 Bots wasn't running, before its next run", () => {
     // 08:00 in São Paulo, today and tomorrow.
     const missed = { since: at("2026-11-20T11:00:00Z"), until: at("2026-11-20T11:00:00Z") };
-    const once = routine({ nextRunAt: at("2026-11-21T11:00:00Z"), missed: { ...missed, count: 1 } });
+    const once = routine({
+      nextRunAt: at("2026-11-21T11:00:00Z"),
+      missed: { ...missed, count: 1 },
+    });
     expect(plain(routineLines(once, en).status ?? "")).toBe(
       "Missed 1 run while J3 Bots wasn’t running · Next run tomorrow at 8:00 AM",
     );
     expect(plain(routineLines(once, pt).status ?? "")).toBe(
       "Perdeu 1 execução enquanto o J3 Bots não estava rodando · Próxima execução amanhã às 08:00",
     );
-    const three = routine({ nextRunAt: at("2026-11-21T11:00:00Z"), missed: { ...missed, count: 3 } });
+    const three = routine({
+      nextRunAt: at("2026-11-21T11:00:00Z"),
+      missed: { ...missed, count: 3 },
+    });
     expect(plain(routineLines(three, en).status ?? "")).toMatch(
       /^Missed 3 runs while J3 Bots wasn’t running · Next run /,
     );

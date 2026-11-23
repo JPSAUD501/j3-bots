@@ -134,7 +134,9 @@ const lastAtOrBefore = (compiled: Compiled, at: number) =>
     }
     return last;
   }).pipe(
-    Result.flatMap((last) => (last === undefined ? Result.fail(unreadable()) : Result.succeed(last))),
+    Result.flatMap((last) =>
+      last === undefined ? Result.fail(unreadable()) : Result.succeed(last),
+    ),
   );
 
 /**
