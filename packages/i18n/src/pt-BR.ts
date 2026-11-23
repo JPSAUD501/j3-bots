@@ -178,6 +178,8 @@ const sentences = {
 
   "file.open": "Abrir {name}",
   "file.opening": "Abrindo…",
+  "file.save": "Salvar {name}",
+  "file.viewer.close": "Fechar a imagem",
   "file.kindAndSize": "{kind} · {size}",
 
   "card.waiting": "Esperando por você",

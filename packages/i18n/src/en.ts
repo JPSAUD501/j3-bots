@@ -180,6 +180,8 @@ export const en = {
 
   "file.open": "Open {name}",
   "file.opening": "Opening…",
+  "file.save": "Save {name}",
+  "file.viewer.close": "Close the image",
   "file.kindAndSize": "{kind} · {size}",
 
   "card.waiting": "Waiting for you",

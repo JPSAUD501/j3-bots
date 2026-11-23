@@ -46,8 +46,16 @@ export {
   providerGate,
 } from "./engine.ts";
 export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";
-export { FILE_MARK, markPositions, placedMessage } from "../files/placed.ts";
-export { type FileIcon, fileIcon, fileKind } from "./files.ts";
+export {
+  FILE_MARK,
+  fittedMarks,
+  insertMarks,
+  markCount,
+  markPositions,
+  placedMessage,
+  withoutMarks,
+} from "../files/placed.ts";
+export { type FileIcon, fileIcon, fileKind, showsImage } from "./files.ts";
 export { webAddress } from "./links.ts";
 export {
   addressed,

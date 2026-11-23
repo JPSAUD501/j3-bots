@@ -19,6 +19,7 @@ import {
   useWorkSteps,
 } from "@j3-bots/client-runtime/react";
 import type {
+  Attachment,
   AvatarChoice,
   Bot,
   BotId,
@@ -72,6 +73,7 @@ import {
   type OpenedNotification,
   type RoomFormMode,
   roomStopFailed,
+  showsImage,
   templateFileName,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
@@ -93,6 +95,8 @@ import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialo
 import { Onboarding } from "../onboarding/Onboarding";
 import { cn } from "../lib/cn";
 import { EditBotDialog } from "../components/EditBotDialog";
+import { AttachmentImagesProvider } from "../components/attachmentImages";
+import { ImageViewer } from "../components/ImageViewer";
 import { MemoryViewer } from "../components/MemoryViewer";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import { NewBotDialog } from "../components/NewBotDialog";
@@ -789,6 +793,8 @@ function LiveShell({
   const [memoryEditing, setMemoryEditing] = useState(false);
   const [roomFormUnsaved, setRoomFormUnsaved] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The image a file shows over everything, opened from a conversation.
+  const [viewing, setViewing] = useState<Attachment | null>(null);
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
   // Read each time Settings opens, and on every socket while it stays open.
@@ -825,6 +831,29 @@ function LiveShell({
   const rosterChanged = (result: IntentResult<unknown>) => {
     if (result._tag === "failed" && stillPaired()) say(t("roster.changeFailed"));
   };
+  /** Shows `attachment` in `reserved`, or saves it, once downloaded; or says why it cannot. */
+  const deliverAttachment = (attachment: Attachment, reserved: Window | null) =>
+    void j3.download(attachment).then((result) => {
+      if (result._tag === "done") {
+        deliverFile(attachment, result.value.bytes, reserved);
+        return;
+      }
+      reserved?.close();
+      say(
+        result.reason === "not-found"
+          ? t("file.gone", { name: attachment.name })
+          : t("file.unreachable", { name: attachment.name }),
+      );
+    });
+  // Only the image types a page draws without running anything get here (`showsImage`).
+  const imageOf = (attachment: Attachment) =>
+    j3
+      .download(attachment)
+      .then((result) =>
+        result._tag === "done"
+          ? new Blob([result.value.bytes], { type: attachment.mediaType })
+          : null,
+      );
 
   const view: ConversationView =
     conversation.state === null
@@ -1238,21 +1267,10 @@ function LiveShell({
     openWorkFold: (entryId) => setOpenFolds((open) => new Set(open).add(entryId)),
     closeWorkFold: (entryId) =>
       setOpenFolds((open) => new Set([...open].filter((id) => id !== entryId))),
+    // An image shows here; any other file opens in its own window, or is saved.
     openAttachment: (attachment) => {
-      // Reserved now, while the click still lets the page open a window.
-      const reserved = reserveWindow(attachment);
-      j3.download(attachment).then((result) => {
-        if (result._tag === "done") {
-          deliverFile(attachment, result.value.bytes, reserved);
-          return;
-        }
-        reserved?.close();
-        say(
-          result.reason === "not-found"
-            ? t("file.gone", { name: attachment.name })
-            : t("file.unreachable", { name: attachment.name }),
-        );
-      });
+      if (showsImage(attachment)) setViewing(attachment);
+      else deliverAttachment(attachment, reserveWindow(attachment));
     },
     openHandoff: (entryId) => {
       const handoff = view.items.find((item) => item._tag === "handoff" && item.id === entryId);
@@ -1267,10 +1285,11 @@ function LiveShell({
     openConversation: (botId) => void goToBot(botId),
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
     setDraftText: j3.setDraftText,
-    attachFiles: (asked, picked) =>
+    attachFiles: (asked, picked, at) =>
       j3.attachFiles(
         asked,
         picked.map((file) => ({ name: file.name, body: file })),
+        at,
       ),
     detachFile: j3.detachFile,
     restoreDraft: j3.restoreDraft,
@@ -1407,7 +1426,14 @@ function LiveShell({
 
   return (
     <ShellSourceProvider source={{ data, intents }}>
-      {children}
+      <AttachmentImagesProvider fetch={imageOf}>
+        {children}
+        <ImageViewer
+          attachment={viewing}
+          onClose={() => setViewing(null)}
+          onSave={(attachment) => deliverAttachment(attachment, null)}
+        />
+      </AttachmentImagesProvider>
       {[...openFolds].map((foldId) => (
         <FoldReader
           key={foldId}

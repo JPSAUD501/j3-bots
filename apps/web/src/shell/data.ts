@@ -134,13 +134,18 @@ interface NewBot {
 /** What the operator can ask for from the shell. Every intent is carried out by the client runtime. */
 export interface ShellIntents extends TimelineIntents {
   readonly setRoutineEnabled: BotDetailsIntents["setRoutineEnabled"];
-  /** The draft's new text, with the mentions picked in it. */
+  /**
+   * The draft's new text, with the mentions picked in it, and the keys of the
+   * files its marks place, in their order, when that changed.
+   */
   readonly setDraftText: (
     target: EntryTarget,
     text: string,
     mentions: ReadonlyArray<DraftMention>,
+    order?: ReadonlyArray<string>,
   ) => void;
-  readonly attachFiles: (target: EntryTarget, files: ReadonlyArray<File>) => void;
+  /** Files to place at `at` in the draft's text, or after it. */
+  readonly attachFiles: (target: EntryTarget, files: ReadonlyArray<File>, at?: number) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
    * Sends the draft once, however often it is called, and clears it.
