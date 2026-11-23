@@ -14,9 +14,11 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Reactivity from "effect/reactivity/Reactivity";
@@ -35,7 +37,8 @@ import {
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { Cards } from "../turns/Cards.ts";
-import { ConnectorId, type ConnectorSecret } from "./ConnectorSecret.ts";
+import { ConnectorId, type ConnectorSecret, connectorRecordId } from "./ConnectorSecret.ts";
+import { NONCE_BYTES, sealField, unwrapDataKey, withDerivedKey } from "./crypto.ts";
 import { VAULT_FILE, Vault } from "./Vault.ts";
 
 const PASSWORD = Redacted.make("correct horse battery");
@@ -51,6 +54,30 @@ const draft = (password: string): CredentialDraft => ({
 });
 
 const idOf = (n: number) => CredentialId.make(`cred_${String(n).padStart(16, "0")}`);
+
+const CONNECTOR = ConnectorId.make("notion");
+const connectorSecret: ConnectorSecret = {
+  connectorId: CONNECTOR,
+  oauth: {
+    client: {
+      issuer: "https://auth.example",
+      registration: "dynamic",
+      clientId: "client-1",
+      clientSecret: null,
+      authMethod: "none",
+      redirectUris: ["http://127.0.0.1/oauth/callback"],
+    },
+    tokens: {
+      accessToken: Redacted.make("access-token-value"),
+      refreshToken: Redacted.make("refresh-token-value"),
+      expiresAt: null,
+      scopes: ["read"],
+      resource: "https://mcp.example/mcp",
+    },
+  },
+  headers: [{ name: "X-Api-Key", value: Redacted.make("header-value") }],
+  env: [],
+};
 
 /** The vault's status now. */
 const stateNow = Effect.gen(function* () {
@@ -82,6 +109,52 @@ const onVaultFile = <A, E>(use: (sql: SqlClient.SqlClient) => Effect.Effect<A, E
     });
     return yield* use(sql);
   }).pipe(Effect.scoped, Effect.provide(Reactivity.layer), Effect.orDie);
+
+const KeyringRow = Schema.Struct({
+  kdf_n: Schema.Int,
+  kdf_r: Schema.Int,
+  kdf_p: Schema.Int,
+  salt: Schema.String,
+  key_nonce: Schema.String,
+  wrapped_key: Schema.String,
+});
+
+/** The vault's data key, as someone who knows `password` and has the file could unwrap it. */
+const dataKeyOf = (password: Redacted.Redacted<string>) =>
+  Effect.gen(function* () {
+    const [row] = yield* onVaultFile((sql) => sql`SELECT * FROM keyring`);
+    const keyring = yield* Schema.decodeUnknownEffect(KeyringRow)(row).pipe(Effect.orDie);
+    const params = { n: keyring.kdf_n, r: keyring.kdf_r, p: keyring.kdf_p };
+    return yield* withDerivedKey(password, Buffer.from(keyring.salt, "base64"), params, (kek) =>
+      Effect.sync(() =>
+        Option.getOrThrow(
+          unwrapDataKey(kek, {
+            nonce: Buffer.from(keyring.key_nonce, "base64"),
+            sealed: Buffer.from(keyring.wrapped_key, "base64"),
+          }),
+        ),
+      ),
+    );
+  });
+
+/** Seals `plain` as a record's field under `key`, in place of the value it had. */
+const sealInto = (key: Uint8Array, recordId: string, field: string, plain: string) => {
+  const sealed = sealField(
+    key,
+    recordId,
+    field,
+    Buffer.from(plain, "utf8"),
+    crypto.getRandomValues(new Uint8Array(NONCE_BYTES)),
+  );
+  return onVaultFile(
+    (sql) => sql`
+      UPDATE record_fields
+      SET nonce = ${Buffer.from(sealed.nonce).toString("base64")},
+        sealed = ${Buffer.from(sealed.sealed).toString("base64")}
+      WHERE record_id = ${recordId} AND field = ${field}
+    `,
+  );
+};
 
 it.effect("seals a login under the master password, and reads it back only unlocked", () =>
   Effect.gen(function* () {
@@ -194,7 +267,7 @@ it.effect("refuses a sealed value moved to another login or field", () =>
     const moved = yield* Effect.exit(
       vault.reveal({ id: idOf(1), field: "password", deviceId: DEVICE }),
     );
-    assert.isTrue(Exit.hasDies(moved));
+    assert.strictEqual(refusal(moved), "vault-damaged");
 
     // Within one login: its user name's seal in its password's place.
     yield* onVaultFile(
@@ -210,9 +283,53 @@ it.effect("refuses a sealed value moved to another login or field", () =>
     const swapped = yield* Effect.exit(
       vault.reveal({ id: idOf(2), field: "password", deviceId: DEVICE }),
     );
-    assert.isTrue(Exit.hasDies(swapped));
+    assert.strictEqual(refusal(swapped), "vault-damaged");
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect("refuses a value that opens but does not read back, and shows it nowhere", () => {
+  const logged: Array<string> = [];
+  const MARKER = "plain-value-marker";
+  return Effect.gen(function* () {
+    const vault = yield* Vault;
+    yield* vault.setup(PASSWORD);
+    yield* vault.save({ id: idOf(1), draft: draft("hunter2"), allowedBots: [] });
+    yield* vault.connectorSecrets.put(connectorSecret);
+    const key = yield* dataKeyOf(PASSWORD);
+    const connector = connectorRecordId(CONNECTOR);
+    // Sealed under the vault's own key, for the right record and field, in a shape it is not.
+    yield* sealInto(key, idOf(1), "totp", JSON.stringify({ secret: MARKER }));
+    yield* sealInto(key, connector, "oauth", JSON.stringify({ accessToken: MARKER }));
+
+    const exits: Array<Exit.Exit<unknown, unknown>> = [
+      yield* Effect.exit(vault.reveal({ id: idOf(1), field: "totp", deviceId: DEVICE })),
+      yield* Effect.exit(vault.totpPreview(idOf(1))),
+      yield* Effect.exit(vault.connectorSecrets.get(CONNECTOR)),
+    ];
+    // A name too long for one, which the list reads for every login.
+    yield* sealInto(key, idOf(1), "name", `${"x".repeat(200)}${MARKER}`);
+    exits.push(yield* Effect.exit(vault.list));
+
+    for (const exit of exits) {
+      assert.strictEqual(refusal(exit), "vault-damaged");
+      if (Exit.isFailure(exit)) assert.notInclude(Cause.pretty(exit.cause), MARKER);
+    }
+    const logs = logged.join("\n");
+    assert.notInclude(logs, MARKER);
+    assert.include(logs, connector);
+  }).pipe(
+    Effect.provide(
+      Layer.merge(
+        TestDomain.layer,
+        Logger.layer([
+          Logger.map(Logger.formatJson, (line) => {
+            logged.push(line);
+          }),
+        ]),
+      ),
+    ),
+  );
+});
 
 it.effect("makes unlocking wait after repeated wrong passwords, even for the right one", () =>
   Effect.gen(function* () {
@@ -229,6 +346,67 @@ it.effect("makes unlocking wait after repeated wrong passwords, even for the rig
     yield* vault.unlock(PASSWORD);
     const status = yield* stateNow;
     assert.deepStrictEqual([status.state, status.retryAt], ["unlocked", null]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps counting wrong passwords, and waiting, across a restart", () =>
+  Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const vault = yield* Vault;
+      yield* vault.setup(PASSWORD);
+      yield* vault.lock;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+      }
+    }).pipe(Effect.provide(Domain.layer));
+    yield* Effect.gen(function* () {
+      const vault = yield* Vault;
+      assert.isNotNull((yield* stateNow).retryAt);
+      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "RateLimited");
+      yield* TestClock.adjust(Duration.seconds(30));
+      // The sixth in a row, counted from before the restart: twice the first wait.
+      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+      yield* TestClock.adjust(Duration.seconds(59));
+      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "RateLimited");
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* vault.unlock(PASSWORD);
+    }).pipe(Effect.provide(Domain.layer));
+    // A right one forgets them, across a restart too.
+    yield* Effect.gen(function* () {
+      const vault = yield* Vault;
+      assert.isNull((yield* stateNow).retryAt);
+      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+      yield* vault.unlock(PASSWORD);
+    }).pipe(Effect.provide(Domain.layer));
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect("starts counting wrong passwords over after a day without one", () =>
+  Effect.gen(function* () {
+    const vault = yield* Vault;
+    yield* vault.setup(PASSWORD);
+    yield* vault.lock;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+    }
+    yield* TestClock.adjust(Duration.hours(24));
+    assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+    assert.isNull((yield* stateNow).retryAt);
+    yield* vault.unlock(PASSWORD);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses key settings out of range without trying them or counting a failure", () =>
+  Effect.gen(function* () {
+    const vault = yield* Vault;
+    yield* vault.setup(PASSWORD);
+    yield* vault.lock;
+    yield* onVaultFile((sql) => sql`UPDATE keyring SET kdf_n = ${2 ** 24}`);
+    for (let attempt = 0; attempt < 6; attempt++) {
+      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "vault-damaged");
+    }
+    assert.isNull((yield* stateNow).retryAt);
+    assert.deepStrictEqual(yield* onVaultFile((sql) => sql`SELECT * FROM unlock_failures`), []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -255,29 +433,8 @@ it.effect("leaves a vault a newer release changed as it was, and refuses to use 
 it.effect("keeps a connector's secret sealed with the logins, and locked with them", () =>
   Effect.gen(function* () {
     const vault = yield* Vault;
-    const connectorId = ConnectorId.make("notion");
-    const secret: ConnectorSecret = {
-      connectorId,
-      oauth: {
-        client: {
-          issuer: "https://auth.example",
-          registration: "dynamic",
-          clientId: "client-1",
-          clientSecret: null,
-          authMethod: "none",
-          redirectUris: ["http://127.0.0.1/oauth/callback"],
-        },
-        tokens: {
-          accessToken: Redacted.make("access-token-value"),
-          refreshToken: Redacted.make("refresh-token-value"),
-          expiresAt: null,
-          scopes: ["read"],
-          resource: "https://mcp.example/mcp",
-        },
-      },
-      headers: [{ name: "X-Api-Key", value: Redacted.make("header-value") }],
-      env: [],
-    };
+    const connectorId = CONNECTOR;
+    const secret = connectorSecret;
     yield* vault.setup(PASSWORD);
     assert.deepStrictEqual(yield* vault.connectorSecrets.get(connectorId), Option.none());
     yield* vault.connectorSecrets.put(secret);

@@ -77,4 +77,16 @@ export default Effect.gen(function* () {
     )
   `;
   yield* sql`CREATE INDEX reveals_record ON reveals (record_id, seq)`;
+
+  // Wrong master passwords in a row, the last one's time, and until when
+  // unlocking waits, so that a restart neither resets the count nor ends the
+  // wait. No row: none since the last right one.
+  yield* sql`
+    CREATE TABLE unlock_failures (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      failures INTEGER NOT NULL CHECK (failures > 0),
+      last_at TEXT NOT NULL,
+      retry_at TEXT
+    )
+  `;
 });

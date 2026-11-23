@@ -47,6 +47,28 @@ const TAG_BYTES = 16;
 /** scrypt's memory for `params`, with room to spare: Node refuses past `maxmem`. */
 const maxmemOf = (params: KdfParams) => 128 * params.n * params.r * params.p + 32 * 1024 * 1024;
 
+/** The most memory scrypt may take for a keyring read from the file: 256 MiB. */
+const MAX_KDF_MEMORY = 256 * 1024 * 1024;
+
+/**
+ * Whether a keyring's scrypt parameters are ones this release derives a key
+ * with: N a power of two from 2^14 to 2^20, r from 1 to 32, p from 1 to 16,
+ * and at most `MAX_KDF_MEMORY` in all. A file that asks for more is refused
+ * rather than left to take the server's memory or time.
+ */
+export const kdfParamsInRange = ({ n, r, p }: KdfParams): boolean =>
+  Number.isSafeInteger(n) &&
+  Number.isSafeInteger(r) &&
+  Number.isSafeInteger(p) &&
+  n >= 2 ** 14 &&
+  n <= 2 ** 20 &&
+  (n & (n - 1)) === 0 &&
+  r >= 1 &&
+  r <= 32 &&
+  p >= 1 &&
+  p <= 16 &&
+  128 * n * r * p <= MAX_KDF_MEMORY;
+
 /** Text the data key's wrapping and every sealed value are bound to, so neither passes for the other. */
 const DATA_KEY_AAD = Buffer.from("j3-bots vault v1\0data-key", "utf8");
 
@@ -65,7 +87,7 @@ export interface Sealed {
  * so the same characters typed on two systems give the same key. The copy of
  * it made here is zeroed once scrypt has it; the string itself cannot be.
  */
-export const deriveKey = (
+const deriveKey = (
   password: Redacted.Redacted<string>,
   salt: Uint8Array,
   params: KdfParams,
@@ -83,6 +105,21 @@ export const deriveKey = (
       },
     );
   });
+
+/**
+ * Runs `use` with the key-encryption key for `password`, and zeroes the key
+ * once `use` ends: done, failed or interrupted. Deriving it is not
+ * interrupted: an interruption waits for scrypt, then zeroes what it gave.
+ */
+export const withDerivedKey = <A, E, R>(
+  password: Redacted.Redacted<string>,
+  salt: Uint8Array,
+  params: KdfParams,
+  use: (kek: Buffer) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(deriveKey(password, salt, params), use, (kek) =>
+    Effect.sync(() => kek.fill(0)),
+  );
 
 const encrypt = (key: Uint8Array, nonce: Uint8Array, aad: Uint8Array, plain: Uint8Array) => {
   const cipher = NodeCrypto.createCipheriv("aes-256-gcm", key, nonce, { authTagLength: TAG_BYTES });
@@ -105,11 +142,15 @@ const decrypt = (
   decipher.setAuthTag(sealed.subarray(sealed.length - TAG_BYTES));
   const body = decipher.update(sealed.subarray(0, sealed.length - TAG_BYTES));
   try {
-    return Option.some(Buffer.concat([body, decipher.final()]));
+    const rest = decipher.final();
+    const plain = Buffer.concat([body, rest]);
+    rest.fill(0);
+    return Option.some(plain);
   } catch {
     // `final` throws when authentication fails, which is the answer here.
-    body.fill(0);
     return Option.none();
+  } finally {
+    body.fill(0);
   }
 };
 
@@ -121,10 +162,11 @@ export const wrapDataKey = (kek: Uint8Array, dataKey: Uint8Array, nonce: Uint8Ar
 
 /** The data key, or none when `kek` is not the key it was wrapped with: a wrong password. */
 export const unwrapDataKey = (kek: Uint8Array, wrapped: Sealed): Option.Option<Buffer> =>
-  Option.filter(
-    decrypt(kek, wrapped.nonce, DATA_KEY_AAD, wrapped.sealed),
-    (key) => key.length === KEY_BYTES,
-  );
+  Option.filter(decrypt(kek, wrapped.nonce, DATA_KEY_AAD, wrapped.sealed), (key) => {
+    if (key.length === KEY_BYTES) return true;
+    key.fill(0);
+    return false;
+  });
 
 /** `plain`, sealed for `field` of record `recordId`. */
 export const sealField = (

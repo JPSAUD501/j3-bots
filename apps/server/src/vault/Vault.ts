@@ -43,16 +43,17 @@ import { json, Time, timeText } from "../persistence/columns.ts";
 import { migrate } from "../persistence/Migrations.ts";
 import { transactional } from "../persistence/transaction.ts";
 import {
-  deriveKey,
   KDF_PARAMS,
   type KdfParams,
   KEY_BYTES,
+  kdfParamsInRange,
   NONCE_BYTES,
   openField,
   SALT_BYTES,
   type Sealed,
   sealField,
   unwrapDataKey,
+  withDerivedKey,
   wrapDataKey,
 } from "./crypto.ts";
 import {
@@ -75,6 +76,8 @@ const FREE_ATTEMPTS = 5;
 /** The first wait, doubled by each wrong password after it, up to `MAX_WAIT`. */
 const FIRST_WAIT = Duration.seconds(30);
 const MAX_WAIT = Duration.hours(1);
+/** A day with no wrong password starts the count over. */
+const FAILURES_FORGOTTEN_AFTER = Duration.hours(24);
 
 /** How long unlocking waits after `failures` wrong passwords in a row; none before `FREE_ATTEMPTS`. */
 const unlockWait = (failures: number): Option.Option<Duration.Duration> =>
@@ -96,6 +99,12 @@ const KeyringRow = Schema.Struct({
   wrapped_key: Schema.String,
 });
 type KeyringRow = typeof KeyringRow.Type;
+
+const UnlockFailuresRow = Schema.Struct({
+  failures: Schema.Int,
+  last_at: Time,
+  retry_at: Schema.NullOr(Time),
+});
 
 const RecordRow = Schema.Struct({
   id: CredentialId,
@@ -135,15 +144,12 @@ const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const bytesOf = (text: string) => Buffer.from(text, "base64");
 const utf8 = (text: string) => Buffer.from(text, "utf8");
 
-/** A record's field the vault cannot open under its own key: its file was changed by hand or damaged. */
-class VaultDamaged extends Schema.TaggedError<VaultDamaged>()("VaultDamaged", {
-  recordId: Schema.String,
-  field: Schema.String,
-}) {
-  override get message(): string {
-    return `The vault's ${this.field} of ${this.recordId} does not open under its key.`;
-  }
-}
+/**
+ * A value the caller gave that does not encode for the vault. Its types rule
+ * that out; should it happen, the defect says so without the value, which the
+ * encoder's own error could carry.
+ */
+const unencodable = (what: string) => Effect.die(new Error(`The vault could not encode ${what}.`));
 
 /**
  * The vault (`docs/architecture/server.md`, "The vault"): saved logins sealed
@@ -268,9 +274,6 @@ export const layer = Layer.effect(
 
     /** The data key while unlocked; zeroed and dropped on lock. */
     let dataKey: Buffer | null = null;
-    /** Wrong passwords in a row, and until when unlocking is refused. */
-    let failures = 0;
-    let retryAt: DateTime.Utc | null = null;
     let revision = 0;
 
     const keyringOf = (sql: SqlClient.SqlClient) =>
@@ -282,6 +285,25 @@ export const layer = Layer.effect(
         `,
       })(undefined).pipe(Effect.orDie);
 
+    /**
+     * Wrong passwords in a row, the last one's time, and until when unlocking
+     * is refused. The file keeps them, so a restart neither resets the count
+     * nor ends a wait; this is its copy.
+     */
+    const failuresOf = (sql: SqlClient.SqlClient) =>
+      SqlSchema.findOneOption({
+        Request: Schema.Void,
+        Result: UnlockFailuresRow,
+        execute: () => sql`SELECT failures, last_at, retry_at FROM unlock_failures WHERE id = 1`,
+      })(undefined).pipe(Effect.orDie);
+    const stored = file._tag === "open" ? yield* failuresOf(file.sql) : Option.none();
+    let failures = Option.match(stored, { onNone: () => 0, onSome: (row) => row.failures });
+    let lastFailureAt = Option.match(stored, {
+      onNone: () => null,
+      onSome: (row) => row.last_at,
+    });
+    let retryAt = Option.match(stored, { onNone: () => null, onSome: (row) => row.retry_at });
+
     const initialState: VaultState =
       file._tag === "newer"
         ? "newer"
@@ -291,7 +313,8 @@ export const layer = Layer.effect(
     const state = yield* SubscriptionRef.make<VaultStatus>({
       state: initialState,
       revision,
-      retryAt: null,
+      retryAt:
+        retryAt !== null && DateTime.isGreaterThan(retryAt, yield* DateTime.now) ? retryAt : null,
     });
 
     const publish = (next: VaultState) =>
@@ -331,8 +354,67 @@ export const layer = Layer.effect(
       });
     });
 
-    /** Counts a wrong password and says so, or refuses before checking while unlocking waits. */
+    /**
+     * A value of the vault that does not open under its key or read back as
+     * what it should be. The log names the record and field, never the value,
+     * and the caller gets a refusal it can show.
+     */
+    const damaged = (recordId: string, field: string) =>
+      Effect.logError("A value in the vault does not open or read back: its file was changed").pipe(
+        Effect.annotateLogs({ recordId, field }),
+        Effect.andThen(Effect.fail(new Conflict({ reason: "vault-damaged" }))),
+      );
+
+    /** `decoded`, a value read back from the vault, or `damaged` without the decoder's error. */
+    const readBack = <A, R>(
+      recordId: string,
+      field: string,
+      decoded: Effect.Effect<A, Schema.SchemaError, R>,
+    ) => decoded.pipe(Effect.catchTag("SchemaError", () => damaged(recordId, field)));
+
+    /** Counts a wrong password, in the file too, and publishes the wait it brings. */
+    const countFailure = Effect.fn("Vault.countFailure")(function* (
+      sql: SqlClient.SqlClient,
+      now: DateTime.Utc,
+    ) {
+      const forgotten =
+        lastFailureAt !== null &&
+        DateTime.isGreaterThanOrEqualTo(
+          now,
+          DateTime.addDuration(lastFailureAt, FAILURES_FORGOTTEN_AFTER),
+        );
+      failures = (forgotten ? 0 : failures) + 1;
+      lastFailureAt = now;
+      const wait = unlockWait(failures);
+      retryAt = Option.isSome(wait) ? DateTime.addDuration(now, wait.value) : null;
+      yield* sql`
+        INSERT INTO unlock_failures (id, failures, last_at, retry_at)
+        VALUES (1, ${failures}, ${timeText(now)}, ${retryAt === null ? null : timeText(retryAt)})
+        ON CONFLICT (id) DO UPDATE SET
+          failures = excluded.failures, last_at = excluded.last_at, retry_at = excluded.retry_at
+      `.pipe(Effect.orDie);
+      yield* Effect.logWarning("A wrong vault password was given").pipe(
+        Effect.annotateLogs({ failures }),
+      );
+      yield* publish((yield* SubscriptionRef.get(state)).state);
+    });
+
+    /** Forgets the wrong passwords counted, after a right one. */
+    const clearFailures = Effect.fn("Vault.clearFailures")(function* (sql: SqlClient.SqlClient) {
+      if (failures === 0 && lastFailureAt === null) return;
+      failures = 0;
+      lastFailureAt = null;
+      retryAt = null;
+      yield* sql`DELETE FROM unlock_failures WHERE id = 1`.pipe(Effect.orDie);
+    });
+
+    /**
+     * The data key `password` unwraps, or a refusal: while unlocking waits,
+     * before checking; for a wrong password, which is counted; for key
+     * settings out of range, which are not tried and not counted.
+     */
     const checkPassword = Effect.fn("Vault.checkPassword")(function* (
+      sql: SqlClient.SqlClient,
       password: Redacted.Redacted<string>,
       keyring: KeyringRow,
     ) {
@@ -341,24 +423,25 @@ export const layer = Layer.effect(
         return yield* new RateLimited({ retryAt });
       }
       const params: KdfParams = { n: keyring.kdf_n, r: keyring.kdf_r, p: keyring.kdf_p };
-      const kek = yield* deriveKey(password, bytesOf(keyring.salt), params);
-      const key = unwrapDataKey(kek, {
-        nonce: bytesOf(keyring.key_nonce),
-        sealed: bytesOf(keyring.wrapped_key),
-      });
-      kek.fill(0);
+      if (!kdfParamsInRange(params)) {
+        yield* Effect.logError(
+          "The vault's key settings are out of range: its file was changed",
+        ).pipe(Effect.annotateLogs({ n: params.n, r: params.r, p: params.p }));
+        return yield* new Conflict({ reason: "vault-damaged" });
+      }
+      const key = yield* withDerivedKey(password, bytesOf(keyring.salt), params, (kek) =>
+        Effect.succeed(
+          unwrapDataKey(kek, {
+            nonce: bytesOf(keyring.key_nonce),
+            sealed: bytesOf(keyring.wrapped_key),
+          }),
+        ),
+      );
       if (Option.isNone(key)) {
-        failures += 1;
-        const wait = unlockWait(failures);
-        retryAt = Option.isSome(wait) ? DateTime.addDuration(now, wait.value) : null;
-        yield* Effect.logWarning("A wrong vault password was given").pipe(
-          Effect.annotateLogs({ failures }),
-        );
-        yield* publish((yield* SubscriptionRef.get(state)).state);
+        yield* countFailure(sql, now);
         return yield* new Invalid({ reason: "master-password" });
       }
-      failures = 0;
-      retryAt = null;
+      yield* clearFailures(sql);
       return key.value;
     });
 
@@ -375,9 +458,10 @@ export const layer = Layer.effect(
       key: Uint8Array,
     ) {
       const salt = yield* randomBuffer(SALT_BYTES);
-      const kek = yield* deriveKey(password, salt, KDF_PARAMS);
-      const wrapped = wrapDataKey(kek, key, yield* randomBuffer(NONCE_BYTES));
-      kek.fill(0);
+      const nonce = yield* randomBuffer(NONCE_BYTES);
+      const wrapped = yield* withDerivedKey(password, salt, KDF_PARAMS, (kek) =>
+        Effect.sync(() => wrapDataKey(kek, key, nonce)),
+      );
       return {
         salt: base64(salt),
         key_nonce: base64(wrapped.nonce),
@@ -413,8 +497,8 @@ export const layer = Layer.effect(
     const unlock = (password: Redacted.Redacted<string>) =>
       serial(
         Effect.gen(function* () {
-          const { keyring } = yield* keyringOrConflict;
-          const key = yield* checkPassword(password, keyring);
+          const { sql, keyring } = yield* keyringOrConflict;
+          const key = yield* checkPassword(sql, password, keyring);
           forgetKey();
           dataKey = key;
           yield* Effect.logInfo("The vault was unlocked");
@@ -436,7 +520,7 @@ export const layer = Layer.effect(
       serial(
         Effect.gen(function* () {
           const { sql, keyring } = yield* keyringOrConflict;
-          const key = yield* checkPassword(current, keyring);
+          const key = yield* checkPassword(sql, current, keyring);
           const row = yield* keyringFor(next, key);
           yield* sql`
             UPDATE keyring SET kdf_n = ${KDF_PARAMS.n}, kdf_r = ${KDF_PARAMS.r},
@@ -465,10 +549,10 @@ export const layer = Layer.effect(
         return { field, nonce: base64(value.nonce), sealed: base64(value.sealed) };
       });
 
-    const openRow = (key: Uint8Array, row: FieldRow): Effect.Effect<Buffer> => {
+    const openRow = (key: Uint8Array, row: FieldRow): Effect.Effect<Buffer, Conflict> => {
       const value: Sealed = { nonce: bytesOf(row.nonce), sealed: bytesOf(row.sealed) };
       return Option.match(openField(key, row.record_id, row.field, value), {
-        onNone: () => Effect.die(new VaultDamaged({ recordId: row.record_id, field: row.field })),
+        onNone: () => damaged(row.record_id, row.field),
         onSome: Effect.succeed,
       });
     };
@@ -553,15 +637,18 @@ export const layer = Layer.effect(
         const own = fields.filter((row) => row.record_id === record.id);
         const nameRow = own.find((row) => row.field === "name");
         const originsRow = own.find((row) => row.field === "origins");
-        if (nameRow === undefined || originsRow === undefined) {
-          return yield* Effect.die(new VaultDamaged({ recordId: record.id, field: "name" }));
-        }
-        const name = yield* Schema.decodeEffect(Label)(text(yield* openRow(key, nameRow))).pipe(
-          Effect.orDie,
+        if (nameRow === undefined) return yield* damaged(record.id, "name");
+        if (originsRow === undefined) return yield* damaged(record.id, "origins");
+        const name = yield* readBack(
+          record.id,
+          "name",
+          Schema.decodeEffect(Label)(text(yield* openRow(key, nameRow))),
         );
-        const origins = yield* Schema.decodeEffect(OriginsJson)(
-          text(yield* openRow(key, originsRow)),
-        ).pipe(Effect.orDie);
+        const origins = yield* readBack(
+          record.id,
+          "origins",
+          Schema.decodeEffect(OriginsJson)(text(yield* openRow(key, originsRow))),
+        );
         const reveal = reveals.find((row) => row.record_id === record.id);
         credentials.push({
           id: record.id,
@@ -614,7 +701,9 @@ export const layer = Layer.effect(
       const rows: Array<{ field: CredentialSealedField; nonce: string; sealed: string }> = [];
       if (draft.name !== undefined) rows.push(yield* sealedRow(key, id, "name", utf8(draft.name)));
       if (draft.origins !== undefined) {
-        const origins = yield* Schema.encodeEffect(OriginsJson)(draft.origins).pipe(Effect.orDie);
+        const origins = yield* Schema.encodeEffect(OriginsJson)(draft.origins).pipe(
+          Effect.catchTag("SchemaError", () => unencodable("a login's sites")),
+        );
         rows.push(yield* sealedRow(key, id, "origins", utf8(origins)));
       }
       if (draft.username !== undefined) {
@@ -626,7 +715,9 @@ export const layer = Layer.effect(
       if (draft.totp !== undefined && draft.totp !== null) {
         const config = parseTotpSetup(Redacted.value(draft.totp));
         if (Option.isNone(config)) return yield* new Invalid({ reason: "totp" });
-        const sealed = yield* Schema.encodeEffect(TotpJson)(config.value).pipe(Effect.orDie);
+        const sealed = yield* Schema.encodeEffect(TotpJson)(config.value).pipe(
+          Effect.catchTag("SchemaError", () => unencodable("a login's code generator")),
+        );
         rows.push(yield* sealedRow(key, id, "totp", utf8(sealed)));
       }
       return rows;
@@ -775,7 +866,8 @@ export const layer = Layer.effect(
       return yield* openRow(key, row);
     });
 
-    const totpOf = (bytes: Buffer) => Schema.decodeEffect(TotpJson)(text(bytes)).pipe(Effect.orDie);
+    const totpOf = (id: CredentialId, bytes: Buffer) =>
+      readBack(id, "totp", Schema.decodeEffect(TotpJson)(text(bytes)));
 
     const reveal = (input: {
       readonly id: CredentialId;
@@ -786,7 +878,8 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const { sql, key } = yield* unlocked;
           const opened = yield* openedField(sql, key, input.id, input.field);
-          const value = input.field === "totp" ? (yield* totpOf(opened)).secret : text(opened);
+          const value =
+            input.field === "totp" ? (yield* totpOf(input.id, opened)).secret : text(opened);
           yield* sql`
             INSERT INTO reveals (record_id, field, device_id, at)
             VALUES (${input.id}, ${input.field}, ${input.deviceId}, ${timeText(yield* DateTime.now)})
@@ -807,12 +900,10 @@ export const layer = Layer.effect(
       serial(
         Effect.gen(function* () {
           const { sql, key } = yield* unlocked;
-          const config = yield* totpOf(yield* openedField(sql, key, id, "totp"));
+          const config = yield* totpOf(id, yield* openedField(sql, key, id, "totp"));
           const now = yield* DateTime.now;
           const code = totpAt(config, Math.floor(DateTime.toEpochMillis(now) / 1000));
-          if (Option.isNone(code)) {
-            return yield* Effect.die(new VaultDamaged({ recordId: id, field: "totp" }));
-          }
+          if (Option.isNone(code)) return yield* damaged(id, "totp");
           return {
             code: Redacted.make(code.value.code),
             validUntil: DateTime.makeUnsafe(code.value.nextAt * 1000),
@@ -832,14 +923,26 @@ export const layer = Layer.effect(
           const opened = (field: (typeof CONNECTOR_FIELDS)[number]) => {
             const row = rows.find((candidate) => candidate.field === field);
             return row === undefined
-              ? Effect.die(new VaultDamaged({ recordId, field }))
+              ? damaged(recordId, field)
               : Effect.map(openRow(key, row), text);
           };
-          const oauth = yield* Schema.decodeEffect(ConnectorOAuthJson)(yield* opened("oauth"));
-          const headers = yield* Schema.decodeEffect(NamedSecretsJson)(yield* opened("headers"));
-          const env = yield* Schema.decodeEffect(NamedSecretsJson)(yield* opened("env"));
+          const oauth = yield* readBack(
+            recordId,
+            "oauth",
+            Schema.decodeEffect(ConnectorOAuthJson)(yield* opened("oauth")),
+          );
+          const headers = yield* readBack(
+            recordId,
+            "headers",
+            Schema.decodeEffect(NamedSecretsJson)(yield* opened("headers")),
+          );
+          const env = yield* readBack(
+            recordId,
+            "env",
+            Schema.decodeEffect(NamedSecretsJson)(yield* opened("env")),
+          );
           return Option.some<ConnectorSecret>({ connectorId: id, oauth, headers, env });
-        }).pipe(Effect.catchTag("SchemaError", Effect.die)),
+        }),
       );
 
     const putConnectorSecret = (secret: ConnectorSecret) =>
@@ -866,7 +969,7 @@ export const layer = Layer.effect(
               yield* writeRows(sql, recordId, rows);
             }),
           );
-        }).pipe(Effect.catchTag("SchemaError", Effect.die)),
+        }).pipe(Effect.catchTag("SchemaError", () => unencodable("a connector's secret"))),
       );
 
     const removeConnectorSecret = (id: ConnectorId) =>
