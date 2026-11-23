@@ -130,7 +130,15 @@ const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
   },
   { type: "answer", connector: "Connector", tool: "tool", text: "text", isError: true, cut: true },
   ...(
-    ["needs-sign-in", "vault-locked", "unreachable", "timed-out", "too-large", "failed"] as const
+    [
+      "needs-sign-in",
+      "held",
+      "vault-locked",
+      "unreachable",
+      "timed-out",
+      "too-large",
+      "failed",
+    ] as const
   ).map((reason): ConnectorResult => ({ type: "unavailable", connector: "Connector", reason })),
 ];
 
