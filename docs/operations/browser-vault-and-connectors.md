@@ -47,7 +47,7 @@ A bot can open pages, read them and act in them in a browser that runs on the ma
 
 ### Turn it on for a bot
 
-In the bot's details, turn on **Browser: Use this computer's browser**. It is off for every bot, including those you had before updating. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing.
+In the bot's details, turn on **Browser: Use this computer's browser**. It is off for every bot, including those you had before updating. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing, as **Stop** does: messages you queued for it and not yet sent are dropped too.
 
 **Every bot with the switch on uses the same browser profile**, so wherever you, or one of those bots, signs in there, all of them are signed in. On those sites a bot acts as you. Give the browser to the bots whose job needs it, and no others.
 
@@ -71,13 +71,13 @@ On Android, the browser opens from a bot's help card (below), on the whole scree
 
 ### Take control
 
-**Take control** gives you the page. While you hold it, the bot can't act on it. Everything you do goes to the page: the pointer, the wheel and typing on a computer; on a phone, a tap clicks, a drag scrolls, a long press right-clicks, and a tap on a field raises the keyboard (a keyboard button raises it when the tap didn't). Back, forward, reload and the address field appear only now. A sign-in window the page opens shows as the bot's page, and you keep control in it.
+**Take control** gives you the page. While you hold it, the bot can't act on it. Everything you do goes to the page: the pointer, the wheel and typing on a computer; on a touch screen, a tap clicks, a drag scrolls and a tap on a field raises the keyboard. In the Android app, a long press right-clicks too, and a keyboard button raises the keyboard when the tap didn't. Back, forward, reload and the address field appear only now. A sign-in window the page opens shows as the bot's page, and you keep control in it.
 
 **Done** gives the page back to the bot. Leaving the browser while you hold it asks once whether to give it back. If your connection drops, you keep control for a minute, and get it back if you return within it.
 
 What you can't do in this version: paste or drop into the page, download, upload or pick a file. Your clipboard and your files never reach the page.
 
-**The bot can still read the page while you hold it**, though it can't act. What you type into a field that doesn't hide it, the bot can read. To give a bot a value it must not see, use the card it asks with, not the browser.
+**The bot can still read the page while you hold it**, though it can't act. What you type into a field that doesn't hide it, the bot can read, and a bot can read even a hidden field's value with a script unless it has vault access (**Assumed** that a hidden field stays hidden in what the bot reads otherwise). To give a bot a value it must not see, use the card it asks with, not the browser.
 
 ### When the bot asks for help
 
@@ -110,7 +110,7 @@ Pick the bots that may use it first: it starts as the bot that suggested it, or 
 - **Sign in.** One press opens your system browser at the service.
   - In the **desktop app**, the browser comes back to the app, which hands the sign-in to the server.
   - On the **web**, with the server at an `https:` address, the server takes the browser back itself.
-  - On the **web over plain `http:`**, the browser ends on a page that doesn't load. Copy that page's address and paste it where the screen asks. The desktop and phone apps do this for you.
+  - On the **web over plain `http:`**, the browser ends on a page that doesn't load. Copy that page's address and paste it where the screen asks. The desktop app does this for you (`TODO(C8)`: and the Android app).
   - `TODO(G1)`: a service that lets J3 Bots register itself is registered once and reused on every later sign-in.
 - **Takes a key.** The page links to where you make the key and says what it needs. The key goes into a masked field and from there to the vault.
 - **Needs an app you register.** For Google and Slack, which don't let J3 Bots register itself, you create an app of your own at the service and give J3 Bots its issuer, client ID and secret. The guides are drafts, and every step in them is **Assumed** until someone has signed in with them: [Google](connector-google.md), [Slack](connector-slack.md). `TODO(G1)`: the guided Google card in the gallery, and these pages pointing at it instead of adding by address.
@@ -139,7 +139,7 @@ When a bot finds its connector signed out, it shows a card in its conversation t
 
 ### What bots do with it
 
-- **A bot can suggest a connector**, with a card that says why, when a task needs a service it has none for. **Connect** opens the entry for that bot; **Not now** is final for that conversation. A bot can never add or grant one itself. `TODO(C9)`: it suggests a connector at most once per need.
+- **A bot can suggest a connector** (`TODO(C9)`), with a card that says why, when a task needs a service it has none for: at most once per need. **Connect** opens the entry for that bot; **Not now** is final for that conversation. A bot can never add or grant one itself.
 - **A connector's tools follow the bot's permission mode**, like a command: in Supervised, each call asks you first. In every mode, a bot doesn't send, post, delete or share through a connector without your yes, unless that is exactly what you asked for. `TODO(C9)`.
 - **What a service returns is data**, never your instruction. A bot reports a request it finds there, and doesn't carry it out.
 
