@@ -126,7 +126,7 @@ jobs:
             os: windows-2025
             targets: --win --x64
             runtime: win-unpacked/resources/server-runtime
-            # No start check: the server's home check fails on an 8.3 short path (RUNNER~1). Lane W turns it on once the Windows server starts.
+            # No start check: the server's path check (isWithin) knows only "/", so it refuses its own home on Windows. Lane W turns it on with #158.
             check-flags: --skip-start
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
