@@ -35,6 +35,7 @@ import * as SettingsService from "./settings/SettingsService.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as Host from "./system/Host.ts";
 import * as BotTools from "./tools/BotTools.ts";
+import * as CredentialFills from "./vault/Fill.ts";
 import * as Vault from "./vault/Vault.ts";
 import * as BotStates from "./turns/BotStates.ts";
 import * as Cards from "./turns/Cards.ts";
@@ -68,7 +69,9 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
   Layer.provideMerge(
     Layer.mergeAll(
       Bots.layer,
-      BrowserViewers.layer.pipe(Layer.provideMerge(BrowserTabs.layer)),
+      Layer.mergeAll(BrowserViewers.layer, CredentialFills.layer).pipe(
+        Layer.provideMerge(BrowserTabs.layer),
+      ),
       Templates.layer,
       Roster.layer,
       Speech.layer,

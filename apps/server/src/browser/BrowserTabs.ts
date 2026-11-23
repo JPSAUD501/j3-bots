@@ -52,6 +52,15 @@ export class BrowserTabs extends Context.Service<
      * go clears the tab only when that device was the one holding it.
      */
     readonly holding: (tab: EngineTabId, deviceId: DeviceId, holds: boolean) => Effect.Effect<void>;
+    /**
+     * The front tab of an engine session: the one of its tabs that most
+     * recently opened or navigated, and whether a device holds it.
+     */
+    readonly frontOf: (
+      sessionId: SessionId,
+    ) => Effect.Effect<
+      Option.Option<{ readonly tab: EngineBrowserTab; readonly heldByDevice: boolean }>
+    >;
   }
 >()("@j3-bots/server/browser/BrowserTabs") {}
 
@@ -176,7 +185,20 @@ export const layer = Layer.effect(
         return next;
       });
 
-    return BrowserTabs.of({ subscribe, resolve, holding });
+    const frontOf = Effect.fnUntraced(function* (sessionId: SessionId) {
+      const front = (yield* SubscriptionRef.get(known))
+        .filter((known) => known.tab.sessionId === sessionId)
+        .reduce<KnownTab | undefined>(
+          (newest, known) =>
+            newest === undefined || known.tab.activeAt > newest.tab.activeAt ? known : newest,
+          undefined,
+        );
+      if (front === undefined) return Option.none();
+      const held = yield* SubscriptionRef.get(holders);
+      return Option.some({ tab: front.tab, heldByDevice: held.has(front.tab.id) });
+    });
+
+    return BrowserTabs.of({ subscribe, resolve, holding, frontOf });
   }),
 );
 

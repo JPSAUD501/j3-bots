@@ -50,6 +50,7 @@ export {
 } from "./instructions.ts";
 export {
   DECODE_OPTIONS,
+  FILL_NOTES,
   MAX_TOOL_INPUT_BYTES,
   type McpTool,
   NO_TURN_REFUSAL,

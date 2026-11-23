@@ -211,6 +211,16 @@ export class Vault extends Context.Service<
     ) => Effect.Effect<Credential, Conflict | NotFound>;
     readonly totpPreview: (id: CredentialId) => Effect.Effect<TotpPreview, Conflict | NotFound>;
     /**
+     * A login's value for the server to type into a bot's browser tab
+     * (`Fill.ts`): its user name, its password, or its one-time code now.
+     * Fails with `NotFound("credential")` for a login without that value, an
+     * empty user name included. Nothing records it as shown: no device saw it.
+     */
+    readonly fillValue: (input: {
+      readonly id: CredentialId;
+      readonly field: CredentialField;
+    }) => Effect.Effect<Redacted.Redacted<string>, Conflict | NotFound>;
+    /**
      * What connectors need to reach their servers: OAuth clients and tokens,
      * headers and environment values. The master password locks them with
      * the logins, so while the vault is locked every one fails with
@@ -921,6 +931,24 @@ export const layer = Layer.effect(
         }),
       );
 
+    const fillValue = (input: { readonly id: CredentialId; readonly field: CredentialField }) =>
+      serial(
+        Effect.gen(function* () {
+          const { sql, key } = yield* unlocked;
+          const opened = yield* openedField(sql, key, input.id, input.field);
+          if (input.field !== "totp") {
+            const value = text(opened);
+            if (value === "") return yield* new NotFound({ resource: "credential" });
+            return Redacted.make(value);
+          }
+          const config = yield* totpOf(input.id, opened);
+          const now = yield* DateTime.now;
+          const code = totpAt(config, Math.floor(DateTime.toEpochMillis(now) / 1000));
+          if (Option.isNone(code)) return yield* damaged(input.id, "totp");
+          return Redacted.make(code.value.code);
+        }),
+      );
+
     // ---- Connectors' secrets ----------------------------------------------------------
 
     const connectorSecret = (id: ConnectorId) =>
@@ -1003,6 +1031,7 @@ export const layer = Layer.effect(
       remove,
       setAllowedBots,
       totpPreview,
+      fillValue,
       connectorSecrets: {
         get: connectorSecret,
         put: putConnectorSecret,
