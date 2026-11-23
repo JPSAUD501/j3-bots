@@ -53,7 +53,9 @@ export function VaultSection() {
             depth="row"
             accessibilityRole="button"
             accessibilityLabel={t("vault.logins")}
-            accessibilityHint={count === null ? undefined : plural("vault.count", count)}
+            accessibilityHint={
+              count === null || count === 0 ? undefined : plural("vault.count", count)
+            }
             onPress={() => navigation.navigate("vault")}
             className="-mx-2 min-h-11 flex-row items-center gap-3 rounded-md px-2 active:bg-muted"
           >
@@ -61,7 +63,7 @@ export function VaultSection() {
             <Text numberOfLines={1} className="min-w-0 flex-1 text-base text-foreground">
               {t("vault.logins")}
             </Text>
-            {count !== null && (
+            {count !== null && count > 0 && (
               <Text className="text-xs text-muted-foreground">{plural("vault.count", count)}</Text>
             )}
             <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />

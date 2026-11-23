@@ -82,10 +82,7 @@ export function VaultScreen({ navigation }: Props) {
                 }}
               />
             ) : (
-              <View className="flex-row flex-wrap items-center justify-between gap-2">
-                <Text accessibilityLiveRegion="polite" className="text-sm text-muted-foreground">
-                  {changed ? t("vault.changed") : ""}
-                </Text>
+              <View className="flex-row flex-wrap items-center gap-3">
                 <Button
                   variant="secondary"
                   label={t("vault.changePassword")}
@@ -94,6 +91,9 @@ export function VaultScreen({ navigation }: Props) {
                     setChanging(true);
                   }}
                 />
+                <Text accessibilityLiveRegion="polite" className="text-sm text-muted-foreground">
+                  {changed ? t("vault.changed") : ""}
+                </Text>
               </View>
             )}
           </Section>
