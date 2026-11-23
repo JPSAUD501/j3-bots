@@ -43,6 +43,7 @@ import {
 } from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
 import { useFoldedSections } from "../components/RosterGroups";
+import { StopUsingComputer } from "../components/LocalMode";
 import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
@@ -311,18 +312,25 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   if (data.roster === null || data.roster.length === 0 || openingFirstBot) {
     // Settings live in the roster's footer; before there is a roster, these are the way out: in
-    // the desktop app, to another server too, as when the one it names has moved.
+    // the desktop app, to another server too, as when the one it names has moved, and while the
+    // bots live on this computer, to a server instead, which is its way of signing out.
     const ways = (
       <div className="flex flex-wrap items-start justify-center gap-2">
-        {intents.server !== undefined && (
-          <ChangeServer
-            address={intents.server.address}
-            onChange={intents.server.forget}
-            paired
-            className="items-center"
-          />
+        {intents.local !== undefined ? (
+          <StopUsingComputer onStop={intents.local.stopUsing} quiet />
+        ) : (
+          <>
+            {intents.server !== undefined && (
+              <ChangeServer
+                address={intents.server.address}
+                onChange={intents.server.forget}
+                paired
+                className="items-center"
+              />
+            )}
+            <SignOutDevice onSignOut={intents.signOut} quiet />
+          </>
         )}
-        <SignOutDevice onSignOut={intents.signOut} quiet />
       </div>
     );
     return (

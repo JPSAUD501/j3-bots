@@ -63,6 +63,11 @@ interface OnboardingProps {
    * computer; without it, the connect step gives the command to run there.
    */
   readonly providerSetup?: LocalProviderSetup;
+  /**
+   * What the bot's arrival waits for before the server has it, said under the
+   * bot, as while the server on this computer starts; `null` for nothing.
+   */
+  readonly waiting?: string | null;
 }
 
 type Direction = "forward" | "back";
@@ -86,6 +91,7 @@ export function Onboarding({
   initialName,
   footer,
   providerSetup,
+  waiting = null,
 }: OnboardingProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -228,7 +234,7 @@ export function Onboarding({
           />
         );
       case "arrival":
-        return <Arrival engine={engine} name={botName} created={created} />;
+        return <Arrival engine={engine} name={botName} created={created} waiting={waiting} />;
     }
   };
 
@@ -654,17 +660,20 @@ function ConnectStep({
 
 /**
  * The bot arriving. Until the server has created it, only the bot above says
- * something is happening; then it grows, its name pops in, and a line says
- * whether it is saying hello or waits for a model.
+ * something is happening, and a line what it waits for, if anything; then it
+ * grows, its name pops in, and a line says whether it is saying hello or
+ * waits for a model.
  */
 function Arrival({
   engine,
   name,
   created,
+  waiting,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
   readonly created: boolean;
+  readonly waiting: string | null;
 }) {
   const { t } = useI18n();
   const ready =
@@ -690,6 +699,7 @@ function Arrival({
               {ready ? t("onboarding.arrival.hello") : t("onboarding.arrival.waiting", { name })}
             </span>
           )}
+          {!created && waiting !== null && <span className="block arrive">{waiting}</span>}
         </p>
       </div>
     </StepFrame>

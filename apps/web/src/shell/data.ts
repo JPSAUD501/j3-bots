@@ -36,6 +36,7 @@ import type {
 } from "@j3-bots/contracts";
 import type {
   Accelerator,
+  ModeChange,
   ShortcutChange,
   ShortcutStatus,
   UpdateStatus,
@@ -229,8 +230,13 @@ export interface ShellIntents extends TimelineIntents {
    * deleted and the device is still signed in.
    */
   readonly signOut: () => Promise<boolean>;
-  /** In the desktop app, the server it talks to. Absent in a browser, whose server is the page's own. */
+  /**
+   * In the desktop app, the server elsewhere it talks to. Absent in a
+   * browser, whose server is the page's own, and in local mode (`local`).
+   */
   readonly server?: DesktopServer;
+  /** In the desktop app, while the bots live on this computer. */
+  readonly local?: DesktopLocal;
   /** In the desktop app, updating it. Absent in a browser, whose page is the server's own. */
   readonly update?: DesktopUpdate;
   /** In the desktop app, the global shortcut that shows it. Absent in a browser. */
@@ -252,6 +258,25 @@ export interface DesktopServer {
    * when it is still kept.
    */
   readonly forget: () => Promise<boolean>;
+  /**
+   * Leaves it for this computer: forgets it as `forget` does, then runs the
+   * bots here. Absent where this computer cannot run them.
+   */
+  readonly chooseThisComputer?: () => Promise<ModeChange | null>;
+}
+
+/** The bots on this computer, as the desktop app runs them. */
+export interface DesktopLocal {
+  /**
+   * Signs this device out of the server on this computer and stops it, its
+   * data kept, for a server elsewhere: the app then loads the server address
+   * screen. Resolves `false` when it did not stop.
+   */
+  readonly stopUsing: () => Promise<boolean>;
+  /** Whether the app starts, in the tray, as the operator signs in to the system. */
+  readonly startWithSystem: boolean;
+  /** Changes it; resolves with what holds once the app answered. */
+  readonly setStartWithSystem: (on: boolean) => Promise<boolean>;
 }
 
 /** The desktop app's global shortcut, which shows it with the cursor in the composer. */

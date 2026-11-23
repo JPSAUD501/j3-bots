@@ -7,6 +7,7 @@ import type {
   CommandId,
   Device,
   DeviceId,
+  DeviceToken,
   EngineStatus as EngineStatusValue,
   EntryId,
   EntryOrder,
@@ -34,6 +35,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
@@ -163,6 +165,15 @@ export interface J3Client {
     readonly code: string;
     readonly deviceName: string;
   }) => Promise<PairResult>;
+  /**
+   * Keeps a credential this device was given without a code, as the desktop
+   * app's own server gives the computer it runs on, and connects with it.
+   * Resolves `false` when the device could not keep it.
+   */
+  readonly adopt: (credential: {
+    readonly deviceId: DeviceId;
+    readonly token: DeviceToken;
+  }) => Promise<boolean>;
   /** Ends this device's access, and deletes its credential, drafts and unsent messages here. */
   readonly signOut: () => Promise<SignOut.SignOutResult>;
   readonly reconnectNow: () => void;
@@ -457,6 +468,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
           Effect.catchTag("PairingFailed", (error) =>
             Effect.succeed<PairResult>({ _tag: "failed", reason: error.reason }),
           ),
+        ),
+      ),
+    adopt: ({ deviceId, token }) =>
+      run.promise(
+        connection.adopt({ deviceId, token: Redacted.make(token) }).pipe(
+          Effect.as(true),
+          Effect.catchTag("CredentialStorageError", () => Effect.succeed(false)),
         ),
       ),
     signOut: () => run.promise(services.signOut.run),

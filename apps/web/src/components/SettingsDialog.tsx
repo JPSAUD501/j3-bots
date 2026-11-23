@@ -32,6 +32,7 @@ import {
   type NotificationAccess,
 } from "../preferences/notifications";
 import type {
+  DesktopLocal,
   DesktopServer,
   DesktopShortcut,
   DesktopUpdate,
@@ -51,6 +52,7 @@ import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
 import { HarnessLocations, type LocalProviderSetup, LocalSignIn } from "./ProviderSetup";
 import { ChangeServer } from "./ServerAddress";
+import { StartWithSystem, StopUsingComputer, UseThisComputer } from "./LocalMode";
 import { PairingQr } from "./PairingQr";
 import { Section } from "./SettingsSection";
 import { SkeletonRows } from "./ui/skeleton";
@@ -74,6 +76,7 @@ type SettingsIntents = Pick<
   | "retryTurns"
   | "signOut"
   | "server"
+  | "local"
   | "update"
   | "shortcut"
   | "providerSetup"
@@ -187,10 +190,13 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 onStartPairing={intents.startPairing}
                 onRevoke={intents.revokeDevice}
               />
-              {intents.server !== undefined && <ServerSection server={intents.server} />}
+              {(intents.server !== undefined || intents.local !== undefined) && (
+                <WhereSection server={intents.server} local={intents.local} />
+              )}
               <BrowserSection
                 onSignOut={intents.signOut}
-                server={intents.server}
+                desktop={intents.server !== undefined || intents.local !== undefined}
+                local={intents.local !== undefined}
                 unencrypted={data.signInUnencrypted}
                 update={intents.update}
                 shortcut={intents.shortcut}
@@ -758,38 +764,74 @@ export function SignOutDevice({
   );
 }
 
-/** In the desktop app, the server it talks to, and leaving it for another. */
-function ServerSection({ server }: { server: DesktopServer }) {
+/**
+ * In the desktop app, where the bots live, and moving them: on this computer,
+ * whether the app starts with the system and stopping using it; on a server,
+ * its address, changing it and using this computer instead.
+ */
+function WhereSection({
+  server,
+  local,
+}: {
+  server: DesktopServer | undefined;
+  local: DesktopLocal | undefined;
+}) {
   const { t } = useI18n();
   return (
-    <Section title={t("settings.server")}>
-      <p className="font-mono text-sm break-all">{server.address}</p>
-      <ChangeServer
-        address={server.address}
-        onChange={server.forget}
-        paired
-        className="items-start"
-      />
+    <Section title={t("settings.where")}>
+      {local !== undefined ? (
+        <>
+          <div className="flex flex-col gap-0.5">
+            <p className="text-sm">{t("settings.where.local")}</p>
+            <p className="text-2xs text-muted-foreground">{t("where.thisComputer.hint")}</p>
+          </div>
+          <StartWithSystem on={local.startWithSystem} onChange={local.setStartWithSystem} />
+          <StopUsingComputer onStop={local.stopUsing} />
+        </>
+      ) : (
+        server !== undefined && (
+          <>
+            <div className="flex flex-col gap-0.5">
+              <p className="text-sm">{t("settings.where.server")}</p>
+              <p className="font-mono text-2xs break-all text-muted-foreground">{server.address}</p>
+            </div>
+            <div className="flex flex-wrap items-start gap-2">
+              {server.chooseThisComputer !== undefined && (
+                <UseThisComputer address={server.address} onUse={server.chooseThisComputer} />
+              )}
+              <ChangeServer
+                address={server.address}
+                onChange={server.forget}
+                paired
+                className="items-start"
+              />
+            </div>
+          </>
+        )
+      )}
     </Section>
   );
 }
 
 /**
  * Choices kept in this browser only, and signing this device out. In the
- * desktop app, whose server is `server`, the same for this device, with the
- * app's version and its `update`, its global `shortcut`, and that its
- * sign-in is stored `unencrypted` when it is, as that is less safe than the
- * operator would expect.
+ * `desktop` app, the same for this device, with the app's version and its
+ * `update`, its global `shortcut`, and that its sign-in is stored
+ * `unencrypted` when it is, as that is less safe than the operator would
+ * expect. In `local` mode, signing out is stopping using this computer, in
+ * the section above: there is no other server to sign in to.
  */
 function BrowserSection({
   onSignOut,
-  server,
+  desktop,
+  local,
   unencrypted,
   update,
   shortcut,
 }: {
   onSignOut: SettingsIntents["signOut"];
-  server: DesktopServer | undefined;
+  desktop: boolean;
+  local: boolean;
   unencrypted: boolean;
   update: DesktopUpdate | undefined;
   shortcut: DesktopShortcut | undefined;
@@ -809,7 +851,7 @@ function BrowserSection({
     ...LANGUAGES.map((language) => ({ value: language, label: LANGUAGE_NAMES[language] })),
   ];
   return (
-    <Section title={t(server === undefined ? "settings.browser" : "settings.thisDevice")}>
+    <Section title={t(desktop ? "settings.thisDevice" : "settings.browser")}>
       {update !== undefined && <AppUpdate update={update} className="items-start" />}
       {shortcut !== undefined && <ShortcutSetting shortcut={shortcut} />}
       <div className="flex flex-col gap-1.5">
@@ -843,13 +885,19 @@ function BrowserSection({
           ))}
         </select>
       </div>
-      <div className="flex flex-col gap-1.5 pt-1">
-        {unencrypted && (
-          <p className="text-xs text-muted-foreground">{t("settings.thisDevice.unencrypted")}</p>
-        )}
-        <p className="text-xs text-muted-foreground">{t("settings.signOut.hint")}</p>
-        <SignOutDevice onSignOut={onSignOut} />
-      </div>
+      {(unencrypted || !local) && (
+        <div className="flex flex-col gap-1.5 pt-1">
+          {unencrypted && (
+            <p className="text-xs text-muted-foreground">{t("settings.thisDevice.unencrypted")}</p>
+          )}
+          {!local && (
+            <>
+              <p className="text-xs text-muted-foreground">{t("settings.signOut.hint")}</p>
+              <SignOutDevice onSignOut={onSignOut} />
+            </>
+          )}
+        </div>
+      )}
     </Section>
   );
 }
