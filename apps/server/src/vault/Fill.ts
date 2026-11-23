@@ -5,7 +5,7 @@ import {
   type Credential,
   type CredentialField,
   type CredentialFill,
-  type FillOutcome,
+  FillOutcome,
   FillRefusal,
   type SiteOrigin,
   siteOriginOf,
@@ -15,8 +15,10 @@ import {
   BrowserBridge,
   type BrowserViewer,
   type EngineBrowserTab,
+  type EngineTabId,
   type SessionId,
   type TabPage,
+  type TurnId,
   type ViewerController,
 } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
@@ -24,6 +26,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -31,22 +34,30 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as SqlClient from "effect/sql/SqlClient";
 import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
 import { BrowserTabs } from "../browser/BrowserTabs.ts";
+import {
+  type FillCall,
+  type TurnEnded,
+  type TurnToolRefused,
+  type TurnToolRetry,
+  TurnTools,
+} from "../tools/TurnTools.ts";
 import { Observer } from "../turns/Observer.ts";
 import { Vault } from "./Vault.ts";
 
 // Filling a saved login into a bot's browser tab (`docs/architecture/server.md`,
-// "Filling a login"). The server opens a viewer of the bot's front tab of its
-// own, as a person's would be, takes the tab, so the bot's browser actions
+// "Filling a login"). The call is first pinned to the engine's record of it in
+// the caller's turn. Then the server opens a viewer of the bot's front tab of
+// its own, as a person's would be, takes the tab, so the bot's browser actions
 // fail while it holds it, checks the page's committed address against the
-// login's origins, types the value where the page has focus, and gives the
-// tab back. The bot never sees the value: its tool result, the work step, the
-// log and the tab's text all lack it. What the server cannot know is which
-// field has focus, nor which frame it is in: the engine's viewer channel says
-// neither (`docs/architecture/security.md`, "Filling a login").
+// login's origins, types the value where the page has focus, waits until the
+// engine has run that input, and gives the tab back. The bot never sees the
+// value: its tool result, the work step, the log and the tab's text all lack
+// it. What the server cannot know is which field has focus, nor which frame
+// it is in: the engine's viewer channel says neither
+// (`docs/architecture/security.md`, "Filling a login").
 
 /** What a fill asks, from a bot's `fill_credential`. */
 export interface FillRequest {
@@ -59,6 +70,8 @@ export interface FillRequest {
   readonly credential: string;
   readonly field: CredentialField;
   readonly submit: boolean;
+  /** As the bridge received them: what the call is matched to the engine's record by. */
+  readonly arguments: Schema.Json;
 }
 
 /** What `list_credentials` answers: names and origins, never a value. */
@@ -73,27 +86,30 @@ export type ListAnswer =
   | { readonly _tag: "refused"; readonly reason: Extract<FillRefusal, "no-access" | "unavailable"> }
   | { readonly _tag: "locked" };
 
-/** How long the server waits to hold the tab. */
-export interface FillTiming {
-  /** For the engine to say the server holds the tab. */
+/** How long the server waits on the engine and the page. */
+interface FillTiming {
+  /** For the engine to say the server holds the tab, and to answer the probe after the typing. */
   readonly take: Duration.Duration;
-  /** After Enter on a password, for the page to move on before the field is cleared. */
+  /** After Enter on a password, for the page to load another before the field is cleared. */
   readonly navigation: Duration.Duration;
   /** Between reads of the page while it waits. */
   readonly poll: Duration.Duration;
 }
 
-export const DEFAULT_FILL_TIMING: FillTiming = {
+const TIMING: FillTiming = {
   take: Duration.seconds(5),
   navigation: Duration.seconds(6),
-  poll: Duration.millis(250),
+  poll: Duration.millis(100),
 };
+
+/** Why a fill was not even tried: the call is not one of the caller's turn. */
+export type FillCallRefused = TurnEnded | TurnToolRefused | TurnToolRetry | Conflict;
 
 export class CredentialFills extends Context.Service<
   CredentialFills,
   {
     readonly list: (botId: BotId) => Effect.Effect<ListAnswer>;
-    readonly fill: (request: FillRequest) => Effect.Effect<FillOutcome>;
+    readonly fillLogin: (request: FillRequest) => Effect.Effect<FillOutcome, FillCallRefused>;
   }
 >()("@j3-bots/server/vault/Fill/CredentialFills") {}
 
@@ -123,12 +139,16 @@ const isLoopback = (url: URL) =>
 /**
  * The page's origin, as the URL parser gives it: scheme, ASCII host (a
  * punycode name stays punycode) and a port other than the scheme's default.
- * A page that is not `http:` or `https:`, or is plain `http:` on another
- * computer, is refused here.
+ * A page whose own address is not `http:` or `https:` is refused, a `blob:`
+ * one included, whose origin is the address inside it; so is plain `http:` on
+ * another computer.
  */
 export const pageOrigin = (url: string): Effect.Effect<SiteOrigin, Refused> => {
   if (!URL.canParse(url)) return Effect.fail(refused("origin"));
   const parsed = new URL(url);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return Effect.fail(refused("origin"));
+  }
   if (parsed.protocol === "http:" && !isLoopback(parsed)) return Effect.fail(refused("insecure"));
   return Effect.fromOption(siteOriginOf(parsed.origin)).pipe(
     Effect.mapError(() => refused("origin")),
@@ -147,6 +167,24 @@ const loadedPage = (page: Option.Option<TabPage>) => {
     case "loaded":
       return Effect.succeed(page.value.url);
   }
+};
+
+/**
+ * The one login named `name` that is saved for `origin`, among `credentials`.
+ * None gives `origin`, more than one `ambiguous`.
+ */
+const loginFor = (
+  credentials: ReadonlyArray<Credential>,
+  name: string,
+  origin: SiteOrigin,
+): Effect.Effect<Credential, Refused> => {
+  const matching = credentials.filter(
+    (credential) => credential.name === name && credential.origins.includes(origin),
+  );
+  const [credential, ...others] = matching;
+  if (credential === undefined) return Effect.fail(refused("origin"));
+  if (others.length > 0) return Effect.fail(refused("ambiguous"));
+  return Effect.succeed(credential);
 };
 
 /** Enter, pressed and let go, as a keyboard sends it: it submits the form the focus is in. */
@@ -177,13 +215,8 @@ const BACKSPACE_DOWN = {
 } as const;
 const BACKSPACE_UP = { ...BACKSPACE_DOWN, action: "up" } as const;
 
-/** The most fills whose answer is kept for a retried forward. */
+/** The most fills whose answer is kept for a forward retried while the server runs. */
 const ANSWERS_KEPT = 256;
-/** The most tabs and turns a refusal is remembered for. */
-const REFUSALS_KEPT = 1_024;
-
-const AdmittedTurn = Schema.Struct({ admitted_turn_id: Schema.NullOr(Schema.String) });
-const decodeAdmittedTurn = Schema.decodeUnknownEffect(Schema.Array(AdmittedTurn));
 
 const WORDS: Record<FillOutcome["_tag"], string> = {
   filled: "Filled a saved login",
@@ -191,41 +224,58 @@ const WORDS: Record<FillOutcome["_tag"], string> = {
   locked: "Did not fill a saved login: the vault is locked",
 };
 
-export const layerWith = (timing: FillTiming) =>
+const encodeOutcome = Schema.encodeEffect(Schema.toCodecJson(FillOutcome));
+const decodeOutcome = Schema.decodeUnknownEffect(Schema.toCodecJson(FillOutcome));
+
+/** What the engine says of the tab the server's viewer holds, as the viewer hears it. */
+interface Heard {
+  readonly controller: ViewerController | "closed" | null;
+  /** How many probes the engine answered. */
+  readonly probes: number;
+}
+
+const make = (timing: FillTiming) =>
   Layer.effect(
     CredentialFills,
     Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
       const bots = yield* BotStore;
       const vault = yield* Vault;
       const bridge = yield* BrowserBridge;
       const tabs = yield* BrowserTabs;
       const observer = yield* Observer;
+      const turnTools = yield* TurnTools;
       const serverScope = yield* Effect.scope;
       /** One fill at a time: each holds a tab, and a person waits for none of them long. */
       const lock = yield* Semaphore.make(1);
       /** The answer of each recent fill, by its request id, for a forward retried under it. */
-      const answers = new Map<string, Deferred.Deferred<FillOutcome>>();
-      /** Each tab and turn a fill was refused on: it takes no other in that turn. */
-      const refusals = new Set<string>();
+      const answers = new Map<string, Deferred.Deferred<FillOutcome, FillCallRefused>>();
+      /**
+       * For each session, the turn a fill last ran in and the tabs a fill was
+       * refused on in it, which take no other until that turn is over. A
+       * session's next turn replaces its entry.
+       */
+      const refusals = new Map<
+        string,
+        { readonly turnId: TurnId; readonly tabs: Set<EngineTabId> }
+      >();
 
-      const remember = <K, V>(map: Map<K, V> | Set<K>, limit: number) => {
-        const oldest = map.keys().next();
-        if (map.size > limit && oldest.done !== true) map.delete(oldest.value);
+      const refusedTabsOf = (request: FillRequest, turnId: TurnId) => {
+        const current = refusals.get(request.caller.id);
+        if (current !== undefined && current.turnId === turnId) return current.tabs;
+        const fresh = { turnId, tabs: new Set<EngineTabId>() };
+        refusals.set(request.caller.id, fresh);
+        return fresh.tabs;
       };
 
-      /** The turn the caller's session runs, which a refusal on a tab lasts for. */
-      const turnOf = (caller: BotSession) =>
-        sql`SELECT admitted_turn_id FROM sessions WHERE id = ${caller.id}`.pipe(
-          Effect.flatMap(decodeAdmittedTurn),
-          Effect.map(([row]) => row?.admitted_turn_id ?? ""),
-          Effect.orDie,
-        );
-
-      /** The logins the bot may use, while its vault access is on and the vault unlocked. */
+      /**
+       * The logins the bot may use: while its vault access and its browser
+       * are on and the vault unlocked, those that allow it.
+       */
       const usable = Effect.fnUntraced(function* (botId: BotId) {
         const found = yield* bots.find(botId);
-        if (Option.isNone(found) || !found.value.bot.vault) return yield* refused("no-access");
+        if (Option.isNone(found) || !found.value.bot.vault || !found.value.bot.browser) {
+          return yield* refused("no-access");
+        }
         const all = yield* vault.list.pipe(
           Effect.catchTag(
             "Conflict",
@@ -264,49 +314,86 @@ export const layerWith = (timing: FillTiming) =>
         const viewer: BrowserViewer = yield* bridge
           .openViewer({ tab: tab.id, maxWidth: 64, maxHeight: 64, quality: 1 })
           .pipe(Effect.mapError(() => refused("unavailable")));
-        const controller = yield* SubscriptionRef.make<ViewerController | "closed" | null>(null);
+        const heard = yield* SubscriptionRef.make<Heard>({ controller: null, probes: 0 });
         // Pictures are never acknowledged, so the engine sends one at most.
         yield* viewer.output.pipe(
-          Stream.runForEach((output) =>
-            output._tag === "control"
-              ? SubscriptionRef.set(controller, output.controller)
-              : Effect.void,
-          ),
+          Stream.runForEach((output) => {
+            switch (output._tag) {
+              case "control":
+                return SubscriptionRef.update(heard, (now) => ({
+                  ...now,
+                  controller: output.controller,
+                }));
+              case "probe":
+                return SubscriptionRef.update(heard, (now) => ({ ...now, probes: now.probes + 1 }));
+              default:
+                return Effect.void;
+            }
+          }),
           Effect.ignore,
-          Effect.andThen(SubscriptionRef.set(controller, "closed")),
+          Effect.andThen(
+            SubscriptionRef.update(heard, (now) => ({ ...now, controller: "closed" as const })),
+          ),
           Effect.forkScoped,
         );
         yield* Effect.addFinalizer(() => viewer.send({ type: "release" }));
         yield* viewer.send({ type: "take" });
-        const taken = yield* SubscriptionRef.changes(controller).pipe(
+        const taken = yield* SubscriptionRef.changes(heard).pipe(
+          Stream.map((now) => now.controller),
           Stream.filter((current) => current === "this-viewer" || current === "closed"),
           Stream.runHead,
           Effect.timeoutOption(timing.take),
           Effect.map(Option.flatten),
         );
         if (Option.getOrNull(taken) !== "this-viewer") {
-          const now = yield* SubscriptionRef.get(controller);
-          return yield* refused(now === "another-viewer" ? "held" : "unavailable");
+          const now = yield* SubscriptionRef.get(heard);
+          return yield* refused(now.controller === "another-viewer" ? "held" : "unavailable");
         }
-        const stillHeld = SubscriptionRef.get(controller).pipe(
-          Effect.flatMap((current) =>
-            current === "this-viewer" ? Effect.void : Effect.fail(refused("navigated")),
+        const stillHeld = SubscriptionRef.get(heard).pipe(
+          Effect.flatMap((now) =>
+            now.controller === "this-viewer" ? Effect.void : Effect.fail(refused("navigated")),
           ),
         );
-        return { viewer, stillHeld };
+        /**
+         * Returns once the engine has run every input sent before it. The
+         * engine runs a holder's input one action at a time, in order, and a
+         * release drops what is still waiting, so the tab is given back only
+         * after this. A probe is answered by the engine from the same line,
+         * so its answer says the input ahead of it ran.
+         */
+        const drained = Effect.gen(function* () {
+          const before = (yield* SubscriptionRef.get(heard)).probes;
+          yield* viewer.send({ type: "probe", x: 0, y: 0 });
+          const answered = yield* SubscriptionRef.changes(heard).pipe(
+            Stream.filter((now) => now.probes > before || now.controller !== "this-viewer"),
+            Stream.runHead,
+            Effect.timeoutOption(timing.take),
+            Effect.map(Option.flatten),
+          );
+          if (Option.isNone(answered) || answered.value.controller !== "this-viewer") {
+            yield* Effect.logWarning("The browser did not confirm a fill's typing in time");
+            return yield* refused("unavailable");
+          }
+        });
+        return { viewer, stillHeld, drained };
       });
 
       const readPage = (tab: EngineBrowserTab) =>
         bridge.readTab(tab.id).pipe(Effect.mapError(() => refused("unavailable")));
 
-      /** Returns once the page left `url`: it loads, failed, went elsewhere or closed. */
-      const leaves = Effect.fnUntraced(function* (tab: EngineBrowserTab, url: string) {
+      /**
+       * Returns once the tab starts loading another document, fails to, or
+       * closes. An address that changes while the page stays loaded is not
+       * enough: a page changes its address with `history.pushState` without
+       * leaving, and the engine reports that as loaded at the new one.
+       */
+      const leaves = Effect.fnUntraced(function* (tab: EngineBrowserTab) {
         while (true) {
           const page = yield* readPage(tab).pipe(Effect.option);
           const moved = Option.exists(page, (current) =>
             Option.match(current, {
               onNone: () => true,
-              onSome: (shown) => shown._tag !== "loaded" || shown.url !== url,
+              onSome: (shown) => shown._tag !== "loaded",
             }),
           );
           if (moved) return;
@@ -317,21 +404,22 @@ export const layerWith = (timing: FillTiming) =>
       /** The fill itself, once the bot and the login are known to allow it. */
       const fillTab = Effect.fn("CredentialFills.fillTab")(function* (
         request: FillRequest,
-        named: ReadonlyArray<Credential>,
         tab: EngineBrowserTab,
         seen: { origin: SiteOrigin | null; credential: Credential | null },
       ) {
-        const { viewer, stillHeld } = yield* hold(tab);
+        const { viewer, stillHeld, drained } = yield* hold(tab);
         // Read from the engine now that the bot cannot act: its account of
-        // where it is counts for nothing.
+        // where it is counts for nothing. The bot's access and the login are
+        // looked up again too, as they are now: the operator may have taken
+        // either away while the take waited.
         const url = yield* loadedPage(yield* readPage(tab));
         const origin = yield* pageOrigin(url);
         seen.origin = origin;
-        const matching = named.filter((credential) => credential.origins.includes(origin));
-        if (matching.length === 0) return yield* refused("origin");
-        if (matching.length > 1) return yield* refused("ambiguous");
-        const [credential] = matching;
-        if (credential === undefined) return yield* refused("origin");
+        const credential = yield* loginFor(
+          yield* usable(request.caller.botId),
+          request.credential,
+          origin,
+        );
         seen.credential = credential;
         const value = yield* vault.fillValue({ id: credential.id, field: request.field }).pipe(
           Effect.catchTags({
@@ -339,7 +427,7 @@ export const layerWith = (timing: FillTiming) =>
             Conflict: vaultRefusal,
           }),
         );
-        // Again right before typing: a page that moved since types nothing.
+        // Again right before typing: a page that moved types nothing.
         const again = yield* readPage(tab);
         if (Option.isNone(again) || again.value._tag !== "loaded" || again.value.url !== url) {
           return yield* refused("navigated");
@@ -347,26 +435,30 @@ export const layerWith = (timing: FillTiming) =>
         yield* stillHeld;
         yield* viewer.send({ type: "text", text: Redacted.value(value) });
         const submitted = request.submit || request.field === "password";
-        if (!submitted) return { submitted };
-        yield* viewer.send(ENTER_DOWN);
-        yield* viewer.send(ENTER_UP);
+        if (submitted) {
+          yield* viewer.send(ENTER_DOWN);
+          yield* viewer.send(ENTER_UP);
+        }
+        yield* drained;
         if (request.field !== "password") return { submitted };
-        // The bot gets the tab back on the page that follows; a page that
-        // stays, as one that only shows an error does, has the password taken
-        // out of the field first, one character at a time from where the
-        // typing left the cursor.
-        const moved = yield* leaves(tab, url).pipe(Effect.timeoutOption(timing.navigation));
+        // The bot gets the tab back on the page that follows. A page that
+        // stays, as one that only shows an error does, has the password
+        // taken out of the field first, one character at a time from where
+        // the typing left the cursor.
+        const moved = yield* leaves(tab).pipe(Effect.timeoutOption(timing.navigation));
         if (Option.isNone(moved)) {
           for (const _ of Redacted.value(value)) {
             yield* viewer.send(BACKSPACE_DOWN);
             yield* viewer.send(BACKSPACE_UP);
           }
+          yield* drained;
         }
         return { submitted };
       }, Effect.scoped);
 
       const attempt = Effect.fn("CredentialFills.attempt")(function* (
         request: FillRequest,
+        turnId: TurnId,
         seen: { origin: SiteOrigin | null; credential: Credential | null },
       ) {
         const named = (yield* usable(request.caller.botId)).filter(
@@ -376,11 +468,9 @@ export const layerWith = (timing: FillTiming) =>
         const front = yield* tabs.frontOf(request.engineSessionId);
         if (Option.isNone(front)) return yield* refused("no-tab");
         const { tab, heldByDevice } = front.value;
-        const key = `${tab.id}\u0000${request.caller.id}\u0000${yield* turnOf(request.caller)}`;
-        if (refusals.has(key)) return yield* refused("refused-before");
-        const filled = heldByDevice
-          ? Effect.fail(refused("held"))
-          : fillTab(request, named, tab, seen);
+        const refusedTabs = refusedTabsOf(request, turnId);
+        if (refusedTabs.has(tab.id)) return yield* refused("refused-before");
+        const filled = heldByDevice ? Effect.fail(refused("held")) : fillTab(request, tab, seen);
         return yield* filled.pipe(
           // Once the tab was looked at, a refusal holds for the tab and the
           // turn. A locked vault, a browser that did not answer or a person
@@ -392,8 +482,7 @@ export const layerWith = (timing: FillTiming) =>
                 error.reason !== "unavailable" &&
                 error.reason !== "held"
               ) {
-                refusals.add(key);
-                remember(refusals, REFUSALS_KEPT);
+                refusedTabs.add(tab.id);
               }
             }),
           ),
@@ -437,13 +526,19 @@ export const layerWith = (timing: FillTiming) =>
         );
       });
 
-      const run = Effect.fn("CredentialFills.run")(function* (request: FillRequest) {
+      /** A fill claimed for `turnId`, run, recorded, and its answer stored for its call. */
+      const run = Effect.fn("CredentialFills.run")(function* (
+        request: FillRequest,
+        call: FillCall,
+      ) {
+        const claim = yield* turnTools.claim(call);
+        if (claim._tag === "stored") return yield* decodeOutcome(claim.result).pipe(Effect.orDie);
         const startedAt = yield* DateTime.now;
         const seen: { origin: SiteOrigin | null; credential: Credential | null } = {
           origin: null,
           credential: null,
         };
-        const outcome = yield* attempt(request, seen).pipe(
+        const outcome = yield* attempt(request, claim.turnId, seen).pipe(
           Effect.map(({ submitted }): FillOutcome => ({ _tag: "filled", submitted })),
           Effect.catchTags({
             Refused: (error) =>
@@ -453,6 +548,7 @@ export const layerWith = (timing: FillTiming) =>
           lock.withPermits(1),
         );
         yield* record(request, outcome, seen, startedAt);
+        yield* turnTools.settle(call, yield* encodeOutcome(outcome).pipe(Effect.orDie));
         return outcome;
       });
 
@@ -460,21 +556,37 @@ export const layerWith = (timing: FillTiming) =>
        * Runs a fill once per request id, in the server's scope rather than
        * the caller's: a forward the bridge gave up on does not cut a fill
        * short between typing and giving the tab back, and its retry waits for
-       * the same answer.
+       * the same answer. A request that could not be claimed is forgotten, so
+       * its retry is claimed afresh.
        */
-      const fill = Effect.fn("CredentialFills.fill")(function* (request: FillRequest) {
+      const fillLogin = Effect.fn("CredentialFills.fillLogin")(function* (request: FillRequest) {
         const existing = answers.get(request.requestId);
         if (existing !== undefined) return yield* Deferred.await(existing);
-        const answer = yield* Deferred.make<FillOutcome>();
+        const answer = yield* Deferred.make<FillOutcome, FillCallRefused>();
         answers.set(request.requestId, answer);
-        remember(answers, ANSWERS_KEPT);
+        const oldest = answers.keys().next();
+        if (answers.size > ANSWERS_KEPT && oldest.done !== true) answers.delete(oldest.value);
+        const call: FillCall = {
+          tool: "fill_credential",
+          requestId: request.requestId,
+          caller: request.caller,
+          arguments: request.arguments,
+        };
         // A defect or an interruption reaches every waiter too, so none waits forever.
-        yield* run(request).pipe(Deferred.into(answer), Effect.forkIn(serverScope));
+        yield* run(request, call).pipe(
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit)
+              ? Effect.sync(() => answers.delete(request.requestId))
+              : Effect.void,
+          ),
+          Deferred.into(answer),
+          Effect.forkIn(serverScope),
+        );
         return yield* Deferred.await(answer);
       });
 
-      return CredentialFills.of({ list, fill });
+      return CredentialFills.of({ list, fillLogin });
     }),
   );
 
-export const layer = layerWith(DEFAULT_FILL_TIMING);
+export const layer = make(TIMING);

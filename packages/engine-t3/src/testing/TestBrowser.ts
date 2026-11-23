@@ -68,6 +68,12 @@ export class TestBrowserControl extends Context.Service<
     readonly scriptReads: (reads: ReadonlyArray<TabPage | "gone" | "down">) => Effect.Effect<void>;
     /** How many times the server read a tab's page. */
     readonly reads: Effect.Effect<number>;
+    /**
+     * Whether viewers answer a `probe` input, as the engine does once it has
+     * run the input before it. On by default; the answer says nothing is
+     * editable there.
+     */
+    readonly answerProbes: (answering: boolean) => Effect.Effect<void>;
   }
 >()("@j3-bots/engine-t3/testing/TestBrowser/TestBrowserControl") {}
 
@@ -85,6 +91,7 @@ export const layer = Layer.effectContext(
     const opens = yield* Ref.make(0);
     const scripted = yield* Ref.make<ReadonlyArray<TabPage | "gone" | "down">>([]);
     const reads = yield* Ref.make(0);
+    const probing = yield* Ref.make(true);
 
     /** A tab's page, as its entry in the list says it. */
     const listedPage = (tab: EngineBrowserTab): TabPage =>
@@ -138,6 +145,12 @@ export const layer = Layer.effectContext(
         send: (next: BrowserInput) =>
           Ref.update(inputs, (all) => [...all, next]).pipe(
             Effect.andThen(Queue.offer(inputQueue, next)),
+            Effect.andThen(Ref.get(probing)),
+            Effect.flatMap((answering) =>
+              answering && next.type === "probe"
+                ? Queue.offer(output, { _tag: "probe", x: next.x, y: next.y, editable: false })
+                : Effect.void,
+            ),
             Effect.asVoid,
           ),
       };
@@ -157,6 +170,7 @@ export const layer = Layer.effectContext(
           opens: Ref.get(opens),
           scriptReads: (next) => Ref.set(scripted, next),
           reads: Ref.get(reads),
+          answerProbes: (answering) => Ref.set(probing, answering),
         }),
       ),
     );

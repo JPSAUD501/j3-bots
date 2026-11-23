@@ -178,9 +178,10 @@ export type TotpPreview = typeof TotpPreview.Type;
 // ---------------------------------------------------------------------------
 
 /**
- * Why the server typed nothing.
+ * Why a fill did not finish. With every reason but `unavailable`, nothing was
+ * typed.
  *
- * - `no-access`: the bot's vault access is off.
+ * - `no-access`: the bot's vault access or its browser is off.
  * - `unknown-login`: no login of that name allows this bot.
  * - `ambiguous`: more than one login of that name allows this bot for the page.
  * - `no-value`: the login has no such value: no user name, or no one-time code.
@@ -191,7 +192,8 @@ export type TotpPreview = typeof TotpPreview.Type;
  * - `origin`: the page's origin is none of the login's.
  * - `navigated`: the page changed while the server held the tab.
  * - `refused-before`: a fill was refused on this tab earlier in this turn.
- * - `unavailable`: the browser or the vault could not be reached.
+ * - `unavailable`: the browser or the vault could not be reached, or the
+ *   browser did not confirm that it ran the typing.
  */
 export const FillRefusal = Schema.Literals([
   "no-access",

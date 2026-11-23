@@ -147,15 +147,23 @@ export const layer = Layer.effect(
       ),
       fill_credential: handler(tools.fill_credential.input, (input, call) =>
         logins
-          .fill({
+          .fillLogin({
             requestId: call.requestId,
             caller: call.caller,
             engineSessionId: call.sessionId,
             credential: input.credential,
             field: input.field,
             submit: input.submit ?? false,
+            arguments: call.arguments,
           })
-          .pipe(Effect.map(fillAnswer)),
+          .pipe(
+            Effect.map(fillAnswer),
+            Effect.catchTags({
+              TurnEnded: (error) => new Refused({ reason: error.message }),
+              TurnToolRefused: (error) => new Refused({ reason: error.message }),
+              Conflict: (error) => new Refused({ reason: error.message }),
+            }),
+          ),
       ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory

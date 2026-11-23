@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Conflict } from "@j3-bots/contracts";
+import type { TurnId } from "@j3-bots/engine-t3";
 import { NO_TURN_REFUSAL, type ToolInput } from "@j3-bots/prompts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -57,6 +58,26 @@ export type TurnToolCall = {
 }[TurnToolName];
 
 /**
+ * A `fill_credential` call, claimed for its turn before the fill runs
+ * (`vault/Fill.ts`).
+ */
+export interface FillCall {
+  readonly tool: "fill_credential";
+  readonly requestId: string;
+  readonly caller: BotSession;
+  /** As the bridge received them: what the engine's record of the call is digested from. */
+  readonly arguments: Schema.Json;
+}
+
+/**
+ * A fill's claim: matched to the engine's record of its call and pinned to
+ * that turn, or a forward of the same request that already has its answer.
+ */
+export type FillClaim =
+  | { readonly _tag: "claimed"; readonly turnId: TurnId }
+  | { readonly _tag: "stored"; readonly result: Schema.Json };
+
+/**
  * Where the tools that act for a turn go: `say` and `ask` deliver to the
  * turn's audience, `message_bot` wakes or holds for a teammate,
  * `set_routine` changes a routine on the bot's behalf, and
@@ -73,5 +94,18 @@ export class TurnTools extends Context.Service<
     readonly call: (
       call: TurnToolCall,
     ) => Effect.Effect<Schema.Json, TurnEnded | TurnToolRefused | TurnToolRetry | Conflict>;
+    /**
+     * Pins a fill to the engine's record of its call in the caller's running
+     * admitted turn, as `call` pins the other tools, but in a transaction of
+     * its own: a fill holds a browser tab for seconds, so it runs after the
+     * pin, and its answer is stored with `settle`. A request without such a
+     * call, as one that names a session it was not made from, fails with
+     * `TurnEnded`.
+     */
+    readonly claim: (
+      call: FillCall,
+    ) => Effect.Effect<FillClaim, TurnEnded | TurnToolRefused | TurnToolRetry | Conflict>;
+    /** Stores a claimed fill's answer, which a forward retried under its id then gets. */
+    readonly settle: (call: FillCall, result: Schema.Json) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/tools/TurnTools") {}

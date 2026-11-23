@@ -14,10 +14,10 @@ The owner chose unattended fills, as other assistants offer them: nobody confirm
 
 **The server types a saved login into the bot's front tab when the bot asks, with every guard available today, and says plainly what remains.**
 
-- **Allowed ahead of time.** A bot fills only while its vault access is on (off by default, a switch on its details next to the browser's) and only logins that allow it.
+- **Allowed ahead of time.** A bot fills only while its vault access is on (off by default, a switch on its details next to the browser's) and its browser is on, only logins that allow it, and only for a call its running turn made, as the engine recorded it.
 - **The bot never holds a value.** `fill_credential` names the login and the field; the answer is `filled`, `refused` with a reason, or `locked`, in a fixed shape. No value reaches a result, a work step, an entry or a log line.
 - **The server checks the page, not the bot.** It takes the tab first, so the bot cannot move it, then reads the committed address from the engine. The origin must equal one of the login's exactly, in ASCII; plain `http:` is refused except on this computer, and a page still loading is refused. It reads the address again right before typing.
-- **A password is always submitted** within the hold, and cleared if the page stays, so the bot never gets the tab back with a filled password field.
+- **A password is always submitted** within the hold, and cleared if the page stays, so the bot never gets the tab back with a filled password field. The tab is given back only once the engine confirmed it ran the typing, since a release drops input still waiting.
 - **A refusal is final** for that tab in that turn.
 - **Claude Code bots lose the engine's `preview_evaluate`**, which could read a field's value back with a script. The engine runs one Claude Code instance for every bot, and the list of removed tools is the instance's, so every Claude Code bot loses it, with vault access or not. The other browser tools still read and act on pages.
 

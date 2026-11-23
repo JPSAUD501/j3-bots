@@ -503,7 +503,7 @@ export const FILL_NOTES: Readonly<
     "Your user's vault is locked, so nothing was typed. Tell them: only they can unlock it, from their app.",
   listed: "Fill only into the page of one of a login's origins.",
   "no-access":
-    "Your user has not let you use their saved logins. Nothing was typed. They can allow it in your details.",
+    "Your user has not let you use their saved logins, or your browser is off. Nothing was typed. They can turn both on in your details.",
   "unknown-login":
     "No saved login of that name is one you may use. Nothing was typed. Check `list_credentials`.",
   ambiguous:
@@ -521,7 +521,8 @@ export const FILL_NOTES: Readonly<
     "The page changed while it was being filled. Nothing was typed, and this tab takes no fill in this turn.",
   "refused-before":
     "A fill was already refused on this tab in this turn. Nothing was typed. Tell your user what happened.",
-  unavailable: "The browser or the vault did not answer. Nothing was typed. Try again later.",
+  unavailable:
+    "The browser or the vault did not answer, so the fill may not have finished. Look at the page before you try again.",
 };
 
 export type ToolName = keyof typeof tools;

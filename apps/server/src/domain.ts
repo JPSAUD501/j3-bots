@@ -66,12 +66,12 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
  * which run for as long as the layer's scope.
  */
 export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.layer).pipe(
+  // A fill is claimed for its call's turn, through `Speech`'s turn tools.
+  Layer.provideMerge(CredentialFills.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       Bots.layer,
-      Layer.mergeAll(BrowserViewers.layer, CredentialFills.layer).pipe(
-        Layer.provideMerge(BrowserTabs.layer),
-      ),
+      BrowserViewers.layer.pipe(Layer.provideMerge(BrowserTabs.layer)),
       Templates.layer,
       Roster.layer,
       Speech.layer,
