@@ -1223,8 +1223,7 @@ const make = Effect.gen(function* () {
 
     connectedEndpoint: Effect.sync(() => Option.getOrNull(connection)),
 
-    recheckProvider: (providerId) =>
-      command(Effect.sync(() => void rechecked.push(providerId))),
+    recheckProvider: (providerId) => command(Effect.sync(() => void rechecked.push(providerId))),
 
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 

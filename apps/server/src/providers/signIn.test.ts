@@ -82,11 +82,14 @@ it("runs each harness's own sign-in in J3 Bots' home for it, with only the varia
 });
 
 it("runs a Windows .cmd shim through cmd.exe, and refuses a path cmd.exe would expand", () => {
-  assert.deepStrictEqual(invocation("C:\\Tools\\claude.exe", ["auth", "login"], "win32"), Result.succeed({
-    command: "C:\\Tools\\claude.exe",
-    args: ["auth", "login"],
-    shell: false,
-  }));
+  assert.deepStrictEqual(
+    invocation("C:\\Tools\\claude.exe", ["auth", "login"], "win32"),
+    Result.succeed({
+      command: "C:\\Tools\\claude.exe",
+      args: ["auth", "login"],
+      shell: false,
+    }),
+  );
   assert.deepStrictEqual(
     invocation("C:\\Users\\Ada Lovelace\\npm\\codex.cmd", ["login"], "win32"),
     Result.succeed({
@@ -158,63 +161,71 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
       return { result, reported };
     });
 
-  it.effect("hands the client the page BROWSER is given, then signs in, never passing on what the harness printed", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const home = path.join(root, "claude-code");
-      yield* fs.makeDirectory(home, { mode: 0o700 });
-      const go = path.join(root, "go");
-      const claude = yield* harness(
-        root,
-        "claude",
-        [
-          `echo "Opening browser to sign in… ${SECRET}"`,
-          `"$BROWSER" "https://claude.example/oauth/authorize?state=abc"`,
-          `echo "If the browser didn't open, visit: https://claude.example/short"`,
-          waitFor(go),
-          `printf '{"accessToken":"${SECRET}"}' > "$CLAUDE_CONFIG_DIR/.credentials.json"`,
-        ].join("\n"),
-      );
-      const { result, reported } = yield* runApp("claude-code", claude, home, (status) =>
-        status._tag === "waiting-for-browser" ? fs.writeFileString(go, "").pipe(Effect.orDie) : Effect.void,
-      );
-      assert.isTrue(Result.isSuccess(result));
-      assert.deepStrictEqual(reported, [
-        { _tag: "starting" },
-        {
-          _tag: "waiting-for-browser",
-          url: "https://claude.example/oauth/authorize?state=abc",
-          opened: false,
-        },
-      ]);
-      assert.notInclude(JSON.stringify(reported), SECRET);
-      assert.include(yield* fs.readFileString(path.join(home, ".credentials.json")), SECRET);
-    }).pipe(Effect.scoped),
+  it.effect(
+    "hands the client the page BROWSER is given, then signs in, never passing on what the harness printed",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const home = path.join(root, "claude-code");
+        yield* fs.makeDirectory(home, { mode: 0o700 });
+        const go = path.join(root, "go");
+        const claude = yield* harness(
+          root,
+          "claude",
+          [
+            `echo "Opening browser to sign in… ${SECRET}"`,
+            `"$BROWSER" "https://claude.example/oauth/authorize?state=abc"`,
+            `echo "If the browser didn't open, visit: https://claude.example/short"`,
+            waitFor(go),
+            `printf '{"accessToken":"${SECRET}"}' > "$CLAUDE_CONFIG_DIR/.credentials.json"`,
+          ].join("\n"),
+        );
+        const { result, reported } = yield* runApp("claude-code", claude, home, (status) =>
+          status._tag === "waiting-for-browser"
+            ? fs.writeFileString(go, "").pipe(Effect.orDie)
+            : Effect.void,
+        );
+        assert.isTrue(Result.isSuccess(result));
+        assert.deepStrictEqual(reported, [
+          { _tag: "starting" },
+          {
+            _tag: "waiting-for-browser",
+            url: "https://claude.example/oauth/authorize?state=abc",
+            opened: false,
+          },
+        ]);
+        assert.notInclude(JSON.stringify(reported), SECRET);
+        assert.include(yield* fs.readFileString(path.join(home, ".credentials.json")), SECRET);
+      }).pipe(Effect.scoped),
   );
 
-  it.effect("offers the printed page when the harness opens the browser itself", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped();
-      const go = path.join(root, "go");
-      const claude = yield* harness(
-        root,
-        "claude",
-        [`echo "Visit https://claude.example/short to sign in"`, waitFor(go)].join("\n"),
-      );
-      const { result, reported } = yield* runApp("claude-code", claude, root, (status) =>
-        status._tag === "waiting-for-browser" ? fs.writeFileString(go, "").pipe(Effect.orDie) : Effect.void,
-      );
-      assert.isTrue(Result.isSuccess(result));
-      assert.deepStrictEqual(reported.at(-1), {
-        _tag: "waiting-for-browser",
-        url: "https://claude.example/short",
-        opened: true,
-      });
-    }).pipe(Effect.scoped),
+  it.effect(
+    "offers the printed page when the harness opens the browser itself",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const go = path.join(root, "go");
+        const claude = yield* harness(
+          root,
+          "claude",
+          [`echo "Visit https://claude.example/short to sign in"`, waitFor(go)].join("\n"),
+        );
+        const { result, reported } = yield* runApp("claude-code", claude, root, (status) =>
+          status._tag === "waiting-for-browser"
+            ? fs.writeFileString(go, "").pipe(Effect.orDie)
+            : Effect.void,
+        );
+        assert.isTrue(Result.isSuccess(result));
+        assert.deepStrictEqual(reported.at(-1), {
+          _tag: "waiting-for-browser",
+          url: "https://claude.example/short",
+          opened: true,
+        });
+      }).pipe(Effect.scoped),
     // The printed page waits two seconds for one handed to `BROWSER`.
     10_000,
   );
@@ -302,7 +313,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
       const home = path.join(root, "codex");
       yield* fs.makeDirectory(home, { mode: 0o700 });
       yield* fs.writeFileString(path.join(home, "auth.json"), "stored\n");
-      const keyring = yield* harness(root, "stand-in", `"$BROWSER" "https://auth.example/oauth"\nexit 0`);
+      const keyring = yield* harness(
+        root,
+        "stand-in",
+        `"$BROWSER" "https://auth.example/oauth"\nexit 0`,
+      );
       const { result } = yield* runApp("codex", keyring, home);
       assert.deepStrictEqual(
         Result.isFailure(result) ? result.failure.reason : null,
@@ -325,56 +340,69 @@ const signInsIn = (home: string, bin: string) =>
         Layer.provideMerge(TestEngine.layer),
         Layer.provide(Layer.succeed(ServerConfig, configFor(path, home))),
         Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer))),
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({ PATH: `${bin}:/usr/bin:/bin` }))),
+        Layer.provide(
+          ConfigProvider.layer(ConfigProvider.fromEnvRecord({ PATH: `${bin}:/usr/bin:/bin` })),
+        ),
       );
     }),
   );
 
 it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins clients follow", (it) => {
-  it.effect("says a stored endpoint connection still wins, and has the engine check the provider again", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped();
-      const bin = path.join(home, "bin");
-      yield* fs.makeDirectory(bin);
-      const go = path.join(bin, "go");
-      yield* harness(bin, "claude", [`"$BROWSER" "https://claude.example/oauth"`, waitFor(go)].join("\n"));
-      const statuses = yield* Effect.gen(function* () {
-        const engine = yield* Engine;
-        yield* engine.connectProviders({
-          baseUrl: "https://proxy.example",
-          key: Redacted.make("not-a-real-key"),
-        });
-        const signIns = yield* SignIns.SignIns;
-        const locations = yield* signIns.locations;
-        assert.deepStrictEqual(locations, [
-          { harness: "claude-code", path: path.join(bin, "claude") },
-          { harness: "codex", path: null },
-        ]);
-        const followed = yield* signIns.follow("claude-code").pipe(
-          Stream.tap((status) =>
-            status._tag === "waiting-for-browser" ? fs.writeFileString(go, "").pipe(Effect.orDie) : Effect.void,
-          ),
-          Stream.runCollect,
+  it.effect(
+    "says a stored endpoint connection still wins, and has the engine check the provider again",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const bin = path.join(home, "bin");
+        yield* fs.makeDirectory(bin);
+        const go = path.join(bin, "go");
+        yield* harness(
+          bin,
+          "claude",
+          [`"$BROWSER" "https://claude.example/oauth"`, waitFor(go)].join("\n"),
         );
-        assert.deepStrictEqual(followed.at(-1), {
+        const statuses = yield* Effect.gen(function* () {
+          const engine = yield* Engine;
+          yield* engine.connectProviders({
+            baseUrl: "https://proxy.example",
+            key: Redacted.make("not-a-real-key"),
+          });
+          const signIns = yield* SignIns.SignIns;
+          const locations = yield* signIns.locations;
+          assert.deepStrictEqual(locations, [
+            { harness: "claude-code", path: path.join(bin, "claude") },
+            { harness: "codex", path: null },
+          ]);
+          const followed = yield* signIns.follow("claude-code", true).pipe(
+            Stream.tap((status) =>
+              status._tag === "waiting-for-browser"
+                ? fs.writeFileString(go, "").pipe(Effect.orDie)
+                : Effect.void,
+            ),
+            Stream.runCollect,
+          );
+          assert.deepStrictEqual(followed.at(-1), {
+            _tag: "succeeded",
+            endpoint: "https://proxy.example",
+          });
+          assert.deepStrictEqual(yield* (yield* TestEngine.TestEngineControl).recheckedProviders, [
+            ProviderId.make("claude-code"),
+          ]);
+          // A harness not on the PATH says so.
+          const missing = yield* signIns.follow("codex", true).pipe(Stream.runCollect);
+          return { followed, missing };
+        }).pipe(Effect.provide(signInsIn(home, bin)));
+        assert.deepStrictEqual(statuses.followed.at(-1), {
           _tag: "succeeded",
           endpoint: "https://proxy.example",
         });
-        assert.deepStrictEqual(yield* (yield* TestEngine.TestEngineControl).recheckedProviders, [
-          ProviderId.make("claude-code"),
-        ]);
-        // A harness not on the PATH says so.
-        const missing = yield* signIns.follow("codex").pipe(Stream.runCollect);
-        return { followed, missing };
-      }).pipe(Effect.provide(signInsIn(home, bin)));
-      assert.deepStrictEqual(statuses.followed.at(-1), {
-        _tag: "succeeded",
-        endpoint: "https://proxy.example",
-      });
-      assert.deepStrictEqual(statuses.missing.at(-1), { _tag: "failed", reason: "not-installed" });
-    }).pipe(Effect.scoped),
+        assert.deepStrictEqual(statuses.missing.at(-1), {
+          _tag: "failed",
+          reason: "not-installed",
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect("lets a second client follow the sign-in under way, and a cancel end it for both", () =>
@@ -387,14 +415,22 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins client
       yield* harness(bin, "claude", `"$BROWSER" "https://claude.example/oauth"\nexec sleep 60`);
       yield* Effect.gen(function* () {
         const signIns = yield* SignIns.SignIns;
-        const first = yield* signIns.follow("claude-code").pipe(Stream.runCollect, Effect.forkChild);
-        const second = yield* signIns.follow("claude-code").pipe(
+        const first = yield* signIns
+          .follow("claude-code", true)
+          .pipe(Stream.runCollect, Effect.forkChild);
+        const second = yield* signIns.follow("claude-code", true).pipe(
           Stream.takeUntil((status) => status._tag === "waiting-for-browser"),
           Stream.runCollect,
         );
         assert.deepStrictEqual(second.at(-1)?._tag, "waiting-for-browser");
         yield* signIns.cancel("claude-code");
         assert.deepStrictEqual((yield* Fiber.join(first)).at(-1), { _tag: "cancelled" });
+        // A client back on a new socket learns how it ended, and starts nothing.
+        assert.deepStrictEqual(
+          yield* signIns.follow("claude-code", false).pipe(Stream.runCollect),
+          [{ _tag: "cancelled" }],
+        );
+        assert.deepStrictEqual(yield* signIns.follow("codex", false).pipe(Stream.runCollect), []);
       }).pipe(Effect.provide(signInsIn(home, bin)));
     }).pipe(Effect.scoped),
   );

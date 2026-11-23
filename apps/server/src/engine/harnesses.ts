@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { signInHarnesses } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { PROVIDER_HOMES } from "../home/entries.ts";
@@ -35,9 +36,8 @@ export interface HarnessFacts {
 
 export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
   "claude-code": {
-    name: "Claude Code",
+    ...signInHarnesses["claude-code"],
     executable: "claude",
-    installPage: "https://code.claude.com/docs/en/setup",
     homeVariable: "CLAUDE_CONFIG_DIR",
     credentialFile: ".credentials.json",
     // The command the engine names for a signed-out Claude Code instance.
@@ -48,9 +48,8 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
     revokesStoredSignIn: false,
   },
   codex: {
-    name: "Codex",
+    ...signInHarnesses.codex,
     executable: "codex",
-    installPage: "https://developers.openai.com/codex/cli",
     homeVariable: "CODEX_HOME",
     credentialFile: "auth.json",
     signIn: ["login"],

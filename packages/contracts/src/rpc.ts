@@ -604,14 +604,17 @@ export const ProviderRpcs = RpcGroup.make(
   /** Where the server finds each harness, looked up again on every call. */
   Rpc.make("provider.harnesses", { success: Schema.Array(HarnessLocation) }),
   /**
-   * Runs the harness's own sign-in, without a terminal, for J3 Bots' home for
-   * it, and follows it: where it stands, then each change, ending once it
-   * ended. One runs at a time for each harness: calling this while one runs,
-   * from this client or another, follows that one. It keeps running while no
-   * client follows it, until it ends, is cancelled or times out.
+   * Follows the harness's own sign-in, run without a terminal for J3 Bots'
+   * home for it: where it stands, then each change, ending once it ended.
+   * With `start`, one starts unless one is under way, from this client or
+   * another, which it follows instead. Without, it follows the one under way,
+   * or answers how the last one ended, or nothing when there was none: what
+   * a client asks again on a new socket, so a sign-in that ended meanwhile
+   * is not run a second time. A sign-in keeps running while no client
+   * follows it, until it ends, is cancelled or times out.
    */
   Rpc.make("provider.signIn", {
-    payload: { harness: SignInHarness },
+    payload: { harness: SignInHarness, start: Schema.Boolean },
     success: ProviderSignInStatus,
     stream: true,
   }),

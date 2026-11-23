@@ -23,7 +23,7 @@ import { Host } from "../system/Host.ts";
 import { prepareHome, SignInFailed, signIn } from "./signIn.ts";
 
 /** Whether a sign-in has ended: nothing follows these. */
-export const signInEnded = (status: ProviderSignInStatus): boolean =>
+const signInEnded = (status: ProviderSignInStatus): boolean =>
   status._tag === "succeeded" || status._tag === "failed" || status._tag === "cancelled";
 
 interface Running {
@@ -46,10 +46,14 @@ export class SignIns extends Context.Service<
     /** Where the server finds each harness, on the `PATH` it runs them with, looked up now. */
     readonly locations: Effect.Effect<ReadonlyArray<HarnessLocation>>;
     /**
-     * The harness's sign-in under way, or a new one: where it stands, then
-     * each change, ending with the change that ends it.
+     * The harness's sign-in under way, or with `start` a new one, else the
+     * last one's ending: where it stands, then each change, ending with the
+     * change that ends it. Nothing when none ran and `start` is false.
      */
-    readonly follow: (harness: SignInHarness) => Stream.Stream<ProviderSignInStatus>;
+    readonly follow: (
+      harness: SignInHarness,
+      start: boolean,
+    ) => Stream.Stream<ProviderSignInStatus>;
     /** Stops the harness's sign-in under way, if any, and waits until it stopped. */
     readonly cancel: (harness: SignInHarness) => Effect.Effect<void>;
   }
@@ -65,7 +69,8 @@ export const layer = Layer.effect(
       Host | FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
     >();
     const scope = yield* Effect.scope;
-    const running = new Map<SignInHarness, Running>();
+    // Each harness's latest sign-in, under way or ended.
+    const latest = new Map<SignInHarness, Running>();
     const lock = yield* Semaphore.make(1);
 
     /**
@@ -94,11 +99,13 @@ export const layer = Layer.effect(
         platform: host.platform,
         io: { _tag: "app", report },
       });
-      yield* engine.recheckProvider(ProviderId.make(harness)).pipe(
-        Effect.catch((error) =>
-          Effect.logInfo("The engine could not check a provider again after its sign-in", error),
-        ),
-      );
+      yield* engine
+        .recheckProvider(ProviderId.make(harness))
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logInfo("The engine could not check a provider again after its sign-in", error),
+          ),
+        );
       return yield* engine.connectedEndpoint;
     });
 
@@ -117,50 +124,45 @@ export const layer = Layer.effect(
             ),
         }),
         Effect.onInterrupt(() => report({ _tag: "cancelled" })),
-        Effect.ensuring(
-          lock.withPermits(1)(
-            Effect.sync(() => {
-              if (running.get(harness)?.status === status) running.delete(harness);
-            }),
-          ),
-        ),
         Effect.provideContext(context),
         Effect.forkIn(scope),
       );
       const entry = { status, fiber };
-      running.set(harness, entry);
+      latest.set(harness, entry);
       return entry;
     });
 
-    const follow = (harness: SignInHarness) =>
+    const follow = (harness: SignInHarness, startOne: boolean) =>
       Stream.unwrap(
         lock.withPermits(1)(
           Effect.gen(function* () {
-            const current = running.get(harness);
+            const current = latest.get(harness);
+            const underWay =
+              current !== undefined && !signInEnded(yield* SubscriptionRef.get(current.status));
             const entry =
-              current !== undefined && !signInEnded(yield* SubscriptionRef.get(current.status))
+              underWay || (!startOne && current !== undefined)
                 ? current
-                : yield* start(harness);
-            return SubscriptionRef.changes(entry.status).pipe(
-              Stream.takeUntil(signInEnded),
-            );
+                : startOne
+                  ? yield* start(harness)
+                  : undefined;
+            return entry === undefined
+              ? Stream.empty
+              : SubscriptionRef.changes(entry.status).pipe(Stream.takeUntil(signInEnded));
           }),
         ),
       );
 
     const cancel = Effect.fn("SignIns.cancel")(function* (harness: SignInHarness) {
-      const current = yield* lock.withPermits(1)(Effect.sync(() => running.get(harness)));
+      const current = yield* lock.withPermits(1)(Effect.sync(() => latest.get(harness)));
       if (current !== undefined) yield* Fiber.interrupt(current.fiber);
     });
 
     const locations = Effect.forEach(SignInHarness.literals, (harness) =>
       findHarness(harness, Option.none()).pipe(
-        Effect.map(
-          ({ executable }): HarnessLocation => ({
-            harness,
-            path: Option.getOrNull(executable),
-          }),
-        ),
+        Effect.map(({ executable }): HarnessLocation => ({
+          harness,
+          path: Option.getOrNull(executable),
+        })),
       ),
     ).pipe(Effect.provideService(Host, host));
 

@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EngineStatus, type ModelChoice, PermissionMode, type ProviderId } from "@j3-bots/contracts";
+import {
+  EngineStatus,
+  type ModelChoice,
+  PermissionMode,
+  type ProviderId,
+} from "@j3-bots/contracts";
 import {
   AttachmentCreateUploadUrlInput,
   CommandId,

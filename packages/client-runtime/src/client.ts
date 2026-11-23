@@ -16,13 +16,16 @@ import type {
   MemoryPath,
   MemoryScope,
   Mentions,
+  HarnessLocation,
   Notification,
+  ProviderConnectionRequest,
   Room,
   RoomId,
   RosterItem,
   Routine,
   RoutineId,
   Settings as SettingsValue,
+  SignInHarness,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -58,6 +61,7 @@ import * as Devices from "./stores/Devices.ts";
 import * as Drafts from "./stores/Drafts.ts";
 import * as EngineStatus from "./stores/EngineStatus.ts";
 import * as Presence from "./stores/Presence.ts";
+import * as ProviderSetup from "./stores/ProviderSetup.ts";
 import type { Loaded } from "./stores/reads.ts";
 import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
@@ -92,6 +96,7 @@ export const layer = SignOut.layer.pipe(
       WorkSteps.layer,
       Presence.layer,
       Usage.layer,
+      ProviderSetup.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -319,6 +324,21 @@ export interface J3Client {
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
   readonly startPairing: () => Promise<Actions.IntentResult<Devices.PairingOffer>>;
 
+  /** Each harness's sign-in, as this client follows it; see `ProviderSetup`. */
+  readonly signIns: Readable<ReadonlyMap<SignInHarness, ProviderSetup.SignInView>>;
+  /**
+   * Starts the harness's sign-in on the server, or follows the one under way;
+   * `openPage` opens the page it waits on (`ProviderSetup`).
+   */
+  readonly signIn: (harness: SignInHarness, openPage: (url: string) => void) => void;
+  readonly cancelSignIn: (harness: SignInHarness) => void;
+  /** Where the server finds each harness; null when it cannot say. */
+  readonly harnessLocations: () => Promise<ReadonlyArray<HarnessLocation> | null>;
+  /** Connects the providers to an endpoint, restarting the engine. */
+  readonly connectEndpoint: (
+    request: ProviderConnectionRequest,
+  ) => Promise<ProviderSetup.ConnectEndpointResult>;
+
   readonly setView: (target: EntryTarget | null) => void;
   /** Calls `listener` for each notification. Returns the function that stops it. */
   readonly onNotification: (listener: (notification: Notification) => void) => () => void;
@@ -362,6 +382,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         workSteps: yield* WorkSteps.WorkSteps,
         presence: yield* Presence.Presence,
         usage: yield* Usage.Usage,
+        providerSetup: yield* ProviderSetup.ProviderSetup,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -545,6 +566,12 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       run.promise(
         services.devices.startPairing.pipe(Effect.exit, Effect.map(Actions.intentResult)),
       ),
+
+    signIns: services.providerSetup.signIns,
+    signIn: (harness, openPage) => fire(services.providerSetup.signIn(harness, openPage)),
+    cancelSignIn: (harness) => fire(services.providerSetup.cancelSignIn(harness)),
+    harnessLocations: () => run.promise(services.providerSetup.harnesses),
+    connectEndpoint: (request) => run.promise(services.providerSetup.connect(request)),
 
     setView: (target) => fire(services.presence.setView(target)),
     onNotification: (listener) => listen(services.presence.notifications, listener),

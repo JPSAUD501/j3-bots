@@ -37,7 +37,7 @@ const failed = (reason: SignInFailure, message: string) => new SignInFailed({ re
  * Where a sign-in shows itself: in the terminal it runs from, or to a client,
  * through `report`, with no terminal.
  */
-export type SignInIo =
+type SignInIo =
   | { readonly _tag: "terminal" }
   | {
       readonly _tag: "app";
@@ -191,11 +191,11 @@ export const prepareHome = Effect.fn("signIn.prepareHome")(function* (
 });
 
 /** How long a sign-in with no terminal has to give a page before it counts as needing one. */
-export const PAGE_WAIT = Duration.seconds(30);
+const PAGE_WAIT = Duration.seconds(30);
 /** How long a printed page waits for the same harness to hand one to `BROWSER`, which is preferred. */
 const PRINTED_PAGE_GRACE = Duration.seconds(2);
 /** How long a sign-in waits for the operator to finish on the page. */
-export const SIGN_IN_WAIT = Duration.minutes(10);
+const SIGN_IN_WAIT = Duration.minutes(10);
 /** How often the page handed to `BROWSER` is looked for. */
 const PAGE_POLL = Duration.millis(250);
 /** How much of what the harness printed is kept, in memory only, to tell why it ended. */
@@ -273,15 +273,20 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
     terminal || run.platform === "win32"
       ? null
       : path.join(
-          yield* fs.makeTempDirectoryScoped({ prefix: "j3-sign-in-" }).pipe(Effect.mapError(unexpected)),
+          yield* fs
+            .makeTempDirectoryScoped({ prefix: "j3-sign-in-" })
+            .pipe(Effect.mapError(unexpected)),
           "page",
         );
   let browser: string | null = null;
   if (pageFile !== null) {
     browser = path.join(path.dirname(pageFile), "open-page");
     const script = pageReporter(pageFile);
-    if (Result.isFailure(script)) return yield* failed("unexpected", "No page reporter could be written");
-    yield* fs.writeFileString(browser, script.success, { mode: 0o700 }).pipe(Effect.mapError(unexpected));
+    if (Result.isFailure(script))
+      return yield* failed("unexpected", "No page reporter could be written");
+    yield* fs
+      .writeFileString(browser, script.success, { mode: 0o700 })
+      .pipe(Effect.mapError(unexpected));
   }
   const command = signInCommand(harness, run.executable, folder, run.environment, {
     deviceAuth: run.deviceAuth,
@@ -351,7 +356,10 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
       yield* Effect.gen(function* () {
         while (true) {
           const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
-          const url = text.split("\n").map(pageIn).find((found) => found !== null);
+          const url = text
+            .split("\n")
+            .map(pageIn)
+            .find((found) => found !== null);
           if (url !== undefined && url !== null) {
             return yield* Deferred.succeed(page, { url, opened: false });
           }
@@ -399,7 +407,10 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
     }
   }
   if (exitCode !== 0) {
-    return yield* failed("ended", `${facts.name}'s sign-in ended with status ${exitCode}.${unchanged}`);
+    return yield* failed(
+      "ended",
+      `${facts.name}'s sign-in ended with status ${exitCode}.${unchanged}`,
+    );
   }
   if (folder === home) return;
   const signedIn = path.join(folder, facts.credentialFile);

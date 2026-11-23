@@ -154,7 +154,7 @@ export const handlers = ServedRpcs.toLayer(
       "push.unregister": ({ commandId }) =>
         devices.unregisterPush({ commandId, deviceId: device.id }),
       "provider.harnesses": () => signIns.locations,
-      "provider.signIn": ({ harness }) => signIns.follow(harness),
+      "provider.signIn": ({ harness, start }) => signIns.follow(harness, start),
       "provider.cancelSignIn": ({ harness }) => signIns.cancel(harness),
       // The request carries the key: it is never logged, and has no receipt.
       "provider.connect": (request) =>

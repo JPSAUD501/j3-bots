@@ -11,6 +11,14 @@ import { OpenLiterals } from "./base.ts";
 export const SignInHarness = Schema.Literals(["claude-code", "codex"]);
 export type SignInHarness = typeof SignInHarness.Type;
 
+/** Each harness's name, and where its maker says how to install it. */
+export const signInHarnesses: Readonly<
+  Record<SignInHarness, { readonly name: string; readonly installPage: string }>
+> = {
+  "claude-code": { name: "Claude Code", installPage: "https://code.claude.com/docs/en/setup" },
+  codex: { name: "Codex", installPage: "https://developers.openai.com/codex/cli" },
+};
+
 /** Where the server finds a harness, on the `PATH` it runs harnesses with; null when it is not there. */
 export const HarnessLocation = Schema.Struct({
   harness: SignInHarness,
@@ -22,8 +30,7 @@ export type HarnessLocation = typeof HarnessLocation.Type;
 export const SignInPage = Schema.String.check(
   Schema.isMaxLength(8192),
   Schema.makeFilter(
-    (text: string) =>
-      (URL.canParse(text) && new URL(text).protocol === "https:") || "an https URL",
+    (text: string) => (URL.canParse(text) && new URL(text).protocol === "https:") || "an https URL",
   ),
 );
 

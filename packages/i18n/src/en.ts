@@ -536,6 +536,63 @@ export const en = {
   "onboarding.connect.status.connecting": "Waiting for the server…",
   "onboarding.connect.status.starting": "Starting…",
   "onboarding.connect.status.engineOut": "Not running",
+  "onboarding.connect.local.body":
+    "Bots think with AI models such as Claude or GPT. Sign in with an account you already have: J3 Bots keeps a sign-in of its own, and your own Claude Code and Codex stay as they are.",
+  "providers.signIn.claude-code": "Sign in with Claude",
+  "providers.signIn.codex": "Sign in with ChatGPT (Codex)",
+  "providers.signIn.plan": "Bots use your own plan: their usage counts toward your limits.",
+  "providers.signIn.starting": "Starting {harness}’s sign-in…",
+  "providers.signIn.waiting": "Finish signing in to {harness} in your browser.",
+  "providers.signIn.openAgain": "Open the page again",
+  "providers.signIn.cancel": "Cancel",
+  "providers.signIn.succeeded": "{harness} is signed in. Checking it…",
+  "providers.signIn.succeededEndpoint":
+    "{harness} is signed in, but the endpoint at {endpoint} is still connected, and bots reach their models through it while it is.",
+  "providers.signIn.tryAgain": "Try again",
+  "providers.signIn.failed.notInstalled":
+    "{harness} isn’t on this computer any more. Look again once it is installed.",
+  "providers.signIn.failed.needsTerminal":
+    "{harness} can only sign in from a terminal on this computer, which the app doesn’t have. Use an endpoint instead.",
+  "providers.signIn.failed.ended": "{harness}’s sign-in stopped before it finished. Try again.",
+  "providers.signIn.failed.noCredential":
+    "{harness} finished without leaving a sign-in J3 Bots can use. If it keeps its sign-in in the system’s keyring, use an endpoint instead.",
+  "providers.signIn.failed.linkedHome":
+    "J3 Bots’ folder for {harness} is a link to another folder, so nothing was signed in there. Remove the link, then try again.",
+  "providers.signIn.failed.homeRefused":
+    "J3 Bots couldn’t use its folder for {harness}: other users can open it, or it can’t be written. The server’s log names it.",
+  "providers.signIn.failed.timedOut":
+    "The sign-in waited 10 minutes for your browser, then stopped. Try again.",
+  "providers.signIn.failed.other": "{harness}’s sign-in didn’t work. Try again.",
+  "providers.signIn.unsupported":
+    "This server signs harnesses in only from a terminal on its machine.",
+  "providers.notFound":
+    "Neither Claude Code nor Codex is installed on this computer. Install one, then look again.",
+  "providers.notFound.install": "Install {harness}",
+  "providers.notFound.lookAgain": "Look again",
+  "providers.notFound.looking": "Looking…",
+  "providers.endpoint.open": "Advanced: use an endpoint",
+  "providers.endpoint.use": "Use an endpoint",
+  "providers.endpoint.body":
+    "An endpoint serves Claude Code’s and Codex’s models from elsewhere, such as a proxy in front of your subscriptions. It must speak Anthropic’s Messages API and OpenAI’s Responses API.",
+  "providers.endpoint.url": "Base URL",
+  "providers.endpoint.key": "Key",
+  "providers.endpoint.badUrl":
+    "Use the endpoint’s https address, such as https://proxy.example.com, or http only to this computer (localhost or 127.0.0.1), with no user name, query or fragment.",
+  "providers.endpoint.connect": "Connect",
+  "providers.endpoint.connecting": "Connecting…",
+  "providers.endpoint.applied": "Connected: bots reach their models through {baseUrl}.",
+  "providers.endpoint.stored":
+    "The connection to {baseUrl} is saved. The engine is starting with it.",
+  "providers.endpoint.workRunning.one":
+    "{count} bot has work running, and connecting restarts the engine, which stops it.",
+  "providers.endpoint.workRunning.other":
+    "{count} bots have work running, and connecting restarts the engine, which stops it.",
+  "providers.endpoint.restartAnyway": "Restart anyway",
+  "providers.endpoint.refused":
+    "The engine’s data refused the connection, so it wasn’t saved. The server’s log says why.",
+  "providers.endpoint.refusedActive":
+    "The engine’s data refused the connection, so it wasn’t saved, and bots still use {active}. The server’s log says why.",
+  "providers.endpoint.failed": "Couldn’t reach the server, so nothing changed. Try again.",
   "onboarding.arrival.title": "{name} is here",
   "onboarding.arrival.hello": "Saying hello…",
   "onboarding.arrival.waiting": "{name} says hello as soon as a model is connected.",
@@ -819,6 +876,8 @@ export const en = {
   "settings.engine": "Engine",
   "settings.engine.ready": "Running, version {version}",
   "settings.engine.lastKnown": "Last known. This device isn’t connected to J3 Bots right now.",
+  "settings.engine.harness.found": "{harness}: found at {path}",
+  "settings.engine.harness.missing": "{harness}: not found",
   "settings.usage": "Usage",
   "usage.engineNotRunning": "Usage shows while the engine is running.",
   "usage.noProviders": "No provider can run bots yet.",
