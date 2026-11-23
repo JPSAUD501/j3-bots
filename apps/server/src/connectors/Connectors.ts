@@ -18,6 +18,7 @@ import {
   openCommandSession,
   openSession,
   pinRefusal,
+  reservedVariable,
   processCapacity,
   type SecretHeader,
   type SessionLimits,
@@ -263,14 +264,16 @@ const envFieldsOf = (command: CommandLine): ReadonlyArray<ConnectorField> =>
 /**
  * Whether the server takes a command line: every package it runs through
  * `npx` or `uvx` at an exact version, and no variable named twice, in any
- * case, since Windows reads names without it.
+ * case, since Windows reads names without it, or by a name the server reads
+ * to find and start the program.
  */
 const checkCommand = (command: CommandLine): Effect.Effect<void, Invalid> => {
-  if (Option.isSome(pinRefusal(command.command, command.args.map(Redacted.value)))) {
+  const given = command.env.map((variable) => variable.name);
+  if (Option.isSome(pinRefusal(command.command, command.args.map(Redacted.value), given))) {
     return Effect.fail(new Invalid({ reason: "command-unpinned" }));
   }
-  const names = command.env.map((variable) => variable.name.toUpperCase());
-  return new Set(names).size === names.length
+  const names = given.map((name) => name.toUpperCase());
+  return new Set(names).size === names.length && !given.some(reservedVariable)
     ? Effect.void
     : Effect.fail(new Invalid({ reason: "connector-fields" }));
 };
@@ -1203,21 +1206,26 @@ export const layer = Layer.effect(
         values.map((value) => [value.key, value.value]),
       );
       // A remote connector's fields are its headers, a command's its environment.
-      yield* vault.connectorSecrets.put({
-        ...secret.value,
-        headers: secret.value.headers.map((header) => ({
-          name: header.name,
-          value: given.get(header.name) ?? header.value,
-        })),
-        env: secret.value.env.map((variable) => ({
-          name: variable.name,
-          value: given.get(variable.name) ?? variable.value,
-        })),
-      });
-      yield* store.update(connector.id, { signedInAt: now }, now);
-      yield* updateSeen(connector.id, (seen) => ({ ...seen, refused: false }));
-      // Sessions signed with the old values close; the next call opens one with the new.
-      yield* closeSessions(connector.id);
+      // From the write on, nothing interrupts it: the process the old values started stops with it.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* vault.connectorSecrets.put({
+            ...secret.value,
+            headers: secret.value.headers.map((header) => ({
+              name: header.name,
+              value: given.get(header.name) ?? header.value,
+            })),
+            env: secret.value.env.map((variable) => ({
+              name: variable.name,
+              value: given.get(variable.name) ?? variable.value,
+            })),
+          });
+          yield* store.update(connector.id, { signedInAt: now }, now);
+          yield* updateSeen(connector.id, (seen) => ({ ...seen, refused: false }));
+          // Sessions signed with the old values close; the next call opens one with the new.
+          yield* closeSessions(connector.id);
+        }),
+      );
       // A command's process started with the old ones: the new one starts now, which lists its
       // tools and clears a failure the old values caused.
       if (isCommand(connector)) yield* inFlight(connector.id, relist(connector.id));
@@ -1238,29 +1246,34 @@ export const layer = Layer.effect(
       yield* checkCommand(command);
       const secret = yield* vault.connectorSecrets.get(vaultIdOf(connector.id));
       if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
-      // The whole command line is replaced in one write, so no start mixes the old one with the new.
-      yield* vault.connectorSecrets.put({
-        ...secret.value,
-        command: { program: command.command, args: command.args },
-        env: command.env.map((variable) => ({ name: variable.name, value: variable.value })),
-      });
       const fields = envFieldsOf(command);
-      yield* changing(
-        connector.id,
-        Effect.gen(function* () {
-          yield* store.update(
+      // The whole command line is replaced in one write, so no start mixes the old one with the
+      // new; from the write on, nothing interrupts it, so the old process stops with it.
+      yield* Effect.uninterruptible(
+        Effect.andThen(
+          vault.connectorSecrets.put({
+            ...secret.value,
+            command: { program: command.command, args: command.args },
+            env: command.env.map((variable) => ({ name: variable.name, value: variable.value })),
+          }),
+          changing(
             connector.id,
-            {
-              transport: { _tag: "command", program: command.command },
-              fields,
-              signIn: fields.length > 0 ? "fields" : "none",
-              signedInAt: fields.length > 0 ? now : null,
-            },
-            now,
-          );
-          yield* closeSessions(connector.id);
-          yield* updateSeen(connector.id, () => NOTHING_SEEN);
-        }),
+            Effect.gen(function* () {
+              yield* store.update(
+                connector.id,
+                {
+                  transport: { _tag: "command", program: command.command },
+                  fields,
+                  signIn: fields.length > 0 ? "fields" : "none",
+                  signedInAt: fields.length > 0 ? now : null,
+                },
+                now,
+              );
+              yield* closeSessions(connector.id);
+              yield* updateSeen(connector.id, () => NOTHING_SEEN);
+            }),
+          ),
+        ),
       );
       yield* inFlight(connector.id, relist(connector.id));
     });

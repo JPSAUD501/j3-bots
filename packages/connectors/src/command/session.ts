@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Client } from "@modelcontextprotocol/client";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 import { CommandFailed, type ConnectorFailure, NotMcp, ResponseTooLarge } from "../errors.ts";
@@ -15,6 +17,7 @@ import {
 } from "../session.ts";
 import { type CommandVariable, commandEnvironment } from "./environment.ts";
 import { startProcess } from "./process.ts";
+import { pinRefusal } from "./pinning.ts";
 import { interpreterReads, resolveProgram } from "./program.ts";
 import { ProcessTransport } from "./transport.ts";
 
@@ -27,6 +30,22 @@ import { ProcessTransport } from "./transport.ts";
 
 /** The most one message from the process may take, in bytes, as the SDK's stdio transport allows. */
 const MAX_MESSAGE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Whether the server's Node writes what it starts a child with, arguments
+ * and environment, to its standard error: `NODE_DEBUG` naming
+ * `child_process`, by name or by a pattern with `*`, as Node reads it.
+ */
+const debugsChildren = (environment: Readonly<Record<string, string | undefined>>): boolean =>
+  (environment["NODE_DEBUG"] ?? "")
+    .split(/[\s,]+/)
+    .filter((pattern) => pattern !== "")
+    .some((pattern) =>
+      new RegExp(
+        `^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`,
+        "i",
+      ).test("child_process"),
+    );
 
 export interface CommandSessionOptions {
   readonly platform: NodeJS.Platform;
@@ -47,7 +66,11 @@ export interface CommandSessionOptions {
 
 export interface CommandSession {
   readonly session: McpSession;
-  /** Done once the process has ended, by itself or by the session's close. */
+  /**
+   * Done once the process has ended, by itself or by the session's close, or
+   * once its session broke for its fault (a message too long, its input left
+   * unread), when it is to be stopped.
+   */
   readonly ended: Effect.Effect<void>;
 }
 
@@ -78,9 +101,21 @@ export const openCommandSession = (
       cwd: options.cwd,
     });
     const args = options.args.map(Redacted.value);
+    // Checked again on the program as found, whatever way its path was written.
+    const names = options.variables.map((variable) => variable.name);
+    if (Option.isSome(pinRefusal(executable, args, names))) {
+      yield* Effect.logWarning("A command runs a package launcher the version check refuses");
+      return yield* new CommandFailed({ reason: "exited" });
+    }
     if (interpreterReads(options.platform, executable, args)) {
       yield* Effect.logWarning(
         "A command's arguments would be read by Windows' command interpreter",
+      );
+      return yield* new CommandFailed({ reason: "exited" });
+    }
+    if (debugsChildren(options.serverEnvironment)) {
+      yield* Effect.logWarning(
+        "Command connectors do not start while NODE_DEBUG logs what child processes are given",
       );
       return yield* new CommandFailed({ reason: "exited" });
     }
@@ -91,8 +126,11 @@ export const openCommandSession = (
       environment,
       cwd: options.cwd,
     });
-    const transport = new ProcessTransport(running.input, running.output, MAX_MESSAGE_BYTES);
     const fork = Effect.runForkWith(yield* Effect.context<never>());
+    const broken = yield* Deferred.make<void>();
+    const transport = new ProcessTransport(running.input, running.output, MAX_MESSAGE_BYTES, () =>
+      fork(Deferred.succeed(broken, undefined)),
+    );
     const client = new Client(options.client, {
       capabilities: {},
       listChanged: {
@@ -146,6 +184,6 @@ export const openCommandSession = (
         listTools: explained(tools.listTools),
         callTool: (input) => explained(tools.callTool(input)),
       },
-      ended: running.ended,
+      ended: Effect.raceFirst(running.ended, Deferred.await(broken)),
     } satisfies CommandSession;
   });

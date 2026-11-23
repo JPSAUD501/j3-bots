@@ -187,6 +187,14 @@ describe("Connectors started by command", () => {
           }),
           "connector-fields",
         );
+        // The search path chooses which program runs, and a value can change with no confirmation.
+        assert.strictEqual(
+          yield* add({
+            ...command([]),
+            env: [{ name: EnvName.make("Path"), value: Redacted.make("/tmp/elsewhere") }],
+          }),
+          "connector-fields",
+        );
         // Nothing of a refused command was kept.
         assert.isTrue(Option.isNone(yield* vault.connectorSecrets.get(vaultIdOf(ID))));
       }).pipe(Effect.scoped, Effect.provide(domain)),

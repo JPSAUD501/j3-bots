@@ -27,6 +27,7 @@ export {
   ListedTool,
   MAX_DESCRIPTION_CHARACTERS,
 } from "./catalog.ts";
+export { reservedVariable } from "./command/environment.ts";
 export { pinRefusal } from "./command/pinning.ts";
 export { type CommandSession, openCommandSession } from "./command/session.ts";
 export { makeSupervisor, processCapacity, type Supervisor } from "./command/supervisor.ts";

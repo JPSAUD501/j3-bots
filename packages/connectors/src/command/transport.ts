@@ -17,8 +17,10 @@ import {
  * A line that is not a JSON-RPC message, as a server that logs to its
  * output writes, is skipped. A message longer than `maxMessageBytes` ends
  * the connection: every request waiting on it fails. So does a process that
- * leaves more than `maxMessageBytes` of what was sent it unread, rather than
- * the server holding all it sends.
+ * would leave more than `maxMessageBytes` of what was sent it unread, rather
+ * than the server holding all it sends. Either is the process's fault, and
+ * `onBroken` hears of it, so the process is stopped whether or not a request
+ * was waiting.
  */
 export class ProcessTransport implements Transport {
   onclose?: (() => void) | undefined;
@@ -34,13 +36,26 @@ export class ProcessTransport implements Transport {
   readonly #output: NodeStream.Readable;
   readonly #buffer: ReadBuffer;
   readonly #maxUnread: number;
+  readonly #onBroken: () => void;
   #closed = false;
 
-  constructor(input: NodeStream.Writable, output: NodeStream.Readable, maxMessageBytes: number) {
+  constructor(
+    input: NodeStream.Writable,
+    output: NodeStream.Readable,
+    maxMessageBytes: number,
+    onBroken: () => void,
+  ) {
     this.#input = input;
     this.#output = output;
     this.#buffer = new ReadBuffer({ maxBufferSize: maxMessageBytes });
     this.#maxUnread = maxMessageBytes;
+    this.#onBroken = onBroken;
+  }
+
+  /** Ends the connection for the process's fault. */
+  #break(): void {
+    void this.close();
+    this.#onBroken();
   }
 
   readonly #onData = (chunk: Buffer) => {
@@ -48,7 +63,7 @@ export class ProcessTransport implements Transport {
       this.#buffer.append(chunk);
     } catch {
       this.tooLarge = true;
-      void this.close();
+      this.#break();
       return;
     }
     for (;;) {
@@ -77,13 +92,14 @@ export class ProcessTransport implements Transport {
 
   send(message: JSONRPCMessage): Promise<void> {
     if (this.#closed) return Promise.reject(new Error("The process's input is closed."));
-    if (this.#input.writableLength > this.#maxUnread) {
+    const line = serializeMessage(message);
+    if (this.#input.writableLength + Buffer.byteLength(line, "utf8") > this.#maxUnread) {
       this.stalled = true;
-      void this.close();
+      this.#break();
       return Promise.reject(new Error("The process is not reading its input."));
     }
     return new Promise((resolve, reject) => {
-      this.#input.write(serializeMessage(message), (error) => {
+      this.#input.write(line, (error) => {
         if (error === null || error === undefined) resolve();
         else reject(new Error("The process's input is closed."));
       });

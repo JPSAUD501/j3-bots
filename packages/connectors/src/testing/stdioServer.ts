@@ -11,7 +11,8 @@
 // - `echo`: the value of the variable `name`, as a server that leaks a secret would;
 // - `arguments`: its command line's arguments;
 // - `spawn`: starts a process of its own that never ends, and gives its id;
-// - `exit`: answers, then ends with an error, as a server that crashes.
+// - `exit`: answers, then ends with an error, as a server that crashes;
+// - `flood`: answers, then writes more than a message may hold, unasked.
 //
 // It writes a line that is not MCP to its output before anything else, and
 // its whole environment to its standard error, as careless servers do. An
@@ -50,6 +51,7 @@ const TOOLS = [
   tool("arguments", "Gives the server's arguments"),
   tool("spawn", "Starts a process that never ends"),
   tool("exit", "Ends the server"),
+  tool("flood", "Writes too long a message"),
   ...extra.map((name) => tool(name, "Does nothing")),
 ];
 
@@ -79,6 +81,9 @@ const answer = (name: string, args: Readonly<Record<string, unknown>>): string =
     case "exit":
       setTimeout(() => process.exit(3), 50);
       return "ending";
+    case "flood":
+      setTimeout(() => process.stdout.write("x".repeat(11 * 1024 * 1024)), 50);
+      return "flooding";
     default:
       return "done";
   }

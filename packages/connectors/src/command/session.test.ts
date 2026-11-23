@@ -5,7 +5,13 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { answerOf, fixtureOptions, OPERATOR_SECRET, SERVER_ONLY } from "../testing/stdioFixture.ts";
+import {
+  answerOf,
+  fixtureOptions,
+  OPERATOR_SECRET,
+  SERVER_ONLY,
+  serverEnvironment,
+} from "../testing/stdioFixture.ts";
 import { openCommandSession } from "./session.ts";
 
 const decodeNames = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -59,5 +65,21 @@ describe("openCommandSession", () => {
         ]);
       }).pipe(Effect.scoped),
     30_000,
+  );
+
+  it.live("starts nothing while the server's Node logs what it starts children with", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        openCommandSession({
+          ...fixtureOptions(),
+          serverEnvironment: { ...serverEnvironment, NODE_DEBUG: "net,child*" },
+          onToolsChanged: Effect.void,
+        }),
+      );
+      assert.strictEqual(
+        failure._tag === "CommandFailed" ? failure.reason : failure._tag,
+        "exited",
+      );
+    }).pipe(Effect.scoped),
   );
 });

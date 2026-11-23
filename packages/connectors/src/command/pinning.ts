@@ -14,8 +14,14 @@ import * as Option from "effect/Option";
  * a value, so which word is the package cannot be told: the command is
  * refused rather than guessed at. `npx` stops reading its options at the
  * package, so what follows is the package's own; `npm exec` reads options
- * after it too, so through `npm exec` the package must follow a `--`. Other
- * programs are run as they are given.
+ * after it too, so through `npm exec` the package must follow a `--`. npm
+ * takes any prefix of a command only it has for the command, so a word that
+ * could be `exec`, `init` or `create` (which runs a package of its own) is
+ * refused, as is an option before npm's command. uv's own options are read
+ * wherever they come before its command. A launcher's settings from the
+ * environment (`npm_config_*`, `UV_*`) can choose another package or
+ * registry, so a variable of the operator's by such a name is refused too.
+ * Other programs are run as they are given.
  */
 
 /** Why a command is refused. */
@@ -50,8 +56,28 @@ const npm = {
   packages: new Set(["-p", "--package"]),
 };
 
+/** uv's own options, which it reads before and after its command. */
+const UV_GLOBAL = {
+  valued: ["--cache-dir", "--color", "--directory", "--project", "--config-file"],
+  flags: [
+    "-q",
+    "--quiet",
+    "-v",
+    "--verbose",
+    "--offline",
+    "-n",
+    "--no-cache",
+    "--native-tls",
+    "--no-progress",
+    "--no-python-downloads",
+    "--no-config",
+    "--isolated",
+  ],
+};
+
 const uv = {
   valued: new Set([
+    ...UV_GLOBAL.valued,
     "--from",
     "--with",
     "-p",
@@ -71,30 +97,19 @@ const uv = {
     "--python-preference",
     "--exclude-newer",
   ]),
-  flags: new Set([
-    "-q",
-    "--quiet",
-    "-v",
-    "--verbose",
-    "--isolated",
-    "--offline",
-    "-n",
-    "--no-cache",
-    "--native-tls",
-    "--no-progress",
-    "--no-python-downloads",
-  ]),
+  flags: new Set(UV_GLOBAL.flags),
   shell: new Set<string>(),
   packages: new Set(["--from", "--with"]),
 };
 
 /**
  * An npm package at an exact version: `name@1.2.3` or `@scope/name@1.2.3`,
- * with an optional pre-release and build. Not a tag, a range, an alias, a
- * URL, a git repository or a path.
+ * with an optional pre-release and build, each as semver writes it, since
+ * npm takes what is not a valid version for a tag. Not a tag, a range, an
+ * alias, a URL, a git repository or a path.
  */
 const NPM_PINNED =
-  /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*@\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?$/i;
+  /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*@(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-z-][0-9a-z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-z-][0-9a-z-]*))*)?(?:\+[0-9a-z-]+(?:\.[0-9a-z-]+)*)?$/i;
 
 /**
  * A Python package at an exact version: `name==1.2.3` or `name@1.2.3`, with
@@ -104,9 +119,39 @@ const NPM_PINNED =
 const PYTHON_PINNED =
   /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?(?:\[[a-z0-9._,\s-]+\])?(?:==|@)\d[0-9a-z.!+-]*$/i;
 
-/** The program's name, whatever its folder and, on Windows, its extension. */
-const programName = (program: string): string =>
-  (program.split(/[\\/]/).pop() ?? program).toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, "");
+/**
+ * The name of the file `program` runs, whatever its folder and, on Windows,
+ * its extension: its path read as the system reads it, `.` and `..` and
+ * all, and without the trailing dots and spaces Windows drops.
+ */
+const programName = (program: string): string => {
+  const segments: Array<string> = [];
+  for (const segment of program.split(/[\\/]/)) {
+    if (segment === "..") segments.pop();
+    else if (segment !== "" && segment !== ".") segments.push(segment);
+  }
+  return (segments.at(-1) ?? "")
+    .replace(/[. ]+$/, "")
+    .toLowerCase()
+    .replace(/\.(cmd|exe|bat|com|ps1)$/, "");
+};
+
+/** npm's commands that run a package other than through `exec`'s own arguments. */
+const NPM_RUNS = ["exec", "init", "create", "innit"];
+
+/** uv's arguments after its own leading options: its command first; none when one is not known. */
+const uvCommand = (args: ReadonlyArray<string>): Option.Option<ReadonlyArray<string>> => {
+  for (let at = 0; at < args.length; at++) {
+    const word = args[at] ?? "";
+    if (!word.startsWith("-")) return Option.some(args.slice(at));
+    const equals = word.indexOf("=");
+    const option = equals < 0 ? word : word.slice(0, equals);
+    if (UV_GLOBAL.flags.includes(option) && equals < 0) continue;
+    if (!UV_GLOBAL.valued.includes(option)) return Option.none();
+    if (equals < 0) at++;
+  }
+  return Option.some([]);
+};
 
 interface Launched {
   readonly launcher: Launcher;
@@ -118,26 +163,48 @@ interface Launched {
 
 /**
  * The launcher `program` and `args` run; none for any other program, and
- * `unclear` for `npm` or `uv` with an option before its command, which may
- * take the next word as its value and hide which command runs.
+ * `unclear` when which command npm or uv runs cannot be told: an option
+ * before npm's command, which may take the next word as its value, a word
+ * npm could read as a command that runs a package, or an option of uv's own
+ * the check does not know.
  */
 const launcherOf = (
   program: string,
   args: ReadonlyArray<string>,
 ): Option.Option<Launched> | "unclear" => {
   const name = programName(program);
-  if ((name === "npm" || name === "uv") && args[0]?.startsWith("-") === true) return "unclear";
-  if (name === "npx")
+  if (name === "npx") {
     return Option.some({ launcher: "npm-exec", args, optionsAfterPackage: false });
-  if (name === "npm" && (args[0] === "exec" || args[0] === "x")) {
-    return Option.some({ launcher: "npm-exec", args: args.slice(1), optionsAfterPackage: true });
+  }
+  if (name === "npm") {
+    const command = args[0] ?? "";
+    if (command === "exec" || command === "x") {
+      return Option.some({ launcher: "npm-exec", args: args.slice(1), optionsAfterPackage: true });
+    }
+    const couldRun = command.length >= 2 && NPM_RUNS.some((run) => run.startsWith(command));
+    return command.startsWith("-") || couldRun ? "unclear" : Option.none();
   }
   if (name === "uvx") return Option.some({ launcher: "uv-run", args, optionsAfterPackage: false });
-  if (name === "uv" && args[0] === "tool" && args[1] === "run") {
-    return Option.some({ launcher: "uv-run", args: args.slice(2), optionsAfterPackage: false });
+  if (name === "uv") {
+    const command = uvCommand(args);
+    if (Option.isNone(command)) return "unclear";
+    const [first, second] = command.value;
+    if (first !== "tool") return Option.none();
+    if (second === "run") {
+      return Option.some({
+        launcher: "uv-run",
+        args: command.value.slice(2),
+        optionsAfterPackage: false,
+      });
+    }
+    return second?.startsWith("-") === true ? "unclear" : Option.none();
   }
   return Option.none();
 };
+
+/** Whether a variable named `name` is one of the launcher's settings, which can choose what it fetches. */
+const launcherSetting = (launcher: Launcher, name: string): boolean =>
+  launcher === "npm-exec" ? /^npm_config_/i.test(name) : /^uv_/i.test(name);
 
 /**
  * The packages a launcher's arguments fetch: those its package options name,
@@ -183,18 +250,20 @@ const pinned = (launcher: Launcher, spec: string): boolean =>
   (launcher === "npm-exec" ? NPM_PINNED : PYTHON_PINNED).test(spec.trim());
 
 /**
- * Whether `program` with `args` runs only packages at an exact version: none
- * when it does, or when it runs no launcher the check reads; otherwise why
- * it is refused.
+ * Whether `program` with `args`, and the operator's variables named
+ * `variables`, runs only packages at an exact version: none when it does,
+ * or when it runs no launcher the check reads; otherwise why it is refused.
  */
 export const pinRefusal = (
   program: string,
   args: ReadonlyArray<string>,
+  variables: ReadonlyArray<string> = [],
 ): Option.Option<PinRefusal> => {
   const found = launcherOf(program, args);
   if (found === "unclear") return Option.some("unclear");
   if (Option.isNone(found)) return Option.none();
   const { launcher } = found.value;
+  if (variables.some((name) => launcherSetting(launcher, name))) return Option.some("unclear");
   const packages = packagesOf(found.value);
   if (packages === "shell") return Option.some("shell");
   if (Option.isNone(packages)) return Option.some("unclear");
