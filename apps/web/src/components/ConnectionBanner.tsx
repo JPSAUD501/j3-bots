@@ -59,10 +59,11 @@ interface ConnectionBannerProps {
 /**
  * One quiet line above the shell while the server is out of reach: what is
  * happening, and Try now when a retry is waiting. In local mode, while the
- * server on this computer is not running, it says that first, with what
- * starts it again. Once both run, it speaks only of an update of that server
- * that was rolled back, with Try again and its details, or of a newer one
- * than the app that runs; otherwise it takes no room. Its text is a live region, so
+ * server on this computer moves to a new release, it says only that; while
+ * that server is not running, it says that first, with what starts it again.
+ * Once both run, it speaks only of an update of that server that was rolled
+ * back, with Try again and its details, or of a newer one than the app that
+ * runs; otherwise it takes no room. Its text is a live region, so
  * each change is read out once. Shown, it is the top of the screen, so it
  * takes the device's top inset and what lies under it does not.
  */
@@ -77,13 +78,16 @@ export function ConnectionBanner({
   const down = local !== undefined && local.server.state !== "ready" ? local : null;
   const retryAt = down !== null ? down.restartAt : state._tag === "waiting" ? state.retryAt : null;
   const seconds = useSecondsUntil(retryAt);
+  // An update of the server on this computer, from the stop of the one that ran to the new one's answer.
+  const updating =
+    local?.server.update?._tag === "updating"
+      ? t("local.line.update.updating", { version: local.server.update.to })
+      : null;
   /** The server on this computer, while it is not running. */
   const downText = ((): string | null => {
     switch (down?.server.state) {
       case "starting":
-        return down.server.update?._tag === "updating"
-          ? t("local.line.update.updating", { version: down.server.update.to })
-          : t("local.line.starting");
+        return t("local.line.starting");
       case "stopped":
         return t("local.line.stopped");
       case "restarting":
@@ -129,7 +133,7 @@ export function ConnectionBanner({
         return null;
     }
   })();
-  const text = downText ?? connectionText ?? updateText;
+  const text = updating ?? downText ?? connectionText ?? updateText;
   // The line keeps its last words while it folds away, so it never shrinks empty.
   const [lastText, setLastText] = useState(text);
   if (text !== null && text !== lastText) setLastText(text);
@@ -148,12 +152,12 @@ export function ConnectionBanner({
               {text}
             </span>
             <span aria-hidden>{text ?? lastText}</span>
-            {down?.server.state === "stopped" && (
+            {updating === null && down?.server.state === "stopped" && (
               <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={down.onRetry}>
                 {t("local.line.start")}
               </Button>
             )}
-            {down?.server.state === "failed" && (
+            {updating === null && down?.server.state === "failed" && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -163,7 +167,7 @@ export function ConnectionBanner({
                 {t("local.failed.details")}
               </Button>
             )}
-            {down?.server.state === "restarting" && (
+            {updating === null && down?.server.state === "restarting" && (
               <>
                 <span aria-hidden className="tabular-nums">
                   {seconds > 0 ? t("connection.retryIn", { seconds }) : t("connection.retrying")}

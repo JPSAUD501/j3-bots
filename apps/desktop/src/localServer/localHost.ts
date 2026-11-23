@@ -244,11 +244,7 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
    * the server that runs stops, and the next start moves the data again.
    */
   const retryUpdate = Effect.gen(function* () {
-    const now = yield* update;
-    if (Option.isNone(versions) || !Option.exists(now, (notice) => notice._tag === "rolled-back")) {
-      return;
-    }
-    yield* versions.value.retry;
+    if (Option.isNone(versions) || !(yield* versions.value.retry)) return;
     yield* supervisor.stop;
     yield* supervisor.start;
   });

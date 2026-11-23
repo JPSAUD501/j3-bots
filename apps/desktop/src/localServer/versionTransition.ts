@@ -4,6 +4,7 @@ import * as Transition from "@j3-bots/server/transition";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -368,7 +369,7 @@ export const make = Effect.fn("VersionTransition.make")(function* (
     });
     const done = yield* withSteps((lock, steps) =>
       Transition.transition({ lock, from: old, to: bundled, steps }),
-    ).pipe(Effect.onError(() => SubscriptionRef.set(update, Option.none())));
+    );
     const { result } = done;
     if (Option.isSome(result.interrupted)) {
       yield* Effect.logInfo("Rolled back an update a stop had cut off first", {
@@ -468,7 +469,17 @@ export const make = Effect.fn("VersionTransition.make")(function* (
       case "finish-rollback":
         return yield* finishRollback(plan.snapshot).pipe(Effect.mapError(onTheHome));
     }
-  });
+  }).pipe(
+    // A start that fails or stops moves nothing: an update said to be under way is not.
+    Effect.onExit((exit) =>
+      Exit.isSuccess(exit)
+        ? Effect.void
+        : SubscriptionRef.update(
+            update,
+            Option.filter((notice) => notice._tag !== "updating"),
+          ),
+    ),
+  );
 
   /**
    * Takes over a server an earlier run of the app left on the home with
@@ -498,7 +509,20 @@ export const make = Effect.fn("VersionTransition.make")(function* (
     /** What the server's version is going through, if anything. */
     update: SubscriptionRef.get(update),
     updates: SubscriptionRef.changes(update) satisfies Stream.Stream<Option.Option<ServerUpdate>>,
-    /** Has the next start try the app's release again, after it was rolled back from. */
-    retry: Ref.set(retryAsked, true),
+    /**
+     * Has the next start try the app's release again, when the server was
+     * rolled back from it, and says the update is under way from now on, as
+     * the server that runs stops for it. Whether it was rolled back.
+     */
+    retry: Effect.gen(function* () {
+      const now = yield* SubscriptionRef.get(update);
+      if (Option.isNone(now) || now.value._tag !== "rolled-back") return false;
+      yield* Ref.set(retryAsked, true);
+      yield* SubscriptionRef.set(
+        update,
+        Option.some({ _tag: "updating", from: now.value.running, to: bundled.version }),
+      );
+      return true;
+    }),
   };
 });

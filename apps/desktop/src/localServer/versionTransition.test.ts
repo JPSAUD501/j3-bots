@@ -177,7 +177,8 @@ describe("the version of the server on this computer", () => {
 
       here.host.failing.clear();
       const versions = yield* here.app(NEW);
-      yield* versions.retry;
+      yield* versions.launch;
+      assert.isTrue(yield* versions.retry);
       yield* versions.launch;
       assert.deepStrictEqual((yield* Runtime.kept(here.runtimes)).sort(), [OLD, NEW]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -231,12 +232,40 @@ describe("the version of the server on this computer", () => {
         failed: NEW,
       });
 
-      yield* versions.retry;
+      assert.isTrue(yield* versions.retry);
+      // The line says so as soon as the server that runs stops for it.
+      assert.deepStrictEqual(Option.getOrNull(yield* versions.update), {
+        _tag: "updating",
+        from: OLD,
+        to: NEW,
+      });
       const retried = yield* versions.launch;
       assert.strictEqual(yield* here.versionOf(retried), NEW);
       assert.strictEqual(Option.getOrThrow(yield* here.record).version, NEW);
       yield* versions.onReady;
       assert.isTrue(Option.isNone(yield* versions.update));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("says no update is under way once a retry could not start one", () =>
+    Effect.gen(function* () {
+      const here = yield* computer();
+      here.host.failing.add(NEW);
+      const versions = yield* here.app(NEW);
+      yield* versions.launch;
+      here.host.failing.clear();
+
+      assert.isTrue(yield* versions.retry);
+      // Another change to the data holds it, as an update from the command line would.
+      const busy = yield* Effect.scoped(
+        Effect.andThen(
+          Transition.TransitionLock.hold(here.home, () => "busy"),
+          Effect.flip(versions.launch),
+        ),
+      );
+      assert.isTrue(busy.retry);
+      assert.isTrue(Option.isNone(yield* versions.update));
+      assert.strictEqual(Option.getOrThrow(yield* here.record).version, OLD);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
