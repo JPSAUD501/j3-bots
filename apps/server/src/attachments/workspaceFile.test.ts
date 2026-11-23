@@ -21,22 +21,26 @@ const places = Effect.gen(function* () {
 });
 
 it.layer(NodeServices.layer)("readWorkspaceFile", (it) => {
-  // A file far larger than memory could hold: read whole, it could not be refused at all.
-  it.effect("refuses a file above the limit, reading no more than the limit", () =>
-    Effect.gen(function* () {
-      const { fs, path, workspace, readWorkspaceFile } = yield* places;
-      const huge = path.join(workspace, "huge.bin");
-      yield* fs.writeFileString(huge, "");
-      yield* fs.truncate(huge, 64 * 1024 ** 3);
-      assert.deepStrictEqual(yield* readWorkspaceFile(workspace, "huge.bin", 1024 * 1024), {
-        _tag: "too-large",
-      });
+  // A file far larger than memory could hold: read whole, it could not be
+  // refused at all. Not on Windows, where NTFS writes out every byte a
+  // truncate adds, so no disk holds such a file.
+  it.effect.skipIf(process.platform === "win32")(
+    "refuses a file above the limit, reading no more than the limit",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, workspace, readWorkspaceFile } = yield* places;
+        const huge = path.join(workspace, "huge.bin");
+        yield* fs.writeFileString(huge, "");
+        yield* fs.truncate(huge, 64 * 1024 ** 3);
+        assert.deepStrictEqual(yield* readWorkspaceFile(workspace, "huge.bin", 1024 * 1024), {
+          _tag: "too-large",
+        });
 
-      const fits = path.join(workspace, "fits.txt");
-      yield* fs.writeFileString(fits, "x".repeat(1024));
-      const read = yield* readWorkspaceFile(workspace, "fits.txt", 1024);
-      assert.strictEqual(read._tag === "read" ? read.bytes.length : read._tag, 1024);
-    }).pipe(Effect.scoped),
+        const fits = path.join(workspace, "fits.txt");
+        yield* fs.writeFileString(fits, "x".repeat(1024));
+        const read = yield* readWorkspaceFile(workspace, "fits.txt", 1024);
+        assert.strictEqual(read._tag === "read" ? read.bytes.length : read._tag, 1024);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("refuses a link that leads out of the workspace, and follows one that stays in", () =>

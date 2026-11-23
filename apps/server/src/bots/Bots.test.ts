@@ -128,12 +128,19 @@ it.effect("never removes through a workspace that leads into the web client", ()
     const { webClient } = yield* ServerConfig;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const sessions = yield* EngineSessions;
     const bot = yield* createBot("Ana");
     // Ana's workspace, generated files and all, is moved into the web client's folder and linked back.
+    // While no provisioning runs: the rotator provisions the new bot's session in the background,
+    // which writes the workspace, and would otherwise make it anew mid-move.
     const published = path.join(webClient.directory, "ana");
     yield* fs.makeDirectory(webClient.directory, { recursive: true });
-    yield* fs.rename(layout.workspace(bot.id), published);
-    yield* fs.symlink(published, layout.workspace(bot.id));
+    yield* sessions.withoutProvisioning(
+      Effect.andThen(
+        fs.rename(layout.workspace(bot.id), published),
+        fs.symlink(published, layout.workspace(bot.id)),
+      ),
+    );
     const before = yield* fs.readDirectory(published);
 
     yield* bots.remove({ commandId: command(), botId: bot.id, deleteFiles: false });

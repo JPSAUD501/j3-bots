@@ -74,6 +74,19 @@ export const colors = {
   scrollbar: themed("oklch(0 0 0 / 0.22)", "oklch(1 0 0 / 0.22)"),
   /** Behind sheets and dialogs. */
   scrim: themed("oklch(0 0 0 / 0.3)", "oklch(0 0 0 / 0.62)"),
+  /**
+   * The image viewer's canvas, black in both themes, as an image is seen best
+   * against it.
+   */
+  viewer: themed("#000000", "#000000"),
+  /** The viewer's bar, laid over the image. */
+  "viewer-bar": themed("oklch(0 0 0 / 0.6)", "oklch(0 0 0 / 0.6)"),
+  /** Text and icons on the viewer. */
+  "viewer-foreground": themed("#ffffff", "#ffffff"),
+  /** A quieter line on the viewer, such as the image still loading. */
+  "viewer-muted-foreground": themed("oklch(1 0 0 / 0.75)", "oklch(1 0 0 / 0.75)"),
+  /** A button on the viewer under the pointer or a press. */
+  "viewer-pressed": themed("oklch(1 0 0 / 0.15)", "oklch(1 0 0 / 0.15)"),
 } as const satisfies Record<string, Themed>;
 
 /**

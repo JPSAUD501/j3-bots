@@ -54,6 +54,7 @@ import { HarnessLocations, type LocalProviderSetup, LocalSignIn } from "./Provid
 import { ChangeServer } from "./ServerAddress";
 import { StartWithSystem, StopUsingComputer, UseThisComputer } from "./LocalMode";
 import { PairingQr } from "./PairingQr";
+import { PhoneAccessSetting } from "./PhoneAccess";
 import { Section } from "./SettingsSection";
 import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
@@ -770,7 +771,8 @@ export function SignOutDevice({
 
 /**
  * In the desktop app, where the bots live, and moving them: on this computer,
- * whether the app starts with the system and stopping using it; on a server,
+ * whether the app starts with the system, whether phones on the network reach
+ * the bots, and stopping using it; on a server,
  * its address, changing it and using this computer instead.
  */
 export function WhereSection({
@@ -790,6 +792,7 @@ export function WhereSection({
             <p className="text-2xs text-muted-foreground">{t("where.thisComputer.hint")}</p>
           </div>
           <StartWithSystem on={local.startWithSystem} onChange={local.setStartWithSystem} />
+          <PhoneAccessSetting phone={local.phone} />
           <StopUsingComputer onStop={local.stopUsing} />
         </>
       ) : (

@@ -104,16 +104,18 @@ export const install = Effect.fn("SharedSkills.install")(function* () {
   );
   if (realRoot === undefined) return;
 
+  // The folder first: Windows says a file under a file is missing, not that
+  // its folder is not one.
   const state = path.dirname(layout.shippedSkills);
-  const saved = yield* readRegular(layout.shippedSkills);
-  if (saved._tag === "other") {
-    const stateIsFolder = yield* fs.stat(state).pipe(
-      Effect.map((info) => info.type === "Directory"),
-      Effect.orElseSucceed(() => false),
-    );
-    const [where, what] = stateIsFolder
-      ? [layout.shippedSkills, "a regular file"]
-      : [state, "a folder"];
+  const stateInTheWay = yield* fs.stat(state).pipe(
+    Effect.map((info) => info.type !== "Directory"),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+    Effect.orElseSucceed(() => true),
+  );
+  const saved = stateInTheWay ? undefined : yield* readRegular(layout.shippedSkills);
+  if (saved === undefined || saved._tag === "other") {
+    const [where, what] =
+      saved === undefined ? [state, "a folder"] : [layout.shippedSkills, "a regular file"];
     return yield* Effect.logWarning(
       `${where} is not ${what}, so no shipped skill was installed or replaced. Move it aside.`,
     );

@@ -88,7 +88,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const { t } = i18n;
   const shortcuts = shellShortcuts();
   const { dictate, editProfile } = intents;
-  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLButtonElement>(null);
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailsHeadingId = useId();
@@ -345,9 +345,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             engine={data.engine}
             vault={{ view: data.vault, intents: intents.vault }}
             footer={ways}
-            {...(intents.providerSetup === undefined
-              ? {}
-              : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
+            providerSetup={
+              intents.providerSetup === undefined
+                ? undefined
+                : { ...intents.providerSetup, signIns: data.signIns }
+            }
             onCreate={({ name, avatar }) => {
               setOpeningFirstBot(true);
               // The first bot is the primary one: there is no other to choose.
@@ -506,14 +508,17 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               recipient={recipient}
               value={draft.text}
               mentions={draft.mentions}
-              onValueChange={(value, picked) => intents.setDraftText(target, value, picked)}
+              onValueChange={(value, picked, order) =>
+                intents.setDraftText(target, value, picked, order)
+              }
               files={draft.files}
               sending={draft.sending}
               loading={data.draftsLoading}
               {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}
               notSaved={data.draftNotSaved(target)}
-              onAttachFiles={(files) => intents.attachFiles(target, files)}
+              onAttachFiles={(files, at) => intents.attachFiles(target, files, at)}
               onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
+              onOpenFile={intents.openAttachment}
               onSend={() => intents.sendDraft(target, addressing)}
               {...(dictate ? { onDictate: () => dictate(target) } : {})}
               {...(offer === null

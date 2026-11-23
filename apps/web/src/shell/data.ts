@@ -37,7 +37,10 @@ import type {
 } from "@j3-bots/contracts";
 import type {
   Accelerator,
+  LocalPairingLink,
   ModeChange,
+  PhoneAccess,
+  PhoneAccessChange,
   ShortcutChange,
   ShortcutStatus,
   UpdateStatus,
@@ -138,13 +141,18 @@ interface NewBot {
 /** What the operator can ask for from the shell. Every intent is carried out by the client runtime. */
 export interface ShellIntents extends TimelineIntents {
   readonly setRoutineEnabled: BotDetailsIntents["setRoutineEnabled"];
-  /** The draft's new text, with the mentions picked in it. */
+  /**
+   * The draft's new text, with the mentions picked in it, and the keys of the
+   * files its marks place, in their order, when that changed.
+   */
   readonly setDraftText: (
     target: EntryTarget,
     text: string,
     mentions: ReadonlyArray<DraftMention>,
+    order?: ReadonlyArray<string>,
   ) => void;
-  readonly attachFiles: (target: EntryTarget, files: ReadonlyArray<File>) => void;
+  /** Files to place at `at` in the draft's text, or after it. */
+  readonly attachFiles: (target: EntryTarget, files: ReadonlyArray<File>, at?: number) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
    * Sends the draft once, however often it is called, and clears it.
@@ -283,6 +291,32 @@ export interface DesktopLocal {
   readonly startWithSystem: boolean;
   /** Changes it; resolves with what holds once the app answered. */
   readonly setStartWithSystem: (on: boolean) => Promise<boolean>;
+  /** Phones on this computer's network reaching the bots. */
+  readonly phone: DesktopPhone;
+}
+
+/** The system the desktop app runs on, as far as its firewall goes. */
+export type DesktopSystem = "windows" | "mac" | "linux";
+
+/** Phones on this computer's network reaching the bots on it ("Use from your phone"). */
+export interface DesktopPhone {
+  /** Phone access as last known. */
+  readonly access: PhoneAccess;
+  /**
+   * Calls `listener` with phone access now, its addresses read again, then
+   * each time it changes; answers a function that stops it.
+   */
+  readonly follow: (listener: (access: PhoneAccess) => void) => () => void;
+  /** Which system's firewall to speak of. */
+  readonly system: DesktopSystem;
+  /**
+   * Turns it on or off. The server on this computer restarts, which stops
+   * the work bots have running: `stopWork` says the operator agreed.
+   * Resolves `null` when the app gave no answer the page understands.
+   */
+  readonly set: (on: boolean, stopWork: boolean) => Promise<PhoneAccessChange | null>;
+  /** A pairing code for a phone; `unlock` lifts the lock wrong codes set first. */
+  readonly pairingLink: (unlock: boolean) => Promise<LocalPairingLink | null>;
 }
 
 /** The desktop app's global shortcut, which shows it with the cursor in the composer. */

@@ -24,6 +24,7 @@ import * as Home from "../home/Home.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
 import { connectProviders } from "../providers/connect.ts";
+import { Network, reachableOrigins } from "../system/Network.ts";
 import * as Ports from "../system/Ports.ts";
 import { ServerStop } from "../ServerStop.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
@@ -72,12 +73,16 @@ const routes = Layer.mergeAll(
       const { toolPort, enginePort, publicOrigin } = yield* ServerConfig;
       const listener = yield* Deferred.await(yield* Listener);
       const webClient = yield* WebClientStatus;
+      const network = yield* Network;
       return HttpRouter.add(
         "GET",
         ADMIN_PATHS.status,
         Effect.gen(function* () {
           const engine = yield* EngineState;
           const devices = yield* Devices;
+          const origins = yield* reachableOrigins(listener, publicOrigin).pipe(
+            Effect.provideService(Network, network),
+          );
           const status: AdminStatus = {
             version: packageJson.version,
             pid: process.pid,
@@ -92,6 +97,7 @@ const routes = Layer.mergeAll(
               onNone: () => ({}),
               onSome: (origin) => ({ publicOrigin: origin }),
             }),
+            origins,
           };
           return yield* HttpServerResponse.schemaJson(AdminStatus)(status).pipe(Effect.orDie);
         }),

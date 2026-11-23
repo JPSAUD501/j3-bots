@@ -19,6 +19,7 @@ import {
   unmarkRestoring,
 } from "../install/snapshot.ts";
 import * as Home from "./Home.ts";
+import { openToOthers, REPAIR } from "./testPrivacy.ts";
 
 /** A fresh private home, with the paths the server derives from it. */
 const freshHome = Effect.gen(function* () {
@@ -92,71 +93,81 @@ it.layer(NodeServices.layer)("home", (it) => {
     ),
   );
 
-  it.effect("removes a socket a stopped server left, and nothing else", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const stale = yield* freshHome;
-      yield* staleSocket(stale.adminSocket);
-      yield* reserveIn(stale).pipe(Effect.scoped);
-      assert.isFalse(yield* fs.exists(stale.adminSocket));
+  // Windows has no admin socket (`hasAdminSocket`).
+  it.effect.skipIf(process.platform === "win32")(
+    "removes a socket a stopped server left, and nothing else",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const stale = yield* freshHome;
+        yield* staleSocket(stale.adminSocket);
+        yield* reserveIn(stale).pipe(Effect.scoped);
+        assert.isFalse(yield* fs.exists(stale.adminSocket));
 
-      const blocked = yield* freshHome;
-      yield* fs.writeFileString(blocked.adminSocket, "notes");
-      const exit = yield* reserveIn(blocked).pipe(Effect.scoped, Effect.exit);
-      assert.deepInclude(failure(exit), { _tag: "HomeBlocked", reason: "not-a-socket" });
-      assert.strictEqual(yield* fs.readFileString(blocked.adminSocket), "notes");
-    }).pipe(Effect.scoped),
+        const blocked = yield* freshHome;
+        yield* fs.writeFileString(blocked.adminSocket, "notes");
+        const exit = yield* reserveIn(blocked).pipe(Effect.scoped, Effect.exit);
+        assert.deepInclude(failure(exit), { _tag: "HomeBlocked", reason: "not-a-socket" });
+        assert.strictEqual(yield* fs.readFileString(blocked.adminSocket), "notes");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("refuses a home other users can open, before it creates anything in it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const config = yield* freshHome;
-      yield* fs.chmod(config.home, 0o750);
+      yield* openToOthers(config.home);
       const exit = yield* reserveIn(config).pipe(Effect.scoped, Effect.exit);
       const error = failure(exit);
       assert.deepInclude(error, { _tag: "HomeNotPrivate", reason: "open-to-others" });
-      assert.include(Schema.is(Home.HomeNotPrivate)(error) ? error.fix : "", "chmod 700");
+      assert.include(Schema.is(Home.HomeNotPrivate)(error) ? error.fix : "", REPAIR);
       assert.deepStrictEqual(yield* fs.readDirectory(config.home), []);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses a home this user cannot search, as `chmod -R 600` leaves it", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { home } = yield* freshHome;
-      yield* fs.chmod(home, 0o600);
-      const error = yield* Home.checkPrivate(home).pipe(
-        Effect.flip,
-        Effect.ensuring(fs.chmod(home, 0o700).pipe(Effect.orDie)),
-      );
-      assert.strictEqual(error.reason, "closed-to-owner");
-      assert.include(error.fix, "chmod 700");
-    }).pipe(Effect.scoped),
+  // A mode means nothing on Windows; windowsAcl.test.ts judges a list that shuts this user out.
+  it.effect.skipIf(process.platform === "win32")(
+    "refuses a home this user cannot search, as `chmod -R 600` leaves it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home } = yield* freshHome;
+        yield* fs.chmod(home, 0o600);
+        const error = yield* Home.checkPrivate(home).pipe(
+          Effect.flip,
+          Effect.ensuring(fs.chmod(home, 0o700).pipe(Effect.orDie)),
+        );
+        assert.strictEqual(error.reason, "closed-to-owner");
+        assert.include(error.fix, "chmod 700");
+      }).pipe(Effect.scoped),
   );
 
-  it.effect("tells when the home's path no longer names the private folder it checked", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { home } = yield* freshHome;
-      const checked = yield* Home.identifyPrivate(home);
-      yield* Home.checkUnchanged(home, checked);
+  // Checked only around the admin socket's bind, which Windows has none of; it
+  // sets privacy by mode and moves a home whose open files Windows would hold.
+  it.effect.skipIf(process.platform === "win32")(
+    "tells when the home's path no longer names the private folder it checked",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home } = yield* freshHome;
+        const checked = yield* Home.identifyPrivate(home);
+        yield* Home.checkUnchanged(home, checked);
 
-      // Moved away, and a private folder of the same name made in its place.
-      const moved = `${home}.moved`;
-      yield* fs.rename(home, moved);
-      yield* fs.makeDirectory(home);
-      yield* fs.chmod(home, 0o700);
-      const replaced = yield* Home.checkUnchanged(home, checked).pipe(Effect.flip);
-      assert.deepInclude(replaced, { _tag: "HomeBlocked", reason: "home-replaced" });
+        // Moved away, and a private folder of the same name made in its place.
+        const moved = `${home}.moved`;
+        yield* fs.rename(home, moved);
+        yield* fs.makeDirectory(home);
+        yield* fs.chmod(home, 0o700);
+        const replaced = yield* Home.checkUnchanged(home, checked).pipe(Effect.flip);
+        assert.deepInclude(replaced, { _tag: "HomeBlocked", reason: "home-replaced" });
 
-      // The same folder back, but opened to others.
-      yield* fs.remove(home, { recursive: true });
-      yield* fs.rename(moved, home);
-      yield* fs.chmod(home, 0o750);
-      const opened = yield* Home.checkUnchanged(home, checked).pipe(Effect.flip);
-      assert.deepInclude(opened, { _tag: "HomeNotPrivate", reason: "open-to-others" });
-    }).pipe(Effect.scoped),
+        // The same folder back, but opened to others.
+        yield* fs.remove(home, { recursive: true });
+        yield* fs.rename(moved, home);
+        yield* fs.chmod(home, 0o750);
+        const opened = yield* Home.checkUnchanged(home, checked).pipe(Effect.flip);
+        assert.deepInclude(opened, { _tag: "HomeNotPrivate", reason: "open-to-others" });
+      }).pipe(Effect.scoped),
   );
 
   it.effect("gives a fix only for a refusal it can name the repair of", () =>

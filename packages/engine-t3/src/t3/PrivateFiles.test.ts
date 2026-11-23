@@ -45,7 +45,7 @@ it.effect("checks a link's target from where its folder really is, links resolve
     // `a/b/deep` is `shallow`, one level nearer the top: `../../x` from it leaves the home.
     yield* fs.symlink(path.join(home, "shallow"), path.join(home, "a", "b", "deep"));
     const files = yield* makePrivateFiles((location) =>
-      Effect.succeed(location === home || location.startsWith(`${home}/`)),
+      Effect.succeed(location === home || location.startsWith(`${home}${path.sep}`)),
     );
 
     const location = path.join(home, "a", "b", "deep", "link");
@@ -54,6 +54,13 @@ it.effect("checks a link's target from where its folder really is, links resolve
     assert.isFalse(yield* fs.exists(path.join(home, "shallow", "link")));
 
     yield* files.link(location, "../x");
-    assert.strictEqual(yield* fs.readLink(path.join(home, "shallow", "link")), "../x");
+    assert.isTrue(yield* files.holdsLink(location, "../x"));
+    assert.strictEqual(
+      path.resolve(
+        path.join(home, "shallow"),
+        yield* fs.readLink(path.join(home, "shallow", "link")),
+      ),
+      path.join(home, "x"),
+    );
   }).pipe(Effect.scoped, Effect.provide(machine)),
 );

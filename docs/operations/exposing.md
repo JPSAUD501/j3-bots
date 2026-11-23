@@ -8,16 +8,34 @@ Bots run with full access to the user that runs J3 Bots. Whoever can open the se
 
 Every other request needs a paired device's token, which the server checks itself. Webhooks are the exception: their address is their credential ([Webhooks](#webhooks)).
 
-Over plain HTTP, open the server at an address or at `localhost`, as `j3-bots pair` prints it: the server answers `403` to a request for any other name, such as `http://<machine>.local:3737`, except the one in [`publicOrigin`](#publicorigin). A web page on a name its owner points at your machine's address could otherwise talk to the server as if it were its own page ([Security](../architecture/security.md#j3-bots-own-surface)). Web pages cannot lock pairing either: only a JSON request counts as an attempt, and a page cannot send one to another origin.
+Over plain HTTP, open the server at an address or at `localhost`, as `j3-bots pair` prints it: the server answers `403` to a request for any other name, such as `http://<machine>.local:3737`, except the one in [`publicOrigin`](#publicorigin). The browser then shows one line saying which addresses the server answers, and the server's log names the refused name and what would serve it: behind a proxy or tunnel that serves it at that name, set `publicOrigin`. A web page on a name its owner points at your machine's address could otherwise talk to the server as if it were its own page ([Security](../architecture/security.md#j3-bots-own-surface)). Web pages cannot lock pairing either: only a JSON request counts as an attempt, and a page cannot send one to another origin.
 
 The ways below, from least to most exposed:
 
 | Way | Who reaches it | HTTPS |
 | --- | --- | --- |
 | The defaults (`"host": "lan"`) | Your local network | No: browsers do not install the app |
+| [The desktop app, "Use from your phone"](#from-the-desktop-app) | Your local network, while it is on | No |
 | [Tailscale](#tailscale) | Your tailnet | With `tailscale cert` |
 | [Your own certificate](#https-with-your-own-certificate) | Whoever reaches the address you serve | Yes |
 | [A proxy or a tunnel](#through-a-proxy-or-a-tunnel) | The internet, unless the platform gates it | Yes, at the platform |
+
+## From the desktop app
+
+The desktop app's own server, when the bots live on that computer, listens on `127.0.0.1` only: nothing but that computer reaches it. To use the bots from a phone on the same network, turn on Settings → "Use from your phone". The app starts its server again on `lan`, as above, and shows the address phones reach it at; "Pair a phone" then shows a QR code for the phone's camera, and the address and code typed out. Turning it off starts the server on `127.0.0.1` again; the phones stay paired and reconnect, without pairing, when it is back on. A phone can scan the QR code with its camera, which opens the server's web client in its browser, or with the Android app's scanner.
+
+- **Only on a network you trust.** It is plain HTTP, so anyone on that network can read what the phone and the computer send each other, the device's token included. Use it at home, not on café or hotel Wi-Fi. On a network that gives the computer a public address, the app keeps the server on `127.0.0.1` and says why.
+- **Only on the same network.** The phone reaches the computer only while both are on it. Away from it, use [Tailscale](#tailscale) or a server that is always on.
+- **Only while the computer is awake.** The bots run in the app: a computer that sleeps or shuts down stops them.
+
+The system's firewall may stand between the phone and the server:
+
+| System | What to do |
+| --- | --- |
+| Windows | The first time, Windows Defender Firewall may ask whether the server (`node.exe`, in the app's folder) may use networks. Allow it on private networks. A network Windows counts as public keeps the phone out: set the Wi-Fi to private in its properties. (**Assumed**: not yet run on Windows.) |
+| macOS | The firewall, when it is on, may ask whether the app may accept incoming connections. Allow it. (**Assumed**: local mode does not run on a Mac yet.) |
+| Linux with ufw | ufw drops the phone's connections without asking. Allow the server's port, which Settings shows in the command it gives: `sudo ufw allow 3747/tcp` for the first port the app picks. `sudo ufw delete allow 3747/tcp` removes the rule. |
+| Linux with firewalld | Allow the port in the zone of your network, such as `sudo firewall-cmd --zone=home --add-port=3747/tcp` (add `--permanent` to keep it). |
 
 ## HTTPS with your own certificate
 

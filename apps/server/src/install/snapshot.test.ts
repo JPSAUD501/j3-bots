@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
+import { devicesApart } from "../testing/filesystem.ts";
 import {
   backupsElsewhere,
   listSnapshots,
@@ -76,23 +77,6 @@ const renamesFailingOnto = (fs: FileSystem.FileSystem, failing: string) =>
         : fs.rename(from, to),
   });
 
-/**
- * A file system that reports the folders `apart`, and what is in them, on
- * another device, as `stat` does: through links.
- */
-const devicesApart = (fs: FileSystem.FileSystem, apart: ReadonlyArray<string>) =>
-  FileSystem.FileSystem.of({
-    ...fs,
-    stat: (at) =>
-      Effect.all([fs.stat(at), fs.realPath(at)]).pipe(
-        Effect.map(([info, real]) =>
-          apart.some((folder) => real === folder || real.startsWith(`${folder}/`))
-            ? { ...info, dev: info.dev + 1n }
-            : info,
-        ),
-      ),
-  });
-
 const FILES = ["config.json", "j3.sqlite", "engine/userdata/settings.json"] as const;
 
 /** How far the rollback to the newest snapshot in `home` got, or none when it is not marked. */
@@ -158,13 +142,17 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
         "engine/userdata/statev2.sqlite",
         "engine/userdata/settings.json",
       ]);
-      const modes = yield* modesUnder(taken.folder);
-      for (const [entry, mode] of modes) {
-        const folder = (yield* fs.stat(path.join(taken.folder, entry))).type === "Directory";
-        assert.strictEqual(mode, folder ? 0o700 : 0o600, entry);
+      // On Windows a mode means nothing: a snapshot is private there as the
+      // home is, by the access list everything in the home inherits.
+      if (process.platform !== "win32") {
+        const modes = yield* modesUnder(taken.folder);
+        for (const [entry, mode] of modes) {
+          const folder = (yield* fs.stat(path.join(taken.folder, entry))).type === "Directory";
+          assert.strictEqual(mode, folder ? 0o700 : 0o600, entry);
+        }
+        assert.isTrue(modes.has("manifest.json"));
+        assert.strictEqual((yield* fs.stat(path.dirname(taken.folder))).mode & 0o777, 0o700);
       }
-      assert.isTrue(modes.has("manifest.json"));
-      assert.strictEqual((yield* fs.stat(path.dirname(taken.folder))).mode & 0o777, 0o700);
 
       // What the new release did: it changed the configuration and the
       // engine's settings, left a write-ahead log the snapshot does not have,
@@ -183,7 +171,9 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
       );
       assert.deepStrictEqual(yield* fs.readFile(at("j3.sqlite")), database);
       assert.isFalse(yield* fs.exists(at("j3.sqlite-wal")));
-      assert.strictEqual((yield* fs.stat(at("config.json"))).mode & 0o777, 0o600);
+      if (process.platform !== "win32") {
+        assert.strictEqual((yield* fs.stat(at("config.json"))).mode & 0o777, 0o600);
+      }
       // Bot files are not in a snapshot: what the bot wrote stays.
       assert.strictEqual(
         yield* fs.readFileString(at("bots/scout/memory/profile.md")),

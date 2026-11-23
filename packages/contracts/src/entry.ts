@@ -2,7 +2,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
-import { Attachment } from "./attachment.ts";
+import { Attachment, AttachmentOffsets } from "./attachment.ts";
 import {
   BotId,
   CommandId,
@@ -100,6 +100,12 @@ export const MessageEntry = Schema.TaggedStruct("message", {
   ...entry,
   text: MessageText,
   attachments: Schema.Array(Attachment),
+  /**
+   * Where the operator placed each file in `text` (`AttachmentOffsets`).
+   * Left out, as for a message sent without places or written by a bot, the
+   * files follow the text.
+   */
+  attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
   mentions: Mentions,
   /** Whether it reached its recipients. Messages written by bots are always `delivered`. */
   delivery: MessageDelivery,

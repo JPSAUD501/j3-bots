@@ -5,6 +5,7 @@ import {
   IPC_CHANNELS,
   LanguageReport,
   type LocalServerState,
+  type PhoneAccess,
   ShellCommand,
   type ShortcutChange,
   ShortcutRequest,
@@ -92,6 +93,8 @@ interface Options {
   readonly bringForward: () => void;
   /** The server this computer runs, in local mode, now and as it changes; `null` in any other. */
   readonly localServer: Stream.Stream<LocalServerState | null>;
+  /** Phone access to that server, now and as it changes. */
+  readonly phoneAccess: Stream.Stream<PhoneAccess>;
 }
 
 /**
@@ -106,6 +109,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
   fromApp,
   bringForward,
   localServer,
+  phoneAccess,
 }: Options) {
   const settings = yield* DesktopSettings;
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -114,7 +118,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
   // One change of shortcut at a time, so two cannot both register and leave one untracked.
   const changing = yield* Semaphore.make(1);
 
-  const { followLocalServer } = yield* Effect.acquireRelease(
+  const { followLocalServer, followPhoneAccess } = yield* Effect.acquireRelease(
     Effect.sync(() => {
       let i18n: I18n = createI18n(resolveLocale(app.getPreferredSystemLanguages()));
       const icon = new Tray(trayIcon(false, appearance.systemTheme()));
@@ -274,6 +278,9 @@ export const serve = Effect.fn("desktop.menus")(function* ({
             { label: model.summary, enabled: false },
             ...entries,
             ...(model.more === null ? [] : [{ label: model.more, enabled: false }]),
+            ...(model.phone === null
+              ? []
+              : [{ type: "separator" } as const, { label: model.phone, enabled: false }]),
             { type: "separator" },
             { label: i18n.t("desktop.menu.show"), click: show },
             { role: "quit", label: i18n.t("desktop.menu.quit") },
@@ -352,6 +359,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
         pageReplaced,
         stopFollowingTheme,
         followLocalServer: tray.followLocalServer,
+        followPhoneAccess: tray.followPhoneAccess,
       };
     }),
     ({ icon, pageReplaced, stopFollowingTheme }) =>
@@ -368,6 +376,12 @@ export const serve = Effect.fn("desktop.menus")(function* ({
   );
   yield* localServer.pipe(
     Stream.runForEach((state) => Effect.sync(() => followLocalServer(state))),
+    Effect.forkScoped,
+  );
+  yield* phoneAccess.pipe(
+    Stream.runForEach((access) =>
+      Effect.sync(() => followPhoneAccess(access.on && access.origins.length > 0)),
+    ),
     Effect.forkScoped,
   );
 });

@@ -2,7 +2,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { type ConnectRefusal, ServerOrigin } from "@j3-bots/desktop-bridge";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -177,26 +179,65 @@ describe("running the bots on this computer", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("stops the server, keeps the device to replace, and opens the address screen", () =>
+  it.effect(
+    "stops the server, keeps the device to replace, turns phone access off, and opens the address screen",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(
+          JSON.stringify({
+            mode: "local",
+            server: LOCAL,
+            localDevice: { id: DEVICE, current: true },
+            phoneAccess: true,
+          }),
+        );
+        const { choice, page, done, settings } = yield* setUp(file);
+        assert.strictEqual(yield* choice.connectToServerInstead(page), "changed");
+        assert.deepStrictEqual(done, [
+          "stop local server",
+          "clear (server none)",
+          "open home (server none)",
+        ]);
+        const now = yield* settings.get;
+        assert.strictEqual(now.mode, "remote");
+        assert.isNull(now.server);
+        assert.deepStrictEqual(now.localDevice, { id: DEVICE, current: false });
+        assert.isFalse(now.phoneAccess);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("lets a step taken while the bots run here end before they stop running here", () =>
     Effect.gen(function* () {
-      const file = yield* settingsFile(
-        JSON.stringify({
-          mode: "local",
-          server: LOCAL,
-          localDevice: { id: DEVICE, current: true },
-        }),
-      );
-      const { choice, page, done, settings } = yield* setUp(file);
-      assert.strictEqual(yield* choice.connectToServerInstead(page), "changed");
+      const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+      const { choice, page, done } = yield* setUp(file);
+      const entered = yield* Deferred.make<void>();
+      const go = yield* Deferred.make<void>();
+      // Try again of an update stops the server, then starts it.
+      const retry = Effect.gen(function* () {
+        done.push("retry: stop");
+        yield* Deferred.succeed(entered, undefined);
+        yield* Deferred.await(go);
+        done.push("retry: start");
+      });
+
+      const retrying = yield* Effect.forkChild(choice.whileLocal(retry));
+      yield* Deferred.await(entered);
+      const leaving = yield* Effect.forkChild(choice.connectToServerInstead(page));
+      // Time for the switch to save and stop the server, were it not kept waiting.
+      yield* Effect.sleep("200 millis");
+      yield* Deferred.succeed(go, undefined);
+      yield* Fiber.join(retrying);
+      assert.strictEqual(yield* Fiber.join(leaving), "changed");
+      // Once they run elsewhere, it does nothing.
+      yield* choice.whileLocal(retry);
+
       assert.deepStrictEqual(done, [
+        "retry: stop",
+        "retry: start",
         "stop local server",
         "clear (server none)",
         "open home (server none)",
       ]);
-      const now = yield* settings.get;
-      assert.strictEqual(now.mode, "remote");
-      assert.isNull(now.server);
-      assert.deepStrictEqual(now.localDevice, { id: DEVICE, current: false });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
@@ -207,10 +248,17 @@ describe("the settings file", () => {
     server: SERVER,
     localDevice: null,
     startWithSystem: false,
+    phoneAccess: false,
   } as const;
-  const NONE = { mode: null, server: null, localDevice: null, startWithSystem: false } as const;
+  const NONE = {
+    mode: null,
+    server: null,
+    localDevice: null,
+    startWithSystem: false,
+    phoneAccess: false,
+  } as const;
 
-  it("reads the server, the window, the shortcut, the appearance and starting with the system each on its own", () => {
+  it("reads the server, the window, the shortcut, the appearance, starting with the system and phone access each on its own", () => {
     const window = { x: 10, y: 20, width: 800, height: 600, maximized: false };
     const shortcut = "Control+Alt+K";
     assert.deepStrictEqual(
@@ -254,6 +302,17 @@ describe("the settings file", () => {
     assert.isTrue(
       Settings.decodeSettings(JSON.stringify({ startWithSystem: true })).settings.startWithSystem,
     );
+    assert.deepStrictEqual(
+      Settings.decodeSettings(JSON.stringify({ server: SERVER, phoneAccess: "on" })),
+      {
+        settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
+        dropped: ["phoneAccess"],
+      },
+    );
+    assert.isTrue(
+      Settings.decodeSettings(JSON.stringify({ mode: "local", phoneAccess: true })).settings
+        .phoneAccess,
+    );
     assert.deepStrictEqual(Settings.decodeSettings("{ not json"), {
       settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
       dropped: [],
@@ -278,6 +337,7 @@ describe("the settings file", () => {
         shortcut: null,
         appearance: "system",
         startWithSystem: false,
+        phoneAccess: false,
       },
     );
   });

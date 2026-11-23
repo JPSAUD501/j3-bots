@@ -181,9 +181,12 @@ it.layer(Layer.mergeAll(Server.layer(Server.connectorsUnserved), NodeServices.la
             });
           await page.getByRole("button", { name: "Remove notes.txt" }).waitFor({ timeout: STEP });
           await page.getByText(/^Uploading/).waitFor({ state: "detached", timeout: STEP });
+          // Typed after the file's chip: filling the field would replace the chip, and so the file.
           await page
             .getByRole("textbox", { name: `Message ${bot.profile.name}` })
-            .fill("Hello from the desktop", { timeout: STEP });
+            .focus({ timeout: STEP });
+          await page.keyboard.press("ControlOrMeta+End");
+          await page.keyboard.insertText("Hello from the desktop");
           await page.getByRole("button", { name: "Send message" }).click();
           await page
             .getByText("Hello from the desktop")

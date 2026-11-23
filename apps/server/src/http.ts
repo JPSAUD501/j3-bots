@@ -13,6 +13,7 @@ import {
   PROTOCOL_VERSION,
   RateLimited,
   ServerInfo,
+  type ServerOrigin,
   SocketTicketGrant,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
@@ -191,14 +192,60 @@ const cors = HttpMiddleware.cors({
   maxAge: 600,
 });
 
-const forbidden = HttpServerResponse.empty({ status: 403 });
+/**
+ * The answer to a plain-HTTP request for a name the server does not answer
+ * (`isServedHost`), in words a person who typed that name reads in the
+ * browser. A page on the refused name can read it too, so it names no address
+ * of the server's own; the log does (`logRefusedName`).
+ */
+const hostRefused = HttpServerResponse.text(
+  "This server answers plain HTTP only at localhost, at an IP address, or at the name in its publicOrigin setting. Open it at one of those addresses. The server's log names the address that was refused.\n",
+  { status: 403, headers: { "x-content-type-options": "nosniff" } },
+);
+
+/** How many refused names a listener logs, so a flood of names fills neither the log nor memory. */
+const LOGGED_REFUSED_NAMES = 16;
+
+/** The longest DNS name. Anything longer in a `Host` names nothing. */
+const MAX_HOST_NAME = 253;
+
+/** The name a `Host` header asks for, as the log shows it. */
+const requestedName = (host: string | undefined) => {
+  if (host === undefined) return "(no Host header)";
+  const name = URL.parse(`http://${host}`)?.hostname;
+  return name === undefined || name.length > MAX_HOST_NAME ? "(not a host name)" : name;
+};
+
+/**
+ * Logs the first refusal of each name, up to `LOGGED_REFUSED_NAMES`, with
+ * what would make the server answer it: a proxy or tunnel that serves it
+ * under that name needs `publicOrigin`, and anyone else opens it at an
+ * address.
+ */
+const refusedNameLogger = (publicOrigin: Option.Option<ServerOrigin>) => {
+  const logged = new Set<string>();
+  const answered = Option.match(publicOrigin, {
+    onNone: () => "localhost and IP addresses; publicOrigin is not set",
+    onSome: (origin) => `localhost, IP addresses and ${URL.parse(origin)?.hostname ?? origin}`,
+  });
+  return (host: string | undefined) =>
+    Effect.suspend(() => {
+      const name = requestedName(host);
+      if (logged.has(name) || logged.size >= LOGGED_REFUSED_NAMES) return Effect.void;
+      logged.add(name);
+      return Effect.logWarning(
+        `Refused a plain-HTTP request for ${name} (403). Over plain HTTP this server answers ${answered}. If a proxy or tunnel serves it at ${name}, set publicOrigin to that address; otherwise open it at localhost or at the address \`j3-bots pair\` prints. Further refusals of this name are not logged.`,
+      );
+    });
+};
 
 /**
  * What every request on the client listener passes before it is routed, the
  * RPC socket's upgrade included.
  *
  * Over plain HTTP, its `Host` must be one no web page can rebind to this
- * machine (`isServedHost`), or it is answered 403. Over HTTPS the browser
+ * machine (`isServedHost`), or it is answered 403, with a line that says why
+ * (`hostRefused`), and the name is logged (`refusedNameLogger`). Over HTTPS the browser
  * already refuses a name the certificate does not cover, and a proxy in front
  * may put any name there, so `Host` is not checked.
  *
@@ -214,10 +261,15 @@ const clientGate = HttpRouter.middleware(
   Effect.gen(function* () {
     const { tls, publicOrigin } = yield* ServerConfig;
     const checksHost = Option.isNone(tls);
+    const logRefusedName = refusedNameLogger(publicOrigin);
     return (httpApp) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        if (checksHost && !isServedHost(request.headers["host"], publicOrigin)) return forbidden;
+        const host = request.headers["host"];
+        if (checksHost && !isServedHost(host, publicOrigin)) {
+          yield* logRefusedName(host);
+          return hostRefused;
+        }
         return yield* isDesktopOrigin(request.headers["origin"]) ? cors(httpApp) : httpApp;
       });
   }),

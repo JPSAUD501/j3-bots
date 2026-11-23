@@ -12,6 +12,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -68,22 +69,32 @@ const post = (
     });
   });
 
-/** Sends a bodiless `method` request to `path` with `headers`, and answers the status and headers. */
+/** Sends a bodiless `method` request to `path` with `headers`, and answers the status, headers and body. */
 const ask = (method: string, path: string, headers: Record<string, string>) =>
   Effect.gen(function* () {
     const { address } = yield* HttpServer.HttpServer;
     if (!NetAddress.isInetAddress(address)) return yield* Effect.die("not an IP listener");
-    return yield* Effect.callback<{ status: number; headers: NodeHttp.IncomingHttpHeaders }>(
-      (resume) => {
-        NodeHttp.request(
-          { host: "127.0.0.1", port: address.port, path, method, headers },
-          (response) => {
-            response.resume();
-            resume(Effect.succeed({ status: response.statusCode ?? 0, headers: response.headers }));
-          },
-        ).end();
-      },
-    );
+    return yield* Effect.callback<{
+      status: number;
+      headers: NodeHttp.IncomingHttpHeaders;
+      body: string;
+    }>((resume) => {
+      NodeHttp.request(
+        { host: "127.0.0.1", port: address.port, path, method, headers },
+        (response) => {
+          let body = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => {
+            body += chunk;
+          });
+          response.on("end", () => {
+            resume(
+              Effect.succeed({ status: response.statusCode ?? 0, headers: response.headers, body }),
+            );
+          });
+        },
+      ).end();
+    });
   });
 
 const pairRequest = (name: string, code = "0000000000") => JSON.stringify({ code, name });
@@ -104,9 +115,21 @@ const atPort = (host: string) =>
     return `${host}:${address.port}`;
   });
 
+/** Every line the client listener logs while these tests run, as JSON. */
+const logged: Array<string> = [];
+const recordLogs = Logger.layer([
+  Logger.map(Logger.formatJson, (line) => {
+    logged.push(line);
+  }),
+]);
+
+/** The logged lines that mention `text`. */
+const logLinesWith = (text: string) => logged.filter((line) => line.includes(text));
+
 /** The client listener over the test domain, its configuration changed by `configure`. */
 const served = (configure: (config: ServerConfigShape) => ServerConfigShape) =>
   Http.serve(NodeHttpServer.layerTest, { logAddress: false }).pipe(
+    Layer.provide(recordLogs),
     Layer.provide(
       Layer.effect(
         ServerConfig,
@@ -189,16 +212,27 @@ it.layer(served((config) => config))("http", (it) => {
     Effect.gen(function* () {
       const devices = yield* Devices;
       yield* devices.unlock;
-      // Four wrong codes: one more locks pairing.
-      for (let attempt = 0; attempt < 4; attempt++) {
-        assert.strictEqual(yield* post(HTTP_PATHS.pair, pairRequest("Phone")), 400);
+      // Four wrong codes: one more locks pairing. A media type's case does not matter.
+      for (const contentType of [
+        "application/json",
+        "Application/JSON",
+        "application/json; charset=utf-8",
+        "APPLICATION/JSON;charset=UTF-8",
+      ]) {
+        assert.strictEqual(
+          yield* post(HTTP_PATHS.pair, pairRequest("Phone"), { contentType }),
+          400,
+        );
       }
-      // What a web page can send anywhere without a preflight, and none at all.
+      // What a web page can send anywhere without a preflight, none at all, and
+      // a JSON suffix type, which is not JSON to this route.
       for (const contentType of [
         "text/plain",
         "text/plain; charset=utf-8",
         "application/x-www-form-urlencoded",
         null,
+        "application/*+json",
+        "application/ld+json",
       ]) {
         assert.strictEqual(
           yield* post(HTTP_PATHS.pair, pairRequest("Phone"), { contentType }),
@@ -245,6 +279,33 @@ it.layer(served((config) => config))("http", (it) => {
     }),
   );
 
+  it.effect("says why it refuses a name, and logs the name once with what would serve it", () =>
+    Effect.gen(function* () {
+      const host = yield* atPort("machine.local");
+      const refused = yield* ask("GET", "/", { host });
+      assert.strictEqual(refused.status, 403);
+      assert.match(refused.headers["content-type"] ?? "", /^text\/plain/);
+      assert.include(refused.body, "localhost");
+      assert.include(refused.body, "publicOrigin");
+      yield* ask("GET", HTTP_PATHS.server, { host });
+      const lines = logLinesWith("machine.local");
+      assert.lengthOf(lines, 1);
+      assert.include(lines[0], "publicOrigin is not set");
+    }),
+  );
+
+  it.effect("stops logging refused names after a few, however many a page sends", () =>
+    Effect.gen(function* () {
+      for (let index = 0; index < 40; index++) {
+        const refused = yield* ask("GET", "/", { host: yield* atPort(`flood-${index}.example`) });
+        assert.strictEqual(refused.status, 403);
+      }
+      const lines = logLinesWith("flood-");
+      assert.isAbove(lines.length, 0);
+      assert.isBelow(lines.length, 40);
+    }),
+  );
+
   it.effect("serves a Host that names it as a client reaches it", () =>
     Effect.gen(function* () {
       for (const name of ["127.0.0.1", "localhost", "[::1]", "10.0.2.2"]) {
@@ -269,10 +330,13 @@ it.layer(
         (yield* ask("GET", HTTP_PATHS.server, { host: "bots.example.com" })).status,
         200,
       );
-      assert.strictEqual(
-        (yield* ask("GET", HTTP_PATHS.server, { host: "other.example.com" })).status,
-        403,
-      );
+      const refused = yield* ask("GET", HTTP_PATHS.server, { host: "other.example.com" });
+      assert.strictEqual(refused.status, 403);
+      // A page on the refused name reads the answer; only the log names the server's own.
+      assert.notInclude(refused.body, "bots.example.com");
+      const lines = logLinesWith("other.example.com");
+      assert.lengthOf(lines, 1);
+      assert.include(lines[0], "bots.example.com");
     }),
   );
 });

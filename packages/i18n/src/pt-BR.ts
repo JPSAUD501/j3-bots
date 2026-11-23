@@ -185,6 +185,9 @@ const sentences = {
 
   "file.open": "Abrir {name}",
   "file.opening": "Abrindo…",
+  "file.save": "Salvar {name}",
+  "file.viewer.close": "Fechar a imagem",
+  "file.share": "Abrir {name} em outro app",
   "file.kindAndSize": "{kind} · {size}",
 
   "card.waiting": "Esperando por você",
@@ -772,7 +775,6 @@ const sentences = {
   "timeline.newMessages": "Novas mensagens",
   "timeline.toLatest": "Ir para a mensagem mais recente",
 
-  "composer.files": "Arquivos para enviar",
   "composer.stillUploading": "Os arquivos ainda estão subindo",
   "composer.file.uploading": "Enviando, {percent}",
   "composer.file.uploadingUnmeasured": "Enviando…",
@@ -813,6 +815,7 @@ const sentences = {
   "composer.dictation.listening": "Ouvindo…",
   "composer.dictation.listeningOnline":
     "Ouvindo… O serviço de voz deste aparelho pode reconhecer isto online.",
+  "composer.dictation.onlineNote": "pode ser reconhecido online",
   "composer.dictation.denied": "O ditado precisa do microfone.",
   "composer.dictation.settings": "Configurações",
   "composer.dictation.noSpeech": "Nada foi ouvido. Tente de novo.",
@@ -917,6 +920,14 @@ const sentences = {
   "local.line.start": "Iniciar",
   "local.line.restarting": "Os bots pararam.",
   "local.line.failed": "Os bots não iniciaram.",
+  "local.line.update.updating": "Atualizando os bots para a {version}…",
+  "local.line.update.rolledBack":
+    "A atualização para a {failed} não deu certo. Os bots voltaram para a {running}.",
+  "local.line.update.olderApp":
+    "Os bots rodam na {running}, que é mais nova que este app. Atualize o J3 Bots.",
+  "local.line.update.retry": "Tentar de novo",
+  "local.update.title": "A atualização para a {failed} não deu certo",
+  "local.update.body": "Os bots e os dados deles estão como antes dela, na {running}.",
   "local.failed.title": "Os bots não iniciaram",
   "local.failed.unknown": "Algo impediu o J3 Bots de iniciar neste computador.",
   "local.failed.retry": "Tentar de novo",
@@ -1229,6 +1240,52 @@ const sentences = {
   "settings.startWithSystem.hint":
     "Abre na bandeja quando você entra neste computador, e os bots voltam sem você abrir o app.",
   "settings.startWithSystem.failed": "Não foi possível mudar isso. Tente de novo.",
+  "settings.phone": "Usar pelo celular",
+  "settings.phone.hint": "O celular acessa os bots deste computador pela mesma rede.",
+  "settings.phone.trust":
+    "Só ligue numa rede em que você confia, como a de casa: a conexão não é criptografada. Em Wi-Fi de café ou hotel, não.",
+  "settings.phone.sameNetwork":
+    "O celular só alcança este computador nessa mesma rede, não quando você está fora.",
+  "settings.phone.awake":
+    "Os bots só continuam funcionando enquanto este computador está ligado e acordado.",
+  "settings.phone.turningOn": "Ligando…",
+  "settings.phone.on": "Ligado em {address}",
+  "settings.phone.public":
+    "Esta rede dá a este computador um endereço público, então os bots continuam só neste computador. Use uma rede privada, como a de casa.",
+  "settings.phone.unavailable":
+    "Não deu para abrir os bots para a rede, então eles continuam só neste computador.",
+  "settings.phone.noNetwork":
+    "Este computador não está em nenhuma rede local. Conecte-o ao Wi-Fi ou a um cabo.",
+  "settings.phone.retry": "Tentar de novo",
+  "settings.phone.failed": "Não foi possível mudar isso. Tente de novo.",
+  "settings.phone.restart.title": "Reiniciar os bots?",
+  "settings.phone.restart.body.one":
+    "Um bot está trabalhando. Isso reinicia os bots deste computador, e esse trabalho para.",
+  "settings.phone.restart.body.other":
+    "{count} bots estão trabalhando. Isso reinicia os bots deste computador, e o trabalho deles para.",
+  "settings.phone.restart.unknown":
+    "Os bots podem estar trabalhando: o J3 Bots não conseguiu verificar. Isso reinicia os bots deste computador, e qualquer trabalho deles para.",
+  "settings.phone.restart": "Reiniciar",
+  "settings.phone.restart.cancel": "Agora não",
+  "settings.phone.firewall.windows":
+    "O Windows pode perguntar se o J3 Bots pode usar redes privadas. Permita, ou o celular não conecta.",
+  "settings.phone.firewall.mac":
+    "O macOS pode perguntar se o J3 Bots pode aceitar conexões. Permita, ou o celular não conecta.",
+  "settings.phone.firewall.linux":
+    "Se este computador usa o ufw, ele bloqueia o celular sem avisar. Libere a porta com:",
+  "settings.phone.firewall.copy": "Copiar o comando que libera a porta",
+  "settings.phone.pair": "Parear um celular",
+  "settings.phone.pair.again": "Gerar outro",
+  "settings.phone.pair.scan":
+    "Aponte a câmera do celular para o código, ou abra o J3 Bots no celular e digite:",
+  "settings.phone.pair.address": "Endereço",
+  "settings.phone.pair.code": "Código",
+  "settings.phone.pair.expiresIn": "Expira em {time}",
+  "settings.phone.pair.expired": "Este código expirou.",
+  "settings.phone.pair.locked":
+    "Muitos códigos errados foram tentados, então o pareamento está bloqueado até {time}.",
+  "settings.phone.pair.unlock": "Desbloquear e gerar código",
+  "settings.phone.pair.failed": "Nenhum código foi gerado. Tente de novo.",
   "settings.browser": "Este navegador",
   "settings.thisDevice": "Este dispositivo",
   "settings.thisDevice.unencrypted":
@@ -1287,10 +1344,12 @@ const sentences = {
   "desktop.tray.more.one": "E mais {count}",
   "desktop.tray.more.other": "E mais {count}",
   "desktop.tray.local.starting": "Iniciando os bots…",
+  "desktop.tray.local.updating": "Atualizando os bots…",
   "desktop.tray.local.stopped": "Bots parados",
   "desktop.tray.local.restarting": "Bots parados · reiniciando em {seconds} s",
   "desktop.tray.local.restartingNow": "Bots parados · reiniciando…",
   "desktop.tray.local.failed": "Os bots não iniciaram",
+  "desktop.tray.phoneOn": "Uso pelo celular ligado",
   "update.version": "J3 Bots {version}",
   "update.unavailable": "Esta versão não se atualiza sozinha.",
   "update.upToDate": "Está na versão mais recente.",

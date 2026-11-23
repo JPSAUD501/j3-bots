@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
 import { BotId, PairingCode, RoomId } from "@j3-bots/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import {
@@ -10,8 +11,10 @@ import {
   ConnectResult,
   DesktopState,
   HostedBridge,
+  LocalPairingLink,
   NotificationClick,
   NotificationRequest,
+  LocalServerState,
   OpenRequest,
   SavingReport,
   ServerOrigin,
@@ -60,6 +63,24 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(DesktopState, {}));
   });
 
+  it("carries a pairing code for a phone across IPC, as its structured clone copies it", () => {
+    const encode = Schema.encodeSync(LocalPairingLink);
+    const decode = Schema.decodeUnknownSync(LocalPairingLink);
+    const granted: LocalPairingLink = {
+      _tag: "granted",
+      code: PairingCode.make("7KQ2M9XH4D"),
+      expiresAt: DateTime.makeUnsafe("2026-11-23T20:05:00Z"),
+      origins: [ServerOrigin.make("http://192.168.1.20:3747")],
+    };
+    const locked: LocalPairingLink = {
+      _tag: "locked",
+      until: DateTime.makeUnsafe("2026-11-23T20:20:00Z"),
+    };
+    for (const link of [granted, locked]) {
+      assert.deepStrictEqual(decode(structuredClone(encode(link))), link);
+    }
+  });
+
   it("refuses an answer from the main process that is not one it gives", () => {
     assert.isTrue(decodes(ConnectResult, { _tag: "connected", server: "http://192.0.2.10:3737" }));
     assert.isTrue(decodes(ConnectResult, { _tag: "refused", reason: "needs-https" }));
@@ -67,6 +88,31 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(ConnectResult, { _tag: "refused", reason: "because" }));
     assert.isFalse(decodes(ConnectResult, { _tag: "paired" }));
     assert.isFalse(decodes(ConnectResult, "connected"));
+  });
+
+  it("carries the local server's update only as the app gives it", () => {
+    const ready = { state: "ready", attempt: 1 } as const;
+    const rolledBack = { _tag: "rolled-back", running: "0.3.0", failed: "0.3.1" } as const;
+    assert.isTrue(decodes(LocalServerState, { ...ready, update: rolledBack }));
+    assert.isTrue(
+      decodes(LocalServerState, {
+        ...ready,
+        update: { ...rolledBack, reason: "It stopped with exit code 1.", logTail: "boom" },
+      }),
+    );
+    assert.isTrue(
+      decodes(LocalServerState, {
+        state: "starting",
+        update: { _tag: "updating", from: "0.3.0", to: "0.3.1" },
+      }),
+    );
+    // A version is a release's name, never a path or markup the page would show.
+    assert.isFalse(
+      decodes(LocalServerState, { ...ready, update: { ...rolledBack, failed: "../0.3.1" } }),
+    );
+    assert.isFalse(
+      decodes(LocalServerState, { ...ready, update: { _tag: "older-app", running: "0.3.0" } }),
+    );
   });
 
   it("refuses an update status that is not one the main process gives", () => {
@@ -147,7 +193,9 @@ describe("the desktop bridge", () => {
       localDevice: call,
       onLocalServer: call,
       retryLocalServer: call,
+      retryServerUpdate: call,
       setPhoneAccess: call,
+      onPhoneAccess: call,
       localPairingLink: call,
       setStartWithSystem: call,
     };

@@ -135,8 +135,6 @@ jobs:
             os: windows-2025
             targets: --win --x64
             runtime: win-unpacked/resources/server-runtime
-            # No start check: the server's path check (isWithin) knows only "/", so it refuses its own home on Windows. Lane W turns it on with #158.
-            check-flags: --skip-start
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
@@ -185,8 +183,7 @@ jobs:
       - name: Check the packaged server runtime
         env:
           RUNTIME: apps/desktop/release/${{ matrix.runtime }}
-          FLAGS: ${{ matrix.check-flags }}
-        run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION" $FLAGS
+        run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION"
 
       - name: Package sizes
         working-directory: apps/desktop/release
@@ -199,6 +196,40 @@ jobs:
               echo "| \`$file\` | $(( $(wc -c < "$file") )) bytes |"
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: Windows server
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Test the engine adapter
+        run: vp run --filter @j3-bots/engine-t3 test
+
+      - name: Test the server
+        if: ${{ !cancelled() }}
+        run: vp run --filter @j3-bots/server test
+
+      # The built server as the desktop app runs it, on the pinned Node: the
+      # engine downloaded and started, a device over the inherited pipe, a
+      # scripted turn through the engine, and a stop that leaves no process.
+      - name: Smoke
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          vp run --filter @j3-bots/server build
+          J3_SERVER_ENTRY="$PWD/apps/server/dist/bin.mjs" vp run --filter @j3-bots/server smoke:windows
 
   release:
     name: Release archive (${{ matrix.platform }})

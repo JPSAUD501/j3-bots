@@ -38,6 +38,7 @@ import {
   recoverTimes,
   sendToBot,
   sendWithFile,
+  sendWithFiles,
   sessionAfter,
   timesSent,
   turnEnded,
@@ -533,6 +534,32 @@ it.effect("refuses a message too long for the engine as the bot would read it", 
     yield* flushed(bot.id);
     yield* deliveryIs(longest, "delivered");
     assert.lengthOf(yield* received(session), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps where the operator placed each file, and refuses places that do not fit", () =>
+  Effect.gen(function* () {
+    const bot = yield* createBot("Ana");
+    yield* engineSession(bot.id);
+
+    for (const offsets of [[3], [6, 2], [0, 99], [1.5, 2]]) {
+      const refused = yield* Effect.flip(
+        sendWithFiles(bot.id, "see  and ", ["a.txt", "b.txt"], offsets),
+      );
+      assert.deepStrictEqual(refused, new Invalid({ reason: "attachment" }));
+    }
+    // Between the two halves of a character.
+    const split = yield* Effect.flip(sendWithFiles(bot.id, "🙂", ["a.txt"], [1]));
+    assert.deepStrictEqual(split, new Invalid({ reason: "attachment" }));
+    assert.lengthOf(yield* conversation(bot.id), 0);
+
+    const placed = yield* sendWithFiles(bot.id, "see  and ", ["a.txt", "b.txt"], [4, 9]);
+    const unplaced = yield* sendWithFiles(bot.id, "see these", ["c.txt"]);
+    const [first, second] = yield* conversation(bot.id);
+    assert.strictEqual(first?.id, placed);
+    assert.deepStrictEqual(first?._tag === "message" && first.attachmentOffsets, [4, 9]);
+    assert.strictEqual(second?.id, unplaced);
+    assert.isFalse(second?._tag === "message" && "attachmentOffsets" in second);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

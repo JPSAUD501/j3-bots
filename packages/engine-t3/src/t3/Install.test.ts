@@ -29,6 +29,7 @@ import {
 import { pin } from "./Pin.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import type { ProcessState } from "./Supervisor.ts";
+import { makeZip } from "./testZip.ts";
 
 /** The release's archive. Not a real one: the install stops at unpacking it. */
 const ARCHIVE = new TextEncoder().encode("the pinned engine release, byte for byte");
@@ -133,7 +134,7 @@ const insideHome = Effect.fn("insideHome")(function* (home: string, location: st
   while (!(yield* fs.exists(existing))) existing = path.dirname(existing);
   const real = yield* fs.realPath(existing);
   const realHome = yield* fs.realPath(home);
-  return real === realHome || real.startsWith(`${realHome}/`);
+  return real === realHome || real.startsWith(`${realHome}${path.sep}`);
 });
 
 /** Installs into a fresh home, set up as `setup` says. */
@@ -292,7 +293,9 @@ describe("ensureInstalled", () => {
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
-  it.effect(
+  // Windows does not let a folder be moved while a file in it is open, as
+  // the download is, so there the swap this guards against cannot be made.
+  it.effect.skipIf(process.platform === "win32")(
     "neither reads nor removes through a runtime folder swapped for a link mid-download",
     () =>
       Effect.gen(function* () {
@@ -348,6 +351,51 @@ describe("ensureInstalled", () => {
       assert.deepStrictEqual(executables, [executable, executable]);
       assert.strictEqual(downloads, 1);
       assert.strictEqual(yield* fs.readFileString(executable), "the engine");
+      assert.deepStrictEqual((yield* fs.readDirectory(runtime)).sort(), [
+        pin.version,
+        `${pin.version}.lock`,
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("installs Windows' engine from its zip, unpacked in this process, as t3.exe", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const top = `t3-${pin.version}-win32-x64`;
+      const archive = makeZip([
+        { name: `${top}/` },
+        { name: `${top}/t3.exe`, data: "the engine", method: "deflated" },
+        { name: `${top}/client/index.html`, data: "<!doctype html>", method: "deflated" },
+      ]);
+      const requested: Array<string> = [];
+      const releaseServer = HttpClient.make((request) =>
+        Effect.sync(() => {
+          requested.push(request.url);
+          return HttpClientResponse.fromWeb(request, new Response(archive, { status: 200 }));
+        }),
+      );
+      const files = yield* makePrivateFiles(() => Effect.succeed(true));
+
+      const executable = yield* ensureInstalled({
+        home,
+        platform: "win32",
+        arch: "x64",
+        sha256: { "win32-x64": NodeCrypto.createHash("sha256").update(archive).digest("hex") },
+        files,
+      }).pipe(Effect.provideService(HttpClient.HttpClient, releaseServer));
+
+      const runtime = path.join(home, "j3", "runtime");
+      assert.strictEqual(executable, path.join(runtime, pin.version, "t3.exe"));
+      assert.deepStrictEqual(requested, [
+        `https://github.com/pingdotgg/t3code/releases/download/v${pin.version}/${top}.zip`,
+      ]);
+      assert.strictEqual(yield* fs.readFileString(executable), "the engine");
+      assert.strictEqual(
+        yield* fs.readFileString(path.join(runtime, pin.version, "client", "index.html")),
+        "<!doctype html>",
+      );
       assert.deepStrictEqual((yield* fs.readDirectory(runtime)).sort(), [
         pin.version,
         `${pin.version}.lock`,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- Opening a file so that a link at its name is refused takes O_NOFOLLOW, which Effect's FileSystem cannot pass.
+// @effect-diagnostics nodeBuiltinImport:off -- Opening a file so that a link at its name is refused takes O_NOFOLLOW, and a junction takes its type, neither of which Effect's FileSystem can pass.
 import * as NodeFs from "node:fs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -109,21 +109,31 @@ export interface PrivateFiles {
    */
   readonly remove: (location: string) => Effect.Effect<void, StorageError>;
   /**
-   * Removes the symbolic link at `location`, once the folder that holds it
+   * Removes the link at `location`, once the folder that holds it
    * passes the check. Anything else at `location`, or nothing, is left as it
    * is.
    */
   readonly unlink: (location: string) => Effect.Effect<void, StorageError>;
   /**
-   * Makes a symbolic link at `location` that leads to `target`, a path
+   * Makes a link at `location` to a folder that leads to `target`, a path
    * relative to the real path of `location`'s folder, links resolved, which is
    * where the system resolves it from. Both are checked first: the folder that
    * holds the link, and where `target` leads from that real folder, links
    * resolved, so a link the adapter makes never leads out of private state
    * when it is made. Nothing may be at `location` yet: a link is never made
    * over anything.
+   *
+   * On Windows it is a junction, which leads to that folder by its absolute
+   * path: a symbolic link there takes a privilege an ordinary user does not
+   * hold unless Developer Mode is on, and a junction takes none.
    */
   readonly link: (location: string, target: string) => Effect.Effect<void, StorageError>;
+  /**
+   * Whether `location` is a link, as `link` makes one, that leads where
+   * `target` does from the real path of `location`'s folder. False when
+   * anything else is there, or nothing is, or it cannot be read.
+   */
+  readonly holdsLink: (location: string, target: string) => Effect.Effect<boolean>;
 }
 
 /** Random bytes in a temporary file's name: never guessed ahead of the write. */
@@ -260,8 +270,26 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     yield* folder(parent);
     const destination = path.resolve(yield* fs.realPath(parent), target);
     if (!(yield* isPrivate(destination))) return yield* refuse(destination);
-    yield* fs.symlink(target, location);
+    if (process.platform !== "win32") return yield* fs.symlink(target, location);
+    yield* Effect.callback<void, PlatformError.PlatformError>((resume) => {
+      NodeFs.symlink(destination, location, "junction", (error) => {
+        resume(error === null ? Effect.void : Effect.fail(fsFailure("symlink", location, error)));
+      });
+    });
   });
+
+  const holdsLink = Effect.fnUntraced(
+    function* (location: string, target: string) {
+      const held = yield* fs.readLink(location);
+      if (process.platform !== "win32") return held === target;
+      // A junction holds the absolute path it was made with, which Windows
+      // compares without case.
+      const destination = path.resolve(yield* fs.realPath(path.dirname(location)), target);
+      const comparable = (folder: string) => path.resolve(folder).toLowerCase();
+      return comparable(held) === comparable(destination);
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   return {
     contains: isPrivate,
@@ -272,5 +300,6 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
     remove,
     unlink,
     link,
+    holdsLink,
   } satisfies PrivateFiles;
 });

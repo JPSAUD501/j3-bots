@@ -11,7 +11,15 @@ import type {
   VaultHandle,
   VaultView,
 } from "@j3-bots/client-runtime";
-import { hasDefaultModel, providerGate } from "@j3-bots/client-runtime/presentation";
+import {
+  fittedMarks,
+  hasDefaultModel,
+  insertMarks,
+  placedMessage,
+  providerGate,
+  showsImage,
+  withoutMarks,
+} from "@j3-bots/client-runtime/presentation";
 import {
   AttachmentId,
   BotId,
@@ -22,6 +30,7 @@ import {
   ProviderId,
   SectionId,
   ServerOrigin,
+  type Attachment,
   type Bot,
   type BotState,
   type EngineStatus,
@@ -37,6 +46,8 @@ import { freeAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ClockProvider } from "../app/clock";
+import { AttachmentImagesProvider } from "../components/attachmentImages";
+import { ImageViewer } from "../components/ImageViewer";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
@@ -148,12 +159,15 @@ const loadedAt = Date.now();
 const now = () => DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) + Date.now() - loadedAt);
 let created = 0;
 const newId = () => EntryId.make(`local-${++created}`);
+// The bytes of each file the operator attached here, which the sample keeps in place of a server.
+const attached = new Map<AttachmentId, Blob>();
 
 function message(
   author: Entry["author"],
   text: string,
   attachments: Extract<Entry, { _tag: "message" }>["attachments"] = [],
   mentions: Mentions = { _tag: "bots", ids: [] },
+  attachmentOffsets?: ReadonlyArray<number>,
 ): DraftEntry {
   return {
     _tag: "message",
@@ -162,6 +176,7 @@ function message(
     createdAt: now(),
     text,
     attachments,
+    ...(attachmentOffsets === undefined ? {} : { attachmentOffsets }),
     mentions,
     delivery: { _tag: "delivered" },
     commandId: null,
@@ -254,34 +269,51 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     });
 
   return {
-    setDraftText: (target, text, mentions) =>
-      changeDraft(target, (draft) => ({ ...draft, text, mentions })),
+    setDraftText: (target, text, mentions, order) =>
+      changeDraft(target, (draft) => {
+        const files =
+          order === undefined
+            ? draft.files
+            : order.flatMap((key) => draft.files.filter((file) => file.key === key));
+        return { ...draft, ...fittedMarks({ text, mentions }, files.length), files };
+      }),
     // Files are "uploaded" at once: the sample has no server to send them to.
-    attachFiles: (target, picked) =>
-      changeDraft(target, (draft) => ({
-        ...draft,
-        files: [
-          ...draft.files,
-          ...picked.map((file): DraftFile => {
-            const id = AttachmentId.make(`local-file-${++created}`);
-            return {
-              _tag: "ready",
-              key: id,
-              attachment: {
-                id,
-                name: file.name,
-                mediaType: file.type === "" ? "application/octet-stream" : file.type,
-                size: file.size,
-              },
-            };
-          }),
-        ],
-      })),
+    attachFiles: (target, picked, at) =>
+      changeDraft(target, (draft) => {
+        const placed = insertMarks(draft, at ?? draft.text.length, picked.length);
+        return {
+          ...draft,
+          text: placed.text,
+          mentions: placed.mentions,
+          files: draft.files.toSpliced(
+            placed.index,
+            0,
+            ...picked.map((file): DraftFile => {
+              const id = AttachmentId.make(`local-file-${++created}`);
+              attached.set(id, file);
+              return {
+                _tag: "ready",
+                key: id,
+                attachment: {
+                  id,
+                  name: file.name,
+                  mediaType: file.type === "" ? "application/octet-stream" : file.type,
+                  size: file.size,
+                },
+              };
+            }),
+          ),
+        };
+      }),
     detachFile: (target, key) =>
-      changeDraft(target, (draft) => ({
-        ...draft,
-        files: draft.files.filter((file) => file.key !== key),
-      })),
+      changeDraft(target, (draft) => {
+        const index = draft.files.findIndex((file) => file.key === key);
+        return {
+          ...draft,
+          ...withoutMarks(draft, (mark) => mark === index),
+          files: draft.files.filter((file) => file.key !== key),
+        };
+      }),
     restoreDraft: nothing,
     retryDrafts: () => Promise.resolve(true),
     dismissDraftOffer: nothing,
@@ -289,14 +321,23 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
       const mentions = addressing?.mentions;
       const key = keyOf(target);
       const draft = get().drafts[key] ?? blankDraft;
-      const text = draft.text.trim();
+      const { text, offsets } = placedMessage(draft.text);
       const attachments = draft.files.flatMap((file) =>
         file._tag === "ready" ? [file.attachment] : [],
       );
       if (text === "" && attachments.length === 0) return;
       update((s) => ({
         ...withEntries(s, key, (es) =>
-          appended(es, message({ _tag: "operator" }, text, attachments, mentions)),
+          appended(
+            es,
+            message(
+              { _tag: "operator" },
+              text,
+              attachments,
+              mentions,
+              attachments.length === 0 ? undefined : offsets,
+            ),
+          ),
         ),
         drafts: { ...s.drafts, [key]: blankDraft },
       }));
@@ -719,9 +760,24 @@ export function useSampleSource({
  */
 export function SampleSourceProvider({ children }: { children: ReactNode }) {
   const source = useSampleSource();
+  // An image the operator attached here shows as it would from a server.
+  const [viewing, setViewing] = useState<Attachment | null>(null);
+  const intents: ShellIntents = {
+    ...source.intents,
+    openAttachment: (attachment) => {
+      if (showsImage(attachment) && attached.has(attachment.id)) setViewing(attachment);
+    },
+  };
   return (
     <ClockProvider now={SAMPLE_NOW}>
-      <ShellSourceProvider source={source}>{children}</ShellSourceProvider>
+      <ShellSourceProvider source={{ ...source, intents }}>
+        <AttachmentImagesProvider
+          fetch={(attachment) => Promise.resolve(attached.get(attachment.id) ?? null)}
+        >
+          {children}
+          <ImageViewer attachment={viewing} onClose={() => setViewing(null)} onSave={() => {}} />
+        </AttachmentImagesProvider>
+      </ShellSourceProvider>
     </ClockProvider>
   );
 }

@@ -3,7 +3,9 @@ export type Inline =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "code"; readonly text: string }
   | { readonly kind: "link"; readonly href: string; readonly text: string }
-  | { readonly kind: "mention"; readonly name: string };
+  | { readonly kind: "mention"; readonly name: string }
+  /** The message's file of this index, where the operator placed it. */
+  | { readonly kind: "file"; readonly index: number };
 
 export type Block =
   | { readonly kind: "paragraph"; readonly inlines: ReadonlyArray<Inline> }
@@ -88,14 +90,21 @@ export function literalRanges(text: string): ReadonlyArray<readonly [number, num
 }
 
 /**
- * A mention opens at the start of the text, after a space or after opening
- * punctuation, so an address like `ana@example.com` holds none.
+ * A mention opens at the start of the text, after a space, after opening
+ * punctuation or after a file placed in a draft (`FILE_MARK`), so an address
+ * like `ana@example.com` holds none.
  */
 export const opensAt = (text: string, at: number) =>
-  at === 0 || /[\s([{"'“‘«:]/u.test(text.charAt(at - 1));
+  at === 0 || /[\s([{"'“‘«:\uFFFC]/u.test(text.charAt(at - 1));
 
 /** A name ends where the text does or where no letter, digit or underscore follows. */
 export const endsAt = (text: string, at: number) => !/[\p{L}\p{N}\p{M}_]/u.test(text.charAt(at));
+
+/** A file placed in the text: its index among the message's files, and where it stands. */
+interface Placed {
+  readonly index: number;
+  readonly at: number;
+}
 
 /**
  * Splits message text into what the bubble renders: paragraphs with inline
@@ -103,16 +112,52 @@ export const endsAt = (text: string, at: number) => !/[\p{L}\p{N}\p{M}_]/u.test(
  * text. Only http and https addresses become links. `@` and a name in
  * `mentionable` is a mention where it opens and ends as one, outside code and
  * links; of two names that both fit, the longer.
+ *
+ * Each of `placed`, a file's offset in the text by its index, never
+ * decreasing, becomes a `file` inline where it stands: in its paragraph,
+ * after a code span, link or mention it would split, and, between
+ * paragraphs or blocks, in a paragraph of the files placed there.
  */
-export function parseMessageText(text: string, mentionable: ReadonlyArray<string> = []): Block[] {
+export function parseMessageText(
+  text: string,
+  mentionable: ReadonlyArray<string> = [],
+  placed: ReadonlyArray<number> = [],
+): Block[] {
   const names = mentionable.filter((name) => name !== "").toSorted((a, b) => b.length - a.length);
-  const blocks: Block[] = [];
   const parts = literals(text);
+  // A file inside a literal stands after it.
+  const files: ReadonlyArray<Placed> = placed.map((offset, index) => {
+    const at = Math.min(Math.max(offset, 0), text.length);
+    const inside = parts.find((part) => part.start < at && at < part.end);
+    return { index, at: inside === undefined ? at : inside.end };
+  });
+  const blocks: Block[] = [];
+  const alone = (group: ReadonlyArray<Placed>) => {
+    if (group.length === 0) return;
+    blocks.push({
+      kind: "paragraph",
+      inlines: group.map(({ index }) => ({ kind: "file", index })),
+    });
+  };
+  /** The paragraphs of `[from, to]`, with the files that stand there, `to` included. */
   const paragraphs = (from: number, to: number) => {
+    const ranges: Array<readonly [number, number]> = [];
     const split = (start: number, end: number) => {
       while (start < end && text[start] === "\n") start += 1;
       while (end > start && text[end - 1] === "\n") end -= 1;
-      if (text.slice(start, end).trim() === "") return;
+      if (text.slice(start, end).trim() !== "") ranges.push([start, end]);
+    };
+    let start = from;
+    for (const gap of text.slice(from, to).matchAll(/\n{2,}/g)) {
+      split(start, from + gap.index);
+      start = from + gap.index + gap[0].length;
+    }
+    split(start, to);
+    let here = files.filter(({ at }) => at >= from && at <= to);
+    for (const [start, end] of ranges) {
+      alone(here.filter(({ at }) => at < start));
+      const inline = here.filter(({ at }) => at >= start && at <= end);
+      here = here.filter(({ at }) => at > end);
       blocks.push({
         kind: "paragraph",
         inlines: inlines(
@@ -121,15 +166,11 @@ export function parseMessageText(text: string, mentionable: ReadonlyArray<string
           end,
           parts.filter((part) => part.kind === "inline" && part.start >= start && part.end <= end),
           names,
+          inline,
         ),
       });
-    };
-    let start = from;
-    for (const gap of text.slice(from, to).matchAll(/\n{2,}/g)) {
-      split(start, from + gap.index);
-      start = from + gap.index + gap[0].length;
     }
-    split(start, to);
+    alone(here);
   };
   let cursor = 0;
   for (const part of parts) {
@@ -142,20 +183,38 @@ export function parseMessageText(text: string, mentionable: ReadonlyArray<string
   return blocks;
 }
 
-/** The inlines of `[from, to)` of `text`: its literal parts, and mentions and text between them. */
+/**
+ * The inlines of `[from, to)` of `text`: its literal parts, and mentions and
+ * text between them, with each of `files`, standing in `[from, to]`, where it
+ * stands: before a part or mention it starts at, after one it would split.
+ */
 function inlines(
   text: string,
   from: number,
   to: number,
   parts: ReadonlyArray<Literal>,
   names: ReadonlyArray<string>,
+  files: ReadonlyArray<Placed>,
 ): Inline[] {
   const out: Inline[] = [];
+  const waiting = [...files];
   const pushText = (s: string) => {
     if (s === "") return;
     const last = out.at(-1);
     if (last?.kind === "text") out[out.length - 1] = { kind: "text", text: last.text + s };
     else out.push({ kind: "text", text: s });
+  };
+  /** Plain text of `[start, end)`, with the files that stand up to `end`. */
+  const plain = (start: number, end: number) => {
+    let cursor = start;
+    for (let next = waiting[0]; next !== undefined && next.at <= end; next = waiting[0]) {
+      waiting.shift();
+      const at = Math.max(next.at, cursor);
+      pushText(text.slice(cursor, at));
+      out.push({ kind: "file", index: next.index });
+      cursor = at;
+    }
+    pushText(text.slice(cursor, end));
   };
   const prose = (start: number, end: number) => {
     let cursor = start;
@@ -168,11 +227,11 @@ function inlines(
           endsAt(text, at + 1 + candidate.length),
       );
       if (name === undefined) continue;
-      pushText(text.slice(cursor, at));
+      plain(cursor, at);
       out.push({ kind: "mention", name });
       cursor = at + 1 + name.length;
     }
-    pushText(text.slice(cursor, end));
+    plain(cursor, end);
   };
   let cursor = from;
   for (const part of parts) {

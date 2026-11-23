@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
-import { BotFile, MessageAttachments } from "./attachment.ts";
+import { AttachmentOffsets, BotFile, MessageAttachments } from "./attachment.ts";
 import {
   AttachmentId,
   BotId,
@@ -246,6 +246,12 @@ export const EntryRpcs = RpcGroup.make(
       target: EntryTarget,
       text: MessageText,
       attachments: MessageAttachments,
+      /**
+       * Where the operator placed each file in `text` (`AttachmentOffsets`).
+       * Left out, the files follow the text. Offsets that do not fit the
+       * text and the files fail with `Invalid("attachment")`.
+       */
+      attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
       mentions: Schema.optionalKey(Mentions),
     },
     success: EntryId,

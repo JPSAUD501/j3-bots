@@ -49,7 +49,7 @@ const setUp = Effect.gen(function* () {
       }),
     );
   const files = yield* makePrivateFiles((location) =>
-    Effect.map(resolve(location), (real) => real === root || real.startsWith(`${root}/`)),
+    Effect.map(resolve(location), (real) => real === root || real.startsWith(`${root}${path.sep}`)),
   );
 
   const addShared = Effect.fnUntraced(function* (name: string, description: string) {
@@ -108,7 +108,12 @@ describe("linkSharedSkills", () => {
         "expenses",
         "j3-routines",
       ]);
-      assert.isFalse(path.isAbsolute(yield* fs.readLink(path.join(home, "skills", "expenses"))));
+      // Relative, so it still holds once the data moves; but a junction, as
+      // Windows links a folder, holds an absolute path.
+      assert.strictEqual(
+        path.isAbsolute(yield* fs.readLink(path.join(home, "skills", "expenses"))),
+        process.platform === "win32",
+      );
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
@@ -162,19 +167,17 @@ describe("linkSharedSkills", () => {
       const folder = path.join(home, "skills");
       yield* fs.makeDirectory(folder, { recursive: true });
       // The operator's: one into the shared folder itself, one as J3 Bots would write it.
-      yield* fs.symlink("../../../shared/skills", path.join(folder, ".system"));
-      yield* fs.symlink("../../../shared/skills/old", path.join(folder, "old"));
+      const sharedFolder = path.join("..", "..", "..", "shared", "skills");
+      yield* fs.symlink(sharedFolder, path.join(folder, ".system"));
+      yield* fs.symlink(path.join(sharedFolder, "old"), path.join(folder, "old"));
 
       yield* link();
       yield* link();
 
-      assert.strictEqual(
-        yield* fs.readLink(path.join(folder, ".system")),
-        "../../../shared/skills",
-      );
+      assert.strictEqual(yield* fs.readLink(path.join(folder, ".system")), sharedFolder);
       assert.strictEqual(
         yield* fs.readLink(path.join(folder, "old")),
-        "../../../shared/skills/old",
+        path.join(sharedFolder, "old"),
       );
       assert.strictEqual(yield* listed("expenses"), skill("expenses", "Expenses"));
     }).pipe(Effect.scoped, Effect.provide(machine)),
@@ -235,7 +238,7 @@ describe("linkSharedSkills", () => {
 
         assert.strictEqual(yield* listed("j3-routines"), skill("j3-routines", "Routines"));
         for (const destination of yield* destinations) {
-          assert.isTrue(destination.startsWith(`${root}/`), destination);
+          assert.isTrue(destination.startsWith(`${root}${path.sep}`), destination);
         }
       }).pipe(Effect.scoped, Effect.provide(machine)),
     );
@@ -303,24 +306,27 @@ describe("linkSharedSkills", () => {
         }).pipe(Effect.scoped, Effect.provide(machine)),
     );
   });
-  it.effect("leaves the home as it is while its record is a FIFO, without opening it", () =>
-    Effect.gen(function* () {
-      const { fs, path, home, record, addShared, listed, link } = yield* setUp;
-      yield* addShared("j3-routines", "Routines");
-      yield* link();
-      yield* fs.makeDirectory(path.dirname(record), { recursive: true });
-      yield* fs.remove(record);
-      NodeChildProcess.execFileSync("mkfifo", [record]);
-      yield* addShared("expenses", "Expenses");
-      logged.length = 0;
+  // Windows has no FIFO.
+  it.effect.skipIf(process.platform === "win32")(
+    "leaves the home as it is while its record is a FIFO, without opening it",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, home, record, addShared, listed, link } = yield* setUp;
+        yield* addShared("j3-routines", "Routines");
+        yield* link();
+        yield* fs.makeDirectory(path.dirname(record), { recursive: true });
+        yield* fs.remove(record);
+        NodeChildProcess.execFileSync("mkfifo", [record]);
+        yield* addShared("expenses", "Expenses");
+        logged.length = 0;
 
-      yield* link();
+        yield* link();
 
-      assert.strictEqual((yield* fs.lstat(record)).type, "FIFO");
-      assert.strictEqual(yield* listed("j3-routines"), skill("j3-routines", "Routines"));
-      assert.isFalse(yield* fs.exists(path.join(home, "skills", "expenses")));
-      assert.isTrue(logged.some((line) => line.includes("is not a regular file")));
-    }).pipe(Effect.scoped, Effect.provide(machine)),
+        assert.strictEqual((yield* fs.lstat(record)).type, "FIFO");
+        assert.strictEqual(yield* listed("j3-routines"), skill("j3-routines", "Routines"));
+        assert.isFalse(yield* fs.exists(path.join(home, "skills", "expenses")));
+        assert.isTrue(logged.some((line) => line.includes("is not a regular file")));
+      }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
   it.effect("records no link it was refused, so a link put there later stays", () =>
