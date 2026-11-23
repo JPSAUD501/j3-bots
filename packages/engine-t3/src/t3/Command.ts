@@ -38,6 +38,13 @@ export const boundedCommand = (
  * and crypto libraries load from), `ComSpec` and `PATHEXT` (how a `.cmd`
  * harness is started), the profile and its application data folders, the
  * temporary folders, the program folders, and the machine's and user's names.
+ * Node starts no Windows program without some of them anyway: libuv copies
+ * the server's `HOMEDRIVE`, `HOMEPATH`, `LOGONSERVER`, `PATH`, `SYSTEMDRIVE`,
+ * `SYSTEMROOT`, `TEMP`, `USERDOMAIN`, `USERNAME`, `USERPROFILE` and `WINDIR`
+ * into any environment it is given that lacks them (`required_vars` in
+ * `src/win/process.c`). So they are all on the list, which is then exactly
+ * what the engine gets; `LOGONSERVER` names the server that signed the user
+ * in, and is set only where one did.
  */
 const PASSED = new Set([
   "PATH",
@@ -91,6 +98,7 @@ const PASSED_ON_WINDOWS = new Set(
     "TMP",
     "USERNAME",
     "USERDOMAIN",
+    "LOGONSERVER",
     "COMPUTERNAME",
     "TZ",
     "HTTP_PROXY",
