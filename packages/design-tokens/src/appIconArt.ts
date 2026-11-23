@@ -36,7 +36,7 @@ export interface IconArt {
   readonly whole: IconFrame;
 }
 
-/** An idle Pip at rest, looking straight out: the pose each candidate starts from. */
+/** An idle Pip at rest, looking straight out. */
 const rest: AvatarFace = {
   lidTop: 0,
   lidBottom: 0,
@@ -71,46 +71,15 @@ const rest: AvatarFace = {
 };
 
 /**
- * The three candidates the owner chooses from. The two not chosen go when
- * one is: only `iconArt` below names one.
+ * The icon every platform shows: an iris loaf seen close, on a true-black
+ * plate. The plate frames its eye, lifted and a little wide, and its antenna;
+ * the body rises off the plate's bottom edge.
  */
-const iconCandidates = {
-  /** One bold Pip filling a black plate. */
-  a: {
-    avatar: { shape: "dome", color: "tangerine" },
-    palette: "dark",
-    plate: "#000000",
-    face: { ...rest, antennaAngle: 8 },
-    frame: { x: -4, y: -1, size: 108 },
-    whole: { x: 4, y: 4, size: 92 },
-  },
-  /** A Pip calling for you: its antenna tall and its light lit, on a white plate. */
-  b: {
-    avatar: { shape: "bean", color: "cobalt" },
-    palette: "dark",
-    plate: "#ffffff",
-    face: {
-      ...rest,
-      pupil: 8.6,
-      antennaLength: 21,
-      light: "waiting",
-      signal: "ping",
-      ping: 0.3,
-      pingOpacity: 1,
-    },
-    frame: { x: -2, y: -4, size: 104 },
-    whole: { x: 4, y: 0, size: 96 },
-  },
-  /** Close on the eye and the antenna, the body rising off the plate's bottom edge. */
-  c: {
-    avatar: { shape: "loaf", color: "iris" },
-    palette: "dark",
-    plate: "#000000",
-    face: { ...rest, pupil: 7.4, eyeLift: -7 },
-    frame: { x: 21, y: 19, size: 58 },
-    whole: { x: 4, y: 4, size: 92 },
-  },
-} as const satisfies Record<string, IconArt>;
-
-/** The icon every platform shows. */
-export const iconArt: IconArt = iconCandidates.a;
+export const iconArt: IconArt = {
+  avatar: { shape: "loaf", color: "iris" },
+  palette: "dark",
+  plate: "#000000",
+  face: { ...rest, pupil: 7.4, eyeLift: -7 },
+  frame: { x: 21, y: 19, size: 58 },
+  whole: { x: 4, y: 4, size: 92 },
+};

@@ -43,15 +43,15 @@ describe("renderAppIcon", () => {
 });
 
 describe("renderTrayIcon", () => {
-  // A short antenna on a wide body, and a tall one on a narrow body whose own light is lit.
+  // The icon's own, and a taller antenna on a narrower body, which the frame grows to fit.
   const arts: ReadonlyArray<readonly [string, IconArt]> = [
-    ["a dome", { ...iconArt, avatar: { shape: "dome", color: "tangerine" } }],
+    ["the icon's art", iconArt],
     [
-      "a bean with its light lit",
+      "a bean with a taller antenna",
       {
         ...iconArt,
-        avatar: { shape: "bean", color: "cobalt" },
-        face: { ...iconArt.face, antennaLength: 21, light: "waiting", signal: "ping" },
+        avatar: { ...iconArt.avatar, shape: "bean" },
+        face: { ...iconArt.face, antennaLength: 21 },
       },
     ],
   ];

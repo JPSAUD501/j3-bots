@@ -103,6 +103,20 @@ function plateOutline(size: number, inset: number) {
   return roundedSquare(low, high, (high - low) * PLATE_RADIUS);
 }
 
+/**
+ * An icon this many px square or smaller, the smallest a platform shows one
+ * (a browser tab's favicon, the tray on macOS and Windows), grows the light at
+ * its antenna's tip by `SMALL_LIGHT`. At its own size it is barely wider than
+ * the stalk there and blurs into it, leaving a line over an eye; grown, it
+ * stands apart as a knob, and the antenna reads as one.
+ */
+const SMALL_ICON = 16;
+const SMALL_LIGHT = 1.5;
+
+/** The art's pose for an image `size` px square. */
+const poseAt = (face: AvatarFace, size: number): AvatarFace =>
+  size <= SMALL_ICON ? { ...face, lightScale: face.lightScale * SMALL_LIGHT } : face;
+
 /** The subpaths reversed: with the nonzero rule, a reversed shape inside another is a hole in it. */
 const reversed = (subpaths: ReadonlyArray<Subpath>): ReadonlyArray<Subpath> =>
   subpaths.map(({ points, closed }) => ({ points: [...points].reverse(), closed }));
@@ -147,8 +161,9 @@ export function renderAppIcon(icon: AppIcon, art: IconArt = iconArt): Uint8Array
   const outline = plate.kind === "rounded" ? plateOutline(size, plate.inset) : null;
   if (outline !== null) canvas.fill(outline, plateColor);
   const ground = plate.kind === "none" ? icon.ground : art.plate;
+  const face = poseAt(art.face, size);
   // A silhouette leaves out the light's signal, which at a status bar's size is noise.
-  const drawn: IconArt = silhouette ? { ...art, face: { ...art.face, signal: null } } : art;
+  const drawn: IconArt = { ...art, face: silhouette ? { ...face, signal: null } : face };
   drawFramed(
     canvas,
     drawn,
@@ -229,6 +244,7 @@ export function renderTrayIcon(
     throw new RangeError(`An icon's size is a whole number of px, at least 1, not ${size}.`);
   }
   const canvas = new Canvas(size, size);
-  drawFramed(canvas, { ...art, face: trayFace(art, attention) }, trayFrame(art), size, theme, {});
+  const posed: IconArt = { ...art, face: poseAt(art.face, size) };
+  drawFramed(canvas, { ...art, face: trayFace(posed, attention) }, trayFrame(art), size, theme, {});
   return canvas.png();
 }
