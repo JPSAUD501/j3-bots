@@ -23,7 +23,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { boundedCommand, engineEnvironment } from "./Command.ts";
 import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
-import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
+import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./PrivateFiles.ts";
 
 // Runs the engine as a child process and says, at every moment, whether it can
 // take commands. Being down is a state, not a failure: the supervisor restarts
@@ -163,7 +163,18 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   const { state } = input;
   const check = probe(input.port).pipe(Effect.provideService(HttpClient.HttpClient, http));
   const recordFile = path.join(engineFolders(path, input.home).j3, "engine-process.json");
-  const environment = engineEnvironment(yield* Effect.sync(() => process.env));
+  // Each J3 Bots instance has a configuration folder of its own, which the
+  // engine sets for it. Any other run of a harness the engine makes gets
+  // these, empty and J3 Bots' own, instead of the server user's own
+  // `~/.claude` and `~/.codex`: the engine's check of the installed Codex
+  // (`codex --version`, **Read** at `59651c1`, `CodexInstallation.ts`), and a
+  // harness a bot runs in its shell.
+  const defaults = harnessDefaultHomes(path, input.home);
+  const environment = {
+    ...engineEnvironment(yield* Effect.sync(() => process.env)),
+    CLAUDE_CONFIG_DIR: defaults.claudeCode,
+    CODEX_HOME: defaults.codex,
+  };
 
   const engine = boundedCommand(
     input.executable,

@@ -24,5 +24,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md) | An update keeps a snapshot to roll back to | Accepted |
 | [0017](0017-the-android-app-is-a-signed-apk-on-the-release.md) | The Android app is an APK on the release, signed with the project's key | Accepted |
 | [0018](0018-the-interface-follows-pips.md) | The interface follows Pips: lively bots on quiet chrome | Accepted |
+| [0019](0019-codex-runs-with-a-home-of-its-own.md) | Codex runs with a home folder of its own; the commands it runs keep the user's | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

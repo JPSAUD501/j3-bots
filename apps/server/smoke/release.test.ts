@@ -30,8 +30,9 @@ import { freePort, runToEnd, searchPathWithoutNode } from "./host.ts";
 // it: unpacked anywhere, with no Node on PATH. Its doctor runs; it fetches the
 // engine it is pinned to; its server answers /health, serves the archive's web
 // client and starts that engine; and a paired client gets a bot's reply
-// through the engine, from the scripted agent. Needs the archive in J3_RELEASE_ARCHIVE and the
-// network, to download the engine.
+// through the engine, from the scripted agent. The engine checks Claude Code
+// and Codex, stand-ins here, and writes nothing in the user's own home. Needs
+// the archive in J3_RELEASE_ARCHIVE and the network, to download the engine.
 
 const ENGINE_READY_WITHIN = Duration.minutes(2);
 const TURN_WITHIN = Duration.minutes(1);
@@ -39,6 +40,22 @@ const TURN_WITHIN = Duration.minutes(1);
 const SCRIPTED_AGENT = `${import.meta.dirname}/../../../packages/engine-t3/scripted-agent/agent.ts`;
 
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseManifest));
+
+/**
+ * A harness stand-in: it records each run, with the configuration folder it
+ * was given, in `log`, then writes where the real harness writes when it runs,
+ * that folder, which is the user's own when no variable names another
+ * (**Verified** with Claude Code 2.1.330 and Codex 0.171.0: run by the engine
+ * on the user's own folders, each created and wrote them), and fails, as a
+ * harness the engine cannot use.
+ */
+const harnessStandIn = (name: string, variable: string, own: string, log: string) =>
+  [
+    `printf '%s\\t%s\\n' ${name} "\${${variable}:-}" >> '${log}'`,
+    `dir="\${${variable}:-$HOME/${own}}"`,
+    `mkdir -p "$dir" && : > "$dir/run"`,
+    "exit 1",
+  ].join("\n");
 
 const services = Layer.mergeAll(
   NodeServices.layer,
@@ -75,8 +92,16 @@ it.layer(services, { excludeTestServices: true })("release archive", (it) => {
           .readFileString(path.join(release, RELEASE_MANIFEST))
           .pipe(Effect.flatMap(decodeManifest));
 
-        // Only the archive's Node can run.
-        const commands = yield* searchPathWithoutNode(path.join(scratch, "commands"));
+        // Only the archive's Node can run, and Claude Code and Codex are stand-ins.
+        // The engine asks `gh` for a setting once at start, and `gh` writes its
+        // own state in the user's home whenever it runs, as it does when a bot
+        // runs it: that is `gh`'s, not a harness's, so the smoke has none.
+        const harnessRuns = path.join(scratch, "harness-runs.tsv");
+        const commands = yield* searchPathWithoutNode(path.join(scratch, "commands"), {
+          claude: harnessStandIn("claude", "CLAUDE_CONFIG_DIR", ".claude", harnessRuns),
+          codex: harnessStandIn("codex", "CODEX_HOME", ".codex", harnessRuns),
+          gh: "exit 1",
+        });
         const home = path.join(scratch, "home");
         const userHome = path.join(scratch, "user");
         yield* fs.makeDirectory(userHome);
@@ -170,13 +195,17 @@ it.layer(services, { excludeTestServices: true })("release archive", (it) => {
         );
         const client = yield* RpcClient.make(J3Rpcs).pipe(Effect.provide(protocol));
 
-        // The engine the archive is pinned to, downloaded and ready, offering the scripted agent.
+        // The engine the archive is pinned to, downloaded and ready, offering the
+        // scripted agent, and done checking Claude Code and Codex.
         const engine = yield* client["engine.subscribe"]().pipe(
           Stream.filter(
             (current) =>
               current.state._tag === "ready" &&
               current.providers.some(
                 (provider) => provider.id === "scripted" && provider.status._tag === "ready",
+              ) &&
+              current.providers.every(
+                (provider) => provider.status._tag !== "unavailable" || !provider.status.checking,
               ),
           ),
           Stream.runHead,
@@ -210,6 +239,26 @@ it.layer(services, { excludeTestServices: true })("release archive", (it) => {
         });
         const said = yield* Fiber.join(reply).pipe(Effect.timeout(TURN_WITHIN));
         assert.isTrue(Option.isSome(said));
+
+        // The engine ran each harness only on J3 Bots' own folders, and left
+        // the user's home as it was.
+        const runs = (yield* fs.readFileString(harnessRuns))
+          .split("\n")
+          .filter((line) => line !== "")
+          .map((line) => line.split("\t"));
+        for (const harness of ["claude", "codex"]) {
+          assert.isTrue(
+            runs.some(([name]) => name === harness),
+            `the engine never ran ${harness}`,
+          );
+        }
+        for (const [name, folder = ""] of runs) {
+          assert.isTrue(
+            folder.startsWith(`${home}${path.sep}`),
+            `${name} ran with ${folder || "no"} folder`,
+          );
+        }
+        assert.deepStrictEqual(yield* fs.readDirectory(userHome), []);
       }).pipe(Effect.scoped),
     Duration.toMillis(Duration.minutes(10)),
   );

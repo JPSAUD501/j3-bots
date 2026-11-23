@@ -25,7 +25,26 @@ export const engineFolders = (path: Path.Path, home: string) => ({
   userdata: path.join(home, "userdata"),
   /** The harnesses' environment, one file per variable. */
   secrets: path.join(home, "userdata", "secrets"),
+  /** The home folder each Codex instance runs with, one folder per instance (`Provision.ts`). */
+  codexHomes: path.join(home, "j3", "codex-homes"),
+  /**
+   * The configuration folders the engine itself is given, which any harness
+   * it starts outside a J3 Bots instance falls back to (`engineEnvironment`).
+   */
+  harnessDefaults: path.join(home, "j3", "harness-defaults"),
 });
+
+/**
+ * The configuration folders, empty, that the engine is given as its own
+ * `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, for an engine data directory at `home`.
+ */
+export const harnessDefaultHomes = (path: Path.Path, home: string) => {
+  const { harnessDefaults } = engineFolders(path, home);
+  return {
+    claudeCode: path.join(harnessDefaults, "claude-code"),
+    codex: path.join(harnessDefaults, "codex"),
+  };
+};
 
 /**
  * Every folder the adapter writes under the engine's data directory, for the

@@ -11,6 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as PlatformError from "effect/PlatformError";
+import { parse } from "smol-toml";
 import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
 import { type InstanceSpec, provision, storeConnection, writeBasePrompt } from "./Provision.ts";
 
@@ -30,8 +31,10 @@ const Settings = Schema.fromJsonString(
       Schema.String,
       Schema.Struct({
         enabled: Schema.Boolean,
-        environment: Schema.Array(
-          Schema.Struct({ name: Schema.String, value: Schema.String, sensitive: Schema.Boolean }),
+        environment: Schema.optional(
+          Schema.Array(
+            Schema.Struct({ name: Schema.String, value: Schema.String, sensitive: Schema.Boolean }),
+          ),
         ),
       }),
     ),
@@ -74,6 +77,7 @@ const setUp = Effect.gen(function* () {
     systemPromptFile: ".j3/system.md",
     basePrompt: 'Say "done" when done.',
     sharedSkills: path.join(home, "shared-skills"),
+    userHome: "/home/sam",
   };
   const { userdata, secrets } = engineFolders(path, home);
   const settings = Effect.gen(function* () {
@@ -182,6 +186,11 @@ describe("provision with a provider connection", () => {
         { name: "ENABLE_TOOL_SEARCH", value: "false", sensitive: false },
       ]);
       assert.deepStrictEqual(yield* variables("j3-codex"), [
+        {
+          name: "HOME",
+          value: path.join(engineFolders(path, home).codexHomes, "j3-codex"),
+          sensitive: false,
+        },
         { name: "J3_PROVIDER_KEY", value: "", sensitive: true },
       ]);
 
@@ -293,6 +302,36 @@ describe("a harness configuration J3 Bots cannot read", () => {
       assert.strictEqual(prompt._tag, "HarnessConfigUnreadable");
       assert.include(prompt.message, configFile);
       assert.strictEqual((yield* fs.stat(configFile)).type, "Directory");
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
+
+describe("a Codex instance", () => {
+  it.effect("runs in a home of its own, and the commands it runs keep the server user's", () =>
+    Effect.gen(function* () {
+      const { fs, path, files, input, home, settings } = yield* setUp;
+      const configFile = path.join(input.home, "codex", "config.toml");
+      yield* files.folder(path.join(input.home, "codex"));
+      yield* files.write(
+        configFile,
+        ["[shell_environment_policy]", 'inherit = "core"', 'set = { HOME = "/old" }', ""].join(
+          "\n",
+        ),
+      );
+
+      yield* provision(input);
+
+      const variables = (yield* settings).providerInstances["j3-codex"]?.environment ?? [];
+      const own = path.join(engineFolders(path, home).codexHomes, "j3-codex");
+      assert.strictEqual(variables.find(({ name }) => name === "HOME")?.value, own);
+      assert.deepStrictEqual(yield* fs.readDirectory(own), []);
+      assert.deepStrictEqual(
+        parse(yield* fs.readFileString(configFile))["shell_environment_policy"],
+        {
+          inherit: "core",
+          set: { HOME: "/home/sam" },
+        },
+      );
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });

@@ -7,7 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
+import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./PrivateFiles.ts";
 import { linkSharedSkills } from "./SkillLinks.ts";
 import { editToml, type TomlEdit, type TomlTable } from "./toml.ts";
 
@@ -62,6 +62,11 @@ export interface ProvisionInput {
   readonly basePrompt: string;
   /** The folder of the skills every bot shares, which each Claude Code and Codex home links. */
   readonly sharedSkills: string;
+  /**
+   * The server user's home folder (`HOME`), which the commands a Codex bot
+   * runs get back (`codexConfig`), or undefined when the server has none.
+   */
+  readonly userHome: string | undefined;
 }
 
 /**
@@ -131,6 +136,12 @@ const claudeLaunchArgs = (systemPromptFile: string) =>
 
 // Engine settings J3 Bots owns. Everything else in the file is the engine's.
 const ENGINE_SETTINGS = {
+  // The engine would look up each harness's latest release to offer an
+  // update, with the harness's package manager (`npm view`, `npm outdated -g`),
+  // which writes its cache in the server user's home. J3 Bots offers no
+  // harness update. **Read** at `59651c1`, `enrichProviderSnapshotWithVersionAdvisory`
+  // in `provider-core/src/server/maintenanceResolver.ts`.
+  enableProviderUpdateChecks: false,
   // A bot's session must never be settled: a settled thread loses usage-limit
   // auto-resume and restart continuation.
   sidebarAutoSettleAfterDays: null,
@@ -151,6 +162,45 @@ const DRIVERS = {
   codex: "codex",
   "acp-local": "acpRegistry",
 } as const;
+
+/**
+ * The instance the engine adds for each of its built-in drivers that has
+ * one, under the driver's own name, whenever its settings do not name that
+ * instance, and the driver of each. Claude Code's and Codex's start enabled,
+ * with no home of their own: the engine probes them at every start, and each
+ * probe runs the harness on the server user's own `~/.claude` and `~/.codex`,
+ * which it creates and writes. So J3 Bots names every one of them, turned
+ * off, and the engine checks and runs only J3 Bots' own instances. **Read**
+ * at `59651c1`, `deriveProviderInstanceConfigMap` in
+ * `ProviderInstanceRegistryHydration.ts` and `BUILT_IN_DRIVERS` in
+ * `builtInDrivers.ts` (the ACP registry has no default instance); **Verified**
+ * on `0.1.11` (`docs/architecture/engine.md#isolation`).
+ */
+const ENGINE_DEFAULT_INSTANCES = [
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "grok",
+  "fx",
+  "opencode",
+  "antigravity",
+  "kiro",
+  "pi",
+  "muse",
+] as const;
+
+/**
+ * The home folder a Codex instance runs with, which J3 Bots owns and leaves
+ * empty: Codex looks in its home folder, not only in `CODEX_HOME`, for user
+ * skills (`~/.agents/skills`) and plugin marketplaces, so with the server
+ * user's own a Codex bot would be offered theirs. **Read** in Codex 0.171.0,
+ * `ext/skills/src/host_roots.rs` and `core-plugins/src/marketplace.rs`;
+ * **Verified** with its app server's `skills/list`
+ * (`docs/decisions/0019-codex-runs-with-a-home-of-its-own.md`). The commands
+ * a Codex bot runs get the server user's home back (`codexConfig`).
+ */
+const codexProcessHome = (path: Path.Path, home: string, instanceId: string) =>
+  path.join(engineFolders(path, home).codexHomes, instanceId);
 
 /** Where the engine's secret store keeps one instance variable. **Read** at `db51b67`, `settingsSecrets.ts`. */
 const secretFileName = (instanceId: string, variable: string) =>
@@ -197,6 +247,22 @@ const connectionVariables = (
     : [key];
 };
 
+/** The variables an instance runs with whatever the connection: for Codex, its own home folder. */
+const instanceVariables = (
+  path: Path.Path,
+  input: ProvisionInput,
+  spec: InstanceSpec,
+): ReadonlyArray<SettingsVariable> =>
+  spec.kind === "codex"
+    ? [
+        {
+          name: "HOME",
+          value: codexProcessHome(path, input.home, spec.instanceId),
+          sensitive: false,
+        },
+      ]
+    : [];
+
 const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
   switch (spec.kind) {
     case "claude-code":
@@ -217,11 +283,13 @@ const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
 
 /**
  * The settings file with J3 Bots' keys and instances merged into what the
- * engine keeps there. An instance whose harness configuration J3 Bots could
- * not write is turned off, so it never runs with a configuration that
- * belongs to another connection or lacks the bot tools.
+ * engine keeps there, and the engine's own default instances turned off
+ * (`ENGINE_DEFAULT_INSTANCES`). An instance whose harness configuration J3
+ * Bots could not write is turned off, so it never runs with a configuration
+ * that belongs to another connection or lacks the bot tools.
  */
 const engineSettings = (
+  path: Path.Path,
   input: ProvisionInput,
   connected: boolean,
   disabled: ReadonlySet<string>,
@@ -229,27 +297,38 @@ const engineSettings = (
 ) => ({
   ...existing,
   ...ENGINE_SETTINGS,
-  providerInstances: Object.fromEntries(
-    input.instances.map((spec) => [
-      spec.instanceId,
-      {
-        driver: DRIVERS[spec.kind],
-        displayName: spec.name,
-        enabled: !disabled.has(spec.instanceId),
-        environment: [
-          ...connectionVariables(spec, connected),
-          ...spec.environment.map((variable) => secretVariable(variable.name)),
-        ],
-        config: instanceConfig(input, spec),
-      },
-    ]),
-  ),
+  providerInstances: Object.fromEntries([
+    ...ENGINE_DEFAULT_INSTANCES.map((driver) => [driver, { driver, enabled: false }] as const),
+    ...input.instances.map(
+      (spec) =>
+        [
+          spec.instanceId,
+          {
+            driver: DRIVERS[spec.kind],
+            displayName: spec.name,
+            enabled: !disabled.has(spec.instanceId),
+            environment: [
+              ...instanceVariables(path, input, spec),
+              ...connectionVariables(spec, connected),
+              ...spec.environment.map((variable) => secretVariable(variable.name)),
+            ],
+            config: instanceConfig(input, spec),
+          },
+        ] as const,
+    ),
+  ]),
 });
 
 /**
  * J3 Bots' part of a Codex instance's `config.toml`: the base prompt, the
- * connection's model provider, and the bot tools. Codex writes the rest of the
- * file itself (trusted projects, its own settings), and that is kept.
+ * connection's model provider, the bot tools, and the server user's home
+ * folder for the commands a bot runs. Codex itself runs with a home of its
+ * own (`codexProcessHome`); `shell_environment_policy.set` puts `HOME` back
+ * in the environment of every command it runs, so a bot's shell, `git` and
+ * `gh` find the same configuration as a Claude Code bot's. **Read** in Codex
+ * 0.171.0, `protocol/src/shell_environment.rs` `populate_env`, used by its
+ * shell, `exec_command` and hook runners. Codex writes the rest of the file
+ * itself (trusted projects, its own settings), and that is kept.
  */
 const codexConfig = (input: ProvisionInput, connection: StoredConnection | null): TomlEdit => {
   const modelProvider: ReadonlyArray<TomlTable> =
@@ -274,6 +353,10 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
       ["default_tools_approval_mode", "approve"],
     ],
   };
+  const commandHome: ReadonlyArray<TomlTable> =
+    input.userHome === undefined
+      ? []
+      : [{ path: ["shell_environment_policy", "set"], values: [["HOME", input.userHome]] }];
   return {
     keys: [
       ["developer_instructions", input.basePrompt],
@@ -282,8 +365,9 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
     owns: [
       ["model_providers", CODEX_MODEL_PROVIDER],
       ["mcp_servers", TOOL_SERVER],
+      ["shell_environment_policy", "set"],
     ],
-    tables: [...modelProvider, tools],
+    tables: [...modelProvider, tools, ...commandHome],
   };
 };
 
@@ -426,6 +510,9 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     path.join(j3, "skill-links", `${instanceId}.json`);
   yield* input.files.folder(secrets);
   yield* fs.chmod(secrets, 0o700);
+  for (const folder of Object.values(harnessDefaultHomes(path, input.home))) {
+    yield* input.files.folder(folder);
+  }
 
   const connection = yield* readConnection(input.home);
   const settingsFile = path.join(userdata, "settings.json");
@@ -472,6 +559,7 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
       }
       case "codex": {
         yield* input.files.folder(spec.home);
+        yield* input.files.folder(codexProcessHome(path, input.home, spec.instanceId));
         const configFile = path.join(spec.home, "config.toml");
         const text = yield* readIfPresent(fs, configFile, unreadable(configFile));
         const edited = editToml(text ?? "", codexConfig(input, connection));
@@ -515,7 +603,10 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
       );
     }
   }
-  yield* writeJson(settingsFile, engineSettings(input, connection !== null, disabled, existing));
+  yield* writeJson(
+    settingsFile,
+    engineSettings(path, input, connection !== null, disabled, existing),
+  );
 });
 
 /**
