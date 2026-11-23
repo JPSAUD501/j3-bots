@@ -102,8 +102,9 @@ export const en = {
   "file.opening": "Opening…",
   "file.kindAndSize": "{kind} · {size}",
 
+  "card.waiting": "Waiting for you",
+
   "question.title": "Question",
-  "question.pending": "Needs your answer",
   "question.typeAnswer": "Type an answer",
   "question.typeInstead": "Or type an answer",
   "question.addNote": "Add a note to your answer",
@@ -117,7 +118,6 @@ export const en = {
   "question.tooLong": "Your answer is too long to reach the bot. Shorten it and send it again.",
 
   "secret.title": "Credential",
-  "secret.pending": "Needs a credential",
   "secret.unseen": "The bot can use it without seeing it. It never appears in this conversation.",
   "secret.getOne": "Get one",
   "secret.decline": "Decline",
@@ -483,6 +483,8 @@ export const en = {
 
   "timeline.loadOlder": "Show earlier messages",
   "timeline.loadingOlder": "Loading earlier messages…",
+  "timeline.newMessages": "New messages",
+  "timeline.toLatest": "Go to the latest message",
 
   "composer.files": "Files to send",
   "composer.stillUploading": "Files are still uploading",

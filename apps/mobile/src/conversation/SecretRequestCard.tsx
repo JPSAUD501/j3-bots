@@ -6,13 +6,14 @@ import type { KeyWith } from "@j3-bots/i18n";
 import * as Redacted from "effect/Redacted";
 import { ExternalLink, KeyRound } from "lucide-react-native";
 import { useState } from "react";
-import { Linking, Pressable, View } from "react-native";
+import { Linking, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { useColor } from "../theme.ts";
 import { Button } from "../ui.tsx";
 import { CardFrame, useOutcomeFocus, useSubmitting } from "./CardFrame.tsx";
+import { PressScale } from "../press.tsx";
 
 const closedText: Record<Exclude<SecretRequestEntry["status"], "pending">, KeyWith> = {
   provided: "secret.provided",
@@ -33,11 +34,7 @@ export function SecretRequestCard({ entry }: { readonly entry: SecretRequestEntr
   const pending = entry.status === "pending";
   const { outcome, answered } = useOutcomeFocus(pending);
   return (
-    <CardFrame
-      icon={KeyRound}
-      title={pending ? t("secret.pending") : t("secret.title")}
-      attention={pending}
-    >
+    <CardFrame icon={KeyRound} title={t("secret.title")} attention={pending}>
       <View className="gap-1">
         <Text className="text-sm font-medium text-foreground">{entry.label}</Text>
         {entry.reason !== "" && (
@@ -108,17 +105,22 @@ function SecretForm({
       <Text className="text-xs text-muted-foreground">{t("secret.unseen")}</Text>
       <View className="flex-row flex-wrap items-center gap-2">
         {link !== null && (
-          <Pressable
+          <PressScale
             accessibilityRole="link"
             onPress={() => void Linking.openURL(link)}
             className="min-h-11 flex-row items-center gap-1"
           >
             <Text className="text-xs text-muted-foreground underline">{t("secret.getOne")}</Text>
             <Icon icon={ExternalLink} size={12} color="accent-muted-foreground" />
-          </Pressable>
+          </PressScale>
         )}
         <View className="ms-auto flex-row gap-2">
-          <Button variant="quiet" label={t("secret.decline")} onPress={decline} held={submitting} />
+          <Button
+            variant="outline"
+            label={t("secret.decline")}
+            onPress={decline}
+            held={submitting}
+          />
           <Button
             variant="primary"
             label={t("secret.provide")}

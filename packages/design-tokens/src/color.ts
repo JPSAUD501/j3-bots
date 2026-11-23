@@ -71,6 +71,22 @@ function linearToOklab({ r, g, b }: Omit<LinearRgb, "alpha">): Lab {
   };
 }
 
+/**
+ * `share` (0 to 1) of opaque `a` mixed into opaque `b` in OKLab, as CSS
+ * `color-mix(in oklab, a share, b)` mixes them, written as `oklch(L C H)`.
+ */
+export function mixOklab(a: string, b: string, share: number): string {
+  const x = linearToOklab(parseColor(a));
+  const y = linearToOklab(parseColor(b));
+  const at = (p: number, q: number) => p * share + q * (1 - share);
+  const l = at(x.l, y.l);
+  const ab = { a: at(x.a, y.a), b: at(x.b, y.b) };
+  const c = Math.hypot(ab.a, ab.b);
+  const h = c < 1e-4 ? 0 : ((Math.atan2(ab.b, ab.a) * 180) / Math.PI + 360) % 360;
+  const fixed = (n: number, digits: number) => Number(n.toFixed(digits));
+  return `oklch(${fixed(l, 3)} ${fixed(c, 3)} ${fixed(h, 1)})`;
+}
+
 /** Whether the color can be shown on an sRGB display without clipping. */
 export function inSrgbGamut(color: LinearRgb): boolean {
   const epsilon = 1e-4;

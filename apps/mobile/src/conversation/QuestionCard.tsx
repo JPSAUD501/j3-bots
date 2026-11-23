@@ -7,17 +7,22 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { Question, QuestionAnswers, QuestionEntry, QuestionOption } from "@j3-bots/contracts";
+import { springs } from "@j3-bots/design-tokens";
 import { Check, MessageCircleQuestionMark } from "lucide-react-native";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { useColor } from "../theme.ts";
 import { useSay } from "../toast.tsx";
 import { Button } from "../ui.tsx";
-import { CardFrame, useOutcomeFocus, useSubmitting } from "./CardFrame.tsx";
+import { enteringWhen, popIn, settleIn } from "../motion.ts";
+import { AnimatedView } from "./animated.ts";
+import { CardFrame, useClosedHere, useOutcomeFocus, useSubmitting } from "./CardFrame.tsx";
+import { PressScale } from "../press.tsx";
 
+/** A chosen option's check, popping in as the choice confirms. */
 /** A bordered row the operator picks; a picked one is filled. */
 const choiceRow = (picked: boolean) =>
   `min-h-11 flex-row items-start gap-2.5 rounded-md border px-3 py-2 ${picked ? "border-foreground/60 bg-muted" : "border-input"}`;
@@ -60,20 +65,22 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
       : null;
   const answersOnTap =
     pending && entry.questions.length === 1 && !first.multiple && !first.acceptsText;
+  // The option tapped confirms while its answer is on its way: it takes a check, and the others
+  // step back. Refused, the card waits again with every option as it was.
+  const [tapped, setTapped] = useState<string | null>(null);
+  const chosen = submitting ? tapped : null;
+  const { closedHere } = useClosedHere(pending);
 
   return (
-    <CardFrame
-      icon={MessageCircleQuestionMark}
-      title={pending ? t("question.pending") : t("question.title")}
-      attention={pending}
-    >
+    <CardFrame icon={MessageCircleQuestionMark} title={t("question.title")} attention={pending}>
       {!pending ? (
-        <>
+        <AnimatedView {...enteringWhen(closedHere, settleIn(springs.soft))} className="gap-3">
           {entry.questions.map((question) => (
             <Resolved
               key={question.id}
               question={question}
               answer={status._tag === "answered" ? (status.answers[question.id] ?? null) : null}
+              popped={closedHere}
             />
           ))}
           <Text ref={outcome} className="text-xs text-muted-foreground">
@@ -85,25 +92,34 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
                   ? t("question.refused")
                   : t("question.expired")}
           </Text>
-        </>
+        </AnimatedView>
       ) : answersOnTap ? (
         <>
           <View className="gap-1.5">
             <Text className="mb-1 text-sm font-medium text-foreground">{first.prompt}</Text>
             {first.options.map((option) => (
-              <Pressable
+              <PressScale
                 key={option.id}
+                depth="row"
                 accessibilityRole="button"
-                accessibilityState={{ disabled: submitting }}
+                accessibilityState={{ disabled: submitting, selected: chosen === option.id }}
                 onPress={
                   submitting
                     ? undefined
-                    : () => answer({ [first.id]: { optionIds: [option.id], text: null } })
+                    : () => {
+                        setTapped(option.id);
+                        answer({ [first.id]: { optionIds: [option.id], text: null } });
+                      }
                 }
-                className={choiceRow(false)}
+                className={`${choiceRow(chosen === option.id)} ${chosen !== null && chosen !== option.id ? "opacity-50" : ""}`}
               >
                 <OptionText option={option} />
-              </Pressable>
+                {chosen === option.id && (
+                  <AnimatedView entering={popIn()} className="ms-auto mt-0.5">
+                    <Icon icon={Check} size={16} color="accent-foreground" />
+                  </AnimatedView>
+                )}
+              </PressScale>
             ))}
           </View>
           {dismiss !== null && <Actions onDismiss={dismiss} submitting={submitting} send={null} />}
@@ -222,8 +238,9 @@ function QuestionFields({
           {question.options.map((option) => {
             const checked = picked.includes(option.id);
             return (
-              <Pressable
+              <PressScale
                 key={option.id}
+                depth="row"
                 accessibilityRole={question.multiple ? "checkbox" : "radio"}
                 accessibilityState={{ checked, disabled: readOnly }}
                 onPress={readOnly ? undefined : () => toggle(option)}
@@ -231,7 +248,7 @@ function QuestionFields({
               >
                 <Indicator shape={question.multiple ? "square" : "round"} checked={checked} />
                 <OptionText option={option} />
-              </Pressable>
+              </PressScale>
             );
           })}
         </View>
@@ -318,7 +335,7 @@ function Actions({
     <View className="flex-row flex-wrap items-center justify-end gap-2">
       {onDismiss !== null && (
         <Button
-          variant="quiet"
+          variant="outline"
           label={t("question.dismiss")}
           onPress={onDismiss}
           held={submitting}
@@ -341,9 +358,12 @@ function Actions({
 function Resolved({
   question,
   answer,
+  popped,
 }: {
   readonly question: Question;
   readonly answer: QuestionAnswers[string] | null;
+  /** Answered while on screen: each chosen option's check pops in. */
+  readonly popped: boolean;
 }) {
   const chosen = question.options.filter((option) => answer?.optionIds.includes(option.id));
   return (
@@ -352,6 +372,9 @@ function Resolved({
       {chosen.map((option) => (
         <View key={option.id} className={choiceRow(true)}>
           <OptionText option={option} />
+          <AnimatedView {...enteringWhen(popped, popIn())} className="ms-auto mt-0.5">
+            <Icon icon={Check} size={16} color="accent-foreground" />
+          </AnimatedView>
         </View>
       ))}
       {answer !== null && answer.text !== null && answer.text !== "" && (

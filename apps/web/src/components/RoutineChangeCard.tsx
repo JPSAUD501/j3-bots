@@ -36,7 +36,7 @@ export function RoutineChangeCard({
       type="button"
       onClick={onOpen}
       disabled={entry.change === "deleted"}
-      className="mt-2 flex w-full max-w-(--layout-compact-card-width) items-center gap-3 self-start rounded-md border border-border bg-surface px-3 py-2.5 text-start transition-colors duration-(--duration-fast) enabled:hover:bg-muted"
+      className="pressable mt-3 flex w-full max-w-(--layout-compact-card-width) items-center gap-3 self-start rounded-bubble border border-border bg-surface p-3.5 text-start shadow-raised enabled:hover:bg-muted"
     >
       <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
         <Icon aria-hidden className="size-4" />

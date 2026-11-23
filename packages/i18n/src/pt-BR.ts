@@ -100,8 +100,9 @@ const sentences = {
   "file.opening": "Abrindo…",
   "file.kindAndSize": "{kind} · {size}",
 
+  "card.waiting": "Esperando por você",
+
   "question.title": "Pergunta",
-  "question.pending": "Precisa da sua resposta",
   "question.typeAnswer": "Digite uma resposta",
   "question.typeInstead": "Ou digite uma resposta",
   "question.addNote": "Acrescente uma observação à resposta",
@@ -115,7 +116,6 @@ const sentences = {
   "question.tooLong": "Sua resposta é longa demais para chegar ao bot. Encurte e envie de novo.",
 
   "secret.title": "Credencial",
-  "secret.pending": "Precisa de uma credencial",
   "secret.unseen": "O bot pode usá-la sem vê-la. Ela nunca aparece nesta conversa.",
   "secret.getOne": "Obter uma",
   "secret.decline": "Recusar",
@@ -487,6 +487,8 @@ const sentences = {
 
   "timeline.loadOlder": "Mostrar mensagens anteriores",
   "timeline.loadingOlder": "Carregando mensagens anteriores…",
+  "timeline.newMessages": "Novas mensagens",
+  "timeline.toLatest": "Ir para a mensagem mais recente",
 
   "composer.files": "Arquivos para enviar",
   "composer.stillUploading": "Os arquivos ainda estão subindo",

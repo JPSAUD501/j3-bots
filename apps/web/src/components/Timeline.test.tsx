@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, EntryId, EntryOrder } from "@j3-bots/contracts";
 import { at, message } from "@j3-bots/client-runtime/testing";
+import { buildTimeline } from "@j3-bots/client-runtime/presentation";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { Timeline, type TimelineIntents } from "./Timeline";
@@ -34,7 +35,7 @@ describe("a conversation", () => {
     const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
     const html = renderToStaticMarkup(
       <Timeline
-        entries={[
+        rows={buildTimeline([
           message("2026-11-20T10:00:00Z", scout, "Before"),
           {
             _tag: "unknown",
@@ -44,7 +45,7 @@ describe("a conversation", () => {
             createdAt: at("2026-11-20T10:00:10Z"),
           },
           message("2026-11-20T10:00:20Z", scout, "After"),
-        ]}
+        ])}
         room={null}
         workSteps={() => null}
         submitting={() => false}

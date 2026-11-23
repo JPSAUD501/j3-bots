@@ -39,6 +39,16 @@
       --color-bot-violet: oklch(0.622 0.183 295);
       --color-bot-pink: oklch(0.451 0.136 336);
       --color-bot-gray: oklch(0.532 0 0);
+      --color-bot-bubble-red: oklch(0.939 0.02 29);
+      --color-bot-bubble-orange: oklch(0.949 0.012 72);
+      --color-bot-bubble-yellow: oklch(0.958 0.014 86);
+      --color-bot-bubble-green: oklch(0.934 0.01 159);
+      --color-bot-bubble-teal: oklch(0.957 0.011 206);
+      --color-bot-bubble-blue: oklch(0.947 0.014 243);
+      --color-bot-bubble-indigo: oklch(0.925 0.021 281);
+      --color-bot-bubble-violet: oklch(0.958 0.02 295);
+      --color-bot-bubble-pink: oklch(0.94 0.015 336);
+      --color-bot-bubble-gray: oklch(0.949 0 0);
     }
 
     @variant dark {
@@ -78,6 +88,16 @@
       --color-bot-violet: oklch(0.523 0.148 298);
       --color-bot-pink: oklch(0.584 0.094 349);
       --color-bot-gray: oklch(0.93 0 0);
+      --color-bot-bubble-red: oklch(0.155 0.054 33);
+      --color-bot-bubble-orange: oklch(0.191 0.037 57);
+      --color-bot-bubble-yellow: oklch(0.221 0.045 94);
+      --color-bot-bubble-green: oklch(0.227 0.029 149);
+      --color-bot-bubble-teal: oklch(0.198 0.026 189);
+      --color-bot-bubble-blue: oklch(0.167 0.061 271);
+      --color-bot-bubble-indigo: oklch(0.202 0.042 295);
+      --color-bot-bubble-violet: oklch(0.146 0.041 298);
+      --color-bot-bubble-pink: oklch(0.164 0.026 349);
+      --color-bot-bubble-gray: oklch(0.26 0 0);
     }
   }
 }
@@ -123,6 +143,16 @@
   --color-bot-violet: unset;
   --color-bot-pink: unset;
   --color-bot-gray: unset;
+  --color-bot-bubble-red: unset;
+  --color-bot-bubble-orange: unset;
+  --color-bot-bubble-yellow: unset;
+  --color-bot-bubble-green: unset;
+  --color-bot-bubble-teal: unset;
+  --color-bot-bubble-blue: unset;
+  --color-bot-bubble-indigo: unset;
+  --color-bot-bubble-violet: unset;
+  --color-bot-bubble-pink: unset;
+  --color-bot-bubble-gray: unset;
   --spacing: 4px;
   --breakpoint-tablet: 768px;
   --breakpoint-wide: 1200px;
@@ -152,6 +182,7 @@
   --radius-xl: 20px;
   --radius-sheet: 28px;
   --radius-bubble: 20px;
+  --radius-composer: 22px;
   --radius-pill: 9999px;
 }
 

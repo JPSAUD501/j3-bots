@@ -2,29 +2,84 @@
 import { messageStatus } from "@j3-bots/client-runtime";
 import { type GroupPosition, type TimelineMessage } from "@j3-bots/client-runtime/presentation";
 import { deliveryLine } from "@j3-bots/client-runtime/wording";
-import type { Bot } from "@j3-bots/contracts";
-import { use, useEffect, useRef } from "react";
+import type { Avatar, Bot } from "@j3-bots/contracts";
+import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
+import { use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { AccessibilityInfo, Pressable, View } from "react-native";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { AvatarShape } from "../components/Avatar.tsx";
 import { useI18n } from "../i18n.ts";
+
 import { FileCard } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
+import { AnimatedView } from "./animated.ts";
+import { useTint } from "./tint.ts";
 import { EntryWidths } from "./widths.ts";
 
-// Only the corners where bubbles of one group meet tighten, on the speaker's side.
+// On the speaker's side, the bottom corner tightens, pointing at who spoke, and so does the top
+// corner where a bubble meets the one above it in a group.
 const operatorCorners = {
-  single: "",
+  single: "rounded-br-sm",
   first: "rounded-br-sm",
   middle: "rounded-r-sm",
-  last: "rounded-tr-sm",
+  last: "rounded-r-sm",
 } as const satisfies Record<GroupPosition, string>;
 const botCorners = {
-  single: "",
+  single: "rounded-bl-sm",
   first: "rounded-bl-sm",
   middle: "rounded-l-sm",
-  last: "rounded-tl-sm",
+  last: "rounded-l-sm",
 } as const satisfies Record<GroupPosition, string>;
+
+/** How long a bot's text takes to show as it arrives: longer for more, within reason. */
+const revealTime = (text: string) => Math.min(1100, Math.max(320, text.length * 6));
+
+/**
+ * How a message arrives at the end of a conversation: the operator's rises
+ * from the composer below, shrunk, and pops into place; a bot's settles in
+ * softly while its text fades up at a reading pace, the bubble at its full
+ * size from the start so nothing below it moves. One that was there when the
+ * conversation opened plays nothing.
+ */
+function useArrival(arriving: boolean, fromOperator: boolean, text: string) {
+  const [played] = useState(arriving);
+  const enter = useSharedValue(played ? 0 : 1);
+  const reveal = useSharedValue(played && !fromOperator ? 0 : 1);
+  const play = useEffectEvent(() => {
+    if (!played) return;
+    enter.set(withSpring(1, reanimatedSpring(fromOperator ? springs.pop : springs.soft)));
+    if (!fromOperator) {
+      reveal.set(
+        withTiming(1, { duration: revealTime(text), easing: Easing.bezier(0.2, 0.8, 0.2, 1) }),
+      );
+    }
+  });
+  // Played once, as the message mounts.
+  useEffect(() => play(), []);
+  const row = useAnimatedStyle(() =>
+    fromOperator
+      ? {
+          opacity: 0.7 + 0.3 * Math.min(1, enter.get()),
+          transform: [{ translateY: 40 * (1 - enter.get()) }, { scale: 0.72 + 0.28 * enter.get() }],
+        }
+      : {
+          opacity: Math.min(1, enter.get()),
+          transform: [{ translateY: 12 * (1 - enter.get()) }, { scale: 0.94 + 0.06 * enter.get() }],
+        },
+  );
+  const words = useAnimatedStyle(() => ({
+    opacity: reveal.get(),
+    transform: [{ translateY: 4 * (1 - reveal.get()) }],
+  }));
+  return { row, words };
+}
 
 /**
  * Says each change of the delivery line once, as it happens, the way a
@@ -74,6 +129,8 @@ export function MessageBubble({
   submitting = false,
   leftRoom = [],
   retryLabel,
+  tint = null,
+  arriving = false,
 }: {
   readonly message: TimelineMessage;
   readonly position: GroupPosition;
@@ -89,6 +146,10 @@ export function MessageBubble({
   readonly leftRoom?: ReadonlyArray<string>;
   /** What Send again says when it sends somewhere else than the message did. */
   readonly retryLabel?: string;
+  /** The bot whose color a bot's bubble takes; the neutral bubble when it is not known. */
+  readonly tint?: Avatar | null;
+  /** It just arrived at the end of the conversation, and settles into place. */
+  readonly arriving?: boolean;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -100,9 +161,12 @@ export function MessageBubble({
   const troubled = failed || status._tag === "unrecorded";
   const delivery = fromOperator ? deliveryLine(status, { submitting, leftRoom }, i18n) : null;
   useAnnounced(delivery);
+  const bubble = useTint(tint).bubble;
+  const motion = useArrival(arriving, fromOperator, message.text);
   return (
-    <View
-      className={`gap-1 px-4 ${fromOperator ? "items-end" : "items-start"} ${startsGroup ? "mt-2" : "mt-0.5"}`}
+    <AnimatedView
+      style={[motion.row, { transformOrigin: fromOperator ? "right bottom" : "left bottom" }]}
+      className={`gap-1 px-4 ${fromOperator ? "items-end" : "items-start"} ${startsGroup ? "mt-3" : "mt-1"}`}
     >
       {speaker !== null && startsGroup && (
         <View className="flex-row items-center gap-1.5 ps-1 pt-1">
@@ -112,20 +176,24 @@ export function MessageBubble({
       )}
       {message.text !== "" && (
         <View
-          style={{ maxWidth: widths.bubble }}
-          className={`rounded-bubble px-3.5 py-2 ${
+          style={
             fromOperator
-              ? `bg-bubble-operator ${operatorCorners[position]}`
-              : `bg-bubble-bot ${botCorners[position]}`
+              ? { maxWidth: widths.bubble }
+              : { maxWidth: widths.bubble, backgroundColor: bubble }
+          }
+          className={`rounded-bubble px-3.5 py-2 ${
+            fromOperator ? `bg-bubble-operator ${operatorCorners[position]}` : botCorners[position]
           }`}
         >
-          <MessageText
-            text={message.text}
-            mentionable={mentionable}
-            className={
-              fromOperator ? "text-bubble-operator-foreground" : "text-bubble-bot-foreground"
-            }
-          />
+          <Animated.View style={motion.words}>
+            <MessageText
+              text={message.text}
+              mentionable={mentionable}
+              className={
+                fromOperator ? "text-bubble-operator-foreground" : "text-bubble-bot-foreground"
+              }
+            />
+          </Animated.View>
         </View>
       )}
       {message.attachments.map((attachment) => (
@@ -153,6 +221,6 @@ export function MessageBubble({
           )}
         </View>
       )}
-    </View>
+    </AnimatedView>
   );
 }

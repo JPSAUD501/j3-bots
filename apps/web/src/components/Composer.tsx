@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import type { DraftFile, DraftMention } from "@j3-bots/client-runtime";
+import { useRestored } from "@j3-bots/client-runtime/react";
 import {
   draftFileName,
   draftReadiness,
@@ -31,10 +32,25 @@ import {
   fileProblemText,
   messageProblemText,
 } from "@j3-bots/client-runtime/wording";
+import { springs } from "@j3-bots/design-tokens";
 import { cn } from "../lib/cn";
+import { play } from "../lib/motion";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
 import { AvatarShape } from "./BotAvatar";
 import { Button } from "./ui/button";
+
+/**
+ * The send button's three looks: nothing to send yet, a message ready to go,
+ * and one on its way.
+ */
+type SendState = "disabled" | "ready" | "sending";
+
+const sendButton = cn(
+  "border-0 aria-disabled:opacity-100",
+  "data-[send=disabled]:bg-muted data-[send=disabled]:text-muted-foreground",
+  "data-[send=ready]:bg-(--tint) data-[send=ready]:text-avatar-ink data-[send=ready]:hover:bg-[color-mix(in_oklab,var(--tint)_85%,var(--background))]",
+  "data-[send=sending]:bg-(--tint) data-[send=sending]:text-avatar-ink",
+);
 
 /** A room member the composer offers after `@`, drawn by its shape. */
 export interface MentionCandidate extends Mentionable {
@@ -89,32 +105,33 @@ interface ComposerProps {
    * a pick mentions one; a name typed or pasted addresses nobody.
    */
   readonly mentionable?: ReadonlyArray<MentionCandidate>;
-  /** In a room, who the message wakes as it stands, in one quiet line under the pill. */
+  /** In a room, who the message wakes as it stands, in one quiet line under the composer. */
   readonly addressee?: string;
 }
 
 /**
- * The pill at the bottom of a conversation. Enter sends, Shift+Enter starts a
- * new line. Files picked, pasted or dropped upload at once and show above the
- * pill; the message goes once they all have. With nothing to send, the
+ * The composer at the bottom of a conversation: a rounded rectangle that
+ * grows with its text. Enter sends, Shift+Enter starts a new line. Files
+ * picked, pasted or dropped upload at once and show above the composer; the message goes once they all have. With nothing to send, the
  * trailing button dictates where dictation exists. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, or the drafts load or could not be read, the field stays
  * focused but read-only, and attaching and removing files show as
  * unavailable; files dropped or pasted meanwhile are not taken, and the
  * composer asks for them again. Many files scroll within their own list, so
- * the pill and what sits above it stay in view. A draft that could not be
- * read says so above the pill, with a way to read it again: once read, the
+ * the composer and what sits above it stay in view. A draft that could not be
+ * read says so above the composer, with a way to read it again: once read, the
  * focus returns to the field; read in vain, it says so again. A draft the
- * device could not keep says so quietly below the pill until it is kept. Text
- * replaced in another tab is offered back above the pill until the operator
+ * device could not keep says so quietly below the composer until it is kept. Text
+ * replaced in another tab is offered back above the composer until the operator
  * restores or dismisses it; either way the focus returns to the field. The
- * field draws no ring of its own: the pill takes the focus outline. In a room,
- * `@` opens a list of the members and `@everyone` above the pill: arrow keys
+ * field draws no ring of its own: while anything in it has focus, the composer
+ * takes a calm border and halo in the conversation's tint. In a room,
+ * `@` opens a list of the members and `@everyone` above the composer: arrow keys
  * move through it, keeping the active option in view, Enter or Tab picks, so
  * a second Enter sends, Escape closes it until the next `@`, and a tap picks
  * without taking the focus from the field. Only a pick mentions a member; a
- * quiet line under the pill says who the message wakes.
+ * quiet line under the composer says who the message wakes.
  */
 export function Composer({
   draftKey,
@@ -147,6 +164,12 @@ export function Composer({
   const { empty, uploading, sendable, problem } = draftReadiness(value, files);
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = sending || loading || unread !== undefined;
+  // Files the draft already held when shown appear in place; only those attached since arrive.
+  const restored = useRestored(
+    draftKey,
+    files.map((file) => file.key),
+    loading || unread !== undefined,
+  );
   const ready = !frozen && sendable;
   // Files dropped or pasted while the draft took no change, which it did not take.
   const [notTaken, setNotTaken] = useState(false);
@@ -159,6 +182,17 @@ export function Composer({
   const send = () => {
     if (ready) onSend();
   };
+  const sendState: SendState = sending ? "sending" : ready ? "ready" : "disabled";
+  // Once the draft is handed over and the field is clear, the composer settles back with a pop.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const wasSending = useRef(sending);
+  useEffect(() => {
+    const handedOver = wasSending.current && !sending;
+    wasSending.current = sending;
+    if (handedOver && boxRef.current !== null) {
+      play(boxRef.current, [{ transform: "scale(0.97)" }, { transform: "none" }], springs.pop);
+    }
+  }, [sending]);
   // The field's selection as the operator last left it: what an edit replaces.
   const selection = useRef<readonly [number, number] | null>(null);
   const remember = (element: HTMLTextAreaElement) => {
@@ -260,6 +294,7 @@ export function Composer({
             <DraftFileChip
               key={file.key}
               file={file}
+              arriving={!restored.has(file.key)}
               onRemove={onDetachFile ? () => detach(file.key) : undefined}
               unavailable={frozen}
             />
@@ -322,12 +357,16 @@ export function Composer({
           />
         </div>
       )}
-      <div className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-raised has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-accent">
+      <div
+        ref={boxRef}
+        className="flex items-end gap-1 rounded-composer border border-input bg-surface p-1 shadow-raised transition-[border-color,box-shadow] duration-(--duration-state) focus-within:border-(--tint) focus-within:shadow-[0_0_0_3px_color-mix(in_oklab,var(--tint)_22%,transparent)]"
+      >
         {onAttachFiles && (
           <>
             <Button
               variant="ghost-muted"
               size="icon-pill"
+
               onClick={() => {
                 if (!frozen) pickerRef.current?.click();
               }}
@@ -398,10 +437,11 @@ export function Composer({
           data-composer=""
           className="field-sizing-content max-h-(--layout-composer-max-height) min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
         />
-        {empty && onDictate ? (
+        {empty && onDictate && !sending ? (
           <Button
             variant="ghost-muted"
             size="icon-pill"
+
             onClick={onDictate}
             aria-label={t("composer.dictate")}
           >
@@ -410,13 +450,21 @@ export function Composer({
         ) : (
           <Button
             type="submit"
-            variant="primary"
+            variant="ghost"
             size="icon-pill"
+            data-send={sendState}
+            className={sendButton}
             aria-disabled={!ready}
             aria-label={t("composer.send")}
             aria-describedby={uploading ? waitingId : undefined}
           >
-            <ArrowUpIcon />
+            {/* Keyed by its state, so the arrow pops in when the message can go and flies off with it. */}
+            <ArrowUpIcon
+              key={sendState}
+              className={
+                sendState === "ready" ? "pop-in" : sendState === "sending" ? "send-off" : ""
+              }
+            />
           </Button>
         )}
       </div>
@@ -450,10 +498,13 @@ export function Composer({
 /** A file in the draft: its name, how its upload goes or why it cannot go, and a way out. */
 function DraftFileChip({
   file,
+  arriving,
   onRemove,
   unavailable,
 }: {
   file: DraftFile;
+  /** Attached since the draft was shown: it settles in. */
+  arriving: boolean;
   onRemove: (() => void) | undefined;
   /** The draft takes no change: the file cannot be removed meanwhile. */
   unavailable: boolean;
@@ -466,6 +517,7 @@ function DraftFileChip({
     <li
       className={cn(
         "relative flex max-w-full min-w-0 items-center gap-2 overflow-hidden rounded-md border bg-surface py-1 ps-2 pe-1",
+        arriving && "arrive",
         file._tag === "failed" ? "border-blocked/40 bg-blocked-surface" : "border-border",
       )}
     >
@@ -495,7 +547,7 @@ function DraftFileChip({
       {file._tag === "uploading" && (
         <span
           aria-hidden
-          className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-accent transition-transform duration-(--duration-fast)"
+          className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-(--tint) transition-transform duration-(--duration-fast)"
           style={{ transform: `scaleX(${file.size === 0 ? 0 : file.sent / file.size})` }}
         />
       )}
@@ -627,7 +679,7 @@ function useMentionPicker({
   };
 }
 
-/** The members and `@everyone` the operator can mention, above the pill. */
+/** The members and `@everyone` the operator can mention, above the composer. */
 export function MentionList({
   id,
   options,

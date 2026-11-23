@@ -17,11 +17,22 @@ import {
   Wrench,
   X,
 } from "lucide-react-native";
-import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
+import { useEffect, useState } from "react";
+import { View } from "react-native";
+import {
+  FadeIn,
+  FadeOut,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { useReducedMotion, useStep } from "../motion.ts";
 import { usePresentation } from "../presentation.tsx";
+import { PressScale } from "../press.tsx";
+import { AnimatedView } from "./animated.ts";
 
 const stepIcon = {
   command: Terminal,
@@ -46,31 +57,47 @@ export function WorkFold({ entry }: { readonly entry: WorkFoldEntry }) {
   const failed = status._tag === "finished" && status.ending === "failed";
   const title = workFoldTitle(entry, ctx);
   const count = entry.stepCount > 0 ? plural("work.steps", entry.stepCount) : null;
+  const turn = useSharedValue(0);
+  useEffect(() => {
+    turn.set(withSpring(open ? 1 : 0, reanimatedSpring(springs.pop)));
+  }, [open, turn]);
+  const chevron = useAnimatedStyle(() => ({ transform: [{ rotate: `${turn.get() * 90}deg` }] }));
   return (
-    <View className="mt-2 px-4">
-      <Pressable
+    <View className="mt-3 px-4">
+      <PressScale
         accessibilityRole="button"
         accessibilityState={{ expanded: open }}
         accessibilityLabel={count === null ? title : `${title}, ${count}`}
         onPress={() => setOpen((was) => !was)}
-        className="min-h-11 flex-row items-center gap-1.5 self-start"
+        frame={{ alignSelf: "flex-start", marginStart: -8 }}
+        className="min-h-11 flex-row items-center gap-1.5 rounded-md px-2"
       >
-        <View style={{ transform: [{ rotate: open ? "90deg" : "0deg" }] }}>
+        <AnimatedView style={chevron}>
           <Icon
             icon={ChevronRight}
             size={14}
             color={failed ? "accent-blocked" : "accent-muted-foreground"}
           />
-        </View>
+        </AnimatedView>
+        {/* Running, the line carries a quiet live mark: the bot is still at it. */}
+        {status._tag === "running" && <LiveMark />}
         <Text className={`text-xs ${failed ? "text-blocked" : "text-muted-foreground"}`}>
           {title}
         </Text>
         {count !== null && <Text className="text-xs text-muted-foreground">· {count}</Text>}
-      </Pressable>
-      {open && <Steps foldId={entry.id} />}
+      </PressScale>
+      {open && (
+        <AnimatedView entering={opening} exiting={closing}>
+          <Steps foldId={entry.id} />
+        </AnimatedView>
+      )}
     </View>
   );
 }
+
+/** The steps fade in as the fold opens and out as it closes; at once under reduced motion. */
+const opening = FadeIn.duration(180);
+const closing = FadeOut.duration(140);
 
 function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
   const { i18n } = usePresentation();
@@ -108,7 +135,12 @@ function StepStatus({ step }: { readonly step: WorkStep }) {
   const { t } = ctx.i18n;
   switch (step.status) {
     case "running":
-      return <Text className="text-2xs text-muted-foreground">{t("work.stepRunning")}</Text>;
+      return (
+        <View className="flex-row items-center gap-1.5">
+          <LiveMark />
+          <Text className="text-2xs text-muted-foreground">{t("work.stepRunning")}</Text>
+        </View>
+      );
     case "failed":
       return (
         <View accessible accessibilityLabel={t("work.stepFailed")}>
@@ -131,4 +163,22 @@ function StepStatus({ step }: { readonly step: WorkStep }) {
         </View>
       );
   }
+}
+
+/**
+ * A small dot that breathes while something runs, stepped like the avatars,
+ * 8 changes in 1.4 s, so it never repaints every frame; still under reduced
+ * motion.
+ */
+function LiveMark() {
+  const reduced = useReducedMotion();
+  const step = useStep(1400, 8, !reduced);
+  // 0 at rest, 1 at the breath's deepest, halfway through.
+  const depth = 1 - Math.abs(step - 4) / 4;
+  return (
+    <View
+      style={{ opacity: 1 - 0.65 * depth, transform: [{ scale: 1 - 0.3 * depth }] }}
+      className="size-1.5 rounded-pill bg-foreground/70"
+    />
+  );
 }

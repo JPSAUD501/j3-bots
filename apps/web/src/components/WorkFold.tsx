@@ -65,11 +65,11 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
     <Collapsible.Root
       open={open}
       onOpenChange={setOpen}
-      className="mt-2 max-w-(--layout-card-width) self-start"
+      className="mt-3 max-w-(--layout-card-width) self-start"
     >
       <Collapsible.Trigger
         className={cn(
-          "group flex items-center gap-1.5 rounded-sm text-xs hover:text-foreground",
+          "pressable group -ms-2 flex items-center gap-1.5 rounded-md px-2 text-xs hover:bg-muted hover:text-foreground",
           touchTarget,
           status._tag === "finished" && status.ending === "failed"
             ? "text-blocked"
@@ -78,14 +78,16 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
       >
         <ChevronRightIcon
           aria-hidden
-          className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
+          className="size-3.5 transition-transform duration-(--duration-pop) ease-pop group-data-panel-open:rotate-90"
         />
+        {/* Running, the line carries a quiet live mark: the bot is still at it. */}
+        {status._tag === "running" && <LiveMark />}
         <span>{title}</span>
         {entry.stepCount > 0 && (
           <span className="text-muted-foreground">· {plural("work.steps", entry.stepCount)}</span>
         )}
       </Collapsible.Trigger>
-      <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-out data-ending-style:h-0 data-starting-style:h-0">
+      <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-(--duration-slide) ease-slide data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
         {steps === null ? (
           <p className="py-2 ps-5 text-xs text-muted-foreground">{t("work.loading")}</p>
         ) : (
@@ -121,7 +123,12 @@ function StepStatus({ step }: { step: WorkStep }) {
   const { t } = ctx.i18n;
   switch (step.status) {
     case "running":
-      return <span className="text-2xs text-muted-foreground">{t("work.stepRunning")}</span>;
+      return (
+        <span className="flex items-center gap-1.5 text-2xs text-muted-foreground">
+          <LiveMark />
+          {t("work.stepRunning")}
+        </span>
+      );
     case "failed":
       return <XIcon className="size-3.5 shrink-0 text-blocked" aria-label={t("work.stepFailed")} />;
     case "completed":
@@ -133,4 +140,9 @@ function StepStatus({ step }: { step: WorkStep }) {
         </span>
       );
   }
+}
+
+/** A small dot that breathes while something runs; still under reduced motion. */
+function LiveMark() {
+  return <span aria-hidden className="live-mark size-1.5 shrink-0 rounded-pill bg-foreground/70" />;
 }

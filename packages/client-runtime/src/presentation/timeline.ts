@@ -175,3 +175,52 @@ export function readThrough(seen: Iterable<EntryOrder | null>): EntryOrder | nul
 export function handoffPeer(entry: HandoffEntry): BotId {
   return entry.direction === "sent" ? entry.recipientId : entry.author.botId;
 }
+
+/**
+ * The rows that arrived at the end of a conversation between two of its
+ * renders, by key: those after the newest row it showed before. Earlier
+ * rows loaded above, and a row that keeps its key as it changes (a message
+ * the server took over from this device), did not arrive. Nothing arrives on
+ * the first render, `before` null, so opening a conversation plays nothing.
+ */
+export function arrivedRows(
+  before: ReadonlyArray<string> | null,
+  after: ReadonlyArray<string>,
+): ReadonlySet<string> {
+  if (before === null) return new Set();
+  const known = new Set(before);
+  // The newest row shown before that is still there; rows past it arrived.
+  let start = after.length;
+  for (let i = after.length - 1; i >= 0; i--) {
+    const key = after[i];
+    if (key !== undefined && known.has(key)) break;
+    start = i;
+  }
+  // A conversation that kept none of its rows started again: nothing arrived in it.
+  if (start === 0 && before.length > 0) return new Set();
+  return new Set(after.slice(start));
+}
+
+/** What the rows that arrived at the end of a conversation hold, for whoever follows its end. */
+export interface ArrivalCounts {
+  /** One of them is a message the operator sent from this device. */
+  readonly own: boolean;
+  /** Messages others wrote: bots, in a room each member. Cards, notices and times are not counted. */
+  readonly others: number;
+}
+
+/** Counts what arrived among `rows`, the conversation's rows as they stand. */
+export function arrivalCounts(
+  rows: ReadonlyArray<TimelineItem>,
+  arrived: ReadonlySet<string>,
+): ArrivalCounts {
+  let own = false;
+  let others = 0;
+  for (const row of rows) {
+    if (row.kind !== "message" || !arrived.has(row.key)) continue;
+    const { message } = row;
+    if (message._tag === "outgoing") own = true;
+    else if (message.author._tag !== "operator") others += 1;
+  }
+  return { own, others };
+}

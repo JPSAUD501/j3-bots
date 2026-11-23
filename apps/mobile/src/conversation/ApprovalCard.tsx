@@ -7,16 +7,20 @@ import type {
   ApprovalEntry,
   SessionGrant,
 } from "@j3-bots/contracts";
-import { layout } from "@j3-bots/design-tokens";
+import { layout, springs } from "@j3-bots/design-tokens";
 import type { KeyWith } from "@j3-bots/i18n";
-import { ChevronRight, Shield, ShieldCheck, ShieldX } from "lucide-react-native";
+import { Check, ChevronRight, Shield, ShieldCheck, ShieldX } from "lucide-react-native";
 import { use, useState } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
+import { FadeOut } from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { Button } from "../ui.tsx";
-import { CardFrame, useOutcomeFocus, useSubmitting } from "./CardFrame.tsx";
+import { enteringWhen, popIn, settleIn } from "../motion.ts";
+import { AnimatedView } from "./animated.ts";
+import { CardFrame, useClosedHere, useOutcomeFocus, useSubmitting } from "./CardFrame.tsx";
+import { PressScale } from "../press.tsx";
 import { CodeBlock, Scrolling } from "./CodeBlock.tsx";
 import { EntryWidths } from "./widths.ts";
 
@@ -81,6 +85,10 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
   const { status, detail, sessionGrant } = entry;
   const pending = status._tag === "pending";
   const { outcome, answered } = useOutcomeFocus(pending);
+  // Decided while on screen, the buttons fold away and the outcome settles in; allowed, the card
+  // gives one small pulse and its check pops in.
+  const { closedHere } = useClosedHere(pending);
+  const allowed = status._tag === "decided" && status.decision !== "deny";
   const [shown, setShown] = useState(false);
   const scope = sessionGrant === null ? null : t(grantScope[sessionGrant.covers]);
   // On a phone the buttons fill the row they share, and the operation goes under the path.
@@ -129,7 +137,12 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
   );
 
   return (
-    <CardFrame icon={icon} title={t(kindTitle[entry.kind])} attention={pending}>
+    <CardFrame
+      icon={icon}
+      title={t(kindTitle[entry.kind])}
+      attention={pending}
+      pulse={closedHere && allowed}
+    >
       {entry.reason !== null && (
         <Text className="text-xs text-muted-foreground">{entry.reason}</Text>
       )}
@@ -166,11 +179,12 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
       ) : (
         <>
           {paths("rounded-md overflow-hidden")}
-          <Pressable
+          <PressScale
             accessibilityRole="button"
             accessibilityState={{ expanded: shown }}
             onPress={() => setShown((was) => !was)}
-            className="min-h-11 flex-row items-center gap-1 self-start"
+            frame={{ alignSelf: "flex-start" }}
+            className="min-h-11 flex-row items-center gap-1"
           >
             <View style={{ transform: [{ rotate: shown ? "90deg" : "0deg" }] }}>
               <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />
@@ -178,12 +192,12 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
             <Text className="text-xs text-muted-foreground">
               {t(wholeFile ? "approval.showFile" : "approval.showChange")}
             </Text>
-          </Pressable>
+          </PressScale>
           {shown && change(detail.text, "rounded-md")}
         </>
       )}
       {pending ? (
-        <View className="gap-2">
+        <AnimatedView exiting={FadeOut.duration(160)} className="gap-2">
           <View className="flex-row flex-wrap justify-end gap-2">
             <Button
               variant="outline"
@@ -220,19 +234,26 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
               {scope}
             </Text>
           )}
-        </View>
+        </AnimatedView>
       ) : (
-        <View className="gap-0.5">
-          <Text
-            ref={outcome}
-            className={`text-xs ${status._tag === "decided" && status.decision === "deny" ? "text-blocked" : "text-muted-foreground"}`}
-          >
-            {status._tag === "decided"
-              ? t(decisionText[status.decision])
-              : status._tag === "refused"
-                ? t("approval.refused")
-                : t("approval.expired")}
-          </Text>
+        <AnimatedView {...enteringWhen(closedHere, settleIn(springs.soft))} className="gap-0.5">
+          <View className="flex-row items-center gap-1.5">
+            {allowed && (
+              <AnimatedView {...enteringWhen(closedHere, popIn(120))}>
+                <Icon icon={Check} size={14} color="accent-success" />
+              </AnimatedView>
+            )}
+            <Text
+              ref={outcome}
+              className={`text-xs ${status._tag === "decided" && status.decision === "deny" ? "text-blocked" : allowed ? "text-success" : "text-muted-foreground"}`}
+            >
+              {status._tag === "decided"
+                ? t(decisionText[status.decision])
+                : status._tag === "refused"
+                  ? t("approval.refused")
+                  : t("approval.expired")}
+            </Text>
+          </View>
           {status._tag === "decided" &&
             status.decision === "allow-session" &&
             sessionGrant !== null && (
@@ -240,7 +261,7 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
                 {t(grantedScope[sessionGrant.covers])}
               </Text>
             )}
-        </View>
+        </AnimatedView>
       )}
     </CardFrame>
   );

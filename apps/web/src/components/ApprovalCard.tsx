@@ -6,8 +6,15 @@ import type {
   SessionGrant,
 } from "@j3-bots/contracts";
 import { Collapsible } from "@base-ui/react/collapsible";
-import { ChevronRightIcon, ShieldCheckIcon, ShieldXIcon, ShieldIcon } from "lucide-react";
-import { useId } from "react";
+import { springs } from "@j3-bots/design-tokens";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  ShieldCheckIcon,
+  ShieldXIcon,
+  ShieldIcon,
+} from "lucide-react";
+import { useId, useLayoutEffect } from "react";
 import { diffTones } from "@j3-bots/client-runtime/presentation";
 import { useI18n } from "../app/context";
 import type { KeyWith } from "@j3-bots/i18n";
@@ -15,7 +22,8 @@ import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { useFocusReplacement } from "../lib/useFocusReplacement";
-import { CardFrame } from "./CardFrame";
+import { play } from "../lib/motion";
+import { CardActions, CardFrame, useClosedHere } from "./CardFrame";
 import { CodeLines } from "./CodeLines";
 import { Button } from "./ui/button";
 
@@ -102,6 +110,23 @@ export function ApprovalCard({
   // the summary moves to what replaces it.
   const replacement = useFocusReplacement();
   const replaceable = pending ? replacement : undefined;
+  // Decided while on screen, the buttons fold away and the outcome settles in; allowed, the card
+  // gives one small pulse and its check draws.
+  const { waitedHere, closedHere } = useClosedHere(pending);
+  const allowed = status._tag === "decided" && status.decision !== "deny";
+  useLayoutEffect(() => {
+    const card = target.current;
+    if (!closedHere || !allowed || card === null) return;
+    play(
+      card,
+      [
+        { transform: "scale(1)" },
+        { transform: "scale(1.035)", offset: 0.3 },
+        { transform: "scale(1)" },
+      ],
+      springs.pop,
+    );
+  }, [closedHere, allowed, target]);
   // While a decision is on its way the buttons stay focusable but take no second one.
   const decide = (decision: ApprovalDecision) => () => {
     if (!submitting) onDecide(decision);
@@ -222,66 +247,75 @@ export function ApprovalCard({
               )}
             >
               <ChevronRightIcon
-                className="size-3.5 transition-transform duration-(--duration-state) group-data-panel-open:rotate-90"
+                className="size-3.5 transition-transform duration-(--duration-pop) ease-pop group-data-panel-open:rotate-90"
                 aria-hidden
               />
               {t(wholeFile ? "approval.showFile" : "approval.showChange")}
             </Collapsible.Trigger>
-            <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-out data-ending-style:h-0 data-starting-style:h-0">
+            <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slide) ease-slide data-ending-style:h-0 data-starting-style:h-0">
               {diff("mt-2 rounded-md")}
             </Collapsible.Panel>
           </Collapsible.Root>
         </>
       )}
-      {pending ? (
-        // On a phone the buttons fill the row and share it; when they wrap, each row stays full, so
-        // they still read as one group.
-        <div className="flex flex-col gap-2" {...actions}>
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              size="sm"
-              className="@max-tablet:grow"
-              aria-disabled={submitting}
-              onClick={decide("deny")}
-            >
-              {t("approval.deny")}
-            </Button>
-            {scope !== null && (
+      {waitedHere && (
+        <CardActions open={pending}>
+          {/* On a phone the buttons fill the row and share it; when they wrap, each row stays full,
+            so they still read as one group. */}
+          <div className="flex flex-col gap-2" {...actions}>
+            <div className="flex flex-wrap justify-end gap-2">
               <Button
                 size="sm"
                 className="@max-tablet:grow"
                 aria-disabled={submitting}
-                aria-describedby={scopeId}
-                onClick={decide("allow-session")}
+                onClick={decide("deny")}
               >
-                {t("approval.allowSession")}
+                {t("approval.deny")}
               </Button>
+              {scope !== null && (
+                <Button
+                  size="sm"
+                  className="@max-tablet:grow"
+                  aria-disabled={submitting}
+                  aria-describedby={scopeId}
+                  onClick={decide("allow-session")}
+                >
+                  {t("approval.allowSession")}
+                </Button>
+              )}
+              <Button
+                variant="primary"
+                size="sm"
+                className="@max-tablet:grow"
+                aria-disabled={submitting}
+                onClick={decide("allow-once")}
+              >
+                {t("approval.allowOnce")}
+              </Button>
+            </div>
+            {scope !== null && (
+              <p id={scopeId} className="text-end text-2xs text-muted-foreground">
+                {scope}
+              </p>
             )}
-            <Button
-              variant="primary"
-              size="sm"
-              className="@max-tablet:grow"
-              aria-disabled={submitting}
-              onClick={decide("allow-once")}
-            >
-              {t("approval.allowOnce")}
-            </Button>
           </div>
-          {scope !== null && (
-            <p id={scopeId} className="text-end text-2xs text-muted-foreground">
-              {scope}
-            </p>
-          )}
-        </div>
-      ) : (
-        <div id={outcomeId} className="flex flex-col gap-0.5">
+        </CardActions>
+      )}
+      {!pending && (
+        <div id={outcomeId} className={cn("flex flex-col gap-0.5", closedHere && "arrive")}>
           <p
-            className={
+            className={cn(
+              "flex items-center gap-1.5 text-xs",
               status._tag === "decided" && status.decision === "deny"
-                ? "text-xs text-blocked"
-                : "text-xs text-muted-foreground"
-            }
+                ? "text-blocked"
+                : allowed
+                  ? "text-success"
+                  : "text-muted-foreground",
+            )}
           >
+            {allowed && (
+              <CheckIcon aria-hidden className={cn("size-3.5", closedHere && "draw-check")} />
+            )}
             {status._tag === "decided"
               ? t(decisionText[status.decision])
               : status._tag === "refused"

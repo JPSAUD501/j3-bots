@@ -14,15 +14,17 @@ import type {
   WorkStep,
 } from "@j3-bots/contracts";
 import type * as Redacted from "effect/Redacted";
-import type { ConversationItem, MentionLabel } from "@j3-bots/client-runtime";
+import type { RefObject } from "react";
+import type { MentionLabel } from "@j3-bots/client-runtime";
 import {
   addresseeOf,
-  buildTimeline,
   mentionedNames,
   mentionedWhoLeft,
+  type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
 import { resendLabel } from "@j3-bots/client-runtime/wording";
+import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
 import { HandoffCard } from "./HandoffCard";
 import { MessageBubble } from "./MessageBubble";
@@ -59,8 +61,11 @@ export interface TimelineIntents {
 }
 
 interface TimelineProps {
-  /** Entries oldest first, then the operator's messages still on their way. */
-  readonly entries: ReadonlyArray<ConversationItem>;
+  /**
+   * The conversation's rows (`buildTimeline`): entries oldest first, then the
+   * operator's messages still on their way.
+   */
+  readonly rows: ReadonlyArray<TimelineItem>;
   /**
    * In a room, its members and host now: rooms show who said each message and
    * whom it addressed, and a message refused for mentioning a member who left
@@ -72,13 +77,25 @@ interface TimelineProps {
   /** Whether the operator's answer to a card is still on its way. */
   readonly submitting: (entryId: EntryId) => boolean;
   readonly intents: TimelineIntents;
+  /** The rows that just arrived at the end, by key: they settle into place as they mount. */
+  readonly arrived?: ReadonlySet<string>;
+  /** Where the operator's messages fly from as they arrive: the composer's field. */
+  readonly flyFrom?: RefObject<HTMLElement | null>;
 }
 
 /**
  * Every entry of a conversation or room, oldest first: bubbles, cards, folds
  * and notices, and a line for each of a kind this version does not know.
  */
-export function Timeline({ entries, room, workSteps, submitting, intents }: TimelineProps) {
+export function Timeline({
+  rows,
+  room,
+  workSteps,
+  submitting,
+  intents,
+  arrived,
+  flyFrom,
+}: TimelineProps) {
   const bots = useBots();
   const i18n = useI18n();
   const { t } = i18n;
@@ -88,11 +105,20 @@ export function Timeline({ entries, room, workSteps, submitting, intents }: Time
     room === null ? [] : mentionedNames(mentions, labels, nameOf);
   return (
     <div className="flex flex-col">
-      {buildTimeline(entries).map((item) => {
-        if (item.kind === "divider") return <TimeDivider key={item.key} at={item.at} />;
+      {rows.map((item) => {
+        const arriving = arrived?.has(item.key) === true;
+        // What is not a message settles in as it mounts; a message moves itself.
+        const settles = cn(arriving && "arrive origin-bottom-left");
+        if (item.kind === "divider") {
+          return (
+            <div key={item.key} className={settles}>
+              <TimeDivider at={item.at} />
+            </div>
+          );
+        }
         if (item.kind === "unknown") {
           return (
-            <div key={item.key} data-seen-id={item.id}>
+            <div key={item.key} data-seen-id={item.id} className={settles}>
               <NeedsUpdateLine />
             </div>
           );
@@ -117,6 +143,8 @@ export function Timeline({ entries, room, workSteps, submitting, intents }: Time
                 <MessageBubble
                   message={message}
                   position={item.position}
+                  arriving={arriving}
+                  {...(flyFrom === undefined ? {} : { flyFrom })}
                   mentionable={highlighted(message.mentions, message.labels)}
                   onOpenAttachment={intents.openAttachment}
                   onRetry={() =>
@@ -139,14 +167,15 @@ export function Timeline({ entries, room, workSteps, submitting, intents }: Time
             );
           }
           const { author } = message;
+          const speaker = author._tag === "bot" ? (bots.get(author.botId) ?? null) : null;
           return (
             <div key={item.key} data-seen-id={message.id}>
               <MessageBubble
                 message={message}
                 position={item.position}
-                speaker={
-                  room !== null && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null
-                }
+                arriving={arriving}
+                tint={speaker?.profile.avatar ?? null}
+                speaker={room === null ? null : speaker}
                 // The server's entry keeps no names picked: its members go by their names now.
                 mentionable={highlighted(message.mentions, [])}
                 onOpenAttachment={intents.openAttachment}
@@ -158,7 +187,7 @@ export function Timeline({ entries, room, workSteps, submitting, intents }: Time
         }
         const { entry } = item;
         return (
-          <div key={item.key} data-seen-id={entry.id}>
+          <div key={item.key} data-seen-id={entry.id} className={settles}>
             <Card entry={entry} submitting={submitting} workSteps={workSteps} intents={intents} />
           </div>
         );

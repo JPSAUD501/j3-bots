@@ -10,7 +10,7 @@ import {
 import type { OutgoingMessage } from "../stores/Conversations.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, message } from "../../test/fixtures.ts";
-import { buildTimeline, readThrough, rowOrder } from "./timeline.ts";
+import { arrivalCounts, arrivedRows, buildTimeline, readThrough, rowOrder } from "./timeline.ts";
 
 const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
 const wren = { _tag: "bot", botId: BotId.make("wren") } as const;
@@ -199,5 +199,74 @@ describe("buildTimeline", () => {
       expect(items.map(rowOrder)).toEqual([null, edited.order]);
       expect(readThrough(items.map(rowOrder))).toBe(edited.order);
     });
+  });
+});
+
+describe("arrivedRows", () => {
+  it("finds nothing on a conversation's first render", () => {
+    expect(arrivedRows(null, ["a", "b"])).toEqual(new Set());
+  });
+
+  it("finds the rows added after the newest one shown before", () => {
+    expect(arrivedRows(["a", "b"], ["a", "b", "divider-c", "c"])).toEqual(
+      new Set(["divider-c", "c"]),
+    );
+  });
+
+  it("counts the first rows of an empty conversation as arrived", () => {
+    expect(arrivedRows([], ["a"])).toEqual(new Set(["a"]));
+  });
+
+  it("does not count earlier rows loaded above", () => {
+    expect(arrivedRows(["c", "d"], ["a", "b", "c", "d"])).toEqual(new Set());
+  });
+
+  it("does not count a row that kept its key as it changed", () => {
+    expect(arrivedRows(["a", "b"], ["a", "b"])).toEqual(new Set());
+  });
+
+  it("finds rows after the newest kept row when the newest shown one went", () => {
+    expect(arrivedRows(["a", "b"], ["a", "c"])).toEqual(new Set(["c"]));
+  });
+
+  it("finds nothing when none of the rows shown before are left", () => {
+    expect(arrivedRows(["a"], ["x", "y"])).toEqual(new Set());
+  });
+});
+
+describe("arrivalCounts", () => {
+  const outgoing: OutgoingMessage = {
+    _tag: "outgoing",
+    commandId: CommandId.make("sent-here"),
+    target: { _tag: "conversation", botId: BotId.make("scout") },
+    text: "On my way",
+    attachments: [],
+    mentions: null,
+    labels: [],
+    createdAt: at("2026-11-20T10:05:00Z"),
+    status: { _tag: "sending" },
+  };
+  const rows = buildTimeline([
+    message("2026-11-20T10:00:00Z", scout),
+    message("2026-11-20T10:30:00Z", scout),
+    message("2026-11-20T10:31:00Z", wren),
+    message("2026-11-20T10:32:00Z"),
+  ]);
+
+  it("counts only what arrived, and only messages others wrote", () => {
+    // Everything after the first message: a time, both bots' messages, and one the operator
+    // wrote on another device.
+    const [, first, ...later] = rows;
+    expect(first?.kind).toBe("message");
+    expect(arrivalCounts(rows, new Set(later.map((row) => row.key)))).toEqual({
+      own: false,
+      others: 2,
+    });
+  });
+
+  it("tells a message sent from this device apart from others'", () => {
+    const withOwn = buildTimeline([message("2026-11-20T10:00:00Z", scout), outgoing]);
+    const own = new Set(withOwn.filter((row) => row.kind === "message").map((row) => row.key));
+    expect(arrivalCounts(withOwn, own)).toEqual({ own: true, others: 1 });
   });
 });
