@@ -131,10 +131,13 @@ const decodeSecretInput = Schema.decodeUnknownOption(
  * to a bot, for a scenario about what those tools reach. The engine offers a
  * bot tools under the `t3-code` server name, which Claude Code lists as
  * `mcp__t3-code__<tool>` (Read in this repository,
- * `packages/engine-t3/src/t3/toolNames.ts`). Which tools a bot gets at the
- * pinned engine, and the shapes of their results, are Assumed: the stand-in
- * offers three read tools, answers them from {@link EngineInstance}, and
- * describes them in this repository's own words.
+ * `packages/engine-t3/src/t3/toolNames.ts`). The stand-in offers three read
+ * tools and answers them from {@link EngineInstance}, in the fields T3 Code's
+ * own answer with (Verified on `4941`, `docs/research/t3-code.md`): the
+ * environment's `label` is the name of the machine the engine runs on, and the
+ * projects and threads are the instance's own. That the pinned engine offers a
+ * bot the same tools is Assumed. The descriptions are this repository's own
+ * wording.
  */
 export interface EngineInstance {
   /** The name the instance answers with: the machine it runs on. */
@@ -183,15 +186,22 @@ const engineTools: ReadonlyArray<FunctionTool> = [
   },
 ];
 
+/** A stand-in project's id, from its title. */
+const projectId = (title: string): string => `project-${title.toLowerCase()}`;
+
 /** What the stand-in engine tool `name` answers, or `undefined` when `name` is not one. */
 const engineAnswer = (engine: EngineInstance, name: string): Schema.Json | undefined => {
   switch (name) {
     case ENGINE_TOOLS.environment:
-      return { environmentId: "env-local", label: engine.machine, platform: "linux" };
+      return {
+        environmentId: "env-local",
+        label: engine.machine,
+        platform: { os: "linux", arch: "x64" },
+      };
     case ENGINE_TOOLS.projects:
       return {
-        projects: engine.projects.map((project, index) => ({
-          projectId: `project-${index + 1}`,
+        projects: engine.projects.map((project) => ({
+          id: projectId(project.title),
           title: project.title,
           workspaceRoot: project.workspaceRoot,
         })),
@@ -200,8 +210,8 @@ const engineAnswer = (engine: EngineInstance, name: string): Schema.Json | undef
       return {
         threads: engine.threads.map((thread, index) => ({
           threadId: `thread-${index + 1}`,
+          projectId: projectId(thread.project),
           title: thread.title,
-          project: thread.project,
           status: "idle",
         })),
       };
@@ -734,9 +744,7 @@ const answer = (
     default: {
       const engine =
         scenario.engine === undefined ? undefined : engineAnswer(scenario.engine, request.name);
-      return reply(
-        json(engine ?? { error: `${request.name} is not available here.` }),
-      );
+      return reply(json(engine ?? { error: `${request.name} is not available here.` }));
     }
   }
 };

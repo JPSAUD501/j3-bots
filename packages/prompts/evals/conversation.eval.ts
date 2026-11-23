@@ -41,8 +41,9 @@ import { HOME } from "./shell.ts";
 // things, how it gets to know its user after its first hello and when it
 // stops, what it does when the host refuses a step, a secret pasted into the
 // chat, drafting, saving and sending as its user, saving a skill, what it
-// keeps out of a room, and a batch of messages whose last one changes the
-// request.
+// keeps out of a room, a batch of messages whose last one changes the
+// request, and what it says about its user's own T3 Code, which its engine
+// tools cannot reach.
 //
 // Each case is one turn per model and skill column, scored on what its tool
 // calls did; what a message means is read by the judge (`judge.ts`), on
