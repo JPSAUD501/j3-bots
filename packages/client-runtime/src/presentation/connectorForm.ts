@@ -8,8 +8,10 @@ import {
   type FieldKey,
   HeaderName,
   Label,
+  type Language,
   type ListingRef,
   OAuthClientInput,
+  signInCallbackPath,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -183,9 +185,11 @@ export const withoutSecrets = (
 /**
  * A gallery entry's form: a value for each of its fields, as `fieldValues`
  * takes them, and for an `own-app` entry the client the operator registered.
+ * `language` is the operator's: the connector keeps its name and fields in it.
  */
 export function listingSource(input: {
   readonly ref: ListingRef;
+  readonly language: Language;
   readonly fields: ReadonlyArray<ConnectorField>;
   readonly values: ReadonlyMap<FieldKey, string>;
   /** Null for an entry that takes no client. */
@@ -208,6 +212,7 @@ export function listingSource(input: {
     source: {
       _tag: "listing",
       ref: input.ref,
+      language: input.language,
       values: values.values,
       oauthClient: oauthClient._tag === "ready" ? oauthClient.client : null,
     },
@@ -301,4 +306,20 @@ export function commandSource(input: {
       env: env.decoded,
     },
   };
+}
+
+/**
+ * The redirect address to register on an app made at the service, for a
+ * sign-in at `issuer` from this device: the server's own `origin` when the
+ * browser comes back to it, else this device's loopback with no port, which
+ * any port matches at a service that follows RFC 8252. Null when `issuer` is
+ * not an address.
+ */
+export function ownAppRedirect(
+  issuer: string,
+  back: { readonly _tag: "server"; readonly origin: string } | { readonly _tag: "loopback" },
+): string | null {
+  if (!URL.canParse(issuer)) return null;
+  const path = signInCallbackPath(new URL(issuer));
+  return `${back._tag === "server" ? back.origin : "http://127.0.0.1"}${path}`;
 }

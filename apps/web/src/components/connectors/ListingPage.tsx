@@ -5,6 +5,7 @@ import {
   initialGrant,
   listingKey,
   listingSource,
+  ownAppRedirect,
   withoutSecrets,
 } from "@j3-bots/client-runtime/presentation";
 import { connectFailureText, publisherText } from "@j3-bots/client-runtime/wording";
@@ -133,9 +134,21 @@ function ConnectForm({
   const i18n = useI18n();
   const { t } = i18n;
   const ownApp = listing.connect === "own-app";
+  // The entry names the server its app is registered at, so the operator is asked only when it does not.
+  const knownIssuer = listing.setup?.issuer ?? null;
   const [grant, setGrant] = useState<ConnectorGrant>(() => initialGrant(bots, forBot));
   const [values, setValues] = useState<ReadonlyMap<FieldKey, string>>(new Map());
-  const [issuer, setIssuer] = useState("");
+  const [typedIssuer, setIssuer] = useState("");
+  const issuer = knownIssuer ?? typedIssuer;
+  const redirect =
+    ownApp && knownIssuer !== null
+      ? ownAppRedirect(
+          knownIssuer,
+          intents.signInRoute._tag === "server"
+            ? { _tag: "server", origin: window.location.origin }
+            : { _tag: "loopback" },
+        )
+      : null;
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [problems, setProblems] = useState<FormProblems | null>(null);
@@ -148,6 +161,7 @@ function ConnectForm({
   const add = () => {
     const draft = listingSource({
       ref: listing.ref,
+      language: i18n.locale,
       fields: listing.fields,
       values,
       client: ownApp ? { issuer, clientId, clientSecret } : null,
@@ -215,15 +229,25 @@ function ConnectForm({
       )}
       {ownApp && (
         <>
-          <LineField
-            label={t("connect.issuer")}
-            hint={t("connect.issuer.hint")}
-            problem={problems?.issuer ? t("connect.issuer.invalid") : null}
-            value={issuer}
-            onChange={setIssuer}
-            readOnly={submitting}
-            mono
-          />
+          {redirect !== null && (
+            <LineField
+              label={t("connect.redirect")}
+              hint={t("connect.redirect.hint")}
+              value={redirect}
+              mono
+            />
+          )}
+          {knownIssuer === null && (
+            <LineField
+              label={t("connect.issuer")}
+              hint={t("connect.issuer.hint")}
+              problem={problems?.issuer ? t("connect.issuer.invalid") : null}
+              value={typedIssuer}
+              onChange={setIssuer}
+              readOnly={submitting}
+              mono
+            />
+          )}
           <LineField
             label={t("connect.clientId")}
             hint={t("connect.client.hint")}

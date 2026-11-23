@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
-import { DeviceId, EntryId, Label } from "./base.ts";
+import { DeviceId, EntryId, Label, Language } from "./base.ts";
 import { EntryTarget } from "./entry.ts";
 
 /** A paired client. */
@@ -18,11 +18,6 @@ export const Device = Schema.Struct({
   pushRegistered: Schema.Boolean,
 });
 export type Device = typeof Device.Type;
-
-/** The languages the interface is written in, and a push to a device can be. */
-export const LANGUAGES = ["en", "pt-BR"] as const;
-export const Language = Schema.Literals(LANGUAGES);
-export type Language = typeof Language.Type;
 
 /** The push services a device can register with. Expo's is the only one so far. */
 export const PushProvider = Schema.Literal("expo");

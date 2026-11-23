@@ -11,6 +11,7 @@ import {
   DeviceId,
   EntryId,
   EntryOrder,
+  Language,
   RoomId,
   RoutineId,
   RoutineRunId,
@@ -32,7 +33,7 @@ import {
   SignInStarted,
   ToolReviewRevision,
 } from "./connector.ts";
-import { Device, Language, PairingCode, PushRegistration } from "./device.ts";
+import { Device, PairingCode, PushRegistration } from "./device.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
   ApprovalDecision,

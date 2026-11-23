@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { SIGN_IN_CALLBACK_PATH as CALLBACK_PATH } from "@j3-bots/contracts";
 import { SIGN_IN_RETURN_MAX } from "@j3-bots/desktop-bridge";
 
 // What the app's loopback listener makes of a request, while it catches the
 // browser's return from a connector's sign-in (`signInRelay.ts`). Only the
 // return itself is taken: anything else that reaches the port, such as the
 // browser asking for a favicon, is turned away and the listener waits on.
-
-/** Where every sign-in returns, under a path of its authorization server's own. */
-const CALLBACK_PATH = "/oauth/callback";
 
 /** An issuer's host, as the server writes it into a callback path: a name or an address, and a port. */
 const ISSUER_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?::\d{1,5})?$/;

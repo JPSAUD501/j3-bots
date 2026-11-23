@@ -1425,6 +1425,8 @@ export const en = {
     "The address of the service's sign-in server, as its guide gives it, such as https://accounts.google.com.",
   "connect.issuer.invalid":
     "Enter the issuer as an https:// address, as the service's guide gives it.",
+  "connect.redirect": "Redirect address",
+  "connect.redirect.hint": "If the app asks where sign-ins return, add this address.",
   "connect.clientId": "Client ID",
   "connect.clientSecret": "Client secret",
   "connect.client.hint": "From the app you registered at the service for J3 Bots.",

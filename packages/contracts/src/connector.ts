@@ -2,7 +2,7 @@
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { BotId, Label, OpenLiterals } from "./base.ts";
+import { BotId, Label, Language, OpenLiterals } from "./base.ts";
 
 // ---------------------------------------------------------------------------
 // Connectors: services a bot uses through J3 Bots, which the operator signs
@@ -207,13 +207,28 @@ export const ConnectorField = Schema.Struct({
 });
 export type ConnectorField = typeof ConnectorField.Type;
 
-/** What the operator does at the service before connecting: an app to register, a token to make. */
+/**
+ * The issuer of an OAuth authorization server, as its metadata names it: a
+ * bare `https:` address, such as `https://accounts.google.com`.
+ */
+export const OAuthIssuer = Schema.String.check(
+  Schema.makeFilter(
+    (text: string) => isHttpsAddress(text, MAX_CONNECTOR_URL_LENGTH, true) || BARE_HTTPS,
+  ),
+);
+
+/**
+ * What the operator does at the service before connecting: an app to register,
+ * a token to make. For an `own-app` listing, `issuer` is the authorization
+ * server the app is registered at, which the form fills in for them.
+ */
 export const ConnectorSetup = Schema.Struct({
   steps: Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1_000))).check(
     Schema.isMaxLength(10),
   ),
   /** The page where the steps start. */
   url: Schema.NullOr(SetupPageUrl),
+  issuer: Schema.NullOr(OAuthIssuer),
 });
 export type ConnectorSetup = typeof ConnectorSetup.Type;
 
@@ -472,11 +487,7 @@ export type EnvName = typeof EnvName.Type;
  * only, so a connector that names another never gets its secret.
  */
 export const OAuthClientInput = Schema.Struct({
-  issuer: Schema.String.check(
-    Schema.makeFilter(
-      (text: string) => isHttpsAddress(text, MAX_CONNECTOR_URL_LENGTH, true) || BARE_HTTPS,
-    ),
-  ),
+  issuer: OAuthIssuer,
   clientId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   clientSecret: Schema.NullOr(secretValue(1, 2_000)),
 });
@@ -484,8 +495,9 @@ export type OAuthClientInput = typeof OAuthClientInput.Type;
 
 /**
  * What a connector is added from:
- * - `listing`: a gallery entry, with the values its form asked for, and the
- *   operator's OAuth client for an `own-app` one;
+ * - `listing`: a gallery entry, with the values its form asked for, the
+ *   operator's OAuth client for an `own-app` one, and the language the
+ *   operator reads, which the connector's name and fields are kept in;
  * - `remote`: an address the operator typed, with any headers and an
  *   optional OAuth client. `privateNetwork` says the operator confirmed an
  *   address in their own network; without it the server refuses one;
@@ -497,6 +509,7 @@ export type OAuthClientInput = typeof OAuthClientInput.Type;
 export const ConnectorSource = Schema.Union([
   Schema.TaggedStruct("listing", {
     ref: ListingRef,
+    language: Language,
     values: ConnectorFieldValues,
     oauthClient: Schema.NullOr(OAuthClientInput),
   }),
@@ -548,6 +561,22 @@ export const SignInRedirect = Schema.Union([
   Schema.TaggedStruct("paste", {}),
 ]);
 export type SignInRedirect = typeof SignInRedirect.Type;
+
+/** Where every sign-in's browser returns, under a path of its authorization server's own. */
+export const SIGN_IN_CALLBACK_PATH = "/oauth/callback";
+
+/**
+ * The path a sign-in at `issuer` returns to: the callback's, then the
+ * issuer's host and its path exactly as written, trailing slashes included,
+ * as `/oauth/callback/accounts.google.com` or
+ * `/oauth/callback/auth.example/tenant/`. Two issuers that differ share a
+ * redirect only when they are one URL spelled two ways, on one host, so an
+ * answer one authorization server gave cannot be taken for another's
+ * (mix-up, RFC 9700 §4.4.2). An app registered at the service is given the
+ * address this path ends.
+ */
+export const signInCallbackPath = (issuer: URL): string =>
+  `${SIGN_IN_CALLBACK_PATH}/${issuer.host}${issuer.pathname === "/" ? "" : issuer.pathname}`;
 
 /**
  * A sign-in under way, which the device that began it opens in the system

@@ -53,7 +53,13 @@ const noClient = { issuer: "", clientId: "", clientSecret: "" };
 describe("a gallery entry's form", () => {
   it("sends each value it was given, redacted, and leaves out an empty optional one", () => {
     const source = ready(
-      listingSource({ ref, fields, values: new Map([[token, " key "]]), client: null }),
+      listingSource({
+        ref,
+        language: "en",
+        fields,
+        values: new Map([[token, " key "]]),
+        client: null,
+      }),
     );
     if (source._tag !== "listing") throw new Error(source._tag);
     // A secret is sent exactly as typed; spaces may be part of it.
@@ -65,9 +71,12 @@ describe("a gallery entry's form", () => {
 
   it("asks for a required field left empty, and an own app's whole client", () => {
     expect(
-      problems(listingSource({ ref, fields, values: new Map(), client: null })).missing,
+      problems(listingSource({ ref, language: "en", fields, values: new Map(), client: null }))
+        .missing,
     ).toEqual([token]);
-    const own = problems(listingSource({ ref, fields: [], values: new Map(), client: noClient }));
+    const own = problems(
+      listingSource({ ref, language: "en", fields: [], values: new Map(), client: noClient }),
+    );
     expect([own.issuer, own.clientId]).toEqual([true, true]);
   });
 
@@ -75,6 +84,7 @@ describe("a gallery entry's form", () => {
     const source = ready(
       listingSource({
         ref,
+        language: "en",
         fields: [],
         values: new Map(),
         client: { issuer: " https://accounts.example.com ", clientId: " app ", clientSecret: "s" },
