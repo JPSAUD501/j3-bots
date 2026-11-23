@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Invalid, type RoutineTrigger } from "@j3-bots/contracts";
+import { Invalid, MISSED_RUNS_LIMIT, type RoutineTrigger } from "@j3-bots/contracts";
 import * as Cron from "effect/Cron";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -80,14 +80,31 @@ function* wallRuns(
   let wall = fromWall;
   while (true) {
     wall = Cron.next(compiled.wall, wall).getTime();
-    const at = DateTime.makeZonedUnsafe(wall, {
+    yield { wall, at: instantOf(compiled, wall) };
+  }
+}
+
+/** {@link wallRuns} backwards: the runs whose wall-clock times lie before `beforeWall`, latest first. */
+function* wallRunsBack(
+  compiled: Compiled,
+  beforeWall: number,
+): Generator<{ readonly wall: number; readonly at: number }, never> {
+  let wall = beforeWall;
+  while (true) {
+    wall = Cron.prev(compiled.wall, wall).getTime();
+    yield { wall, at: instantOf(compiled, wall) };
+  }
+}
+
+/** A wall-clock time's instant in the schedule's zone, resolved as the runs' are. */
+const instantOf = (compiled: Compiled, wall: number) =>
+  DateTime.toEpochMillis(
+    DateTime.makeZonedUnsafe(wall, {
       timeZone: compiled.zone,
       adjustForTimeZone: true,
       disambiguation: "compatible",
-    });
-    yield { wall, at: DateTime.toEpochMillis(at) };
-  }
-}
+    }),
+  );
 
 /** The schedule's first run strictly after `after`. */
 const firstAfter = (compiled: Compiled, after: DateTime.Utc) =>
@@ -105,6 +122,36 @@ const firstAfter = (compiled: Compiled, after: DateTime.Utc) =>
       first === undefined ? Result.fail(unreadable()) : Result.succeed(DateTime.makeUnsafe(first)),
     ),
   );
+
+/** The schedule's last run at or before `at`, as epoch milliseconds. */
+const lastAtOrBefore = (compiled: Compiled, at: number) =>
+  search(() => {
+    let last: number | undefined;
+    for (const run of wallRunsBack(compiled, at + WALL_MARGIN_MILLIS + 1)) {
+      // No earlier wall-clock time can resolve after the run found.
+      if (last !== undefined && run.wall < last - WALL_MARGIN_MILLIS) break;
+      if (run.at <= at && (last === undefined || run.at > last)) last = run.at;
+    }
+    return last;
+  }).pipe(
+    Result.flatMap((last) => (last === undefined ? Result.fail(unreadable()) : Result.succeed(last))),
+  );
+
+/**
+ * How many of the schedule's runs fall strictly after `after` and at or
+ * before `until`, counted up to `limit`: the search stops there, so a long
+ * stretch of a frequent schedule costs no more than `limit` runs. Two
+ * wall-clock times that resolve to one instant are one run.
+ */
+const runsBetween = (compiled: Compiled, after: number, until: number, limit: number) =>
+  search(() => {
+    const found = new Set<number>();
+    for (const run of wallRuns(compiled, after - WALL_MARGIN_MILLIS)) {
+      if (found.size >= limit || run.wall > until + WALL_MARGIN_MILLIS) break;
+      if (run.at > after && run.at <= until) found.add(run.at);
+    }
+    return found.size;
+  });
 
 /** Where `value` goes in `sorted`, ascending: the index of the first element not below it. */
 const insertionIndex = (sorted: ReadonlyArray<number>, value: number) => {
@@ -174,6 +221,68 @@ export const nextRun = (
         Result.map(firstAfter(compiled, after), Option.some),
       );
   }
+};
+
+/**
+ * What the scheduler does with a routine whose next run has come: run it now,
+ * for the run that was due at `due`, or skip to `next`, counting the runs it
+ * missed, from `since` to `until`.
+ */
+export type CatchUp =
+  | {
+      readonly _tag: "run";
+      readonly due: DateTime.Utc;
+      /** None when the trigger fires no more: the routine is paused. */
+      readonly next: Option.Option<DateTime.Utc>;
+    }
+  | {
+      readonly _tag: "skip";
+      readonly next: DateTime.Utc;
+      readonly missed: number;
+      readonly since: DateTime.Utc;
+      readonly until: DateTime.Utc;
+    };
+
+/**
+ * What becomes of a routine's runs that came due from `due`, its stored next
+ * run, to `now` (`docs/architecture/server.md`, Routines). Only the latest
+ * of them can run: it does, now, if `now` is at least as near to it as to the
+ * schedule's next run, so a run a moment late, or a few hours late on a daily
+ * schedule, still happens. Past that, the next run is nearer and the routine
+ * waits for it; every run that came due is counted as missed. The rule needs
+ * no constant: it is the schedule's own spacing, and a clock change only
+ * makes a night longer or shorter. A one-time trigger always runs, however
+ * late, and a webhook has no time. `due` need not be a run of the schedule:
+ * a routine whose run could not be recorded waits a little past it, and that
+ * deadline stands for it. Fails as {@link nextRun} does.
+ */
+export const catchUp = (
+  trigger: RoutineTrigger,
+  due: DateTime.Utc,
+  now: DateTime.Utc,
+): Result.Result<CatchUp, Invalid> => {
+  if (trigger._tag !== "schedule") {
+    return Result.map(nextRun(trigger, now), (next) => ({ _tag: "run", due, next }));
+  }
+  return Result.gen(function* () {
+    const compiled = yield* compile(trigger);
+    const dueAt = DateTime.toEpochMillis(due);
+    const nowAt = DateTime.toEpochMillis(now);
+    const latest = Math.max(dueAt, yield* lastAtOrBefore(compiled, nowAt));
+    const next = yield* firstAfter(compiled, now);
+    if (nowAt - latest <= (DateTime.toEpochMillis(next) - latest) / 2) {
+      return { _tag: "run", due: DateTime.makeUnsafe(latest), next: Option.some(next) } as const;
+    }
+    // `due` itself is the first; the count stops at the limit.
+    const later = yield* runsBetween(compiled, dueAt, nowAt, MISSED_RUNS_LIMIT - 1);
+    return {
+      _tag: "skip",
+      next,
+      missed: 1 + later,
+      since: due,
+      until: DateTime.makeUnsafe(latest),
+    } as const;
+  });
 };
 
 /**

@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
-import { BotId, EntryId, Label, NonNegativeInt, RoutineId, RoutineRunId } from "./base.ts";
+import {
+  BotId,
+  EntryId,
+  Label,
+  NonNegativeInt,
+  PositiveInt,
+  RoutineId,
+  RoutineRunId,
+} from "./base.ts";
 import { PermissionMode } from "./bot.ts";
 
 export const RoutineTrigger = Schema.Union([
@@ -58,8 +66,34 @@ export const RoutineRun = Schema.Struct({
    * name. Absent otherwise, and from a server that names none.
    */
   failure: Schema.optionalKey(RoutineRunFailure),
+  /**
+   * When a scheduled run was due, on one that started more than a minute
+   * after that: J3 Bots was not running then, or was busy recording others.
+   * Absent on a run that started on time, on one a webhook or the operator
+   * asked for, and from a server that does not record it.
+   */
+  dueAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type RoutineRun = typeof RoutineRun.Type;
+
+/**
+ * How many missed runs a routine counts at most: a count at this limit means
+ * at least as many.
+ */
+export const MISSED_RUNS_LIMIT = 1000;
+
+/**
+ * The scheduled runs a routine missed since its last run started: J3 Bots was
+ * not running when they were due, and it was too late to make up the latest
+ * of them when it came back, since its next run was nearer. `since` is the
+ * first of them and `until` the last; one run's are the same.
+ */
+export const RoutineMissed = Schema.Struct({
+  count: PositiveInt.check(Schema.isLessThanOrEqualTo(MISSED_RUNS_LIMIT)),
+  since: Schema.DateTimeUtc,
+  until: Schema.DateTimeUtc,
+});
+export type RoutineMissed = typeof RoutineMissed.Type;
 
 export const Routine = Schema.Struct({
   id: RoutineId,
@@ -73,5 +107,11 @@ export const Routine = Schema.Struct({
   nextRunAt: Schema.NullOr(Schema.DateTimeUtc),
   lastRun: Schema.NullOr(RoutineRun),
   runCount: NonNegativeInt,
+  /**
+   * The runs it missed since its last run started, null when none. Cleared
+   * when its next run starts, or when it is given a new trigger. Absent from
+   * a server that does not count them.
+   */
+  missed: Schema.optionalKey(Schema.NullOr(RoutineMissed)),
 });
 export type Routine = typeof Routine.Type;

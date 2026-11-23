@@ -3,15 +3,18 @@ import {
   type Bot,
   type EngineStatus,
   MEMORY_TEXT_LIMIT,
+  MISSED_RUNS_LIMIT,
   type MemoryPath,
   type PermissionMode,
   type Routine,
   type RoutineRun,
+  type RoutineMissed,
   type RoutineRunFailure,
 } from "@j3-bots/contracts";
 import type { AvatarShapeName, BotColor } from "@j3-bots/design-tokens/names";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { MemoryEditProblem } from "../presentation/saves.ts";
+import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { scheduleInWords } from "./schedule.ts";
 import { dividerTime, timeInSentence, type TimeContext } from "./time.ts";
 
@@ -112,7 +115,10 @@ export interface RoutineLines {
   readonly schedule: string;
   /** `schedule` is the expression itself, drawn as code. */
   readonly expression: boolean;
-  /** That it is paused, or when it runs next; null when neither applies. */
+  /**
+   * That it is paused, or when it runs next, after the runs it missed while
+   * J3 Bots was not running; null when none of them applies.
+   */
   readonly status: string | null;
   /**
    * What its last run did, for `routine.lastRunWithCount` to place beside the
@@ -121,19 +127,38 @@ export interface RoutineLines {
   readonly lastRun: { readonly text: string; readonly failed: boolean } | null;
 }
 
-export function routineLines(routine: Routine, ctx: TimeContext): RoutineLines {
+/**
+ * The runs a routine missed. The server cannot tell a computer asleep from
+ * one shut down or a crash, so the words say only that J3 Bots was not
+ * running.
+ */
+function missedText(missed: RoutineMissed, { i18n }: TimeContext): string {
+  return missed.count >= MISSED_RUNS_LIMIT
+    ? i18n.t("routine.missedAtLeast", { count: MISSED_RUNS_LIMIT })
+    : i18n.plural("routine.missed", missed.count);
+}
+
+/** That it is paused, or the runs it missed and when it runs next. */
+function routineStatus(routine: Routine, ctx: TimeContext): string | null {
   const { t } = ctx.i18n;
+  if (!routine.enabled) return t("routine.paused");
+  const next =
+    routine.nextRunAt === null
+      ? null
+      : t("routine.next", { when: timeInSentence(routine.nextRunAt, ctx) });
+  const missed = routine.missed ? missedText(routine.missed, ctx) : null;
+  if (missed === null) return next;
+  return next === null ? missed : t("routine.missedThenNext", { missed, next });
+}
+
+export function routineLines(routine: Routine, ctx: TimeContext): RoutineLines {
   const words = scheduleInWords(routine.trigger, ctx);
   const expression = words === null && routine.trigger._tag === "schedule";
   const last = routine.lastRun;
   return {
     schedule: words ?? (routine.trigger._tag === "schedule" ? routine.trigger.cron : ""),
     expression,
-    status: !routine.enabled
-      ? t("routine.paused")
-      : routine.nextRunAt
-        ? t("routine.next", { when: timeInSentence(routine.nextRunAt, ctx) })
-        : null,
+    status: routineStatus(routine, ctx),
     lastRun:
       last === null
         ? null
@@ -169,7 +194,7 @@ export interface RoutineRunLines {
   readonly status: string;
   /** When it started. */
   readonly when: string;
-  /** Why it failed or was skipped; null when it needs no reason. */
+  /** Why it failed, was skipped or ran late; null when it needs no reason. */
   readonly reason: string | null;
   /** How many attempts it took, once it took more than one. */
   readonly attempts: string | null;
@@ -189,7 +214,12 @@ export function routineRunLines(run: RoutineRun, ctx: TimeContext): RoutineRunLi
         : runFailureText(run.failure, ctx.i18n)
       : run.status === "skipped"
         ? t("routine.run.skippedWhy")
-        : null,
+        : run.dueAt !== undefined
+          ? t("routine.run.late", {
+              duration: shortDuration(millisBetween(run.dueAt, run.startedAt), ctx.i18n),
+              when: timeInSentence(run.dueAt, ctx),
+            })
+          : null,
     attempts: run.attempts > 1 ? plural("routine.run.attempts", run.attempts) : null,
     failed,
   };

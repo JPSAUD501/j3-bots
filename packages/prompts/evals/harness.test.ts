@@ -26,6 +26,7 @@ const run: RoutineWake = {
   },
   recentRuns: [],
   triggerData: null,
+  dueAt: null,
 };
 
 const conversation: Wake = {

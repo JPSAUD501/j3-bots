@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import type { RoutineTrigger } from "@j3-bots/contracts";
+import { MISSED_RUNS_LIMIT, type RoutineTrigger } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { localInstant, nextRun, plannedRun } from "./schedule.ts";
+import { catchUp, localInstant, nextRun, plannedRun } from "./schedule.ts";
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
@@ -64,6 +64,157 @@ describe("nextRun", () => {
     assert.strictEqual(next(once, "2026-11-20T09:00:00.000Z"), "2026-11-21T09:00:00.000Z");
     assert.strictEqual(next(once, "2026-11-21T09:00:00.000Z"), null);
     assert.strictEqual(next({ _tag: "webhook" }, "2026-11-21T09:00:00.000Z"), null);
+  });
+});
+
+/** What becomes of runs due from `due` once the server looks at `now`, with instants as ISO text. */
+const caughtUp = (trigger: RoutineTrigger, due: string, now: string) => {
+  const result = catchUp(trigger, at(due), at(now));
+  if (Result.isFailure(result)) throw new Error(`Unexpected ${result.failure.reason}`);
+  const plan = result.success;
+  return plan._tag === "run"
+    ? {
+        run: DateTime.formatIso(plan.due),
+        next: Option.match(plan.next, { onNone: () => null, onSome: DateTime.formatIso }),
+      }
+    : {
+        skip: plan.missed,
+        since: DateTime.formatIso(plan.since),
+        until: DateTime.formatIso(plan.until),
+        next: DateTime.formatIso(plan.next),
+      };
+};
+
+describe("catchUp", () => {
+  // 08:00 in São Paulo is 11:00 UTC all year.
+  const daily = schedule("0 8 * * *", "America/Sao_Paulo");
+  const hourly = schedule("0 * * * *", "UTC");
+
+  it("runs a daily run two hours late, nearer to it than to the next one", () => {
+    assert.deepStrictEqual(caughtUp(daily, "2026-11-20T11:00:00.000Z", "2026-11-20T13:00:00.000Z"), {
+      run: "2026-11-20T11:00:00.000Z",
+      next: "2026-11-21T11:00:00.000Z",
+    });
+  });
+
+  it("skips a daily run once the next is nearer, counting it as missed", () => {
+    // Woken at 07:00 the next day: the 08:00 run is an hour away.
+    assert.deepStrictEqual(caughtUp(daily, "2026-11-20T11:00:00.000Z", "2026-11-21T10:00:00.000Z"), {
+      skip: 1,
+      since: "2026-11-20T11:00:00.000Z",
+      until: "2026-11-20T11:00:00.000Z",
+      next: "2026-11-21T11:00:00.000Z",
+    });
+  });
+
+  it("runs an hourly run up to half an hour late, and skips it after", () => {
+    assert.deepStrictEqual(
+      caughtUp(hourly, "2026-11-20T09:00:00.000Z", "2026-11-20T09:30:00.000Z"),
+      { run: "2026-11-20T09:00:00.000Z", next: "2026-11-20T10:00:00.000Z" },
+    );
+    assert.deepStrictEqual(
+      caughtUp(hourly, "2026-11-20T09:00:00.000Z", "2026-11-20T09:40:00.000Z"),
+      {
+        skip: 1,
+        since: "2026-11-20T09:00:00.000Z",
+        until: "2026-11-20T09:00:00.000Z",
+        next: "2026-11-20T10:00:00.000Z",
+      },
+    );
+  });
+
+  it("runs a weekly run three days late, for the Monday it was due", () => {
+    const weekly = schedule("0 9 * * 1", "UTC");
+    assert.deepStrictEqual(
+      caughtUp(weekly, "2026-11-16T09:00:00.000Z", "2026-11-19T09:00:00.000Z"),
+      { run: "2026-11-16T09:00:00.000Z", next: "2026-11-23T09:00:00.000Z" },
+    );
+    assert.strictEqual(
+      caughtUp(weekly, "2026-11-16T09:00:00.000Z", "2026-11-19T22:00:00.000Z").next,
+      "2026-11-23T09:00:00.000Z",
+    );
+    assert.property(caughtUp(weekly, "2026-11-16T09:00:00.000Z", "2026-11-19T22:00:00.000Z"), "skip");
+  });
+
+  it("runs a one-time trigger however late, with nothing after it", () => {
+    const once: RoutineTrigger = { _tag: "once", at: at("2026-11-13T09:00:00.000Z") };
+    assert.deepStrictEqual(caughtUp(once, "2026-11-13T09:00:00.000Z", "2026-11-20T10:00:00.000Z"), {
+      run: "2026-11-13T09:00:00.000Z",
+      next: null,
+    });
+  });
+
+  it("makes up only the latest of many runs, and counts every one it skips", () => {
+    assert.deepStrictEqual(
+      caughtUp(hourly, "2026-11-01T00:00:00.000Z", "2026-11-20T12:20:00.000Z"),
+      { run: "2026-11-20T12:00:00.000Z", next: "2026-11-20T13:00:00.000Z" },
+    );
+    // Nineteen days and thirteen hours of hourly runs.
+    assert.deepStrictEqual(
+      caughtUp(hourly, "2026-11-01T00:00:00.000Z", "2026-11-20T12:40:00.000Z"),
+      {
+        skip: 19 * 24 + 13,
+        since: "2026-11-01T00:00:00.000Z",
+        until: "2026-11-20T12:00:00.000Z",
+        next: "2026-11-20T13:00:00.000Z",
+      },
+    );
+  });
+
+  it("stops counting a frequent schedule's missed runs at the limit, and still finds the latest", () => {
+    // Forty days of runs every five minutes, woken three minutes past one.
+    assert.deepStrictEqual(
+      caughtUp(schedule("*/5 * * * *", "UTC"), "2026-10-01T00:00:00.000Z", "2026-11-10T00:03:00.000Z"),
+      {
+        skip: MISSED_RUNS_LIMIT,
+        since: "2026-10-01T00:00:00.000Z",
+        until: "2026-11-10T00:00:00.000Z",
+        next: "2026-11-10T00:05:00.000Z",
+      },
+    );
+  });
+
+  it("measures the half of a night the clocks shorten or lengthen", () => {
+    // New York moves to -04:00 on 2026-03-08: the night between 23:00 and
+    // 23:00 lasts 23 hours, so 11 h 45 min late is past its half.
+    const late = schedule("0 23 * * *", "America/New_York");
+    assert.deepStrictEqual(caughtUp(late, "2026-03-08T04:00:00.000Z", "2026-03-08T15:45:00.000Z"), {
+      skip: 1,
+      since: "2026-03-08T04:00:00.000Z",
+      until: "2026-03-08T04:00:00.000Z",
+      next: "2026-03-09T03:00:00.000Z",
+    });
+    // It goes back to -05:00 on 2026-11-01: that night lasts 25 hours, so
+    // 12 h 15 min late is still within its half.
+    assert.deepStrictEqual(caughtUp(late, "2026-11-01T03:00:00.000Z", "2026-11-01T15:15:00.000Z"), {
+      run: "2026-11-01T03:00:00.000Z",
+      next: "2026-11-02T04:00:00.000Z",
+    });
+  });
+
+  it("runs a time the clocks skip, moved later, as the run it stands for", () => {
+    // 02:30 does not happen in New York on 2026-03-08; the run comes at 03:30.
+    const early = schedule("30 2 * * *", "America/New_York");
+    assert.deepStrictEqual(caughtUp(early, "2026-03-08T07:30:00.000Z", "2026-03-08T08:00:00.000Z"), {
+      run: "2026-03-08T07:30:00.000Z",
+      next: "2026-03-09T06:30:00.000Z",
+    });
+  });
+
+  it("runs for a deadline that stands in for a run postponed after a defect", () => {
+    assert.deepStrictEqual(
+      caughtUp(schedule("0 8 * * *", "UTC"), "2026-11-20T08:01:00.000Z", "2026-11-20T08:02:00.000Z"),
+      { run: "2026-11-20T08:01:00.000Z", next: "2026-11-21T08:00:00.000Z" },
+    );
+  });
+
+  it("fails for a schedule it cannot read", () => {
+    const result = catchUp(
+      schedule("0 9 * * *", "Mars/Olympus"),
+      at("2026-11-20T09:00:00.000Z"),
+      at("2026-11-20T09:01:00.000Z"),
+    );
+    assert.isTrue(Result.isFailure(result) && result.failure.reason === "time-zone");
   });
 });
 

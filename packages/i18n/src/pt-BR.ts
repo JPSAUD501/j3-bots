@@ -284,6 +284,10 @@ const sentences = {
   "routine.pauseFailed": "A rotina {name} não foi pausada. Tente de novo.",
   "routine.resumeFailed": "A rotina {name} não foi retomada. Tente de novo.",
   "routine.next": "Próxima execução {when}",
+  "routine.missed.one": "Perdeu {count} execução enquanto o J3 Bots não estava rodando",
+  "routine.missed.other": "Perdeu {count} execuções enquanto o J3 Bots não estava rodando",
+  "routine.missedAtLeast": "Perdeu {count} execuções ou mais enquanto o J3 Bots não estava rodando",
+  "routine.missedThenNext": "{missed}\u00a0·\u00a0{next}",
   "routine.lastRun.running": "Em execução agora, começou {when}",
   "routine.lastRun.delivered": "A última execução trouxe novidades {when}",
   "routine.lastRun.silent": "A última execução não tinha nada a relatar {when}",
@@ -311,6 +315,7 @@ const sentences = {
   "routine.run.modeAllowed":
     "Uma política no computador que roda o J3 Bots permite até {allowed}, não {mode}.",
   "routine.run.skippedWhy": "A anterior ainda estava rodando.",
+  "routine.run.late": "Rodou {duration} atrasada: o J3 Bots não estava rodando {when}.",
   "routine.run.attempts.one": "Tentou uma vez",
   "routine.run.attempts.other": "Tentou {count} vezes",
 

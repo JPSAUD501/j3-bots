@@ -9,6 +9,7 @@ import {
   NotFound,
   Routine,
   RoutineId,
+  RoutineMissed,
   type RoutineRun,
   RoutineRunFailure,
   RoutineRunId,
@@ -39,7 +40,7 @@ import { CERTIFICATE_NAME, Network, reachableOrigins } from "../system/Network.t
 import { Ledger } from "../turns/Ledger.ts";
 import { DispatchRowId } from "../turns/model.ts";
 import { Signals } from "../turns/Signals.ts";
-import { RoutineRuns } from "./RoutineRuns.ts";
+import { isLate, RoutineRuns } from "./RoutineRuns.ts";
 import { plannedRun } from "./schedule.ts";
 import { Scheduler } from "./Scheduler.ts";
 import { WEBHOOK_PATH } from "./webhook.ts";
@@ -57,6 +58,7 @@ const RoutineRow = Schema.Struct({
   webhook_secret: Schema.NullOr(Schema.String),
   next_run_at: Schema.NullOr(Time),
   run_count: NonNegativeInt,
+  missed_json: Schema.NullOr(Schema.String),
 });
 
 const RunRow = Schema.Struct({
@@ -69,9 +71,11 @@ const RunRow = Schema.Struct({
   started_at: Time,
   finished_at: Schema.NullOr(Time),
   failure_json: Schema.NullOr(json(RoutineRunFailure)),
+  due_at: Schema.NullOr(Time),
 });
 
 const decodeRoutine = Schema.decodeUnknownEffect(Routine);
+const decodeMissed = Schema.decodeOption(json(RoutineMissed));
 const encodeTrigger = Schema.encodeEffect(json(RoutineTrigger));
 
 /** Whether two triggers are the same: the same schedule, time or webhook. */
@@ -237,12 +241,12 @@ export const layer = Layer.effect(
 
     const SELECT = sql.literal(`
       SELECT id, bot_id, name, instruction, trigger_json, enabled, webhook_secret, next_run_at,
-        run_count
+        run_count, missed_json
       FROM routines
     `);
     const RUNS = sql.literal(`
       SELECT id, routine_id, wake_id, status, attempts, note, started_at, finished_at,
-        failure_json
+        failure_json, due_at
       FROM routine_runs
     `);
 
@@ -322,6 +326,7 @@ export const layer = Layer.effect(
         ...(row.status === "failed" && row.failure_json !== null
           ? { failure: row.failure_json }
           : {}),
+        ...(row.due_at !== null && isLate(row.due_at, row.started_at) ? { dueAt: row.due_at } : {}),
       } satisfies RoutineRun;
     }, Effect.orDie);
 
@@ -341,6 +346,10 @@ export const layer = Layer.effect(
         nextRunAt: row.next_run_at,
         lastRun: last === undefined ? null : yield* toRun(last),
         runCount: row.run_count,
+        // Missed runs another version of the server wrote in a form this one
+        // cannot read are left out.
+        missed:
+          row.missed_json === null ? null : Option.getOrNull(decodeMissed(row.missed_json)),
       });
     }, Effect.orDie);
 
@@ -474,6 +483,8 @@ export const layer = Layer.effect(
               enabled: enabled ? 1 : 0,
               webhook_secret: secret,
               next_run_at: Option.match(next, { onNone: () => null, onSome: timeText }),
+              // The runs it missed were the old trigger's.
+              ...(retriggered ? { missed_json: null } : {}),
               updated_at: timeText(now),
             })}
             WHERE id = ${before.id}

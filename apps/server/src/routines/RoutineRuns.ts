@@ -56,6 +56,17 @@ export const RUN_ATTEMPTS = 3;
 export const retryDelay = (n: number): Duration.Duration => Duration.minutes(2 ** n);
 
 /**
+ * How long after it was due a run starts before it counts as late: clients
+ * are told when it was due, and so is the bot. The scheduler records a run
+ * within seconds of its time while the server runs.
+ */
+export const LATE_AFTER = Duration.minutes(1);
+
+/** Whether a run due at `due` that starts at `start` is late. */
+export const isLate = (due: DateTime.Utc, start: DateTime.Utc): boolean =>
+  Duration.isGreaterThan(DateTime.distance(due, start), LATE_AFTER);
+
+/**
  * How many runs, skipped ones included, a routine's webhook may record in a
  * minute. A caller past it is told when to try again, and nothing is recorded.
  */
@@ -175,12 +186,13 @@ export class RoutineRuns extends Context.Service<
   RoutineRuns,
   {
     /**
-     * Records the run of a routine that came due, in the caller's
+     * Records the run of a routine that came due at `dueAt`, in the caller's
      * transaction, which also moves the routine on to its next run.
      */
     readonly due: (routine: {
       readonly id: RoutineId;
       readonly botId: BotId;
+      readonly dueAt: DateTime.Utc;
     }) => Effect.Effect<RunReceipt>;
     /** Runs the routine now at the operator's request, as a test: also a paused one. */
     readonly runNow: (routineId: RoutineId) => Effect.Effect<RunReceipt, NotFound>;
@@ -376,21 +388,29 @@ export const layer = Layer.effect(
     /**
      * Records a run of the routine, in the caller's transaction: skipped
      * while its previous run is still going, otherwise running with its wake.
+     * A run that starts clears the runs the routine missed. `dueAt` is when a
+     * scheduled run was due; null for one a webhook or the operator asked for.
      */
     const begin = Effect.fn("RoutineRuns.begin")(function* (
       routine: { readonly id: RoutineId; readonly botId: BotId },
-      request: { readonly body: string | null; readonly key: string | null },
+      request: {
+        readonly body: string | null;
+        readonly key: string | null;
+        readonly dueAt: DateTime.Utc | null;
+      },
     ) {
       yield* settleEnded(routine.id);
       const at = timeText(yield* DateTime.now);
+      const dueAt = request.dueAt === null ? null : timeText(request.dueAt);
       const runId = RoutineRunId.make(yield* ids.make("run"));
       const going = yield* sql`
         SELECT 1 FROM routine_runs WHERE routine_id = ${routine.id} AND status = 'running'
       `;
       if (going.length > 0) {
         yield* sql`
-          INSERT INTO routine_runs (id, routine_id, status, request_key, started_at, finished_at)
-          VALUES (${runId}, ${routine.id}, 'skipped', ${request.key}, ${at}, ${at})
+          INSERT INTO routine_runs (
+            id, routine_id, status, request_key, due_at, started_at, finished_at
+          ) VALUES (${runId}, ${routine.id}, 'skipped', ${request.key}, ${dueAt}, ${at}, ${at})
         `;
       } else {
         const [wakeId] = yield* wakes.record([
@@ -412,12 +432,15 @@ export const layer = Layer.effect(
         }
         yield* sql`
           INSERT INTO routine_runs (
-            id, routine_id, wake_id, status, trigger_data, request_key, started_at
+            id, routine_id, wake_id, status, trigger_data, request_key, due_at, started_at
           ) VALUES (
-            ${runId}, ${routine.id}, ${wakeId}, 'running', ${request.body}, ${request.key}, ${at}
+            ${runId}, ${routine.id}, ${wakeId}, 'running', ${request.body}, ${request.key},
+            ${dueAt}, ${at}
           )
         `;
-        yield* sql`UPDATE routines SET run_count = run_count + 1 WHERE id = ${routine.id}`;
+        yield* sql`
+          UPDATE routines SET run_count = run_count + 1, missed_json = NULL WHERE id = ${routine.id}
+        `;
       }
       yield* prune(routine.id);
       yield* recordChange(routine.botId, routine.id);
@@ -428,8 +451,11 @@ export const layer = Layer.effect(
       } satisfies RunReceipt;
     }, Effect.orDie);
 
-    const due = (routine: { readonly id: RoutineId; readonly botId: BotId }) =>
-      begin(routine, { body: null, key: null });
+    const due = (routine: {
+      readonly id: RoutineId;
+      readonly botId: BotId;
+      readonly dueAt: DateTime.Utc;
+    }) => begin(routine, { body: null, key: null, dueAt: routine.dueAt });
 
     const runNow = Effect.fn("RoutineRuns.runNow")(function* (routineId: RoutineId) {
       return yield* transaction(
@@ -438,7 +464,7 @@ export const layer = Layer.effect(
           if (Option.isNone(row)) return yield* new NotFound({ resource: "routine" });
           return yield* begin(
             { id: row.value.id, botId: row.value.bot_id },
-            { body: null, key: null },
+            { body: null, key: null, dueAt: null },
           );
         }),
       );
@@ -525,7 +551,7 @@ export const layer = Layer.effect(
           }
           return yield* begin(
             { id: routine.id, botId: routine.bot_id },
-            { body: input.body, key: input.requestKey },
+            { body: input.body, key: input.requestKey, dueAt: null },
           );
         }),
       );
