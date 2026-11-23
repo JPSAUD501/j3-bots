@@ -113,6 +113,93 @@ jobs:
           path: apps/desktop/smoke-failure.png
           if-no-files-found: ignore
 
+  # The desktop packages as the release builds them, without publishing them,
+  # each with the server runtime of its platform (docs/operations/releasing.md),
+  # which is then run where it was packaged. It writes each package's size to
+  # the log and the job's summary.
+  packages:
+    name: Desktop packages (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+            targets: --linux --x64
+            runtime: linux-unpacked/resources/server-runtime
+          - name: mac
+            os: macos-15
+            targets: --mac --x64 --arm64
+            runtime: mac-arm64/J3 Bots.app/Contents/Resources/server-runtime
+          - name: windows
+            os: windows-2025
+            targets: --win --x64
+            runtime: win-unpacked/resources/server-runtime
+            # No start check: the server's path check (isWithin) knows only "/", so it refuses its own home on Windows. Lane W turns it on with #158.
+            check-flags: --skip-start
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      VERSION: 0.0.0-ci.${{ github.run_number }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      # A version of its own, set as the release sets the tag's, so that the
+      # check below proves the runtime and the app carry the version given.
+      - name: Version
+        working-directory: apps/server
+        run: npm pkg set version="$VERSION"
+
+      - name: Build the server runtime
+        run: node scripts/build-release.ts --server-runtime
+
+      - name: Build the web client and the app
+        run: |
+          vp run --filter @j3-bots/web build
+          vp run --filter @j3-bots/desktop build
+
+      # Signed as a tag signs it: electron-builder skips signing for a pull
+      # request unless told to, and the macOS build is signed ad hoc, with no
+      # certificate and so no secret, as the runtime it carries is too.
+      - name: Package
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_FOR_PULL_REQUEST: "true"
+          TARGETS: ${{ matrix.targets }}
+        run: vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
+
+      - name: Check the packaged server runtime
+        env:
+          RUNTIME: apps/desktop/release/${{ matrix.runtime }}
+          FLAGS: ${{ matrix.check-flags }}
+        run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION" $FLAGS
+
+      - name: Package sizes
+        working-directory: apps/desktop/release
+        run: |
+          {
+            echo "| Package | Size |"
+            echo "| --- | --- |"
+            for file in *.AppImage *.deb *.dmg *.zip *.exe; do
+              [[ -f "$file" ]] || continue
+              echo "| \`$file\` | $(( $(wc -c < "$file") )) bytes |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
   release:
     name: Release archive (${{ matrix.platform }})
     strategy:

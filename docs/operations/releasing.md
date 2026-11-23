@@ -1,6 +1,6 @@
 # Releasing J3 Bots
 
-A release is a version tag, with one version for the server, the web client it serves, the desktop app and the Android app. Pushing the tag builds the desktop packages on Linux, macOS and Windows, the server's archives on x64 and arm64 Linux and a signed Android APK, and uploads them to a draft GitHub release. A maintainer checks the draft and publishes it. Installed apps are offered a release, and `install.sh` finds it, only once it is published. An AppImage and a Windows install then download it in the background and offer "Restart to update" in Settings → This device; a deb and a Mac build say it is out and link to it ([Clients: desktop](../architecture/clients.md#desktop)).
+A release is a version tag, with one version for the server, the web client it serves, the desktop app and the Android app. Pushing the tag builds the desktop packages on Linux, macOS and Windows, each with the server runtime its platform runs local mode on, the server's archives on x64 and arm64 Linux and a signed Android APK, and uploads them to a draft GitHub release. A maintainer checks the draft and publishes it. Installed apps are offered a release, and `install.sh` finds it, only once it is published. An AppImage and a Windows install then download it in the background and offer "Restart to update" in Settings → This device; a deb and a Mac build say it is out and link to it ([Clients: desktop](../architecture/clients.md#desktop)).
 
 The desktop builds are unsigned for now; the Android APK is signed with the project's own key. See [Signing](#signing) below.
 
@@ -23,6 +23,33 @@ The desktop app:
 | Linux x64 | `J3-Bots-x86_64.AppImage`, `j3-bots_<version>_amd64.deb` | `latest-linux.yml` | The AppImage does: it is replaced in place. The deb does not: installing it takes root, which the app never asks for, so it links to the release |
 | macOS x64 and arm64 | `J3-Bots-<version>-<arch>-unsigned.dmg` and `.zip`, with a `.blockmap` each | `latest-mac.yml` | No: macOS installs an update only for a signed app. The app links to the release, and each new version is downloaded by hand |
 | Windows x64 | `J3-Bots-Setup-<version>-unsigned.exe` and its `.blockmap` | `latest.yml` | Yes. Windows SmartScreen warns before the first install of an unsigned installer |
+
+Each desktop package for a platform the app runs local mode on carries the server runtime for it, in its resources as `server-runtime/` ([decision 0015](../decisions/0015-a-release-is-a-self-contained-archive.md)): the AppImage and the deb (`linux-x64`), the Windows installer (`win32-x64`), and the arm64 dmg and zip (`darwin-arm64`). The x64 Mac build carries none: on an Intel Mac the app only connects to a server. The runtime is the server archive's folder without `web/`, since the app brings its own web client, and without the `sh` launcher, since the app starts Node itself:
+
+```
+server-runtime/
+  node/bin/node         the Node release package.json pins; node/node.exe on Windows
+  server/               the server bundle, with its prompt files
+  release.json          version (the app's), platform, Node release and engine
+  LICENSE
+  APP-STORE-PERMISSION
+  THIRD_PARTY_NOTICES   Node, and what the server bundle holds
+```
+
+`pnpm release --server-runtime` builds it into `dist/release/server-runtime/<platform>/`, and each platform's `extraResources` in `apps/desktop/electron-builder.yml` copies it into the package. electron-builder only warns when such a folder is missing, so a build hook, `apps/desktop/scripts/afterPack.ts`, fails the build of a package that lacks the runtime its platform needs, carries one of another version or platform, or carries one where local mode does not run. The engine is not in it: the server downloads it on its first start. The runtime on disk is 155 MB for Linux, 152 MB for macOS and 105 MB for Windows, almost all of it Node. Copied out of the AppImage and started with no Node on `PATH`, its server answered `/health` 0.3 s after it started, and had downloaded the engine and started it 8.2 s after (**Verified** on a Linux x64 VM).
+
+What the runtime adds to each package (1 MB is 1,000,000 bytes):
+
+| Package | Without it (`v0.2.0`) | With it | Added |
+| --- | --- | --- | --- |
+| `J3-Bots-x86_64.AppImage` | 121.5 MB | 169.0 MB | 47.5 MB |
+| `j3-bots_<version>_amd64.deb` | 103.2 MB | 140.0 MB | 36.8 MB |
+| `J3-Bots-Setup-<version>-unsigned.exe` | 123.8 MB | 152.2 MB | 28.4 MB |
+| `J3-Bots-<version>-arm64-unsigned.dmg` | 135.0 MB | 180.9 MB | 46.0 MB |
+| `J3-Bots-<version>-arm64-unsigned.zip` | 130.6 MB | 174.7 MB | 44.0 MB |
+| `J3-Bots-<version>-x64-unsigned.dmg`, `.zip` | 140.3 MB, 136.0 MB | the same | none |
+
+**Verified**: the sizes without it are `v0.2.0`'s, built from the commit before the runtime was added; the sizes with it are that commit's packages with the runtime, built on a Linux x64 VM and by CI on GitHub's macOS and Windows runners.
 
 The feed files are electron-updater's: the version, each file's name, size and SHA-512. Installed apps read them from the latest published release. A pre-release has the same three names (**Verified** on Linux: a build for GitHub of `0.1.0-beta.1` wrote `latest-linux.yml`), so what keeps it from apps on a release version is only its pre-release mark. The block maps let an app download only what changed; the AppImage carries its own. The macOS and Windows files are named as the build configuration asks (**Verified** on GitHub's runners: `v0.1.0` built `J3-Bots-0.1.0-arm64-unsigned.dmg` and `J3-Bots-0.1.0-arm64-unsigned.zip`, the same for x64, each with its `.blockmap`, `J3-Bots-Setup-0.1.0-unsigned.exe` with its `.blockmap`, `latest-mac.yml` and `latest.yml`). The app they hold has not been run on macOS or Windows. The AppImage's name carries no version so that electron-updater replaces it in place: when the file's name has a version, it deletes that file and installs the new version under the release's name (**Read** in electron-updater 6.8.9, `AppImageUpdater.js:72-115`).
 
@@ -55,7 +82,7 @@ It is built without an Expo or a Firebase project, so it cannot turn push notifi
    git push origin v1.4.0
    ```
 
-4. Watch the **Release** workflow in the repository's Actions tab. Its first job refuses a tag the Android app cannot number and stops when `ANDROID_CERT_SHA256` is not a SHA-256, then creates a draft release for the tag, saying the builds are unsigned, and marks it a pre-release when the version has a suffix. Then one job per desktop platform builds the web client and the app and packages it with the tag's version, one job per Linux architecture builds the server's archive with the tag's version and runs the same smoke as CI on it: the archive with no Node on `PATH`, and `install.sh` from a local mirror, one job builds the APK unsigned, and another signs it. The signing job fails at once when any of the [four signing secrets](#android-signing) is missing. Another job writes `SHA256SUMS`. A last job checks that the release is still a draft and uploads every package, feed file, archive, the APK, `SHA256SUMS` and `install.sh` to it. A run takes about 12 minutes from the tag's push to the upload (**Verified** for `v0.1.0-rc.1` on GitHub's runners). For it and for `v0.1.0`, all ten jobs passed, and each draft had every file in the tables above, 20 of them.
+4. Watch the **Release** workflow in the repository's Actions tab. Its first job refuses a tag the Android app cannot number and stops when `ANDROID_CERT_SHA256` is not a SHA-256, then creates a draft release for the tag, saying the builds are unsigned, and marks it a pre-release when the version has a suffix. Then one job per desktop platform builds the server runtime for its platform, the web client and the app, packages them with the tag's version and checks the packaged runtime with `scripts/check-server-runtime.ts`: its files and `release.json` carry the tag's version, its Node is the pinned one, its server prints `j3-bots v<version>` and, except on Windows for now, starts, answering `/health` and stopping on `SIGTERM`. On Windows the server does not start yet: its path containment check (`isWithin`) knows only `/` as a separator, so it refuses its own home there. One job per Linux architecture builds the server's archive with the tag's version and runs the same smoke as CI on it: the archive with no Node on `PATH`, and `install.sh` from a local mirror, one job builds the APK unsigned, and another signs it. The signing job fails at once when any of the [four signing secrets](#android-signing) is missing. Another job writes `SHA256SUMS`. A last job checks that the release is still a draft and uploads every package, feed file, archive, the APK, `SHA256SUMS` and `install.sh` to it. A run takes about 12 minutes from the tag's push to the upload (**Verified** for `v0.1.0-rc.1` on GitHub's runners). For it and for `v0.1.0`, all ten jobs passed, and each draft had every file in the tables above, 20 of them.
 5. Open the draft under Releases. Check that it has every file in the tables above, then add what changed to its description.
 6. Publish it. Leave a pre-release marked as one. Apps on a release version read GitHub's latest release, which skips pre-releases, and look in it for `latest-linux.yml`, `latest-mac.yml` or `latest.yml`; a pre-release published as a release has them too, so every installed app would take it as an update (**Read** in electron-updater 6.8.9, `providers/GitHubProvider.js`, `getLatestTagName`, and `AppUpdater.js`, which turns pre-releases on only for an app that runs one). The workflow refuses to upload to a draft whose pre-release mark disagrees with its tag, as one drafted by hand before the tag was pushed can.
 
@@ -190,7 +217,9 @@ The **Upgrade check** workflow (`.github/workflows/upgrade-check.yml`) runs it o
 pnpm --filter @j3-bots/desktop package
 ```
 
-builds the web client and the app, then the packages for the platform it runs on, into `apps/desktop/release/`, without publishing anything. A Linux AppImage needs no FUSE 2: the build uses the static AppImage runtime, as T3 Code does. Each package is 100 to 130 MB.
+builds the web client, the app and the server runtime for the platform it runs on (`pnpm release --server-runtime`), then the packages for that platform, into `apps/desktop/release/`, without publishing anything. It runs on Linux x64, Windows x64 and Apple Silicon, the platforms a runtime is built for; on an Intel Mac, `electron-builder --publish never` alone builds the x64 packages, which carry none. A Linux AppImage needs no FUSE 2: the build uses the static AppImage runtime, as T3 Code does. [What a release contains](#what-a-release-contains) gives each package's size.
+
+CI builds the same packages on Linux, macOS and Windows for every pull request, sets the server's version to `0.0.0-ci.<run>` as the release sets the tag's, checks each packaged runtime where it was packaged as the release does, and writes each package's size to the job's summary (`.github/workflows/ci.yml`, `packages`).
 
 To try an update without publishing, build two versions against a feed on loopback. Copy `apps/desktop/electron-builder.yml`, change its `publish` to `{ provider: generic, url: http://127.0.0.1:<port>/ }`, and build with `--config <that copy> -c.extraMetadata.version=<version>`. Serve the newer build's `.AppImage` and `.yml` from that port with any static HTTP server, and start the older AppImage. A version with a suffix reads a feed named after it: `0.0.2-test` writes `test-linux.yml`.
 

@@ -2,7 +2,8 @@
 name: Release
 
 # Builds a release when a version tag is pushed: a draft GitHub release for
-# the tag; the desktop app's packages with electron-updater's feed files; the
+# the tag; the desktop app's packages with electron-updater's feed files, each
+# with the server runtime of its platform where local mode runs; the
 # server's archives for linux-x64 and linux-arm64, with SHA256SUMS and
 # scripts/install.sh; the Android app's signed APK; and then their upload to
 # the draft. A maintainer reads the draft and publishes it: installed apps are
@@ -111,15 +112,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `runtime` is where the package for this runner's own platform
+          # holds its server runtime, which the job runs once packaged.
           - name: linux
             os: ubuntu-24.04
             targets: --linux --x64
+            runtime: linux-unpacked/resources/server-runtime
           - name: mac
             os: macos-15
             targets: --mac --x64 --arm64
+            runtime: mac-arm64/J3 Bots.app/Contents/Resources/server-runtime
           - name: windows
             os: windows-2025
             targets: --win --x64
+            runtime: win-unpacked/resources/server-runtime
+            # No start check: the server's path check (isWithin) knows only "/", so it refuses its own home on Windows. Lane W turns it on with #158.
+            check-flags: --skip-start
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
@@ -139,6 +147,21 @@ jobs:
           node-version-file: package.json
           run-install: true
 
+      # The server runtime the package carries for local mode: the server
+      # bundle and the pinned Node for this runner's platform, checked against
+      # its checksum in package.json. It carries the tag's version, which the
+      # package checks it against, so the server's package.json gets it too,
+      # as in the server job. The mac runner is Apple Silicon: the x64 build,
+      # for which no runtime is built, carries none.
+      - name: Version from the tag
+        working-directory: apps/server
+        env:
+          VERSION: ${{ needs.draft.outputs.version }}
+        run: npm pkg set version="$VERSION"
+
+      - name: Build the server runtime
+        run: node scripts/build-release.ts --server-runtime
+
       - name: Build the web client and the app
         run: |
           vp run --filter @j3-bots/web build
@@ -154,6 +177,16 @@ jobs:
           VERSION: ${{ needs.draft.outputs.version }}
           TARGETS: ${{ matrix.targets }}
         run: vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
+
+      # The runtime as packaged (and, on macOS, signed) runs on this runner:
+      # its release.json and files are right for the tag, its Node is the
+      # pinned one, its server prints `j3-bots v<tag's version>` and starts.
+      - name: Check the packaged server runtime
+        env:
+          RUNTIME: apps/desktop/release/${{ matrix.runtime }}
+          FLAGS: ${{ matrix.check-flags }}
+          VERSION: ${{ needs.draft.outputs.version }}
+        run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION" $FLAGS
 
       # The packages, their block maps and the feed files (latest-linux.yml,
       # latest-mac.yml, latest.yml, or the pre-release channel's), not

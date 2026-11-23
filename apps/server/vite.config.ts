@@ -12,9 +12,13 @@ import { bundleInputs } from "../../scripts/bundle-inputs.ts";
  * `@j3-bots/prompts` reads its templates from `./templates/` and its skills
  * from `./skills/`, next to its own module. Bundled, that module is a chunk
  * directly in `dist/`, so they go to `dist/templates/` and `dist/skills/`.
+ * tsdown matches the source as a glob, whose separator is `/` on every
+ * system: on Windows a `\` would escape the next character.
  */
 const promptFiles = (folder: string) =>
-  NodePath.join(import.meta.dirname, `../../packages/prompts/src/${folder}/*.md`);
+  NodePath.join(import.meta.dirname, "../../packages/prompts/src", folder)
+    .split(NodePath.sep)
+    .join("/") + "/*.md";
 
 /** Native accelerators `ws` loads when they are installed, and works without. */
 const OPTIONAL_NATIVE = ["bufferutil", "utf-8-validate"];
