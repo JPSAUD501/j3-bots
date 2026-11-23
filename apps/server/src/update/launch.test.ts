@@ -33,7 +33,6 @@ describe("the update's transient unit", () => {
       "update",
       "--version",
       "0.4.0",
-      "--yes",
       "--run",
       plan.id,
     ]);

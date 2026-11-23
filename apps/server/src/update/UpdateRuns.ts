@@ -178,6 +178,7 @@ export const layer = Layer.effect(
             from: packageJson.version,
             to: request.version,
             by: request.device,
+            stopWork: request.stopWork,
             startedAt: yield* DateTime.now,
             stage: { _tag: "downloading", receivedBytes: 0, totalBytes: null },
           };

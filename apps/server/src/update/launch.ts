@@ -74,7 +74,7 @@ export const systemdRunArgs = (plan: UpdateUnitPlan): ReadonlyArray<string> => [
   `--working-directory=${plan.home}`,
   `--description=J3 Bots update to ${plan.version}`,
   "--",
-  ...[plan.command, "update", "--version", plan.version, "--yes", "--run", plan.id].map((word) =>
+  ...[plan.command, "update", "--version", plan.version, "--run", plan.id].map((word) =>
     word.replaceAll("$", () => "$$"),
   ),
 ];

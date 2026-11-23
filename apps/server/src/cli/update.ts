@@ -44,7 +44,7 @@ const rollbackFlag = Flag.Boolean("rollback").pipe(
 
 const runFlag = Flag.String("run").pipe(
   Flag.withDescription(
-    "Carry out the update a client asked for, which the server recorded as this run, and record each stage and how it ended. The server starts this itself; it needs --version and --yes.",
+    "Carry out the update a client asked for, which the server recorded as this run, and record each stage and how it ended. The server starts this itself; it needs --version, and stops bots' work only if the client said so.",
   ),
   Flag.optional,
 );
@@ -199,11 +199,16 @@ const reportOf = (result: UpdateResult): Report => {
         ending: { _tag: "done" },
         text: `The service runs J3 Bots ${result.version} already; the j3-bots command now runs it too.`,
       };
-    case "declined": {
-      const text =
-        "Bots have work running, which the update would stop, so nothing was changed. Run this again once it is done, or with --yes to stop it.";
-      return { ending: { _tag: "rolled-back", reason: "other", detail: text }, text };
-    }
+    case "declined":
+      return {
+        ending: {
+          _tag: "rolled-back",
+          reason: "other",
+          detail:
+            "Bots had work running when the update was ready to stop the service, and it was not to stop it, so nothing was changed. Update again once the work is done, or let the update stop it.",
+        },
+        text: "Bots have work running, which the update would stop, so nothing was changed. Run this again once it is done, or with --yes to stop it.",
+      };
     case "switched":
       break;
   }
@@ -347,8 +352,27 @@ const clientRun = Effect.fn("update.clientRun")(function* (
       `The update ${id} installs J3 Bots ${run.to}; --version must name it. Nothing was changed.`,
     );
   }
-  return { home, id };
+  return { home, id, stopWork: run.stopWork };
 });
+
+/**
+ * Whether the update may stop the work bots have running, `count` of them when
+ * the server could say, asked once
+ * it is ready to stop the service. A client's run answers with what the
+ * client sent, whatever else was given: work begun after it asked is stopped
+ * only if it said so. Otherwise `--yes` answers, or the operator does.
+ */
+export const stopsWork =
+  <E, R>(
+    tracked: Option.Option<{ readonly stopWork: boolean }>,
+    yes: boolean,
+    ask: (count: Option.Option<number>) => Effect.Effect<boolean, E, R>,
+  ) =>
+  (count: Option.Option<number>): Effect.Effect<boolean, E, R> =>
+    Option.match(tracked, {
+      onSome: ({ stopWork }) => Effect.succeed(stopWork),
+      onNone: () => (yes ? Effect.succeed(true) : ask(count)),
+    });
 
 /**
  * Runs an update and reports it. With `run`, the update is the one a client
@@ -386,8 +410,9 @@ const runUpdate = Effect.fn("update.run")(function* (
   const check = signatureCheck(yield* trustedReleaseKeys);
   const result = yield* update({
     version,
-    confirm: (count) =>
-      yes ? Effect.succeed(true) : ask(`${bots(count)}, and the update stops it. Update now?`),
+    confirm: stopsWork(tracked, yes, (count) =>
+      ask(`${bots(count)}, and the update stops it. Update now?`),
+    ),
     say: (line) => Console.log(line),
     progress,
     check,

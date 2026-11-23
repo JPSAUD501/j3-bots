@@ -71,6 +71,12 @@ export const UpdateRun = Schema.Struct({
   to: ReleaseVersion,
   /** The paired device that asked. */
   by: DeviceId,
+  /**
+   * Whether the device let it stop the work bots have running. Work found
+   * when the update is ready to stop the service, begun after the request
+   * included, is stopped only then.
+   */
+  stopWork: Schema.Boolean,
   startedAt: Schema.DateTimeUtc,
   /** Where it is, while it has not ended. */
   stage: RunStage,
