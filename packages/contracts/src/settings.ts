@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Label, MAX_LABEL_LENGTH, PositiveInt } from "./base.ts";
+import { UpdateChannel } from "./update.ts";
 
 /** An IANA time zone name, such as `America/Sao_Paulo`. The server checks that it exists. */
 export const TimeZone = Label.pipe(Schema.brand("TimeZone"));
@@ -111,6 +113,11 @@ export const Settings = Schema.Struct({
   timeZone: TimeZone,
   budgets: Budgets,
   notifications: NotificationSettings,
+  /**
+   * Which releases the server is offered (`UPDATE_HTTP_PATHS`). `stable`
+   * from a server that predates update channels, which offers no update.
+   */
+  updateChannel: UpdateChannel.pipe(Schema.withDecodingDefaultKey(Effect.succeed("stable"))),
 });
 export type Settings = typeof Settings.Type;
 
@@ -123,5 +130,10 @@ export const SettingsChange = Schema.Struct({
   timeZone: Schema.optionalKey(TimeZone),
   budgets: Schema.optionalKey(Budgets),
   notifications: Schema.optionalKey(NotificationSettingsChange),
+  /**
+   * Sent only to a server whose `ServerInfo.updateApi` is set: an older one
+   * would take the rest of the change and drop it.
+   */
+  updateChannel: Schema.optionalKey(UpdateChannel),
 });
 export type SettingsChange = typeof SettingsChange.Type;

@@ -801,6 +801,7 @@ export function sampleTeam(now: DateTime.Utc) {
     timeZone: TimeZone.make("America/Sao_Paulo"),
     budgets: { hops: 6, fanOut: 3, concurrentTurns: 4 },
     notifications: { enabled: true, previews: true },
+    updateChannel: "stable",
   };
 
   const devices: ReadonlyArray<Device> = [

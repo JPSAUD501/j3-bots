@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { compareVersions } from "@j3-bots/release";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -179,46 +180,6 @@ export const setAsideRecord = Effect.fn("transition.setAsideRecord")(function* (
   yield* fs.rename(file, `${file}.unreadable-${now.epochMilliseconds}`);
   yield* flushFolder(path.dirname(file));
 });
-
-/** A version as releases are numbered: `0.3.0`, `0.3.0-rc.1`, semantic versioning's order. */
-const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
-
-/** -1, 0 or 1 as `a` sorts before, with or after `b`. */
-const sign = <T extends number | string>(a: T, b: T) => (a < b ? -1 : a > b ? 1 : 0);
-
-/** A pre-release's identifiers in order: numbers sort below names, and fewer below more. */
-const comparePrerelease = (a: ReadonlyArray<string>, b: ReadonlyArray<string>): number => {
-  for (let index = 0; index < Math.min(a.length, b.length); index++) {
-    const [x, y] = [a[index] ?? "", b[index] ?? ""];
-    const [xNumber, yNumber] = [/^\d+$/.test(x), /^\d+$/.test(y)];
-    const order =
-      xNumber && yNumber
-        ? sign(Number(x), Number(y))
-        : xNumber !== yNumber
-          ? xNumber
-            ? -1
-            : 1
-          : sign(x, y);
-    if (order !== 0) return order;
-  }
-  return sign(a.length, b.length);
-};
-
-/** How `a` orders against `b`, -1, 0 or 1; none when either is not a version releases are numbered with. */
-export const compareVersions = (a: string, b: string): Option.Option<number> => {
-  const [x, y] = [SEMVER.exec(a), SEMVER.exec(b)];
-  if (x === null || y === null) return Option.none();
-  for (const part of [1, 2, 3]) {
-    const order = sign(Number(x[part]), Number(y[part]));
-    if (order !== 0) return Option.some(order);
-  }
-  const [xPre, yPre] = [x[4], y[4]];
-  if (xPre === undefined || yPre === undefined) {
-    // A release sorts after its pre-releases.
-    return Option.some(xPre === yPre ? 0 : xPre === undefined ? 1 : -1);
-  }
-  return Option.some(comparePrerelease(xPre.split("."), yPre.split(".")));
-};
 
 /**
  * What a host may do about starting a release on a home:

@@ -11,6 +11,7 @@ const saved: Settings = {
   timeZone: zone("America/Sao_Paulo"),
   budgets: { hops: 4, fanOut: 2, concurrentTurns: 2 },
   notifications: { enabled: true, previews: true },
+  updateChannel: "stable",
 };
 
 describe("settingsPatch", () => {
