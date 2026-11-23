@@ -23,7 +23,10 @@ describe("catching the browser's return from a sign-in", () => {
   it("turns away anything else that reaches the port, and waits on", () => {
     assert.deepStrictEqual(get("/favicon.ico"), { _tag: "refused", status: 404 });
     assert.deepStrictEqual(get("/oauth/callback?code=abc"), { _tag: "refused", status: 400 });
-    assert.deepStrictEqual(get("/oauth/callback?code=abc&state="), { _tag: "refused", status: 400 });
+    assert.deepStrictEqual(get("/oauth/callback?code=abc&state="), {
+      _tag: "refused",
+      status: 400,
+    });
     assert.deepStrictEqual(get("/oauth/callback?state=s1", { method: "POST" }), {
       _tag: "refused",
       status: 405,

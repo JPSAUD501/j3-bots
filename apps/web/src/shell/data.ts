@@ -18,6 +18,7 @@ import type {
   AvatarChoice,
   BotFile,
   BotId,
+  Connector,
   Device,
   DeviceId,
   EngineStatus,
@@ -42,6 +43,7 @@ import type {
   ShortcutStatus,
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
+import type { ConnectorsOpening } from "../components/connectors/screen";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { TimelineIntents } from "../components/Timeline";
@@ -102,6 +104,8 @@ export interface ShellData {
   readonly routines: (botId: BotId) => ReadonlyArray<Routine> | null;
   /** Files a bot delivered, newest first; null while they load. */
   readonly files: (botId: BotId) => ReadonlyArray<BotFile> | null;
+  /** Every connector the operator added; null until they load. */
+  readonly connectors: ReadonlyArray<Connector> | null;
   /** Null while they load. */
   readonly memory: (botId: BotId) => ReadonlyArray<MemoryFile> | null;
   /** The server's settings; null until they load. */
@@ -214,6 +218,8 @@ export interface ShellIntents extends TimelineIntents {
   /** Saves the change; the save of its section in `settingsSaves` follows it. */
   readonly updateSettings: (change: SettingsChange) => void;
   readonly setSettingsOpen: (open: boolean) => void;
+  /** Opens the connectors screen, closing Settings if it is open. */
+  readonly openConnectors: (opening: ConnectorsOpening) => void;
   readonly startPairing: () => Promise<PairingStart>;
   /**
    * Resolves `false` unless the server confirmed it within ten seconds; the

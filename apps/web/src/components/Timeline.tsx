@@ -4,6 +4,8 @@ import type {
   Attachment,
   BotId,
   CommandId,
+  ConnectorAuthEntry,
+  ConnectorSuggestionEntry,
   Mentions,
   Entry,
   EntryId,
@@ -29,6 +31,7 @@ import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
 import { CredentialRequestCard } from "./CredentialRequestCard";
+import { ConnectorAuthCard, ConnectorSuggestionCard } from "./connectors/ConnectorCards";
 import { HandoffCard } from "./HandoffCard";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
@@ -64,6 +67,15 @@ export interface TimelineIntents {
   readonly openHandoff: (entryId: EntryId) => void;
   readonly openRoutine: (routineId: RoutineId) => void;
   readonly openConversation: (botId: BotId) => void;
+  /**
+   * A bot's suggested connector: lets the bot use one the operator added, or
+   * opens the page that connects it, for that bot.
+   */
+  readonly connectSuggested: (entry: ConnectorSuggestionEntry) => void;
+  /** Not now: the suggestion closes for good in its conversation. */
+  readonly dismissSuggestion: (entryId: EntryId) => void;
+  /** Opens the connector's page with its sign-in started. */
+  readonly signInConnector: (entry: ConnectorAuthEntry) => void;
 }
 
 interface TimelineProps {
@@ -284,6 +296,17 @@ function Card({
           submitting={submitting(entry.id)}
         />
       );
+    case "connector-suggestion":
+      return (
+        <ConnectorSuggestionCard
+          entry={entry}
+          onConnect={() => intents.connectSuggested(entry)}
+          onDismiss={() => intents.dismissSuggestion(entry.id)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "connector-auth":
+      return <ConnectorAuthCard entry={entry} onSignIn={() => intents.signInConnector(entry)} />;
     case "notice":
       return (
         <NoticeLine

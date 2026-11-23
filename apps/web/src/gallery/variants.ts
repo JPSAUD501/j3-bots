@@ -9,6 +9,9 @@ import {
   CommandId,
   CredentialId,
   DeviceId,
+  ConnectorGlyph,
+  ConnectorId,
+  CuratedKey,
   EntryId,
   EntryOrder,
   Label,
@@ -20,6 +23,8 @@ import {
   type BotId,
   type Credential,
   type CredentialRequestEntry,
+  type ConnectorAuthEntry,
+  type ConnectorSuggestionEntry,
   type HandoffEntry,
   type MessageEntry,
   type NoticeEntry,
@@ -437,6 +442,46 @@ export function galleryVariants(now: DateTime.Utc) {
     ],
   ];
 
+  const suggestion = (
+    name: string,
+    subject: ConnectorSuggestionEntry["subject"],
+    status: ConnectorSuggestionEntry["status"],
+  ): ConnectorSuggestionEntry => ({
+    _tag: "connector-suggestion",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    subject,
+    name: "Notion",
+    glyph: ConnectorGlyph.make("notebook"),
+    reason: "Your reading list is in Notion. With it I can add each paper there as I find it.",
+    status,
+  });
+  const notion = ConnectorId.make("conn_samplenotion00000");
+  const listed = {
+    _tag: "listing",
+    ref: { _tag: "curated", key: CuratedKey.make("notion") },
+  } as const;
+  const connectorSuggestions: ReadonlyArray<ConnectorSuggestionEntry> = [
+    suggestion("cs-listing", listed, { _tag: "pending" }),
+    suggestion("cs-added", { _tag: "connector", connectorId: notion }, { _tag: "pending" }),
+    suggestion("cs-connected", listed, { _tag: "connected", connectorId: notion }),
+    suggestion("cs-dismissed", listed, { _tag: "dismissed" }),
+  ];
+  const auth = (name: string, status: ConnectorAuthEntry["status"]): ConnectorAuthEntry => ({
+    _tag: "connector-auth",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    connectorId: notion,
+    name: "Notion",
+    glyph: ConnectorGlyph.make("notebook"),
+    status,
+  });
+  const connectorAuths: ReadonlyArray<ConnectorAuthEntry> = [
+    auth("ca-pending", "pending"),
+    auth("ca-signed-in", "signed-in"),
+    auth("ca-removed", "removed"),
+  ];
+
   const fold = (
     name: string,
     status: WorkFoldEntry["status"],
@@ -705,6 +750,8 @@ export function galleryVariants(now: DateTime.Utc) {
     secrets,
     logins,
     credentials,
+    connectorSuggestions,
+    connectorAuths,
     folds,
     notices,
     handoffs,

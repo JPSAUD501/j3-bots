@@ -60,6 +60,7 @@ export const useConnection = () => useReadable(useJ3Client().connection);
 export const useEngineStatus = () => useReadable(useJ3Client().engine);
 export const useSettings = () => useReadable(useJ3Client().settings);
 export const useDevices = () => useReadable(useJ3Client().devices);
+export const useConnectors = () => useReadable(useJ3Client().connectors.state);
 
 /** Where an action on a card stands, to disable its buttons while it runs. */
 export const useCardAction = (entryId: EntryId): ActionState | undefined =>
@@ -202,4 +203,10 @@ export {
   useRoomForm,
 } from "./roomForm.ts";
 export { useAsleep, useAvatarMood } from "./avatar.ts";
+export {
+  type ConnectorSignIn,
+  type SignInPhase,
+  type SignInRoute,
+  useConnectorSignIn,
+} from "./connectorSignIn.ts";
 export { useTurnAnnouncement } from "./turn.ts";

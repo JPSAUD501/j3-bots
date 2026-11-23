@@ -2,6 +2,16 @@
 import type {
   Attachment,
   Bot,
+  Connector,
+  ConnectorGrant,
+  ConnectorId,
+  ConnectorListing,
+  ConnectorListingDetails,
+  Language,
+  ListingRef,
+  SignInRedirect,
+  SignInStarted,
+  ToolReviewRevision,
   BotFile,
   BotId,
   CommandId,
@@ -64,6 +74,7 @@ import type {
   WindowLocks,
 } from "./ports.ts";
 import type { Readable } from "./Store.ts";
+import * as Connectors from "./stores/Connectors.ts";
 import * as Conversations from "./stores/Conversations.ts";
 import * as Details from "./stores/Details.ts";
 import * as Devices from "./stores/Devices.ts";
@@ -108,6 +119,7 @@ export const layer = SignOut.layer.pipe(
       Usage.layer,
       ProviderSetup.layer,
       Vault.layer,
+      Connectors.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -169,6 +181,45 @@ export interface UsageHandle {
   /** Reads the turns again after a read failed. */
   readonly retry: () => void;
   readonly release: () => void;
+}
+
+/** The operator's connectors and the gallery to find more in; see `Connectors`. */
+export interface ConnectorsClient {
+  readonly state: Readable<Synced<ReadonlyArray<Connector>>>;
+  readonly featured: (
+    language: Language,
+  ) => Promise<Actions.IntentResult<ReadonlyArray<ConnectorListing>>>;
+  readonly search: (input: {
+    readonly query: string;
+    readonly language: Language;
+    readonly all: boolean;
+  }) => Promise<Actions.IntentResult<Connectors.ConnectorSearch>>;
+  readonly listing: (
+    ref: ListingRef,
+    language: Language,
+  ) => Promise<Actions.IntentResult<ConnectorListingDetails>>;
+  readonly add: (
+    addition: Connectors.ConnectorAddition,
+  ) => Promise<Actions.IntentResult<Connector>>;
+  readonly update: (
+    connectorId: ConnectorId,
+    changes: Connectors.ConnectorChanges,
+  ) => Promise<Actions.IntentResult<Connector>>;
+  readonly remove: (connectorId: ConnectorId) => Promise<Actions.IntentResult>;
+  readonly setBots: (
+    connectorId: ConnectorId,
+    grant: ConnectorGrant,
+  ) => Promise<Actions.IntentResult<Connector>>;
+  readonly answerToolReview: (
+    connectorId: ConnectorId,
+    revision: ToolReviewRevision,
+    decision: "accept" | "keep",
+  ) => Promise<Actions.IntentResult<Connector>>;
+  readonly beginSignIn: (
+    connectorId: ConnectorId,
+    redirect: SignInRedirect,
+  ) => Promise<Actions.IntentResult<SignInStarted>>;
+  readonly completeSignIn: (url: Redacted.Redacted<string>) => Promise<Actions.IntentResult>;
 }
 
 /** Server state held open until `release`. */
@@ -412,6 +463,7 @@ export interface J3Client {
   readonly cancelSignIn: (harness: SignInHarness) => void;
   /** Where the server finds each harness; null when it cannot say. */
   readonly harnessLocations: () => Promise<ReadonlyArray<HarnessLocation> | null>;
+  readonly connectors: ConnectorsClient;
   /** Connects the providers to an endpoint, restarting the engine. */
   readonly connectEndpoint: (
     request: ProviderConnectionRequest,
@@ -465,6 +517,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         usage: yield* Usage.Usage,
         providerSetup: yield* ProviderSetup.ProviderSetup,
         vault: yield* Vault.Vault,
+        connectors: yield* Connectors.Connectors,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -683,6 +736,22 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     signIn: (harness, openPage) => fire(services.providerSetup.signIn(harness, openPage)),
     cancelSignIn: (harness) => fire(services.providerSetup.cancelSignIn(harness)),
     harnessLocations: () => run.promise(services.providerSetup.harnesses),
+    connectors: {
+      state: services.connectors.state,
+      featured: (language) => run.promise(services.connectors.featured(language)),
+      search: (input) => run.promise(services.connectors.search(input)),
+      listing: (ref, language) => run.promise(services.connectors.listing(ref, language)),
+      add: (addition) => run.promise(services.connectors.add(addition)),
+      update: (connectorId, changes) =>
+        run.promise(services.connectors.update(connectorId, changes)),
+      remove: (connectorId) => run.promise(services.connectors.remove(connectorId)),
+      setBots: (connectorId, grant) => run.promise(services.connectors.setBots(connectorId, grant)),
+      answerToolReview: (connectorId, revision, decision) =>
+        run.promise(services.connectors.answerToolReview(connectorId, revision, decision)),
+      beginSignIn: (connectorId, redirect) =>
+        run.promise(services.connectors.beginSignIn(connectorId, redirect)),
+      completeSignIn: (url) => run.promise(services.connectors.completeSignIn(url)),
+    },
     connectEndpoint: (request) => run.promise(services.providerSetup.connect(request)),
 
     setView: (target) => fire(services.presence.setView(target)),

@@ -6,6 +6,15 @@
  */
 export { addresseeLine, resendLabel } from "./addressee.ts";
 export {
+  connectedText,
+  connectFailureText,
+  connectorStatusText,
+  grantText,
+  publisherText,
+  signedInText,
+  signInProblemText,
+} from "./connectors.ts";
+export {
   avatarShapeText,
   botColorText,
   botModelName,

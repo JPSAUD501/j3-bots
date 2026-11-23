@@ -31,6 +31,9 @@ const intents: TimelineIntents = {
   openHandoff: nothing,
   openRoutine: nothing,
   openConversation: nothing,
+  connectSuggested: nothing,
+  dismissSuggestion: nothing,
+  signInConnector: nothing,
 };
 
 describe("a conversation", () => {

@@ -37,6 +37,31 @@ export {
   withChanges,
   withProfileEdit,
 } from "./botEdit.ts";
+export {
+  addedFrom,
+  applyConnectorChange,
+  awaitsReview,
+  connectorNeedsYou,
+  connectorsOf,
+  connectorTone,
+  type ConnectorTone,
+  grantsBot,
+  initialGrant,
+  listingKey,
+  sameGrant,
+  type SignInProblem,
+  withBot,
+} from "./connectors.ts";
+export {
+  type ClientInput,
+  commandSource,
+  fieldValues,
+  type FormProblems,
+  listingSource,
+  type PairInput,
+  remoteSource,
+  type SourceDraft,
+} from "./connectorForm.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
 export {
   connectCommand,

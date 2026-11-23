@@ -554,6 +554,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             routines={data.routines(bot.id)}
             memory={data.memory(bot.id)}
             files={data.files(bot.id)}
+            connectors={data.connectors}
             modelName={botModelName(data.engine, bot)}
             stopShortcut={shortcuts.stop}
             onClose={close}
@@ -568,6 +569,15 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               freshStart: () => intents.freshStart(bot.id, bot.profile.name),
               deleteBot: () => intents.deleteBot(bot.id),
               shareTemplate: () => intents.shareBotTemplate(bot.id),
+              openConnectors: (connectorId) =>
+                intents.openConnectors({
+                  at:
+                    connectorId === null
+                      ? { _tag: "home" }
+                      : { _tag: "connector", connectorId, signIn: false, added: false },
+                  forBot: bot.id,
+                  suggestion: null,
+                }),
               ...(editProfile ? { editProfile: () => editProfile(bot.id) } : {}),
             }}
           />

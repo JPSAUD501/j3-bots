@@ -11,7 +11,12 @@ import type {
   VaultHandle,
   VaultView,
 } from "@j3-bots/client-runtime";
-import { hasDefaultModel, providerGate } from "@j3-bots/client-runtime/presentation";
+import {
+  applyConnectorChange,
+  hasDefaultModel,
+  providerGate,
+  withBot,
+} from "@j3-bots/client-runtime/presentation";
 import {
   AttachmentId,
   BotId,
@@ -24,6 +29,7 @@ import {
   ServerOrigin,
   type Bot,
   type BotState,
+  type Connector,
   type EngineStatus,
   type Entry,
   type EntryTarget,
@@ -37,11 +43,14 @@ import { freeAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ClockProvider } from "../app/clock";
+import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
+import type { ConnectorsOpening } from "../components/connectors/screen";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
 import { SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleVault } from "./sampleVault";
+import { sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** Cards whose answer is on its way, as it would be to a server. */
@@ -50,6 +59,9 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly drafts: Readonly<Record<string, Draft>>;
   readonly settingsSaves: SettingsSaves;
   readonly settingsOpen: boolean;
+  readonly connectors: ReadonlyArray<Connector>;
+  /** The connectors screen, and what opened it; null while it is closed. */
+  readonly connectorsOpening: ConnectorsOpening | null;
 }
 
 const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
@@ -83,6 +95,10 @@ function withEntries(
     ),
   };
 }
+
+/** Every bot of the roster, hidden ones too. */
+const botsOf = (state: State): ReadonlyArray<Bot> =>
+  state.roster.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
 
 function updateEntry(state: State, entryId: EntryId, update: (entry: Entry) => Entry): State {
   const key = Object.keys(state.entries).find((k) =>
@@ -253,7 +269,49 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
       return { ...s, drafts: { ...s.drafts, [key]: change(s.drafts[key] ?? blankDraft) } };
     });
 
+  const openConnectors = (opening: ConnectorsOpening) =>
+    update((s) => ({ ...s, settingsOpen: false, connectorsOpening: opening }));
+
   return {
+    openConnectors,
+    connectSuggested: (entry) => {
+      const { botId } = entry.author;
+      if (entry.subject._tag === "listing") {
+        openConnectors({
+          at: { _tag: "listing", ref: entry.subject.ref, name: entry.name, glyph: entry.glyph },
+          forBot: botId,
+          suggestion: entry.id,
+        });
+        return;
+      }
+      const { connectorId } = entry.subject;
+      inFlight(
+        entry.id,
+        (e) =>
+          e._tag === "connector-suggestion"
+            ? { ...e, status: { _tag: "connected", connectorId } }
+            : e,
+        () =>
+          update((s) => ({
+            ...s,
+            connectors: s.connectors.map((connector) =>
+              connector.id === connectorId
+                ? { ...connector, grant: withBot(connector.grant, botId, true, botsOf(s)) }
+                : connector,
+            ),
+          })),
+      );
+    },
+    dismissSuggestion: (entryId) =>
+      inFlight(entryId, (e) =>
+        e._tag === "connector-suggestion" ? { ...e, status: { _tag: "dismissed" } } : e,
+      ),
+    signInConnector: (entry) =>
+      openConnectors({
+        at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
+        forBot: entry.author.botId,
+        suggestion: null,
+      }),
     setDraftText: (target, text, mentions) =>
       changeDraft(target, (draft) => ({ ...draft, text, mentions })),
     // Files are "uploaded" at once: the sample has no server to send them to.
@@ -654,6 +712,7 @@ function toData(state: State, vault: VaultView): ShellData {
     routines: (botId) => state.routines[botId] ?? [],
     files: (botId) => state.files[botId] ?? [],
     memory: (botId) => state.memory[botId] ?? [],
+    connectors: state.connectors,
     settings: state.settings,
     settingsSaves: state.settingsSaves,
     settingsOpen: state.settingsOpen,
@@ -677,7 +736,10 @@ function toData(state: State, vault: VaultView): ShellData {
 export function useSampleSource({
   firstRun = false,
   engine,
-}: { firstRun?: boolean; engine?: EngineStatus } = {}): ShellSource {
+}: { firstRun?: boolean; engine?: EngineStatus } = {}): ShellSource & {
+  /** The dialogs the source holds over the shell: the connectors screen. */
+  readonly overlays: ReactNode;
+} {
   const [store] = useState(() => {
     const team: State = {
       ...sampleTeam(SAMPLE_NOW),
@@ -685,6 +747,8 @@ export function useSampleSource({
       drafts: {},
       settingsSaves: { profile: { _tag: "idle" }, notifications: { _tag: "idle" } },
       settingsOpen: false,
+      connectors: sampleConnectors,
+      connectorsOpening: null,
     };
     const started = firstRun ? withoutBots(team) : team;
     return createStore(engine === undefined ? started : { ...started, engine });
@@ -710,7 +774,32 @@ export function useSampleSource({
   const state = useSyncExternalStore(store.subscribe, store.get);
   const vaultView = useSyncExternalStore(vault.view.subscribe, vault.view.get);
   const intents = useMemo(() => sampleIntents(store, vault), [store, vault]);
-  return { data: toData(state, vaultView), intents };
+  const connectorsIntents = useMemo(
+    () =>
+      sampleConnectorsIntents({
+        get: () => store.get().connectors,
+        change: (upsert, remove) =>
+          store.update((s) => ({
+            ...s,
+            connectors: applyConnectorChange(s.connectors, upsert, remove),
+          })),
+      }),
+    [store],
+  );
+  return {
+    data: toData(state, vaultView),
+    intents,
+    overlays: (
+      <ConnectorsDialog
+        opening={state.connectorsOpening}
+        connectors={state.connectors}
+        bots={botsOf(state)}
+        connected
+        intents={connectorsIntents}
+        onClose={() => store.update((s) => ({ ...s, connectorsOpening: null }))}
+      />
+    ),
+  };
 }
 
 /**
@@ -718,10 +807,13 @@ export function useSampleSource({
  * the sample's moment so its times read as they were written.
  */
 export function SampleSourceProvider({ children }: { children: ReactNode }) {
-  const source = useSampleSource();
+  const { overlays, ...source } = useSampleSource();
   return (
     <ClockProvider now={SAMPLE_NOW}>
-      <ShellSourceProvider source={source}>{children}</ShellSourceProvider>
+      <ShellSourceProvider source={source}>
+        {children}
+        {overlays}
+      </ShellSourceProvider>
     </ClockProvider>
   );
 }

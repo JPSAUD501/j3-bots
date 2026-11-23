@@ -10,6 +10,9 @@ import {
   type BotId,
   type BotTemplate,
   Conflict,
+  type Connector,
+  ConnectorGlyph,
+  CuratedKey,
   type EngineStatus,
   EntryId,
   type EntryTarget,
@@ -24,6 +27,7 @@ import {
   PairingCode,
   ProviderId,
   type ProviderStatus,
+  RegistryName,
   type Bot,
   type Room,
   RoomId,
@@ -79,9 +83,16 @@ import {
   mentionOptions,
   type OnboardingStep,
 } from "@j3-bots/client-runtime/presentation";
+import type { SignInRoute } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { BotsProvider, I18nProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
+import {
+  ConnectorAuthCard,
+  ConnectorSuggestionCard,
+} from "../components/connectors/ConnectorCards";
+import { ConnectorsScreen } from "../components/connectors/ConnectorsDialog";
+import type { ConnectorsPlace } from "../components/connectors/screen";
 import { AvatarPicker } from "../components/avatar/AvatarPicker";
 import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
 import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
@@ -120,7 +131,7 @@ import { CredentialRequestCard } from "../components/CredentialRequestCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
-import { EngineSection } from "../components/SettingsDialog";
+import { ConnectorsSection, EngineSection } from "../components/SettingsDialog";
 import type { LocalProviderSetup } from "../components/ProviderSetup";
 import { UsageSection } from "../components/UsageSection";
 import { VaultSection } from "../components/vault/VaultSection";
@@ -139,6 +150,7 @@ import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
+import { connectorsHolder, sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
 import { useSampleSource } from "./sampleSource";
 import { SAMPLE_VAULT_PASSWORD, useSampleVault } from "./sampleVault";
 import { galleryVariants } from "./variants";
@@ -211,6 +223,7 @@ export default function GalleryPage() {
                 <NoticesSection />
                 <ComposerSection />
                 <DetailsSection />
+                <ConnectorsGallerySection />
                 <EditingSection />
                 <TemplatesSection />
                 <RoomsSection />
@@ -907,6 +920,9 @@ const timelineIntents: TimelineIntents = {
   openHandoff: nothing,
   openRoutine: nothing,
   openConversation: nothing,
+  connectSuggested: nothing,
+  dismissSuggestion: nothing,
+  signInConnector: nothing,
   resendMessage: nothing,
   discardMessage: nothing,
   closeWorkFold: nothing,
@@ -1059,6 +1075,21 @@ function CardsSection() {
         label={`Save a login: with no vault password, locked (the password is “${SAMPLE_VAULT_PASSWORD}”), unlocked, saved, dismissed`}
       >
         <LoginCards />
+      </Labeled>
+      <Labeled label="Connector suggestion: a gallery entry, one the operator added, connected, not now; sign in again: pending, signed in, removed">
+        <div className="flex flex-col gap-3">
+          {variants.connectorSuggestions.map((entry) => (
+            <ConnectorSuggestionCard
+              key={entry.id}
+              entry={entry}
+              onConnect={nothing}
+              onDismiss={nothing}
+            />
+          ))}
+          {variants.connectorAuths.map((entry) => (
+            <ConnectorAuthCard key={entry.id} entry={entry} onSignIn={nothing} />
+          ))}
+        </div>
       </Labeled>
       <Labeled label="Credential: pending with a link, provided, declined, expired">
         <div className="flex flex-col gap-3">
@@ -1428,6 +1459,7 @@ const detailsIntents = {
   freshStart: nothing,
   deleteBot: nothing,
   shareTemplate: nothing,
+  openConnectors: nothing,
 };
 
 const roomIntents = {
@@ -1508,6 +1540,7 @@ function DetailsSection() {
             routines={team.routines[scout.id] ?? []}
             memory={team.memory[scout.id] ?? []}
             files={team.files[scout.id] ?? []}
+            connectors={sampleConnectors}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
@@ -1520,6 +1553,7 @@ function DetailsSection() {
             routines={team.routines[atlas.id] ?? []}
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
+            connectors={sampleConnectors}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
@@ -1532,6 +1566,7 @@ function DetailsSection() {
             routines={[]}
             memory={[]}
             files={[]}
+            connectors={sampleConnectors}
             modelName={null}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
@@ -1554,6 +1589,7 @@ function DetailsSection() {
             routines={null}
             memory={null}
             files={null}
+            connectors={null}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
@@ -1829,6 +1865,133 @@ function EditingSection() {
             failure: { _tag: "refused", error: new Conflict({ reason: "private-location" }) },
           }}
         />
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * The connectors screen on one page, in a frame the size of a sheet, over a
+ * server of the sample's that answers and keeps what changes in the frame.
+ */
+function ConnectorsVariant({
+  label,
+  at,
+  route = { _tag: "paste" },
+  connected = true,
+  initial = sampleConnectors,
+}: {
+  label: string;
+  at: ConnectorsPlace;
+  route?: SignInRoute;
+  connected?: boolean;
+  initial?: ReadonlyArray<Connector>;
+}) {
+  const titleId = useId();
+  const [connectors, setConnectors] = useState(initial);
+  const [intents] = useState(() =>
+    sampleConnectorsIntents(connectorsHolder(initial, setConnectors), route),
+  );
+  return (
+    <Frame label={label} width={400} height={720}>
+      <div className="flex h-full flex-col bg-background">
+        <ConnectorsScreen
+          titleId={titleId}
+          opening={{ at, forBot: ids.scout, suggestion: null }}
+          connectors={connectors}
+          bots={Object.values(team.bots)}
+          connected={connected}
+          intents={intents}
+          onClose={nothing}
+        />
+      </div>
+    </Frame>
+  );
+}
+
+const sampleConnectorId = (index: number) => {
+  const connector = sampleConnectors[index];
+  if (connector === undefined) throw new Error(`No sample connector ${index}`);
+  return connector.id;
+};
+
+/** The desktop app's way back from a sign-in, listening on a port of the sample's. */
+const relay: SignInRoute = {
+  _tag: "relay",
+  listen: () => Promise.resolve(51734),
+  onReturn: () => nothing,
+  stop: nothing,
+};
+
+const listingAt = (key: string, name: string, glyph: string | null): ConnectorsPlace => ({
+  _tag: "listing",
+  ref: { _tag: "curated", key: CuratedKey.make(key) },
+  name,
+  glyph: glyph === null ? null : ConnectorGlyph.make(glyph),
+});
+
+/** The sample's connectors with the tool changes waiting on one answered "Not now". */
+const keptReview = sampleConnectors.map((connector) =>
+  connector.review === null
+    ? connector
+    : { ...connector, review: { ...connector.review, kept: true } },
+);
+
+const connectorAt = (index: number, signIn = false): ConnectorsPlace => ({
+  _tag: "connector",
+  connectorId: sampleConnectorId(index),
+  signIn,
+  added: false,
+});
+
+function ConnectorsGallerySection() {
+  return (
+    <Section title="Connectors">
+      <Labeled label="Settings: the connectors, how many work and how many need you">
+        <ConnectorsSection connectors={sampleConnectors} onOpen={nothing} />
+      </Labeled>
+      <div className="flex flex-wrap gap-4">
+        <ConnectorsVariant label="Yours and featured; type to search" at={{ _tag: "home" }} />
+        <ConnectorsVariant label="Offline" at={{ _tag: "home" }} connected={false} />
+        <ConnectorsVariant
+          label="An entry that signs in"
+          at={listingAt("notion", "Notion", "notebook")}
+        />
+        <ConnectorsVariant
+          label="An entry that needs an app you register"
+          at={listingAt("google-calendar", "Google Calendar", "calendar")}
+        />
+        <ConnectorsVariant
+          label="An entry that takes a key"
+          at={listingAt("sentry", "Sentry", null)}
+        />
+        <ConnectorsVariant
+          label="An entry that runs a command"
+          at={{
+            _tag: "listing",
+            ref: { _tag: "registry", name: RegistryName.make("io.example/files") },
+            name: "Local files",
+            glyph: ConnectorGlyph.make("folder"),
+          }}
+        />
+        <ConnectorsVariant label="Connected, for all bots" at={connectorAt(0)} />
+        <ConnectorsVariant
+          label="Signing in again from a browser: paste the address"
+          at={connectorAt(1, true)}
+        />
+        <ConnectorsVariant
+          label="Signing in again from the desktop app"
+          at={connectorAt(1, true)}
+          route={relay}
+        />
+        <ConnectorsVariant label="Can't reach, with tool changes to review" at={connectorAt(2)} />
+        <ConnectorsVariant
+          label="Tool changes answered Not now: held, with no badge"
+          at={connectorAt(2)}
+          initial={keptReview}
+        />
+        <ConnectorsVariant label="Vault locked" at={connectorAt(3)} />
+        <ConnectorsVariant label="Add your own" at={{ _tag: "add-own" }} />
       </div>
     </Section>
   );

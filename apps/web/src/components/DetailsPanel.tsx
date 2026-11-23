@@ -3,6 +3,8 @@ import type {
   Attachment,
   Bot,
   BotFile,
+  Connector,
+  ConnectorId,
   MemoryFile,
   MemoryPath,
   Room,
@@ -37,9 +39,10 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
+import { canStop, connectorsOf, roomStop } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
+import { ConnectorTile, StatusWord } from "./connectors/parts";
 import {
   activityTime,
   fileSize,
@@ -229,6 +232,8 @@ export interface BotDetailsIntents {
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
   readonly shareTemplate: () => void;
+  /** Opens the connectors screen for this bot: on one connector's page, or on all of them. */
+  readonly openConnectors: (connectorId: ConnectorId | null) => void;
 }
 
 interface BotDetailsProps {
@@ -238,6 +243,8 @@ interface BotDetailsProps {
   /** Files the bot delivered, newest first. */
   readonly files: ReadonlyArray<BotFile> | null;
   readonly memory: ReadonlyArray<MemoryFile> | null;
+  /** Every connector the operator added, the bot's among them; null while they load. */
+  readonly connectors: ReadonlyArray<Connector> | null;
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
   readonly intents: BotDetailsIntents;
@@ -257,6 +264,7 @@ export function BotDetails({
   routines,
   files,
   memory,
+  connectors,
   modelName,
   intents,
   stopShortcut,
@@ -371,6 +379,18 @@ export function BotDetails({
         )}
       </DetailsSection>
 
+      <DetailsSection title={t("details.connectors")}>
+        {connectors === null ? (
+          <SkeletonRows count={1} />
+        ) : (
+          <BotConnectors
+            connectors={connectorsOf(connectors, bot.id)}
+            name={name}
+            onOpen={intents.openConnectors}
+          />
+        )}
+      </DetailsSection>
+
       <DetailsSection title={t("details.model")}>
         <dl className="flex flex-col gap-3 text-sm">
           <div className="flex items-start gap-3">
@@ -415,6 +435,46 @@ export function BotDetails({
         <DeleteBot name={name} onDelete={intents.deleteBot} />
       </Apart>
     </PanelFrame>
+  );
+}
+
+/**
+ * The connectors the bot may use, each with its status, opening its page;
+ * then the connectors screen, where the operator connects more for it.
+ */
+function BotConnectors({
+  connectors,
+  name,
+  onOpen,
+}: {
+  connectors: ReadonlyArray<Connector>;
+  name: string;
+  onOpen: (connectorId: ConnectorId | null) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="appear flex flex-col gap-2">
+      {connectors.length === 0 ? (
+        <Quiet>{t("details.noConnectors", { name })}</Quiet>
+      ) : (
+        <ul className="-mx-2 flex flex-col">
+          {connectors.map((connector) => (
+            <li key={connector.id}>
+              <button type="button" className={rowButton} onClick={() => onOpen(connector.id)}>
+                <ConnectorTile name={connector.name} glyph={connector.glyph} />
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm font-medium">{connector.name}</span>
+                  <StatusWord connector={connector} />
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Button size="sm" className="self-start" onClick={() => onOpen(null)}>
+        {t("details.connectors.manage")}
+      </Button>
+    </div>
   );
 }
 

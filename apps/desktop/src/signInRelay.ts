@@ -43,93 +43,95 @@ export const serve = Effect.fn("SignInRelay.serve")(function* ({
   fromApp,
   bringForward,
 }: Options) {
-    const context = yield* Effect.context<never>();
-    const runFork = Effect.runForkWith(context);
-    let current: { readonly server: Server; readonly expiry: Fiber.Fiber<void> } | null = null;
+  const context = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(context);
+  let current: { readonly server: Server; readonly expiry: Fiber.Fiber<void> } | null = null;
 
-    const stop = () => {
-      if (current === null) return;
-      const { server, expiry } = current;
-      current = null;
-      server.close();
-      server.closeAllConnections();
-      runFork(Fiber.interrupt(expiry));
-    };
+  const stop = () => {
+    if (current === null) return;
+    const { server, expiry } = current;
+    current = null;
+    server.close();
+    server.closeAllConnections();
+    runFork(Fiber.interrupt(expiry));
+  };
 
-    /** Opens a listener on a port the system picks, in place of any other. */
-    const start = (language: SignInRelayRequest["language"]) =>
-      Effect.callback<SignInRelayStart>((resume) => {
-        stop();
-        const i18n = createI18n(language);
-        const page = landingPage({
-          language,
-          title: i18n.t("signInReturn.title"),
-          body: i18n.t("signInReturn.body"),
-        });
-        let port = 0;
-        // The browser comes back once: a reload of the page it landed on relays nothing more.
-        let returned = false;
-        const server = createServer((request, response) => {
-          const arrived = arrival(
-            { method: request.method, url: request.url, host: request.headers.host },
-            port,
-          );
-          if (arrived._tag === "refused" || returned) {
-            response.writeHead(arrived._tag === "refused" ? arrived.status : 404, LOOPBACK_HEADERS).end();
-            return;
-          }
-          returned = true;
-          response
-            .writeHead(200, { ...LOOPBACK_HEADERS, "content-type": "text/html; charset=utf-8" })
-            .end(page, () => {
-              if (current?.server === server) stop();
-            });
-          if (window.isDestroyed()) return;
-          window.webContents.send(IPC_CHANNELS.signInReturned, encodeReturn({ url: arrived.url }));
-          bringForward();
-        });
-        server.once("error", () => resume(Effect.succeed({ _tag: "failed" })));
-        server.listen(0, "127.0.0.1", () => {
-          const address = server.address();
-          if (address === null || typeof address === "string") {
-            server.close();
-            resume(Effect.succeed({ _tag: "failed" }));
-            return;
-          }
-          port = address.port;
-          const expiry = runFork(
-            Effect.sleep(WAIT).pipe(
-              Effect.andThen(
-                Effect.sync(() => {
-                  if (current?.server === server) stop();
-                }),
-              ),
-            ),
-          );
-          current = { server, expiry };
-          resume(Effect.succeed({ _tag: "listening", port }));
-        });
+  /** Opens a listener on a port the system picks, in place of any other. */
+  const start = (language: SignInRelayRequest["language"]) =>
+    Effect.callback<SignInRelayStart>((resume) => {
+      stop();
+      const i18n = createI18n(language);
+      const page = landingPage({
+        language,
+        title: i18n.t("signInReturn.title"),
+        body: i18n.t("signInReturn.body"),
       });
+      let port = 0;
+      // The browser comes back once: a reload of the page it landed on relays nothing more.
+      let returned = false;
+      const server = createServer((request, response) => {
+        const arrived = arrival(
+          { method: request.method, url: request.url, host: request.headers.host },
+          port,
+        );
+        if (arrived._tag === "refused" || returned) {
+          response
+            .writeHead(arrived._tag === "refused" ? arrived.status : 404, LOOPBACK_HEADERS)
+            .end();
+          return;
+        }
+        returned = true;
+        response
+          .writeHead(200, { ...LOOPBACK_HEADERS, "content-type": "text/html; charset=utf-8" })
+          .end(page, () => {
+            if (current?.server === server) stop();
+          });
+        if (window.isDestroyed()) return;
+        window.webContents.send(IPC_CHANNELS.signInReturned, encodeReturn({ url: arrived.url }));
+        bringForward();
+      });
+      server.once("error", () => resume(Effect.succeed({ _tag: "failed" })));
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (address === null || typeof address === "string") {
+          server.close();
+          resume(Effect.succeed({ _tag: "failed" }));
+          return;
+        }
+        port = address.port;
+        const expiry = runFork(
+          Effect.sleep(WAIT).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                if (current?.server === server) stop();
+              }),
+            ),
+          ),
+        );
+        current = { server, expiry };
+        resume(Effect.succeed({ _tag: "listening", port }));
+      });
+    });
 
-    yield* Effect.acquireRelease(
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      ipcMain.handle(IPC_CHANNELS.catchSignIn, (event, request: unknown) => {
+        const decoded = decodeRequest(request);
+        if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "failed" };
+        return Effect.runPromiseWith(context)(start(decoded.value.language));
+      });
+      ipcMain.on(IPC_CHANNELS.stopCatchingSignIn, (event) => {
+        if (fromApp(event)) stop();
+      });
+      // A page that replaces the one that asked has nothing waiting for the return.
+      window.webContents.on("did-navigate", stop);
+    }),
+    () =>
       Effect.sync(() => {
-        ipcMain.handle(IPC_CHANNELS.catchSignIn, (event, request: unknown) => {
-          const decoded = decodeRequest(request);
-          if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "failed" };
-          return Effect.runPromiseWith(context)(start(decoded.value.language));
-        });
-        ipcMain.on(IPC_CHANNELS.stopCatchingSignIn, (event) => {
-          if (fromApp(event)) stop();
-        });
-        // A page that replaces the one that asked has nothing waiting for the return.
-        window.webContents.on("did-navigate", stop);
+        ipcMain.removeHandler(IPC_CHANNELS.catchSignIn);
+        ipcMain.removeAllListeners(IPC_CHANNELS.stopCatchingSignIn);
+        if (!window.isDestroyed()) window.webContents.off("did-navigate", stop);
+        stop();
       }),
-      () =>
-        Effect.sync(() => {
-          ipcMain.removeHandler(IPC_CHANNELS.catchSignIn);
-          ipcMain.removeAllListeners(IPC_CHANNELS.stopCatchingSignIn);
-          if (!window.isDestroyed()) window.webContents.off("did-navigate", stop);
-          stop();
-        }),
-    );
+  );
 });
