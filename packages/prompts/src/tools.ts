@@ -284,6 +284,41 @@ const RequestCredentialInput = toolInput({
   note: described(text(1, 500), "One line on what you need the login for."),
 });
 
+const SuggestConnectorInput = toolInput({
+  connector: described(
+    text(1, 100),
+    "The service, by the name your user knows it by, such as Notion, Linear or Google Calendar.",
+  ),
+  reason: described(
+    text(1, 500),
+    "One line, in your user's language, on what you would use it for in this task.",
+  ),
+});
+
+/**
+ * What `suggest_connector` answers, the server and the evals alike. A card
+ * shown answers with {@link SUGGESTION_SHOWN}; every other answer is a
+ * refusal, and no card was shown.
+ */
+export const SUGGESTION_SHOWN =
+  "Your user sees the card in your conversation with them. Tell them in a sentence what you could not do without it, and carry on with what you can; don't explain how to connect it. Nothing wakes you when they connect it or say Not now.";
+
+/** Why `suggest_connector` showed no card, in words the bot reads. */
+export const SUGGESTION_REFUSED = {
+  /** No connector of the operator's, and no entry of J3 Bots' own gallery, goes by that name. */
+  unknown: (service: string) =>
+    `No card was shown: J3 Bots' gallery has no connector for ${service}. Tell your user in a sentence what you could not do; don't explain how they could connect it.`,
+  /** The bot can already use it. */
+  usable: (name: string) =>
+    `No card was shown: you can already use ${name}. Its tools are the ones whose names start with its name; if none is listed, it is not connected right now, and your user sees why on its page.`,
+  /** A card of the bot's for it waits for the operator. */
+  pending: (name: string) =>
+    `No card was shown: your suggestion of ${name} is still in your conversation, waiting for your user. Don't suggest it again.`,
+  /** The operator said Not now to it in this conversation. */
+  declined: (name: string) =>
+    `No card was shown: your user said Not now to ${name} in this conversation, which is final. Don't suggest it again; if they ask for it, they add it from Connectors.`,
+} as const;
+
 /** One `j3` tool: its name, its description as prompt text, and the schema its arguments decode with. */
 export interface ToolDefinition<S extends Schema.Top = Schema.Top> {
   readonly name: string;
@@ -453,6 +488,17 @@ export const tools = {
       "Returns once the card is shown.",
     ],
     RequestCredentialInput,
+  ),
+  suggest_connector: define(
+    "suggest_connector",
+    [
+      "Suggest that your user connect a service you have no connector for, when the task in hand needs it: a card in your conversation with them, with your reason and a Connect button. Only they can connect it; you cannot add one or give yourself one.",
+      "Call it once for that need, then tell them in a sentence what you could not do, and do what you can without it. Don't explain how to set it up, and don't reach the service another way instead, such as signing in to it in a browser.",
+      "A connector's key or token goes in its connect form, never in chat or `request_secret`.",
+      "Their Not now is final in this conversation: don't suggest that service again unless they ask for it. Nothing wakes you when they connect it or say Not now.",
+      "Returns once the card is shown, or says why none was: the gallery has no such connector, you can already use it, or you suggested it here before.",
+    ],
+    SuggestConnectorInput,
   ),
 } as const;
 

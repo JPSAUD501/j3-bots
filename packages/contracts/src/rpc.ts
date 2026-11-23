@@ -261,8 +261,7 @@ export const EntryRpcs = RpcGroup.make(
    * the answer to an `ask` question as the bot would read it is too long for
    * the engine that runs the bot to take in one message. A save-login card
    * takes only a dismissal, which closes it without waking the bot; it is
-   * saved with `vault.save`.
-   * the engine that runs the bot to take in one message. A connector
+   * saved with `vault.save`. A connector
    * suggestion takes only a dismissal, its Not now, which closes it without
    * waking the bot; its Connect is `connector.add` or `connector.setBots`.
    */

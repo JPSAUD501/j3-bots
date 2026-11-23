@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
+import { ConnectorStore } from "../connectors/ConnectorStore.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { SYSTEM_PROMPT_FILE, WORKSPACE_ENTRIES } from "../home/entries.ts";
 import { Layout, type PrivateLocationExposed } from "../Layout.ts";
@@ -37,7 +38,8 @@ const BOT_FOLDERS = [skills, files] as const;
  * prompt, the profile and the pinned memory, which Claude Code appends to its
  * system prompt; `AGENTS.md` holds the profile and pinned memory, which Codex
  * reads from the session's folder. Both are rewritten from the database and
- * the memory files whenever one of their inputs changes, and reach the bot when
+ * the memory files whenever one of their inputs changes (the bot's connectors
+ * among them, whose rules only a bot with one gets), and reach the bot when
  * its session next starts its provider.
  */
 export class Workspaces extends Context.Service<
@@ -70,6 +72,7 @@ export const layer = Layer.effect(
     const settings = yield* SettingsStore;
     const engineState = yield* EngineState;
     const memory = yield* MemoryFiles;
+    const connectors = yield* ConnectorStore;
     const writing = yield* Semaphore.make(1);
 
     const pinnedText = (document: Option.Option<{ readonly text: string }>) =>
@@ -123,6 +126,11 @@ export const layer = Layer.effect(
         },
         runtime: yield* engineState.labels(bot.model),
         pinned: { shared: pinnedText(pinnedShared), bot: pinnedText(pinnedBot) },
+        // Granted, whatever its status: one that needs a sign-in comes back
+        // without a new session, and its rules must already be there.
+        connectors: (yield* connectors.all).some(
+          ({ grant }) => grant._tag === "all-bots" || grant.ids.includes(botId),
+        ),
       };
       const workspace = stored.value.workspacePath;
       yield* writing.withPermits(1)(

@@ -63,6 +63,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
 import { BotStore } from "../bots/BotStore.ts";
+import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Vault } from "../vault/Vault.ts";
@@ -264,6 +265,7 @@ export const layer = Layer.effect(
     const vault = yield* Vault;
     const signIns = yield* ConnectorSignIns;
     const bots = yield* BotStore;
+    const workspaces = yield* Workspaces;
     const entries = yield* Entries;
     const receipts = yield* CommandReceipts;
     const random = yield* SecureRandom.SecureRandom;
@@ -315,6 +317,14 @@ export const layer = Layer.effect(
 
     const toolsTouched = Effect.fn("Connectors.toolsTouched")(function* (ids: Iterable<BotId>) {
       for (const id of new Set(ids)) yield* PubSub.publish(toolChanges, id);
+    });
+
+    /**
+     * Rewrites the instructions of bots that gained or lost a connector:
+     * only a bot with one gets the connector rules.
+     */
+    const grantsChanged = Effect.fn("Connectors.grantsChanged")(function* (ids: Iterable<BotId>) {
+      for (const id of new Set(ids)) yield* workspaces.render(id);
     });
 
     const offeredNow = Effect.fn("Connectors.offeredNow")(function* (id: ConnectorId) {
@@ -919,6 +929,7 @@ export const layer = Layer.effect(
           );
       }
       yield* closeSuggestion(input.suggestion, connector);
+      yield* grantsChanged(yield* botsOf(connector));
       yield* toolsTouched(yield* botsOf(connector));
       yield* touch(input.id);
       return yield* render(connector);
@@ -1000,6 +1011,7 @@ export const layer = Layer.effect(
       // Safe to repeat: a retry after a lost reply finishes what the first left.
       yield* forget(input.connectorId);
       yield* PubSub.publish(changes, changeOf("remove", input.connectorId));
+      yield* grantsChanged(losing);
       yield* toolsTouched(losing);
     });
 
@@ -1023,10 +1035,12 @@ export const layer = Layer.effect(
       for (const lost of before.filter((id) => !after.includes(id))) {
         yield* closeSessions(input.connectorId, lost);
       }
-      yield* toolsTouched([
+      const changed = [
         ...before.filter((id) => !after.includes(id)),
         ...after.filter((id) => !before.includes(id)),
-      ]);
+      ];
+      yield* grantsChanged(changed);
+      yield* toolsTouched(changed);
       yield* touch(input.connectorId);
       return yield* render(connector);
     });

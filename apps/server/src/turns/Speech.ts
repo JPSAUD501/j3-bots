@@ -3,7 +3,10 @@ import {
   type Attachment,
   BotId,
   Conflict,
+  type ConnectorGlyph,
+  type ConnectorSuggestionEntry,
   type EntryTarget,
+  type ListingRef,
   MAX_ATTACHMENT_SIZE,
   type MessageEntry,
   RoomId,
@@ -16,7 +19,11 @@ import {
   toolInputDigest,
   ToolInputDigest,
 } from "@j3-bots/engine-t3";
-import type { ToolInput } from "@j3-bots/prompts";
+import {
+  SUGGESTION_REFUSED,
+  SUGGESTION_SHOWN,
+  type ToolInput,
+} from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -29,6 +36,8 @@ import { Attachments, isStorable } from "../attachments/Attachments.ts";
 import { workspaceReader } from "../attachments/workspaceFile.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
+import { ConnectorStore } from "../connectors/ConnectorStore.ts";
+import { ConnectorSources } from "../connectors/sources/Sources.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
@@ -151,6 +160,39 @@ const answer = (result: Schema.Json) =>
     onSome: ({ reason }) => Effect.fail(new TurnToolRefused({ reason })),
   });
 
+/** Text folded for matching a service's name: lower case, without accents or surrounding spaces. */
+const fold = (value: string) =>
+  value.trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+const sameListing = (a: ListingRef, b: ListingRef) =>
+  a._tag === "curated"
+    ? b._tag === "curated" && a.key === b.key
+    : b._tag === "registry" && a.name === b.name;
+
+/** What a connector suggestion offers, and the gallery entry it is, if any. */
+interface Suggested {
+  readonly subject: ConnectorSuggestionEntry["subject"];
+  readonly name: string;
+  readonly glyph: ConnectorGlyph | null;
+  readonly listing: ListingRef | null;
+}
+
+/**
+ * Whether an earlier suggestion card offered the same service: the same
+ * connector, the same gallery entry, or the same name, so a connector the
+ * operator added from an entry, or removed again, is the entry it came from.
+ */
+const sameService = (card: ConnectorSuggestionEntry, suggested: Suggested) => {
+  if (fold(card.name) === fold(suggested.name)) return true;
+  if (card.subject._tag === "connector") {
+    return (
+      suggested.subject._tag === "connector" &&
+      card.subject.connectorId === suggested.subject.connectorId
+    );
+  }
+  return suggested.listing !== null && sameListing(card.subject.ref, suggested.listing);
+};
+
 /** A request as its stored result is looked up: under its id, for its caller and its tool. */
 const RequestKey = Schema.Struct({
   requestId: Schema.String,
@@ -174,7 +216,8 @@ type PinnedTool =
   | "message_bot"
   | "set_routine"
   | "set_operator_name"
-  | "request_credential";
+  | "request_credential"
+  | "suggest_connector";
 
 /** A request matched to its call, or one a forward of it already committed. */
 type Matched =
@@ -216,6 +259,8 @@ export const layer = Layer.effect(
     const routing = yield* RoomRouting;
     const settings = yield* SettingsStore;
     const settingsService = yield* SettingsService;
+    const connectorStore = yield* ConnectorStore;
+    const gallery = yield* ConnectorSources;
     const wakes = yield* Wakes;
     const ids = yield* Ids;
     const stops = stopTargets(sql);
@@ -1131,6 +1176,93 @@ export const layer = Layer.effect(
       );
     });
 
+    /**
+     * `suggest_connector` (`docs/architecture/server.md`, Connectors): a
+     * connector card in the bot's own conversation, whatever audience the
+     * turn speaks for, as a save-login card is. The bot names a service; it
+     * is one of the operator's connectors the bot may not use yet, else an
+     * entry of J3 Bots' curated gallery. No card is shown for a service the
+     * bot can use already, nor for one a card of the bot's there still offers
+     * or the operator said Not now to: that is final in this conversation.
+     * The checks run in the transaction that writes the card, so two calls at
+     * once show one card, and a refusal is stored, so a forward retried gives
+     * it again.
+     */
+    const suggestConnector = Effect.fn("Speech.suggestConnector")(function* (
+      found: Pin,
+      input: ToolInput<"suggest_connector">,
+    ) {
+      return yield* once(
+        "suggest_connector",
+        found,
+      )(
+        Effect.gen(function* () {
+          const refused = (reason: string) =>
+            ({ _tag: "refused", reason }) satisfies Schema.Json;
+          // The card keeps a gallery entry's name as the service gives it,
+          // which no shipped entry words apart from its English one.
+          const listing = gallery.find(input.connector, "en");
+          const wanted = fold(input.connector);
+          const own = (yield* connectorStore.all).find(
+            (connector) =>
+              fold(connector.name) === wanted ||
+              connector.slug === wanted ||
+              (Option.isSome(listing) &&
+                connector.listing !== null &&
+                sameListing(connector.listing, listing.value.ref)),
+          );
+          const suggested: Suggested | null =
+            own !== undefined
+              ? {
+                  subject: { _tag: "connector", connectorId: own.id },
+                  name: own.name,
+                  glyph: own.glyph,
+                  listing: own.listing,
+                }
+              : Option.match(listing, {
+                  onNone: () => null,
+                  onSome: (entry) => ({
+                    subject: { _tag: "listing", ref: entry.ref },
+                    name: entry.name,
+                    glyph: entry.glyph,
+                    listing: entry.ref,
+                  }),
+                });
+          if (suggested === null) return refused(SUGGESTION_REFUSED.unknown(input.connector));
+          const { name } = suggested;
+          if (
+            own !== undefined &&
+            (own.grant._tag === "all-bots" || own.grant.ids.includes(found.botId))
+          ) {
+            return refused(SUGGESTION_REFUSED.usable(name));
+          }
+          const target = yield* requireTarget(found.botId, conversation);
+          const earlier = (yield* entries.ofKind(target, "connector-suggestion")).filter((card) =>
+            sameService(card, suggested),
+          );
+          if (earlier.some((card) => card.status._tag === "dismissed")) {
+            return refused(SUGGESTION_REFUSED.declined(name));
+          }
+          if (earlier.some((card) => card.status._tag === "pending")) {
+            return refused(SUGGESTION_REFUSED.pending(name));
+          }
+          yield* entries.append({
+            target,
+            entry: {
+              _tag: "connector-suggestion",
+              author: { _tag: "bot", botId: found.botId },
+              subject: suggested.subject,
+              name,
+              glyph: suggested.glyph,
+              reason: input.reason,
+              status: { _tag: "pending" },
+            },
+          });
+          return { status: "shown", note: SUGGESTION_SHOWN } satisfies Schema.Json;
+        }),
+      );
+    });
+
     const encodeValues = Schema.encodeEffect(
       json(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
     );
@@ -1162,6 +1294,8 @@ export const layer = Layer.effect(
           return yield* setOperatorName(found, call.input);
         case "request_credential":
           return yield* requestCredential(found, call.input);
+        case "suggest_connector":
+          return yield* suggestConnector(found, call.input);
       }
     });
 

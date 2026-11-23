@@ -6,6 +6,7 @@ import {
   type Credential,
   type CredentialDraft,
   type CredentialId,
+  type ConnectorSuggestionEntry,
   type CredentialRequestEntry,
   type Entry,
   EntryId,
@@ -346,6 +347,21 @@ export const layer = Layer.effect(
       yield* entries.update({ ...card, status: { _tag: "dismissed" } });
     });
 
+    /**
+     * A connector suggestion takes only a dismissal through `card.answer`, its
+     * Not now: final for that connector in the bot's conversation, where the
+     * bot's next suggestion of it is refused. Its Connect is `connector.add`
+     * or `connector.setBots`. Neither wakes the bot.
+     */
+    const dismissSuggestion = Effect.fn("Cards.dismissSuggestion")(function* (
+      card: ConnectorSuggestionEntry,
+      answer: CardAnswer,
+    ) {
+      if (card.status._tag !== "pending") return yield* new Conflict({ reason: "card-closed" });
+      if (answer._tag !== "dismiss") return yield* new Invalid({ reason: "answer" });
+      yield* entries.update({ ...card, status: { _tag: "dismissed" } });
+    });
+
     const saveCredential = Effect.fn("Cards.saveCredential")(function* (input: {
       readonly id: CredentialId;
       readonly draft: CredentialDraft;
@@ -398,6 +414,9 @@ export const layer = Layer.effect(
             return yield* answerAsk(card, input.answer);
           }
           if (card._tag === "credential-request") return yield* dismissLogin(card, input.answer);
+          if (card._tag === "connector-suggestion") {
+            return yield* dismissSuggestion(card, input.answer);
+          }
           return yield* answerRequest(input.entryId, input.commandId, input.answer);
         }),
       });

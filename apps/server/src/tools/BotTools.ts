@@ -115,6 +115,9 @@ export const layer = Layer.effect(
       request_credential: handler(tools.request_credential.input, (input, call) =>
         admit({ tool: "request_credential", input, ...call }),
       ),
+      suggest_connector: handler(tools.suggest_connector.input, (input, call) =>
+        admit({ tool: "suggest_connector", input, ...call }),
+      ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory
           .remember({

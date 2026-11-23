@@ -292,6 +292,21 @@ export const curatedMatches = (list: CuratedList, entry: CuratedEntry, query: st
 export const curatedEntry = (list: CuratedList, key: string) =>
   list.connectors.find((entry) => entry.id === key);
 
+/**
+ * The entry a bot means by `service`: the one whose key or name, in any
+ * language, is it, else the first that matches it as a search does.
+ */
+export const curatedFind = (list: CuratedList, service: string): CuratedEntry | undefined => {
+  const wanted = fold(service.trim());
+  if (wanted === "") return undefined;
+  const named = list.connectors.find(
+    (entry) =>
+      entry.id === wanted ||
+      LANGUAGES.some((language) => fold(nameOf(entry, language)) === wanted),
+  );
+  return named ?? list.connectors.find((entry) => curatedMatches(list, entry, service));
+};
+
 /** Whether a registry entry is one the list already has: by its name, or by its address. */
 export const curatedCovers = (list: CuratedList, name: string, urls: ReadonlyArray<string>) =>
   list.connectors.some((entry) => entry.registryName === name || urls.includes(entry.remote.url));

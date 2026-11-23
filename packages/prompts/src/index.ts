@@ -8,7 +8,9 @@
  * - {@link tools} and {@link toolList}: the `j3` MCP tools, their descriptions
  *   and the schemas their arguments decode with, within
  *   {@link MAX_TOOL_INPUT_BYTES}; {@link NO_TURN_REFUSAL}: what a call that
- *   matches no running turn, such as a subagent's, reads.
+ *   matches no running turn, such as a subagent's, reads;
+ *   {@link SUGGESTION_SHOWN} and {@link SUGGESTION_REFUSED}: what a connector
+ *   suggestion answers.
  * - {@link sharedSkills}: the skills J3 Bots ships, which the server installs
  *   for every bot.
  * - {@link renderConnectorResult}: what a bot reads back from a connector's
@@ -58,6 +60,8 @@ export {
   isConnectorTool,
   type McpTool,
   NO_TURN_REFUSAL,
+  SUGGESTION_REFUSED,
+  SUGGESTION_SHOWN,
   type ToolDefinition,
   type ToolInput,
   type ToolName,

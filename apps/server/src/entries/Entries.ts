@@ -138,6 +138,11 @@ export class Entries extends Context.Service<
     >;
     /** The latest `limit` entries of a target, oldest first. */
     readonly latest: (target: EntryTarget, limit: number) => Effect.Effect<ReadonlyArray<Entry>>;
+    /** Every entry of one kind in a target, oldest first. */
+    readonly ofKind: <K extends Entry["_tag"]>(
+      target: EntryTarget,
+      kind: K,
+    ) => Effect.Effect<ReadonlyArray<Extract<Entry, { readonly _tag: K }>>>;
     /** Moves the operator's read mark forward to `through`. */
     readonly markRead: (target: EntryTarget, through: EntryOrder) => Effect.Effect<void, NotFound>;
     /**
@@ -491,12 +496,27 @@ export const layer = Layer.effect(
     const latest = (target: EntryTarget, limit: number) =>
       Effect.map(newest(target, null, limit), (page) => page.entries);
 
+    const ofKind = <K extends Entry["_tag"]>(target: EntryTarget, kind: K) =>
+      Effect.gen(function* () {
+        const rows = yield* sql`
+          SELECT ${sql.literal(ENTRY_COLUMNS)} FROM entries
+          WHERE ${targetColumn(target)} AND kind = ${kind}
+          ORDER BY position
+        `;
+        const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(EntryRow))(rows);
+        const found = yield* Effect.forEach(decoded, toEntry);
+        return found.filter((entry): entry is Extract<Entry, { readonly _tag: K }> =>
+          entry._tag === kind,
+        );
+      }).pipe(Effect.orDie, Effect.withSpan("Entries.ofKind"));
+
     return Entries.of({
       append,
       update,
       find: findRow,
       history,
       latest,
+      ofKind,
       markRead,
       markUnread,
       summary,

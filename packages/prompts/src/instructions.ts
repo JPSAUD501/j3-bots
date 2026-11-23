@@ -8,10 +8,13 @@ import { defuseTags } from "./text.ts";
  * `docs/prompts/architecture.md#layers` (base prompt, profile, pinned memory).
  *
  * The text lives in `templates/`: `base.md` is the base prompt every bot shares,
- * `bot.md` is the profile and pinned memory of one bot. `{{name}}` marks a value
- * filled at render time. The base prompt's only placeholder is `{{user.name}}`,
- * the same for every bot of an installation, because on Codex it is set once
- * per provider instance and shared by all bots.
+ * `bot.md` is the profile and pinned memory of one bot, and `connectors.md`
+ * the rules for a bot that can use a connector, which go in that bot's
+ * profile layer. `{{name}}` marks a value filled at render time. The base
+ * prompt's only placeholder is `{{user.name}}`, the same for every bot of an
+ * installation, because on Codex it is set once per provider instance and
+ * shared by all bots: so whatever differs between bots, the connector rules
+ * included, lives in the profile layer.
  */
 
 const readTemplate = (name: string): string =>
@@ -21,6 +24,8 @@ const readTemplate = (name: string): string =>
 export const BASE_TEMPLATE = readTemplate("base.md");
 /** The profile and pinned memory template, as edited. */
 export const BOT_TEMPLATE = readTemplate("bot.md");
+/** The rules for a bot that can use a connector, as edited. */
+export const CONNECTORS_TEMPLATE = readTemplate("connectors.md");
 
 /** Placed between the base prompt and the profile when both share one file. */
 const LAYER_SEPARATOR = "\n---\n\n";
@@ -37,6 +42,7 @@ export const PLACEHOLDERS = {
     "bot.title",
     "bot.is_primary",
     "bot.job",
+    "bot.connectors",
     "model.label",
     "harness.label",
     "shared.pinned",
@@ -91,6 +97,11 @@ export interface BotInstructionsInput {
   readonly runtime: { readonly model: string; readonly harness: string };
   /** The pinned memory files, as Markdown. Empty when there is nothing pinned. */
   readonly pinned: { readonly shared: string; readonly bot: string };
+  /**
+   * Whether the operator gave the bot a connector, connected or not: its
+   * rules are rendered only then.
+   */
+  readonly connectors: boolean;
 }
 
 const orElse = (value: string, fallback: string): string =>
@@ -115,6 +126,8 @@ export const renderBotInstructions = (input: BotInstructionsInput): string =>
     "bot.title": orElse(input.profile.title, "none"),
     "bot.is_primary": input.profile.primary ? "yes" : "no",
     "bot.job": orElse(input.profile.job, "Not set yet."),
+    // Its own section between the job and pinned memory, or nothing.
+    "bot.connectors": input.connectors ? `\n${CONNECTORS_TEMPLATE}` : "",
     "model.label": input.runtime.model,
     "harness.label": input.runtime.harness,
     "shared.pinned": orElse(input.pinned.shared, "Nothing yet."),

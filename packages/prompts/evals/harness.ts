@@ -20,6 +20,12 @@ import {
   tools,
   type Wake,
 } from "../src/index.ts";
+import {
+  ConnectorCards,
+  connectorAnswer,
+  type ConnectorStage,
+  connectorTools,
+} from "./connectors.ts";
 import type { FixtureEvent, ProgramEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
 import { localInstant, nextScheduled, plannedRun, type Trigger } from "./schedule.ts";
@@ -35,6 +41,8 @@ import type { Workspace } from "./shell.ts";
  * reading of them is not what is measured); `run_command`, a stand-in shell
  * whose workspace and programs the scenario fixes (`shell.ts`, `fixtures.ts`);
  * and `request_secret`, which the engine offers every bot ({@link SECRET_TOOL}).
+ * A scenario may also give the bot connectors (`connectors.ts`), whose tools
+ * it then gets beside its own, and whose rules its instructions then hold.
  *
  * Every case runs with the skills and without them. Nothing links them into a
  * harness yet, and a session that never reads one still has to behave, so a
@@ -66,22 +74,34 @@ const operatorOf = (unnamed: boolean) =>
  * A fictional operator and bot. An operator who has not said what to call
  * them has no shared facts either: nobody has got to know them yet.
  */
-const bot = (model: string, setup: BotSetup, unnamed: boolean): BotInstructionsInput => {
+const bot = (
+  model: string,
+  setup: BotSetup,
+  unnamed: boolean,
+  connectors: boolean,
+): BotInstructionsInput => {
   const operator = operatorOf(unnamed);
   return {
     operator: { name: operator.name, timeZone: "Europe/Lisbon" },
     profile: { name: "Juniper", title: setup.title, job: setup.job, primary: false },
     runtime: { model, harness: model.startsWith("gpt") ? "Codex" : "Claude Code" },
     pinned: { shared: operator.shared, bot: setup.pinned },
+    connectors,
   };
 };
 
 /** Whether a turn has the shipped skills as already read. */
 export type Skills = "with the skill" | "without the skill";
 
-const systemPrompt = (model: string, skills: Skills, setup: BotSetup, unnamed: boolean): string =>
+const systemPrompt = (
+  model: string,
+  skills: Skills,
+  setup: BotSetup,
+  unnamed: boolean,
+  connectors: boolean,
+): string =>
   [
-    renderSystemFile(bot(model, setup, unnamed)),
+    renderSystemFile(bot(model, setup, unnamed, connectors)),
     ...(skills === "with the skill" ? sharedSkills : []).map(
       (skill) => `# You read the skill skills/${skill.name}/SKILL.md\n\n${skill.text}`,
     ),
@@ -224,18 +244,21 @@ const engineAnswer = (engine: EngineInstance, name: string): Schema.Json | undef
 const GH_SIGNED_IN = "The GitHub CLI, gh, is signed in.";
 
 /**
- * The `j3` tools, a `run_command` that names what the workspace has, and the
- * engine's own tools when the scenario gives its instance.
+ * The `j3` tools, with the connector tools the scenario gives, a
+ * `run_command` that names what the workspace has, and the engine's own tools
+ * when the scenario gives its instance.
  */
 const functionTools = (
   commands: ReadonlyArray<string>,
   shell: string,
   engine: EngineInstance | undefined,
+  connectors: ConnectorStage,
 ): ReadonlyArray<FunctionTool> => [
   ...toolList.map((tool): FunctionTool => ({
     type: "function",
     function: { name: tool.name, description: tool.description, parameters: tool.inputSchema },
   })),
+  ...connectorTools(connectors),
   {
     type: "function",
     function: {
@@ -372,7 +395,11 @@ export interface Scenario {
   readonly pastedSecretFails?: boolean;
   /** The engine instance whose own tools the bot gets; none offers them. */
   readonly engine?: EngineInstance;
+  /** The operator's connectors and connector cards; none by default. */
+  readonly connectors?: ConnectorStage;
 }
+
+const NO_CONNECTORS: ConnectorStage = { connected: [] };
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
 const MAX_STEPS = 12;
@@ -655,6 +682,7 @@ type Answer = Pick<Call, "output" | "events" | "refused">;
 /** What the server would answer, as far as these scenarios need, and what a command did. */
 const answer = (
   routines: HeldRoutines,
+  cards: ConnectorCards,
   workspace: Workspace<ProgramEvent>,
   scenario: Scenario,
   request: Request,
@@ -693,6 +721,8 @@ const answer = (
         ? reply(json({ name: named.value.name }))
         : reply(json({ error: "`name` must be 1 to 200 characters once trimmed." }));
     }
+    case "suggest_connector":
+      return reply(cards.suggest(request.input));
     case "recall":
       return reply(json({ facts: [] }));
     case "remember":
@@ -742,6 +772,12 @@ const answer = (
         : reply(json({ error: "`command` must be a string." }));
     }
     default: {
+      const connector = connectorAnswer(
+        scenario.connectors ?? NO_CONNECTORS,
+        request.name,
+        request.input,
+      );
+      if (connector !== undefined) return reply(connector);
       const engine =
         scenario.engine === undefined ? undefined : engineAnswer(scenario.engine, request.name);
       return reply(json(engine ?? { error: `${request.name} is not available here.` }));
@@ -792,15 +828,24 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const envelope = yield* renderWake(scenario.wake);
     const workspace = scenario.workspace();
     const routines = new HeldRoutines(scenario.wake);
+    const connectors = scenario.connectors ?? NO_CONNECTORS;
+    const cards = new ConnectorCards(connectors);
     const tools = functionTools(
       workspace.commands,
       scenario.shell ?? GH_SIGNED_IN,
       scenario.engine,
+      connectors,
     );
     const messages: Array<Message> = [
       {
         role: "system",
-        content: systemPrompt(model, skills, scenario.bot ?? JUNIPER, scenario.unnamed === true),
+        content: systemPrompt(
+          model,
+          skills,
+          scenario.bot ?? JUNIPER,
+          scenario.unnamed === true,
+          connectors.connected.length > 0,
+        ),
       },
       ...earlierMessages(
         yield* Effect.forEach(scenario.history ?? [], ({ wake, calls }) =>
@@ -836,7 +881,10 @@ export const runTurn = Effect.fn("evals.runTurn")(
           toolCall.function.name,
           parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
         );
-        const call: Call = { ...request, ...answer(routines, workspace, scenario, request) };
+        const call: Call = {
+          ...request,
+          ...answer(routines, cards, workspace, scenario, request),
+        };
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });
       }
