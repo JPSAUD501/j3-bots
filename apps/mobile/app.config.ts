@@ -91,10 +91,41 @@ const fromEnvironment = (value: string | undefined) => (value === "" ? undefined
 const pushProjectId = fromEnvironment(process.env.EAS_PROJECT_ID);
 const googleServicesFile = fromEnvironment(process.env.GOOGLE_SERVICES_JSON);
 
+/**
+ * Where the app takes its own update from (src/update/feed.ts). The release
+ * build reads the project's releases and trusts only the release key it
+ * carries. A preview or development build updates itself only when it is
+ * built for a release server of its own, with that server's public key: the
+ * device checks of the update do so. The release build refuses both, so no
+ * build that installs as J3 Bots trusts another key.
+ */
+const testFeed = fromEnvironment(process.env.J3_APP_UPDATE_FEED);
+const testKey = fromEnvironment(process.env.J3_APP_UPDATE_KEY);
+
+const appUpdateOf = (variantName: keyof typeof VARIANTS) => {
+  if (variantName === "production") {
+    if (testFeed !== undefined || testKey !== undefined)
+      throw new Error(
+        "J3_APP_UPDATE_FEED and J3_APP_UPDATE_KEY are for preview and development builds only.",
+      );
+    return { _tag: "release" } as const;
+  }
+  if (testFeed === undefined && testKey === undefined) return undefined;
+  if (testFeed === undefined || testKey === undefined)
+    throw new Error("J3_APP_UPDATE_FEED and J3_APP_UPDATE_KEY go together.");
+  return { _tag: "test", feed: testFeed, key: testKey } as const;
+};
+
 export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
   const variantName = variantOf(process.env.APP_VARIANT);
   const variant = VARIANTS[variantName];
   const icon = iconIn(projectRoot);
+  const appUpdate = appUpdateOf(variantName);
+  const extra = {
+    ...config.extra,
+    ...(pushProjectId === undefined ? {} : { eas: { projectId: pushProjectId } }),
+    ...(appUpdate === undefined ? {} : { appUpdate }),
+  };
   return {
     ...config,
     name: variant.name,
@@ -158,9 +189,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
         "android.permission.RECEIVE_BOOT_COMPLETED",
       ],
     },
-    ...(pushProjectId === undefined
-      ? {}
-      : { extra: { ...config.extra, eas: { projectId: pushProjectId } } }),
+    extra,
     // No over-the-air updates: a build runs the JavaScript it was built with.
     updates: { enabled: false },
     plugins: [
