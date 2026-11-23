@@ -169,7 +169,10 @@ const isLink = Effect.fn("signIn.isLink")(function* (target: string) {
  * stays private, and never through a symbolic link, which could make the
  * sign-in act on what it points to, such as the operator's own. A sign-in in
  * a new folder (`signIn`) does not open the credential file in the home, so
- * only one signing in in place checks it.
+ * only one signing in in place checks it. The harness's home must be private
+ * too, as the data directory is: one opened to others since, by its mode or
+ * its access list, gets no sign-in written in it. On Windows an inheritable
+ * grant on a folder it is in reaches it, so its own list shows that too.
  */
 export const prepareHome = Effect.fn("signIn.prepareHome")(function* (
   harness: Harness,
@@ -200,6 +203,16 @@ export const prepareHome = Effect.fn("signIn.prepareHome")(function* (
   yield* fs
     .makeDirectory(home, { recursive: true, mode: 0o700 })
     .pipe(Effect.mapError((error) => failed("home-refused", error.message)));
+  yield* Home.checkPrivate(home).pipe(
+    Effect.mapError((error) =>
+      failed(
+        "home-refused",
+        error.reason === "open-to-others"
+          ? `Other users on this machine can open ${error.home}, where ${facts.name}'s sign-in is kept. ${error.fix}`
+          : error.message,
+      ),
+    ),
+  );
   return home;
 });
 

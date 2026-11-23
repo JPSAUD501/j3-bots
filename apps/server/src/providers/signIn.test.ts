@@ -21,9 +21,10 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { ServerConfig } from "../config.ts";
 import { HARNESSES } from "../engine/harnesses.ts";
+import { openToOthers } from "../home/testPrivacy.ts";
 import * as Host from "../system/Host.ts";
 import { configFor } from "../testing/database.ts";
-import { invocation, pageIn, signIn, signInCommand } from "./signIn.ts";
+import { invocation, pageIn, prepareHome, signIn, signInCommand } from "./signIn.ts";
 import * as SignIns from "./SignIns.ts";
 
 /** What a stand-in harness prints and writes as its sign-in's secret, which must go nowhere else. */
@@ -112,6 +113,22 @@ it("runs a Windows .cmd shim through cmd.exe, every word quoted, and refuses wha
   }
   // Elsewhere a `.cmd` is a file like another.
   assert.isFalse(invocation("/opt/codex.cmd", ["login"], "linux").pipe(Result.getOrThrow).shell);
+});
+
+it.layer(NodeServices.layer, { excludeTestServices: true })("a harness's home", (it) => {
+  it.effect("gets no sign-in once others can open it, by its mode or its access list", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dataHome = yield* fs.makeTempDirectoryScoped();
+      yield* fs.chmod(dataHome, 0o700);
+      const home = yield* prepareHome("codex", dataHome);
+
+      yield* openToOthers(home);
+      const refused = yield* prepareHome("codex", dataHome).pipe(Effect.flip);
+      assert.strictEqual(refused.reason, "home-refused");
+      assert.include(refused.message, home);
+    }).pipe(Effect.scoped),
+  );
 });
 
 // A real cmd.exe, which only Windows has.
