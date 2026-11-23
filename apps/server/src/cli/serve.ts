@@ -7,6 +7,7 @@ import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import { CliError, Command, Flag } from "effect/cli";
 import * as ServerStop from "../ServerStop.ts";
+import { portStateOf } from "../system/Ports.ts";
 import * as Stdin from "../system/Stdin.ts";
 import { refuse } from "./errors.ts";
 
@@ -23,6 +24,7 @@ const START_REFUSED = 78;
 const REFUSALS: ReadonlySet<string> = new Set([
   "ConfigRefused",
   "ConfigFileInvalid",
+  "ConfigFileUnreadable",
   "HomeNotPrivate",
   "HomeNotWritable",
   "HomeBlocked",
@@ -31,14 +33,21 @@ const REFUSALS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether `error` refuses the start: one of `REFUSALS`, or a database a newer
- * release migrated (the migrator's `BadState`).
+ * Whether `error` refuses the start: one of `REFUSALS`; a database a newer
+ * release migrated (the migrator's `BadState`); or a port the configuration
+ * names that another program holds, that is not this machine's, or that this
+ * user may not listen on (`Ports.ListenFailed`), none of which a start with
+ * nothing changed would clear. A listen that failed otherwise may pass.
  */
 const isRefusal = (error: { readonly _tag: string }) =>
   REFUSALS.has(error._tag) ||
   (error._tag === "MigrationError" &&
     Predicate.hasProperty(error, "kind") &&
-    error.kind === "BadState");
+    error.kind === "BadState") ||
+  (error._tag === "ListenFailed" &&
+    Predicate.hasProperty(error, "code") &&
+    typeof error.code === "string" &&
+    portStateOf(error.code)._tag !== "failed");
 
 /** A start the server refused, shown as its own message and ended with `START_REFUSED`. */
 class StartRefused extends Schema.TaggedError<StartRefused>()("StartRefused", {

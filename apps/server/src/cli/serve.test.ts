@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- The server is started as the desktop app starts it, with node:child_process, a pipe at fd 3 and stdin as its lifeline; node:fs opens a FIFO to hand it instead.
+// @effect-diagnostics nodeBuiltinImport:off -- The server is started as the desktop app starts it, with node:child_process, a pipe at fd 3 and stdin as its lifeline; node:fs opens a FIFO to hand it instead; node:net holds a port another program has, which node:http then fails to listen on.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFs from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -18,6 +19,7 @@ import * as AdminClient from "../admin/AdminClient.ts";
 import * as Socket from "../admin/socket.ts";
 import * as Home from "../home/Home.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
+import * as Ports from "../system/Ports.ts";
 import { startFailure } from "./serve.ts";
 
 const SERVER = `${import.meta.dirname}/../bin.ts`;
@@ -275,6 +277,45 @@ describe("how a failed start ends", () => {
       new Migrator.MigrationError({ kind: "BadState", message: "newer" }),
     );
     assert.strictEqual(failure[Runtime.errorExitCode], 78);
+  });
+
+  it.effect("ends a start whose port another program holds as refused, naming the port", () =>
+    Effect.gen(function* () {
+      const held = yield* Effect.acquireRelease(
+        Effect.callback<NodeNet.Server>((resume) => {
+          const server = NodeNet.createServer();
+          server.listen({ host: "127.0.0.1", port: 0 }, () => resume(Effect.succeed(server)));
+        }),
+        (server) =>
+          Effect.callback<void>((resume) => {
+            server.close(() => resume(Effect.void));
+          }),
+      );
+      const address = held.address();
+      const port = address !== null && typeof address === "object" ? address.port : 0;
+      const listenFailed = yield* Effect.flip(
+        Layer.build(
+          Ports.listen(
+            () => NodeHttp.createServer(),
+            { host: "127.0.0.1", port },
+            { label: "the server", setting: "port", host: "127.0.0.1", port },
+            "/data/home/config.json",
+          ),
+        ),
+      );
+      const failure = startFailure(listenFailed);
+      assert.strictEqual(failure[Runtime.errorExitCode], 78);
+      assert.include(
+        failure[CliError.userMessage],
+        `Port ${port}, for the server, is in use by another program.`,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it("ends a listen that failed for another reason as one the app may start again after", () => {
+    const tooManyFiles = { _tag: "ListenFailed", code: "EMFILE", message: "EMFILE" };
+    const failure = startFailure(tooManyFiles);
+    assert.notStrictEqual(failure[Runtime.errorExitCode], 78);
   });
 
   it("ends any other failure as one the app may start again after", () => {
