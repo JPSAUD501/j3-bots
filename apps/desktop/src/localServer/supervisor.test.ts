@@ -37,6 +37,7 @@ const fakeServer = (
     version: "0.3.0",
     pid: options.statusPid ?? pid,
     listener: { port: 3747 },
+    engine: { state: { _tag: "ready" } },
   };
   const whenAsked = options.whenAsked ?? "stops";
   const admin: AdminChannel = {

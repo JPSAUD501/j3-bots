@@ -32,7 +32,9 @@ const localLine = (local: LocalServerState, i18n: I18n): string | null => {
     case "ready":
       return null;
     case "starting":
-      return i18n.t("desktop.tray.local.starting");
+      return local.update?._tag === "updating"
+        ? i18n.t("desktop.tray.local.updating")
+        : i18n.t("desktop.tray.local.starting");
     case "stopped":
       return i18n.t("desktop.tray.local.stopped");
     case "restarting":

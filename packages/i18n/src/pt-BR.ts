@@ -830,6 +830,14 @@ const sentences = {
   "local.line.start": "Iniciar",
   "local.line.restarting": "Os bots pararam.",
   "local.line.failed": "Os bots não iniciaram.",
+  "local.line.update.updating": "Atualizando os bots para a {version}…",
+  "local.line.update.rolledBack":
+    "A atualização para a {failed} não deu certo. Os bots voltaram para a {running}.",
+  "local.line.update.olderApp":
+    "Os bots rodam na {running}, que é mais nova que este app. Atualize o J3 Bots.",
+  "local.line.update.retry": "Tentar de novo",
+  "local.update.title": "A atualização para a {failed} não deu certo",
+  "local.update.body": "Os bots e os dados deles estão como antes dela, na {running}.",
   "local.failed.title": "Os bots não iniciaram",
   "local.failed.unknown": "Algo impediu o J3 Bots de iniciar neste computador.",
   "local.failed.retry": "Tentar de novo",
@@ -1200,6 +1208,7 @@ const sentences = {
   "desktop.tray.more.one": "E mais {count}",
   "desktop.tray.more.other": "E mais {count}",
   "desktop.tray.local.starting": "Iniciando os bots…",
+  "desktop.tray.local.updating": "Atualizando os bots…",
   "desktop.tray.local.stopped": "Bots parados",
   "desktop.tray.local.restarting": "Bots parados · reiniciando em {seconds} s",
   "desktop.tray.local.restartingNow": "Bots parados · reiniciando…",

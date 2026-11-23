@@ -42,6 +42,10 @@ describe("the tray's menu", () => {
       trayModel(report, local, i18n).summary;
     assert.strictEqual(summary({ state: "ready" }), "1 needs you");
     assert.strictEqual(summary({ state: "starting" }), "Starting your bots…");
+    assert.strictEqual(
+      summary({ state: "starting", update: { _tag: "updating", from: "0.3.0", to: "0.3.1" } }),
+      "Updating your bots…",
+    );
     assert.strictEqual(summary({ state: "stopped" }), "Bots stopped");
     assert.strictEqual(
       summary({ state: "restarting", attempt: 2, retryInSeconds: 4 }),

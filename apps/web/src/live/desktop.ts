@@ -132,6 +132,8 @@ export interface Desktop {
   readonly connectToServerInstead: () => Promise<ModeChange | null>;
   /** Starts the server on this computer again now, after it failed or while it waits to. */
   readonly retryLocalServer: () => void;
+  /** Tries the update the server on this computer was rolled back from again. */
+  readonly retryServerUpdate: () => void;
   /**
    * Calls `listener` with the state of the server on this computer now, then
    * each time it changes; answers a function that stops it.
@@ -280,6 +282,9 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     connectToServerInstead: () => ask(() => bridge.connectToServerInstead(), decodeModeChange),
     retryLocalServer: () => {
       bridge.retryLocalServer();
+    },
+    retryServerUpdate: () => {
+      bridge.retryServerUpdate();
     },
     onLocalServer: (listener) => {
       const stop: unknown = bridge.onLocalServer((state: unknown) =>
