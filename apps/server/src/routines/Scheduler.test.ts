@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { BotId, type Routine, RoutineId, type RoutineTrigger } from "@j3-bots/contracts";
+import { SessionId } from "@j3-bots/engine-t3";
+import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -17,7 +20,7 @@ import { timeText } from "../persistence/columns.ts";
 import { migrate, migrationsThrough } from "../persistence/Migrations.ts";
 import * as TestDatabase from "../testing/database.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { command, createBot, noticesOf, until } from "../testing/turns.ts";
+import { command, createBot, eventually, noticesOf, until } from "../testing/turns.ts";
 import { Stops } from "../turns/Stops.ts";
 import { RUN_HISTORY } from "./RoutineRuns.ts";
 import { Routines } from "./Routines.ts";
@@ -213,6 +216,58 @@ it.effect("runs a one-time routine missed while the server was down, marked late
       );
       const after = yield* current(routine);
       assert.deepStrictEqual([after.enabled, after.nextRunAt, after.missed], [false, null, null]);
+    }).pipe(Effect.provide(Domain.layer));
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+/** What the engine was sent for the routine's run, once its side session has it. */
+const sentForRun = (routineId: RoutineId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const control = yield* TestEngineControl;
+    const side = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Schema.Struct({ engine_session_id: SessionId }),
+      execute: (id) => sql`
+        SELECT s.engine_session_id FROM sessions s
+        JOIN routine_runs r ON r.wake_id = s.side_wake_id
+        WHERE r.routine_id = ${id} AND s.purpose = 'side' AND s.engine_session_id IS NOT NULL
+      `,
+    });
+    return yield* eventually(
+      side(routineId).pipe(
+        Effect.orDie,
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.succeedNone,
+            onSome: ({ engine_session_id }) =>
+              Effect.map(control.dispatches(engine_session_id), (sent) =>
+                Option.fromNullishOr(sent[0]?.text),
+              ),
+          }),
+        ),
+      ),
+    );
+  });
+
+it.effect("tells the bot the day a run was due when it starts just after that day ended", () =>
+  Effect.gen(function* () {
+    const routine = yield* madeBeforeDowntime({ _tag: "once", at: at("1970-01-01T23:59:45.000Z") });
+
+    // Back 30 seconds after it, on the next day: not late, but "today" is no
+    // longer the day it was due.
+    yield* setTime("1970-01-02T00:00:15.000Z");
+    yield* Effect.gen(function* () {
+      yield* pass;
+      assert.include(
+        yield* sentForRun(routine.id),
+        'due="1970-01-01T23:59:45+00:00" due-weekday="Thursday"',
+      );
+      // Clients do not show it as late.
+      assert.deepStrictEqual(
+        (yield* history(routine.id)).map((run) => run.dueAt),
+        [undefined],
+      );
     }).pipe(Effect.provide(Domain.layer));
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );

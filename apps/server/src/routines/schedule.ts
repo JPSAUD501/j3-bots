@@ -24,11 +24,14 @@ const MIN_SPACING = Duration.minutes(5);
 const SPACING_WINDOW = Duration.days(8);
 
 /**
- * How far a run's wall-clock time, read as UTC, can lie from its instant: a
- * zone's offset (at most 14 hours either way) and a skipped stretch of the
- * clock (at most a day) together stay within it.
+ * How far a run's wall-clock time, read as UTC, can lie from its instant.
+ * They lie one of the zone's offsets apart, even across a stretch the clocks
+ * skip, which resolves with the offset from before it: within 14 hours today,
+ * and within 16 for the local mean times of the 19th century. A search walks
+ * about twice this much of a schedule's runs: some 580 steps for one every
+ * five minutes.
  */
-const WALL_MARGIN_MILLIS = Duration.toMillis(Duration.days(2));
+const WALL_MARGIN_MILLIS = Duration.toMillis(Duration.days(1));
 
 type Schedule = Extract<RoutineTrigger, { readonly _tag: "schedule" }>;
 
@@ -256,7 +259,9 @@ export type CatchUp =
  * makes a night longer or shorter. A one-time trigger always runs, however
  * late, and a webhook has no time. `due` need not be a run of the schedule:
  * a routine whose run could not be recorded waits a little past it, and that
- * deadline stands for it. Fails as {@link nextRun} does.
+ * deadline stands for it. The run and the missed runs are still told by the
+ * schedule's own times (08:00, not 08:00:30), and a one-time trigger's by its
+ * time. Fails as {@link nextRun} does.
  */
 export const catchUp = (
   trigger: RoutineTrigger,
@@ -264,24 +269,26 @@ export const catchUp = (
   now: DateTime.Utc,
 ): Result.Result<CatchUp, Invalid> => {
   if (trigger._tag !== "schedule") {
-    return Result.map(nextRun(trigger, now), (next) => ({ _tag: "run", due, next }));
+    const at = trigger._tag === "once" ? trigger.at : due;
+    return Result.map(nextRun(trigger, now), (next) => ({ _tag: "run", due: at, next }));
   }
   return Result.gen(function* () {
     const compiled = yield* compile(trigger);
-    const dueAt = DateTime.toEpochMillis(due);
     const nowAt = DateTime.toEpochMillis(now);
-    const latest = Math.max(dueAt, yield* lastAtOrBefore(compiled, nowAt));
+    // At or after the run `due` stands for, since `now` is not before `due`.
+    const latest = yield* lastAtOrBefore(compiled, nowAt);
     const next = yield* firstAfter(compiled, now);
     if (nowAt - latest <= (DateTime.toEpochMillis(next) - latest) / 2) {
       return { _tag: "run", due: DateTime.makeUnsafe(latest), next: Option.some(next) } as const;
     }
-    // `due` itself is the first; the count stops at the limit.
-    const later = yield* runsBetween(compiled, dueAt, nowAt, MISSED_RUNS_LIMIT - 1);
+    // The run `due` stands for is the first; the count stops at the limit.
+    const first = yield* lastAtOrBefore(compiled, DateTime.toEpochMillis(due));
+    const later = yield* runsBetween(compiled, first, nowAt, MISSED_RUNS_LIMIT - 1);
     return {
       _tag: "skip",
       next,
       missed: 1 + later,
-      since: due,
+      since: DateTime.makeUnsafe(first),
       until: DateTime.makeUnsafe(latest),
     } as const;
   });

@@ -90,6 +90,9 @@ describe("routineLines", () => {
     expect(routineLines(many, en).status).toBe(
       "Missed 1,000 or more runs while J3 Bots wasn’t running",
     );
+    // A later server may count further; this client still says what it knows.
+    const more = routine({ missed: { ...missed, count: MISSED_RUNS_LIMIT * 4 } });
+    expect(routineLines(more, en).status).toBe(routineLines(many, en).status);
     expect(routineLines({ ...once, enabled: false }, en).status).toBe("Paused");
   });
 

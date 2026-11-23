@@ -66,6 +66,23 @@ const LATE_AFTER = Duration.minutes(1);
 export const isLate = (due: DateTime.Utc, start: DateTime.Utc): boolean =>
   Duration.isGreaterThan(DateTime.distance(due, start), LATE_AFTER);
 
+const dayIn = (at: DateTime.Utc, zone: DateTime.TimeZone) => {
+  const parts = DateTime.toParts(DateTime.setZone(at, zone));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+};
+
+/**
+ * The due time a run's envelope gives the bot, which reads the instruction's
+ * dates against it: when the run is late, and when it was due on another day
+ * than `at` in the operator's zone, however little before. A run due at 23:59
+ * that starts at 00:00 still does the work of the day before.
+ */
+export const dueToTell = (
+  due: DateTime.Utc,
+  at: DateTime.Utc,
+  zone: DateTime.TimeZone,
+): DateTime.Utc | null => (isLate(due, at) || dayIn(due, zone) !== dayIn(at, zone) ? due : null);
+
 /**
  * How many runs, skipped ones included, a routine's webhook may record in a
  * minute. A caller past it is told when to try again, and nothing is recorded.

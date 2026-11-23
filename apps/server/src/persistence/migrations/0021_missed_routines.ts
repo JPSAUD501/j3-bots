@@ -4,8 +4,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 // A routine whose runs came due while the server was not running makes up the
 // latest of them only while it is nearer than the next one, and counts the
-// rest as missed (`routines/schedule.ts`, `catchUp`). Both columns are added,
-// so a database this migration wrote is still read by the release before it.
+// rest as missed (`routines/schedule.ts`, `catchUp`). Like any migration, it
+// makes the release before refuse the database, which records a migration
+// that release does not know; going back to it restores the snapshot the
+// update took (`j3-bots update --rollback`).
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   // The time a scheduled run was due, which it started at or after; NULL for

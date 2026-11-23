@@ -209,9 +209,10 @@ export interface RoutineWake extends WakeBase {
   /** The webhook request body, for a webhook trigger. */
   readonly triggerData: string | null;
   /**
-   * When the run was due, when that was more than a minute before `at`: J3
-   * Bots was not running at a scheduled run's time, or an attempt is tried
-   * again later. Dates in the instruction are read against it.
+   * When the run was due, when that was more than a minute before `at` or on
+   * another day in `timeZone`: J3 Bots was not running at a scheduled run's
+   * time, an attempt is tried again later, or a run due just before midnight
+   * starts after it. Dates in the instruction are read against it.
    */
   readonly dueAt: DateTime.Utc | null;
 }

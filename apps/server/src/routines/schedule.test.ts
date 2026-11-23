@@ -217,14 +217,47 @@ describe("catchUp", () => {
     );
   });
 
-  it("runs for a deadline that stands in for a run postponed after a defect", () => {
+  it("tells a run postponed after a defect, and the runs it then missed, by their own times", () => {
+    const daily = schedule("0 8 * * *", "UTC");
+    // 08:00's run could not be recorded; it was tried again at 08:00:30.
     assert.deepStrictEqual(
-      caughtUp(
-        schedule("0 8 * * *", "UTC"),
-        "2026-11-20T08:01:00.000Z",
-        "2026-11-20T08:02:00.000Z",
-      ),
-      { run: "2026-11-20T08:01:00.000Z", next: "2026-11-21T08:00:00.000Z" },
+      caughtUp(daily, "2026-11-20T08:00:30.000Z", "2026-11-20T08:00:31.000Z"),
+      { run: "2026-11-20T08:00:00.000Z", next: "2026-11-21T08:00:00.000Z" },
+    );
+    // The server stopped before that, and is back at 07:00 the next day.
+    assert.deepStrictEqual(
+      caughtUp(daily, "2026-11-20T08:00:30.000Z", "2026-11-21T07:00:00.000Z"),
+      {
+        skip: 1,
+        since: "2026-11-20T08:00:00.000Z",
+        until: "2026-11-20T08:00:00.000Z",
+        next: "2026-11-21T08:00:00.000Z",
+      },
+    );
+    const once: RoutineTrigger = { _tag: "once", at: at("2026-11-20T08:00:00.000Z") };
+    assert.deepStrictEqual(caughtUp(once, "2026-11-20T08:00:30.000Z", "2026-11-20T08:00:31.000Z"), {
+      run: "2026-11-20T08:00:00.000Z",
+      next: null,
+    });
+  });
+
+  it("finds the runs around a day the clocks skip", () => {
+    // Samoa moved from -10:00 to +14:00 at the end of 2011-12-29, local time:
+    // 30 December never happened there. Its 09:00 runs on the 29th and the
+    // 31st are a day apart, and the 30th's lands on the 31st's.
+    const samoa = schedule("0 9 * * *", "Pacific/Apia");
+    assert.deepStrictEqual(
+      caughtUp(samoa, "2011-12-29T19:00:00.000Z", "2011-12-30T06:00:00.000Z"),
+      { run: "2011-12-29T19:00:00.000Z", next: "2011-12-30T19:00:00.000Z" },
+    );
+    assert.deepStrictEqual(
+      caughtUp(samoa, "2011-12-29T19:00:00.000Z", "2011-12-31T08:00:00.000Z"),
+      {
+        skip: 2,
+        since: "2011-12-29T19:00:00.000Z",
+        until: "2011-12-30T19:00:00.000Z",
+        next: "2011-12-31T19:00:00.000Z",
+      },
     );
   });
 

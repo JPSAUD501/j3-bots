@@ -55,7 +55,7 @@ import { stopTargets } from "../turns/stopTargets.ts";
 import { isIdle, sessionWork } from "../turns/sessionWork.ts";
 import { Signals } from "../turns/Signals.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
-import { isLate, RoutineRuns } from "./RoutineRuns.ts";
+import { dueToTell, RoutineRuns } from "./RoutineRuns.ts";
 import { recordRunFailure } from "./runFailure.ts";
 
 /** How many of a routine's earlier runs its envelope describes, newest first. */
@@ -315,8 +315,8 @@ export const layer = Layer.effect(
 
     /**
      * The attempt's envelope: the routine, its trigger data, when the run was
-     * due if that was a while ago, and as many of its earlier runs as fit the
-     * engine's input limit, newest first. A run was due at its schedule's
+     * due if that was a while ago or on another day, and as many of its
+     * earlier runs as fit the engine's input limit, newest first. A run was due at its schedule's
      * time, or when a webhook or the operator asked for it: a run that
      * started late, or an attempt tried again later, still does the work of
      * that time.
@@ -325,9 +325,10 @@ export const layer = Layer.effect(
       const recent = yield* recentRuns(attempt);
       const now = yield* DateTime.now;
       const due = attempt.due_at ?? attempt.started_at;
+      const timeZone = yield* zoneOf;
       const base = {
         at: now,
-        timeZone: yield* zoneOf,
+        timeZone,
         sinceLastTurn: [],
         kind: "routine",
         routine: {
@@ -337,7 +338,7 @@ export const layer = Layer.effect(
           instruction: attempt.instruction,
         },
         triggerData: attempt.trigger_data,
-        dueAt: isLate(due, now) ? due : null,
+        dueAt: dueToTell(due, now, timeZone),
       } as const;
       for (let count = recent.length; count > 0; count--) {
         const wake: RoutineWake = { ...base, recentRuns: recent.slice(0, count) };

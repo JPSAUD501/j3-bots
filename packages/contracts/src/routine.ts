@@ -77,8 +77,10 @@ export const RoutineRun = Schema.Struct({
 export type RoutineRun = typeof RoutineRun.Type;
 
 /**
- * How many missed runs a routine counts at most: a count at this limit means
- * at least as many.
+ * How many missed runs this release's server counts at most: a count at this
+ * limit means at least as many. A count is not checked against it as it is
+ * read, so a later server may count further without a client failing to read
+ * the routine.
  */
 export const MISSED_RUNS_LIMIT = 1000;
 
@@ -89,7 +91,7 @@ export const MISSED_RUNS_LIMIT = 1000;
  * first of them and `until` the last; one run's are the same.
  */
 export const RoutineMissed = Schema.Struct({
-  count: PositiveInt.check(Schema.isLessThanOrEqualTo(MISSED_RUNS_LIMIT)),
+  count: PositiveInt,
   since: Schema.DateTimeUtc,
   until: Schema.DateTimeUtc,
 });
