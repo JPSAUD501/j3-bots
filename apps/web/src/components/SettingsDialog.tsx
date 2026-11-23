@@ -137,6 +137,8 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
             intents.serverUpdate?.refresh();
           } else {
             profile.discard();
+            // The operator has seen how the update this device followed ended.
+            intents.serverUpdate?.dismissEnded();
           }
           intents.setSettingsOpen(open);
         }}

@@ -361,11 +361,11 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const remote = useRemoteServerUpdate();
   const serverUpdate = local === null ? remote : undefined;
   const updatingTo = serverUpdate === undefined ? null : restartingTo(serverUpdate);
-  // How an update this device saw under way ended, said once.
+  // How an update this device saw under way ended, said once as it comes in.
+  // It stays in Settings until the operator closes Settings after it.
   const ended = serverUpdate?.ended ?? null;
   const tellEnded = useEffectEvent((result: UpdateResult) => {
     say(updateResultLine(result, i18n).text);
-    remote.dismissEnded();
   });
   useEffect(() => {
     if (ended !== null) tellEnded(ended);
