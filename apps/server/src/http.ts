@@ -28,10 +28,12 @@ import packageJson from "../package.json" with { type: "json" };
 import { Attachments } from "./attachments/Attachments.ts";
 import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { readBody, readText } from "./body.ts";
+import { ServerConfig } from "./config.ts";
 import { Devices } from "./devices/Devices.ts";
 import * as Webhook from "./routines/webhook.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
+import { isServedHost } from "./system/Network.ts";
 import * as Ports from "./system/Ports.ts";
 import * as WebClient from "./web/WebClient.ts";
 
@@ -84,6 +86,7 @@ const requestDevice = Effect.gen(function* () {
 });
 
 const tooLarge = HttpServerResponse.empty({ status: 413 });
+const unsupportedMediaType = HttpServerResponse.empty({ status: 415 });
 
 /**
  * A pairing request is a code and a device name of at most 200 characters,
@@ -93,22 +96,29 @@ const PAIR_BODY_LIMIT = 4 * 1024;
 
 const decodePairRequest = Schema.decodeUnknownEffect(Schema.fromJsonString(PairRequest));
 
+/** Whether a `Content-Type` header names JSON, with or without parameters. */
+const isJson = (contentType: string | undefined) =>
+  contentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
+
 const pair = HttpRouter.add(
   "POST",
   HTTP_PATHS.pair,
   Effect.gen(function* () {
     const devices = yield* Devices;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    // A web page may POST `text/plain` to any address without a preflight,
+    // and its wrong codes would lock pairing for everyone. JSON to another
+    // origin needs a preflight the server never grants, so only JSON counts.
+    if (!isJson(request.headers["content-type"])) return unsupportedMediaType;
     const invalid = respond(Invalid, new Invalid({ reason: "pairing-code" }), 400);
     // The size is settled before the rate limit counts the attempt.
-    const body = yield* readText(yield* HttpServerRequest.HttpServerRequest, PAIR_BODY_LIMIT).pipe(
-      Effect.result,
-    );
+    const body = yield* readText(request, PAIR_BODY_LIMIT).pipe(Effect.result);
     if (body._tag === "Failure") {
       return body.failure._tag === "BodyTooLarge" ? tooLarge : yield* invalid;
     }
-    const request = yield* decodePairRequest(body.success).pipe(Effect.option);
-    if (Option.isNone(request)) return yield* invalid;
-    return yield* devices.pair(request.value).pipe(
+    const pairing = yield* decodePairRequest(body.success).pipe(Effect.option);
+    if (Option.isNone(pairing)) return yield* invalid;
+    return yield* devices.pair(pairing.value).pipe(
       Effect.flatMap((result) => respond(PairResult, result, 200)),
       Effect.catchTags({
         Invalid: (error) => respond(Invalid, error, 400),
@@ -180,25 +190,42 @@ const cors = HttpMiddleware.cors({
   maxAge: 600,
 });
 
+const forbidden = HttpServerResponse.empty({ status: 403 });
+
 /**
- * CORS for the desktop app, whose pages call the server from their own origin
- * (`DESKTOP_APP_ORIGINS`), and only for requests from those origins: any
- * other request, a preflight included, is answered as if there were no CORS,
- * so a web page elsewhere still cannot read an answer. The credential is a
- * bearer header, never a cookie, so credentialed CORS is never allowed.
+ * What every request on the client listener passes before it is routed, the
+ * RPC socket's upgrade included.
+ *
+ * Over plain HTTP, its `Host` must be one no web page can rebind to this
+ * machine (`isServedHost`), or it is answered 403. Over HTTPS the browser
+ * already refuses a name the certificate does not cover, and a proxy in front
+ * may put any name there, so `Host` is not checked.
+ *
+ * Then CORS for the desktop app, whose pages call the server from their own
+ * origin (`DESKTOP_APP_ORIGINS`), and only for requests from those origins:
+ * any other request, a preflight included, is answered as if there were no
+ * CORS, so a web page elsewhere still cannot read an answer. The credential is
+ * a bearer header, never a cookie, so credentialed CORS is never allowed.
+ *
+ * Both are one middleware, so the `Host` check always comes first.
  */
-const desktopCors = HttpRouter.middleware(
-  (httpApp) =>
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      return yield* isDesktopOrigin(request.headers["origin"]) ? cors(httpApp) : httpApp;
-    }),
+const clientGate = HttpRouter.middleware(
+  Effect.gen(function* () {
+    const { tls, publicOrigin } = yield* ServerConfig;
+    const checksHost = Option.isNone(tls);
+    return (httpApp) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        if (checksHost && !isServedHost(request.headers["host"], publicOrigin)) return forbidden;
+        return yield* isDesktopOrigin(request.headers["origin"]) ? cors(httpApp) : httpApp;
+      });
+  }),
   { global: true },
 );
 
 /** The routes outside the RPC socket. */
 export const routes = Layer.mergeAll(
-  desktopCors,
+  clientGate,
   health,
   serverInfo,
   socketTicket,
