@@ -220,6 +220,7 @@ export const en = {
   "login.totpHint":
     "The setup key or otpauth:// address the site shows when you turn on two-step sign-in.",
   "login.totpInvalid": "That is not a one-time code key.",
+  "login.invalid": "Check the login: it needs a name and a password.",
   "login.allow": "Let {name} use it",
   "login.unseen": "It goes straight to your vault. {name} never sees what you type here.",
   "login.save": "Save",
@@ -249,6 +250,8 @@ export const en = {
   "vault.wrong": "Wrong password.",
   "vault.wait": "Too many wrong passwords. Try again at {time}.",
   "vault.failed": "Something went wrong. Try again.",
+  "vault.damaged":
+    "Something in the vault does not open: its file was changed or damaged. Restore it from a backup.",
   "vault.changePassword": "Change password",
   "vault.current": "Current password",
   "vault.next": "New password",

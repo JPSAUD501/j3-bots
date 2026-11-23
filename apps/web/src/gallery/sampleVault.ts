@@ -70,6 +70,7 @@ export function sampleVault({ state, credentials = [], onSaved, now }: Options):
             current === "unlocked"
               ? [...logins.values()].map(({ credential }) => credential)
               : null,
+          listFailure: null,
           stale: false,
         };
   const view = new Cell<VaultView>(viewOf());

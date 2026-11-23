@@ -4,6 +4,7 @@ import {
   type CredentialDraft,
   CredentialDraft as CredentialDraftSchema,
   type CredentialRequestEntry,
+  MAX_LABEL_LENGTH,
   type SiteOrigin,
   siteOriginOf,
 } from "@j3-bots/contracts";
@@ -167,9 +168,11 @@ function LoginForm({
     ? null
     : Option.isNone(origin)
       ? t("login.siteInvalid")
-      : failure !== null
-        ? failureText(failure)
-        : null;
+      : Option.isNone(draft)
+        ? t("login.invalid")
+        : failure !== null
+          ? failureText(failure)
+          : null;
   const botId = entry.author._tag === "bot" ? entry.author.botId : null;
 
   return (
@@ -220,7 +223,7 @@ function LoginForm({
           <input
             id={nameId}
             value={name}
-            maxLength={80}
+            maxLength={MAX_LABEL_LENGTH}
             autoComplete="off"
             aria-invalid={tried && name.trim() === ""}
             onChange={(event) => setName(event.currentTarget.value)}

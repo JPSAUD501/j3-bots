@@ -5,6 +5,7 @@ import {
   type CredentialDraft,
   CredentialDraft as CredentialDraftSchema,
   type CredentialRequestEntry,
+  MAX_LABEL_LENGTH,
   type SiteOrigin,
   siteOriginOf,
 } from "@j3-bots/contracts";
@@ -158,7 +159,12 @@ function LoginForm({
         autoCapitalize="none"
         error={tried && Option.isNone(origin) ? t("login.siteInvalid") : null}
       />
-      <TextField label={t("login.name")} value={name} onChange={setName} maxLength={80} />
+      <TextField
+        label={t("login.name")}
+        value={name}
+        onChange={setName}
+        maxLength={MAX_LABEL_LENGTH}
+      />
       <TextField
         label={t("login.username")}
         value={username}
@@ -191,7 +197,13 @@ function LoginForm({
         />
       )}
       <Text className="text-xs text-muted-foreground">{t("login.unseen", { name: botName })}</Text>
-      <Problem>{failure === null ? null : failureText(failure)}</Problem>
+      <Problem>
+        {tried && Option.isSome(origin) && Option.isNone(draft)
+          ? t("login.invalid")
+          : failure === null
+            ? null
+            : failureText(failure)}
+      </Problem>
       <View className="flex-row justify-end gap-2">
         <Button variant="outline" label={t("login.dismiss")} onPress={onDismiss} held={busy} />
         <Button
