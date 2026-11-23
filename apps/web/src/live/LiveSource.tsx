@@ -1408,6 +1408,13 @@ function LiveShell({
         j3.dismissBotSave(bot.id);
         if (stillPaired()) say(t("details.browser.failed", { name: bot.profile.name }));
       }),
+    setVault: (bot, enabled) =>
+      void j3.updateBot(bot.id, { vault: enabled }).then((result) => {
+        if (result._tag !== "failed") return;
+        // As for the browser: the switch shows the bot as the server has it.
+        j3.dismissBotSave(bot.id);
+        if (stillPaired()) say(t("details.vault.failed", { name: bot.profile.name }));
+      }),
     openMemoryFile,
     freshStart: (botId, name) =>
       void j3

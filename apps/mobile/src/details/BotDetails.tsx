@@ -25,6 +25,7 @@ import {
   Cpu,
   FileText,
   Globe,
+  KeyRound,
   NotebookText,
   ShieldCheck,
   Webhook,
@@ -186,6 +187,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
 
       <Section open title={t("details.browser")}>
         <BrowserRow bot={bot} needsSetup={browserNeedsSetup} />
+        <VaultRow bot={bot} />
       </Section>
 
       <Section open title={t("details.workingContext")}>
@@ -332,6 +334,44 @@ function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetu
             // The switch shows the bot as the server has it, so a failure leaves nothing to keep.
             client.dismissBotSave(bot.id);
             say(t("details.browser.failed", { name }));
+          })
+        }
+      />
+    </View>
+  );
+}
+
+/**
+ * Whether the bot may have the logins the operator allows it typed into its
+ * browser page by the server, from its next fill; and, while it may, whether
+ * it still needs the browser for that.
+ */
+function VaultRow({ bot }: { readonly bot: Bot }) {
+  const { t } = usePresentation().i18n;
+  const client = useJ3Client();
+  const say = useSay();
+  const { name } = bot.profile;
+  return (
+    <View className="flex-row items-start gap-3">
+      <View className="pt-0.5">
+        <Icon icon={KeyRound} color="accent-muted-foreground" />
+      </View>
+      <View className="min-w-0 flex-1 gap-0.5">
+        <Text className="text-base text-foreground">{t("details.vault.use")}</Text>
+        <Text className="text-sm text-muted-foreground">{t("details.vault.hint", { name })}</Text>
+        {bot.vault && !bot.browser && (
+          <Text className="text-sm text-muted-foreground">{t("details.vault.needsBrowser")}</Text>
+        )}
+      </View>
+      <Switch
+        accessibilityLabel={t("details.vault.use")}
+        value={bot.vault}
+        onChange={(enabled) =>
+          void client.updateBot(bot.id, { vault: enabled }).then((result) => {
+            if (result._tag !== "failed") return;
+            // As for the browser: the switch shows the bot as the server has it.
+            client.dismissBotSave(bot.id);
+            say(t("details.vault.failed", { name }));
           })
         }
       />

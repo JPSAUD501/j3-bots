@@ -1166,7 +1166,7 @@ function WorkSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Folded: running with no turn seen, finished, loading its steps, stopped, failed">
+      <Labeled label="Folded: running with no turn seen, finished, loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, vault locked)">
         <div className="flex flex-col gap-2">
           {variants.folds.map(({ entry, steps, open }) => (
             <WorkFold
@@ -1430,6 +1430,7 @@ const detailsIntents = {
   deleteBot: nothing,
   shareTemplate: nothing,
   setBrowser: nothing,
+  setVault: nothing,
 };
 
 const roomIntents = {
@@ -1518,8 +1519,9 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
+          {/* The browser and vault access on, and the vault's on with the browser off. */}
           <BotDetails
-            bot={atlas}
+            bot={{ ...atlas, browser: true, vault: true }}
             routines={team.routines[atlas.id] ?? []}
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
@@ -1532,7 +1534,7 @@ function DetailsSection() {
         </Pane>
         <Pane>
           <BotDetails
-            bot={moss}
+            bot={{ ...moss, vault: true }}
             routines={[]}
             memory={[]}
             files={[]}

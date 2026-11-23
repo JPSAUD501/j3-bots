@@ -19,6 +19,7 @@ import {
   type Author,
   type BotId,
   type Credential,
+  type CredentialFill,
   type CredentialRequestEntry,
   type HandoffEntry,
   type MessageEntry,
@@ -462,6 +463,27 @@ export function galleryVariants(now: DateTime.Utc) {
     startedAt: ago(4),
     finishedAt: status === "running" ? null : ago(3),
   });
+  /** A fill of the sample login "GitHub (work)", as its work step shows it. */
+  const fillStep = (
+    field: CredentialFill["field"],
+    origin: string,
+    outcome: CredentialFill["outcome"],
+  ): WorkStep => ({
+    id: WorkStepId.make(`variant-login-${field}-${outcome._tag}`),
+    kind: "tool",
+    tool: "login",
+    label: "Filled a saved login",
+    status: outcome._tag === "filled" ? "completed" : "failed",
+    startedAt: ago(2),
+    finishedAt: ago(2),
+    fill: {
+      name: "GitHub (work)",
+      credentialId: null,
+      field,
+      origin: SiteOrigin.make(origin),
+      outcome,
+    },
+  });
   const folds: ReadonlyArray<{
     entry: WorkFoldEntry;
     steps: ReadonlyArray<WorkStep> | null;
@@ -562,6 +584,28 @@ export function galleryVariants(now: DateTime.Utc) {
         1,
       ),
       steps: [step("web", "Read the vendor’s status page", "failed")],
+      open: true,
+    },
+    {
+      entry: fold(
+        "fold-logins",
+        {
+          _tag: "finished",
+          finishedAt: ago(1),
+          ending: "completed",
+          waitedMs: 0,
+          waitedBeforeMs: 0,
+          background: false,
+        },
+        5,
+      ),
+      steps: [
+        step("tool", "Used the browser", "completed", "browser"),
+        fillStep("username", "https://github.com", { _tag: "filled", submitted: false }),
+        fillStep("password", "https://github.com", { _tag: "filled", submitted: true }),
+        fillStep("password", "https://xn--gthub-zsa.com", { _tag: "refused", reason: "origin" }),
+        fillStep("totp", "https://github.com", { _tag: "locked" }),
+      ],
       open: true,
     },
   ];
