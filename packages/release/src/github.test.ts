@@ -22,17 +22,20 @@ const versionOf = (found: ReturnType<typeof newestOn>) =>
 describe("the release a channel offers", () => {
   // As the API lists them: by creation, not by version.
   const listed = [
-    release("v0.3.2-nightly.20261125.1", true),
-    release("v0.3.2-nightly.20261126.1", true, { draft: true, published_at: null }),
+    release("0.3.2-nightly.20261125.1", true),
+    release("0.3.2-nightly.20261126.1", true, { draft: true, published_at: null }),
     release("v0.3.1", false),
-    release("v0.3.2-nightly.20261124.3", true),
+    release("0.3.2-nightly.20261124.3", true),
     release("v0.3.2-rc.1", true),
-    release("v0.3.9-nightly.20261124.1", false),
+    release("0.3.9-nightly.20261124.1", false),
     release("v0.9.0", true),
     release("nightly-latest", true),
+    // A tag that does not name its version as releases are tagged.
+    release("v0.4.0-nightly.20261124.1", true),
+    release("0.4.0", false),
   ];
 
-  it("offers nightly the newest published nightly or stable release, passing over drafts, candidates and contradictions", () => {
+  it("offers nightly the newest published nightly or stable release, passing over drafts, candidates, other tags and contradictions", () => {
     assert.strictEqual(versionOf(newestOn(listed, "nightly")), "0.3.2-nightly.20261125.1");
     assert.strictEqual(
       versionOf(newestOn([...listed, release("v0.3.2", false)], "nightly")),
@@ -42,7 +45,7 @@ describe("the release a channel offers", () => {
 
   it("offers stable only stable releases", () => {
     assert.strictEqual(versionOf(newestOn(listed, "stable")), "0.3.1");
-    assert.isTrue(Option.isNone(newestOn([release("v0.3.2-nightly.20261125.1", true)], "stable")));
+    assert.isTrue(Option.isNone(newestOn([release("0.3.2-nightly.20261125.1", true)], "stable")));
   });
 
   it("never offers a release that is not newer than the one running", () => {

@@ -5,7 +5,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Schema from "effect/Schema";
-import { channelOf, compareVersions, isNewer, offeredOn } from "./version.ts";
+import { channelOf, compareVersions, isNewer, offeredOn, releaseTag } from "./version.ts";
 
 // Which release a channel offers, from what GitHub's REST API answers for the
 // releases of the repository: `releases/latest` (the newest published release
@@ -36,16 +36,18 @@ export interface Candidate {
 }
 
 /**
- * The release `release` is, when it is one a channel may offer: published,
- * tagged `v<version>`, a stable release that is not marked pre-release or a
- * nightly build that is. Anything else is passed over: a draft, a release
- * candidate, a tag of another shape, or a flag that contradicts the tag.
+ * The release `release` is, when it is one a channel may offer: published
+ * under its version's tag (`releaseTag`), a stable release that is not marked
+ * pre-release or a nightly build that is. Anything else is passed over: a
+ * draft, a release candidate, a tag of another shape, or a flag that
+ * contradicts the tag.
  */
 export const candidateOf = (release: GitHubRelease): Option.Option<Candidate> => {
-  if (release.draft || !release.tag_name.startsWith("v")) return Option.none();
-  const version = release.tag_name.slice(1);
+  if (release.draft) return Option.none();
+  const tag = release.tag_name;
+  const version = tag.startsWith("v") ? tag.slice(1) : tag;
   return Option.flatMap(channelOf(version), (channel) =>
-    release.prerelease !== (channel === "nightly")
+    release.prerelease !== (channel === "nightly") || tag !== releaseTag(version)
       ? Option.none()
       : Option.map(decodeTime(release.published_at), (publishedAt) => ({
           version,

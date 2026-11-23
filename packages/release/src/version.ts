@@ -80,6 +80,15 @@ export const channelOf = (version: string): Option.Option<UpdateChannel> =>
       : Option.none();
 
 /**
+ * The tag a release of `version` is published under, which names its folder
+ * on the releases page: the bare version for a nightly build, and `v<version>`
+ * for any other release. Nightly tags stay outside the protected `v*` tags,
+ * which only a maintainer may push.
+ */
+export const releaseTag = (version: string): string =>
+  NIGHTLY.test(version) ? version : `v${version}`;
+
+/**
  * Whether a release of `channel` may be offered on `subscribed`: a stable
  * release on either, since a stable release is a build of `main` too; a
  * nightly only to those who chose nightly.

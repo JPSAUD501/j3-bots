@@ -3,7 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, type UpdateChannel } from "@j3-bots/contracts";
-import type { GitHubRelease } from "@j3-bots/release";
+import { type GitHubRelease, releaseTag } from "@j3-bots/release";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -32,11 +32,11 @@ const signed = (version: string): Published => {
 };
 
 const release = (version: string, prerelease: boolean): GitHubRelease => ({
-  tag_name: `v${version}`,
+  tag_name: releaseTag(version),
   draft: false,
   prerelease,
   published_at: "2026-11-24T03:17:00Z",
-  html_url: `https://github.test/releases/tag/v${version}`,
+  html_url: `https://github.test/releases/tag/${releaseTag(version)}`,
 });
 
 /** The fake releases page and API: what they hold, and what they were asked. */
@@ -105,8 +105,8 @@ const fakeGitHub = Layer.effectContext(
           }
           return answer(github.listed);
         }
-        const [, version, name] = /\/download\/v([^/]+)\/(.+)$/.exec(url.pathname) ?? [];
-        const files = github.files.get(version ?? "");
+        const [, tag, name] = /\/download\/([^/]+)\/(.+)$/.exec(url.pathname) ?? [];
+        const files = [...github.files].find(([version]) => releaseTag(version) === tag)?.[1];
         const body =
           name === "SHA256SUMS" ? files?.sums : name === "SHA256SUMS.sig" ? files?.signature : null;
         return HttpClientResponse.fromWeb(
@@ -295,6 +295,14 @@ describe("the release feed", () => {
         assert.deepStrictEqual(nightly.current, { version: running, channel: "nightly" });
         assert.strictEqual(nightly.available?.version, "0.3.2-nightly.20261126.1");
         assert.strictEqual(nightly.available?.channel, "nightly");
+        // A nightly's files are under its bare version, outside the `v*` tags.
+        assert.includeMembers(
+          github.asked.map((asked) => asked.path),
+          [
+            "/releases/download/0.3.2-nightly.20261126.1/SHA256SUMS",
+            "/releases/download/0.3.2-nightly.20261126.1/SHA256SUMS.sig",
+          ],
+        );
 
         yield* setChannel("stable");
         const stable = yield* feed.check;

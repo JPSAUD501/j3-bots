@@ -15,6 +15,7 @@ import {
   isNewer,
   newestOn,
   offer,
+  releaseTag,
   SIGNATURE_FILE,
   SUMS_FILE,
   verifySums,
@@ -290,7 +291,7 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
 
   /** A release file's bytes; none when the release has no such file. */
   const download = Effect.fn("ReleaseFeed.download")(function* (version: string, name: string) {
-    const response = yield* get(`${downloads}/download/v${version}/${name}`, {
+    const response = yield* get(`${downloads}/download/${releaseTag(version)}/${name}`, {
       "user-agent": `j3-bots/${running}`,
     });
     if (response.status === 404) return Option.none<Uint8Array>();
