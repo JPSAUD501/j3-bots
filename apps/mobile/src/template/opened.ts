@@ -36,14 +36,19 @@ export const openTemplateAt = async (uri: string, size?: number | null): Promise
 /**
  * The system's document picker, for one file to open as a template. Any type
  * is offered: Android knows no media type for `.j3bot`, so a template the
- * operator saved reads as any other file. Nothing waits when they pick none.
+ * operator saved reads as any other file. Nothing waits when they pick none;
+ * a picker that fails to hand the file over says it could not be read.
  */
 export async function pickTemplate(): Promise<void> {
   const result = await DocumentPicker.getDocumentAsync({
     type: "*/*",
     multiple: false,
     copyToCacheDirectory: true,
-  });
+  }).catch(() => null);
+  if (result === null) {
+    opened.set(UNREADABLE);
+    return;
+  }
   const asset = result.canceled ? undefined : result.assets[0];
   if (asset !== undefined) await openTemplateAt(asset.uri, asset.size);
 }
