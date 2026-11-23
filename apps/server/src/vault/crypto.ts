@@ -36,6 +36,9 @@ export interface KdfParams {
  */
 export const KDF_PARAMS: KdfParams = { n: 2 ** 16, r: 8, p: 1 };
 
+/** The cheapest parameters `kdfParamsInRange` accepts, for tests that derive many keys. */
+export const LEAST_KDF_PARAMS: KdfParams = { n: 2 ** 14, r: 1, p: 1 };
+
 /** Every key here: AES-256. */
 export const KEY_BYTES = 32;
 /** GCM's nonce, random per value. */
@@ -60,12 +63,12 @@ export const kdfParamsInRange = ({ n, r, p }: KdfParams): boolean =>
   Number.isSafeInteger(n) &&
   Number.isSafeInteger(r) &&
   Number.isSafeInteger(p) &&
-  n >= 2 ** 14 &&
+  n >= LEAST_KDF_PARAMS.n &&
   n <= 2 ** 20 &&
   (n & (n - 1)) === 0 &&
-  r >= 1 &&
+  r >= LEAST_KDF_PARAMS.r &&
   r <= 32 &&
-  p >= 1 &&
+  p >= LEAST_KDF_PARAMS.p &&
   p <= 16 &&
   128 * n * r * p <= MAX_KDF_MEMORY;
 

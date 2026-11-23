@@ -65,6 +65,15 @@ import {
 import Migration0001 from "./migrations/0001_initial.ts";
 import { parseTotpSetup, TotpConfig, totpAt } from "./totp.ts";
 
+/**
+ * The scrypt parameters a new keyring gets: `KDF_PARAMS`. A test that derives
+ * many keys gives cheaper ones the vault still accepts; a keyring already
+ * written keeps the parameters it records.
+ */
+export class VaultKdf extends Context.Reference<KdfParams>("@j3-bots/server/vault/Vault/VaultKdf", {
+  defaultValue: () => KDF_PARAMS,
+}) {}
+
 /** The vault's file, inside its own folder of the home. */
 export const VAULT_FILE = "vault.sqlite";
 
@@ -264,6 +273,7 @@ export const layer = Layer.effect(
     const layout = yield* Layout;
     const bots = yield* BotStore;
     const random = yield* SecureRandom.SecureRandom;
+    const kdf = yield* VaultKdf;
 
     const folder = yield* layout.writable(path.join(home, HOME_ENTRIES.vault)).pipe(Effect.orDie);
     yield* fs.makeDirectory(folder, { recursive: true, mode: 0o700 }).pipe(Effect.orDie);
@@ -459,7 +469,7 @@ export const layer = Layer.effect(
     ) {
       const salt = yield* randomBuffer(SALT_BYTES);
       const nonce = yield* randomBuffer(NONCE_BYTES);
-      const wrapped = yield* withDerivedKey(password, salt, KDF_PARAMS, (kek) =>
+      const wrapped = yield* withDerivedKey(password, salt, kdf, (kek) =>
         Effect.sync(() => wrapDataKey(kek, key, nonce)),
       );
       return {
@@ -483,7 +493,7 @@ export const layer = Layer.effect(
             INSERT INTO keyring (
               id, kdf, kdf_n, kdf_r, kdf_p, salt, key_nonce, wrapped_key, created_at, changed_at
             ) VALUES (
-              1, 'scrypt', ${KDF_PARAMS.n}, ${KDF_PARAMS.r}, ${KDF_PARAMS.p}, ${row.salt},
+              1, 'scrypt', ${kdf.n}, ${kdf.r}, ${kdf.p}, ${row.salt},
               ${row.key_nonce}, ${row.wrapped_key}, ${now}, ${now}
             )
           `.pipe(Effect.orDie);
@@ -523,8 +533,8 @@ export const layer = Layer.effect(
           const key = yield* checkPassword(sql, current, keyring);
           const row = yield* keyringFor(next, key);
           yield* sql`
-            UPDATE keyring SET kdf_n = ${KDF_PARAMS.n}, kdf_r = ${KDF_PARAMS.r},
-              kdf_p = ${KDF_PARAMS.p}, salt = ${row.salt}, key_nonce = ${row.key_nonce},
+            UPDATE keyring SET kdf_n = ${kdf.n}, kdf_r = ${kdf.r},
+              kdf_p = ${kdf.p}, salt = ${row.salt}, key_nonce = ${row.key_nonce},
               wrapped_key = ${row.wrapped_key}, changed_at = ${timeText(yield* DateTime.now)}
             WHERE id = 1
           `.pipe(Effect.orDie);
