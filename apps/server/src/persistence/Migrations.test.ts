@@ -154,6 +154,14 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         SELECT entry_id FROM attachments WHERE id = 'file-1'
       `;
       assert.deepStrictEqual(files, [{ entry_id: "entry-1" }]);
+      // The entry kept its kind when the kind's check widened (migration 23),
+      // and an entry still cannot change it.
+      const kinds = yield* sql<{ readonly kind: string }>`SELECT kind FROM entries`;
+      assert.deepStrictEqual(kinds, [{ kind: "message" }]);
+      const changed = yield* sql`UPDATE entries SET kind = 'notice' WHERE id = 'entry-1'`.pipe(
+        Effect.flip,
+      );
+      assert.include(String(changed.reason.cause), "keeps its target, its place and its kind");
       // The command retried answers as it did, a bot with no settings change held.
       const [receipt] = yield* sql<{ readonly result_json: string }>`
         SELECT result_json FROM command_receipts WHERE command_id = 'command-1'

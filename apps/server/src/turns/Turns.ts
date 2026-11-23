@@ -8,6 +8,7 @@ import * as Stream from "effect/Stream";
 import { Bots } from "../bots/Bots.ts";
 import { EngineSessions } from "../bots/EngineSessions.ts";
 import { EngineState } from "../engine/EngineState.ts";
+import { BrowserHelp } from "../browser/BrowserHelp.ts";
 import { RoutineRunner } from "../routines/RoutineRunner.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
@@ -41,6 +42,7 @@ export const layer = Layer.effectDiscard(
     const observer = yield* Observer;
     const pipeline = yield* Pipeline;
     const cards = yield* Cards;
+    const browserHelp = yield* BrowserHelp;
     const held = yield* HeldQueues;
     const states = yield* BotStates;
     const routines = yield* RoutineRunner;
@@ -132,6 +134,7 @@ export const layer = Layer.effectDiscard(
         supervised("The recovery", pipeline.runRecovery),
         supervised("The Stop runner", stops.run),
         supervised("The responder", cards.run),
+        supervised("The browser help watcher", browserHelp.run),
         supervised("The held-queue resumer", held.run),
         supervised("The rotator", rotations.run),
         supervised("The routine runner", routines.run),

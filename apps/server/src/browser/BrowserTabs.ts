@@ -32,6 +32,21 @@ interface KnownTab {
   readonly tab: EngineBrowserTab;
 }
 
+/** A bot's tab that most recently opened or navigated, the one it works in. */
+export interface FrontTab {
+  readonly ref: BrowserTabRef;
+  readonly tab: EngineTabId;
+  /** Empty for a tab that has not loaded a page yet. */
+  readonly url: string;
+}
+
+/** A tab a device holds, taken from the bot that opened it. */
+export interface HeldTab {
+  readonly tab: EngineTabId;
+  readonly botId: BotId;
+  readonly deviceId: DeviceId;
+}
+
 /**
  * The bots' browser tabs: which bot each belongs to, the ref clients name it
  * by, and which device holds it. One feed of the engine's tabs runs for as
@@ -52,6 +67,14 @@ export class BrowserTabs extends Context.Service<
      * go clears the tab only when that device was the one holding it.
      */
     readonly holding: (tab: EngineTabId, deviceId: DeviceId, holds: boolean) => Effect.Effect<void>;
+    /** The bot's front tab, while it has a tab open. */
+    readonly front: (botId: BotId) => Effect.Effect<Option.Option<FrontTab>>;
+    /** The tabs the bot has open now. */
+    readonly tabsOf: (botId: BotId) => Effect.Effect<ReadonlyArray<EngineTabId>>;
+    /** Every tab open now, then again on every change. */
+    readonly open: Stream.Stream<ReadonlySet<EngineTabId>>;
+    /** Every tab a device holds now, then again on every change. */
+    readonly held: Stream.Stream<ReadonlyArray<HeldTab>>;
   }
 >()("@j3-bots/server/browser/BrowserTabs") {}
 
@@ -136,11 +159,7 @@ export const layer = Layer.effect(
             SubscriptionRef.changes(holders),
             (all, held): TabsFrame => {
               const mine = all.filter((known) => known.botId === botId);
-              const front = mine.reduce<KnownTab | undefined>(
-                (newest, known) =>
-                  newest === undefined || known.tab.activeAt > newest.tab.activeAt ? known : newest,
-                undefined,
-              );
+              const front = frontOf(mine);
               return {
                 tabs: mine.map((known): BrowserTab => ({
                   ref: known.ref,
@@ -176,9 +195,53 @@ export const layer = Layer.effect(
         return next;
       });
 
-    return BrowserTabs.of({ subscribe, resolve, holding });
+    const front = (botId: BotId) =>
+      SubscriptionRef.get(known).pipe(
+        Effect.map((all) =>
+          Option.map(
+            Option.fromUndefinedOr(frontOf(all.filter((known) => known.botId === botId))),
+            (newest): FrontTab => ({ ref: newest.ref, tab: newest.tab.id, url: newest.tab.url }),
+          ),
+        ),
+      );
+
+    const tabsOf = (botId: BotId) =>
+      SubscriptionRef.get(known).pipe(
+        Effect.map((all) => all.filter((known) => known.botId === botId).map(({ tab }) => tab.id)),
+      );
+
+    const open = SubscriptionRef.changes(known).pipe(
+      Stream.map((all): ReadonlySet<EngineTabId> => new Set(all.map(({ tab }) => tab.id))),
+    );
+
+    const held = Stream.zipLatestWith(
+      SubscriptionRef.changes(known),
+      SubscriptionRef.changes(holders),
+      (all, byTab): ReadonlyArray<HeldTab> =>
+        all.flatMap(({ tab, botId }) => {
+          const deviceId = byTab.get(tab.id);
+          return deviceId === undefined ? [] : [{ tab: tab.id, botId, deviceId }];
+        }),
+    ).pipe(Stream.changesWith(sameHeld));
+
+    return BrowserTabs.of({ subscribe, resolve, holding, front, tabsOf, open, held });
   }),
 );
+
+/** The tab that most recently opened or navigated, among `tabs`. */
+const frontOf = (tabs: ReadonlyArray<KnownTab>): KnownTab | undefined =>
+  tabs.reduce<KnownTab | undefined>(
+    (newest, known) =>
+      newest === undefined || known.tab.activeAt > newest.tab.activeAt ? known : newest,
+    undefined,
+  );
+
+const sameHeld = (left: ReadonlyArray<HeldTab>, right: ReadonlyArray<HeldTab>) =>
+  left.length === right.length &&
+  left.every((held, index) => {
+    const other = right[index];
+    return other !== undefined && held.tab === other.tab && held.deviceId === other.deviceId;
+  });
 
 const sameTab = (left: BrowserTab, right: BrowserTab) =>
   left.ref === right.ref &&

@@ -40,7 +40,7 @@ const BotRow = Schema.Struct({ id: BotId, provider_id: Schema.String });
  * turn is observed): read from what the observer applied, never from a
  * client's timer. An engine request waiting on the operator comes first, then
  * a running turn, then a turn blocked until a usage limit resets, then an
- * `ask` card the bot is waiting on.
+ * `ask` card or a browser help card the bot is waiting on.
  */
 export class BotStates extends Context.Service<
   BotStates,
@@ -107,13 +107,19 @@ export const layer = Layer.effect(
       `,
     });
 
+    /** The bot's oldest open card it ended a turn on: an `ask`, or a request for help in its browser. */
     const askCard = SqlSchema.findOneOption({
       Request: BotId,
       Result: Card,
       execute: (botId) => sql`
-        SELECT a.entry_id FROM ask_cards a JOIN entries e ON e.id = a.entry_id
-        WHERE e.author_bot_id = ${botId} AND a.closed_at IS NULL
-        ORDER BY e.seq LIMIT 1
+        SELECT entry_id FROM (
+          SELECT a.entry_id, e.seq FROM ask_cards a JOIN entries e ON e.id = a.entry_id
+          WHERE e.author_bot_id = ${botId} AND a.closed_at IS NULL
+          UNION ALL
+          SELECT b.entry_id, e.seq FROM browser_help_cards b JOIN entries e ON e.id = b.entry_id
+          WHERE b.bot_id = ${botId} AND b.closed_at IS NULL
+        )
+        ORDER BY seq LIMIT 1
       `,
     });
 

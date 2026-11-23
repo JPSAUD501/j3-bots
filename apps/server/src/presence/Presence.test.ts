@@ -2,6 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   type BotId,
+  BrowserTabRef,
   CommandId,
   type DeviceId,
   type EntryTarget,
@@ -140,6 +141,26 @@ it.effect("notifies every socket of what a bot adds where no socket looks, and n
     for (const queue of queues) {
       const notification = yield* Queue.take(queue);
       assert.deepStrictEqual([notification.entryId, notification.kind], [back.id, "message"]);
+    }
+  }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
+it.effect("tells of a bot's request for help in its browser as a kind of its own", () =>
+  Effect.gen(function* () {
+    const scout = yield* createBot("Scout");
+    const { queues } = yield* twoSockets(scout.id);
+    const card = yield* add(scout.id, {
+      _tag: "browser-help",
+      author: { _tag: "bot", botId: scout.id },
+      reason: "captcha",
+      note: "The ticket site wants to know a person is there.",
+      site: "tickets.example.com",
+      tab: BrowserTabRef.make("tab-tickets"),
+      status: { _tag: "pending" },
+    });
+    for (const queue of queues) {
+      const notification = yield* Queue.take(queue);
+      assert.deepStrictEqual([notification.entryId, notification.kind], [card.id, "browser-help"]);
     }
   }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );

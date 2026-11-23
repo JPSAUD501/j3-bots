@@ -123,6 +123,9 @@ export const layer = Layer.effect(
         },
         runtime: yield* engineState.labels(bot.model),
         pinned: { shared: pinnedText(pinnedShared), bot: pinnedText(pinnedBot) },
+        // The engine gives every bot its browser (`enableAgentBrowserAccess`
+        // is left at the engine's default), so every bot gets its rules.
+        browser: true,
       };
       const workspace = stored.value.workspacePath;
       yield* writing.withPermits(1)(
