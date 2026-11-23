@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Label, PositiveInt, type Settings, TimeZone } from "@j3-bots/contracts";
+import { Label, PositiveInt, type Settings, TimeZone, UpdateChannel } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -17,6 +17,7 @@ const SettingsRow = Schema.Struct({
   concurrent_turns: PositiveInt,
   notifications_enabled: Flag,
   notification_previews: Flag,
+  update_channel: UpdateChannel,
 });
 
 /** The `settings` table's one row. */
@@ -47,7 +48,7 @@ export const layer = Layer.effect(
       Result: SettingsRow,
       execute: () => sql`
         SELECT operator_name, time_zone, hop_limit, fan_out_limit, concurrent_turns,
-          notifications_enabled, notification_previews
+          notifications_enabled, notification_previews, update_channel
         FROM settings WHERE id = 1
       `,
     });
@@ -66,6 +67,7 @@ export const layer = Layer.effect(
             enabled: row.notifications_enabled,
             previews: row.notification_previews,
           },
+          updateChannel: row.update_channel,
         })),
       ),
       save: Effect.fn("SettingsStore.save")(function* (
@@ -83,6 +85,7 @@ export const layer = Layer.effect(
             concurrent_turns = ${settings.budgets.concurrentTurns},
             notifications_enabled = ${settings.notifications.enabled ? 1 : 0},
             notification_previews = ${settings.notifications.previews ? 1 : 0},
+            update_channel = ${settings.updateChannel},
             updated_at = ${timeText(at)}
           WHERE id = 1
         `;

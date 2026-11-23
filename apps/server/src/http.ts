@@ -47,6 +47,7 @@ const serverInfo = Layer.unwrap(
       protocolVersion: PROTOCOL_VERSION,
       version: packageJson.version,
       startedAt: yield* DateTime.now,
+      updateApi: null,
     };
     const response = yield* HttpServerResponse.schemaJson(ServerInfo)(info).pipe(Effect.orDie);
     return HttpRouter.add("GET", HTTP_PATHS.server, Effect.succeed(response));

@@ -21,8 +21,8 @@
 
 export { freeSpaceAt } from "../system/freeSpace.ts";
 export { type ServerProbe, READY_WITHIN } from "./readiness.ts";
+export { compareVersions } from "@j3-bots/release";
 export {
-  compareVersions,
   decideStart,
   type PendingTransition,
   readRuntimeRecord,

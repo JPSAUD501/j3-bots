@@ -63,6 +63,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * shared/skills/
  * state/shipped-skills.json  which texts in shared/skills the server installed
  * state/runtime.json     the release whose data this home holds, and a transition under way
+ * state/release-feed.json  the newer releases the server last found, and whether they verified
  * attachments/           file bytes, by digest
  * backups/<snapshot>/    the databases and settings an update copied first
  * providers/<provider>/  the configuration folder of an engine provider instance
@@ -80,6 +81,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
     sharedSkills,
     attachments: path.join(home, HOME_ENTRIES.attachments),
     shippedSkills: path.join(home, HOME_ENTRIES.state, "shipped-skills.json"),
+    releaseFeed: path.join(home, HOME_ENTRIES.state, "release-feed.json"),
     providerHome: (provider: (typeof PROVIDER_HOMES)[number]) =>
       path.join(home, HOME_ENTRIES.providers, provider),
     /**

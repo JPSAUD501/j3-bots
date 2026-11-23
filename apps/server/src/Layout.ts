@@ -41,6 +41,8 @@ export class Layout extends Context.Service<
     readonly sharedSkills: string;
     /** Which texts in `sharedSkills` the server installed: its own record, outside them. */
     readonly shippedSkills: string;
+    /** What the release feed last found (`releases/ReleaseFeed.ts`). */
+    readonly releaseFeed: string;
     readonly attachments: string;
     /**
      * `location`, once where it really is, links resolved (through its nearest
@@ -109,6 +111,7 @@ export const layer = Layer.effect(
       sharedMemory: layout.sharedMemory,
       sharedSkills: layout.sharedSkills,
       shippedSkills: layout.shippedSkills,
+      releaseFeed: layout.releaseFeed,
       attachments: layout.attachments,
       writable,
       writeFile,

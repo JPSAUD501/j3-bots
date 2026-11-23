@@ -13,7 +13,7 @@ const ROOT = NodePath.join(import.meta.dirname, "..");
 const KEYS = NodePath.join(ROOT, "release-keys");
 
 /** The files that carry a copy of every release key, as PEM blocks in their text. */
-const EMBEDDED = ["scripts/install.sh"];
+const EMBEDDED = ["scripts/install.sh", "packages/release/src/keys.ts"];
 
 const PEM = /-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+?\n-----END PUBLIC KEY-----/g;
 

@@ -43,6 +43,7 @@
     "@j3-bots/engine-t3": "workspace:*",
     "@j3-bots/i18n": "workspace:*",
     "@j3-bots/prompts": "workspace:*",
+    "@j3-bots/release": "workspace:*",
     "effect": "catalog:",
     "lean-qr": "2.7.4"
   },

@@ -7,7 +7,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import {
-  compareVersions,
   decideStart,
   readRuntimeRecord,
   type RecordedRuntime,
@@ -129,40 +128,6 @@ describe("whether a release may start on a home", () => {
       );
     });
   }
-
-  it("orders two builds of one version as equal, and a version that is not one as nothing", () => {
-    assert.deepStrictEqual(compareVersions("0.3.0+a", "0.3.0+b"), Option.some(0));
-    assert.deepStrictEqual(compareVersions("0.3.0+a", "0.3.1"), Option.some(-1));
-    assert.isTrue(Option.isNone(compareVersions("nightly", "0.3.0")));
-    assert.isTrue(Option.isNone(compareVersions("0.3", "0.3.0")));
-  });
-
-  it("orders versions as releases are numbered", () => {
-    const ordered = [
-      "0.2.9",
-      "0.3.0-alpha",
-      "0.3.0-alpha.1",
-      "0.3.0-beta",
-      // Nightlies (decision 0031): by day, then run, below the release candidates.
-      "0.3.0-nightly.20261124.57",
-      "0.3.0-nightly.20261124.58",
-      "0.3.0-nightly.20261125.3",
-      "0.3.0-rc.2",
-      "0.3.0-rc.10",
-      "0.3.0",
-      "0.10.0",
-      "1.0.0",
-    ];
-    for (const [index, version] of ordered.entries()) {
-      for (const [other, than] of ordered.entries()) {
-        assert.deepStrictEqual(
-          compareVersions(version, than),
-          Option.some(Math.sign(index - other)),
-          `${version} against ${than}`,
-        );
-      }
-    }
-  });
 });
 
 it.layer(NodeServices.layer)("a home's record", (it) => {

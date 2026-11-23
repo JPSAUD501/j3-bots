@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { DeviceId, Label, PositiveInt } from "./base.ts";
 import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
@@ -75,6 +76,12 @@ export const ServerInfo = Schema.Struct({
   /** The J3 Bots release. */
   version: Label,
   startedAt: Schema.DateTimeUtc,
+  /**
+   * The `UPDATE_API_VERSION` of the update routes the server serves
+   * (`UPDATE_HTTP_PATHS`), outside the protocol; null from a server that
+   * has none. A client offers to update the server only when it is set.
+   */
+  updateApi: Schema.NullOr(PositiveInt).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });
 export type ServerInfo = typeof ServerInfo.Type;
 

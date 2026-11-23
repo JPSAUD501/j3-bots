@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- SHA-256 of a 50 MB archive needs an incremental hash; Effect has none.
 import * as NodeCrypto from "node:crypto";
+import { releaseTag } from "@j3-bots/release";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,11 +28,11 @@ const RELEASES = "https://github.com/JPSAUD501/j3-bots/releases";
 
 /**
  * The releases page, or a mirror of it that serves `<base>/latest` and
- * `<base>/download/v<version>/<file>`: `J3_RELEASE_BASE_URL`, as install.sh
- * reads it. The mirror is trusted as the publisher, since it serves the
+ * `<base>/download/<tag>/<file>`, the tag as `releaseTag` names it:
+ * `J3_RELEASE_BASE_URL`, as install.sh reads it. The mirror is trusted as the publisher, since it serves the
  * SHA256SUMS an archive is checked against.
  */
-const releaseBase = Config.String("J3_RELEASE_BASE_URL").pipe(
+export const releaseBase = Config.String("J3_RELEASE_BASE_URL").pipe(
   Config.withDefault(RELEASES),
   Config.map((base) => base.replace(/\/+$/, "")),
 );
@@ -187,7 +188,7 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* (options
   }
 
   const base = yield* releaseBase;
-  const download = `${base}/download/v${version}`;
+  const download = `${base}/download/${releaseTag(version)}`;
   const stem = `j3-bots-${version}-${platform}`;
   const archive = `${stem}.tar.gz`;
   const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));

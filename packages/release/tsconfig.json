@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  // Only `src/node.ts` may import Node's modules: the rest runs in every
+  // client, Hermes on Android included. Node's types give the WHATWG globals.
+  "compilerOptions": {
+    "types": ["node"],
+    "lib": ["ESNext"]
+  },
+  "include": ["src", "testing"]
+}

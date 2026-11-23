@@ -18,6 +18,7 @@ import { SYSTEM_PROMPT_FILE } from "./home/entries.ts";
 import * as Layout from "./Layout.ts";
 import * as Listener from "./listener.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
+import * as ReleaseFeed from "./releases/ReleaseFeed.ts";
 import * as ExpoPushSender from "./push/ExpoPushSender.ts";
 import * as BasePrompt from "./settings/BasePrompt.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
@@ -85,6 +86,8 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     logShutdown,
   ).pipe(
     Layer.provide(Http.serve(Listener.layer, { logAddress: true })),
+    // Checks for newer releases for as long as the server runs.
+    Layer.provideMerge(ReleaseFeed.layer),
     // One decision for the client routes and the admin socket's report.
     Layer.provide(WebClient.statusLayer),
     Layer.provide(Domain.layer),
