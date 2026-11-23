@@ -105,7 +105,11 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     triggerData: "text",
     dueAt: at,
   },
-  { ...base, kind: "system", event: { name: "first-run" } },
+  ...[false, true].map((askName): Wake => ({
+    ...base,
+    kind: "system",
+    event: { name: "first-run", askName },
+  })),
   {
     ...base,
     kind: "system",

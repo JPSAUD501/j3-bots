@@ -97,6 +97,9 @@ export const layer = Layer.effect(
       set_routine: handler(tools.set_routine.input, (input, call) =>
         admit({ tool: "set_routine", input, ...call }),
       ),
+      set_operator_name: handler(tools.set_operator_name.input, (input, call) =>
+        admit({ tool: "set_operator_name", input, ...call }),
+      ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory
           .remember({

@@ -448,9 +448,18 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
      * the routine runs next. The operator edits it to turn it back on.
      */
     Schema.TaggedStruct("routine-paused", { routineId: RoutineId, name: Label }),
+    /**
+     * The bot saved the name the operator asked to be called by, which every
+     * bot uses from then on (`Settings.operatorName`). Settings shows it and
+     * changes it.
+     */
+    Schema.TaggedStruct("operator-named", { botId: BotId, name: Label }),
   ] as const;
 
-/** A quiet line where something stopped. Nothing is dropped silently. */
+/**
+ * A quiet line where something stopped, or where a bot changed something the
+ * operator should know about. Nothing is dropped silently.
+ */
 export const Notice = Schema.Union(notices(FailureClass));
 export type Notice = typeof Notice.Type;
 

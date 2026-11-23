@@ -191,6 +191,11 @@ export function noticeText(
       return t("notice.tooLong");
     case "routine-paused":
       return t("notice.routinePaused", { name: notice.name });
+    case "operator-named":
+      return t("notice.operatorNamed", {
+        bot: ctx.botName(notice.botId) ?? t("bot.unknown"),
+        name: notice.name,
+      });
   }
 }
 

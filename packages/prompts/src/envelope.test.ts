@@ -429,9 +429,16 @@ describe("renderWake", () => {
   it("renders every system event", () => {
     const system = (event: Extract<Wake, { kind: "system" }>["event"]) =>
       render({ kind: "system", at: now, timeZone, sinceLastTurn: [], event });
-    expect(system({ name: "first-run" })).toMatchInlineSnapshot(`
+    expect(system({ name: "first-run", askName: false })).toMatchInlineSnapshot(`
       "<j3-wake kind="system" event="first-run" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
       You were just created, and your user has not written yet.
+      </j3-wake>
+      This is an event, not a message from your user. Respond only as your instructions say for it.
+      "
+    `);
+    expect(system({ name: "first-run", askName: true })).toMatchInlineSnapshot(`
+      "<j3-wake kind="system" event="first-run" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+      You were just created, and your user has not written yet. None of their bots knows yet what they want to be called, so instead of what they need, your hello asks what to call them, in a few friendly words.
       </j3-wake>
       This is an event, not a message from your user. Respond only as your instructions say for it.
       "
@@ -473,7 +480,7 @@ describe("renderWake", () => {
       at: at("2026-07-01T12:00:00Z"),
       timeZone: DateTime.zoneMakeNamedUnsafe("Europe/Lisbon"),
       sinceLastTurn: [],
-      event: { name: "first-run" },
+      event: { name: "first-run", askName: false },
     } as const;
     expect(render(wake)).toContain(
       'at="2026-07-01T13:00:00+01:00" weekday="Wednesday" tz="Europe/Lisbon"',

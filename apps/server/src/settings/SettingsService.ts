@@ -16,6 +16,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { BasePrompt } from "./BasePrompt.ts";
@@ -57,11 +59,26 @@ export class SettingsService extends Context.Service<
   SettingsService,
   {
     readonly get: Effect.Effect<Settings>;
+    /** The settings now, then each change once it has committed, whoever made it. */
+    readonly changes: Stream.Stream<Settings>;
     /** Fails with `Invalid("time-zone")` for a time zone that does not exist. */
     readonly update: (input: {
       readonly commandId: CommandId;
       readonly changes: SettingsChanges;
     }) => Effect.Effect<Settings, CommandError>;
+    /**
+     * Saves `changes` in the caller's transaction and returns the settings as
+     * saved, as `update` does but with no command receipt: for a caller that
+     * makes its change act once by its own record, as a bot's tool call does.
+     * Once that transaction has committed, the caller runs `applied`.
+     */
+    readonly save: (changes: SettingsChanges) => Effect.Effect<Settings, Invalid>;
+    /**
+     * Brings what follows the settings up to saved `changes`: the base
+     * prompt, every bot's instructions, and `changes`' subscribers. Safe to
+     * run again.
+     */
+    readonly applied: (changes: SettingsChanges) => Effect.Effect<void>;
     /**
      * A device's time zone, which becomes the operator's unless they chose
      * one or a device gave one before. A zone the server does not know
@@ -81,43 +98,51 @@ export const layer = Layer.effect(
     const receipts = yield* CommandReceipts;
     const workspaces = yield* Workspaces;
     const basePrompt = yield* BasePrompt;
+    const current = yield* SubscriptionRef.make(yield* store.get);
 
-    const update = Effect.fn("SettingsService.update")(function* (input: {
-      readonly commandId: CommandId;
-      readonly changes: SettingsChanges;
-    }) {
-      const { changes } = input;
+    /** Tells `changes`' subscribers the settings as committed now. */
+    const publish = Effect.flatMap(store.get, (settings) => SubscriptionRef.set(current, settings));
+
+    const save = Effect.fn("SettingsService.save")(function* (changes: SettingsChanges) {
       if (
         changes.timeZone !== undefined &&
         Option.isNone(DateTime.zoneMakeNamed(changes.timeZone))
       ) {
         return yield* new Invalid({ reason: "time-zone" });
       }
-      const saved = yield* receipts.once({
-        commandId: input.commandId,
-        method: "settings.update",
-        payload: changes,
-        result: SettingsReceipt,
-        apply: Effect.gen(function* () {
-          const current = yield* store.get;
-          const next: Settings = {
-            operatorName:
-              changes.operatorName === undefined ? current.operatorName : changes.operatorName,
-            timeZone: changes.timeZone ?? current.timeZone,
-            budgets: changes.budgets ?? current.budgets,
-            // Field by field, read in the same transaction as the write.
-            notifications: { ...current.notifications, ...changes.notifications },
-          };
-          yield* store.save(next, yield* DateTime.now, {
-            zoneChosen: changes.timeZone !== undefined,
-          });
-          return next;
-        }),
-      });
+      const saved = yield* store.get;
+      const next: Settings = {
+        operatorName:
+          changes.operatorName === undefined ? saved.operatorName : changes.operatorName,
+        timeZone: changes.timeZone ?? saved.timeZone,
+        budgets: changes.budgets ?? saved.budgets,
+        // Field by field, read in the same transaction as the write.
+        notifications: { ...saved.notifications, ...changes.notifications },
+      };
+      yield* store.save(next, yield* DateTime.now, { zoneChosen: changes.timeZone !== undefined });
+      return next;
+    });
+
+    const applied = Effect.fn("SettingsService.applied")(function* (changes: SettingsChanges) {
       if (changes.operatorName !== undefined) yield* basePrompt.refresh;
       if (changes.operatorName !== undefined || changes.timeZone !== undefined) {
         yield* workspaces.renderAll;
       }
+      yield* publish;
+    });
+
+    const update = Effect.fn("SettingsService.update")(function* (input: {
+      readonly commandId: CommandId;
+      readonly changes: SettingsChanges;
+    }) {
+      const saved = yield* receipts.once({
+        commandId: input.commandId,
+        method: "settings.update",
+        payload: input.changes,
+        result: SettingsReceipt,
+        apply: save(input.changes),
+      });
+      yield* applied(input.changes);
       return saved;
     });
 
@@ -127,9 +152,19 @@ export const layer = Layer.effect(
       if (Option.isNone(DateTime.zoneMakeNamed(timeZone))) return;
       const now = yield* DateTime.now;
       if (keepsUtcClock(timeZone, DateTime.toPartsUtc(now).year)) return;
-      if (yield* store.adoptTimeZone(timeZone, now)) yield* workspaces.renderAll;
+      if (yield* store.adoptTimeZone(timeZone, now)) {
+        yield* workspaces.renderAll;
+        yield* publish;
+      }
     });
 
-    return SettingsService.of({ get: store.get, update, deviceTimeZone });
+    return SettingsService.of({
+      get: store.get,
+      changes: SubscriptionRef.changes(current),
+      update,
+      save,
+      applied,
+      deviceTimeZone,
+    });
   }),
 );

@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { Connection, type J3RpcClient, type NotPaired } from "../connection/Connection.ts";
 import { DeviceTimeZone } from "../ports.ts";
 import { Actions, intentResult, type IntentResult } from "../intents/Actions.ts";
@@ -45,13 +46,15 @@ export interface SettingsSaves {
 }
 
 /**
- * The operator's preferences. The contract has no subscription for them and
- * no revision, so they are read when each socket opens and again after each
- * save the server accepts, and only the read started last is shown. What
- * a save returns is not shown: answered again from its receipt after a
- * reconnection, it can be older than what the reconnection read. A change
- * made on another device shows here after the next reconnect, save or
- * `refresh`.
+ * The operator's preferences. They are read when each socket opens, then
+ * followed: the server tells every change, whoever made it, a bot the
+ * operator told what to call them included. A server older than that
+ * subscription tells none, so they are also read again after each save the
+ * server accepts and on `refresh`, and there a change made elsewhere shows
+ * after the next reconnect, save or `refresh`. They have no revision, so only
+ * the read started or the change told last is shown. What a save returns is
+ * not shown: answered again from its receipt after a reconnection, it can be
+ * older than what the reconnection read.
  *
  * Each socket first gives the server the device's time zone, which becomes
  * the operator's while they have chosen none, so the first read shows it.
@@ -125,10 +128,22 @@ export const layer = Layer.effect(
         ),
       );
 
+    /**
+     * Shows each change the server tells. A server older than the RPC answers
+     * it with a defect, which changes nothing here: the settings are then
+     * read as before.
+     */
+    const follow = (client: J3RpcClient) =>
+      client["settings.subscribe"]().pipe(
+        Stream.runForEach((settings) => latest(Effect.succeed(settings))),
+        Effect.ignoreCause,
+      );
+
     yield* connection
       .eachSession((client) =>
         giveZone(client).pipe(
           Effect.andThen(read(client)),
+          Effect.andThen(follow(client)),
           Effect.andThen(Effect.never),
           Effect.ensuring(Effect.sync(() => state.update(markStale))),
         ),

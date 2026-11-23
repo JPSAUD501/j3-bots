@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { MAX_LABEL_LENGTH } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { DECODE_OPTIONS, MAX_TOOL_INPUT_BYTES, type ToolName, toolList, tools } from "./tools.ts";
@@ -43,6 +44,14 @@ describe("j3 tools", () => {
     });
     const recalled = decode("recall", { query: "pricing" });
     expect(recalled._tag === "Success" && recalled.value).toEqual({ query: "pricing", limit: 10 });
+  });
+
+  it("takes the operator's name trimmed, and only one Settings would take", () => {
+    const named = decode("set_operator_name", { name: "  Ana Clara \n" });
+    expect(named._tag === "Success" && named.value).toEqual({ name: "Ana Clara" });
+    expect(accepts("set_operator_name", { name: "   " })).toBe(false);
+    expect(accepts("set_operator_name", { name: "a".repeat(MAX_LABEL_LENGTH) })).toBe(true);
+    expect(accepts("set_operator_name", { name: "a".repeat(MAX_LABEL_LENGTH + 1) })).toBe(false);
   });
 
   it("bounds an ask to one to six options", () => {

@@ -218,7 +218,14 @@ export interface RoutineWake extends WakeBase {
 }
 
 export type SystemEvent =
-  | { readonly name: "first-run" }
+  | {
+      readonly name: "first-run";
+      /**
+       * The opening asks what the operator wants to be called: nobody knows,
+       * and no other bot's opening has asked.
+       */
+      readonly askName: boolean;
+    }
   | {
       readonly name: "profile-changed";
       readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
@@ -263,11 +270,21 @@ const closingLine = (wake: Wake): string =>
 
 const PROFILE_CHANGED_LINE = "Your profile was changed. The new values:";
 
+/**
+ * What a `first-run` event adds when the opening asks the operator's name. It
+ * carries the instruction itself, so the base prompt says nothing about asking
+ * and an opening that should not ask is not led to.
+ */
+const ASK_NAME_LINE =
+  "None of their bots knows yet what they want to be called, so instead of what they need, your hello asks what to call them, in a few friendly words.";
+
 /** What happened, in one line. */
 const eventLine = (event: SystemEvent): string => {
   switch (event.name) {
     case "first-run":
-      return "You were just created, and your user has not written yet.";
+      return event.askName
+        ? `You were just created, and your user has not written yet. ${ASK_NAME_LINE}`
+        : "You were just created, and your user has not written yet.";
     case "profile-changed":
       return PROFILE_CHANGED_LINE;
     case "undelivered":

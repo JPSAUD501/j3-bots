@@ -65,9 +65,13 @@ const fill = <K extends string>(
   });
 };
 
+/** What the instructions call the operator until they say what they want to be called. */
+const UNNAMED_OPERATOR = "your user";
+
 /** The operator, as every bot's instructions name them. */
 export interface OperatorInfo {
-  readonly name: string;
+  /** What they want to be called; null until they say, and the instructions then say "your user". */
+  readonly name: string | null;
   /** An IANA time zone name, such as `America/Sao_Paulo`. */
   readonly timeZone: string;
 }
@@ -97,7 +101,7 @@ const orElse = (value: string, fallback: string): string =>
  * the provider instance's `developer_instructions`.
  */
 export const renderBaseInstructions = (operator: Pick<OperatorInfo, "name">): string =>
-  fill<BasePlaceholder>(BASE_TEMPLATE, { "user.name": operator.name });
+  fill<BasePlaceholder>(BASE_TEMPLATE, { "user.name": operator.name ?? UNNAMED_OPERATOR });
 
 /**
  * One bot's profile and pinned memory. On Codex this is the workspace's
@@ -105,7 +109,7 @@ export const renderBaseInstructions = (operator: Pick<OperatorInfo, "name">): st
  */
 export const renderBotInstructions = (input: BotInstructionsInput): string =>
   fill<BotPlaceholder>(BOT_TEMPLATE, {
-    "user.name": input.operator.name,
+    "user.name": input.operator.name ?? UNNAMED_OPERATOR,
     "user.timezone": input.operator.timeZone,
     "bot.name": input.profile.name,
     "bot.title": orElse(input.profile.title, "none"),
