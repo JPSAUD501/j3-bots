@@ -42,6 +42,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 - [Reaching J3 Bots from elsewhere](operations/exposing.md): HTTPS, Tailscale, a domain through a proxy, `publicOrigin`, webhooks, a sign-in gate.
 - [Releasing](operations/releasing.md): cutting a release of the desktop app and the server, what the release workflow may do, signing, and trying an update or an install locally.
 - [Release notes for 0.1.0](releases/v0.1.0.md): the first release, what it contains, how to install it and what does not work yet.
+- [Release notes for 0.3.0](releases/v0.3.0.md), a draft until it is released: the bots on your own computer, what changes on updating and what does not work yet.
 - [The every-surface check](operations/every-surface-check.md): the desktop app and the Android app against one server, run by hand: continuity, cards resolved across devices, the desktop's surfaces, and what it does not prove.
 
 ## Engineering

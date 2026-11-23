@@ -8,7 +8,7 @@ Bots run with full access to the user that runs J3 Bots. Whoever can open the se
 
 Every other request needs a paired device's token, which the server checks itself. Webhooks are the exception: their address is their credential ([Webhooks](#webhooks)).
 
-Over plain HTTP, open the server at an address or at `localhost`, as `j3-bots pair` prints it: the server answers `403` to a request for any other name, such as `http://<machine>.local:3737`, except the one in [`publicOrigin`](#publicorigin). A web page on a name its owner points at your machine's address could otherwise talk to the server as if it were its own page ([Security](../architecture/security.md#j3-bots-own-surface)). Web pages cannot lock pairing either: only a JSON request counts as an attempt, and a page cannot send one to another origin.
+Over plain HTTP, open the server at an address or at `localhost`, as `j3-bots pair` prints it: the server answers `403` to a request for any other name, such as `http://<machine>.local:3737`, except the one in [`publicOrigin`](#publicorigin). The browser then shows one line saying which addresses the server answers, and the server's log names the refused name and what would serve it: behind a proxy or tunnel that serves it at that name, set `publicOrigin`. A web page on a name its owner points at your machine's address could otherwise talk to the server as if it were its own page ([Security](../architecture/security.md#j3-bots-own-surface)). Web pages cannot lock pairing either: only a JSON request counts as an attempt, and a page cannot send one to another origin.
 
 The ways below, from least to most exposed:
 

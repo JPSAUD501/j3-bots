@@ -70,7 +70,7 @@ Done when a conversation started on one device continues on the others with noth
 
 **Status.** Built. The exit test is met on Linux and an Android emulator, with development builds; not yet with the release packages or on a phone.
 
-- The [every-surface check](operations/every-surface-check.md) passes with the desktop app on Linux and the Android app on an emulator. The desktop app has not run on macOS or Windows.
+- The [every-surface check](operations/every-surface-check.md) passes with the desktop app on Linux and the Android app on an emulator. Outside the check, the packaged desktop app has run on Windows 11, in a virtual machine, with the bots on that computer ([On the operator's own computer](#on-the-operators-own-computer)); it has not run on macOS.
 - **Push notifications are built but cannot be turned on.** A build needs an Expo project and a Firebase configuration for them, and the project has neither, by the owner's decision, so no build turns push on and push has not been tried on a device ([Clients: mobile](architecture/clients.md#mobile)).
 
 ## M5: Public
@@ -85,6 +85,15 @@ Done when a conversation started on one device continues on the others with noth
 
 - **Built:** the one-command install, `j3-bots doctor`, `j3-bots update` with a snapshot to roll back to, the contribution policy and license, and the [operator documentation](operations/install.md).
 - **Not yet:** the upgrade path is exercised on two engine versions, not three ([Releasing: the upgrade check](operations/releasing.md#the-upgrade-check)). The tool bridge, pairing and webhooks were each reviewed and hardened in a pull request of their own, but no one outside the project has reviewed them. The name is chosen, and whether it is free to use is [open question 10](open-questions.md#10-is-the-name-free-to-use).
+
+## On the operator's own computer
+
+- The desktop app runs J3 Bots itself, for someone with no always-on machine: its first screen offers "Use this computer", which signs that computer in without a pairing code and starts the server as the app's own child ([decision 0024](decisions/0024-the-local-server-is-a-supervised-child-of-the-app.md)). The bots sleep when the computer sleeps.
+- Claude Code and Codex are signed in from the app, into J3 Bots' own homes for them.
+- An app update moves the bots' data to the server it carries, and rolls back if that server never gets ready.
+- A routine missed while J3 Bots was not running runs on its return only while that is nearer than its next run ([decision 0021](decisions/0021-a-missed-routine-runs-only-while-it-is-nearer-than-the-next.md)).
+
+**Status.** Built for 0.3.0 on Linux x64 and Windows x64. On Apple silicon it is built but not offered until it has run on a Mac; an Intel Mac connects to a server only. A phone reaching these bots from outside the home network is a later step.
 
 ## Next
 
