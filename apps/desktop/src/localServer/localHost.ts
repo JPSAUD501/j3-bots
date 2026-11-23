@@ -45,6 +45,11 @@ export interface LocalHostOptions {
   /** `app.getAppPath()`: `apps/desktop` in development. */
   readonly appPath: string;
   readonly userData: string;
+  /**
+   * The app's own build of the web client, which the server serves too: a
+   * phone that opens the pairing link reaches it there.
+   */
+  readonly webClient: string;
   readonly platform: NodeJS.Platform;
   readonly arch: string;
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -72,17 +77,28 @@ const isAppOnly = (name: string) =>
  * AppImage, Node (but the certificates it trusts) or a J3 Bots setting in
  * the operator's shell (the server's
  * settings come from its home's `config.json`), with the operator's PATH,
- * its home and the address it listens on.
+ * its home, the address it listens on and the web client it serves.
  */
 export const serverEnvironment = (
   env: Readonly<Record<string, string | undefined>>,
-  options: { readonly path: string; readonly home: string; readonly host: string },
+  options: {
+    readonly path: string;
+    readonly home: string;
+    readonly host: string;
+    readonly webClient: string;
+  },
 ): Record<string, string> => {
   const kept: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
     if (value !== undefined && !isAppOnly(name)) kept[name] = value;
   }
-  return { ...kept, PATH: options.path, J3_HOME: options.home, J3_HOST: options.host };
+  return {
+    ...kept,
+    PATH: options.path,
+    J3_HOME: options.home,
+    J3_HOST: options.host,
+    J3_WEB_CLIENT: options.webClient,
+  };
 };
 
 const decodeOrigin = Schema.decodeUnknownEffect(ServerOrigin);
@@ -157,6 +173,7 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
         path: yield* shellPath,
         home,
         host: yield* phone.hostForLaunch,
+        webClient: options.webClient,
       }),
       logFile,
       platform: options.platform,

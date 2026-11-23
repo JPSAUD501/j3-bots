@@ -249,6 +249,7 @@ const program = Effect.gen(function* () {
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath(),
     userData: app.getPath("userData"),
+    webClient: webRoot,
     platform: process.platform,
     arch: process.arch,
     env: process.env,

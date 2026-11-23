@@ -233,16 +233,17 @@ export type LocalPairingRequest = typeof LocalPairingRequest.Type;
  * is `<origins[0]>/pair#<code>`, and the others are alternatives.
  * `phone-access-off`: phones cannot reach the server, so no link can work.
  * `locked`: too many wrong codes were tried, until `until`. `unavailable`:
- * the server on this computer is not running.
+ * the server on this computer is not running. Times cross the bridge as ISO
+ * strings: IPC's structured clone keeps no `DateTime`.
  */
 export const LocalPairingLink = Schema.Union([
   Schema.TaggedStruct("granted", {
     code: PairingCode,
-    expiresAt: Schema.DateTimeUtc,
+    expiresAt: Schema.DateTimeUtcFromString,
     origins: Schema.Array(ServerOrigin).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
   }),
   Schema.TaggedStruct("phone-access-off", {}),
-  Schema.TaggedStruct("locked", { until: Schema.DateTimeUtc }),
+  Schema.TaggedStruct("locked", { until: Schema.DateTimeUtcFromString }),
   Schema.TaggedStruct("unavailable", {}),
 ]);
 export type LocalPairingLink = typeof LocalPairingLink.Type;

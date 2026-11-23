@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
 import { BotId, PairingCode, RoomId } from "@j3-bots/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import {
@@ -10,6 +11,7 @@ import {
   ConnectResult,
   DesktopState,
   HostedBridge,
+  LocalPairingLink,
   NotificationClick,
   NotificationRequest,
   LocalServerState,
@@ -59,6 +61,24 @@ describe("the desktop bridge", () => {
     }
     assert.isTrue(decodes(DesktopState, { ...LOCAL_OFF, server: null, pairingCode: null }));
     assert.isFalse(decodes(DesktopState, {}));
+  });
+
+  it("carries a pairing code for a phone across IPC, as its structured clone copies it", () => {
+    const encode = Schema.encodeSync(LocalPairingLink);
+    const decode = Schema.decodeUnknownSync(LocalPairingLink);
+    const granted: LocalPairingLink = {
+      _tag: "granted",
+      code: PairingCode.make("7KQ2M9XH4D"),
+      expiresAt: DateTime.makeUnsafe("2026-11-23T20:05:00Z"),
+      origins: [ServerOrigin.make("http://192.168.1.20:3747")],
+    };
+    const locked: LocalPairingLink = {
+      _tag: "locked",
+      until: DateTime.makeUnsafe("2026-11-23T20:20:00Z"),
+    };
+    for (const link of [granted, locked]) {
+      assert.deepStrictEqual(decode(structuredClone(encode(link))), link);
+    }
   });
 
   it("refuses an answer from the main process that is not one it gives", () => {

@@ -188,7 +188,10 @@ const send = (
 const decodeStatus = Schema.decodeUnknownEffect(Schema.fromJsonString(StatusReply));
 const decodeLocalDevice = Schema.decodeUnknownEffect(Schema.fromJsonString(LocalDeviceReply));
 const decodeRunningWork = Schema.decodeUnknownEffect(Schema.fromJsonString(RunningWorkReply));
-const decodePairing = Schema.decodeUnknownEffect(Schema.fromJsonString(PairingOffer));
+// The server writes its time as JSON does, an ISO string.
+const decodePairing = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(PairingOffer)),
+);
 const encodeLocalDevice = Schema.encodeSync(Schema.fromJsonString(LocalDeviceRequest));
 
 const channelOver = (target: Target): AdminChannel => {
