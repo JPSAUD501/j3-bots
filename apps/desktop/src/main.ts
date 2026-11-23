@@ -387,9 +387,7 @@ const program = Effect.gen(function* () {
         fromApp(event) ? encodeLocalServer(runSync(localServerNow)) : null,
       );
       ipcMain.on(IPC_CHANNELS.retryLocalServer, (event) => {
-        if (fromApp(event) && runSync(settings.get).mode === "local") {
-          void runPromise(supervisor.retry);
-        }
+        if (fromApp(event)) void runPromise(choice.whileLocal(supervisor.retry));
       });
       ipcMain.on(IPC_CHANNELS.retryServerUpdate, (event) => {
         if (fromApp(event)) void runPromise(choice.whileLocal(localHost.retryUpdate));

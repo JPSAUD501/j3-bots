@@ -202,7 +202,7 @@ describe("running the bots on this computer", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("lets a step taken while the bots run here end before they stop running here", () =>
+  it.live("lets a step taken while the bots run here end before they stop running here", () =>
     Effect.gen(function* () {
       const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
       const { choice, page, done } = yield* setUp(file);
@@ -219,6 +219,8 @@ describe("running the bots on this computer", () => {
       const retrying = yield* Effect.forkChild(choice.whileLocal(retry));
       yield* Deferred.await(entered);
       const leaving = yield* Effect.forkChild(choice.connectToServerInstead(page));
+      // Time for the switch to save and stop the server, were it not kept waiting.
+      yield* Effect.sleep("200 millis");
       yield* Deferred.succeed(go, undefined);
       yield* Fiber.join(retrying);
       assert.strictEqual(yield* Fiber.join(leaving), "changed");
