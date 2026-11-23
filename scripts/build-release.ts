@@ -62,23 +62,37 @@ const texts = (value: unknown): ReadonlyArray<string> =>
 
 // ---------------------------------------------------------------------------
 
-/**
- * Runs `command`. On Windows it goes through the shell, which is what finds
- * `vp` there whatever form it is installed in (an .exe or a .cmd shim, which
- * Node no longer starts without one); the arguments are this script's own.
- */
-const run = (command: string, args: ReadonlyArray<string>, cwd: string, env = process.env) => {
-  const result = NodeChildProcess.spawnSync(command, args, {
-    cwd,
-    env,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
+/** Throws unless the command behind `result`, from `spawnSync`, started and exited with 0. */
+const check = (
+  command: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  result: NodeChildProcess.SpawnSyncReturns<Buffer>,
+) => {
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0) {
     throw new Error(`\`${[command, ...args].join(" ")}\` in ${cwd} exited with ${result.status}.`);
   }
 };
+
+/** Runs `command` with `args`, each passed to it as it is, without a shell. */
+const run = (command: string, args: ReadonlyArray<string>, cwd: string) =>
+  check(command, args, cwd, NodeChildProcess.spawnSync(command, args, { cwd, stdio: "inherit" }));
+
+/**
+ * Runs `vp <task>`. On Windows it goes through the shell, which is what finds
+ * `vp` there whatever form it is installed in (an .exe, or a .cmd shim, which
+ * Node starts only through a shell). The command line is `vp` and one word.
+ */
+const vp = (task: "build" | "pack", cwd: string, env: NodeJS.ProcessEnv) =>
+  check(
+    "vp",
+    [task],
+    cwd,
+    process.platform === "win32"
+      ? NodeChildProcess.spawnSync(`vp ${task}`, { cwd, env, stdio: "inherit", shell: true })
+      : NodeChildProcess.spawnSync("vp", [task], { cwd, env, stdio: "inherit" }),
+  );
 
 const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
@@ -345,8 +359,8 @@ const work = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j3-release-"));
 try {
   const inputs = NodePath.join(work, "inputs");
   const withInputs = { ...process.env, [BUNDLE_INPUTS_FOLDER]: inputs };
-  if (parts.includes("web")) run("vp", ["build"], WEB, withInputs);
-  run("vp", ["pack"], SERVER, withInputs);
+  if (parts.includes("web")) vp("build", WEB, withInputs);
+  vp("pack", SERVER, withInputs);
   const packages = thirdParties([...recordedInputs(inputs, parts), ...compiledIn(parts)]);
   const pin = nodePin(platform, readJson(NodePath.join(ROOT, "package.json")));
   const node = unpackNode(platform, pin, await downloadNode(pin), work);
