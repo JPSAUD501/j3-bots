@@ -25,7 +25,12 @@ export const ADMIN_PATHS = {
    * once the engine restarted with the connection, or it could not.
    */
   providerConnection: "/provider-connection",
-  /** `GET`. Answers `RunningWorkReply`: what `j3-bots update` would stop. */
+  /**
+   * `POST`, no body. Answers `RunningWorkReply`: what `j3-bots update` would
+   * stop, right before it stops the service. Read with every new first send
+   * held; when no work runs, they stay held until the server stops, or for
+   * `IDLE_HOLD` if it does not, so no work begins before the stop.
+   */
   runningWork: "/running-work",
   /**
    * `POST`, a `LocalDeviceRequest`. Pairs a device without a code, as a

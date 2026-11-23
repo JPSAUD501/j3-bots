@@ -138,8 +138,11 @@ const channelRoute = HttpRouter.add(
       const sql = yield* SqlClient.SqlClient;
       const changes = { updateChannel: body.value.channel };
       // Only a time zone can be refused.
-      yield* sql.withTransaction(settings.save(changes)).pipe(Effect.orDie);
-      yield* settings.applied(changes);
+      yield* settings.channelSteady(
+        sql
+          .withTransaction(settings.save(changes))
+          .pipe(Effect.orDie, Effect.andThen(settings.applied(changes))),
+      );
       return yield* respond(UpdateStatus, yield* status, 200);
     }),
   ),
@@ -152,25 +155,30 @@ const startRoute = HttpRouter.add(
     Effect.gen(function* () {
       const body = yield* jsonBody(UpdateStartRequest);
       if (body._tag === "refused") return body.response;
-      const feed = yield* (yield* ReleaseFeed).status;
-      // The feed hears of a channel change after it committed: until then, its offer is the old channel's.
-      const { updateChannel } = yield* (yield* SettingsService).get;
-      const available = Option.filter(
-        Option.fromNullishOr(feed.available),
-        () => feed.channel === updateChannel,
-      );
-      return yield* (yield* UpdateRuns)
-        .start({
+      const releases = yield* ReleaseFeed;
+      const settings = yield* SettingsService;
+      const runs = yield* UpdateRuns;
+      const started = Effect.gen(function* () {
+        const feed = yield* releases.status;
+        // The feed hears of a channel change after it committed: until then, its offer is the old channel's.
+        const { updateChannel } = yield* settings.get;
+        const available = Option.filter(
+          Option.fromNullishOr(feed.available),
+          () => feed.channel === updateChannel,
+        );
+        return yield* runs.start({
           version: body.value.version,
           stopWork: body.value.stopWork,
           device,
           available: Option.map(available, ({ version }) => version),
-        })
-        .pipe(
-          Effect.andThen(status),
-          Effect.flatMap((started) => respond(UpdateStatus, started, 202)),
-          Effect.catchTag("UpdateRefused", (refused) => respond(UpdateRefused, refused, 409)),
-        );
+        });
+      });
+      // No change of the channel between the offer read and the run recorded.
+      return yield* settings.channelSteady(started).pipe(
+        Effect.andThen(status),
+        Effect.flatMap((started) => respond(UpdateStatus, started, 202)),
+        Effect.catchTag("UpdateRefused", (refused) => respond(UpdateRefused, refused, 409)),
+      );
     }),
   ),
 );

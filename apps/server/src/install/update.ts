@@ -547,6 +547,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   const to = Option.getOrUndefined(yield* releaseOf(fetched.root));
 
   if (yield* serviceRunning(installed)) {
+    // With none running, the server holds new work until the service stops.
     const socket = path.join(installed.home, HOME_ENTRIES.adminSocket);
     const work = yield* (yield* AdminClient).runningWork(socket).pipe(
       Effect.map(Option.map(({ bots }) => bots)),

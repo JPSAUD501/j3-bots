@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Workspaces } from "../bots/Workspaces.ts";
@@ -82,6 +83,15 @@ export class SettingsService extends Context.Service<
      * wants UTC chooses it.
      */
     readonly deviceTimeZone: (timeZone: TimeZone) => Effect.Effect<void>;
+    /**
+     * Runs `effect` with the update channel steady: no change of it under
+     * way, and none beginning until `effect` ends. `update` changes the
+     * channel under it; a caller that changes it with `save` runs its
+     * transaction under it. What starts an update reads the channel's offer
+     * and records the run under it, so a change commits before the offer is
+     * read or after the run is recorded.
+     */
+    readonly channelSteady: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   }
 >()("@j3-bots/server/settings/SettingsService") {}
 
@@ -93,6 +103,12 @@ export const layer = Layer.effect(
     const workspaces = yield* Workspaces;
     const basePrompt = yield* BasePrompt;
     const current = yield* SubscriptionRef.make(yield* store.get);
+    const channel = yield* Semaphore.make(1);
+    const channelSteady = Effect.fn("SettingsService.channelSteady")(function* <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) {
+      return yield* channel.withPermits(1)(effect);
+    });
 
     /**
      * Tells `changes`' subscribers the settings as committed now. The read
@@ -134,15 +150,18 @@ export const layer = Layer.effect(
       readonly commandId: CommandId;
       readonly changes: SettingsChanges;
     }) {
-      const saved = yield* receipts.once({
-        commandId: input.commandId,
-        method: "settings.update",
-        payload: input.changes,
-        result: SettingsReceipt,
-        apply: save(input.changes),
+      const change = Effect.gen(function* () {
+        const saved = yield* receipts.once({
+          commandId: input.commandId,
+          method: "settings.update",
+          payload: input.changes,
+          result: SettingsReceipt,
+          apply: save(input.changes),
+        });
+        yield* applied(input.changes);
+        return saved;
       });
-      yield* applied(input.changes);
-      return saved;
+      return yield* input.changes.updateChannel === undefined ? change : channelSteady(change);
     });
 
     const deviceTimeZone = Effect.fn("SettingsService.deviceTimeZone")(function* (
@@ -164,6 +183,7 @@ export const layer = Layer.effect(
       save,
       applied,
       deviceTimeZone,
+      channelSteady,
     });
   }),
 );
