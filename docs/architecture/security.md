@@ -199,6 +199,7 @@ The Android app draws a bot's visual in its own native view (`apps/mobile/module
   - from the visual's own realm, which has no RTC interface;
   - from a `srcdoc` frame a script added, to the document or to a closed shadow root, or just before a 1.5-second busy loop;
   - by borrowing a new frame's realm through `contentWindow`, `window[i]` or `contentDocument`, which threw `SecurityError` or found no document;
+  - by copying a shadow root asked for as clonable, with `cloneNode` or `importNode`: the root came back unclonable, and neither copy had one;
 - heights still arrived, a scripted chart in the same conversation still drew, and full screen still scrolled and pinch-zoomed.
 
 That a screen reader skips the inline page is **Assumed**. The view sets `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS` on the WebView, and its React parent does the same, but the test driver's accessibility tree still lists the page's nodes, and TalkBack was not run.
