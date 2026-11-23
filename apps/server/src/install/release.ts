@@ -31,7 +31,7 @@ const RELEASES = "https://github.com/JPSAUD501/j3-bots/releases";
  * reads it. The mirror is trusted as the publisher, since it serves the
  * SHA256SUMS an archive is checked against.
  */
-const releaseBase = Config.String("J3_RELEASE_BASE_URL").pipe(
+export const releaseBase = Config.String("J3_RELEASE_BASE_URL").pipe(
   Config.withDefault(RELEASES),
   Config.map((base) => base.replace(/\/+$/, "")),
 );
