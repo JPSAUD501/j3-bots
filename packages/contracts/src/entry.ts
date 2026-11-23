@@ -655,7 +655,8 @@ export const EntryPreview = Schema.Struct({
   /**
    * How a work fold's turn ended, once it has (`foldEnding`), so a fold of no
    * steps, a turn stopped or failed before its first, says so; `null` while
-   * it runs, for every other entry, and from a server that predates it.
+   * it runs, for every other entry, and from a server that predates it. A
+   * failed turn's notice comes after its fold, so the roster previews that.
    */
   ending: Schema.NullOr(TurnEnding).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   /**

@@ -23,7 +23,9 @@ import {
   conversation,
   createBot,
   engineSession,
+  finishRunning,
   nextTurn,
+  noticesOf,
   sendToBot,
   stopSettled,
   turnEnded,
@@ -33,6 +35,7 @@ import { Roster } from "../roster/Roster.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
+import { STALL_AFTER } from "./model.ts";
 import { Stops } from "./Stops.ts";
 
 const value = { _tag: "provide", value: Redacted.make("test-token") } as const;
@@ -721,10 +724,9 @@ const endsBeforeItsFirstStep = <E, R>(
     yield* TestClock.adjust(thinking);
     yield* end(bot.id);
     yield* turnEnded(bot.id);
-    const folds = (yield* conversation(bot.id)).flatMap((entry) =>
-      entry._tag === "work-fold" ? [entry] : [],
-    );
-    return { bot, folds, started: started.since };
+    const entries = yield* conversation(bot.id);
+    const folds = entries.flatMap((entry) => (entry._tag === "work-fold" ? [entry] : []));
+    return { bot, entries, folds, started: started.since };
   });
 
 /** The engine ends the bot's running turn with `outcome`. */
@@ -776,16 +778,98 @@ it.effect("says a turn that failed before its first step failed, and when", () =
       [[0, "failed"]],
     );
     assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(12)));
+    // The notice written after the fold, with what went wrong and its retry, is what the roster shows.
+    const notices = (yield* conversation(bot.id)).flatMap((entry) =>
+      entry._tag === "notice" ? [[entry.notice, entry.retryable]] : [],
+    );
+    assert.deepStrictEqual(notices, [[{ _tag: "turn-failed", failure: "provider-error" }, true]]);
+    const item = (yield* (yield* Roster).items).find(
+      (found) => found._tag === "bot" && found.bot.id === bot.id,
+    );
+    assert.deepStrictEqual(
+      [item?.lastEntry?.kind, item?.lastEntry?.notice],
+      ["notice", { _tag: "turn-failed", failure: "provider-error" }],
+    );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("leaves no fold for a turn that completed before its first step: its reply says it", () =>
   Effect.gen(function* () {
-    const { folds } = yield* endsBeforeItsFirstStep(
-      Duration.seconds(5),
-      engineEnds({ _tag: "completed" }),
-    );
+    // `finishRunning` has the bot say "Done." before its turn completes.
+    const { entries, folds } = yield* endsBeforeItsFirstStep(Duration.seconds(5), finishRunning);
     assert.deepStrictEqual(folds, []);
+    assert.isTrue(entries.some((entry) => entry._tag === "message" && entry.text === "Done."));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "says a turn cut short before its first step by a session lost while the server was down",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { bot, session } = yield* Effect.gen(function* () {
+        const states = yield* BotStates;
+        const bot = yield* createBot("Ana");
+        const session = yield* engineSession(bot.id);
+        yield* sendToBot(bot.id, "Look into the outage.");
+        yield* nextTurn(bot.id);
+        yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag === "thinking")));
+        return { bot, session };
+      }).pipe(Effect.provide(Domain.layer));
+      yield* control.loseSession(session);
+
+      yield* Effect.gen(function* () {
+        yield* until(noticesOf(bot.id).pipe(Effect.map((kinds) => kinds.includes("session-lost"))));
+        const folds = (yield* conversation(bot.id)).flatMap((entry) =>
+          entry._tag === "work-fold" ? [entry] : [],
+        );
+        assert.deepStrictEqual(
+          folds.map((fold) => [
+            fold.stepCount,
+            fold.status._tag === "finished" && fold.status.ending,
+          ]),
+          [[0, "interrupted"]],
+        );
+      }).pipe(Effect.provide(Domain.layer));
+    }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect("counts the operator's answer to a card as the turn's activity", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const states = yield* BotStates;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Clean up.");
+    const turnId = yield* nextTurn(bot.id);
+    yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "approval",
+        kind: "command",
+        action: "rm -rf build",
+        detail: null,
+        reason: null,
+        exact: true,
+        sessionGrant: null,
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "approval");
+    // The operator answers long after the card arrived.
+    yield* TestClock.adjust(Duration.sum(STALL_AFTER, Duration.minutes(5)));
+    yield* (yield* Cards).answer({
+      commandId: command(),
+      entryId: card.id,
+      answer: { _tag: "approval", decision: "allow-once" },
+    });
+    yield* (yield* Cards).respondPending;
+    yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag !== "waiting")));
+    const after = yield* states.of(bot.id);
+    assert.deepStrictEqual(
+      after._tag === "thinking" ? [after.stalled, after.quietSince] : after._tag,
+      [false, null],
+    );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

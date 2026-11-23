@@ -43,12 +43,16 @@ const sameTime = (a: DateTime.Utc, b: DateTime.Utc) =>
 /**
  * Whether `fold` is the work of the turn that started at `startedAt`. A fold
  * from a server that predates `turnStartedAt` is taken for the turn's when
- * it was written after the turn started.
+ * it was written after the turn started, unless it finished before then: a
+ * late fold of the turn before.
  */
 export function foldOfTurn(fold: WorkFoldEntry, startedAt: DateTime.Utc): boolean {
-  return fold.turnStartedAt === null
-    ? DateTime.toEpochMillis(fold.createdAt) >= DateTime.toEpochMillis(startedAt)
-    : sameTime(fold.turnStartedAt, startedAt);
+  if (fold.turnStartedAt !== null) return sameTime(fold.turnStartedAt, startedAt);
+  const start = DateTime.toEpochMillis(startedAt);
+  return (
+    DateTime.toEpochMillis(fold.createdAt) >= start &&
+    (fold.status._tag !== "finished" || DateTime.toEpochMillis(fold.status.finishedAt) >= start)
+  );
 }
 
 /**

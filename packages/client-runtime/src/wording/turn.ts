@@ -8,12 +8,18 @@ import { workFoldTitle } from "./work.ts";
 /**
  * The line beside a turn under way: what the bot is doing now, the same line
  * its header and roster row show. Out of touch with the server, the client
- * cannot know, so the line says it is only what it last knew.
+ * cannot know, so the line says it is only what it last knew, with no time
+ * in it: a stall is only "No recent activity", since how long it has lasted
+ * runs on past what the client knew.
  */
 export function turnLine(bot: Bot, offline: boolean, ctx: PresentationContext): StatusLine {
   const { t } = ctx.i18n;
   const line = presenceLine(bot, ctx) ?? { text: t("presence.working"), tone: "default" };
-  return offline ? { text: t("work.offline", { status: line.text }), tone: "secondary" } : line;
+  if (!offline) return line;
+  const { state } = bot;
+  const stalled = (state._tag === "thinking" || state._tag === "working") && state.stalled;
+  const status = stalled ? t("presence.stalledQuiet") : line.text;
+  return { text: t("work.offline", { status }), tone: "secondary" };
 }
 
 /**

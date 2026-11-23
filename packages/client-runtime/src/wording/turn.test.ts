@@ -37,6 +37,13 @@ describe("turnLine", () => {
       tone: "secondary",
     });
   });
+
+  it("says a stall it last knew of with no time, which would run on past what it knew", () => {
+    const stalled = bot("Scout", working("git status", true));
+    for (const now of ["2026-11-20T14:10:00Z", "2026-11-20T15:40:00Z"]) {
+      expect(turnLine(stalled, true, ctxAt(now)).text).toBe("Last known: No recent activity");
+    }
+  });
 });
 
 describe("turnLabel", () => {

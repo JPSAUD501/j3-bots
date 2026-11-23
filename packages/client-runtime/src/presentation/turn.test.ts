@@ -136,6 +136,27 @@ describe("withLiveTurn", () => {
     const rows = withLiveTurn(buildTimeline([asked, ours]), liveTurn(scout));
     expect(work(rows)).toEqual([expect.objectContaining({ fold: ours, live: true })]);
   });
+
+  it("does not take an older server's fold that finished before the turn started", () => {
+    // The turn before's fold, written as this turn started and finished, by its own clock, before.
+    const before = fold(
+      {
+        _tag: "finished",
+        finishedAt: at("2026-11-20T13:59:59Z"),
+        ending: "completed",
+        waitedMs: 0,
+        waitedBeforeMs: 0,
+        background: false,
+      },
+      null,
+      started,
+    );
+    const rows = withLiveTurn(buildTimeline([before, asked]), liveTurn(scout));
+    expect(work(rows)).toEqual([
+      expect.objectContaining({ fold: before, live: false }),
+      expect.objectContaining({ fold: null, live: true }),
+    ]);
+  });
 });
 
 describe("the turn's clock", () => {

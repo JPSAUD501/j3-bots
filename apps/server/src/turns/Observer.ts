@@ -97,7 +97,6 @@ const RequestRow = Schema.Struct({
 });
 
 const encodeStep = Schema.encodeEffect(json(WorkStep));
-const encodeOutcome = Schema.encodeEffect(json(TurnOutcome));
 
 /** The longest message an entry holds; host speech past it is cut. */
 const MESSAGE_LIMIT = 100_000;
@@ -282,7 +281,8 @@ export const layer = Layer.effect(
     const spoken = routineSpeech(sql, ids, changes);
     const { sessionLost } = sessionLoss(sql, entries, ledger, workSteps, signals);
     const { requestRotation } = rotationRequests(sql, signals);
-    const { finishFold, followBackground, closeCard } = sessionRecords(sql, entries, workSteps);
+    const records = sessionRecords(sql, entries, workSteps);
+    const { endTurn, followBackground, closeCard } = records;
 
     /**
      * Each followed session. The engine sends a `synchronized` only on the
@@ -493,28 +493,9 @@ export const layer = Layer.effect(
             background: turn.background_pending,
           } as const);
 
-    /**
-     * The turn's work fold in the bot's conversation, written with its first
-     * step, or as the turn ends when it was stopped or failed before one.
-     */
-    const foldOf = Effect.fn("Observer.foldOf")(function* (session: Watched, turn: TurnRow) {
-      if (turn.work_fold_entry_id !== null) return turn.work_fold_entry_id;
-      const entry = yield* entries.append({
-        target: { _tag: "conversation", botId: session.bot_id },
-        entry: {
-          _tag: "work-fold",
-          author: { _tag: "bot", botId: session.bot_id },
-          turnStartedAt: turn.started_at,
-          stepCount: 0,
-          status: foldStatus(turn),
-        },
-      });
-      yield* sql`
-        UPDATE turns SET work_fold_entry_id = ${entry.id}
-        WHERE session_id = ${session.id} AND engine_turn_id = ${turn.engine_turn_id}
-      `.pipe(Effect.orDie);
-      return entry.id;
-    });
+    /** The turn's work fold, written with its first step (`sessionRecords`). */
+    const foldOf = (session: Watched, turn: TurnRow) =>
+      records.foldOf(session, turn, foldStatus(turn));
 
     /** Something happened in a running turn: it is not stalled. */
     const touchActivity = (sessionId: SessionRowId, turnId: TurnId, at: DateTime.Utc) =>
@@ -728,23 +709,7 @@ export const layer = Layer.effect(
       // A routine run's attempt may have ended: its run settles, or its session retires.
       if (session.purpose === "side") yield* sql.afterCommit(signals.routines.fire);
       if (Option.isSome(turn)) {
-        yield* sql`
-          UPDATE turns SET finished_at = ${timeText(end.at)},
-            outcome_json = ${yield* encodeOutcome(end.outcome)}
-          WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
-        `;
-        // A turn stopped or failed before its first step still says how it
-        // ended, in a fold of no steps; one that completed leaves its reply.
-        // A routine run's has none, as its steps have none.
-        const foldId =
-          turn.value.work_fold_entry_id ??
-          ((end.outcome._tag === "interrupted" || end.outcome._tag === "failed") &&
-          session.purpose !== "side"
-            ? yield* foldOf(session, turn.value)
-            : null);
-        if (foldId !== null) {
-          yield* finishFold(foldId, end.outcome, end.at, end.backgroundWork);
-        }
+        yield* endTurn(session, turn.value, end.outcome, end.at, end.backgroundWork);
         // It handed off to work that goes on after it: a room's Stop finds it
         // by this turn until the engine no longer reports the work.
         if (end.backgroundWork) {
