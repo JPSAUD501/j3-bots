@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import type { AuthFailure, CredentialsUnavailable } from "@j3-bots/connectors";
+import { NeedsSignIn } from "@j3-bots/connectors";
+import {
+  type BotId,
+  type CommandError,
+  type ConnectorId,
+  Invalid,
+  type OAuthClientInput,
+} from "@j3-bots/contracts";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import type * as Option from "effect/Option";
+import type * as DateTime from "effect/DateTime";
+import type * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
+
+/**
+ * Where an OAuth connector's sign-in stands, as its sign-in reports it. That
+ * the service refused a token is the `Connectors` service's to see, from its
+ * calls, so it is not here.
+ */
+export type SignInState =
+  | {
+      readonly _tag: "signed-in";
+      /** The account it is signed in as, when the service says. */
+      readonly account: string | null;
+      readonly signedInAt: DateTime.Utc;
+    }
+  | { readonly _tag: "needs-sign-in"; readonly reason: "not-signed-in" | "expired" }
+  | { readonly _tag: "vault-locked" }
+  | { readonly _tag: "failing"; readonly reason: AuthFailure };
+
+/**
+ * The OAuth side of connectors: the `Connectors` service signs a call to an
+ * OAuth connector only through this, and never reads a token itself.
+ */
+export class ConnectorSignIns extends Context.Service<
+  ConnectorSignIns,
+  {
+    /** The access token to send now, refreshed first when it is about to expire. */
+    readonly accessToken: (
+      id: ConnectorId,
+    ) => Effect.Effect<Redacted.Redacted<string>, CredentialsUnavailable>;
+    /** The connector's server refused the token just sent, with this `WWW-Authenticate`. */
+    readonly rejected: (
+      id: ConnectorId,
+      wwwAuthenticate: Option.Option<string>,
+    ) => Effect.Effect<void, CredentialsUnavailable>;
+    /** A bot's call needed a sign-in it did not have: show the operator the card for it. */
+    readonly needed: (input: {
+      readonly botId: BotId;
+      readonly connectorId: ConnectorId;
+    }) => Effect.Effect<void>;
+    /** Revokes the sign-in at the service when it offers that, before the connector's secrets go. */
+    readonly disconnect: (id: ConnectorId) => Effect.Effect<void>;
+    /** Signs in to the connector with the OAuth client the operator registered at the service. */
+    readonly useOperatorClient: (
+      id: ConnectorId,
+      client: OAuthClientInput,
+    ) => Effect.Effect<void, CommandError>;
+    /** Every OAuth connector's sign-in, again on each change. */
+    readonly states: Stream.Stream<ReadonlyMap<ConnectorId, SignInState>>;
+  }
+>()("@j3-bots/server/connectors/auth/ConnectorSignIns") {}
+
+/**
+ * For a server that signs in to no OAuth connector: each one needs a sign-in
+ * it cannot have, and the operator's own client is refused.
+ */
+export const layerNone = Layer.succeed(ConnectorSignIns, {
+  accessToken: Effect.fn("ConnectorSignIns.accessToken")(function* () {
+    return yield* new NeedsSignIn();
+  }),
+  rejected: Effect.fn("ConnectorSignIns.rejected")(function* () {
+    return yield* new NeedsSignIn();
+  }),
+  needed: Effect.fn("ConnectorSignIns.needed")(function* () {}),
+  disconnect: Effect.fn("ConnectorSignIns.disconnect")(function* () {}),
+  useOperatorClient: Effect.fn("ConnectorSignIns.useOperatorClient")(function* () {
+    return yield* new Invalid({ reason: "connector-unsupported" });
+  }),
+  states: Stream.make(new Map()),
+});
