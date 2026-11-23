@@ -81,7 +81,10 @@ export const unlockWait = (failures: number): Option.Option<Duration.Duration> =
   failures < FREE_ATTEMPTS
     ? Option.none()
     : Option.some(
-        Duration.min(Duration.times(FIRST_WAIT, 2 ** Math.min(failures - FREE_ATTEMPTS, 16)), MAX_WAIT),
+        Duration.min(
+          Duration.times(FIRST_WAIT, 2 ** Math.min(failures - FREE_ATTEMPTS, 16)),
+          MAX_WAIT,
+        ),
       );
 
 const KeyringRow = Schema.Struct({
@@ -203,9 +206,7 @@ export class Vault extends Context.Service<
      */
     readonly connectorSecrets: {
       /** The connector's secret; none when it has no secret saved. */
-      readonly get: (
-        id: ConnectorId,
-      ) => Effect.Effect<Option.Option<ConnectorSecret>, Conflict>;
+      readonly get: (id: ConnectorId) => Effect.Effect<Option.Option<ConnectorSecret>, Conflict>;
       /** Saves the connector's secret whole, replacing the one it had. */
       readonly put: (secret: ConnectorSecret) => Effect.Effect<void, Conflict>;
       /** Deletes it. Deleting one already gone succeeds. */
@@ -467,13 +468,16 @@ export const layer = Layer.effect(
     const openRow = (key: Uint8Array, row: FieldRow): Effect.Effect<Buffer> => {
       const value: Sealed = { nonce: bytesOf(row.nonce), sealed: bytesOf(row.sealed) };
       return Option.match(openField(key, row.record_id, row.field, value), {
-        onNone: () =>
-          Effect.die(new VaultDamaged({ recordId: row.record_id, field: row.field })),
+        onNone: () => Effect.die(new VaultDamaged({ recordId: row.record_id, field: row.field })),
         onSome: Effect.succeed,
       });
     };
 
-    const fieldsOf = (sql: SqlClient.SqlClient, ids: ReadonlyArray<string>, fields: ReadonlyArray<string>) =>
+    const fieldsOf = (
+      sql: SqlClient.SqlClient,
+      ids: ReadonlyArray<string>,
+      fields: ReadonlyArray<string>,
+    ) =>
       ids.length === 0
         ? Effect.succeed<ReadonlyArray<FieldRow>>([])
         : SqlSchema.findAll({
@@ -771,8 +775,7 @@ export const layer = Layer.effect(
       return yield* openRow(key, row);
     });
 
-    const totpOf = (bytes: Buffer) =>
-      Schema.decodeEffect(TotpJson)(text(bytes)).pipe(Effect.orDie);
+    const totpOf = (bytes: Buffer) => Schema.decodeEffect(TotpJson)(text(bytes)).pipe(Effect.orDie);
 
     const reveal = (input: {
       readonly id: CredentialId;
@@ -783,8 +786,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const { sql, key } = yield* unlocked;
           const opened = yield* openedField(sql, key, input.id, input.field);
-          const value =
-            input.field === "totp" ? (yield* totpOf(opened)).secret : text(opened);
+          const value = input.field === "totp" ? (yield* totpOf(opened)).secret : text(opened);
           yield* sql`
             INSERT INTO reveals (record_id, field, device_id, at)
             VALUES (${input.id}, ${input.field}, ${input.deviceId}, ${timeText(yield* DateTime.now)})

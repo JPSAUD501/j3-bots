@@ -70,7 +70,12 @@ describe("one-time codes", () => {
       [20000000000, "SHA512", "47863826"],
     ];
     for (const [time, algorithm, code] of vectors) {
-      const config = { secret: base32(ascii(seeds[algorithm])), algorithm, digits: 8 as const, period: 30 };
+      const config = {
+        secret: base32(ascii(seeds[algorithm])),
+        algorithm,
+        digits: 8 as const,
+        period: 30,
+      };
       assert.deepStrictEqual(
         totpAt(config, time),
         Option.some({ code, nextAt: (Math.floor(time / 30) + 1) * 30 }),

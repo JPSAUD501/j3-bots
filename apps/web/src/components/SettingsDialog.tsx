@@ -57,6 +57,7 @@ import { PairingQr } from "./PairingQr";
 import { Section } from "./SettingsSection";
 import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
+import { VaultSection } from "./vault/VaultSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
@@ -80,6 +81,7 @@ type SettingsIntents = Pick<
   | "update"
   | "shortcut"
   | "providerSetup"
+  | "vault"
 >;
 
 interface SettingsButtonProps {
@@ -96,6 +98,7 @@ interface SettingsButtonProps {
     | "roster"
     | "recentTurns"
     | "signInUnencrypted"
+    | "vault"
   >;
   readonly intents: SettingsIntents;
 }
@@ -169,6 +172,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 connected={data.connected}
                 onSave={intents.updateSettings}
               />
+              <VaultSection vault={{ view: data.vault, intents: intents.vault }} />
               <EngineSection
                 engine={data.engine}
                 stale={data.engineStale}

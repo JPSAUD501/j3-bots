@@ -8,6 +8,7 @@ import type {
   WorkFoldEntry,
 } from "@j3-bots/contracts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
+import { CredentialRequestCard } from "./CredentialRequestCard.tsx";
 import { HandoffCard } from "./HandoffCard.tsx";
 import { QuestionCard } from "./QuestionCard.tsx";
 import { RoutineChangeCard } from "./RoutineChangeCard.tsx";
@@ -35,6 +36,8 @@ export function Card({
       return <ApprovalCard entry={entry} />;
     case "secret-request":
       return <SecretRequestCard entry={entry} />;
+    case "credential-request":
+      return <CredentialRequestCard entry={entry} />;
     case "handoff":
       return <HandoffCard entry={entry} onOpenBot={onOpenBot} />;
     case "routine-change":

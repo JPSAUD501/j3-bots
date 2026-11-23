@@ -996,6 +996,7 @@ function LiveShell({
   // While the bots live on this computer, the providers sign in from here. The page a sign-in
   // waits on opens in the system's browser: the desktop app hands it a page `window.open` names.
   const signIns = useReadable(j3.signIns);
+  const vault = useReadable(j3.vault.view);
   const providerSetup: ProviderSetupIntents | undefined =
     desktop?.mode === "local"
       ? {
@@ -1013,6 +1014,7 @@ function LiveShell({
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
     signIns,
+    vault,
     roster,
     sections,
     conversation: (asked) =>
@@ -1225,6 +1227,7 @@ function LiveShell({
       void j3.answerCard(entryId, { _tag: "approval", decision }),
     provideSecret: (entryId, value) => void j3.provideSecret(entryId, { _tag: "provide", value }),
     declineSecret: (entryId) => void j3.provideSecret(entryId, { _tag: "decline" }),
+    dismissLogin: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
     resendMessage: (commandId, mentions) =>
@@ -1359,6 +1362,7 @@ function LiveShell({
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
+    vault: j3.vault,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,

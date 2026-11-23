@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EngineStatus } from "@j3-bots/contracts";
+import type { VaultView } from "../stores/Vault.ts";
 import { providerGate } from "./engine.ts";
 
 /**
@@ -7,11 +8,19 @@ import { providerGate } from "./engine.ts";
  * arrival; its conversation opens after it.
  * - `welcome`: what bots are;
  * - `name` and `look`: the first bot, each with a default, so Continue always works;
+ * - `vault`: only while the server's vault has no master password. Setting
+ *   one is skippable: Settings sets it later;
  * - `connect`: only while no provider can run the bot. It never holds the bot
  *   back: the bot is created anyway, and says hello once a provider can run it;
  * - `arrival`: the bot is being created, and then it is here.
  */
-export type OnboardingStep = "welcome" | "name" | "look" | "connect" | "arrival";
+export type OnboardingStep = "welcome" | "name" | "look" | "vault" | "connect" | "arrival";
+
+/** Which of the steps that come only when needed the first run shows. */
+export interface OnboardingFlow {
+  readonly vault: boolean;
+  readonly connect: boolean;
+}
 
 /**
  * Whether the first run shows `connect`: while no provider can run a bot, or
@@ -26,30 +35,43 @@ export const showsConnect = (engine: EngineStatus | null, shown: boolean): boole
   engine.state._tag !== "ready" ||
   providerGate(engine)._tag !== "ready";
 
-const order = (connect: boolean): ReadonlyArray<OnboardingStep> =>
-  connect
-    ? ["welcome", "name", "look", "connect", "arrival"]
-    : ["welcome", "name", "look", "arrival"];
+/**
+ * Whether the first run shows `vault`: while the server's vault, as last
+ * heard, has no master password, and, once it was `shown`, until the first
+ * run ends, so setting one there keeps the step for Back. A server without a
+ * vault, or one not heard from yet, has none to set.
+ */
+export const showsVault = (vault: VaultView, shown: boolean): boolean =>
+  shown || (vault._tag === "ready" && vault.status.state === "uninitialized");
+
+const order = (flow: OnboardingFlow): ReadonlyArray<OnboardingStep> => [
+  "welcome",
+  "name",
+  "look",
+  ...(flow.vault ? (["vault"] as const) : []),
+  ...(flow.connect ? (["connect"] as const) : []),
+  "arrival",
+];
 
 /** The step after `at`; null after the arrival, when the conversation opens. */
-export const nextStep = (at: OnboardingStep, connect: boolean): OnboardingStep | null => {
-  const steps = order(connect);
+export const nextStep = (at: OnboardingStep, flow: OnboardingFlow): OnboardingStep | null => {
+  const steps = order(flow);
   return steps[steps.indexOf(at) + 1] ?? null;
 };
 
 /** The step Back returns to; null where there is none: the welcome, and the arrival, which is under way. */
-export const previousStep = (at: OnboardingStep, connect: boolean): OnboardingStep | null => {
+export const previousStep = (at: OnboardingStep, flow: OnboardingFlow): OnboardingStep | null => {
   if (at === "arrival") return null;
-  const steps = order(connect);
+  const steps = order(flow);
   return steps[steps.indexOf(at) - 1] ?? null;
 };
 
 /** The steps that make the bot, each a dot in the progress: where `at` is among them, and how many. */
 export const makingProgress = (
   at: OnboardingStep,
-  connect: boolean,
+  flow: OnboardingFlow,
 ): { readonly index: number; readonly count: number } | null => {
-  const making: ReadonlyArray<OnboardingStep> = order(connect).filter(
+  const making: ReadonlyArray<OnboardingStep> = order(flow).filter(
     (step) => step !== "welcome" && step !== "arrival",
   );
   const index = making.indexOf(at);

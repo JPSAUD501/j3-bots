@@ -140,35 +140,37 @@ it.effect("starts locked after every restart", () =>
   }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
-it.effect("changes the password by wrapping the same key again, leaving every value as sealed", () =>
-  Effect.gen(function* () {
-    const vault = yield* Vault;
-    yield* vault.setup(PASSWORD);
-    yield* vault.save({ id: idOf(1), draft: draft("hunter2"), allowedBots: [] });
-    const sealedBefore = yield* onVaultFile((sql) => sql`SELECT * FROM record_fields`);
-    const keyringBefore = yield* onVaultFile((sql) => sql`SELECT salt, wrapped_key FROM keyring`);
+it.effect(
+  "changes the password by wrapping the same key again, leaving every value as sealed",
+  () =>
+    Effect.gen(function* () {
+      const vault = yield* Vault;
+      yield* vault.setup(PASSWORD);
+      yield* vault.save({ id: idOf(1), draft: draft("hunter2"), allowedBots: [] });
+      const sealedBefore = yield* onVaultFile((sql) => sql`SELECT * FROM record_fields`);
+      const keyringBefore = yield* onVaultFile((sql) => sql`SELECT salt, wrapped_key FROM keyring`);
 
-    const next = Redacted.make("a new and longer password");
-    assert.strictEqual(
-      refusal(yield* Effect.exit(vault.changePassword(WRONG, next))),
-      "master-password",
-    );
-    yield* vault.changePassword(PASSWORD, next);
+      const next = Redacted.make("a new and longer password");
+      assert.strictEqual(
+        refusal(yield* Effect.exit(vault.changePassword(WRONG, next))),
+        "master-password",
+      );
+      yield* vault.changePassword(PASSWORD, next);
 
-    assert.deepStrictEqual(
-      yield* onVaultFile((sql) => sql`SELECT * FROM record_fields`),
-      sealedBefore,
-    );
-    assert.notDeepEqual(
-      yield* onVaultFile((sql) => sql`SELECT salt, wrapped_key FROM keyring`),
-      keyringBefore,
-    );
-    yield* vault.lock;
-    assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "master-password");
-    yield* vault.unlock(next);
-    const password = yield* vault.reveal({ id: idOf(1), field: "password", deviceId: DEVICE });
-    assert.strictEqual(Redacted.value(password), "hunter2");
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.deepStrictEqual(
+        yield* onVaultFile((sql) => sql`SELECT * FROM record_fields`),
+        sealedBefore,
+      );
+      assert.notDeepEqual(
+        yield* onVaultFile((sql) => sql`SELECT salt, wrapped_key FROM keyring`),
+        keyringBefore,
+      );
+      yield* vault.lock;
+      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "master-password");
+      yield* vault.unlock(next);
+      const password = yield* vault.reveal({ id: idOf(1), field: "password", deviceId: DEVICE });
+      assert.strictEqual(Redacted.value(password), "hunter2");
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("refuses a sealed value moved to another login or field", () =>
@@ -334,7 +336,12 @@ it.effect("saves a login a bot asked for from its card, which then shows it save
 
     // Locked or never set up, the card stays open.
     const before = yield* Effect.exit(
-      cards.saveCredential({ id: idOf(1), draft: draft("hunter2"), allowedBots: [], request: card.id }),
+      cards.saveCredential({
+        id: idOf(1),
+        draft: draft("hunter2"),
+        allowedBots: [],
+        request: card.id,
+      }),
     );
     assert.strictEqual(refusal(before), "vault-not-set-up");
     yield* vault.setup(PASSWORD);
@@ -346,10 +353,19 @@ it.effect("saves a login a bot asked for from its card, which then shows it save
     });
     assert.deepStrictEqual(saved.allowedBots, [bot.id]);
     const closed = yield* awaitEntry(bot.id, "credential-request");
-    assert.deepStrictEqual(closed.status, { _tag: "saved", credentialId: idOf(1), name: "Example" });
+    assert.deepStrictEqual(closed.status, {
+      _tag: "saved",
+      credentialId: idOf(1),
+      name: "Example",
+    });
 
     // Saving again, as after a lost reply, adds nothing.
-    yield* cards.saveCredential({ id: idOf(1), draft: draft("hunter2"), allowedBots: [], request: card.id });
+    yield* cards.saveCredential({
+      id: idOf(1),
+      draft: draft("hunter2"),
+      allowedBots: [],
+      request: card.id,
+    });
     assert.strictEqual((yield* vault.list).length, 1);
     // A saved card takes no dismissal.
     const dismissed = yield* Effect.exit(
