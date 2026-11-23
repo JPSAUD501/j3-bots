@@ -880,6 +880,8 @@ export const en = {
   "gate.incompatible.appBehindTitle": "This app needs an update",
   "gate.incompatible.appBehindBody":
     "The server at {address} runs J3 Bots {version}, which is newer than this app.",
+  "gate.incompatible.serverBehindNoRelease":
+    "There’s no newer release for it on its channel yet. Change to another server, or use an app that matches it.",
   "gate.storage.title": "This browser won’t keep the sign-in",
   "gate.storage.body":
     "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",

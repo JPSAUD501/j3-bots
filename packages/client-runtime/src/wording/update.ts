@@ -141,6 +141,37 @@ export function serverUpdateLine(view: ServerUpdateView, i18n: I18n): ServerUpda
   }
 }
 
+/**
+ * The line for a server older than this client, on the screen that says so.
+ * It never says the server is up to date. A server that cannot update from
+ * here says how to update it on its machine. One with nothing newer on offer
+ * says there is no release yet only once `checked`, after a check of its
+ * release feed this client asked for has ended: until then the server may
+ * not have looked since the release came out.
+ */
+export function serverBehindLine(
+  view: ServerUpdateView,
+  checked: boolean,
+  i18n: I18n,
+): ServerUpdateLine | null {
+  if (view._tag !== "status") return serverUpdateLine(view, i18n);
+  const { status } = view;
+  if (status.available !== null || status.state._tag === "checking" || isRunning(status.state)) {
+    return serverUpdateLine(view, i18n);
+  }
+  const { t } = i18n;
+  if (status.canUpdate._tag === "unable") {
+    return line(t(UNABLE[status.canUpdate.reason]), "blocked", {
+      command: status.canUpdate.command,
+    });
+  }
+  if (!checked) return line(t("update.checking"), "working");
+  if (status.refused !== null || status.lastCheck?.failure != null) {
+    return restingLine(status, i18n);
+  }
+  return line(t("gate.incompatible.serverBehindNoRelease"), "quiet");
+}
+
 const FAILURES = {
   "health-check": "serverUpdate.failure.healthCheck",
   download: "serverUpdate.failure.download",

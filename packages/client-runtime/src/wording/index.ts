@@ -59,5 +59,6 @@ export {
   serverUpdateLine,
   startRefusalText,
   type UpdateTone,
+  serverBehindLine,
   updateResultLine,
 } from "./update.ts";

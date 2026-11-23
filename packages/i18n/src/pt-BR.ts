@@ -890,6 +890,8 @@ const sentences = {
   "gate.incompatible.appBehindTitle": "Este app precisa de uma atualização",
   "gate.incompatible.appBehindBody":
     "O servidor em {address} roda o J3 Bots {version}, mais novo que este app.",
+  "gate.incompatible.serverBehindNoRelease":
+    "Ainda não há uma versão mais nova para ele no canal dele. Troque de servidor ou use um app que combine com ele.",
   "gate.storage.title": "Este navegador não guarda o acesso",
   "gate.storage.body":
     "O J3 Bots guarda o acesso deste dispositivo nos dados de site do navegador, e o navegador recusou. Permita dados de site para esta página e tente de novo.",
