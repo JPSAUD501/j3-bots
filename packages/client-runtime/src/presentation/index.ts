@@ -196,6 +196,7 @@ export {
 export {
   readVisualHeight,
   type VisualAppearance,
+  VISUAL_BRIDGE,
   VISUAL_FRAME_SANDBOX,
   VISUAL_HEIGHT_MESSAGE,
   visualDocument,

@@ -64,12 +64,47 @@ interface VisualFrameProps {
 
 /**
  * The frame, with its placeholder while the page loads and the line that
- * says when it could not be shown. It loads the client's visual page, in a
- * sandbox with scripts only, and posts it the visual's document; it takes
- * nothing back but the page's height.
+ * says when it could not be shown: at once for a page that embeds another
+ * document, which a visual may not hold.
  */
 function VisualFrame({ visual, appearance, fill }: VisualFrameProps) {
+  const html = visualDocument(visual.html, appearance);
+  return html === null ? (
+    <VisualFailed fill={fill} />
+  ) : (
+    <LoadingFrame html={html} title={visual.title} height={visual.height} fill={fill} />
+  );
+}
+
+function VisualFailed({ fill }: { readonly fill: boolean }) {
   const { t } = useI18n();
+  return (
+    <p
+      role="status"
+      className={cn(
+        "flex items-center justify-center px-4 py-6 text-center text-sm text-muted-foreground",
+        fill && "flex-1",
+      )}
+    >
+      {t("visual.failed")}
+    </p>
+  );
+}
+
+interface LoadingFrameProps {
+  /** The visual's document, as `visualDocument` builds it. */
+  readonly html: string;
+  readonly title: string;
+  /** The height the bot measured, which the frame starts at. */
+  readonly height: number | null;
+  readonly fill: boolean;
+}
+
+/**
+ * Loads the client's visual page, in a sandbox with scripts only, and posts
+ * it the visual's document; it takes nothing back but the page's height.
+ */
+function LoadingFrame({ html, title, height: measured, fill }: LoadingFrameProps) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [state, setState] = useState<FrameState>({ _tag: "loading" });
   // Writing the document loads the frame again, which is not another start.
@@ -90,37 +125,22 @@ function VisualFrame({ visual, appearance, fill }: VisualFrameProps) {
     return () => window.clearTimeout(timer);
   }, [state._tag]);
 
-  if (state._tag === "failed") {
-    return (
-      <p
-        role="status"
-        className={cn(
-          "flex items-center justify-center px-4 py-6 text-center text-sm text-muted-foreground",
-          fill && "flex-1",
-        )}
-      >
-        {t("visual.failed")}
-      </p>
-    );
-  }
-  const height = state._tag === "shown" ? state.height : (visual.height ?? DEFAULT_HEIGHT);
+  if (state._tag === "failed") return <VisualFailed fill={fill} />;
+  const height = state._tag === "shown" ? state.height : (measured ?? DEFAULT_HEIGHT);
   return (
     <div className={cn("relative", fill && "min-h-0 flex-1")} style={fill ? undefined : { height }}>
       <iframe
         ref={frame}
         src={VISUAL_FRAME_PATH}
         sandbox={VISUAL_FRAME_SANDBOX}
-        title={visual.title}
+        title={title}
         referrerPolicy="no-referrer"
         className={cn("block size-full border-0", state._tag === "loading" && "invisible")}
         onLoad={(event) => {
           // The first load is the empty visual page, ready for its document.
           if (posted.current) return;
           posted.current = true;
-          event.currentTarget.contentWindow?.postMessage(
-            visualDocument(visual.html, appearance),
-            "*",
-          );
+          event.currentTarget.contentWindow?.postMessage(html, "*");
         }}
       />
       {state._tag === "loading" && <span aria-hidden className="skeleton absolute inset-3" />}

@@ -9,6 +9,7 @@ import {
   type MessageEntry,
   RoomId,
   type Visual,
+  visualEmbedsDocument,
   VisualHtml,
   VisualTitle,
 } from "@j3-bots/contracts";
@@ -651,6 +652,11 @@ export const layer = Layer.effect(
           const html = Option.getOrUndefined(decodeVisualHtml(text));
           if (html === undefined)
             return yield* refuse(`Nothing was sent: ${given} has no content.`);
+          if (visualEmbedsDocument(html)) {
+            return yield* refuse(
+              `Nothing was sent: ${given} embeds another page (an <iframe>, <frame>, <object> or <embed>), which a visual cannot hold. Draw everything in the page itself.`,
+            );
+          }
           return { title, html, height: visual.height ?? null } satisfies Visual;
         }
       }

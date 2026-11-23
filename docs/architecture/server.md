@@ -246,6 +246,14 @@ Files cross the server in both directions as attachments. Bytes and names are st
 - `GET /attachments/:id` serves a file to a paired device only, with the device token as a bearer.
 - `bot.files` lists the files a bot has produced, newest first, for the bot's details view.
 
+## Visuals
+
+A `say` may show a page above its text ([decision 0030](../decisions/0030-a-visual-is-part-of-say.md)): `visual: {path, title, height?}` names an HTML file in the bot's workspace, which the server reads as it reads an attachment, by the same containment, and stores with the message as `MessageEntry.visual`, `{title, html, height}`. The page itself is never sent to the bridge inline, since the engine summarizes a tool input past 16 KB and J3 Bots matches a `say` to the engine's call by its input ([Bot tools](#bot-tools)).
+
+- **What is refused.** A blank title or one over 200 characters, a URL, a path that does not end in `.html` or `.htm`, a path outside the workspace or that is not a regular file, a file past `MAX_VISUAL_BYTES` (512 KB, of which no more is read), one that is not UTF-8 text, an empty one, and one that embeds another page: an `<iframe>`, `<frame>`, `<object>` or `<embed>` start tag anywhere in its text, which a client would not show ([Security: visuals](security.md#visuals)). Each refusal sends nothing, and says what to change. A `height` outside 80 to 2000 is refused by the tool's schema; without one, the client measures the page.
+- **What is done with it.** Nothing: the server neither runs nor parses the page, which only a client's sandboxed frame renders ([Security: visuals](security.md#visuals)). It is stored as text in the entry and never written to a log, a trace, a notification or a push, which say the message's text. The roster's preview of the message is its text.
+- **How it is served.** The web client's visual page, `VISUAL_FRAME_PATH`, is served with `VISUAL_FRAME_POLICY` and no `X-Frame-Options`, so the client can frame it; every other page of the client is served with `frame-ancestors 'none'; frame-src 'self'`.
+
 ## Sessions
 
 Each bot has one **main session**: an engine thread in the bot's project, where operator turns, room turns and teammate messages all land. One working context means a bot in a room can use what the operator told it privately, which is what makes it the same teammate everywhere.
@@ -319,7 +327,7 @@ The `j3` tools are pre-approved in every permission mode, so they never raise an
 
 | Tool | Purpose |
 | --- | --- |
-| `say` | Deliver a message to the audience of the turn that made the call: the operator, or the room during a room turn. Optional attachments. `done` marks the delivery complete. |
+| `say` | Deliver a message to the audience of the turn that made the call: the operator, or the room during a room turn. Optional attachments, and an optional visual ([Visuals](#visuals)). `done` marks the delivery complete. |
 | `ask` | Put one question to the operator as a card with options. Ends the turn. Refused in a routine's side session. |
 | `message_bot` | Send a message to one teammate, by bot id. `urgent` wakes them now; otherwise it waits for their next turn. Returns only an acknowledgement. See [Teammate messages](#teammate-messages). |
 | `remember`, `forget`, `recall` | Write, remove and search memory, in the bot's own scope or the shared one. |

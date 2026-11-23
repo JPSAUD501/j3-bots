@@ -6,16 +6,33 @@ import {
 } from "@j3-bots/contracts";
 import { visualColors } from "@j3-bots/design-tokens";
 import { assert, describe, it } from "@effect/vitest";
-import { readVisualHeight, visualDocument } from "./visual.ts";
+import { readVisualHeight, VISUAL_HEIGHT_MESSAGE, visualDocument } from "./visual.ts";
+
+/** The document built for `page`, which embeds no other. */
+const built = (page: string, appearance: "light" | "dark" = "dark"): string => {
+  const document = visualDocument(page, appearance);
+  if (document === null) throw new Error(`no document for ${page}`);
+  return document;
+};
 
 describe("a visual's document", () => {
   const page = '<!doctype html><html><head><script>fetch("https://x.test")</script></head></html>';
 
-  it("opens with the policy, before anything of the page", () => {
-    const document = visualDocument(page, "dark");
+  it("opens with the policy, then the guard and the height reporter, before anything of the page", () => {
+    const document = built(page);
     const policy = `<meta http-equiv="Content-Security-Policy" content="${VISUAL_CONTENT_SECURITY_POLICY}">`;
     assert.isTrue(document.startsWith(`<!doctype html>${policy}`));
     assert.isTrue(document.endsWith(page));
+    const scripts = [...document.slice(0, -page.length).matchAll(/<script>([^]*?)<\/script>/g)];
+    assert.strictEqual(scripts.length, 2);
+    assert.match(scripts[0]?.[1] ?? "", /RTC/, "the guard, first");
+    assert.include(scripts[1]?.[1] ?? "", VISUAL_HEIGHT_MESSAGE, "then the height reporter");
+  });
+
+  it("is not built for a page that embeds another document", () => {
+    assert.isNull(
+      visualDocument("<p>Chart</p><iframe srcdoc='<script>1</script>'></iframe>", "light"),
+    );
   });
 
   it("lets nothing reach the network", () => {
@@ -36,8 +53,8 @@ describe("a visual's document", () => {
   });
 
   it("carries the theme it is built for", () => {
-    const light = visualDocument("<p>", "light");
-    const dark = visualDocument("<p>", "dark");
+    const light = built("<p>", "light");
+    const dark = built("<p>", "dark");
     assert.include(light, `--background:${visualColors("light").background};`);
     assert.include(light, "color-scheme:light;");
     assert.include(dark, `--chart-1:${visualColors("dark")["chart-1"]};`);

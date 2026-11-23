@@ -623,6 +623,12 @@ for (const [why, name, file, reason] of [
   ],
   ["a blank page", "chart.html", new TextEncoder().encode(" \n"), "has no content"],
   [
+    "a page that embeds another",
+    "chart.html",
+    new TextEncoder().encode("<p>Chart</p><iframe srcdoc='<p>'></iframe>"),
+    "embeds another page",
+  ],
+  [
     "a page over the cap",
     "chart.html",
     new Uint8Array(MAX_VISUAL_BYTES + 1).fill(0x61),

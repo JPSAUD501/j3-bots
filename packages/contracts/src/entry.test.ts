@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import { EntryId, EntryOrder } from "./base.ts";
 import { BotState } from "./bot.ts";
 import { EntryPreview, MessageDelivery, ReceivedEntry } from "./entry.ts";
-import { MAX_VISUAL_BYTES } from "./visual.ts";
+import { MAX_VISUAL_BYTES, visualEmbedsDocument } from "./visual.ts";
 
 // As the socket carries them: JSON, which a client decodes with the contract.
 const EntriesJson = Schema.toCodecJson(Schema.Array(ReceivedEntry));
@@ -143,5 +143,33 @@ describe("a message's visual", () => {
     assert.isTrue(refused([shown({ html: "é".repeat(MAX_VISUAL_BYTES / 2 + 1) })]));
     assert.isFalse(refused([shown({ html: "é".repeat(MAX_VISUAL_BYTES / 2) })]));
     assert.isTrue(refused([shown({ html: "<p>\ud800</p>" })]));
+  });
+});
+
+describe("a visual's page", () => {
+  it("embeds a document wherever its text has a frame's start tag, in any case", () => {
+    for (const html of [
+      "<iframe srcdoc='<p>'></iframe>",
+      "<IFRAME\tsrc=x>",
+      "<div><template shadowrootmode=closed><iframe></iframe></template></div>",
+      "<frame/>",
+      '<object data="data:text/html,x">',
+      "<embed>",
+      "<script>const tag = '<iframe>';</script>",
+    ]) {
+      assert.isTrue(visualEmbedsDocument(html), html);
+    }
+  });
+
+  it("embeds none when it only names one, or holds a longer tag that starts the same", () => {
+    for (const html of [
+      "<p>&lt;iframe&gt; is not allowed</p>",
+      "<frameset></frameset>",
+      "<objective-list></objective-list>",
+      "<embedded-chart></embedded-chart>",
+      "<svg><text>iframe</text></svg>",
+    ]) {
+      assert.isFalse(visualEmbedsDocument(html), html);
+    }
   });
 });

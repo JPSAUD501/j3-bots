@@ -30,22 +30,27 @@ const intents: TimelineIntents = {
   openConversation: nothing,
 };
 
+const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
+
+/** The markup of a conversation holding one message from Scout that shows `page`. */
+const shown = (page: string) =>
+  renderToStaticMarkup(
+    <Timeline
+      rows={buildTimeline([
+        message("2026-11-20T10:00:00Z", scout, "March was the peak.", {
+          visual: { title: "Spending by month", html: page, height: 260 },
+        }),
+      ])}
+      room={null}
+      workSteps={() => null}
+      submitting={() => false}
+      intents={intents}
+    />,
+  );
+
 describe("a bot's visual", () => {
   it("is drawn above its message in the sandboxed visual page, with scripts alone", () => {
-    const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
-    const html = renderToStaticMarkup(
-      <Timeline
-        rows={buildTimeline([
-          message("2026-11-20T10:00:00Z", scout, "March was the peak.", {
-            visual: { title: "Spending by month", html: "<svg></svg>", height: 260 },
-          }),
-        ])}
-        room={null}
-        workSteps={() => null}
-        submitting={() => false}
-        intents={intents}
-      />,
-    );
+    const html = shown("<svg></svg>");
     const frames = [...html.matchAll(/<iframe\b[^>]*>/g)].map((match) => match[0]);
     expect(frames).toHaveLength(1);
     const [frame = ""] = frames;
@@ -59,6 +64,13 @@ describe("a bot's visual", () => {
     expect(html).not.toContain("<svg></svg>");
     expect(html.indexOf("Spending by month")).toBeLessThan(html.indexOf("March was the peak."));
     expect(html).toContain("height:260px");
+  });
+
+  it("that embeds another document is never framed, and says it could not be shown", () => {
+    const html = shown("<svg></svg><iframe srcdoc='<p>'></iframe>");
+    expect(html).not.toContain("<iframe");
+    expect(html).toContain("Couldn’t show this visual.");
+    expect(html).toContain("March was the peak.");
   });
 
   it("takes a height only from its own frame", () => {

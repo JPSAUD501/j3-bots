@@ -49,6 +49,20 @@ export const VISUAL_FRAME_PATH = "/visual-frame.html";
  */
 export const VISUAL_FRAME_POLICY = `${VISUAL_CONTENT_SECURITY_POLICY}; sandbox allow-scripts; frame-ancestors 'self'`;
 
+/**
+ * Whether a page's markup embeds another document: an `<iframe>`, `<frame>`,
+ * `<object>` or `<embed>` start tag anywhere in its text, the only way markup
+ * makes one. A nested document is a realm of its own, out of reach of the
+ * guard a visual's document runs first, so a page that holds one is not
+ * shown. It reads text, not a parsed document, so a tag in a comment or in a
+ * script's string counts too.
+ */
+export const visualEmbedsDocument = (html: string): boolean => EMBEDDED_DOCUMENT.test(html);
+
+// A start tag's name ends at whitespace, `/` or `>`; the tokenizer lowercases
+// only ASCII letters, so no other spelling makes one of these elements.
+const EMBEDDED_DOCUMENT = /<(?:iframe|frame|object|embed)[\s/>]/i;
+
 const utf8 = new TextEncoder();
 
 /**
@@ -71,7 +85,7 @@ export const VisualHtml = Schema.String.check(
   ),
 );
 
-/** What a visual is called: its accessible name, and all a notification or the roster says of it. */
+/** What a visual is called: its caption, and its accessible name. */
 export const VisualTitle = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(MAX_VISUAL_TITLE_LENGTH),

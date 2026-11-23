@@ -89,7 +89,8 @@ const diagramPage = `<!doctype html>
 /**
  * A page that tries every way out of its frame and lists what each attempt
  * got: the client's cookies and storage, its API, the window around it, a
- * popup, the network, and messages the client could mistake for its own.
+ * popup, the network, a peer connection, a frame of its own, and messages
+ * the client could mistake for its own.
  * Leave takes the frame itself elsewhere, by script and by a refresh; Hang
  * runs a script that never ends, which the app around it outlasts.
  */
@@ -124,6 +125,17 @@ const escapePage = `<!doctype html>
   tried("top.location", () => { top.location.href = "https://example.com/j3-visual/top"; return "navigated"; });
   tried("window.open", () => window.open("https://example.com/j3-visual/popup") === null ? "refused, no window" : "opened");
   tried("parent.document", () => "read " + parent.document.title);
+  tried("RTCPeerConnection", () => {
+    new RTCPeerConnection({ iceServers: [{ urls: "stun:example.com:3478" }] }).createDataChannel("out");
+    return "opened";
+  });
+  tried("nested frame", () => {
+    const nested = document.createElement("iframe");
+    nested.srcdoc = "<p>A realm of its own</p>";
+    document.body.append(nested);
+    setTimeout(() => show("nested frame, a moment later", nested.isConnected ? "kept" : "removed"));
+    return "added";
+  });
   tried("postMessage, spoofed", () => {
     parent.postMessage({ type: "j3-visual-height", height: "9999" }, "*");
     parent.postMessage({ type: "j3-visual-open", url: "https://example.com/j3-visual/open" }, "*");
@@ -163,5 +175,5 @@ export const sampleVisuals = {
   chart: { title: "Household spending by month", html: chartPage, height: 250 },
   table: { title: "Three e-bikes for a hilly commute", html: tablePage, height: 210 },
   diagram: { title: "Staging migration plan", html: diagramPage, height: 180 },
-  escape: { title: "A page that tries to get out", html: escapePage, height: 300 },
+  escape: { title: "A page that tries to get out", html: escapePage, height: 420 },
 } satisfies Record<string, Visual>;
