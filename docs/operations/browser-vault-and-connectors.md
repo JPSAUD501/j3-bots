@@ -77,7 +77,7 @@ On Android, the browser opens from a bot's help card (below), on the whole scree
 
 What you can't do in this version: paste or drop into the page, download, upload or pick a file. Your clipboard and your files never reach the page.
 
-**The bot can still read the page while you hold it**, though it can't act. What you type into a field that doesn't hide it, the bot can read, and a bot can read even a hidden field's value with a script unless it has vault access (**Assumed** that a hidden field stays hidden in what the bot reads otherwise). To give a bot a value it must not see, use the card it asks with, not the browser.
+**The bot can still read the page while you hold it**, though it can't act. What you type into a field that doesn't hide it, the bot can read, and with a script it can read a hidden field's value too (**Assumed** that a hidden field stays hidden in what it reads otherwise). `TODO(V2)`: on Claude Code, a bot with vault access loses that script tool; whether Codex can be denied it is **Assumed**. To give a bot a value it must not see, use the card it asks with, not the browser.
 
 ### When the bot asks for help
 
