@@ -552,6 +552,42 @@ The server learns of newer releases on its own, so a client can offer to update 
 
 `J3_RELEASE_FEED_URL` replaces the API (default `https://api.github.com/repos/JPSAUD501/j3-bots`), for tests and mirrors: it must answer `<base>/releases/latest` and `<base>/releases`. Downloads come from `J3_RELEASE_BASE_URL`, as `j3-bots update` and `install.sh` take them.
 
+## Updating from a client
+
+A client asks the server to update itself through `POST /api/update/v1/start`, with the version the status offers ([Clients: updates](clients.md#updates-outside-the-protocol)). The update is the same transition `j3-bots update` makes from a shell ([decision 0016](../decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md)): the server only starts it, and reports what it records ([decision 0033](../decisions/0033-a-client-update-runs-in-a-transient-unit.md)). `UpdateRuns` (`apps/server/src/update/`) does it.
+
+**Where it can run.** The update stops the service, so it cannot run in the server's process or as its child, whose cgroup ends with the service. It runs as a transient unit of the same systemd user manager, `j3-bots-update-<run>.service`, which `systemd-run --user --collect` starts. Only a server `install.sh` installed and its service runs can do that, on a manager that outlives the operator's sessions. Anything else answers `canUpdate: unable`, with a reason and the command that updates it by hand, checked in this order each time the status is read:
+
+| Reason | When | Command |
+| --- | --- | --- |
+| `desktop-managed` | The desktop app runs the server (`--admin-fd`). The app updates it with itself, and its own surface reports that update ([Operating: the desktop app](../operations/operating.md#the-server-the-desktop-app-runs)). | none |
+| `checkout` | A checkout runs it. | `git pull && pnpm install --frozen-lockfile && pnpm build && j3-bots service install` |
+| `unpacked` | A release unpacked by hand, not under `install.sh`'s folder, or one whose manifest cannot be read. | the `install.sh` line |
+| `started-by-hand` | The service's main process is not this server: `j3-bots serve` in a shell. | `j3-bots update` |
+| `no-systemd` | `systemd-run` is not on the service's `PATH`. | `j3-bots update` |
+| `no-linger` | The user does not linger, so the manager, and the update with it, would end with the operator's last session. | `sudo loginctl enable-linger "$(id -un)"` |
+| `rollback-unfinished` | A rollback was cut off ([Operating](../operations/operating.md#update-and-roll-back)). | `j3-bots update --rollback` |
+
+**What starts it**, in this order, each refusal an `UpdateRefused` with nothing changed:
+
+1. `unable`, as above.
+2. `not-available` unless the version is exactly the feed's `available` one: verified, newer, on the channel. No request names a file or an address.
+3. `busy` while a run has not ended, or while the home's update lock is held, as by `j3-bots update` or `--rollback` from a shell. Steps 3 to 5 run under one lock, so two clients cannot both start.
+4. `work-running`, with the number of bots, while bots have work running and the client did not send `stopWork`.
+5. Otherwise the server writes the run record and starts the unit. A unit that does not start ends the run as `rolled-back` with `other` and `systemd-run`'s output: nothing was changed.
+
+**The unit.** It runs the release that runs now, `<install>/versions/<current>/bin/j3-bots update --version <V> --yes --run <run>`, as the same user, with no privilege the user does not have (`NoNewPrivileges=yes`). Its environment is the service's: `J3_HOME`, `PATH`, and `J3_RELEASE_BASE_URL` and `J3_RELEASE_PUBLIC_KEY` when the service has them, so it downloads from where the feed found the release. It also unsets the variables a shell may set to override the configuration file, as the service's unit does. systemd expands `$` in a transient unit's command, as in `ExecStart=`, so the command's words have each `$` doubled; `%` is not expanded there (**Verified** with systemd 255 on a test machine: in a `systemd-run --user` command, a `$HOME` was expanded and a `%h` was not). The update downloads `SHA256SUMS` and its signature again and verifies them itself before it reads a digest, whatever the feed found ([Security: updates](security.md#updates)). It is collected when it ends, failed or not; what it printed stays in `journalctl --user -u j3-bots-update-<run>`.
+
+**The record.** `<home>/state/update.json`, readable by the user alone, holds the run: its id, the release it came from and goes to, the device that asked, when, its stage, and once it ends, how. The server writes it before it starts the unit. From then on only the update writes it: `downloading`, with bytes so far and the total once known, at most once a second; `verifying`; `installing`; `restarting`; then the outcome. Each write replaces the file whole and flushes it, and an update writes only a run that has its id and has not ended. Since the record is in the home, it outlives the restart: whichever release runs afterwards reads it.
+
+**How it ended**, as the status' `lastResult`, the one entry every client sees for it (an update belongs to no bot, so it is no conversation's entry):
+
+- `done`: the new release runs.
+- `rolled-back`, with a reason: either the new release did not get ready and the release before runs again on the data as it was (`health-check`), or the update stopped before it changed anything (`download`, `verification`, `engine`, `disk`, `other`). Either way the release before runs.
+- `failed`: bringing the release before back failed too, and `j3-bots update --rollback` finishes it; or the unit ended without recording how, as when the machine restarted under it (`interrupted`). A run whose unit has ended while it has not is ended that way the next time the status is read, with the unit's journal named in its detail.
+
+While a run has not ended, the status' `state` is its stage and `run` names it, so a client follows it by polling `status`. A stream would end with the restart, and a client already polls `GET /api/server` while the server is down. The server logs the run, the versions and the device when it starts one, and how it ended when it finds one cut off, never a token.
+
 ## Configuration
 
 The server reads its settings from `<J3_HOME>/config.json`. On first start, once the configuration and the home pass their checks, it writes that file whole, with every setting at its default but `scriptedAgent`, which is for test installs; it never replaces one that exists. A setting in the environment overrides the file, and a default applies only when neither has the setting. A setting that is present but invalid stops the start, so a typo never becomes the default. The file refuses unknown keys for the same reason. A port another program holds stops the start with a message that names the port and its setting. Start also refuses two listeners on one port, port `0` for the tool endpoint or the engine (both are dialed at the number configured), and a certificate and key that Node cannot load as a pair. `j3-bots doctor` runs the same checks without starting anything. A service runs with the file alone: it does not get the variables of the shell that installed it.
