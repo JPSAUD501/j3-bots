@@ -569,6 +569,12 @@ export function galleryVariants(now: DateTime.Utc) {
       urgent: false,
       state: "sent",
     }),
+    handoff("handoff-received-urgent", ids.atlas, ids.scout, {
+      direction: "received",
+      text: "Staging is read-only again. Can you hold the newsletter send until I say it’s back?",
+      urgent: true,
+      state: "not-delivered",
+    }),
     handoff("handoff-failed", ids.scout, ids.atlas, {
       direction: "sent",
       text: "Please roll back the staging migration before the demo.",

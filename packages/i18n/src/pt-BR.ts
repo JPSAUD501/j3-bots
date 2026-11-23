@@ -305,7 +305,7 @@ const sentences = {
   "notice.openConversation": "Abrir",
 
   "handoff.to": "Para {name}",
-  "handoff.from": "De {name}",
+  "handoff.messageFrom": "Mensagem de {name}",
   "handoff.urgent": "Urgente",
   "handoff.notDelivered": "Não entregue",
   "handoff.stopped": "Interrompida",

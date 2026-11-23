@@ -59,7 +59,7 @@ The operator creates a room, adds two to six bots, and writes.
 ### One bot hands work to another
 
 - The operator asks, or the bot offers ("want me to ask Scout?").
-- The handoff appears as a compact card in both conversations: "To Wren" in the sender's, "From Scout" in the recipient's, with the message. The other bot's name goes to its conversation; tapping the message shows all of it in place. An urgent message that never reached the teammate says so on both cards, and the recipient's conversation offers to send it again.
+- The handoff appears in both conversations. The sender's shows a compact card, "To Wren", with the start of the message; tapping it shows all of it in place. The recipient's shows the message whole, under a centred line, "Message from" with Scout's avatar and name, the way a conversation marks the time between messages. The other bot's name goes to its conversation. An urgent message that never reached the teammate says so on both cards, and the recipient's conversation offers to send it again.
 - The reply comes back later, as its own turn. The operator is told only when there is something new for them.
 
 ### Changing a bot
