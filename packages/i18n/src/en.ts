@@ -376,7 +376,8 @@ export const en = {
   "fill.onSubmitted": "On {origin}, then sent the form.",
   "fill.submitted": "Then sent the form.",
   "fill.locked": "The vault was locked. Unlock it in Settings to let the bot sign in.",
-  "fill.refused.noAccess": "This bot’s vault access is off. Turn it on in its details.",
+  "fill.refused.noAccess":
+    "This bot can’t sign in with saved logins: its vault access or its browser is off. Turn both on in its details.",
   "fill.refused.unknownLogin": "No saved login by that name is allowed to this bot.",
   "fill.refused.ambiguous": "More than one login by that name fits this page.",
   "fill.refused.noValue": "That login has nothing saved for this field.",
@@ -389,7 +390,8 @@ export const en = {
   "fill.refused.originAt": "The page, {origin}, isn’t one of the login’s sites.",
   "fill.refused.navigated": "The page changed while it was being filled.",
   "fill.refused.before": "A fill was already refused on this page in this turn.",
-  "fill.refused.unavailable": "The browser or the vault couldn’t be reached.",
+  "fill.refused.unavailable":
+    "The browser or the vault couldn’t be reached, or the browser didn’t confirm what it typed.",
   "fill.refused.other": "J3 Bots refused it.",
   "tool.browser.did": "Used the browser",
   "tool.browser.doing": "Using the browser",

@@ -374,8 +374,9 @@ const sentences = {
   "fill.on": "Em {origin}.",
   "fill.onSubmitted": "Em {origin}, e enviou o formulário.",
   "fill.submitted": "E enviou o formulário.",
-  "fill.locked": "O cofre estava trancado. Destranque em Ajustes para o bot poder entrar.",
-  "fill.refused.noAccess": "O acesso deste bot ao cofre está desligado. Ligue nos detalhes dele.",
+  "fill.locked": "O cofre estava trancado. Destranque em Configurações para o bot poder entrar.",
+  "fill.refused.noAccess":
+    "Este bot não pode entrar com logins salvos: o acesso dele ao cofre ou o navegador está desligado. Ligue os dois nos detalhes dele.",
   "fill.refused.unknownLogin": "Nenhum login salvo com esse nome está permitido a este bot.",
   "fill.refused.ambiguous": "Mais de um login com esse nome serve para esta página.",
   "fill.refused.noValue": "Esse login não tem nada salvo para este campo.",
@@ -388,7 +389,8 @@ const sentences = {
   "fill.refused.originAt": "A página, {origin}, não é um dos sites do login.",
   "fill.refused.navigated": "A página mudou durante o preenchimento.",
   "fill.refused.before": "Um preenchimento já foi recusado nesta página neste turno.",
-  "fill.refused.unavailable": "Não foi possível falar com o navegador ou com o cofre.",
+  "fill.refused.unavailable":
+    "Não foi possível falar com o navegador ou com o cofre, ou o navegador não confirmou o que digitou.",
   "fill.refused.other": "O J3 Bots recusou.",
   "tool.browser.did": "Usou o navegador",
   "tool.browser.doing": "Usando o navegador",
@@ -553,7 +555,7 @@ const sentences = {
   "details.browser.failed": "A configuração do navegador de {name} não foi salva. Tente de novo.",
   "details.vault.use": "Entrar com logins salvos",
   "details.vault.hint":
-    "{name} pode entrar em sites com os logins que você permitir a ele em Ajustes → Cofre. O J3 Bots os digita na página; {name} não os recebe.",
+    "{name} pode entrar em sites com os logins que você permitir a ele em Configurações → Cofre. O J3 Bots os digita na página; {name} não os recebe.",
   "details.vault.needsBrowser": "Também precisa do navegador ligado.",
   "details.vault.failed": "A configuração de cofre de {name} não foi salva. Tente de novo.",
   "details.delete": "Excluir {name}",
