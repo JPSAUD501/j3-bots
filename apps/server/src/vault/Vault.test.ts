@@ -58,6 +58,7 @@ const idOf = (n: number) => CredentialId.make(`cred_${String(n).padStart(16, "0"
 const CONNECTOR = ConnectorId.make("notion");
 const connectorSecret: ConnectorSecret = {
   connectorId: CONNECTOR,
+  address: Redacted.make("https://mcp.example/mcp?key=address-key-value"),
   oauth: {
     client: {
       issuer: "https://auth.example",
@@ -442,9 +443,14 @@ it.effect("keeps a connector's secret sealed with the logins, and locked with th
     const tokens = read.oauth?.tokens;
     assert.strictEqual(tokens && Redacted.value(tokens.accessToken), "access-token-value");
     assert.strictEqual(read.headers[0] && Redacted.value(read.headers[0].value), "header-value");
+    assert.strictEqual(
+      read.address && Redacted.value(read.address),
+      "https://mcp.example/mcp?key=address-key-value",
+    );
 
     const stored = yield* onVaultFile((sql) => sql`SELECT sealed FROM record_fields`);
     assert.notInclude(JSON.stringify(stored), "token-value");
+    assert.notInclude(JSON.stringify(stored), "address-key-value");
     // Not a login: the list has none.
     assert.deepStrictEqual(yield* vault.list, []);
 

@@ -58,6 +58,12 @@ export type NamedSecret = typeof NamedSecret.Type;
  */
 export const ConnectorSecret = Schema.Struct({
   connectorId: ConnectorId,
+  /**
+   * The full URL of a connector the operator added by address, which may
+   * carry a key in its path or query; null for a gallery entry's, which is
+   * public and kept with the connector.
+   */
+  address: Schema.NullOr(Secret),
   oauth: Schema.NullOr(Schema.Struct({ client: OAuthClient, tokens: Schema.NullOr(OAuthTokens) })),
   headers: Schema.Array(NamedSecret),
   env: Schema.Array(NamedSecret),

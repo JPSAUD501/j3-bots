@@ -275,8 +275,9 @@ Every one of these values is sealed, the name and the sites included. In the cle
 
 **The save-login card.** A bot that meets a website login its operator wants kept calls `request_credential`, with the page's origin and a note in its own words. The call puts a save-login card (`credential-request`) in the bot's own conversation, also during a room turn, since only the operator types into it. The bot gets back only that the card is shown. The operator types the login into the card. The client sends it to `vault.save` with the card's id. The server saves the login in the vault, then marks the card as saved, with the login's id and name. The vault is a separate database, so the two steps are not one transaction. The login is saved first, so a retry after a crash between them finds the login saved and still marks the card. `vault.save` carries the id the client chose for the login, so a retry after a lost reply adds nothing. A card that was closed in another way stays closed, and the login is saved anyway, since the operator typed it. A dismissal (`card.answer` with `dismiss`) closes the card. Neither a save nor a dismissal wakes the bot. While the vault is locked or has no password, the card offers unlock or setup in place. A card with any other answer is refused with `Invalid("answer")`.
 
-**Connector secrets.** A connector's secret is one record, `connector:<id>`, with three sealed fields:
+**Connector secrets.** A connector's secret is one record, `connector:<id>`, with four sealed fields:
 
+- `address`: the full URL of a connector added by address, which may carry a key in its path or query; empty for a gallery entry, whose address is public;
 - `oauth`: the OAuth client (issuer, whether it was registered dynamically or by the operator, client id, optional client secret, how it authenticates, redirect URIs) and its tokens (access token, optional refresh token, expiry, scopes, resource);
 - `headers`: header values;
 - `env`: environment values.
