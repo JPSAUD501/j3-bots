@@ -87,6 +87,8 @@ The machine J3 Bots runs on is never called a "host": a host is a room's bot.
 
 **Routine.** A saved instruction plus a trigger. The trigger is a schedule or an inbound webhook. A routine belongs to one bot and runs even when no client is open. A routine's instruction says who receives the result and what to do when there is nothing to report.
 
+**Connector.** A service a bot can use through J3 Bots, such as the operator's notes, tracker or calendar, signed in to once by the operator, on the server. It is an MCP server the operator adds from the gallery or by its address, and the operator chooses which bots may use it: one, several or all. A bot can suggest one, never add one. Bots use its tools without ever holding its sign-in. The interface says "Connector" in English and "Conector" in Portuguese, and never "MCP" outside the form that adds one by address.
+
 ## Controls
 
 **Permission mode.** How much a bot may do without asking: supervised, auto-accept edits, auto (an automatic reviewer decides) or full access. This is the engine's runtime mode, set per bot.
