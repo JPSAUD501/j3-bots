@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotChanges } from "../stores/Details.ts";
 import {
+  type Avatar,
+  type AvatarChoice,
   type Bot,
   type EngineStatus,
   type ModelChoice,
   type PermissionMode,
   Profile,
+  type ProfileChanges,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -16,6 +19,7 @@ export interface BotEdits {
   readonly name: string | null;
   readonly title: string | null;
   readonly job: string | null;
+  readonly avatar: AvatarChoice | null;
   readonly model: ModelChoice | null;
   readonly permissionMode: PermissionMode | null;
 }
@@ -24,6 +28,7 @@ export const noBotEdits: BotEdits = {
   name: null,
   title: null,
   job: null,
+  avatar: null,
   model: null,
   permissionMode: null,
 };
@@ -40,6 +45,8 @@ export type BotPatch =
 export const sameModel = (a: ModelChoice, b: ModelChoice) =>
   a.providerId === b.providerId && a.modelId === b.modelId;
 
+const sameAvatar = (a: Avatar, b: Avatar) => a.shape === b.shape && a.color === b.color;
+
 const decoders = {
   name: Schema.decodeUnknownOption(Profile.fields.name),
   title: Schema.decodeUnknownOption(Profile.fields.title),
@@ -52,7 +59,7 @@ const decoders = {
  * edit back to the saved value sends nothing.
  */
 export function botPatch(bot: Bot, edits: BotEdits): BotPatch {
-  const profile: { name?: string; title?: string; job?: string } = {};
+  const profile: Types.Mutable<ProfileChanges> = {};
   const invalid = new Set<ProfileField>();
   for (const field of ["name", "title", "job"] as const) {
     const edit = edits[field];
@@ -64,6 +71,9 @@ export function botPatch(bot: Bot, edits: BotEdits): BotPatch {
     else profile[field] = decoded.value;
   }
   if (invalid.size > 0) return { _tag: "invalid", fields: invalid };
+  if (edits.avatar !== null && !sameAvatar(edits.avatar, bot.profile.avatar)) {
+    profile.avatar = edits.avatar;
+  }
   const changes: Types.Mutable<BotChanges> = {};
   if (Object.keys(profile).length > 0) changes.profile = profile;
   if (edits.model !== null && !sameModel(edits.model, bot.model)) changes.model = edits.model;
@@ -97,6 +107,7 @@ export function editsAfterFailedBotSave(edits: BotEdits, changes: BotChanges): B
     name: edits.name ?? changes.profile?.name ?? null,
     title: edits.title ?? changes.profile?.title ?? null,
     job: edits.job ?? changes.profile?.job ?? null,
+    avatar: edits.avatar ?? changes.profile?.avatar ?? null,
     model: edits.model ?? changes.model ?? null,
     permissionMode: edits.permissionMode ?? changes.permissionMode ?? null,
   };

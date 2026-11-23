@@ -11,29 +11,33 @@ const botColorOf = (avatar: Avatar): BotColor => resolveAvatar(avatar).color;
 
 // Written out whole, so Tailwind finds each class.
 const inks = {
-  red: "accent-bot-red",
-  orange: "accent-bot-orange",
-  yellow: "accent-bot-yellow",
-  green: "accent-bot-green",
+  tomato: "accent-bot-tomato",
+  tangerine: "accent-bot-tangerine",
+  honey: "accent-bot-honey",
+  lime: "accent-bot-lime",
+  mint: "accent-bot-mint",
   teal: "accent-bot-teal",
-  blue: "accent-bot-blue",
-  indigo: "accent-bot-indigo",
-  violet: "accent-bot-violet",
-  pink: "accent-bot-pink",
-  gray: "accent-bot-gray",
+  sky: "accent-bot-sky",
+  cobalt: "accent-bot-cobalt",
+  iris: "accent-bot-iris",
+  orchid: "accent-bot-orchid",
+  rose: "accent-bot-rose",
+  slate: "accent-bot-slate",
 } as const satisfies Record<BotColor, string>;
 
 const bubbles = {
-  red: "accent-bot-bubble-red",
-  orange: "accent-bot-bubble-orange",
-  yellow: "accent-bot-bubble-yellow",
-  green: "accent-bot-bubble-green",
+  tomato: "accent-bot-bubble-tomato",
+  tangerine: "accent-bot-bubble-tangerine",
+  honey: "accent-bot-bubble-honey",
+  lime: "accent-bot-bubble-lime",
+  mint: "accent-bot-bubble-mint",
   teal: "accent-bot-bubble-teal",
-  blue: "accent-bot-bubble-blue",
-  indigo: "accent-bot-bubble-indigo",
-  violet: "accent-bot-bubble-violet",
-  pink: "accent-bot-bubble-pink",
-  gray: "accent-bot-bubble-gray",
+  sky: "accent-bot-bubble-sky",
+  cobalt: "accent-bot-bubble-cobalt",
+  iris: "accent-bot-bubble-iris",
+  orchid: "accent-bot-bubble-orchid",
+  rose: "accent-bot-bubble-rose",
+  slate: "accent-bot-bubble-slate",
 } as const satisfies Record<BotColor, string>;
 
 /** A conversation's tint: the bot's color, and its bubbles' fill. */

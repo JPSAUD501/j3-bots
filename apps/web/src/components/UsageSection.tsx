@@ -18,7 +18,7 @@ import {
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { timeInSentence, windowText } from "@j3-bots/client-runtime/wording";
-import { AvatarShape } from "./BotAvatar";
+import { BotAvatar } from "./avatar/BotAvatar";
 import { Loading, Section } from "./SettingsSection";
 import { Button } from "./ui/button";
 
@@ -255,7 +255,13 @@ function BotTurns({ spend, stale }: { spend: BotSpend; stale: boolean }) {
           <span aria-hidden className="mt-0.5 size-4 shrink-0" />
         ) : (
           <span className={cn("mt-0.5 shrink-0", stale && "grayscale")}>
-            <AvatarShape avatar={spend.bot.profile.avatar} size={16} />
+            <BotAvatar
+              avatar={spend.bot.profile.avatar}
+              seed={spend.bot.id}
+              state="idle"
+              size={20}
+              still
+            />
           </span>
         )}
         <span className={cn("min-w-0 flex-1 wrap-break-word", spend.bot === null && "italic")}>

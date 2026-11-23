@@ -1,75 +1,252 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotState, NotificationKind } from "@j3-bots/contracts";
-import { EntryId } from "@j3-bots/contracts";
+import { BotId, EntryId, type BotState, type NotificationKind } from "@j3-bots/contracts";
+import { avatarFrame } from "@j3-bots/design-tokens";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { at } from "../../test/fixtures.ts";
-import { avatarAppearance, notificationLook } from "./avatar.ts";
+import { at, preview } from "../../test/fixtures.ts";
+import {
+  avatarFace,
+  avatarMood,
+  avatarSeed,
+  avatarStates,
+  createAvatar,
+  gazeToward,
+  notificationState,
+  plainTraits,
+  setAvatarState,
+  speakingUntil,
+  stepAvatar,
+  stillFace,
+  type AvatarSim,
+  type AvatarState,
+} from "./avatar.ts";
 
 const since = at("2026-11-20T10:00:00Z");
-const states: ReadonlyArray<readonly [BotState, boolean]> = [
-  [{ _tag: "idle" }, false],
-  [{ _tag: "idle" }, true],
-  [{ _tag: "thinking", since, stalled: false }, false],
-  [{ _tag: "working", since, stalled: false, activity: null, tool: null }, false],
-  [{ _tag: "waiting", entryId: EntryId.make("q") }, false],
-  [{ _tag: "blocked", failure: "unknown", retryAt: null }, false],
-  [{ _tag: "working", since, stalled: true, activity: null, tool: null }, false],
-];
+const working: BotState = { _tag: "working", since, stalled: false, activity: null, tool: null };
+const quiet = { unread: false, speaking: false, offline: false };
 
-describe("avatarAppearance", () => {
-  it("gives every state, and done, its own mark, so the avatar reads without motion", () => {
-    const marks = states.map(([state, unread]) => avatarAppearance(state, unread).mark);
-    expect(new Set(marks).size).toBe(states.length);
+describe("avatarMood", () => {
+  it("shows a turn under way as thinking or working, and an idle bot as idle", () => {
+    expect(avatarMood({ _tag: "idle" }, quiet)).toEqual({ state: "idle", stalled: false });
+    expect(avatarMood({ _tag: "thinking", since, stalled: false }, quiet).state).toBe("thinking");
+    expect(avatarMood(working, quiet).state).toBe("working");
   });
 
-  it("stops a stalled turn's motion, thinking or working alike", () => {
-    expect(avatarAppearance({ _tag: "thinking", since, stalled: true }, false)).toEqual(
-      avatarAppearance(
-        { _tag: "working", since, stalled: true, activity: "Reading", tool: null },
-        false,
-      ),
+  it("shows an idle bot with something unread as unread, and a busy one as busy", () => {
+    expect(avatarMood({ _tag: "idle" }, { ...quiet, unread: true }).state).toBe("unread");
+    expect(avatarMood(working, { ...quiet, unread: true }).state).toBe("working");
+  });
+
+  it("lets a bot speak over its turn, but never over what waits on the operator", () => {
+    const speaking = { ...quiet, speaking: true };
+    expect(avatarMood(working, speaking).state).toBe("speaking");
+    expect(avatarMood({ _tag: "idle" }, { ...speaking, unread: true }).state).toBe("speaking");
+    expect(avatarMood({ _tag: "waiting", entryId: EntryId.make("q") }, speaking).state).toBe(
+      "waiting",
     );
     expect(
-      avatarAppearance({ _tag: "working", since, stalled: true, activity: null, tool: null }, false)
-        .motion,
-    ).toBe("none");
+      avatarMood({ _tag: "blocked", failure: "usage-limit", retryAt: null }, speaking).state,
+    ).toBe("blocked");
+  });
+
+  it("shows every bot asleep while the client cannot see the server", () => {
+    expect(
+      avatarMood({ _tag: "waiting", entryId: EntryId.make("q") }, { ...quiet, offline: true }),
+    ).toEqual({ state: "offline", stalled: false });
+  });
+
+  it("holds a stalled turn still, thinking or working alike", () => {
+    expect(avatarMood({ ...working, stalled: true }, quiet)).toEqual({
+      state: "working",
+      stalled: true,
+    });
+    expect(avatarMood({ _tag: "thinking", since, stalled: true }, quiet).stalled).toBe(true);
   });
 });
 
-describe("notificationLook", () => {
-  const about = (kind: NotificationKind) => ({ kind, entryId: EntryId.make("e") });
-  const working: BotState = { _tag: "working", since, stalled: false, activity: null, tool: null };
-  const look = (kind: NotificationKind, state: BotState) => {
-    const { mark, badge } = notificationLook(about(kind), state);
-    return { mark, badge };
-  };
-
+describe("notificationState", () => {
   it.each(["question", "approval", "secret-request"] as const)(
     "shows a %s as waiting on the operator, though the roster still has the bot working",
-    (kind) => {
-      expect(look(kind, working)).toEqual({ mark: "notch", badge: "waiting" });
+    (kind: NotificationKind) => {
+      expect(notificationState({ kind }, working)).toBe("waiting");
     },
   );
 
   it.each(["message", "handoff"] as const)(
-    "shows a %s as done and not read yet, even while the turn goes on",
-    (kind) => {
-      expect(look(kind, working)).toEqual({ mark: "check", badge: "unread" });
-      expect(look(kind, { _tag: "idle" })).toEqual({ mark: "check", badge: "unread" });
+    "shows a %s as unread, even while the turn goes on",
+    (kind: NotificationKind) => {
+      expect(notificationState({ kind }, working)).toBe("unread");
+      expect(notificationState({ kind }, { _tag: "idle" })).toBe("unread");
     },
   );
 
-  it.each(["message", "question"] as const)("shows a blocked bot's %s as blocked", (kind) => {
-    expect(look(kind, { _tag: "blocked", failure: "usage-limit", retryAt: null })).toEqual({
-      mark: "slash",
-      badge: "blocked",
-    });
+  it("shows a blocked bot as blocked, and one waiting on another card as waiting", () => {
+    const blocked: BotState = { _tag: "blocked", failure: "usage-limit", retryAt: null };
+    expect(notificationState({ kind: "message" }, blocked)).toBe("blocked");
+    expect(
+      notificationState({ kind: "message" }, { _tag: "waiting", entryId: EntryId.make("q") }),
+    ).toBe("waiting");
+  });
+});
+
+/** What a still face shows of its state, at `px`: the eye, the light and the signal. */
+function cues(state: AvatarState, stalled = false, px = 40) {
+  const face = stillFace(state, plainTraits, stalled);
+  const frame = avatarFrame("dome", face, px);
+  const eye = !frame.open
+    ? "shut"
+    : face.lidTop + face.lidBottom >= 0.6
+      ? "slit"
+      : face.pupil >= 8
+        ? "wide"
+        : face.lidTop >= 0.25
+          ? "lidded"
+          : "open";
+  return {
+    eye,
+    smiling: face.cheek > 0,
+    light: face.light,
+    cut: frame.lightCut > frame.light.r,
+    signal: face.signal,
+    asleep: face.asleep,
+  };
+}
+
+describe("still forms", () => {
+  const plain = { smiling: false, light: "body", cut: false, signal: null, asleep: false } as const;
+  const expected: Record<AvatarState, ReturnType<typeof cues>> = {
+    idle: { ...plain, eye: "open" },
+    thinking: { ...plain, eye: "lidded", signal: "dots" },
+    working: { ...plain, eye: "slit", signal: "ring" },
+    waiting: { ...plain, eye: "wide", light: "waiting", cut: true, signal: "ping" },
+    blocked: { ...plain, eye: "shut", light: "blocked", cut: true },
+    unread: { ...plain, eye: "open", smiling: true, light: "foreground", cut: true },
+    speaking: { ...plain, eye: "open", signal: "arcs" },
+    offline: { ...plain, eye: "shut", asleep: true },
+  };
+
+  it.each(avatarStates)("show %s by its eye, its light and its signal", (state) => {
+    expect(cues(state)).toEqual(expected[state]);
   });
 
-  it("shows a message from a bot waiting on another card as waiting", () => {
-    expect(look("message", { _tag: "waiting", entryId: EntryId.make("q") })).toEqual({
-      mark: "notch",
-      badge: "waiting",
+  it("show no two states alike", () => {
+    const shown = new Set(avatarStates.map((state) => JSON.stringify(cues(state))));
+    expect(shown.size).toBe(avatarStates.length);
+  });
+
+  it("set a state's light apart from the body at every size", () => {
+    for (const px of [24, 40, 96]) {
+      expect(cues("blocked", false, px).cut).toBe(true);
+      expect(cues("idle", false, px).cut).toBe(false);
+    }
+  });
+
+  it.each(["thinking", "working"] as const)(
+    "drop the signal of a stalled %s turn, keeping its eye",
+    (state) => {
+      expect(cues(state, true)).toEqual({ ...expected[state], signal: null });
+    },
+  );
+});
+
+/** `sim` stepped at 60 fps for `seconds`. */
+const run = (sim: AvatarSim, seconds: number) => {
+  let next = sim;
+  for (let i = 0; i < Math.round(seconds * 60); i++) next = stepAvatar(next, 1 / 60, null);
+  return next;
+};
+
+describe("an avatar's variation", () => {
+  it("comes from the bot's id, the same on every run", () => {
+    expect(avatarSeed("bot-1")).toBe(avatarSeed("bot-1"));
+    expect(avatarSeed("bot-1")).not.toBe(avatarSeed("bot-2"));
+    expect(run(createAvatar(avatarSeed("bot-1"), "idle"), 3)).toEqual(
+      run(createAvatar(avatarSeed("bot-1"), "idle"), 3),
+    );
+  });
+
+  it("keeps two bots out of step", () => {
+    const a = createAvatar(avatarSeed("bot-1"), "working");
+    const b = createAvatar(avatarSeed("bot-2"), "working");
+    expect(a.traits).not.toEqual(b.traits);
+    expect(avatarFace(run(a, 1)).gazeX).not.toBeCloseTo(avatarFace(run(b, 1)).gazeX, 2);
+  });
+
+  it("blinks on its own within a few seconds", () => {
+    let sim = createAvatar(avatarSeed("bot-1"), "idle");
+    let blinked = false;
+    for (let i = 0; i < 8 * 60 && !blinked; i++) {
+      sim = stepAvatar(sim, 1 / 60, null);
+      blinked = avatarFace(sim).blink > 0.5;
+    }
+    expect(blinked).toBe(true);
+  });
+});
+
+describe("a change of state", () => {
+  const seed = avatarSeed("bot-1");
+
+  it("eases into the new pose within a second", () => {
+    const sim = run(setAvatarState(createAvatar(seed, "idle"), "working"), 1.2);
+    const face = avatarFace(sim);
+    const pose = stillFace("working");
+    expect(face.lidTop).toBeCloseTo(pose.lidTop, 2);
+    expect(face.pupil).toBeCloseTo(pose.pupil, 2);
+  });
+
+  it("kicks the body once, its own way: a hop up for waiting, a slump for blocked", () => {
+    const idle = createAvatar(seed, "idle");
+    expect(setAvatarState(idle, "waiting").hop.v).toBeLessThan(0);
+    expect(setAvatarState(idle, "blocked").hop.v).toBeGreaterThan(0);
+    expect(setAvatarState(idle, "idle")).toBe(idle);
+  });
+
+  it("settles its springs after the kick", () => {
+    const sim = run(setAvatarState(createAvatar(seed, "idle"), "blocked"), 4);
+    expect(Math.abs(sim.hop.x)).toBeLessThan(0.5);
+    expect(Math.abs(sim.lagX.x)).toBeLessThan(0.5);
+  });
+});
+
+describe("gazeToward", () => {
+  it("looks straight at the pointer, reaching the eye's edge from 220 px", () => {
+    expect(gazeToward(440, 0)).toEqual({ x: 1, y: 0 });
+    const near = gazeToward(0, 110);
+    expect(near.x).toBeCloseTo(0, 6);
+    expect(near.y).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("speakingUntil", () => {
+  const id = BotId.make("ada");
+  it("lets a bot speak for a while after its own message arrives, longer for a longer one", () => {
+    const short = preview("2026-11-20T10:00:00Z", "message", "Hi", { _tag: "bot", botId: id });
+    const long = preview("2026-11-20T10:00:00Z", "message", "x".repeat(90), {
+      _tag: "bot",
+      botId: id,
     });
+    const sent = DateTime.toEpochMillis(at("2026-11-20T10:00:00Z"));
+    const until = speakingUntil(short, id);
+    expect(until).toBeGreaterThan(sent);
+    expect(speakingUntil(long, id)).toBeGreaterThan(until ?? Infinity);
+  });
+
+  it("does not for the operator's message, another bot's, or a card", () => {
+    expect(speakingUntil(preview("2026-11-20T10:00:00Z"), id)).toBeNull();
+    expect(
+      speakingUntil(
+        preview("2026-11-20T10:00:00Z", "message", "Hi", {
+          _tag: "bot",
+          botId: BotId.make("bea"),
+        }),
+        id,
+      ),
+    ).toBeNull();
+    expect(
+      speakingUntil(
+        preview("2026-11-20T10:00:00Z", "question", "Which?", { _tag: "bot", botId: id }),
+        id,
+      ),
+    ).toBeNull();
   });
 });

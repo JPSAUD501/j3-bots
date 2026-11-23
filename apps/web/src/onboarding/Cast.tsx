@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { firstLooks } from "@j3-bots/client-runtime/presentation";
 import type { AvatarChoice } from "@j3-bots/contracts";
-import { BotAvatar } from "../components/BotAvatar";
+import { avatarCast } from "@j3-bots/design-tokens";
+import { BotAvatar } from "../components/avatar/BotAvatar";
 import { cn } from "../lib/cn";
 import { springAnimation } from "./motion";
-
-const idle = { _tag: "idle" } as const;
 
 interface Member {
   readonly look: AvatarChoice;
@@ -18,7 +16,8 @@ interface Member {
   readonly float: number;
 }
 
-const at = (index: number): AvatarChoice => firstLooks[index % firstLooks.length] ?? firstLooks[0];
+/** The cast's look at `index`: the first is the one the first bot starts with. */
+const at = (index: number): AvatarChoice => avatarCast[index % avatarCast.length] ?? avatarCast[0];
 
 /** A small crowd of bots, the largest in the middle, the rest around and in front of it. */
 const members: ReadonlyArray<Member> = [
@@ -60,7 +59,12 @@ export function Cast({ compact = false }: { readonly compact?: boolean }) {
                 animation: `onboarding-float ${member.float}ms ease-in-out calc(var(--duration-pop) + ${90 * index}ms) infinite`,
               }}
             >
-              <BotAvatar avatar={member.look} state={idle} size={Math.round(member.size * scale)} />
+              <BotAvatar
+                avatar={member.look}
+                seed={`cast-${member.look.shape}`}
+                state="idle"
+                size={Math.round(member.size * scale)}
+              />
             </span>
           </span>
         </span>

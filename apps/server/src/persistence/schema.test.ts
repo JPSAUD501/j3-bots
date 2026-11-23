@@ -13,7 +13,7 @@ const insertBot = (id: string) =>
         id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
         permission_mode, workspace_path, created_at, updated_at
       ) VALUES (
-        ${id}, ${id}, '', 'circle', 'blue', '', 'claude', 'haiku', 'auto', ${`/bots/${id}`},
+        ${id}, ${id}, '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', ${`/bots/${id}`},
         ${now}, ${now}
       )
     `,

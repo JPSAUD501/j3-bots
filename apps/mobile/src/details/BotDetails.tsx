@@ -29,7 +29,7 @@ import { type ReactElement, useMemo } from "react";
 import { Pressable, ScrollView, Switch, useWindowDimensions, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { BotAvatar } from "../components/Avatar.tsx";
+import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { confirm, DeleteButton, Quiet, Section } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Navigation } from "../navigation.tsx";
@@ -66,7 +66,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const routines = loadedList(useRoutines(bot.id));
   const files = loadedList(useBotFiles(bot.id));
   const memory = loadedList(useMemory({ _tag: "bot", botId: bot.id }));
-  const { name, title, job, avatar } = bot.profile;
+  const { name, title, job } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, ctx.i18n);
   const modelName = botModelName(engine._tag === "ready" ? engine.value : null, bot);
   const loading = <Quiet>{t("details.loading")}</Quiet>;
@@ -76,7 +76,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
       contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
     >
       <View className="items-start gap-3 border-b border-border px-4 py-5">
-        <BotAvatar avatar={avatar} state={bot.state} size={72} />
+        <LiveBotAvatar bot={bot} size={96} />
         <View>
           <View className="flex-row items-center gap-2">
             <Text accessibilityRole="header" className="text-xl font-medium text-foreground">

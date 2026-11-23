@@ -43,7 +43,7 @@ import { Stops } from "../turns/Stops.ts";
 import { conversation } from "../turns/model.ts";
 import { openingUnsentSql } from "../turns/openings.ts";
 import { Wakes } from "../turns/Wakes.ts";
-import { freeAvatar } from "./avatars.ts";
+import { freeAvatar } from "@j3-bots/design-tokens/names";
 import { type BotChanges, BotStore, type Chooser, type StoredBot } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
 import { Workspaces } from "./Workspaces.ts";

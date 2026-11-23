@@ -25,6 +25,7 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useArrivals, useConversationEnd } from "@j3-bots/client-runtime/react";
 import { BotsProvider, useI18n } from "../app/context";
+import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
 import { Composer, type MentionCandidate } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
@@ -547,19 +548,21 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   return (
     <BotsProvider bots={bots}>
-      <AppShell
-        roster={roster}
-        conversation={conversation}
-        details={details}
-        detailsHeadingId={detailsHeadingId}
-        detailsHeadingRef={detailsHeadingRef}
-        returnFocusRef={titleRef}
-        active={active}
-        layout={layout}
-        containerRef={containerRef}
-        conversationRef={setConversationRegion}
-        onCloseDetails={() => navigation.setDetailsOpen(false)}
-      />
+      <AvatarConnection connected={data.connected}>
+        <AppShell
+          roster={roster}
+          conversation={conversation}
+          details={details}
+          detailsHeadingId={detailsHeadingId}
+          detailsHeadingRef={detailsHeadingRef}
+          returnFocusRef={titleRef}
+          active={active}
+          layout={layout}
+          containerRef={containerRef}
+          conversationRef={setConversationRegion}
+          onCloseDetails={() => navigation.setDetailsOpen(false)}
+        />
+      </AvatarConnection>
       <span className="sr-only" aria-live="polite">
         {announcement !== null && <span key={announcement.id}>{announcement.text}</span>}
       </span>

@@ -14,7 +14,6 @@ import {
   type ApprovalEntry,
   type Author,
   type BotId,
-  type BotState,
   type HandoffEntry,
   type MessageEntry,
   type NoticeEntry,
@@ -40,25 +39,6 @@ export function galleryVariants(now: DateTime.Utc) {
     author,
     createdAt: ago(4),
   });
-
-  /** Each state as the avatar shows it; done is an idle bot with something unread. */
-  const states: ReadonlyArray<readonly [string, BotState, boolean]> = [
-    ["idle", { _tag: "idle" }, false],
-    ["thinking", { _tag: "thinking", since: ago(0), stalled: false }, false],
-    [
-      "working",
-      { _tag: "working", since: ago(2), stalled: false, activity: null, tool: null },
-      false,
-    ],
-    ["waiting", { _tag: "waiting", entryId: id("question") }, false],
-    ["blocked", { _tag: "blocked", failure: "usage-limit", retryAt: ahead(90) }, false],
-    ["done", { _tag: "idle" }, true],
-    [
-      "stalled",
-      { _tag: "working", since: ago(12), stalled: true, activity: null, tool: null },
-      false,
-    ],
-  ];
 
   const message = (
     name: string,
@@ -631,7 +611,6 @@ export function galleryVariants(now: DateTime.Utc) {
   ];
 
   return {
-    states,
     bubbles,
     questions,
     approvals,

@@ -1034,8 +1034,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         open={newBot}
         onOpenChange={setNewBot}
         onUnsavedChange={setNewBotUnsaved}
-        onCreate={(name, primary) =>
-          intents.createBot({ name, primary }).then((result) => {
+        onCreate={(bot) =>
+          intents.createBot(bot).then((result) => {
             if (result._tag === "failed") throw new Error("The bot was not created");
             setNewBot(false);
             void goToBot(result.value);

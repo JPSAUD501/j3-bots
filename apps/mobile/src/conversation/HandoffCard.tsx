@@ -4,7 +4,7 @@ import type { BotId, HandoffEntry } from "@j3-bots/contracts";
 import { use, useState } from "react";
 import { Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
-import { AvatarShape } from "../components/Avatar.tsx";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots } from "../presentation.tsx";
 import { EntryWidths } from "./widths.ts";
@@ -54,9 +54,9 @@ export function HandoffCard({
         style={{ maxWidth: widths.compactCard }}
         className="flex-row items-start gap-2.5 self-start rounded-bubble border border-border bg-surface px-3.5 py-1.5"
       >
-        <View className="mt-2 size-7 items-center justify-center rounded-md bg-muted">
+        <View className="mt-2.5">
           {other !== undefined && (
-            <AvatarShape avatar={other.profile.avatar} size={18} ground="muted" />
+            <BotAvatar avatar={other.profile.avatar} seed={other.id} state="idle" size={24} still />
           )}
         </View>
         <View className="min-w-0 flex-1">

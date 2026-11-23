@@ -166,9 +166,8 @@ function StepStatus({ step }: { readonly step: WorkStep }) {
 }
 
 /**
- * A small dot that breathes while something runs, stepped like the avatars,
- * 8 changes in 1.4 s, so it never repaints every frame; still under reduced
- * motion.
+ * A small dot that breathes while something runs, stepped: 8 changes in
+ * 1.4 s, so it never repaints every frame; still under reduced motion.
  */
 function LiveMark() {
   const reduced = useReducedMotion();

@@ -11,8 +11,7 @@ import {
   type Theme,
   TrayReport,
 } from "@j3-bots/desktop-bridge";
-import { ensembleLead } from "@j3-bots/design-tokens";
-import { renderStillAvatar } from "@j3-bots/design-tokens/raster";
+import { renderTrayIcon } from "@j3-bots/design-tokens/raster";
 import { createI18n, type I18n, resolveLocale } from "@j3-bots/i18n";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -68,17 +67,16 @@ const onWayland = () => {
 const literal = (label: string) => (MAC ? label : label.replaceAll("&", "&&"));
 
 /**
- * The tray's icon: the app's avatar (the ensemble's lead), with the badge that
- * says something waits, in `theme`, the one the system draws its tray in.
+ * The tray's icon: the app icon's lead bot, with the badge that says
+ * something waits, in `theme`, the one the system draws its tray in.
  */
 const trayIcon = (attention: boolean, theme: Theme) => {
   const size = process.platform === "linux" ? 24 : 16;
-  const look = { mark: "dot", badge: attention ? "waiting" : null } as const;
   const image = nativeImage.createEmpty();
   for (const scaleFactor of [1, 2]) {
     image.addRepresentation({
       scaleFactor,
-      buffer: Buffer.from(renderStillAvatar(ensembleLead, look, theme, size * scaleFactor)),
+      buffer: Buffer.from(renderTrayIcon(attention, theme, size * scaleFactor)),
     });
   }
   return image;

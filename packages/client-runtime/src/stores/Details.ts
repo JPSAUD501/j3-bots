@@ -61,7 +61,7 @@ export interface BotDraft {
 
 /** What `updateBot` changes. Fields left out keep their value. */
 export interface BotChanges {
-  readonly profile?: Omit<ProfileChanges, "avatar">;
+  readonly profile?: ProfileChanges;
   readonly model?: ModelChoice;
   readonly permissionMode?: PermissionMode;
 }

@@ -6,6 +6,8 @@
  */
 export { addresseeLine, resendLabel } from "./addressee.ts";
 export {
+  avatarShapeText,
+  botColorText,
   botModelName,
   memoryEditProblemText,
   memoryFileName,

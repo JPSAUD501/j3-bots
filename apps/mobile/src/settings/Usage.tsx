@@ -11,7 +11,7 @@ import { type EngineStatus, USAGE_PERIOD, type UsageWindow } from "@j3-bots/cont
 import * as Duration from "effect/Duration";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
-import { AvatarShape } from "../components/Avatar.tsx";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { Quiet, Section } from "../components/form.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
@@ -218,8 +218,16 @@ function BotTurns(props: { readonly spend: BotSpend; readonly stale: boolean }) 
   return (
     <View className="gap-1">
       <View className="flex-row items-start gap-2">
-        <View className="mt-0.5 size-4">
-          {spend.bot !== null && <AvatarShape avatar={spend.bot.profile.avatar} size={16} />}
+        <View className="mt-0.5 size-5">
+          {spend.bot !== null && (
+            <BotAvatar
+              avatar={spend.bot.profile.avatar}
+              seed={spend.bot.id}
+              state="idle"
+              size={20}
+              still
+            />
+          )}
         </View>
         <Text className={`min-w-0 flex-1 text-sm ${tone} ${spend.bot === null ? "italic" : ""}`}>
           {spend.bot?.profile.name ?? t("usage.deletedBot")}

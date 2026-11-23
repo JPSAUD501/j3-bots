@@ -8,15 +8,17 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { rosterRows } from "@j3-bots/client-runtime";
 import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
-import type { RosterItemKey } from "@j3-bots/contracts";
+import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Plus, Search } from "lucide-react-native";
-import { useEffect, useState } from "react";
-import { Alert, FlatList, Pressable, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { Alert, FlatList, type FlatListProps, Pressable, View } from "react-native";
+import { useSharedValue } from "react-native-reanimated";
 import { Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AvatarHold, AvatarRow, rowsOnScreen } from "../components/avatar/BotAvatar.tsx";
 import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
@@ -112,6 +114,13 @@ export function RosterScreen({ navigation, route }: Props) {
   );
 }
 
+/** A row counts as on screen, and its avatar moves, once any of it shows. */
+const ON_SCREEN: FlatListProps<RosterItem>["viewabilityConfig"] = {
+  itemVisiblePercentThreshold: 1,
+};
+
+type Viewable = NonNullable<FlatListProps<RosterItem>["onViewableItemsChanged"]>;
+
 /** The roster's own header, with its search and New, and its rows, under the status bar. */
 function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const { t } = useI18n();
@@ -123,6 +132,14 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const placeholder = useColor("accent-muted-foreground");
   const [query, setQuery] = useState("");
   const selectedText = selected === null ? null : rosterKeyText(selected);
+  // The rows on screen, by key; the others' avatars hold still. Stable, as the list requires.
+  const [onScreen] = useState(rowsOnScreen);
+  const onViewable = useCallback<Viewable>(
+    ({ viewableItems }) => onScreen.set(new Set(viewableItems.map((token) => token.key))),
+    [onScreen],
+  );
+  // The avatars hold while the list scrolls, from the drag through its glide.
+  const scrolling = useSharedValue(false);
   if (roster._tag === "loading") return <Connecting />;
   const searching = query.trim() !== "";
   // A search finds hidden bots too, in the order the web lists what it finds.
@@ -177,32 +194,43 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
         />
       </View>
       <ConnectionLine loaded />
-      <FlatList
-        className="flex-1"
-        contentContainerStyle={{ paddingBottom: insets.bottom }}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        data={rows}
-        keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
-        ListEmptyComponent={
-          <View className="items-center px-6 py-12">
-            <Body>
-              {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
-            </Body>
-          </View>
-        }
-        renderItem={({ item }) => {
-          const key = rosterKeyOf(item);
-          return (
-            <RosterRow
-              item={item}
-              selected={rosterKeyText(key) === selectedText}
-              onOpen={() => openConversation(key)}
-            />
-          );
-        }}
-        extraData={selectedText}
-      />
+      <AvatarHold held={scrolling}>
+        <FlatList
+          className="flex-1"
+          contentContainerStyle={{ paddingBottom: insets.bottom }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          data={rows}
+          keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
+          ListEmptyComponent={
+            <View className="items-center px-6 py-12">
+              <Body>
+                {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
+              </Body>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const key = rosterKeyOf(item);
+            const text = rosterKeyText(key);
+            return (
+              <AvatarRow rows={onScreen} rowKey={text}>
+                <RosterRow
+                  item={item}
+                  selected={text === selectedText}
+                  onOpen={() => openConversation(key)}
+                />
+              </AvatarRow>
+            );
+          }}
+          onViewableItemsChanged={onViewable}
+          viewabilityConfig={ON_SCREEN}
+          extraData={selectedText}
+          onScrollBeginDrag={() => scrolling.set(true)}
+          onScrollEndDrag={() => scrolling.set(false)}
+          onMomentumScrollBegin={() => scrolling.set(true)}
+          onMomentumScrollEnd={() => scrolling.set(false)}
+        />
+      </AvatarHold>
     </View>
   );
 }

@@ -18,7 +18,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
-import { AvatarShape } from "../components/Avatar.tsx";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { Connecting } from "../components/ConnectionLine.tsx";
 import { ChoiceRow, FormScreen, Problem, TextField, useDiscardGuard } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
@@ -243,7 +243,9 @@ function RoomForm({
               selected={picked}
               // A seventh bot cannot be added: its row stays in reach and does nothing.
               unavailable={busy || (form.full && !picked)}
-              leading={<AvatarShape avatar={bot.profile.avatar} size={20} />}
+              leading={
+                <BotAvatar avatar={bot.profile.avatar} seed={bot.id} state="idle" size={24} still />
+              }
               onPress={() => form.toggleMember(bot.id)}
             />
           );

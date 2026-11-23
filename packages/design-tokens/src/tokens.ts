@@ -7,9 +7,6 @@
  * Colors are `#rrggbb` or `oklch(L C H)`, optionally with `/ alpha`. The
  * reasoning behind the values is in docs/design/design-language.md.
  */
-import { mixOklab } from "./color.ts";
-import type { BotColor } from "./names.ts";
-
 export interface Themed {
   readonly light: string;
   readonly dark: string;
@@ -64,7 +61,7 @@ export const colors = {
    * it past the ends of the track, over the page, where `background` would hide it.
    */
   "control-thumb": themed("#ffffff", "#f5f5f6"),
-  /** Marks drawn inside an avatar, over the bot's color. */
+  /** Marks drawn over a bot's color, such as the composer's send arrow on the conversation's tint. */
   "avatar-ink": themed("#ffffff", "#0b0b0c"),
   /** Behind sheets and dialogs. */
   scrim: themed("oklch(0 0 0 / 0.3)", "oklch(0 0 0 / 0.62)"),
@@ -93,24 +90,6 @@ export const shadows = {
 export type ColorRole = keyof typeof colors;
 
 /**
- * The bot palette. Every value reaches 3:1 against the canvases and against
- * `avatar-ink`. Lightness varies on purpose: every pair stays apart for typical
- * vision and for simulated protanopia, deuteranopia and tritanopia.
- */
-export const botPalette = {
-  red: themed("oklch(0.441 0.179 29)", "oklch(0.555 0.193 33)"),
-  orange: themed("oklch(0.535 0.11 72)", "oklch(0.682 0.132 57)"),
-  yellow: themed("oklch(0.621 0.125 86)", "oklch(0.79 0.162 94)"),
-  green: themed("oklch(0.401 0.091 159)", "oklch(0.812 0.104 149)"),
-  teal: themed("oklch(0.61 0.102 206)", "oklch(0.708 0.093 189)"),
-  blue: themed("oklch(0.516 0.124 243)", "oklch(0.596 0.217 271)"),
-  indigo: themed("oklch(0.322 0.193 281)", "oklch(0.72 0.151 295)"),
-  violet: themed("oklch(0.622 0.183 295)", "oklch(0.523 0.148 298)"),
-  pink: themed("oklch(0.451 0.136 336)", "oklch(0.584 0.094 349)"),
-  gray: themed("oklch(0.532 0 0)", "oklch(0.93 0 0)"),
-} as const satisfies Record<BotColor, Themed>;
-
-/**
  * The three faces J3 Bots bundles (`fonts/`, under the SIL Open Font License),
  * each with the platform's own as its fallback while it loads.
  */
@@ -122,24 +101,6 @@ export const fontFamilies = {
   /** Code, commands and the steps of a turn: JetBrains Mono, regular, without ligatures. */
   mono: "JetBrains Mono",
 } as const;
-
-/**
- * How strongly a bot's color tints its bubbles over the canvas: more in the
- * dark theme, where a light tint would vanish.
- */
-export const botBubbleTint = { light: 0.11, dark: 0.28 } as const satisfies Record<
-  keyof Themed,
-  number
->;
-
-/**
- * A bot's bubbles: a tint of its color over the canvas. Derived from
- * `botPalette`, so every color there has its bubble.
- */
-export const botBubble = (color: BotColor): Themed => ({
-  light: mixOklab(botPalette[color].light, colors.background.light, botBubbleTint.light),
-  dark: mixOklab(botPalette[color].dark, colors.background.dark, botBubbleTint.dark),
-});
 
 export const fonts = {
   display: `"${fontFamilies.display}", "${fontFamilies.text}", system-ui, sans-serif`,
@@ -211,17 +172,6 @@ export const motion = {
   state: 200,
   /** A scrim or a larger fade. */
   slow: 300,
-  /**
-   * Avatar motion is stepped: the mark changes position a few times per
-   * second instead of every frame, so a roster full of busy bots does not keep
-   * the display refreshing at full rate.
-   */
-  avatar: {
-    breathePeriod: 2400,
-    breatheSteps: 12,
-    spinPeriod: 1600,
-    spinSteps: 8,
-  },
 } as const;
 
 /** In px. */

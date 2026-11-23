@@ -25,7 +25,7 @@ import {
   type RoomId,
   type RosterItem,
 } from "@j3-bots/contracts";
-import { avatarShapeNames, botColors } from "@j3-bots/design-tokens";
+import { freeAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ClockProvider } from "../app/clock";
@@ -372,16 +372,15 @@ function sampleIntents({ get, update }: Store): ShellIntents {
       // As on a server: the bot opens its conversation once a provider can run it.
       const canSpeak = providerGate(get().engine)._tag === "ready";
       update((s) => {
-        const count = s.roster.length;
+        const taken = s.roster.flatMap((row) =>
+          row._tag === "bot" ? [row.bot.profile.avatar] : [],
+        );
         const bot: Bot = {
           id: botId,
           profile: {
             name,
             title: "",
-            avatar: avatar ?? {
-              shape: avatarShapeNames[count % avatarShapeNames.length] ?? "circle",
-              color: botColors[count % botColors.length] ?? "gray",
-            },
+            avatar: avatar ?? freeAvatar(taken),
             job: "",
           },
           model: {

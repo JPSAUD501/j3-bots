@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The custom properties both generated stylesheets declare, named once so the
 // web and the mobile theme cannot drift apart.
+import { botBubble, botPalette } from "./botPalette.ts";
 import { botColors } from "./names.ts";
-import { botBubble, botPalette, colors, radii, typeScale, type Themed } from "./tokens.ts";
+import { colors, radii, typeScale, type Themed } from "./tokens.ts";
 
 export type Entry = readonly [name: string, value: string];
 

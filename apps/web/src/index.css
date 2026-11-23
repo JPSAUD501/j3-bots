@@ -57,70 +57,28 @@
 }
 
 /*
- * Avatar motion. A state change plays once; the two working states keep a slow,
- * stepped motion that changes the picture a few times per second, never every
- * frame. Reduced motion and still avatars keep only the mark's form.
+ * Avatars. Their motion runs on the shared frame loop (components/avatar/ticker.ts);
+ * the stylesheet only fades a state's signal in and out, and puts an offline bot to sleep.
  */
 @layer components {
-  .avatar :where(.avatar-breathe, .avatar-spin, .avatar-mark-in, .avatar-nudge) {
-    transform-box: fill-box;
-    transform-origin: center;
-  }
-
-  .avatar-breathe {
-    animation: avatar-breathe var(--avatar-breathe-period) steps(var(--avatar-breathe-steps))
-      infinite;
-  }
-
-  .avatar-spin {
-    animation: avatar-spin var(--avatar-spin-period) steps(var(--avatar-spin-steps)) infinite;
-  }
-
-  .avatar-mark-in {
-    animation: avatar-mark-in var(--duration-state) var(--ease-out);
-  }
-
-  .avatar-nudge {
-    animation: avatar-nudge var(--duration-slow) var(--ease-out);
-  }
-
-  .avatar[data-still] * {
-    animation: none;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .avatar * {
-      animation: none;
-    }
-  }
-}
-
-@keyframes avatar-breathe {
-  0%,
-  100% {
-    transform: scale(0.72);
-  }
-  50% {
-    transform: scale(1);
-  }
-}
-
-@keyframes avatar-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes avatar-mark-in {
-  from {
+  .avatar .avatar-signal {
     opacity: 0;
-    transform: scale(0.5);
+    transition: opacity var(--duration-state) var(--ease-out);
   }
-}
 
-@keyframes avatar-nudge {
-  50% {
-    transform: scale(1.08);
+  .avatar[data-signal="ring"] [data-signal-of="ring"],
+  .avatar[data-signal="ping"] [data-signal-of="ping"],
+  .avatar[data-signal="arcs"] [data-signal-of="arcs"],
+  .avatar[data-signal="dots"] [data-signal-of="dots"] {
+    opacity: 1;
+  }
+
+  .avatar {
+    transition: filter var(--duration-slow) var(--ease-out);
+  }
+
+  .avatar[data-asleep="true"] {
+    filter: saturate(0.12) opacity(0.5);
   }
 }
 

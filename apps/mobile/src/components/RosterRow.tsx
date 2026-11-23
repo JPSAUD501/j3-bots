@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { needsOperator } from "@j3-bots/client-runtime";
-import { avatarAppearance } from "@j3-bots/client-runtime/presentation";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import type { RosterItem } from "@j3-bots/contracts";
+import { useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
-import { BotAvatar, RoomAvatar } from "./Avatar.tsx";
 import { PressScale } from "../press.tsx";
+import { RoomAvatar } from "./avatar/BotAvatar.tsx";
+import { LiveBotAvatar } from "./avatar/mood.tsx";
 
 export const toneClass = {
   default: "text-muted-foreground",
@@ -22,8 +23,8 @@ export const toneClass = {
 /**
  * One bot or room: avatar, name, time, and one line of status, in a 64 px
  * row. Rows that need the operator carry it in the line's words and color
- * and in the avatar's badge. Unread shows once: as a done bot's badge, or as
- * a dot under the time; screen readers hear "Unread" either way.
+ * and in the avatar's light. Unread shows once: as an idle bot's dark light,
+ * or as a dot under the time; screen readers hear "Unread" either way.
  */
 export function RosterRow({
   item,
@@ -42,10 +43,10 @@ export function RosterRow({
   const needs = needsOperator(item);
   const name = itemName(item);
   const time = item.lastActivityAt === null ? null : activityTime(item.lastActivityAt, ctx);
-  const unreadDot =
-    item.unread &&
-    (item._tag === "room" || avatarAppearance(item.bot.state, item.unread).badge !== "unread");
-  const ground = selected ? "muted" : "background";
+  const unreadDot = item.unread && (item._tag === "room" || item.bot.state._tag !== "idle");
+  // The row turns muted while pressed or selected: the avatar's light keeps its ring in that color.
+  const [pressed, setPressed] = useState(false);
+  const ground = selected || pressed ? "muted" : "background";
   return (
     <PressScale
       depth="row"
@@ -55,23 +56,25 @@ export function RosterRow({
         .filter((part) => part !== null)
         .join(", ")}
       onPress={onOpen}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
       className={`mx-2 h-(--layout-row-touch) flex-row items-center gap-3 rounded-lg px-2 active:bg-muted ${selected ? "bg-muted" : ""}`}
     >
       {item._tag === "bot" ? (
-        <BotAvatar
-          avatar={item.bot.profile.avatar}
-          state={item.bot.state}
+        <LiveBotAvatar
+          bot={item.bot}
           unread={item.unread}
-          size={36}
+          lastEntry={item.lastEntry}
+          size={40}
           ground={ground}
         />
       ) : (
         <RoomAvatar
-          size={36}
+          size={40}
           ground={ground}
           members={item.room.members.flatMap((id) => {
             const bot = bots.get(id);
-            return bot === undefined ? [] : [bot.profile.avatar];
+            return bot === undefined ? [] : [{ id, avatar: bot.profile.avatar }];
           })}
         />
       )}

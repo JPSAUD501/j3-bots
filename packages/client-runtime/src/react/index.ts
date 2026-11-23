@@ -201,3 +201,4 @@ export {
   type RoomSubmission,
   useRoomForm,
 } from "./roomForm.ts";
+export { useAsleep, useAvatarMood } from "./avatar.ts";

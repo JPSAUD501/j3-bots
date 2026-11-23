@@ -127,23 +127,24 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
     // This release opens it.
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      // A color the clients draw stays, gray too; one they do not becomes the
-      // first free one for the bot's shape, also in the receipt of its creation.
+      // A color the clients drew stayed, gray too, and one they did not became the
+      // first free one for the bot's shape (migration 13). Then each bot took the
+      // silhouette and color nearest its own, also in the receipt of its creation.
       const avatars = yield* sql<{
         readonly id: string;
         readonly avatar_shape: string;
         readonly avatar_color: string;
       }>`SELECT id, avatar_shape, avatar_color FROM bots ORDER BY id`;
       assert.deepStrictEqual(avatars, [
-        { id: "keeper", avatar_shape: "square", avatar_color: "gray" },
-        { id: "scout", avatar_shape: "circle", avatar_color: "blue" },
-        { id: "scribe", avatar_shape: "circle", avatar_color: "red" },
+        { id: "keeper", avatar_shape: "block", avatar_color: "slate" },
+        { id: "scout", avatar_shape: "bean", avatar_color: "sky" },
+        { id: "scribe", avatar_shape: "bean", avatar_color: "tomato" },
       ]);
       const [scribeReceipt] = yield* sql<{ readonly result_json: string }>`
         SELECT result_json FROM command_receipts WHERE command_id = 'command-2'
       `;
       const scribe = yield* Schema.decodeUnknownEffect(json(Bot))(scribeReceipt?.result_json);
-      assert.deepStrictEqual(scribe.profile.avatar, { shape: "circle", color: "red" });
+      assert.deepStrictEqual(scribe.profile.avatar, { shape: "bean", color: "tomato" });
       const sessions = yield* sql<{ readonly bot_id: string; readonly provider_id: string }>`
         SELECT bot_id, provider_id FROM sessions WHERE id = 'session-1'
       `;

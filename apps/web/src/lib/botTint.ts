@@ -10,16 +10,18 @@ const botColorOf = (avatar: Avatar): BotColor => resolveAvatar(avatar).color;
 
 // Written out whole, so Tailwind finds each class.
 const tints = {
-  red: "[--tint:var(--bot-red)] [--tint-bubble:var(--bot-bubble-red)]",
-  orange: "[--tint:var(--bot-orange)] [--tint-bubble:var(--bot-bubble-orange)]",
-  yellow: "[--tint:var(--bot-yellow)] [--tint-bubble:var(--bot-bubble-yellow)]",
-  green: "[--tint:var(--bot-green)] [--tint-bubble:var(--bot-bubble-green)]",
+  tomato: "[--tint:var(--bot-tomato)] [--tint-bubble:var(--bot-bubble-tomato)]",
+  tangerine: "[--tint:var(--bot-tangerine)] [--tint-bubble:var(--bot-bubble-tangerine)]",
+  honey: "[--tint:var(--bot-honey)] [--tint-bubble:var(--bot-bubble-honey)]",
+  lime: "[--tint:var(--bot-lime)] [--tint-bubble:var(--bot-bubble-lime)]",
+  mint: "[--tint:var(--bot-mint)] [--tint-bubble:var(--bot-bubble-mint)]",
   teal: "[--tint:var(--bot-teal)] [--tint-bubble:var(--bot-bubble-teal)]",
-  blue: "[--tint:var(--bot-blue)] [--tint-bubble:var(--bot-bubble-blue)]",
-  indigo: "[--tint:var(--bot-indigo)] [--tint-bubble:var(--bot-bubble-indigo)]",
-  violet: "[--tint:var(--bot-violet)] [--tint-bubble:var(--bot-bubble-violet)]",
-  pink: "[--tint:var(--bot-pink)] [--tint-bubble:var(--bot-bubble-pink)]",
-  gray: "[--tint:var(--bot-gray)] [--tint-bubble:var(--bot-bubble-gray)]",
+  sky: "[--tint:var(--bot-sky)] [--tint-bubble:var(--bot-bubble-sky)]",
+  cobalt: "[--tint:var(--bot-cobalt)] [--tint-bubble:var(--bot-bubble-cobalt)]",
+  iris: "[--tint:var(--bot-iris)] [--tint-bubble:var(--bot-bubble-iris)]",
+  orchid: "[--tint:var(--bot-orchid)] [--tint-bubble:var(--bot-bubble-orchid)]",
+  rose: "[--tint:var(--bot-rose)] [--tint-bubble:var(--bot-bubble-rose)]",
+  slate: "[--tint:var(--bot-slate)] [--tint-bubble:var(--bot-bubble-slate)]",
 } as const satisfies Record<BotColor, string>;
 
 /** Where no one bot speaks, as in a room's composer: the neutral ink and bubble. */

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   defaultBotName,
-  firstLooks,
   makingProgress,
   nextStep,
   type OnboardingStep,
@@ -18,10 +17,10 @@ import {
   type EngineStatus,
   PROFILE_LIMITS,
 } from "@j3-bots/contracts";
-import { type BotColor, reanimatedSpring, springs } from "@j3-bots/design-tokens";
+import { avatarCast, reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import * as ExpoCrypto from "expo-crypto";
 import { ChevronLeft } from "lucide-react-native";
-import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   BackHandler,
   I18nManager,
@@ -48,7 +47,8 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { BotAvatar } from "../components/Avatar.tsx";
+import { AvatarChoices } from "../components/avatar/AvatarPicker.tsx";
+import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { ProviderRow } from "../components/Engine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
@@ -56,6 +56,7 @@ import { useI18n } from "../i18n.ts";
 import { popIn, useReducedMotion } from "../motion.ts";
 import { useColor } from "../theme.ts";
 import { CommandLine } from "../components/CommandLine.tsx";
+import { useTint } from "../conversation/tint.ts";
 import { PressScale } from "../press.tsx";
 import { displaySpacing, Text, TextInput } from "../text.tsx";
 import { BigButton, bigFieldClass, Cast, StepTitle } from "./parts.tsx";
@@ -64,26 +65,10 @@ const pop = reanimatedSpring(springs.pop);
 const soft = reanimatedSpring(springs.soft);
 const slide = reanimatedSpring(springs.slide);
 
-const idle = { _tag: "idle" } as const;
-
 /** How long the arrival stays at least, so the bot is seen arriving before its conversation opens. */
 const ARRIVAL_MS = 1600;
 
 const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-/** Each bot colour as an `accent-` utility, written out so Tailwind finds it. */
-const botColor = {
-  red: "accent-bot-red",
-  orange: "accent-bot-orange",
-  yellow: "accent-bot-yellow",
-  green: "accent-bot-green",
-  teal: "accent-bot-teal",
-  blue: "accent-bot-blue",
-  indigo: "accent-bot-indigo",
-  violet: "accent-bot-violet",
-  pink: "accent-bot-pink",
-  gray: "accent-bot-gray",
-} as const satisfies Record<BotColor, string>;
 
 type Direction = "forward" | "back";
 
@@ -129,7 +114,7 @@ export function Onboarding({
   const reduced = useReducedMotion();
   const [fallbackName] = useState(() => defaultBotName(ExpoCrypto.getRandomBytes(1)[0] ?? 0));
   const [name, setName] = useState(fallbackName);
-  const [look, setLook] = useState<AvatarChoice>(firstLooks[0]);
+  const [look, setLook] = useState<AvatarChoice>(avatarCast[0]);
   const [view, setView] = useState<{
     readonly step: OnboardingStep;
     readonly direction: Direction;
@@ -313,7 +298,8 @@ function Dot({ current }: { readonly current: boolean }) {
 
 /**
  * The bot being made, above the screens: it pops in, hops at every step and
- * every change, and grows when it arrives, with rings in its colour.
+ * every change, morphs into a new shape, and grows when it arrives, with rings
+ * in its colour.
  */
 function Hero({
   look,
@@ -326,6 +312,12 @@ function Hero({
   readonly arrived: boolean;
   readonly reduced: boolean;
 }) {
+  const bot = useRef<AvatarHandle>(null);
+  const shape = useRef(look.shape);
+  useEffect(() => {
+    if (look.shape !== shape.current) bot.current?.poke("morph");
+    shape.current = look.shape;
+  }, [look.shape]);
   const hop = useSharedValue(0);
   const grow = useSharedValue(0);
   useEffect(() => {
@@ -349,16 +341,16 @@ function Hero({
         <Animated.View style={style}>
           {arrived &&
             !reduced &&
-            [0, 1, 2].map((ring) => <Ring key={ring} index={ring} color={look.color} />)}
-          <BotAvatar avatar={look} state={idle} size={96} />
+            [0, 1, 2].map((ring) => <Ring key={ring} index={ring} look={look} />)}
+          <BotAvatar ref={bot} avatar={look} seed="first-bot" state="idle" size={96} />
         </Animated.View>
       </Animated.View>
     </View>
   );
 }
 
-function Ring({ index, color }: { readonly index: number; readonly color: BotColor }) {
-  const borderColor = useColor(botColor[color]);
+function Ring({ index, look }: { readonly index: number; readonly look: AvatarChoice }) {
+  const borderColor = useTint(look).color;
   const progress = useSharedValue(0);
   useEffect(() => {
     progress.set(
@@ -487,53 +479,11 @@ function LookStep({
       }
     >
       <StepTitle>{t("onboarding.look.title", { name })}</StepTitle>
-      <View className="mt-2">
-        <BotLookSlot look={look} onLook={onLook} />
+      <View className="mt-2 w-full max-w-80">
+        <AvatarChoices value={look} onChange={onLook} />
       </View>
       <Text className="text-center text-sm text-muted-foreground">{t("onboarding.look.hint")}</Text>
     </StepFrame>
-  );
-}
-
-/**
- * Where the first run lets the operator choose the first bot's look. It
- * offers today's avatars until the avatar picker takes its place, which takes
- * the same `look` and `onLook`. Until then each option is named by its place
- * ("Look 3 of 8"); the picker brings a name for each look.
- */
-function BotLookSlot({
-  look,
-  onLook,
-}: {
-  readonly look: AvatarChoice;
-  readonly onLook: (look: AvatarChoice) => void;
-}) {
-  const { t } = useI18n();
-  return (
-    <View
-      accessibilityRole="radiogroup"
-      accessibilityLabel={t("onboarding.look.options")}
-      className="w-72 flex-row flex-wrap justify-center gap-2"
-    >
-      {firstLooks.map((option, index) => {
-        const chosen = option.shape === look.shape && option.color === look.color;
-        return (
-          <PressScale
-            key={`${option.shape}/${option.color}`}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: chosen }}
-            accessibilityLabel={t("onboarding.look.option", {
-              number: index + 1,
-              count: firstLooks.length,
-            })}
-            onPress={() => onLook(option)}
-            className={`size-16 items-center justify-center rounded-lg border-2 bg-surface active:bg-muted ${chosen ? "border-foreground" : "border-transparent"}`}
-          >
-            <BotAvatar avatar={option} state={idle} size={40} ground="surface" />
-          </PressScale>
-        );
-      })}
-    </View>
   );
 }
 

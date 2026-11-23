@@ -35,6 +35,7 @@ describe("botPatch", () => {
         name: "Scout ",
         title: "",
         job: null,
+        avatar: { shape: "dome", color: "cobalt" },
         model: { ...claude },
         permissionMode: "supervised",
       }),
@@ -42,6 +43,14 @@ describe("botPatch", () => {
     expect(botPatch(scout, { ...noBotEdits, name: "  ", title: "Research" })).toEqual({
       _tag: "invalid",
       fields: new Set(["name"]),
+    });
+  });
+
+  it("sends a new avatar with the profile", () => {
+    const avatar = { shape: "ghost", color: "honey" } as const;
+    expect(botPatch(scout, { ...noBotEdits, avatar, title: "Research" })).toEqual({
+      _tag: "changes",
+      changes: { profile: { title: "Research", avatar } },
     });
   });
 });

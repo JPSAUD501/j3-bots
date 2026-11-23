@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { firstLooks } from "@j3-bots/client-runtime/presentation";
 import type { AvatarChoice } from "@j3-bots/contracts";
+import { avatarCast } from "@j3-bots/design-tokens";
 import { type ComponentRef, type ReactNode, useEffect, useRef } from "react";
 import { AccessibilityInfo, View } from "react-native";
 import Animated, {
@@ -11,14 +11,12 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { BotAvatar } from "../components/Avatar.tsx";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { popIn, useReducedMotion } from "../motion.ts";
 import { PressScale } from "../press.tsx";
 import { displaySpacing, Text } from "../text.tsx";
 
 // What the screens before the first bot share: pairing, and the steps that make it.
-
-const idle = { _tag: "idle" } as const;
 
 /**
  * The app's filled text field, at the larger height of the screens before the
@@ -93,7 +91,8 @@ interface CastMember {
   readonly float: number;
 }
 
-const at = (index: number): AvatarChoice => firstLooks[index % firstLooks.length] ?? firstLooks[0];
+/** The cast's look at `index`: the first is the one the first bot starts with. */
+const at = (index: number): AvatarChoice => avatarCast[index % avatarCast.length] ?? avatarCast[0];
 
 const cast: ReadonlyArray<CastMember> = [
   { look: at(0), size: 96, x: 50, y: 40, float: 3400 },
@@ -131,7 +130,12 @@ export function Cast({ compact = false }: { readonly compact?: boolean }) {
           >
             <Animated.View entering={popIn(90 * index)}>
               <Float period={member.float} still={reduced}>
-                <BotAvatar avatar={member.look} state={idle} size={size} />
+                <BotAvatar
+                  avatar={member.look}
+                  seed={`cast-${member.look.shape}`}
+                  state="idle"
+                  size={size}
+                />
               </Float>
             </Animated.View>
           </View>

@@ -1,161 +1,146 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
-import { avatarMarkNames, avatarProportions } from "../avatar.ts";
-import { avatarShapes } from "../avatarShapes.ts";
+import { avatarFrame, type AvatarFace, avatarViewBox } from "../avatar.ts";
+import { avatarEye, botPalette } from "../botPalette.ts";
 import { avatarShapeNames } from "../names.ts";
-import { contrastRatio, parseColor, toSrgb8 } from "../color.ts";
-import { botPalette, colors } from "../tokens.ts";
+import { parseColor, toSrgb8 } from "../color.ts";
+import { colors } from "../tokens.ts";
 import { drawAvatar, renderStillAvatar, renderStillRoomAvatar } from "./avatarRaster.ts";
-import { Canvas, coverage, flattenPath, mapSubpaths } from "./canvas.ts";
+import { Canvas } from "./canvas.ts";
 
-const SIZE = 24;
-/** Room around the avatar's box, to see anything drawn past it. */
-const MARGIN = 4;
-const SIDE = SIZE + 2 * MARGIN;
+/** An idle bot looking straight ahead, as the client runtime's still form draws one. */
+const idle: AvatarFace = {
+  lidTop: 0,
+  lidBottom: 0,
+  blink: 0,
+  pupil: 6.2,
+  gazeX: 0,
+  gazeY: 0,
+  shut: 0,
+  curve: 0,
+  roll: 0,
+  cheek: 0,
+  eyeLift: 0,
+  mouth: 0,
+  antennaAngle: 8,
+  antennaLength: 17,
+  lagX: 0,
+  lagY: 0,
+  lightScale: 1,
+  light: "body",
+  hop: 0,
+  bob: 0,
+  tilt: 0,
+  breath: 0,
+  squash: 0,
+  signal: null,
+  ring: 0,
+  ping: 0,
+  pingOpacity: 0,
+  arcs: [1, 1],
+  dots: [1, 1],
+  asleep: false,
+};
 
-const cases = avatarShapeNames.flatMap((shape) =>
-  avatarMarkNames.map((mark) => [shape, mark] as const),
-);
+const rgb = (value: string) => toSrgb8(parseColor(value));
+const near = (pixel: ArrayLike<number>, color: ArrayLike<number>) =>
+  Math.hypot(...[0, 1, 2].map((c) => (pixel[c] ?? 0) - (color[c] ?? 0))) < 12;
+const pixelsOf = (canvas: Canvas) =>
+  Array.from({ length: canvas.width * canvas.height }, (_, i) => ({
+    x: i % canvas.width,
+    y: Math.floor(i / canvas.width),
+    rgba: canvas.pixels.subarray(i * 4, i * 4 + 4),
+  }));
 
-const hex = (pixels: Uint8Array, i: number) =>
-  `#${Array.from(pixels.subarray(i * 4, i * 4 + 3), (c) => c.toString(16).padStart(2, "0")).join("")}`;
-
-describe.each(["light", "dark"] as const)("a %s still avatar at 24 px", (theme) => {
-  it.each(cases)("%s with the %s mark stays inside its box and shows its ink", (shape, mark) => {
-    const canvas = new Canvas(SIDE, SIDE);
-    const color = "teal";
-    drawAvatar(canvas, { shape, color }, { mark, badge: null }, theme, {
-      x: MARGIN,
-      y: MARGIN,
-      size: SIZE,
-    });
-    const silhouette = coverage(
-      mapSubpaths(flattenPath(avatarShapes[shape].path), (p) => ({
-        x: MARGIN + (p.x * SIZE) / 100,
-        y: MARGIN + (p.y * SIZE) / 100,
-      })),
-      SIDE,
-      SIDE,
-    );
-    const fill = parseColor(botPalette[color][theme]);
-    let inkContrast = 0;
-    for (let i = 0; i < SIDE * SIDE; i++) {
-      const alpha = canvas.pixels[i * 4 + 3] ?? 0;
-      if (alpha === 0) continue;
-      const x = i % SIDE;
-      const y = Math.floor(i / SIDE);
-      // Nothing outside the box, and no ink past the shape's edge.
-      expect([x, y].every((c) => c >= MARGIN && c < MARGIN + SIZE)).toBe(true);
-      expect(silhouette[i]).toBeGreaterThan(0);
-      if (alpha === 255) {
-        inkContrast = Math.max(inkContrast, contrastRatio(parseColor(hex(canvas.pixels, i)), fill));
-      }
+describe.each(["light", "dark"] as const)("a %s still avatar", (theme) => {
+  it.each(avatarShapeNames)("%s at 24 px stays inside its box and shows its eye", (shape) => {
+    const margin = 6;
+    const size = 24;
+    const canvas = new Canvas(size + 2 * margin, size + 2 * margin);
+    drawAvatar(canvas, { shape, color: "cobalt" }, idle, theme, { x: margin, y: margin, size });
+    const drawn = pixelsOf(canvas).filter((p) => (p.rgba[3] ?? 0) > 0);
+    for (const { x, y } of drawn) {
+      expect(x >= margin && x < margin + size && y >= margin && y < margin + size).toBe(true);
     }
-    // The palette promises 3:1 between a bot's color and its ink; some pixel of the mark keeps it.
-    expect(inkContrast).toBeGreaterThanOrEqual(3);
+    expect(drawn.some((p) => near(p.rgba, rgb(avatarEye.pupil)))).toBe(true);
+    expect(drawn.some((p) => near(p.rgba, rgb(avatarEye.lens)))).toBe(true);
   });
 });
 
-/** The shape's coverage of each pixel, for an avatar drawn at the canvas's origin `size` px wide. */
-const silhouetteAt = (shape: keyof typeof avatarShapes, size: number) =>
-  coverage(
-    mapSubpaths(flattenPath(avatarShapes[shape].path), (p) => ({
-      x: (p.x * size) / 100,
-      y: (p.y * size) / 100,
-    })),
-    size,
-    size,
-  );
-
-describe("a still avatar with a badge, on a clear canvas", () => {
-  it("leaves the badge's cutout clear over the shape, and the badge and the shape opaque", () => {
-    const size = 96;
-    const canvas = new Canvas(size, size);
-    drawAvatar(
-      canvas,
-      { shape: "square", color: "teal" },
-      { mark: "dot", badge: "waiting" },
-      "light",
-      {
-        x: 0,
-        y: 0,
-        size,
-      },
+describe("a still avatar at 96 px", () => {
+  const draw = (face: AvatarFace) => {
+    const canvas = new Canvas(96, 96);
+    drawAvatar(canvas, { shape: "dome", color: "teal" }, face, "light", { x: 0, y: 0, size: 96 });
+    return canvas;
+  };
+  const at = (canvas: Canvas, x: number, y: number) =>
+    canvas.pixels.subarray(
+      (Math.floor(y) * 96 + Math.floor(x)) * 4,
+      (Math.floor(y) * 96 + Math.floor(x)) * 4 + 4,
     );
-    const { badge } = avatarProportions(size);
-    const unit = size / 100;
-    const center = badge.center * unit;
-    const inner = (badge.r - badge.cutout / 2) * unit;
-    const outer = (badge.r + badge.cutout / 2) * unit;
-    const silhouette = silhouetteAt("square", size);
-    const alpha = (x: number, y: number) => canvas.pixels[(y * size + x) * 4 + 3];
-    let cutout = 0;
-    let shape = 0;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const d = Math.hypot(x + 0.5 - center, y + 0.5 - center);
-        if (d < inner - 1) expect(alpha(x, y)).toBe(255);
-        if (silhouette[y * size + x] !== 1) continue;
-        if (d > inner + 1 && d < outer - 1) {
-          expect(alpha(x, y)).toBe(0);
-          cutout++;
-        } else if (d > outer + 1) {
-          expect(alpha(x, y)).toBe(255);
-          shape++;
-        }
-      }
-    }
-    // The ring crosses the shape, so the assertions above saw it.
-    expect(cutout).toBeGreaterThan(50);
-    expect(shape).toBeGreaterThan(1000);
+  const toPx = (p: { x: number; y: number }) => ({
+    x: ((p.x - avatarViewBox.x) * 96) / avatarViewBox.size,
+    y: ((p.y - avatarViewBox.y) * 96) / avatarViewBox.size,
   });
-});
 
-describe("the dotted mark at 96 px", () => {
-  it("shows six dots around its ring, with the shape's color between them", () => {
-    const size = 96;
-    const canvas = new Canvas(size, size);
-    drawAvatar(
-      canvas,
-      { shape: "circle", color: "teal" },
-      { mark: "dotted", badge: null },
-      "light",
-      {
-        x: 0,
-        y: 0,
-        size,
-      },
-    );
-    const fill = toSrgb8(parseColor(botPalette.teal.light));
-    const ink = toSrgb8(parseColor(colors["avatar-ink"].light));
-    const distance = (pixel: ArrayLike<number>, color: ArrayLike<number>) =>
-      Math.hypot(...[0, 1, 2].map((c) => (pixel[c] ?? 0) - (color[c] ?? 0)));
-    // Walk the ring the mark is drawn on, noting at each step whether the pixel is nearer the ink.
-    const center = (avatarShapes.circle.mark.x * size) / 100;
-    const radius = (12 * size) / 100;
-    const steps = 720;
-    const inked = Array.from({ length: steps }, (_, i) => {
-      const angle = (2 * Math.PI * i) / steps;
-      const x = Math.floor(center + radius * Math.cos(angle));
-      const y = Math.floor(center + radius * Math.sin(angle));
-      const pixel = canvas.pixels.subarray((y * size + x) * 4, (y * size + x) * 4 + 3);
-      return distance(pixel, ink) < distance(pixel, fill);
+  it("lights its antenna's tip in the color its state names", () => {
+    const face = { ...idle, light: "waiting" as const };
+    const tip = toPx(avatarFrame("dome", face, 96).light);
+    expect(near(at(draw(face), tip.x, tip.y), rgb(colors.waiting.light))).toBe(true);
+    expect(near(at(draw(idle), tip.x, tip.y), rgb(botPalette.teal.light))).toBe(true);
+  });
+
+  it("clears a band of whatever lies under a blocked bot's light, so it stands apart", () => {
+    // The blocked pose: the eye shut and the antenna slumped, its lit tip on the body.
+    const blocked = {
+      ...idle,
+      shut: 1,
+      roll: 10,
+      antennaAngle: 78,
+      antennaLength: 15,
+      tilt: 3,
+      squash: 0.07,
+      light: "blocked" as const,
+    };
+    const unlit = { ...blocked, light: "body" as const };
+    const frame = avatarFrame("dome", blocked, 96);
+    const [a, b, c, d, e, f] = frame.body;
+    const { x, y, r } = frame.light;
+    // Points halfway across the band between the light and the edge of its cutout.
+    const band = (r + frame.lightCut) / 2;
+    const ring = Array.from({ length: 24 }, (_, i) => {
+      const px = x + band * Math.cos((i * Math.PI) / 12);
+      const py = y + band * Math.sin((i * Math.PI) / 12);
+      return toPx({ x: a * px + c * py + e, y: b * px + d * py + f });
     });
-    const dots = inked.filter((on, i) => on && !inked.at(i - 1)).length;
-    expect(dots).toBe(6);
+    const opaque = (canvas: Canvas) =>
+      ring.filter((p) => (at(canvas, p.x, p.y)[3] ?? 0) === 255).length;
+    // Without the cutout the body and the antenna fill much of the band; with it, none does.
+    expect(opaque(draw(unlit))).toBeGreaterThan(8);
+    expect(ring.every((p) => at(draw(blocked), p.x, p.y)[3] === 0)).toBe(true);
+    const tip = toPx({ x: a * x + c * y + e, y: b * x + d * y + f });
+    expect(near(at(draw(blocked), tip.x, tip.y), rgb(colors.blocked.light))).toBe(true);
+  });
+
+  it("hides the lens behind its lids when the eye is shut", () => {
+    const shut = draw({ ...idle, shut: 1, curve: -5 });
+    const open = draw(idle);
+    const lens = rgb(avatarEye.lens);
+    const pupil = rgb(avatarEye.pupil);
+    const count = (canvas: Canvas, color: ArrayLike<number>) =>
+      pixelsOf(canvas).filter((p) => (p.rgba[3] ?? 0) === 255 && near(p.rgba, color)).length;
+    expect(count(open, pupil)).toBeGreaterThan(50);
+    expect(count(shut, pupil)).toBe(0);
+    // Only the closed eye's arc is left of the lens: far less than the open eye shows.
+    expect(count(shut, lens)).toBeLessThan(count(open, lens) / 3);
   });
 });
 
 describe("renderStillAvatar", () => {
   it("writes a PNG of the size asked, whose image data holds every pixel", () => {
     const size = 40;
-    const png = renderStillAvatar(
-      { shape: "hexagon", color: "orange" },
-      { mark: "check", badge: "unread" },
-      "dark",
-      size,
-    );
+    const png = renderStillAvatar({ shape: "hex", color: "tangerine" }, idle, "dark", size);
     expect(Array.from(png.subarray(0, 8))).toEqual([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
     ]);
@@ -175,43 +160,44 @@ describe("renderStillAvatar", () => {
     "refuses a size of %s px",
     (size) => {
       expect(() =>
-        renderStillAvatar(
-          { shape: "circle", color: "teal" },
-          { mark: "dot", badge: null },
-          "light",
-          size,
-        ),
+        renderStillAvatar({ shape: "dome", color: "teal" }, idle, "light", size),
       ).toThrow(RangeError);
     },
   );
 });
 
 describe("renderStillRoomAvatar", () => {
-  it("cuts the front member's shape out of the one behind it, as a room shows on a page", () => {
+  it("cuts the front member out of the one behind it, as a room shows on a page", () => {
     const size = 100;
-    const png = renderStillRoomAvatar(
-      [
-        { shape: "square", color: "teal" },
-        { shape: "square", color: "orange" },
-      ],
-      "light",
-      size,
-    );
-    const view = new DataView(png.buffer, png.byteOffset);
-    const idat = 8 + 25;
-    const rows = inflateSync(png.subarray(idat + 8, idat + 8 + view.getUint32(idat)));
-    // Each row is its filter byte, then four bytes a pixel.
-    const pixel = (x: number, y: number) => {
-      const at = y * (1 + size * 4) + 1 + x * 4;
-      return Array.from(rows.subarray(at, at + 4));
+    const part = size * 0.68;
+    const back = { shape: "loaf", color: "teal" } as const;
+    const front = { shape: "loaf", color: "tangerine" } as const;
+    const decode = (png: Uint8Array<ArrayBuffer>) => {
+      const view = new DataView(png.buffer, png.byteOffset);
+      const idat = 8 + 25;
+      const rows = inflateSync(png.subarray(idat + 8, idat + 8 + view.getUint32(idat)));
+      // Each row is its filter byte, then four bytes a pixel.
+      return (x: number, y: number) => {
+        const at = y * (1 + size * 4) + 1 + x * 4;
+        return Array.from(rows.subarray(at, at + 4));
+      };
     };
-    const opaque = (color: "teal" | "orange") => [
-      ...toSrgb8(parseColor(botPalette[color].light)),
-      255,
-    ];
-    // The front square's left edge is at 36.8 px; the back one runs to 63.2 px.
-    expect(pixel(30, 50)).toEqual(opaque("teal"));
-    expect(pixel(35, 50)[3]).toBe(0);
-    expect(pixel(50, 50)).toEqual(opaque("orange"));
+    const room = decode(renderStillRoomAvatar([back, front], idle, "light", size));
+    const backAlone = decode(renderStillRoomAvatar([back], idle, "light", size));
+    const frontAlone = new Canvas(size, size);
+    drawAvatar(frontAlone, front, idle, "light", { x: size - part, y: size - part, size: part });
+
+    let cut = 0;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const mine = frontAlone.pixels[(y * size + x) * 4 + 3] ?? 0;
+        if (mine > 0) {
+          // The front member is drawn whole, over everything.
+          expect(room(x, y)[3]).toBeGreaterThanOrEqual(mine);
+        } else if (backAlone(x, y)[3] === 255 && room(x, y)[3] === 0) cut++;
+      }
+    }
+    // A band of the back member, along the front one's outline, is left clear.
+    expect(cut).toBeGreaterThan(40);
   });
 });

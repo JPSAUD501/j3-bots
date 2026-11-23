@@ -9,6 +9,7 @@ import {
   type RoutineRun,
   type RoutineRunFailure,
 } from "@j3-bots/contracts";
+import type { AvatarShapeName, BotColor } from "@j3-bots/design-tokens/names";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { MemoryEditProblem } from "../presentation/saves.ts";
 import { scheduleInWords } from "./schedule.ts";
@@ -20,6 +21,12 @@ const PERMISSION_TEXT: Record<PermissionMode, readonly [KeyWith, KeyWith]> = {
   auto: ["permission.auto", "permission.auto.description"],
   "full-access": ["permission.fullAccess", "permission.fullAccess.description"],
 };
+
+/** An avatar silhouette's name, as a picker reads it out. */
+export const avatarShapeText = (shape: AvatarShapeName, { t }: I18n) => t(`avatar.shape.${shape}`);
+
+/** A bot color's name, as a picker reads it out. */
+export const botColorText = (color: BotColor, { t }: I18n) => t(`avatar.color.${color}`);
 
 /** A permission mode's name, and what it lets a bot do. */
 export function permissionModeText(

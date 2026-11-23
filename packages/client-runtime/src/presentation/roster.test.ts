@@ -75,7 +75,7 @@ describe("filterRoster", () => {
           profile: {
             name: "João",
             title: "Research",
-            avatar: { shape: "circle", color: "red" },
+            avatar: { shape: "dome", color: "tomato" },
             job: "",
           },
         },

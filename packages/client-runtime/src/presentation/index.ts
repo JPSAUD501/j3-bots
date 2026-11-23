@@ -4,7 +4,28 @@
  * roster order, timeline grouping, what a form may save, how a moment is
  * formatted. Free of any interface library and of the interface's sentences.
  */
-export { avatarAppearance, notificationLook } from "./avatar.ts";
+export {
+  avatarFace,
+  type AvatarContext,
+  type AvatarGaze,
+  avatarMood,
+  type AvatarMood,
+  type AvatarPoke,
+  avatarSeed,
+  type AvatarSim,
+  type AvatarState,
+  avatarStates,
+  type AvatarTraits,
+  createAvatar,
+  gazeToward,
+  notificationState,
+  plainTraits,
+  pokeAvatar,
+  setAvatarState,
+  speakingUntil,
+  stepAvatar,
+  stillFace,
+} from "./avatar.ts";
 export {
   type BotEdits,
   botPatch,
@@ -16,7 +37,6 @@ export {
   withChanges,
   withProfileEdit,
 } from "./botEdit.ts";
-export { firstSeen, see } from "./changes.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
 export {
   connectCommand,
@@ -49,7 +69,6 @@ export {
 export { type Inline, parseMessageText } from "./messageText.ts";
 export {
   defaultBotName,
-  firstLooks,
   makingProgress,
   nextStep,
   type OnboardingStep,

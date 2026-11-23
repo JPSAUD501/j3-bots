@@ -68,7 +68,7 @@ export function bot(
 ): Bot {
   return {
     id: BotId.make(name.toLowerCase()),
-    profile: { name, title: "", avatar: { shape: "circle", color: "blue" }, job: "" },
+    profile: { name, title: "", avatar: { shape: "dome", color: "cobalt" }, job: "" },
     model: { providerId: ProviderId.make("p"), modelId: ModelId.make("m") },
     permissionMode: "supervised",
     primary: false,

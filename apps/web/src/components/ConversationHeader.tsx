@@ -19,7 +19,8 @@ import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
-import { BotAvatar, RoomAvatar } from "./BotAvatar";
+import { RoomAvatar } from "./avatar/BotAvatar";
+import { LiveBotAvatar } from "./avatar/mood";
 import { toneClass } from "./RosterRow";
 import { Kbd } from "./ui/kbd";
 import { Button } from "./ui/button";
@@ -132,15 +133,15 @@ export function ConversationHeader({
       </Button>
       {/* The title button stretches over the whole block, so a click anywhere opens the details. On a
           phone, where it is the only way to the details, the block is a full touch target. */}
-      <div className="relative flex min-w-0 items-center @max-tablet:min-h-(--layout-touch-target) gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
+      <div className="relative flex min-w-0 items-center @max-tablet:min-h-(--layout-touch-target) gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:hover]:[--avatar-cutout:var(--muted)] has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
         {subject._tag === "bot" ? (
-          <BotAvatar avatar={subject.bot.profile.avatar} state={subject.bot.state} size={28} />
+          <LiveBotAvatar bot={subject.bot} size={32} />
         ) : (
           <RoomAvatar
-            size={28}
+            size={32}
             members={subject.room.members.flatMap((id) => {
               const bot = bots.get(id);
-              return bot ? [bot.profile.avatar] : [];
+              return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
             })}
           />
         )}
