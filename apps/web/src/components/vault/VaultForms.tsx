@@ -186,14 +186,19 @@ export function SetupVaultForm({
   );
 }
 
-/** Unlocks the vault with its master password, saying while too many wrong ones make it wait. */
+/**
+ * Unlocks the vault with its master password, saying while too many wrong
+ * ones make it wait. `actions` go beside the button.
+ */
 function UnlockVaultForm({
   status,
   intents,
+  actions,
   className,
 }: {
   readonly status: VaultStatus;
   readonly intents: VaultIntents;
+  readonly actions?: ReactNode;
   readonly className?: string;
 }) {
   const ctx = usePresentation();
@@ -231,7 +236,8 @@ function UnlockVaultForm({
             ? null
             : failureText(failure)}
       </Problem>
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {actions}
         <Button
           type="submit"
           variant="primary"
@@ -321,42 +327,65 @@ export function ChangePasswordForm({
   );
 }
 
+/** A sentence on why the vault cannot take a login, with the screen's actions under it. */
+function GateNote({
+  text,
+  actions,
+}: {
+  readonly text: string | null;
+  readonly actions?: ReactNode;
+}) {
+  if (text === null && actions === undefined) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      {text !== null && <p className="text-sm text-muted-foreground">{text}</p>}
+      {actions !== undefined && (
+        <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
+      )}
+    </div>
+  );
+}
+
 /**
  * What a screen shows while the vault cannot take a login: its setup or its
- * unlock, inline, or why there is none. Null once it is unlocked.
+ * unlock, inline, or why there is none. `actions`, such as a card's Dismiss,
+ * go beside the form's own button, or under the sentence. Null once the vault
+ * is unlocked.
  */
 export function VaultGate({
   vault,
+  actions,
   className,
 }: {
   readonly vault: VaultAccess;
+  readonly actions?: ReactNode;
   readonly className?: string;
 }) {
   const { t } = useI18n();
   const { view, intents } = vault;
   switch (view._tag) {
     case "loading":
-      return null;
+      return <GateNote text={null} actions={actions} />;
     case "unsupported":
-      return <p className="text-sm text-muted-foreground">{t("vault.unsupported")}</p>;
+      return <GateNote text={t("vault.unsupported")} actions={actions} />;
     case "ready":
       switch (view.status.state) {
         case "unlocked":
           return null;
         case "newer":
-          return <p className="text-sm text-muted-foreground">{t("vault.newer")}</p>;
+          return <GateNote text={t("vault.newer")} actions={actions} />;
         case "uninitialized":
           return (
             <div className={cn("flex flex-col gap-2", className)}>
               <p className="text-sm text-muted-foreground">{t("vault.notSetUp")}</p>
-              <SetupVaultForm intents={intents} />
+              <SetupVaultForm intents={intents} actions={actions} />
             </div>
           );
         case "locked":
           return (
             <div className={cn("flex flex-col gap-2", className)}>
               <p className="text-sm text-muted-foreground">{t("vault.lockedBody")}</p>
-              <UnlockVaultForm status={view.status} intents={intents} />
+              <UnlockVaultForm status={view.status} intents={intents} actions={actions} />
             </div>
           );
       }

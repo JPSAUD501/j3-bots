@@ -66,17 +66,18 @@ export function CredentialRequestCard({ entry }: { readonly entry: CredentialReq
             submitting={submitting}
           />
         ) : (
-          <>
-            <VaultGate view={view} vault={client.vault} />
-            <View className="flex-row justify-end">
+          <VaultGate
+            view={view}
+            vault={client.vault}
+            actions={
               <Button
-                variant="quiet"
+                variant="outline"
                 label={t("login.dismiss")}
                 onPress={dismiss}
                 held={submitting}
               />
-            </View>
-          </>
+            }
+          />
         )
       ) : (
         <Text ref={outcome} className="text-xs text-muted-foreground">

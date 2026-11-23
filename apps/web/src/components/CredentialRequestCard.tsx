@@ -87,19 +87,21 @@ export function CredentialRequestCard({
             focusWatch={actions}
           />
         ) : (
-          <div className="flex flex-col gap-3" {...actions}>
-            <VaultGate vault={vault} />
-            <div className="flex justify-end">
-              <Button
-                size="sm"
-                aria-disabled={submitting}
-                onClick={() => {
-                  if (!submitting) onDismiss();
-                }}
-              >
-                {t("login.dismiss")}
-              </Button>
-            </div>
+          <div {...actions}>
+            <VaultGate
+              vault={vault}
+              actions={
+                <Button
+                  size="sm"
+                  aria-disabled={submitting}
+                  onClick={() => {
+                    if (!submitting) onDismiss();
+                  }}
+                >
+                  {t("login.dismiss")}
+                </Button>
+              }
+            />
           </div>
         )
       ) : (
