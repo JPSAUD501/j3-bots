@@ -32,7 +32,7 @@ describe("the desktop bridge", () => {
       "https://j3.example.test",
       "http://[::1]:3737",
     ]) {
-      assert.isTrue(decodes(DesktopState, { server, pairingCode: null }), server);
+      assert.isTrue(decodes(DesktopState, { server, pairingCode: null, mode: "remote" }), server);
     }
     for (const server of [
       "http://192.0.2.10:3737/",
@@ -45,9 +45,9 @@ describe("the desktop bridge", () => {
       "192.0.2.10:3737",
       "",
     ]) {
-      assert.isFalse(decodes(DesktopState, { server, pairingCode: null }), server);
+      assert.isFalse(decodes(DesktopState, { server, pairingCode: null, mode: "remote" }), server);
     }
-    assert.isTrue(decodes(DesktopState, { server: null, pairingCode: null }));
+    assert.isTrue(decodes(DesktopState, { server: null, pairingCode: null, mode: null }));
     assert.isFalse(decodes(DesktopState, {}));
   });
 
@@ -134,7 +134,7 @@ describe("the desktop bridge", () => {
       shortcutStatus: call,
       setShortcut: call,
     };
-    const state = { server: null, pairingCode: null };
+    const state = { server: null, pairingCode: null, mode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));
     assert.isFalse(decodes(HostedBridge, undefined));
     assert.isFalse(decodes(HostedBridge, { state: { ...state, server: "nowhere" }, ...calls }));

@@ -105,6 +105,11 @@ export {
 } from "./stores/Drafts.ts";
 export { EngineStatus } from "./stores/EngineStatus.ts";
 export { Presence } from "./stores/Presence.ts";
+export {
+  type ConnectEndpointResult,
+  ProviderSetup,
+  type SignInView,
+} from "./stores/ProviderSetup.ts";
 export type { Loaded } from "./stores/reads.ts";
 export { needsOperator, Roster, rosterRows } from "./stores/Roster.ts";
 export {

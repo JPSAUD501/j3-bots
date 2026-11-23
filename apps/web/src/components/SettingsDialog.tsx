@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import { SettingsIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
 import type { PairingOffer, SettingsSaves } from "@j3-bots/client-runtime";
-import { clockTime } from "@j3-bots/client-runtime/presentation";
+import { clockTime, connectCommand } from "@j3-bots/client-runtime/presentation";
 import { type ProfileEdits, useProfileEdits, useProfileForm } from "@j3-bots/client-runtime/react";
 import { useI18n, usePresentation } from "../app/context";
 import { type KeyWith, LANGUAGE_NAMES } from "@j3-bots/i18n";
@@ -49,6 +49,7 @@ import {
 import { AppUpdate } from "./AppUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
+import { HarnessLocations, type LocalProviderSetup, LocalSignIn } from "./ProviderSetup";
 import { ChangeServer } from "./ServerAddress";
 import { PairingQr } from "./PairingQr";
 import { Section } from "./SettingsSection";
@@ -75,6 +76,7 @@ type SettingsIntents = Pick<
   | "server"
   | "update"
   | "shortcut"
+  | "providerSetup"
 >;
 
 interface SettingsButtonProps {
@@ -82,6 +84,7 @@ interface SettingsButtonProps {
     ShellData,
     | "engine"
     | "engineStale"
+    | "signIns"
     | "settings"
     | "settingsSaves"
     | "settingsOpen"
@@ -163,7 +166,13 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 connected={data.connected}
                 onSave={intents.updateSettings}
               />
-              <EngineSection engine={data.engine} stale={data.engineStale} />
+              <EngineSection
+                engine={data.engine}
+                stale={data.engineStale}
+                {...(intents.providerSetup === undefined
+                  ? {}
+                  : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
+              />
               <UsageSection
                 engine={data.engine}
                 engineStale={data.engineStale}
@@ -197,8 +206,18 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
 /**
  * Whether the engine runs, and if not, why and what to do; then each provider.
  * Disconnected, it is what the server last reported, muted and said to be so.
+ * While the server runs on this computer (`providerSetup`), also where it
+ * finds each harness, and the providers sign in from here.
  */
-export function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: boolean }) {
+export function EngineSection({
+  engine,
+  stale,
+  providerSetup,
+}: {
+  engine: EngineStatus | null;
+  stale: boolean;
+  providerSetup?: LocalProviderSetup;
+}) {
   const i18n = useI18n();
   const { t } = i18n;
   if (engine === null) {
@@ -241,7 +260,13 @@ export function EngineSection({ engine, stale }: { engine: EngineStatus | null; 
           ))}
         </ul>
       )}
-      {!stale && <ConnectProviders engine={engine} />}
+      {providerSetup !== undefined && <HarnessLocations setup={providerSetup} />}
+      {!stale &&
+        (providerSetup !== undefined && connectCommand(engine) !== null ? (
+          <LocalSignIn setup={providerSetup} fallback={<ConnectProviders engine={engine} />} />
+        ) : (
+          <ConnectProviders engine={engine} />
+        ))}
     </Section>
   );
 }

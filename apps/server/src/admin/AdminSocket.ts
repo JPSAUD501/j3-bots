@@ -2,14 +2,16 @@
 // @effect-diagnostics nodeBuiltinImport:off -- NodeHttpServer takes a factory for the Node HTTP server it wraps.
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { PairResult } from "@j3-bots/contracts";
-import { Engine } from "@j3-bots/engine-t3";
+import {
+  PairResult,
+  ProviderConnectionOutcome,
+  ProviderConnectionRequest,
+} from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -21,10 +23,10 @@ import { Devices } from "../devices/Devices.ts";
 import * as Home from "../home/Home.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
+import { connectProviders } from "../providers/connect.ts";
 import * as Ports from "../system/Ports.ts";
 import { ServerStop } from "../ServerStop.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
-import { SendPause } from "../turns/SendPause.ts";
 import { WebClientStatus } from "../web/WebClient.ts";
 import * as Pipe from "./pipe.ts";
 import { hasAdminSocket } from "./socket.ts";
@@ -33,8 +35,6 @@ import {
   AdminStatus,
   LocalDeviceRequest,
   PairingOffer,
-  ProviderConnectionOutcome,
-  ProviderConnectionRequest,
   RunningWorkReply,
 } from "./protocol.ts";
 
@@ -156,19 +156,7 @@ const routes = Layer.mergeAll(
         Effect.option,
       );
       if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
-      const { baseUrl, key, stopWork } = request.value;
-      const runningWork = yield* RunningWork;
-      const engine = yield* Engine;
-      // No new work starts between the check and the restart: first sends
-      // wait until the engine is back, or the connection was refused.
-      const outcome = yield* (yield* SendPause).paused(
-        Effect.gen(function* () {
-          const working = stopWork ? [] : yield* runningWork.bots;
-          return working.length > 0
-            ? ({ _tag: "work-running", bots: working.length } satisfies ProviderConnectionOutcome)
-            : yield* engine.connectProviders({ baseUrl, key: Redacted.make(key) });
-        }),
-      );
+      const outcome = yield* connectProviders(request.value);
       return yield* HttpServerResponse.schemaJson(ProviderConnectionOutcome)(outcome).pipe(
         Effect.orDie,
       );

@@ -9,6 +9,7 @@ import type {
   RecentTurnsState,
   SettingsChange,
   SettingsSaves,
+  SignInView,
 } from "@j3-bots/client-runtime";
 import type {
   AvatarChoice,
@@ -26,6 +27,7 @@ import type {
   RosterItem,
   Routine,
   Settings,
+  SignInHarness,
   WorkStep,
 } from "@j3-bots/contracts";
 import type {
@@ -35,6 +37,7 @@ import type {
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
+import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { TimelineIntents } from "../components/Timeline";
 
 /** One conversation or room as the shell shows it. */
@@ -54,6 +57,8 @@ export interface ShellData {
   readonly engine: EngineStatus | null;
   /** `engine` is what the server last reported, before this device lost the connection. */
   readonly engineStale: boolean;
+  /** Each harness's sign-in this device follows (`ShellIntents.providerSetup`). */
+  readonly signIns: ReadonlyMap<SignInHarness, SignInView>;
   /** Null until the roster first loads. */
   readonly roster: ReadonlyArray<RosterItem> | null;
   readonly conversation: (target: EntryTarget) => ConversationView;
@@ -202,6 +207,11 @@ export interface ShellIntents extends TimelineIntents {
   readonly update?: DesktopUpdate;
   /** In the desktop app, the global shortcut that shows it. Absent in a browser. */
   readonly shortcut?: DesktopShortcut;
+  /**
+   * In the desktop app, while the bots live on this computer: signing the
+   * providers in from here. Absent elsewhere, where the command connects them.
+   */
+  readonly providerSetup?: ProviderSetupIntents;
 }
 
 /** The server the desktop app talks to, and a way to leave it for another. */

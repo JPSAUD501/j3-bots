@@ -27,6 +27,7 @@ import { useI18n, usePresentation } from "../app/context";
 import { AvatarChoices } from "../components/avatar/AvatarPicker";
 import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar";
 import { CommandLine } from "../components/CommandLine";
+import { type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetup";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/cn";
 import { Cast } from "./Cast";
@@ -57,6 +58,11 @@ interface OnboardingProps {
   readonly initialName?: string;
   /** Under the welcome's action: the ways out before there is a roster, such as signing out. */
   readonly footer?: ReactNode;
+  /**
+   * Signing the providers in from this app, while its server runs on this
+   * computer; without it, the connect step gives the command to run there.
+   */
+  readonly providerSetup?: LocalProviderSetup;
 }
 
 type Direction = "forward" | "back";
@@ -79,6 +85,7 @@ export function Onboarding({
   initialStep = "welcome",
   initialName,
   footer,
+  providerSetup,
 }: OnboardingProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -211,7 +218,15 @@ export function Onboarding({
           />
         );
       case "connect":
-        return <ConnectStep engine={engine} name={botName} failure={failure} onCreate={create} />;
+        return (
+          <ConnectStep
+            engine={engine}
+            name={botName}
+            failure={failure}
+            onCreate={create}
+            providerSetup={providerSetup}
+          />
+        );
       case "arrival":
         return <Arrival engine={engine} name={botName} created={created} />;
     }
@@ -551,32 +566,24 @@ function ConnectStep({
   name,
   failure,
   onCreate,
+  providerSetup,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
   readonly failure: Failure | null;
   readonly onCreate: () => void;
+  readonly providerSetup: LocalProviderSetup | undefined;
 }) {
   const i18n = useI18n();
   const ctx = usePresentation();
   const { t } = i18n;
   const text = connectStepText(engine, name, i18n);
-  const unavailable =
-    engine !== null && engine.state._tag === "ready" && providerGate(engine)._tag === "unavailable";
-  return (
-    <StepFrame
-      actions={
-        <>
-          <FailureLine failure={failure} name={name} />
-          <BigButton onClick={onCreate}>{t("onboarding.create", { name })}</BigButton>
-          {text.later !== null && (
-            <p className="text-center text-sm text-pretty text-muted-foreground">{text.later}</p>
-          )}
-        </>
-      }
-    >
-      <StepTitle>{text.title}</StepTitle>
-      <p className="text-lg text-pretty text-muted-foreground">{text.body}</p>
+  const gate = engine !== null && engine.state._tag === "ready" ? providerGate(engine) : null;
+  const unavailable = gate?._tag === "unavailable";
+  // On this computer, the harnesses sign in from here; the command stays for when they cannot.
+  const signInHere = gate?._tag === "connect" ? providerSetup : undefined;
+  const command = (
+    <>
       {text.command !== null && (
         <div className="mt-1 w-full text-start">
           <CommandLine command={text.command} copyLabel={t("firstRun.connect.copy")} large />
@@ -595,6 +602,25 @@ function ConnectStep({
           </a>
         </p>
       )}
+    </>
+  );
+  return (
+    <StepFrame
+      actions={
+        <>
+          <FailureLine failure={failure} name={name} />
+          <BigButton onClick={onCreate}>{t("onboarding.create", { name })}</BigButton>
+          {text.later !== null && (
+            <p className="text-center text-sm text-pretty text-muted-foreground">{text.later}</p>
+          )}
+        </>
+      }
+    >
+      <StepTitle>{text.title}</StepTitle>
+      <p className="text-lg text-pretty text-muted-foreground">
+        {signInHere !== undefined ? t("onboarding.connect.local.body") : text.body}
+      </p>
+      {signInHere !== undefined ? <LocalSignIn setup={signInHere} fallback={command} /> : command}
       {unavailable && engine !== null && (
         <ul className="flex w-full flex-col gap-1 text-sm">
           {engine.providers.map((provider) => {
@@ -611,10 +637,7 @@ function ConnectStep({
       {/* Live: the step says when a provider connects, without moving on by itself. */}
       <p
         role="status"
-        className={cn(
-          "flex items-center gap-2 text-sm font-medium tabular-nums",
-          toneClass[text.status.tone],
-        )}
+        className={cn("flex items-center gap-2 text-sm font-medium", toneClass[text.status.tone])}
       >
         <span
           aria-hidden

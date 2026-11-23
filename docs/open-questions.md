@@ -48,7 +48,7 @@ The server rotates a main session after 200 turns and carries a digest of the la
 
 ## 7. How does an operator configure providers without T3 Code's interface?
 
-Today on the host: `j3-bots provider connect` sets the endpoint and its key, and `j3-bots doctor` shows what the engine reports for each provider. J3 Bots' settings need their own provider screen eventually: whether each provider can run bots, which models each bot may use, and a way to change the connection from a client without the key passing through anything but the server.
+On the host, `j3-bots provider connect` sets the endpoint and its key, `j3-bots provider login` signs a harness in, and `j3-bots doctor` shows what the engine reports for each provider. The desktop app, when it runs the bots on its own computer, does the first two itself: a harness's sign-in through the operator's browser, and an endpoint whose key goes only to the server ([Engine: sign-in from the app](architecture/engine.md#sign-in-from-the-app)). Still open: setting the providers up from a client on another machine, where a harness's sign-in page cannot return to the server, which models each bot may use, and removing a stored connection.
 
 ## 8. Is non-streamed speech good enough?
 

@@ -33,6 +33,13 @@ export { ServerOrigin } from "@j3-bots/contracts";
 export const TokenProtection = Schema.Literals(["encrypted", "unencrypted"]);
 export type TokenProtection = typeof TokenProtection.Type;
 
+/**
+ * Where the bots live: on this computer, in a server the app runs itself
+ * (`local`), or on a server the operator named (`remote`).
+ */
+export const DesktopMode = Schema.Literals(["local", "remote"]);
+export type DesktopMode = typeof DesktopMode.Type;
+
 /** What the desktop app holds that the page needs before it starts. */
 export const DesktopState = Schema.Struct({
   /** The server the operator named, or `null` until they have. */
@@ -43,6 +50,8 @@ export const DesktopState = Schema.Struct({
    * after the server address screen kept that server (`ConnectRequest`).
    */
   pairingCode: Schema.NullOr(PairingCode),
+  /** Where the bots live, or `null` until the operator has chosen. */
+  mode: Schema.NullOr(DesktopMode),
 });
 export type DesktopState = typeof DesktopState.Type;
 

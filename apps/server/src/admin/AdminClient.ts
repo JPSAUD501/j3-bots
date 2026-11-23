@@ -5,7 +5,11 @@ import * as NodeHttps from "node:https";
 import type * as NodeNet from "node:net";
 import type * as NodeStream from "node:stream";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
-import { PairResult } from "@j3-bots/contracts";
+import {
+  PairResult,
+  ProviderConnectionOutcome,
+  ProviderConnectionRequest,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -22,8 +26,6 @@ import {
   AdminStatus,
   LocalDeviceRequest,
   PairingOffer,
-  ProviderConnectionOutcome,
-  ProviderConnectionRequest,
   RunningWorkReply,
   ServerReadiness,
 } from "./protocol.ts";

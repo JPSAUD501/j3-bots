@@ -546,6 +546,7 @@ function toData(state: State): ShellData {
   return {
     engine: state.engine,
     engineStale: false,
+    signIns: new Map(),
     roster: state.roster,
     conversation: (target) => ({
       phase: "ready",

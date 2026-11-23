@@ -332,6 +332,16 @@ export class Engine extends Context.Service<
      */
     readonly connectProviders: (connection: ProviderConnection) => Effect.Effect<ConnectionOutcome>;
 
+    /** The base URL of the provider connection stored, or null when none is. Never its key. */
+    readonly connectedEndpoint: Effect.Effect<string | null>;
+
+    /**
+     * Has the engine check the provider again now, as after a sign-in into
+     * its home, instead of at its next periodic check, minutes away. What it
+     * finds follows on `status`.
+     */
+    readonly recheckProvider: (providerId: ProviderId) => Effect.Effect<void, EngineDown>;
+
     /**
      * A link that opens the engine's own web interface, signed in, for setting
      * up providers until J3 Bots has its own screen. Short-lived.
