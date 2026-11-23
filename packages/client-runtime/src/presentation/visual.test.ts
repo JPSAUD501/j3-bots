@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { MAX_VISUAL_HEIGHT, MIN_VISUAL_HEIGHT } from "@j3-bots/contracts";
+import {
+  MAX_VISUAL_HEIGHT,
+  MIN_VISUAL_HEIGHT,
+  VISUAL_CONTENT_SECURITY_POLICY,
+} from "@j3-bots/contracts";
 import { visualColors } from "@j3-bots/design-tokens";
 import { assert, describe, it } from "@effect/vitest";
-import { readVisualHeight, VISUAL_CONTENT_SECURITY_POLICY, visualDocument } from "./visual.ts";
+import { readVisualHeight, visualDocument } from "./visual.ts";
 
 describe("a visual's document", () => {
   const page = '<!doctype html><html><head><script>fetch("https://x.test")</script></head></html>';

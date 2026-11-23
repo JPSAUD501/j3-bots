@@ -35,10 +35,12 @@ import {
   type Settings,
   type UsageRoutine,
   type UsageTurn,
+  type Visual,
   type WorkStep,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { ordered, previewOf, type DraftEntry } from "./entries";
+import { sampleVisuals } from "./visuals";
 
 const claude = ProviderId.make("claude-code");
 const codex = ProviderId.make("codex");
@@ -238,6 +240,7 @@ export function sampleTeam(now: DateTime.Utc) {
       delivery?: MessageDelivery;
       prefix?: string;
       mentions?: ReadonlyArray<BotId>;
+      visual?: Visual;
     } = {},
   ): DraftEntry {
     return {
@@ -250,6 +253,7 @@ export function sampleTeam(now: DateTime.Utc) {
       mentions: options.mentions ? { _tag: "bots", ids: options.mentions } : nobody,
       delivery: options.delivery ?? { _tag: "delivered" },
       commandId: null,
+      ...(options.visual === undefined ? {} : { visual: options.visual }),
     };
   }
 
@@ -298,7 +302,7 @@ export function sampleTeam(now: DateTime.Utc) {
       by(ids.scout),
       ago(60 * 26 - 3),
       "Three fit. All of them have a mid-drive motor, which is what makes the difference on that hill, and the cheapest needs the larger battery for the round trip.\n\nThe range figures come from owners, not spec sheets: see the `range_km` column. The most useful review is https://example.com/ebikes/long-term.",
-      { attachments: [attachments.report] },
+      { attachments: [attachments.report], visual: sampleVisuals.table },
     ),
     {
       _tag: "routine-change",
@@ -473,6 +477,7 @@ export function sampleTeam(now: DateTime.Utc) {
       by(ids.atlas),
       ago(12),
       "Backup finished and checked: 2.1 GB. Ready to migrate staging.",
+      { visual: sampleVisuals.diagram },
     ),
     {
       _tag: "approval",

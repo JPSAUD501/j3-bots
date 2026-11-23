@@ -184,6 +184,9 @@ export const en = {
   "file.viewer.close": "Close the image",
   "file.share": "Open {name} in another app",
   "file.kindAndSize": "{kind} · {size}",
+  "visual.expand": "Open {title} full screen",
+  "visual.close": "Close",
+  "visual.failed": "Couldn’t show this visual.",
 
   "card.waiting": "Waiting for you",
 

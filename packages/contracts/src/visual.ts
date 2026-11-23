@@ -16,6 +16,39 @@ export const MAX_VISUAL_HEIGHT = 2_000;
 /** The longest title a visual has. */
 export const MAX_VISUAL_TITLE_LENGTH = 200;
 
+/**
+ * What a visual may load and run: its own inline scripts and styles, images
+ * and fonts from `data:` or `blob:` URLs, and nothing from the network: no
+ * fetch, no remote script, style, font or image, no frame, no form, no
+ * `<base>`. So a visual can neither report that it was seen nor send anything
+ * it reads.
+ */
+export const VISUAL_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "font-src data:",
+  "connect-src 'none'",
+  "frame-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+].join("; ");
+
+/**
+ * The page of the web client's build a visual is drawn in, on the client's
+ * own origin. Its document has a policy of its own, which a `srcdoc` frame
+ * would not: it would take the client's, whose scripts are only its own.
+ */
+export const VISUAL_FRAME_PATH = "/visual-frame.html";
+
+/**
+ * The policy whoever serves `VISUAL_FRAME_PATH` sends with it: a visual's,
+ * plus `sandbox allow-scripts`, so the page has an opaque origin wherever it
+ * is opened, even on its own, and only the client's own pages may frame it.
+ */
+export const VISUAL_FRAME_POLICY = `${VISUAL_CONTENT_SECURITY_POLICY}; sandbox allow-scripts; frame-ancestors 'self'`;
+
 const utf8 = new TextEncoder();
 
 /**

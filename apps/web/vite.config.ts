@@ -2,9 +2,30 @@
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig, loadEnv } from "vite-plus";
+import { VISUAL_FRAME_PATH, VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
+import { defineConfig, loadEnv, type Plugin } from "vite-plus";
 import { bundleInputs } from "../../scripts/bundle-inputs.ts";
 import { pwa } from "./pwa/plugin.ts";
+
+/**
+ * The development server frames a bot's visual as the J3 Bots server does
+ * (apps/server/src/web/WebClient.ts): the visual page under a visual's policy,
+ * and every other page allowed to frame only its own origin. So a visual that
+ * reaches for the network fails here as it would in production.
+ */
+const visualFrame = (): Plugin => ({
+  name: "j3-visual-frame",
+  configureServer: (server) => {
+    server.middlewares.use((request, response, next) => {
+      const path = new URL(request.url ?? "/", "http://localhost").pathname;
+      response.setHeader(
+        "content-security-policy",
+        path === VISUAL_FRAME_PATH ? VISUAL_FRAME_POLICY : "frame-src 'self'",
+      );
+      next();
+    });
+  },
+});
 
 // The same plugin set as T3 Code's web client: file routes with per-route code
 // splitting, the React Compiler (through oxc), and Tailwind CSS v4.
@@ -26,6 +47,7 @@ export default defineConfig(({ mode }) => {
       react({ compiler: true }),
       tailwindcss(),
       pwa(),
+      visualFrame(),
       // What the release's third-party notices are made from (scripts/build-release.ts).
       bundleInputs("web"),
     ],

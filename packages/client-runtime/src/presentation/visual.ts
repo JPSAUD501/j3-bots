@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { clampVisualHeight } from "@j3-bots/contracts";
+import { clampVisualHeight, VISUAL_CONTENT_SECURITY_POLICY } from "@j3-bots/contracts";
 import { fonts, radii, visualColors } from "@j3-bots/design-tokens";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -15,24 +15,6 @@ import * as Schema from "effect/Schema";
 export type VisualAppearance = "light" | "dark";
 
 /**
- * The page's own scripts and styles run, inline only; images and fonts only
- * from `data:` or `blob:` URLs. Nothing reaches the network: no fetch, no
- * remote script, style, font or image, no frame, no form, no `<base>`. So a
- * visual can neither report that it was seen nor send anything it reads.
- */
-export const VISUAL_CONTENT_SECURITY_POLICY = [
-  "default-src 'none'",
-  "script-src 'unsafe-inline'",
-  "style-src 'unsafe-inline'",
-  "img-src data: blob:",
-  "font-src data:",
-  "connect-src 'none'",
-  "frame-src 'none'",
-  "form-action 'none'",
-  "base-uri 'none'",
-].join("; ");
-
-/**
  * The web's `sandbox` for a visual's frame: scripts, and nothing else. Never
  * `allow-same-origin`, which would give the page the client's origin, its
  * storage and its session; never top navigation, popups or forms.
@@ -46,8 +28,10 @@ export const VISUAL_HEIGHT_MESSAGE = "j3-visual-height";
 // sized to the report, so it measures the root's box, which follows the
 // content, rather than the viewport, which would follow the frame; content
 // that overflows the root counts too. On Android the WebView's bridge carries
-// it as a string; in a frame it goes to the parent.
-const HEIGHT_REPORTER = `(function(){var n=window.ReactNativeWebView,l=-1;function s(){var r=document.documentElement,h=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(h===l)return;l=h;var m={type:${JSON.stringify(VISUAL_HEIGHT_MESSAGE)},height:h};if(n&&typeof n.postMessage==="function")n.postMessage(JSON.stringify(m));else if(window.parent!==window)window.parent.postMessage(m,"*");}if(window.ResizeObserver){var o=new ResizeObserver(s);o.observe(document.documentElement);document.addEventListener("DOMContentLoaded",function(){if(document.body)o.observe(document.body);s();});}window.addEventListener("load",s);})();`;
+// it as a string; in a frame it goes to the parent. Both are taken before the
+// page runs, so the page cannot shadow them; it can still lie about its
+// height, which sizes only its own frame.
+const HEIGHT_REPORTER = `(function(){var n=window.ReactNativeWebView,p=window.parent,l=-1;function s(){var r=document.documentElement,h=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(h===l)return;l=h;var m={type:${JSON.stringify(VISUAL_HEIGHT_MESSAGE)},height:h};if(n&&typeof n.postMessage==="function")n.postMessage(JSON.stringify(m));else if(p!==window)p.postMessage(m,"*");}if(window.ResizeObserver){var o=new ResizeObserver(s);o.observe(document.documentElement);document.addEventListener("DOMContentLoaded",function(){if(document.body)o.observe(document.body);s();});}window.addEventListener("load",s);})();`;
 
 const themeStyle = (appearance: VisualAppearance): string => {
   const variables = Object.entries(visualColors(appearance))

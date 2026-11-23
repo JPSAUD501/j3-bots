@@ -182,6 +182,9 @@ const sentences = {
   "file.viewer.close": "Fechar a imagem",
   "file.share": "Abrir {name} em outro app",
   "file.kindAndSize": "{kind} · {size}",
+  "visual.expand": "Abrir {title} em tela cheia",
+  "visual.close": "Fechar",
+  "visual.failed": "Não foi possível mostrar este visual.",
 
   "card.waiting": "Esperando por você",
 
