@@ -172,10 +172,10 @@ describe("creating the server's home", () => {
         acl: {
           read: () => Effect.succeed(acl),
           createPrivate: (folder) =>
-            fs.makeDirectory(folder).pipe(
-              Effect.orDie,
-              Effect.andThen(() => created.push(folder)),
-            ),
+            Effect.gen(function* () {
+              yield* fs.makeDirectory(folder).pipe(Effect.orDie);
+              created.push(folder);
+            }),
         },
       };
       return { system, created };
