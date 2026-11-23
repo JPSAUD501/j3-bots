@@ -45,7 +45,11 @@ export interface BotAvatarProps {
   readonly size: number;
   /** Draws the state without motion: for previews of reduced motion, and quiet places. */
   readonly still?: boolean;
-  /** Draws a band of what it sits on (`--avatar-cutout`) around the body, to stand clear of what it overlaps. */
+  /**
+   * Draws a band of what it sits on (`--avatar-cutout`, the page's background
+   * unless set) around the body, to stand clear of what it overlaps. A status
+   * light always has one of its own.
+   */
   readonly cutout?: boolean;
   /** The bot's name and state for assistive technology; omit when text next to it says the same. */
   readonly label?: string;
@@ -69,6 +73,7 @@ interface Parts {
   readonly mouth: SVGEllipseElement;
   readonly stalk: SVGPathElement;
   readonly light: SVGCircleElement;
+  readonly lightCut: SVGCircleElement;
   readonly signal: SVGGElement;
   readonly ring: SVGCircleElement;
   readonly ping: SVGCircleElement;
@@ -97,6 +102,7 @@ function partsOf(svg: SVGSVGElement): Parts {
     mouth: part("mouth", SVGEllipseElement),
     stalk: part("stalk", SVGPathElement),
     light: part("light", SVGCircleElement),
+    lightCut: part("light-cut", SVGCircleElement),
     signal: part("signal", SVGGElement),
     ring: part("ring", SVGCircleElement),
     ping: part("ping", SVGCircleElement),
@@ -165,6 +171,9 @@ function painter(svg: SVGSVGElement, size: () => number, shape: () => AvatarShap
     set(p.light, "cy", n(f.light.y));
     set(p.light, "r", n(f.light.r));
     set(p.light, "fill", LIGHT[face.light]);
+    set(p.lightCut, "cx", n(f.light.x));
+    set(p.lightCut, "cy", n(f.light.y));
+    set(p.lightCut, "r", n(f.lightCut));
     set(p.signal, "transform", matrixAttribute(f.signal));
     switch (face.signal) {
       case "ring":
@@ -220,26 +229,30 @@ function mountAvatar(
     () => size,
     () => live.shape,
   );
-  const moving = () => !live.still && !live.stalled && !reducedMotion();
-  const drawStill = () => draw(stillFace(live.state, sim.traits));
-  const stop = animate({
-    size,
-    moving,
-    tracks: true,
-    element: svg,
-    step: (dt, gaze) => {
-      sim = stepAvatar(sim, dt, gaze);
-      draw(avatarFace(sim));
+  // Asleep is a resting state: an offline avatar holds its still form, which spares
+  // the page redrawing its washed-out filter every frame.
+  const moving = () => !live.still && !live.stalled && live.state !== "offline" && !reducedMotion();
+  const drawStill = () => draw(stillFace(live.state, sim.traits, live.stalled));
+  const running = animate(
+    {
+      size,
+      moving,
+      measure: () => svg.getBoundingClientRect(),
+      step: (dt, gaze) => {
+        sim = stepAvatar(sim, dt, gaze);
+        draw(avatarFace(sim));
+      },
+      still: drawStill,
     },
-    still: drawStill,
-  });
+    svg,
+  );
   return {
-    stop,
+    stop: running.stop,
     controller: {
       update: (next) => {
         live = next;
         sim = setAvatarState(sim, next.state);
-        if (moving()) nudge();
+        if (moving()) running.restate();
         else drawStill();
       },
       poke: (poke) => {
@@ -256,8 +269,8 @@ function mountAvatar(
  * whose tip is the status light. It lives on the page's shared frame loop
  * (`ticker.ts`): it blinks, glances, breathes and moves the way its state
  * does, on its own seeded clock, and its eye follows the pointer on desktop.
- * Off screen, under reduced motion, when `still`, or while its turn is
- * stalled, it holds its state's still form.
+ * Off screen, under reduced motion, when `still`, asleep, or while its turn
+ * is stalled, it holds its state's still form.
  */
 export function BotAvatar({
   avatar,
@@ -342,6 +355,7 @@ export function BotAvatar({
           <path data-part="arc" fill="none" stroke={avatarEye.lens} strokeLinecap="round" />
         </g>
         <ellipse data-part="mouth" rx={5.2} fill={avatarEye.pupil} />
+        <circle data-part="light-cut" fill="var(--avatar-cutout, var(--background))" />
         <g data-part="signal" fill="none" strokeWidth={avatarSignals.stroke} strokeLinecap="round">
           <g className="avatar-signal" data-signal-of="ring">
             <circle

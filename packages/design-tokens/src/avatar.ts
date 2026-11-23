@@ -13,9 +13,10 @@
  * `AvatarFrame.eye` places on the body.
  *
  * Nothing is clipped: the eyelids and the cheek are drawn over the lens in
- * the body's color, so a renderer only paints shapes in order, back to front:
- * body, stalk, lens, pupil, glint, cheek, lids, closed-eye arc, mouth, signal,
- * light.
+ * the body's color, and a status light's cutout in the color of what the
+ * avatar sits on, so a renderer only paints shapes in order, back to front:
+ * stalk, body, lens, pupil, glint, cheek, lids, closed-eye arc, mouth, the
+ * light's cutout, signal, light.
  */
 import { avatarShapes } from "./avatarShapes.ts";
 import {
@@ -146,6 +147,13 @@ export interface AvatarFrame {
   readonly stalk: string;
   readonly stalkWidth: number;
   readonly light: AvatarCircle;
+  /**
+   * The radius of a disc about the light in the color of what the avatar sits
+   * on, under a light in a state's color: a band around it, so it stands
+   * clear of the body and the stalk whatever their color. 0, nothing drawn,
+   * for a light in the body's color, which is the antenna's own tip.
+   */
+  readonly lightCut: number;
   /** Places the signal at the light. */
   readonly signal: AvatarMatrix;
   /** Turns the working ring about the light. */
@@ -281,6 +289,7 @@ export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: nu
   const tipX = length(root.x + Math.sin(angle) * face.antennaLength + face.lagX);
   const tipY = length(root.y - Math.cos(angle) * face.antennaLength + face.lagY);
   const signalScale = small ? 1.25 : 1;
+  const lightR = length((small ? 6.4 : 4.8) * face.lightScale);
   const ring = turnOf((face.ring * Math.PI) / 180);
 
   return {
@@ -305,7 +314,8 @@ export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: nu
     },
     stalk: `M${root.x} ${root.y + 4}Q${root.x} ${length(root.y - face.antennaLength * 0.62)} ${tipX} ${tipY}`,
     stalkWidth: small ? 5.5 : 4,
-    light: { x: tipX, y: tipY, r: length((small ? 6.4 : 4.8) * face.lightScale) },
+    light: { x: tipX, y: tipY, r: lightR },
+    lightCut: face.light === "body" ? 0 : length(lightR + (small ? 4 : 2.6)),
     signal: [signalScale, 0, 0, signalScale, tipX, tipY],
     ring: [Math.cos(ring), Math.sin(ring), -Math.sin(ring), Math.cos(ring), 0, 0],
   };

@@ -6,7 +6,8 @@
  * `AvatarSim`, steps it once a frame with `stepAvatar`, and draws
  * `avatarFace(sim)` through `avatarFrame` (`@j3-bots/design-tokens`). Under
  * reduced motion, off screen, or while a turn is stalled, it draws
- * `stillFace` instead: every state has a still form that says the same.
+ * `stillFace` instead: every state has a still form that says the same, and
+ * a stalled turn's has no signal.
  *
  * The functions a frame runs are worklets, so the mobile app runs them on the
  * UI thread; elsewhere the directive is an ordinary string.
@@ -46,7 +47,10 @@ export interface AvatarContext {
 
 export interface AvatarMood {
   readonly state: AvatarState;
-  /** The server reports the turn as possibly stuck: the avatar holds still, so stuck never looks busy. */
+  /**
+   * The server reports the turn as possibly stuck: the avatar holds still,
+   * without its signal, so stuck never looks busy.
+   */
   readonly stalled: boolean;
 }
 
@@ -450,13 +454,19 @@ function compose(
 
 /**
  * `state`'s still form: its pose held, the eye where the state looks, no
- * blink or breath, and its signal as one frame of it. What reduced motion,
- * a still image and a stalled turn show.
+ * blink or breath, and its signal as one frame of it. What reduced motion
+ * and a still image show. A `stalled` turn shows it without the signal, which
+ * says the turn is under way: the eye and the antenna still say thinking or
+ * working, and nothing says it is getting on.
  */
-export function stillFace(state: AvatarState, traits: AvatarTraits = plainTraits): AvatarFace {
+export function stillFace(
+  state: AvatarState,
+  traits: AvatarTraits = plainTraits,
+  stalled = false,
+): AvatarFace {
   "worklet";
   const m = motionAt(state, traits, null, { x: traits.gazeX, y: traits.gazeY });
-  return compose(
+  const face = compose(
     state,
     settled(state, traits, m.x, m.y, m.mouth),
     { hop: 0, bob: 0, tilt: POSES[state].tilt, breath: 0 },
@@ -464,6 +474,7 @@ export function stillFace(state: AvatarState, traits: AvatarTraits = plainTraits
     0,
     { ring: 135, ping: 0.45, pingOpacity: 0.6, arcs: [1, 1], dots: [1, 1] },
   );
+  return stalled ? { ...face, signal: null } : face;
 }
 
 /** A new avatar in `state`, already in its pose, with `seed`'s manner and clock. */

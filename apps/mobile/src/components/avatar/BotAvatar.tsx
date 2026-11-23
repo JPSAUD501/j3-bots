@@ -6,6 +6,7 @@ import {
   type AvatarState,
   createAvatar,
   pokeAvatar,
+  plainTraits,
   setAvatarState,
   stepAvatar,
   stillFace,
@@ -244,6 +245,7 @@ export interface BotAvatarProps {
   readonly still?: boolean;
   /** Draws a band of what it sits on around the body, to stand clear of what it overlaps. */
   readonly cutout?: boolean;
+  /** What it sits on, which the body's cutout and a status light's are drawn in: `background` unless given. */
   readonly ground?: AvatarGround;
   /** Read out for the avatar; without it the avatar is hidden from screen readers. */
   readonly label?: string;
@@ -309,17 +311,19 @@ function StillAvatar({
   avatar,
   seed,
   state,
+  stalled = false,
   size,
   cutout = false,
   ground = "background",
 }: BotAvatarProps) {
   const { shape, color } = resolveAvatar(avatar);
   const paint = usePaint(color, state === "offline");
+  const cut = useColor(groundColor[ground]);
   const seedNumber = avatarSeed(seed);
   const { face, f } = useMemo(() => {
-    const still = stillFace(state, createAvatar(seedNumber, state).traits);
+    const still = stillFace(state, createAvatar(seedNumber, state).traits, stalled);
     return { face: still, f: avatarFrame(shape, still, size) };
-  }, [seedNumber, state, shape, size]);
+  }, [seedNumber, state, stalled, shape, size]);
   return (
     <Svg width={size} height={size} viewBox={VIEW_BOX} style={{ overflow: "visible" }}>
       <G transform={matrixAttribute(f.body)}>
@@ -370,6 +374,7 @@ function StillAvatar({
             fill={avatarEye.pupil}
           />
         )}
+        {f.lightCut > 0 && <Circle cx={f.light.x} cy={f.light.y} r={f.lightCut} fill={cut} />}
         <Circle cx={f.light.x} cy={f.light.y} r={f.light.r} fill={paint.light(face.light)} />
       </G>
     </Svg>
@@ -388,6 +393,7 @@ function MovingAvatar({
 }: BotAvatarProps) {
   const { shape, color } = resolveAvatar(avatar);
   const paint = usePaint(color, state === "offline");
+  const cut = useColor(groundColor[ground]);
   const reduced = useReducedMotion();
   const visible = useContext(Visible);
   const held = useContext(Held);
@@ -395,7 +401,7 @@ function MovingAvatar({
   // Keyed by its seed (`BotAvatar`), so one mount is one bot: its sim starts here.
   const [initial] = useState(() => createAvatar(avatarSeed(seed), state));
   const sim = useSharedValue(initial);
-  const face = useSharedValue(stillFace(state, initial.traits));
+  const face = useSharedValue(stillFace(state, initial.traits, stalled));
   const shapeValue = useSharedValue(shape);
   const halfRate = useSharedValue(size < LIST_SIZE);
   const owed = useSharedValue(0);
@@ -431,8 +437,8 @@ function MovingAvatar({
       "worklet";
       return setAvatarState(current, state);
     });
-    if (!running) face.set(stillFace(state, initial.traits));
-  }, [state, running, initial, sim, face]);
+    if (!running) face.set(stillFace(state, initial.traits, stalled));
+  }, [state, stalled, running, initial, sim, face]);
 
   // The scheduler decides whether the frame callback runs.
   const wants = !stalled && !reduced && visible && focused;
@@ -491,8 +497,13 @@ function MovingAvatar({
     return { cx, cy, ry };
   });
   const signalProps = useAnimatedProps(() => ({ matrix: matrixOf(signalPart.get()) }));
+  const cutPart = useDerivedValue(() => {
+    const { light, lightCut } = frame.get();
+    return joined([light.x, light.y, lightCut]);
+  });
   const lightProps = useAnimatedProps(() => circleOf(lightPart.get()));
-  const still = stillFace(state);
+  const cutProps = useAnimatedProps(() => circleOf(cutPart.get()));
+  const still = stillFace(state, plainTraits, stalled);
   return (
     <Svg width={size} height={size} viewBox={VIEW_BOX} style={{ overflow: "visible" }}>
       <AnimatedG animatedProps={bodyProps}>
@@ -509,6 +520,7 @@ function MovingAvatar({
         {state === "speaking" && (
           <AnimatedEllipse animatedProps={mouthProps} rx={5.2} fill={avatarEye.pupil} />
         )}
+        <AnimatedCircle animatedProps={cutProps} fill={cut} />
         <AnimatedG animatedProps={signalProps}>
           <Signal
             key={still.signal ?? "none"}

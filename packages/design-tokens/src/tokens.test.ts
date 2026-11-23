@@ -5,6 +5,7 @@ import { avatarShapes } from "./avatarShapes.ts";
 import {
   contrastRatio,
   inSrgbGamut,
+  mixOklab,
   over,
   parseColor,
   perceivedDistance,
@@ -134,6 +135,25 @@ describe.each(modes)("%s bot palette", (mode) => {
   });
 });
 
+describe.each(modes)("%s status light", (mode) => {
+  it.each(["waiting", "blocked", "foreground"] as const)(
+    "%s stands apart from every body through its cutout, at 3:1 on each side",
+    (light) => {
+      const lamp = parseColor(colors[light][mode]);
+      for (const ground of ["background", "surface", "sidebar", "muted"] as const) {
+        const cut = parseColor(colors[ground][mode]);
+        for (const body of Object.values(botPalette)) {
+          const apart = Math.min(
+            contrastRatio(lamp, cut),
+            contrastRatio(cut, parseColor(body[mode])),
+          );
+          expect(apart).toBeGreaterThanOrEqual(3);
+        }
+      }
+    },
+  );
+});
+
 describe("the avatar's eye", () => {
   it("keeps its pupil at 4.5:1 against its lens", () => {
     expect(
@@ -163,6 +183,18 @@ describe("8-bit sRGB", () => {
   it("converts OKLCH to the sRGB a browser shows for it", () => {
     // CSS Color 4's reference value for sRGB red.
     expect(toSrgb8(parseColor("oklch(0.62796 0.25768 29.23)"))).toEqual([255, 0, 0]);
+  });
+});
+
+describe("mixOklab", () => {
+  it("brings a mix sRGB cannot show into it, at the same lightness and hue", () => {
+    // Half red, half white, as OKLab mixes them: lightness 0.814, chroma 0.129, hue 29.2, past sRGB's red.
+    const mixed = mixOklab("#ff0000", "#ffffff", 0.5);
+    const [, l, c, h] = /^oklch\(([\d.]+) ([\d.]+) ([\d.]+)\)$/.exec(mixed) ?? [];
+    expect(Number(l)).toBeCloseTo(0.814, 3);
+    expect(Number(h)).toBeCloseTo(29.2, 1);
+    expect(Number(c)).toBeLessThan(0.128);
+    expect(inSrgbGamut(parseColor(mixed))).toBe(true);
   });
 });
 

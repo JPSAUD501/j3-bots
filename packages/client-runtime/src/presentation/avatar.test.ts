@@ -12,11 +12,13 @@ import {
   createAvatar,
   gazeToward,
   notificationState,
+  plainTraits,
   setAvatarState,
   speakingUntil,
   stepAvatar,
   stillFace,
   type AvatarSim,
+  type AvatarState,
 } from "./avatar.ts";
 
 const since = at("2026-11-20T10:00:00Z");
@@ -87,30 +89,64 @@ describe("notificationState", () => {
   });
 });
 
+/** What a still face shows of its state, at `px`: the eye, the light and the signal. */
+function cues(state: AvatarState, stalled = false, px = 40) {
+  const face = stillFace(state, plainTraits, stalled);
+  const frame = avatarFrame("dome", face, px);
+  const eye = !frame.open
+    ? "shut"
+    : face.lidTop + face.lidBottom >= 0.6
+      ? "slit"
+      : face.pupil >= 8
+        ? "wide"
+        : face.lidTop >= 0.25
+          ? "lidded"
+          : "open";
+  return {
+    eye,
+    smiling: face.cheek > 0,
+    light: face.light,
+    cut: frame.lightCut > frame.light.r,
+    signal: face.signal,
+    asleep: face.asleep,
+  };
+}
+
 describe("still forms", () => {
-  it.each([24, 40, 96])("tell every state apart without motion at %s px", (px) => {
-    const drawn = avatarStates.map((state) => {
-      const face = stillFace(state);
-      const frame = avatarFrame("dome", face, px);
-      return JSON.stringify({ frame, light: face.light, signal: face.signal, asleep: face.asleep });
-    });
-    expect(new Set(drawn).size).toBe(avatarStates.length);
+  const plain = { smiling: false, light: "body", cut: false, signal: null, asleep: false } as const;
+  const expected: Record<AvatarState, ReturnType<typeof cues>> = {
+    idle: { ...plain, eye: "open" },
+    thinking: { ...plain, eye: "lidded", signal: "dots" },
+    working: { ...plain, eye: "slit", signal: "ring" },
+    waiting: { ...plain, eye: "wide", light: "waiting", cut: true, signal: "ping" },
+    blocked: { ...plain, eye: "shut", light: "blocked", cut: true },
+    unread: { ...plain, eye: "open", smiling: true, light: "foreground", cut: true },
+    speaking: { ...plain, eye: "open", signal: "arcs" },
+    offline: { ...plain, eye: "shut", asleep: true },
+  };
+
+  it.each(avatarStates)("show %s by its eye, its light and its signal", (state) => {
+    expect(cues(state)).toEqual(expected[state]);
   });
 
-  it("narrow the eye while working, widen it while waiting, and shut it when blocked or asleep", () => {
-    const pupil = (state: (typeof avatarStates)[number]) => stillFace(state).pupil;
-    expect(stillFace("working").lidTop).toBeGreaterThan(stillFace("idle").lidTop);
-    expect(pupil("waiting")).toBeGreaterThan(pupil("idle"));
-    expect(avatarFrame("dome", stillFace("blocked"), 40).open).toBe(false);
-    expect(avatarFrame("dome", stillFace("offline"), 40).open).toBe(false);
+  it("show no two states alike", () => {
+    const shown = new Set(avatarStates.map((state) => JSON.stringify(cues(state))));
+    expect(shown.size).toBe(avatarStates.length);
   });
 
-  it("light the antenna in the state's color: amber waiting, red blocked, dark unread", () => {
-    expect(stillFace("waiting").light).toBe("waiting");
-    expect(stillFace("blocked").light).toBe("blocked");
-    expect(stillFace("unread").light).toBe("foreground");
-    expect(stillFace("idle").light).toBe("body");
+  it("set a state's light apart from the body at every size", () => {
+    for (const px of [24, 40, 96]) {
+      expect(cues("blocked", false, px).cut).toBe(true);
+      expect(cues("idle", false, px).cut).toBe(false);
+    }
   });
+
+  it.each(["thinking", "working"] as const)(
+    "drop the signal of a stalled %s turn, keeping its eye",
+    (state) => {
+      expect(cues(state, true)).toEqual({ ...expected[state], signal: null });
+    },
+  );
 });
 
 /** `sim` stepped at 60 fps for `seconds`. */

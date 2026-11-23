@@ -37,6 +37,7 @@ import {
   botColors,
   colors,
   fontFamilies,
+  freeAvatar,
   press,
   radii,
   resolveAvatar,
@@ -350,6 +351,12 @@ const generated = (count: number): Subject => {
 
 const AVATAR_SIZES = [24, 40, 96] as const;
 
+/** The looks the first 24 bots take when nobody chooses one: the cast, then twelve more pairs. */
+const firstLooks = Array.from({ length: 24 }).reduce<Array<AvatarChoice>>(
+  (taken) => [...taken, freeAvatar(taken)],
+  [],
+);
+
 function PrimitivesSection() {
   const { t } = useI18n();
   const [on, setOn] = useState(true);
@@ -569,11 +576,19 @@ function AvatarsSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="The cast, in the order new bots take it, and a room">
+      <Labeled label="The first 24 bots' looks, in the order new bots take them, and a room">
         <div className="flex flex-wrap items-end gap-3">
-          {avatarCast.map((avatar) => (
-            <div key={avatar.shape} className="flex w-16 flex-col items-center gap-1">
-              <BotAvatar avatar={avatar} seed={`cast-${avatar.shape}`} state="idle" size={40} />
+          {firstLooks.map((avatar) => (
+            <div
+              key={`${avatar.shape}/${avatar.color}`}
+              className="flex w-16 flex-col items-center gap-1"
+            >
+              <BotAvatar
+                avatar={avatar}
+                seed={`cast-${avatar.shape}-${avatar.color}`}
+                state="idle"
+                size={40}
+              />
               <span className="font-mono text-2xs text-muted-foreground">
                 {avatar.shape}
                 <br />

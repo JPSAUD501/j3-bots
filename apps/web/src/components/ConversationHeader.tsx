@@ -133,7 +133,7 @@ export function ConversationHeader({
       </Button>
       {/* The title button stretches over the whole block, so a click anywhere opens the details. On a
           phone, where it is the only way to the details, the block is a full touch target. */}
-      <div className="relative flex min-w-0 items-center @max-tablet:min-h-(--layout-touch-target) gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
+      <div className="relative flex min-w-0 items-center @max-tablet:min-h-(--layout-touch-target) gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:hover]:[--avatar-cutout:var(--muted)] has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
         {subject._tag === "bot" ? (
           <LiveBotAvatar bot={subject.bot} size={32} />
         ) : (

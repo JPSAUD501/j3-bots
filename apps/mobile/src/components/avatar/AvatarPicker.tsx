@@ -145,7 +145,7 @@ function Option({
         frame={{ flex: 1 }}
         accessibilityRole="radio"
         accessibilityLabel={label}
-        accessibilityState={{ selected, disabled: readOnly }}
+        accessibilityState={{ checked: selected, disabled: readOnly }}
         onPress={() => {
           if (!readOnly && !selected) onPress();
         }}

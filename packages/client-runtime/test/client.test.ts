@@ -18,9 +18,11 @@ import {
   Conflict,
   Invalid,
   NotFound,
+  PROTOCOL_VERSION,
   ProviderId,
   PushToken,
   RoomId,
+  ServerInfo,
   MAX_USAGE_TURNS,
   USAGE_PERIOD,
   type UsageTurn,
@@ -294,6 +296,34 @@ const proxyLoginExpired = Layer.effect(
     );
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
+
+const encodeServerInfo = Schema.encodeSync(Schema.toCodecJson(ServerInfo));
+
+/**
+ * The server as a release of protocol `version` would answer the server
+ * check, as one built before or after this client: all else is this server's.
+ */
+const speakingProtocol = (version: number) =>
+  Layer.effect(
+    HttpClient.HttpClient,
+    Effect.gen(function* () {
+      const server = yield* HttpClient.HttpClient;
+      return HttpClient.make((request, url) =>
+        url.pathname === HTTP_PATHS.server
+          ? server.execute(request).pipe(
+              Effect.flatMap(HttpClientResponse.schemaBodyJson(ServerInfo)),
+              Effect.orDie,
+              Effect.map((info) =>
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(encodeServerInfo({ ...info, protocolVersion: version })),
+                ),
+              ),
+            )
+          : server.execute(request),
+      );
+    }),
+  ).pipe(Layer.provide(FetchHttpClient.layer));
 
 /**
  * Something between the client and the server that takes the first `times`
@@ -1036,6 +1066,45 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         ),
       );
     }),
+  );
+
+  it.effect(
+    "refuses a server of the protocol before or after its own, paired or not, keeping the pairing",
+    () =>
+      Effect.gen(function* () {
+        for (const version of [PROTOCOL_VERSION - 1, PROTOCOL_VERSION + 1]) {
+          const refusal = yield* Effect.gen(function* () {
+            const { code } = yield* (yield* Server.Devices).startPairing;
+            return yield* (yield* Connection)
+              .pair({ code, deviceName: "Test client" })
+              .pipe(Effect.flip);
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(client(Option.none(), undefined, speakingProtocol(version))),
+          );
+          assert.deepStrictEqual(refusal.reason, {
+            _tag: "incompatible-server",
+            serverProtocol: version,
+          });
+
+          const device = TestPlatform.makeDevice();
+          const credential = yield* Effect.gen(function* () {
+            yield* pairAndConnect;
+            return yield* savedCredential;
+          }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+          yield* Effect.gen(function* () {
+            const refused = yield* waitFor(
+              (yield* Connection).state,
+              (state) => state._tag === "incompatible",
+            );
+            assert.deepStrictEqual(refused, { _tag: "incompatible", serverProtocol: version });
+            assert.isTrue(Option.isSome(yield* (yield* CredentialStore).load));
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(client(credential, device, speakingProtocol(version))),
+          );
+        }
+      }),
   );
 
   it.effect("uploads a file again when the first attempt never answers", () =>

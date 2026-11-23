@@ -43,9 +43,9 @@ export function NewBotForm({
   const [name, setName] = useState("");
   const [primary, setPrimary] = useState(primaryAtFirst);
   const bots = useBots();
-  const [avatar, setAvatar] = useState(() =>
-    freeAvatar([...bots.values()].map((bot) => bot.profile.avatar)),
-  );
+  // Until the operator picks one, the look follows the bots there are, which may arrive after the form.
+  const [picked, setPicked] = useState<AvatarChoice | null>(null);
+  const avatar = picked ?? freeAvatar([...bots.values()].map((bot) => bot.profile.avatar));
   const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
   const trimmed = name.trim();
   const ready = trimmed !== "" && state !== "creating";
@@ -67,6 +67,8 @@ export function NewBotForm({
         event.preventDefault();
         if (!ready) return;
         setState("creating");
+        // The bot created joins the list: the look it was created with stays on show.
+        setPicked(avatar);
         // A created bot opens, which takes the form off the screen: until then it stays
         // creating, so Create cannot make a second bot.
         onCreate({ name: trimmed, primary, avatar }).catch(() => setState("failed"));
@@ -85,7 +87,7 @@ export function NewBotForm({
       />
       <AvatarPicker
         value={avatar}
-        onChange={setAvatar}
+        onChange={setPicked}
         name={name}
         seed="new-bot"
         readOnly={state === "creating"}

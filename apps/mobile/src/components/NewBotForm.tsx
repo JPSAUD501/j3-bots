@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useJ3Client } from "@j3-bots/client-runtime/react";
-import { type BotId, PROFILE_LIMITS } from "@j3-bots/contracts";
+import { type AvatarChoice, type BotId, PROFILE_LIMITS } from "@j3-bots/contracts";
 import { freeAvatar } from "@j3-bots/design-tokens";
 import { type ReactNode, useState } from "react";
 import { View } from "react-native";
@@ -27,9 +27,9 @@ export function NewBotForm(props: {
   const [name, setName] = useState("");
   const [primary, setPrimary] = useState(false);
   const bots = useBots();
-  const [avatar, setAvatar] = useState(() =>
-    freeAvatar([...bots.values()].map((bot) => bot.profile.avatar)),
-  );
+  // Until the operator picks one, the look follows the bots there are, which may arrive after the form.
+  const [picked, setPicked] = useState<AvatarChoice | null>(null);
+  const avatar = picked ?? freeAvatar([...bots.values()].map((bot) => bot.profile.avatar));
   const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
   const trimmed = name.trim();
   const ready = trimmed !== "" && state !== "creating";
@@ -49,7 +49,7 @@ export function NewBotForm(props: {
       />
       <AvatarPicker
         value={avatar}
-        onChange={setAvatar}
+        onChange={setPicked}
         name={name}
         seed="new-bot"
         readOnly={state === "creating"}
@@ -70,6 +70,8 @@ export function NewBotForm(props: {
           onPress={() => {
             if (!ready) return;
             setState("creating");
+            // The bot created joins the list: the look it was created with stays on show.
+            setPicked(avatar);
             void client.createBot({ name: trimmed, primary, avatar }).then((result) => {
               // A created bot opens, which takes the form off the screen: until then it stays
               // creating, so Create cannot make a second bot.

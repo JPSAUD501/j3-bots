@@ -114,6 +114,10 @@ export function drawAvatar(
     canvas.fill(onBody(ellipse(cx, cy, rx, ry)), pupil);
   }
 
+  // A still image's ground is clear: the light's cutout shows whatever it is laid on.
+  const { x, y, r } = frame.light;
+  if (frame.lightCut > 0) canvas.clear(onBody(circle(x, y, frame.lightCut)));
+
   const signalWidth = avatarSignals.stroke * unit * frame.signal[0];
   switch (face.signal) {
     case "ring":
@@ -148,7 +152,6 @@ export function drawAvatar(
       break;
   }
 
-  const { x, y, r } = frame.light;
   const light = face.light === "body" ? bodyColor : tone(colors[face.light][theme]);
   canvas.fill(onBody(circle(x, y, r)), light);
 }

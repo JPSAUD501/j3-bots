@@ -6,7 +6,8 @@
  * - an avatar scrolled out of view (IntersectionObserver) is not stepped;
  * - an avatar at list size, under 44 px, steps every other frame;
  * - at most `MAX_MOVING` avatars move at once, the largest first; the others
- *   hold their still form until one stops;
+ *   hold their still form until one stops, and draw it again when their state
+ *   changes;
  * - under reduced motion nothing moves, and every avatar shows its still form.
  *
  * Each frame first reads what it must of the layout (the boxes of avatars
@@ -19,15 +20,26 @@ import { gazeToward, type AvatarGaze } from "@j3-bots/client-runtime/presentatio
 export interface Animated {
   /** In px. */
   readonly size: number;
-  /** Whether it may move at all: false for a still or stalled avatar. */
+  /** Whether it may move at all: false for a still, stalled or sleeping avatar. */
   readonly moving: () => boolean;
-  /** Whether its eye follows the pointer. */
-  readonly tracks: boolean;
-  readonly element: Element;
+  /** Its box on the page, for an eye that follows the pointer; null when it does not. */
+  readonly measure: (() => DOMRect) | null;
   /** Steps it `dt` seconds and draws it. */
   readonly step: (dt: number, gaze: AvatarGaze | null) => void;
   /** Draws its still form. */
   readonly still: () => void;
+}
+
+/** An avatar on the loop, as its owner drives it. */
+export interface Running {
+  /**
+   * Its state changed. If the loop steps it, it eases into the new state; if
+   * the loop holds it, off screen or over the cap, it draws its new still
+   * form on the next frame.
+   */
+  readonly restate: () => void;
+  /** Takes it off the loop. */
+  readonly stop: () => void;
 }
 
 /** The most avatars that move at once. */
@@ -44,11 +56,15 @@ interface Entry {
   owed: number;
   /** Whether the loop last drew it moving; when that changes, it draws its still form once. */
   drawnMoving: boolean;
+  /** Its state changed since it was last drawn: until it is stepped, its still form is out of date. */
+  restated: boolean;
   rect: DOMRect | null;
   readonly order: number;
 }
 
-const entries = new Map<Element, Entry>();
+const entries = new Set<Entry>();
+/** The entries whose element the observer watches, by that element. */
+const observed = new Map<Element, Entry>();
 let frame = 0;
 let raf = 0;
 let last = 0;
@@ -70,7 +86,7 @@ const observer =
     : new IntersectionObserver(
         (seen) => {
           for (const { target, isIntersecting } of seen) {
-            const entry = entries.get(target);
+            const entry = observed.get(target);
             if (entry === undefined) continue;
             entry.visible = isIntersecting;
             if (!isIntersecting) settle(entry);
@@ -80,10 +96,11 @@ const observer =
         { rootMargin: "80px" },
       );
 
-/** Draws `entry` still once, when it was last drawn moving. */
+/** Draws `entry` still once, when it was last drawn moving or its state changed since. */
 function settle(entry: Entry) {
-  if (!entry.drawnMoving) return;
+  if (!entry.drawnMoving && !entry.restated) return;
   entry.drawnMoving = false;
+  entry.restated = false;
   entry.avatar.still();
 }
 
@@ -112,18 +129,16 @@ function loop(now: number) {
   frame++;
 
   // Which avatars move this frame: visible, allowed to, the largest first, up to the cap.
-  const candidates = [...entries.values()].filter((e) => e.visible && e.avatar.moving());
+  const candidates = [...entries].filter((e) => e.visible && e.avatar.moving());
   candidates.sort((a, b) => b.avatar.size - a.avatar.size || a.order - b.order);
   const moving = new Set(candidates.slice(0, MAX_MOVING));
-  for (const entry of entries.values()) if (!moving.has(entry)) settle(entry);
+  for (const entry of entries) if (!moving.has(entry)) settle(entry);
   if (moving.size === 0) return;
 
   // Reads first: the boxes of avatars that follow a pointer that just moved.
   const following = finePointer?.matches === true && now - pointer.at < POINTER_HOLD;
   if (following && rectsStale) {
-    for (const entry of moving) {
-      if (entry.avatar.tracks) entry.rect = entry.avatar.element.getBoundingClientRect();
-    }
+    for (const entry of moving) entry.rect = entry.avatar.measure?.() ?? null;
     rectsStale = false;
   }
 
@@ -136,7 +151,7 @@ function loop(now: number) {
     }
     const rect = entry.rect;
     const gaze =
-      following && entry.avatar.tracks && rect !== null
+      following && rect !== null
         ? gazeToward(
             pointer.x - (rect.left + rect.width / 2),
             pointer.y - (rect.top + rect.height / 2),
@@ -145,6 +160,7 @@ function loop(now: number) {
     entry.avatar.step(dt + entry.owed, gaze);
     entry.owed = 0;
     entry.drawnMoving = true;
+    entry.restated = false;
   }
   raf = requestAnimationFrame(loop);
 }
@@ -153,46 +169,62 @@ function onReducedChange() {
   if (reducedMotion()) {
     cancelAnimationFrame(raf);
     raf = 0;
-    for (const entry of entries.values()) settle(entry);
+    for (const entry of entries) settle(entry);
   } else wake();
 }
 
 /**
- * Adds `avatar` to the loop, drawn still until the loop first steps it.
- * Returns what takes it out again.
+ * Adds `avatar` to the loop, drawn still until the loop first steps it. When
+ * `element` is given, the loop watches it and steps the avatar only while it
+ * is in view.
  */
-export function animate(avatar: Animated): () => void {
+export function animate(avatar: Animated, element?: Element): Running {
   if (entries.size === 0) {
     window.addEventListener("pointermove", onPointer, { passive: true });
     window.addEventListener("scroll", onScroll, { passive: true, capture: true });
     window.addEventListener("resize", onScroll, { passive: true });
     reducedQuery?.addEventListener("change", onReducedChange);
   }
+  const watched = element !== undefined && observer !== null ? element : null;
   const entry: Entry = {
     avatar,
-    visible: observer === null,
+    visible: watched === null,
     owed: 0,
     drawnMoving: false,
+    restated: false,
     rect: null,
     order: order++,
   };
-  entries.set(avatar.element, entry);
-  observer?.observe(avatar.element);
+  entries.add(entry);
+  if (watched !== null) {
+    observed.set(watched, entry);
+    observer?.observe(watched);
+  }
   avatar.still();
   rectsStale = true;
   wake();
-  return () => {
-    observer?.unobserve(avatar.element);
-    entries.delete(avatar.element);
-    if (entries.size > 0) return;
-    cancelAnimationFrame(raf);
-    raf = 0;
-    window.removeEventListener("pointermove", onPointer);
-    window.removeEventListener("scroll", onScroll, { capture: true });
-    window.removeEventListener("resize", onScroll);
-    reducedQuery?.removeEventListener("change", onReducedChange);
+  return {
+    restate: () => {
+      if (!entries.has(entry)) return;
+      entry.restated = true;
+      wake();
+    },
+    stop: () => {
+      if (watched !== null) {
+        observer?.unobserve(watched);
+        observed.delete(watched);
+      }
+      entries.delete(entry);
+      if (entries.size > 0) return;
+      cancelAnimationFrame(raf);
+      raf = 0;
+      window.removeEventListener("pointermove", onPointer);
+      window.removeEventListener("scroll", onScroll, { capture: true });
+      window.removeEventListener("resize", onScroll);
+      reducedQuery?.removeEventListener("change", onReducedChange);
+    },
   };
 }
 
-/** Tells the loop an avatar may have started moving: its state changed, or it was poked. */
+/** Tells the loop an avatar was poked: it may have started moving. */
 export const nudge = wake;
