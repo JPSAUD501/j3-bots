@@ -4,12 +4,12 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { EngineInstallProgress } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
@@ -19,7 +19,13 @@ import type * as PlatformError from "effect/PlatformError";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { EngineInstallFailed, ensureInstalled, installTracked } from "./Install.ts";
+import {
+  type DownloadEvent,
+  EngineInstallFailed,
+  ensureInstalled,
+  installTracked,
+  makeProgressLog,
+} from "./Install.ts";
 import { pin } from "./Pin.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import type { ProcessState } from "./Supervisor.ts";
@@ -28,12 +34,28 @@ import type { ProcessState } from "./Supervisor.ts";
 const ARCHIVE = new TextEncoder().encode("the pinned engine release, byte for byte");
 const DIGEST = NodeCrypto.createHash("sha256").update(ARCHIVE).digest("hex");
 
+/** How far a download has come, as `onDownload` hears it. */
+const progress = (receivedBytes: number, totalBytes: number | null): DownloadEvent => ({
+  _tag: "progress",
+  progress: { receivedBytes, totalBytes },
+});
+
+/** A download's end, as `onDownload` hears it. */
+const downloaded = (receivedBytes: number, totalBytes: number | null): DownloadEvent => ({
+  _tag: "downloaded",
+  progress: { receivedBytes, totalBytes },
+});
+
 /** How the release server sends the archive. */
 interface Sending {
   /** Whether it says the archive's size: `Content-Length`, and a range's `Content-Range`. */
   readonly sized: boolean;
   /** Bytes per chunk of the body, or the whole rest in one. */
   readonly chunk?: number;
+  /** Whether it answers a range with the whole archive, as `200`. */
+  readonly ignoresRange?: boolean;
+  /** A `Content-Length` it sends instead of the true one. */
+  readonly contentLength?: string;
 }
 
 /**
@@ -50,7 +72,7 @@ const release = (
   HttpClient.make((request) => {
     const range = /^bytes=(\d+)-$/.exec(request.headers["range"] ?? "");
     requests.push(range?.[0] ?? "whole");
-    const from = Number(range?.[1] ?? 0);
+    const from = sending.ignoresRange === true ? 0 : Number(range?.[1] ?? 0);
     const rest = ARCHIVE.slice(from);
     const size = sending.chunk ?? rest.length;
     const body = new ReadableStream<Uint8Array>({
@@ -66,7 +88,7 @@ const release = (
     });
     const headers: Record<string, string> = sending.sized
       ? {
-          "content-length": String(rest.length),
+          "content-length": sending.contentLength ?? String(rest.length),
           ...(from > 0
             ? { "content-range": `bytes ${from}-${ARCHIVE.length - 1}/${ARCHIVE.length}` }
             : {}),
@@ -137,14 +159,14 @@ const install = (requests: Array<string>, setup: Setup) =>
           )
         : Effect.succeed(true),
     );
-    const progress: Array<EngineInstallProgress> = [];
+    const events: Array<DownloadEvent> = [];
     const exit = yield* ensureInstalled({
       home,
       platform: "linux",
       arch: "x64",
       sha256: { "linux-x64": setup.pinned ?? DIGEST },
       files,
-      onProgress: (reported) => Effect.sync(() => progress.push(reported)),
+      onDownload: (event) => Effect.sync(() => events.push(event)),
     }).pipe(
       Effect.provideService(
         HttpClient.HttpClient,
@@ -153,7 +175,7 @@ const install = (requests: Array<string>, setup: Setup) =>
       Effect.exit,
     );
     const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : Option.none();
-    return { ...workspace, progress, reason: Option.getOrUndefined(error)?.reason };
+    return { ...workspace, events, reason: Option.getOrUndefined(error)?.reason };
   });
 
 const machine = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
@@ -183,15 +205,15 @@ describe("ensureInstalled", () => {
       const fs = yield* FileSystem.FileSystem;
       const requests: Array<string> = [];
 
-      const { partial, progress, reason } = yield* install(requests, {
+      const { partial, events, reason } = yield* install(requests, {
         prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
       });
 
       assert.deepStrictEqual(requests, ["bytes=10-"]);
       // It counts what it had, of the size the range says.
-      assert.deepStrictEqual(progress, [
-        { receivedBytes: 10, totalBytes: ARCHIVE.length },
-        { receivedBytes: ARCHIVE.length, totalBytes: ARCHIVE.length },
+      assert.deepStrictEqual(events, [
+        progress(10, ARCHIVE.length),
+        downloaded(ARCHIVE.length, ARCHIVE.length),
       ]);
       // The resumed file matched the pinned digest; only unpacking it failed.
       assert.strictEqual(reason, "extract");
@@ -337,12 +359,12 @@ describe("ensureInstalled", () => {
 describe("a download's progress", () => {
   it.effect("is reported when it starts and when it ends, not with every chunk", () =>
     Effect.gen(function* () {
-      const { progress } = yield* install([], { sending: { sized: true, chunk: 1 } });
+      const { events } = yield* install([], { sending: { sized: true, chunk: 1 } });
 
       // The test clock stands still: no second passes between chunks.
-      assert.deepStrictEqual(progress, [
-        { receivedBytes: 0, totalBytes: ARCHIVE.length },
-        { receivedBytes: ARCHIVE.length, totalBytes: ARCHIVE.length },
+      assert.deepStrictEqual(events, [
+        progress(0, ARCHIVE.length),
+        downloaded(ARCHIVE.length, ARCHIVE.length),
       ]);
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
@@ -369,7 +391,7 @@ describe("a download's progress", () => {
           ),
         );
       });
-      const progress: Array<EngineInstallProgress> = [];
+      const events: Array<DownloadEvent> = [];
 
       yield* ensureInstalled({
         home,
@@ -377,13 +399,14 @@ describe("a download's progress", () => {
         arch: "x64",
         sha256: { "linux-x64": DIGEST },
         files,
-        onProgress: (reported) => Effect.sync(() => progress.push(reported)),
+        onDownload: (event) => Effect.sync(() => events.push(event)),
       }).pipe(Effect.provideService(HttpClient.HttpClient, slow), Effect.exit);
 
-      assert.deepStrictEqual(
-        progress.map(({ receivedBytes }) => receivedBytes),
-        [0, 20, ARCHIVE.length],
-      );
+      assert.deepStrictEqual(events, [
+        progress(0, ARCHIVE.length),
+        progress(20, ARCHIVE.length),
+        downloaded(ARCHIVE.length, ARCHIVE.length),
+      ]);
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 
@@ -395,49 +418,108 @@ describe("a download's progress", () => {
         prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
       });
 
-      assert.deepStrictEqual(resumed.progress, [
-        { receivedBytes: 10, totalBytes: null },
-        { receivedBytes: ARCHIVE.length, totalBytes: null },
+      assert.deepStrictEqual(resumed.events, [
+        progress(10, null),
+        downloaded(ARCHIVE.length, null),
       ]);
+
+      // A size too large to count exactly is no size.
+      const huge = yield* install([], {
+        sending: { sized: true, contentLength: "99999999999999999999" },
+      });
+      assert.deepStrictEqual(huge.events, [progress(0, null), downloaded(ARCHIVE.length, null)]);
     }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("starts over from 0 when a range is answered with the whole archive", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const requests: Array<string> = [];
+
+      const { partial, events } = yield* install(requests, {
+        sending: { sized: true, ignoresRange: true },
+        prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
+      });
+
+      assert.deepStrictEqual(requests, ["bytes=10-"]);
+      // The size is its Content-Length, not what the partial held added to it.
+      assert.deepStrictEqual(events, [
+        progress(0, ARCHIVE.length),
+        downloaded(ARCHIVE.length, ARCHIVE.length),
+      ]);
+      assert.deepStrictEqual(yield* fs.readFile(partial), ARCHIVE);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("is logged at its end, also when its size is not known", () =>
+    Effect.gen(function* () {
+      const log = yield* makeProgressLog();
+      const lines = yield* Effect.forEach(
+        [progress(0, null), progress(5_000_000, null), downloaded(9_000_000, null)],
+        log,
+      );
+
+      assert.deepStrictEqual(lines.map(Option.getOrNull), [
+        "Downloading the engine: 0 MB",
+        null,
+        "Downloaded the engine: 9 MB",
+      ]);
+    }),
   );
 });
 
 describe("installTracked", () => {
-  it.effect("shows the download in the state, and clears it once installed", () =>
+  it.effect("shows the download in the state, and clears it once the download ends", () =>
     Effect.gen(function* () {
       const state = yield* SubscriptionRef.make<ProcessState>({ _tag: "starting" });
       const seen: Array<ProcessState> = [];
       const look = SubscriptionRef.get(state).pipe(Effect.map((now) => seen.push(now)));
+      const logged: Array<string> = [];
+      const recordInfo = Logger.layer([
+        Logger.make(({ message, logLevel }) => {
+          const [first] = Array.isArray(message) ? message : [message];
+          if (logLevel === "Info" && typeof first === "string") logged.push(first);
+        }),
+      ]);
       let attempts = 0;
 
       const executable = yield* installTracked({
         state,
         retry: Schedule.recurs(1),
-        install: (onProgress) =>
+        install: (onDownload) =>
           Effect.gen(function* () {
             attempts += 1;
             yield* look;
             if (attempts === 1) {
-              yield* onProgress({ receivedBytes: 4, totalBytes: 10 });
+              yield* onDownload(progress(4_000_000, 10_000_000));
               yield* look;
               return yield* new EngineInstallFailed({ reason: "download", version: pin.version });
             }
-            yield* onProgress({ receivedBytes: 10, totalBytes: 10 });
+            yield* onDownload(progress(2_000_000, 10_000_000));
+            yield* look;
+            yield* onDownload(downloaded(10_000_000, 10_000_000));
+            // Checked and unpacked from here: the download no longer shows.
             yield* look;
             return "/engine/t3";
           }),
-      });
+      }).pipe(Effect.provide(recordInfo));
       yield* look;
 
       assert.strictEqual(executable, "/engine/t3");
       assert.deepStrictEqual(seen, [
         { _tag: "starting" },
-        { _tag: "starting", install: { receivedBytes: 4, totalBytes: 10 } },
+        { _tag: "starting", install: { receivedBytes: 4_000_000, totalBytes: 10_000_000 } },
         // Waiting to try again, the failure shows; the next download replaces it.
         { _tag: "unavailable", reason: "install-failed" },
-        { _tag: "starting", install: { receivedBytes: 10, totalBytes: 10 } },
+        { _tag: "starting", install: { receivedBytes: 2_000_000, totalBytes: 10_000_000 } },
         { _tag: "starting" },
+        { _tag: "starting" },
+      ]);
+      // The retry's first line is logged, though no ten seconds passed since the last.
+      assert.deepStrictEqual(logged, [
+        "Downloading the engine: 4 of 10 MB",
+        "Downloading the engine: 2 of 10 MB",
+        "Downloaded the engine: 10 MB",
       ]);
     }),
   );

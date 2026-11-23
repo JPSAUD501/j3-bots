@@ -441,7 +441,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     ? Effect.succeed(options.binaryOverride.value)
     : installTracked({
         state,
-        install: (onProgress) => installForThisMachine(options.home, files, onProgress),
+        install: (onDownload) => installForThisMachine(options.home, files, onDownload),
         retry: INSTALL_RETRY,
       }).pipe(platformServices);
 

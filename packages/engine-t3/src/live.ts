@@ -4,6 +4,8 @@ export { layer } from "./t3/T3Engine.ts";
 export {
   EngineInstallFailed,
   type EngineInstall,
+  type DownloadEvent,
+  downloadText,
   fetchPinned,
   inspectInstall,
   makeProgressLog,

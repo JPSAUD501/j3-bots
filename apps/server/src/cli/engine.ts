@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineInstallProgress } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -16,34 +15,33 @@ import { ServerConfig } from "../config.ts";
 import { userFacing } from "./errors.ts";
 
 /**
- * How the download's progress reaches whoever runs `engine fetch`, as
- * "Downloading: 42 of 180 MB": on a terminal, one line rewritten as the
- * download goes; elsewhere, as when `j3-bots update` relays it, a line now
- * and then (`makeProgressLog`). `done` ends the rewritten line.
+ * How the download reaches whoever runs `engine fetch`, as
+ * "Downloading the engine: 42 of 180 MB" and then "Downloaded the engine:
+ * 180 MB": on a terminal, one line rewritten as the download goes; elsewhere,
+ * as when `j3-bots update` relays it, a line now and then
+ * (`makeProgressLog`). `done` ends the rewritten line.
  */
 const progressPrinter = Effect.fn("engine.progressPrinter")(function* () {
   const terminal = yield* Terminal.Terminal;
   const inPlace = yield* (yield* Stdio.Stdio).stdoutIsTerminal;
   const log = yield* EngineLive.makeProgressLog();
   const shown = yield* Ref.make(false);
-  const onProgress = (progress: EngineInstallProgress) =>
+  const onDownload = (event: EngineLive.DownloadEvent) =>
     inPlace
       ? Ref.set(shown, true).pipe(
           Effect.andThen(
             // Back to the line's start, then the line, then clear what a longer one left.
-            terminal.display(`\rDownloading: ${EngineLive.progressText(progress)}\u001b[K`),
+            terminal.display(`\r${EngineLive.downloadText(event)}\u001b[K`),
           ),
           Effect.ignore,
         )
-      : log(progress).pipe(
-          Effect.flatMap((line) =>
-            Option.isSome(line) ? Console.log(`Downloading: ${line.value}`) : Effect.void,
-          ),
+      : log(event).pipe(
+          Effect.flatMap((line) => (Option.isSome(line) ? Console.log(line.value) : Effect.void)),
         );
   const done = Effect.gen(function* () {
     if (yield* Ref.get(shown)) yield* terminal.display("\n").pipe(Effect.ignore);
   });
-  return { onProgress, done };
+  return { onDownload, done };
 });
 
 const fetchCommand = Command.make("fetch").pipe(
@@ -60,7 +58,7 @@ const fetchCommand = Command.make("fetch").pipe(
         EngineLive.fetchPinned({
           home: config.engineHome,
           isPrivate: (location) => layout.writable(location).pipe(Effect.isSuccess),
-          onProgress: progress.onProgress,
+          onDownload: progress.onDownload,
         }),
       ).pipe(Effect.ensuring(progress.done));
       yield* Console.log(

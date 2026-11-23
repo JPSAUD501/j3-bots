@@ -734,7 +734,7 @@ export const en = {
   "engine.starting.title": "The engine is starting",
   "engine.starting.body": "J3 Bots is starting its engine. This page updates when it’s ready.",
   "engine.downloading.body":
-    "J3 Bots downloads its engine once, on its first start, and starts it right after. This page updates when it’s ready.",
+    "J3 Bots downloads its engine on its first start, and again after an update that needs a new one. This page updates when it’s ready.",
   "engine.downloading.progress": "Downloading the engine… {received} of {total} MB",
   "engine.downloading.progressNoTotal": "Downloading the engine… {received} MB",
   "engine.down.title": "The engine stopped",
