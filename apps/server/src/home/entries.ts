@@ -67,7 +67,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * state/runtime.json     the release whose data this home holds, and a transition under way
  * attachments/           file bytes, by digest
  * backups/<snapshot>/    the databases and settings an update copied first
- * vault/vault.sqlite     the vault's sealed logins; in no snapshot
+ * vault/vault.sqlite     the vault's sealed logins and connector secrets; in no snapshot
  * providers/<provider>/  the configuration folder of an engine provider instance
  * web/                   where the operator may put a built web client; public
  * ```

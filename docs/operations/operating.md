@@ -127,7 +127,7 @@ The release it fetched and the snapshot stay on disk until a later update succee
 j3-bots update --rollback
 ```
 
-It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
+It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither is the vault, whose logins, connectors' secrets and master password stay as they are; a release older than the vault's file reports it as written by a newer release and leaves it alone until you update again. Nor are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
 
 **Keep `~/.j3-bots/backups/` on the data directory's filesystem**, not as a link to another disk, such as a USB drive on a Raspberry Pi. A rollback moves the data directory's files into it by renaming them, which cannot cross filesystems. An update and `--rollback` check this before they stop anything, refuse when it is elsewhere, and give the commands that put it back.
 
@@ -162,6 +162,23 @@ j3-bots doctor
 
 The server migrates its database when it starts, and downloads the engine its code pins on its first start when that changed.
 
+## The vault
+
+The vault keeps the logins you save and what connectors need to reach their services, in `~/.j3-bots/vault/vault.sqlite`, sealed under your master password ([Server: the vault](../architecture/server.md#the-vault)). You create the password during onboarding, from the first save-login card a bot shows you, or in Settings → Vault.
+
+- **It is locked every time the server starts**, also after an update or a reboot, and stays locked until you unlock it from any of your devices: in Settings → Vault, or on a save-login card. Until then, no connector that needs a secret can reach its service, and no login can be saved or shown.
+- **Lock now** in Settings locks it for every device. Nothing locks it on a timer.
+- **After five wrong passwords**, unlocking waits, starting at 30 seconds and doubling up to an hour. The screen says until when.
+- **A lost password cannot be recovered**, by you or anyone else. To start over without it, stop the service, move the vault's folder aside and start again:
+
+  ```sh
+  systemctl --user stop j3-bots
+  mv ~/.j3-bots/vault ~/.j3-bots/vault.lost-$(date +%F)
+  systemctl --user start j3-bots
+  ```
+
+  The vault is then empty and asks for a new password. Save each login again and sign in to each connector again. Keep the moved folder if you might remember the password: putting it back while the service is stopped brings everything back.
+
 ## Back up
 
 Everything J3 Bots keeps is in the data directory: the configuration, the database, the bots' memory and workspaces, attachments and the engine's own data. Stop the service while you copy it, so the database and the files match:
@@ -173,7 +190,7 @@ systemctl --user stop j3-bots
 systemctl --user start j3-bots
 ```
 
-`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, which the server downloads again. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
+`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the vault (sealed, and of no use without its master password), the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, which the server downloads again. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
 
 ## Restore
 
@@ -185,7 +202,7 @@ systemctl --user start j3-bots
 j3-bots doctor
 ```
 
-Restore onto the version the backup was taken with, or a newer one. Once `doctor` shows the server and the engine ready and your conversations are back, delete `~/.j3-bots.before-restore`.
+Restore onto the version the backup was taken with, or a newer one. The vault comes back locked, under the master password it had when the backup was taken. Once `doctor` shows the server and the engine ready and your conversations are back, delete `~/.j3-bots.before-restore`.
 
 ## Remove
 

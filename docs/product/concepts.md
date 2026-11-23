@@ -97,6 +97,8 @@ The machine J3 Bots runs on is never called a "host": a host is a room's bot.
 
 **Question.** A bot asking the operator to choose. It arrives as a card with options, not as prose.
 
+**Vault.** Where the operator's saved logins, and the secrets connectors use, are kept on the server, sealed under a master password only the operator knows. The vault is locked whenever the server starts and stays locked until one of the operator's devices unlocks it; a locked vault also stops every connector that needs a secret. A bot can ask the operator to save a login there, with a card, but never sees what they type. Nothing recovers a forgotten master password.
+
 **Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, or one bot's room message may mention, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.
 
 ## Names
