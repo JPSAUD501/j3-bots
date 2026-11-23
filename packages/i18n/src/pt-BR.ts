@@ -1359,6 +1359,9 @@ const sentences = {
     "A instalação foi cancelada. A {version} está baixada e conferida, pronta para instalar.",
   "phoneUpdate.waitingForStable":
     "Este app roda uma versão nightly, então espera uma versão estável mais nova que ela.",
+  "phoneUpdate.behind.noRelease": "Ainda não há uma versão mais nova deste app no canal dele.",
+  "phoneUpdate.behind.nightlyHint":
+    "Se o servidor roda uma versão nightly, escolha Nightly para este app abaixo.",
   "phoneUpdate.permission.title": "Deixe o J3 Bots instalar a atualização",
   "phoneUpdate.permission.body":
     "O Android pede uma vez. Na próxima tela, Instalar apps desconhecidos, ative “Permitir desta fonte” e volte: a instalação continua. O J3 Bots só instala as próprias atualizações, depois de conferir com a assinatura do projeto.",

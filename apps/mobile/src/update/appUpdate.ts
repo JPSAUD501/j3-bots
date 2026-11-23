@@ -223,11 +223,32 @@ const remove = (file: File) => {
   }
 };
 
+/**
+ * Whether an update the operator started is under way or waits for them, to
+ * allow installs or to confirm again. No check replaces it: it ends when it
+ * is installed or fails, and the folder is emptied at the next start.
+ */
+export const updateInHand = (current: AppUpdateState): boolean => {
+  switch (current._tag) {
+    case "downloading":
+    case "verifying":
+    case "permission":
+    case "installing":
+    case "cancelled":
+      return true;
+    default:
+      return false;
+  }
+};
+
 export interface AppUpdate {
   readonly state: Readable<AppUpdateState>;
   readonly channel: Readable<UpdateChannel>;
   readonly installed: InstalledApp;
-  /** Reads the feed now; `auto` skips it when it was read in the last six hours. */
+  /**
+   * Reads the feed now; `auto` skips it when it was read in the last six
+   * hours. Neither replaces an update in hand.
+   */
   readonly check: (auto?: boolean) => Promise<void>;
   readonly setChannel: (channel: UpdateChannel) => void;
   /** Downloads, verifies and installs the available release, asking for what Android needs. */
@@ -258,24 +279,10 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
   const fail = (release: AppRelease | null, failure: AppUpdateFailure) =>
     state.set({ _tag: "failed", release, failure });
 
-  /** Whether the operator's update is under way or waits for them: no automatic check may replace it. */
-  const inHand = (current: AppUpdateState): boolean => {
-    switch (current._tag) {
-      case "downloading":
-      case "verifying":
-      case "permission":
-      case "installing":
-      case "cancelled":
-        return true;
-      default:
-        return false;
-    }
-  };
-
   const check = async (auto = false) => {
-    if (route === "play" || busy) return;
+    if (route === "play" || busy || updateInHand(state.get())) return;
     const now = Date.now();
-    if (auto && (now - checkedAt < CHECK_EVERY_MS || inHand(state.get()))) return;
+    if (auto && now - checkedAt < CHECK_EVERY_MS) return;
     const running = installed.versionName;
     if (running === null) return;
     busy = true;

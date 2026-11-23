@@ -18,7 +18,7 @@ export function AboutSection(props: { readonly onLayout?: (y: number) => void })
         <Text className="text-sm font-medium text-foreground">{t("about.server")}</Text>
         <ServerUpdatePanel place="settings" />
         <Text className="pt-2 text-sm font-medium text-foreground">{t("about.thisApp")}</Text>
-        <PhoneUpdatePanel controls />
+        <PhoneUpdatePanel place="settings" />
       </Section>
     </View>
   );

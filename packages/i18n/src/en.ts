@@ -1339,6 +1339,9 @@ export const en = {
     "The install was cancelled. {version} is downloaded and checked, ready to install.",
   "phoneUpdate.waitingForStable":
     "This app runs a nightly build, so it waits for a stable release newer than it.",
+  "phoneUpdate.behind.noRelease": "No newer release of this app on its channel yet.",
+  "phoneUpdate.behind.nightlyHint":
+    "If the server runs a nightly build, choose Nightly for this app below.",
   "phoneUpdate.permission.title": "Let J3 Bots install its update",
   "phoneUpdate.permission.body":
     "Android asks once. On the next screen, Install unknown apps, turn on “Allow from this source”, then come back: the install goes on. J3 Bots installs only its own updates, once they check out against the project’s signature.",

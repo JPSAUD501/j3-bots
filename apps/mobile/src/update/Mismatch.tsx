@@ -39,7 +39,7 @@ export function Mismatch(props: {
         {side === "server" ? (
           <ServerUpdatePanel place="behind" />
         ) : (
-          <PhoneUpdatePanel controls={false} />
+          <PhoneUpdatePanel place="behind" />
         )}
       </View>
       <View className="flex-row flex-wrap items-center justify-center gap-2">

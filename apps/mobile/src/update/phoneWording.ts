@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { UpdateTone } from "@j3-bots/client-runtime/wording";
+import type { UpdateChannel } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { AppUpdateFailure, AppUpdateState } from "./appUpdate.ts";
 
@@ -108,4 +109,24 @@ export function phoneUpdateLine(state: AppUpdateState, i18n: I18n): PhoneUpdateL
       });
     }
   }
+}
+
+/**
+ * The app's update on the screen that says the app is behind its server. It
+ * never says the app is up to date: when its channel has nothing newer, it
+ * says so, and on stable it points to nightly, which the server may run.
+ */
+export function phoneBehindLine(
+  state: AppUpdateState,
+  channel: UpdateChannel,
+  i18n: I18n,
+): PhoneUpdateLine {
+  if (state._tag !== "current") return phoneUpdateLine(state, i18n);
+  const { t } = i18n;
+  const hint = state.waitingForStable
+    ? t("phoneUpdate.waitingForStable")
+    : channel === "stable"
+      ? t("phoneUpdate.behind.nightlyHint")
+      : null;
+  return line(t("phoneUpdate.behind.noRelease"), "quiet", { hint });
 }

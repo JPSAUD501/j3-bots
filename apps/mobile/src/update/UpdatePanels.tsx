@@ -24,8 +24,8 @@ import { useConfirm } from "../confirm.tsx";
 import { useI18n } from "../i18n.ts";
 import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
-import { type AppUpdateState, appUpdate } from "./appUpdate.ts";
-import { type PhoneUpdateAction, phoneUpdateLine } from "./phoneWording.ts";
+import { type AppUpdateState, appUpdate, updateInHand } from "./appUpdate.ts";
+import { type PhoneUpdateAction, phoneBehindLine, phoneUpdateLine } from "./phoneWording.ts";
 
 // How updates read on the phone: the server's, which the phone can start, and
 // the app's own. Settings shows both with their channels; the screen for a
@@ -330,15 +330,20 @@ const ACTION_LABEL = {
 } as const;
 
 /**
- * The app's own update: the version it runs, where its update stands, and
- * the one thing to do about it. With `controls`, also the phone's channel
- * and a check now.
+ * The app's own update: the version it runs, where its update stands, the
+ * one thing to do about it, the phone's channel and a check now. On the
+ * screen that says the app is behind its server, it checks the feed as it
+ * opens, since the automatic check may be hours old, and never says the app
+ * is up to date.
  */
-export function PhoneUpdatePanel(props: { readonly controls: boolean }) {
+export function PhoneUpdatePanel(props: { readonly place: "settings" | "behind" }) {
   const i18n = useI18n();
   const { t } = i18n;
   const state = useAppUpdateState();
   const channel = useReadable(appUpdate?.channel ?? STABLE);
+  useEffect(() => {
+    if (props.place === "behind") void appUpdate?.check();
+  }, [props.place]);
   if (appUpdate === null || state === null) {
     const version = Constants.expoConfig?.version;
     return (
@@ -351,9 +356,9 @@ export function PhoneUpdatePanel(props: { readonly controls: boolean }) {
     );
   }
   const update = appUpdate;
-  const shown = phoneUpdateLine(state, i18n);
+  const shown =
+    props.place === "behind" ? phoneBehindLine(state, channel, i18n) : phoneUpdateLine(state, i18n);
   const version = update.installed.versionName;
-  const working = shown.tone === "working";
   return (
     <View className="gap-3">
       {version !== null && (
@@ -381,11 +386,15 @@ export function PhoneUpdatePanel(props: { readonly controls: boolean }) {
           )}
         </View>
       )}
-      {props.controls && state._tag !== "play" && (
+      {state._tag !== "play" && (
         <>
           <ChannelChoice value={channel} onChange={update.setChannel} />
           <View className="items-start">
-            <Button label={t("update.check")} held={working} onPress={() => void update.check()} />
+            <Button
+              label={t("update.check")}
+              held={state._tag === "checking" || updateInHand(state)}
+              onPress={() => void update.check()}
+            />
           </View>
         </>
       )}
