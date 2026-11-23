@@ -158,6 +158,13 @@ export function galleryVariants(now: DateTime.Utc) {
     visual: sampleVisuals.escape,
   });
 
+  const embeddingVisual = message(
+    "visual-embedding",
+    scout,
+    "This page held a frame of its own, so it is not shown.",
+    { visual: sampleVisuals.embedding },
+  );
+
   const option = (
     oid: string,
     label: string,
@@ -668,6 +675,7 @@ export function galleryVariants(now: DateTime.Utc) {
     bubbles,
     visualBubbles,
     escapingVisual,
+    embeddingVisual,
     questions,
     approvals,
     approvalBecomingExact,

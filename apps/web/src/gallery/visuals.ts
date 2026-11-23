@@ -171,9 +171,15 @@ const escapePage = `<!doctype html>
   };
 </script>`;
 
+/** A page that embeds another, which a visual may not hold: never shown. */
+const embeddingPage = `<!doctype html>
+<p>A page with a frame of its own:</p>
+<iframe srcdoc="<p>A realm the guard would not reach</p>"></iframe>`;
+
 export const sampleVisuals = {
   chart: { title: "Household spending by month", html: chartPage, height: 250 },
   table: { title: "Three e-bikes for a hilly commute", html: tablePage, height: 210 },
   diagram: { title: "Staging migration plan", html: diagramPage, height: 180 },
   escape: { title: "A page that tries to get out", html: escapePage, height: 420 },
+  embedding: { title: "A page that embeds another", html: embeddingPage, height: 120 },
 } satisfies Record<string, Visual>;

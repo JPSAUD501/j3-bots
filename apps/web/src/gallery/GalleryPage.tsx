@@ -913,7 +913,7 @@ const workSteps = (entryId: string) => team.workSteps[entryId] ?? null;
 const notSubmitting = () => false;
 
 function BubblesSection() {
-  const { bubbles, visualBubbles, escapingVisual } = variants;
+  const { bubbles, visualBubbles, escapingVisual, embeddingVisual } = variants;
   const { t } = useI18n();
   return (
     <Section title="Bubbles">
@@ -1012,10 +1012,20 @@ function BubblesSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="A visual that tries to get out of its frame: the client's storage and API, the window around it, a popup, the network and spoofed messages; Leave takes its frame elsewhere, and Hang never ends">
+      <Labeled label="A visual that tries to get out of its frame: the client's storage and API, the window around it, a popup, the network, a peer connection, a frame of its own and spoofed messages; Leave takes its frame elsewhere, and Hang never ends">
         <div className="max-w-(--layout-text-column)">
           <MessageBubble
             message={escapingVisual}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="A visual that embeds another page, which a client never shows">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={embeddingVisual}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}
