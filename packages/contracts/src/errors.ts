@@ -85,6 +85,13 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      */
     "vault-newer",
     /**
+     * A value in the vault does not open under its key, or does not read as
+     * what it should be, or the vault's key settings are out of range: its
+     * file was changed by hand or damaged. The server's log names the record
+     * and field, never the value. Restoring the vault from a backup fixes it.
+     */
+    "vault-damaged",
+    /**
      * The connector's address is in the operator's own network. Nothing was
      * added; the operator confirms it, and the client sends it again saying so.
      */

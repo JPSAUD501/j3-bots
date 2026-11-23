@@ -796,8 +796,11 @@ export const ProviderRpcs = RpcGroup.make(
  * in an error. Every request but `vault.status`, `vault.setup`, `vault.unlock`
  * and `vault.lock` fails with `Conflict("vault-locked")` while the vault is
  * locked, `Conflict("vault-not-set-up")` before it has a password, and
- * `Conflict("vault-newer")` while its state is `newer`. New in 0.4.0: a
- * client calls them only on a server that answers `vault.status`.
+ * `Conflict("vault-newer")` while its state is `newer`. A value the vault
+ * cannot open or read back fails with `Conflict("vault-damaged")`, and so do
+ * `vault.unlock` and `vault.changePassword` when its key settings are out of
+ * range. New in 0.4.0: a client calls them only on a server that answers
+ * `vault.status`.
  */
 export const VaultRpcs = RpcGroup.make(
   /** The vault's state now, then each change. */
@@ -811,8 +814,9 @@ export const VaultRpcs = RpcGroup.make(
    * Unlocks the vault for every client until one locks it or the server
    * stops. A wrong password fails with `Invalid("master-password")`; after a
    * few in a row, every attempt fails with `RateLimited` until its `retryAt`,
-   * which grows with each further wrong one. Unlocking an unlocked vault
-   * checks the password all the same.
+   * which grows with each further wrong one. The count and the wait outlast
+   * a restart, and the count starts over after a day with no wrong one.
+   * Unlocking an unlocked vault checks the password all the same.
    */
   Rpc.make("vault.unlock", { payload: { password: MasterPassword }, error: VaultError }),
   /** Forgets the vault's key until a client unlocks it again. */
