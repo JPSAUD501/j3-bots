@@ -256,7 +256,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
       };
 
       const trayMenu = () => {
-        const model = trayModel(tray, i18n);
+        const model = trayModel(tray, null, i18n);
         const { pairing } = tray;
         const entries: MenuItemConstructorOptions[] =
           pairing === null
