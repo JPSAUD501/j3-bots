@@ -987,7 +987,7 @@ const sentences = {
   "update.check": "Procurar atualizações",
   "update.retry": "Tentar de novo",
   "update.restart": "Reiniciar para atualizar",
-  "settings.signOut": "Sair neste dispositivo",
+  "settings.signOut": "Sair deste dispositivo",
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
   "settings.signOut.pending": "Saindo…",
   "settings.signOut.failed": "A saída não terminou. Tente de novo.",
@@ -995,7 +995,7 @@ const sentences = {
     "Outra aba pareou este navegador de novo, então ele continua conectado. O acesso antigo terminou.",
   "settings.signOut.pairedAnewStillListed":
     "Outra aba pareou este navegador de novo, então ele continua conectado. O acesso antigo ainda pode aparecer em Dispositivos.",
-  "settings.signOut.title": "Sair neste dispositivo?",
+  "settings.signOut.title": "Sair deste dispositivo?",
   "settings.signOut.body":
     "Este navegador perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",
   "settings.signOut.body.mobile":

@@ -41,9 +41,9 @@ const pop = reanimatedSpring(springs.pop);
  * pops in on `pop` from that corner and fades away. A button at the start of
  * its row, as the composer's, lines it up with its start edge instead; from a
  * button in the lower half of the window it opens upward. Measured against the
- * window, it stays by its button however the screen is split, as beside a conversation on a tablet or an
- * unfolded phone. Open while `anchor` is set. A press on a row closes it, then
- * acts; a press outside or Back closes it.
+ * window, it stays by its button however the screen is split, as beside a
+ * conversation on a tablet or an unfolded phone. Open while `anchor` is set. A
+ * press on a row closes it, then acts; a press outside or Back closes it.
  */
 export function Menu(props: {
   readonly anchor: MenuAnchor | null;

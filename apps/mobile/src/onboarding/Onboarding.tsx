@@ -68,6 +68,24 @@ const slide = reanimatedSpring(springs.slide);
 /** How long the arrival stays at least, so the bot is seen arriving before its conversation opens. */
 const ARRIVAL_MS = 1600;
 
+/** The bot above the steps, in px, and the room under it before the step below. */
+const HERO_SIZE = 96;
+const HERO_BELOW = 24;
+/** As it arrives the bot moves down and grows by half. */
+const ARRIVED_DROP = 56;
+const ARRIVED_GROWTH = 0.5;
+/** How far its rings spread, as a multiple of the grown bot, fading as they go. */
+const RING_REACH = 1.8;
+/**
+ * Where the arrival's title starts, below the farthest ring, so no ring
+ * crosses it: the ring's radius, less how far the grown bot's centre sits
+ * above the step's top, and a little space.
+ */
+const ARRIVAL_TITLE_TOP =
+  (HERO_SIZE * (1 + ARRIVED_GROWTH) * RING_REACH) / 2 -
+  (HERO_SIZE / 2 + HERO_BELOW - ARRIVED_DROP) +
+  12;
+
 const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 type Direction = "forward" | "back";
@@ -328,21 +346,24 @@ function Hero({
     grow.set(reduced ? (arrived ? 1 : 0) : withSpring(arrived ? 1 : 0, pop));
   }, [arrived, reduced, grow]);
   const style = useAnimatedStyle(() => ({
-    transform: [{ translateY: hop.get() + grow.get() * 56 }, { scale: 1 + grow.get() * 0.5 }],
+    transform: [
+      { translateY: hop.get() + grow.get() * ARRIVED_DROP },
+      { scale: 1 + grow.get() * ARRIVED_GROWTH },
+    ],
   }));
   return (
     <View
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
-      className="items-center pt-4 pb-6"
-      style={{ zIndex: 1 }}
+      className="items-center pt-4"
+      style={{ paddingBottom: HERO_BELOW, zIndex: 1 }}
     >
       <Animated.View entering={popIn()}>
         <Animated.View style={style}>
           {arrived &&
             !reduced &&
             [0, 1, 2].map((ring) => <Ring key={ring} index={ring} look={look} />)}
-          <BotAvatar ref={bot} avatar={look} seed="first-bot" state="idle" size={96} />
+          <BotAvatar ref={bot} avatar={look} seed="first-bot" state="idle" size={HERO_SIZE} />
         </Animated.View>
       </Animated.View>
     </View>
@@ -362,7 +383,7 @@ function Ring({ index, look }: { readonly index: number; readonly look: AvatarCh
   }, [index, progress]);
   const style = useAnimatedStyle(() => ({
     opacity: 0.55 * (1 - progress.get()),
-    transform: [{ scale: 0.8 + 1.4 * progress.get() }],
+    transform: [{ scale: 0.8 + (RING_REACH - 0.8) * progress.get() }],
   }));
   return (
     <Animated.View
@@ -620,7 +641,7 @@ function Arrival({
   if (!created) return <StepFrame actions={null}>{null}</StepFrame>;
   return (
     <StepFrame actions={null}>
-      <View className="mt-24 items-center gap-2">
+      <View className="items-center gap-2" style={{ marginTop: ARRIVAL_TITLE_TOP }}>
         <Animated.View entering={popIn(260)}>
           <StepTitle size="display">{t("onboarding.arrival.title", { name })}</StepTitle>
         </Animated.View>

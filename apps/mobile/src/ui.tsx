@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { motion, reanimatedSpring, springs } from "@j3-bots/design-tokens";
-import { type ComponentRef, type ReactNode, type Ref, useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 import { I18nManager, Pressable, View } from "react-native";
 import Animated, {
   interpolateColor,
@@ -63,12 +63,7 @@ const buttonLook = {
  * go. A `held` button keeps its place and its focus but takes no press, as
  * while an answer it sent is on its way.
  */
-export function Button({
-  ref,
-  ...props
-}: {
-  /** For giving it a screen reader's focus. */
-  readonly ref?: Ref<ComponentRef<typeof View>>;
+export function Button(props: {
   readonly label: string;
   /** What a screen reader says, when the label alone does not name what it acts on. */
   readonly accessibilityLabel?: string;
@@ -86,7 +81,6 @@ export function Button({
   const held = props.held === true;
   return (
     <PressScale
-      ref={ref}
       frame={props.grow === true ? { flexGrow: 1 } : undefined}
       accessibilityRole="button"
       accessibilityLabel={props.accessibilityLabel ?? props.label}

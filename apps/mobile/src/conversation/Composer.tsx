@@ -22,6 +22,7 @@ import { layout, reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { ArrowUp, File, Images, Plus, Users, X } from "lucide-react-native";
 import { type ComponentRef, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AccessibilityInfo, ScrollView, View } from "react-native";
+import { KeyboardController } from "react-native-keyboard-controller";
 import { Text, TextInput } from "../text.tsx";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -197,9 +198,18 @@ export function Composer({
     setNotTaken(stillFrozen);
     if (!stillFrozen) client.attachFiles(target, picked);
   };
+  // The keyboard goes first: the + moves down with the composer as it hides, so
+  // a menu placed while it was up would be left floating where the + had been.
+  // The composer follows the keyboard on the UI thread and takes its last
+  // place a frame after the hide reaches here, at once when nothing animates,
+  // so the + is measured on that frame.
   const openPicker = () =>
-    attachButton.current?.measureInWindow((x, y, width, height) =>
-      setAttachAt({ x, y, width, height }),
+    void KeyboardController.dismiss().then(() =>
+      requestAnimationFrame(() =>
+        attachButton.current?.measureInWindow((x, y, width, height) =>
+          setAttachAt({ x, y, width, height }),
+        ),
+      ),
     );
 
   // Each read in vain is said again, though the words are the same.
