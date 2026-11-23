@@ -126,6 +126,9 @@ describe("forgetting the server", () => {
 });
 
 describe("the settings file", () => {
+  const REMOTE = { mode: "remote", server: SERVER, localDevice: null } as const;
+  const NONE = { mode: null, server: null, localDevice: null } as const;
+
   it("reads the server, the window, the shortcut and the appearance each on its own", () => {
     const window = { x: 10, y: 20, width: 800, height: 600, maximized: false };
     const shortcut = "Control+Alt+K";
@@ -134,14 +137,14 @@ describe("the settings file", () => {
         JSON.stringify({ server: SERVER, window: { x: "left" }, shortcut, appearance: "dark" }),
       ),
       {
-        settings: { server: SERVER, window: null, shortcut, appearance: "dark" },
+        settings: { ...REMOTE, window: null, shortcut, appearance: "dark" },
         dropped: ["window"],
       },
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "somewhere", window })),
       {
-        settings: { server: null, window, shortcut: null, appearance: "system" },
+        settings: { ...NONE, window, shortcut: null, appearance: "system" },
         dropped: ["server"],
       },
     );
@@ -149,19 +152,19 @@ describe("the settings file", () => {
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: SERVER, window, shortcut: "Shift+K" })),
       {
-        settings: { server: SERVER, window, shortcut: null, appearance: "system" },
+        settings: { ...REMOTE, window, shortcut: null, appearance: "system" },
         dropped: ["shortcut"],
       },
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: SERVER, appearance: "sepia" })),
       {
-        settings: { server: SERVER, window: null, shortcut: null, appearance: "system" },
+        settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
         dropped: ["appearance"],
       },
     );
     assert.deepStrictEqual(Settings.decodeSettings("{ not json"), {
-      settings: { server: null, window: null, shortcut: null, appearance: "system" },
+      settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
       dropped: [],
     });
   });
@@ -170,14 +173,16 @@ describe("the settings file", () => {
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "http://192.0.2.10:3737", window: null })),
       {
-        settings: { server: null, window: null, shortcut: null, appearance: "system" },
+        settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
         dropped: ["server"],
       },
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "https://192.0.2.10:3737" })).settings,
       {
+        mode: "remote",
         server: origin("https://192.0.2.10:3737"),
+        localDevice: null,
         window: null,
         shortcut: null,
         appearance: "system",

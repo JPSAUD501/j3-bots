@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Accelerator, Appearance, ServerOrigin } from "@j3-bots/desktop-bridge";
+import { DeviceId } from "@j3-bots/contracts";
+import { Accelerator, Appearance, DesktopMode, ServerOrigin } from "@j3-bots/desktop-bridge";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,26 +24,49 @@ export const WindowState = Schema.Struct({
 export type WindowState = typeof WindowState.Type;
 
 /**
+ * The device this computer was last signed in as on the server it runs: its
+ * id, which the next sign-in replaces (revokes), never its token, which only
+ * the page keeps; and whether it is `current`, the device of the operator's
+ * present choice of this computer. Only a device that is not current is
+ * replaced without the operator asking (`LocalDeviceRequest`).
+ */
+export const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
+export type LocalDevice = typeof LocalDevice.Type;
+
+/**
  * What the app keeps between launches, besides what the page keeps in its own
- * storage: the server the operator named, the window's place, the global
- * shortcut the operator chose (`null` for the default) and the appearance the
- * page last reported, which the window takes before the page paints. None is
- * a secret.
+ * storage: where the bots live (`mode`, `null` until the operator chose), the
+ * server the page runs on (the one the operator named, or the one on this
+ * computer), the device this computer was signed in as on its own server,
+ * the window's place, the global shortcut the operator chose (`null` for the
+ * default) and the appearance the page last reported, which the window takes
+ * before the page paints. None is a secret.
  */
 export const Settings = Schema.Struct({
+  mode: Schema.NullOr(DesktopMode),
   server: Schema.NullOr(ServerOrigin),
+  localDevice: Schema.NullOr(LocalDevice),
   window: Schema.NullOr(WindowState),
   shortcut: Schema.NullOr(Accelerator),
   appearance: Appearance,
 });
 export type Settings = typeof Settings.Type;
 
-const EMPTY: Settings = { server: null, window: null, shortcut: null, appearance: "system" };
+const EMPTY: Settings = {
+  mode: null,
+  server: null,
+  localDevice: null,
+  window: null,
+  shortcut: null,
+  appearance: "system",
+};
 
 const decodeStored = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
+const decodeMode = Schema.decodeUnknownOption(DesktopMode);
 const decodeServer = Schema.decodeUnknownOption(ServerOrigin);
+const decodeLocalDevice = Schema.decodeUnknownOption(LocalDevice);
 const decodeWindow = Schema.decodeUnknownOption(WindowState);
 const decodeShortcut = Schema.decodeUnknownOption(Accelerator);
 const decodeAppearance = Schema.decodeUnknownOption(Appearance);
@@ -53,25 +77,32 @@ const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Settings));
  * be read is dropped and the others kept. A server is kept only if the server
  * address screen would accept it now, so plain HTTP to a public host never
  * comes back from a file. `dropped` names the entries that were there and
- * were not kept.
+ * were not kept. A file from before the app could run the server keeps no
+ * mode: one that names a server is `remote`.
  */
 export const decodeSettings = (
   text: string,
 ): { readonly settings: Settings; readonly dropped: ReadonlyArray<keyof Settings> } => {
   const stored = decodeStored(text);
   if (Option.isNone(stored)) return { settings: EMPTY, dropped: [] };
-  const { server, window, shortcut, appearance } = stored.value;
+  const { mode, server, localDevice, window, shortcut, appearance } = stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
     return Result.isSuccess(checked) && checked.success === origin
       ? Option.some(origin)
       : Option.none();
   });
+  const keptMode = decodeMode(mode);
+  const keptLocalDevice = decodeLocalDevice(localDevice);
   const keptWindow = decodeWindow(window);
   const keptShortcut = decodeShortcut(shortcut);
   const keptAppearance = decodeAppearance(appearance);
   const dropped: Array<keyof Settings> = [];
+  if (mode !== undefined && mode !== null && Option.isNone(keptMode)) dropped.push("mode");
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
+  if (localDevice !== undefined && localDevice !== null && Option.isNone(keptLocalDevice)) {
+    dropped.push("localDevice");
+  }
   if (window !== undefined && window !== null && Option.isNone(keptWindow)) dropped.push("window");
   if (shortcut !== undefined && shortcut !== null && Option.isNone(keptShortcut)) {
     dropped.push("shortcut");
@@ -79,7 +110,11 @@ export const decodeSettings = (
   if (appearance !== undefined && Option.isNone(keptAppearance)) dropped.push("appearance");
   return {
     settings: {
+      mode: Option.getOrElse(keptMode, () =>
+        mode === undefined && Option.isSome(keptServer) ? "remote" : null,
+      ),
       server: Option.getOrNull(keptServer),
+      localDevice: Option.getOrNull(keptLocalDevice),
       window: Option.getOrNull(keptWindow),
       shortcut: Option.getOrNull(keptShortcut),
       appearance: Option.getOrElse(keptAppearance, () => EMPTY.appearance),

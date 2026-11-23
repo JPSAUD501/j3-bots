@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   DeviceId,
+  DeviceToken,
   EntryId,
   EntryTarget,
   Label,
@@ -40,9 +41,68 @@ export type TokenProtection = typeof TokenProtection.Type;
 export const DesktopMode = Schema.Literals(["local", "remote"]);
 export type DesktopMode = typeof DesktopMode.Type;
 
+/**
+ * Where the server the app runs on this computer stands. `stopped`: it is not
+ * running and the app is not starting it. `starting`: it was started and has
+ * not answered yet. `ready`: it answers, and devices can be signed in on it.
+ * `restarting`: it stopped on its own, and the app starts it again in
+ * `retryInSeconds` (attempt `attempt`). `failed`: it refused to start, for a
+ * reason trying again will not change; `reason` and `fix` say what, in the
+ * server's words, and the app waits for the operator to try again.
+ */
+export const LocalServerPhase = Schema.Literals([
+  "stopped",
+  "starting",
+  "ready",
+  "restarting",
+  "failed",
+]);
+export type LocalServerPhase = typeof LocalServerPhase.Type;
+
+const Message = Schema.String.check(Schema.isMaxLength(4096));
+
+export const LocalServerState = Schema.Struct({
+  state: LocalServerPhase,
+  /** Which start this is since the server last ran well, from 1. */
+  attempt: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
+  /** While `restarting`: in how many seconds the next start is. */
+  retryInSeconds: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Why it is stopped or failed, in the server's or the app's words (English). */
+  reason: Schema.optionalKey(Message),
+  /** What repairs it, when that is known apart from `reason`. */
+  fix: Schema.optionalKey(Message),
+  /** The last lines the server wrote to its error output, for "Ver detalhes". */
+  logTail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8192))),
+});
+export type LocalServerState = typeof LocalServerState.Type;
+
+/**
+ * Why the server on this computer does not take phones: this network gives
+ * the computer a public address (`public-address`), which the server will not
+ * listen on without HTTPS, or this app does not offer it yet (`unavailable`).
+ */
+export const PhoneAccessRefusal = Schema.Literals(["public-address", "unavailable"]);
+export type PhoneAccessRefusal = typeof PhoneAccessRefusal.Type;
+
+/**
+ * Whether phones on this network can reach the server on this computer: the
+ * operator's choice (`on`), the origins a phone can open while it holds
+ * (best first, none while off), and why it does not hold, if it does not.
+ */
+export const PhoneAccess = Schema.Struct({
+  on: Schema.Boolean,
+  origins: Schema.Array(ServerOrigin).check(Schema.isMaxLength(16)),
+  refusedReason: Schema.optionalKey(PhoneAccessRefusal),
+});
+export type PhoneAccess = typeof PhoneAccess.Type;
+
 /** What the desktop app holds that the page needs before it starts. */
 export const DesktopState = Schema.Struct({
-  /** The server the operator named, or `null` until they have. */
+  /**
+   * The server the page runs on: the one the operator named, or, in `local`
+   * mode, the server on this computer (`http://127.0.0.1:<port>`, a port the
+   * app chose once). `null` until there is one.
+   */
   server: Schema.NullOr(ServerOrigin),
   /**
    * The code of the pairing link the operator followed to `server`, for the
@@ -52,8 +112,75 @@ export const DesktopState = Schema.Struct({
   pairingCode: Schema.NullOr(PairingCode),
   /** Where the bots live, or `null` until the operator has chosen. */
   mode: Schema.NullOr(DesktopMode),
+  /**
+   * Whether this computer can run the server: false on systems the app does
+   * not run it on, where only a server elsewhere can be named.
+   */
+  localAvailable: Schema.Boolean,
+  /** The server on this computer, in `local` mode; `null` in any other. */
+  localServer: Schema.NullOr(LocalServerState),
+  phoneAccess: PhoneAccess,
+  /** Whether the app starts, in the tray, when the operator signs in to the system. */
+  startWithSystem: Schema.Boolean,
 });
 export type DesktopState = typeof DesktopState.Type;
+
+/**
+ * How choosing where the bots live ended: `changed`, and the page loads again
+ * in the new mode, or `failed`, and nothing changed. `unavailable`: this
+ * computer cannot run the server (`DesktopState.localAvailable`).
+ */
+export const ModeChange = Schema.Literals(["changed", "failed", "unavailable"]);
+export type ModeChange = typeof ModeChange.Type;
+
+/**
+ * What the page asks for to sign this computer in to the server it runs.
+ * `again`: the operator asked to sign in again, after this computer was
+ * signed out. Without it, the app signs a device in only the first time after
+ * the operator chose this computer: a device that was signed out (revoked
+ * from another device, say) stays signed out until the operator asks.
+ */
+export const LocalDeviceRequest = Schema.Struct({ again: Schema.Boolean });
+export type LocalDeviceRequest = typeof LocalDeviceRequest.Type;
+
+export const LocalDeviceResult = Schema.Union([
+  /**
+   * A new device on the server at `server`, signed in with `token`, which
+   * the page seals and keeps as after pairing. It replaces the device this
+   * computer was signed in as before, which the server revoked.
+   */
+  Schema.TaggedStruct("minted", { server: ServerOrigin, deviceId: DeviceId, token: DeviceToken }),
+  /** This computer was signed in before: only the operator signs it in again (`again`). */
+  Schema.TaggedStruct("signed-out", {}),
+  /** The server is not ready (`DesktopState.localServer` says why), or the app is not in `local` mode. */
+  Schema.TaggedStruct("not-running", {}),
+  /** The server did not sign the device in. */
+  Schema.TaggedStruct("failed", {}),
+]);
+export type LocalDeviceResult = typeof LocalDeviceResult.Type;
+
+export const PhoneAccessRequest = Schema.Struct({ on: Schema.Boolean });
+export type PhoneAccessRequest = typeof PhoneAccessRequest.Type;
+
+/**
+ * A pairing code for a phone to scan, from the server on this computer.
+ * `granted`: the code, when it expires, and the origins a phone reaches the
+ * server at, best first, as `pairing.start` answers them. `phone-access-off`:
+ * phones cannot reach the server, so no link can work. `locked`: too many
+ * wrong codes were tried, until `until`. `unavailable`: the server is not
+ * ready, or this app does not offer it yet.
+ */
+export const LocalPairingLink = Schema.Union([
+  Schema.TaggedStruct("granted", {
+    code: PairingCode,
+    expiresAt: Schema.DateTimeUtc,
+    origins: Schema.Array(ServerOrigin).check(Schema.isMaxLength(16)),
+  }),
+  Schema.TaggedStruct("phone-access-off", {}),
+  Schema.TaggedStruct("locked", { until: Schema.DateTimeUtc }),
+  Schema.TaggedStruct("unavailable", {}),
+]);
+export type LocalPairingLink = typeof LocalPairingLink.Type;
 
 /**
  * The address the operator typed on the server address screen, as typed, and
@@ -377,5 +504,12 @@ export const HostedBridge = Schema.Struct({
   onCommand: Callable,
   shortcutStatus: Callable,
   setShortcut: Callable,
+  useThisComputer: Callable,
+  connectToServerInstead: Callable,
+  localDevice: Callable,
+  onLocalServer: Callable,
+  retryLocalServer: Callable,
+  setPhoneAccess: Callable,
+  localPairingLink: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

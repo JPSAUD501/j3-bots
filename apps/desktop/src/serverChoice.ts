@@ -58,7 +58,7 @@ export const make = Effect.fn("ServerChoice.make")(function* (
         const refusal = yield* check(server);
         if (refusal !== null) return refused(refusal);
         return yield* page.clearStorage.pipe(
-          Effect.andThen(settings.update((current) => ({ ...current, server }))),
+          Effect.andThen(settings.update((current) => ({ ...current, mode: "remote", server }))),
           Effect.as<ConnectResult>({ _tag: "connected", server }),
           Effect.catch((error) =>
             Effect.logWarning("Keeping the server failed", error).pipe(

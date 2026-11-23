@@ -25,6 +25,15 @@ const decodes = <S extends Schema.Constraint & { readonly DecodingServices: neve
   input: unknown,
 ) => Exit.isSuccess(Schema.decodeUnknownExit(schema)(input));
 
+/** The state of an app that does not run the server on this computer. */
+const LOCAL_OFF = {
+  mode: "remote",
+  localAvailable: false,
+  localServer: null,
+  phoneAccess: { on: false, origins: [] },
+  startWithSystem: false,
+} as const;
+
 describe("the desktop bridge", () => {
   it("keeps only a bare http: or https: origin as the server", () => {
     for (const server of [
@@ -32,7 +41,7 @@ describe("the desktop bridge", () => {
       "https://j3.example.test",
       "http://[::1]:3737",
     ]) {
-      assert.isTrue(decodes(DesktopState, { server, pairingCode: null, mode: "remote" }), server);
+      assert.isTrue(decodes(DesktopState, { ...LOCAL_OFF, server, pairingCode: null }), server);
     }
     for (const server of [
       "http://192.0.2.10:3737/",
@@ -45,9 +54,9 @@ describe("the desktop bridge", () => {
       "192.0.2.10:3737",
       "",
     ]) {
-      assert.isFalse(decodes(DesktopState, { server, pairingCode: null, mode: "remote" }), server);
+      assert.isFalse(decodes(DesktopState, { ...LOCAL_OFF, server, pairingCode: null }), server);
     }
-    assert.isTrue(decodes(DesktopState, { server: null, pairingCode: null, mode: null }));
+    assert.isTrue(decodes(DesktopState, { ...LOCAL_OFF, server: null, pairingCode: null }));
     assert.isFalse(decodes(DesktopState, {}));
   });
 
@@ -133,8 +142,15 @@ describe("the desktop bridge", () => {
       onCommand: call,
       shortcutStatus: call,
       setShortcut: call,
+      useThisComputer: call,
+      connectToServerInstead: call,
+      localDevice: call,
+      onLocalServer: call,
+      retryLocalServer: call,
+      setPhoneAccess: call,
+      localPairingLink: call,
     };
-    const state = { server: null, pairingCode: null, mode: null };
+    const state = { ...LOCAL_OFF, server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));
     assert.isFalse(decodes(HostedBridge, undefined));
     assert.isFalse(decodes(HostedBridge, { state: { ...state, server: "nowhere" }, ...calls }));
