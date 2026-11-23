@@ -18,6 +18,7 @@ import {
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { RoutineTrigger } from "./routine.ts";
+import { Visual } from "./visual.ts";
 import { StepTool } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
@@ -109,6 +110,13 @@ export const MessageEntry = Schema.TaggedStruct("message", {
   delivery: MessageDelivery,
   /** The operator's command that created it, so a client can replace its optimistic copy. */
   commandId: Schema.NullOr(CommandId),
+  /**
+   * A page a bot showed above its words: a chart, a table, a diagram or a
+   * mockup, which clients render in a sandboxed frame with no network
+   * (docs/architecture/clients.md, "Visuals"). Absent from every other
+   * message.
+   */
+  visual: Schema.optionalKey(Visual),
 });
 export type MessageEntry = typeof MessageEntry.Type;
 

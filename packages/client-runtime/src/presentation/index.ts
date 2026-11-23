@@ -193,3 +193,11 @@ export {
   type WindowState,
   windowState,
 } from "./usage.ts";
+export {
+  readVisualHeight,
+  type VisualAppearance,
+  VISUAL_CONTENT_SECURITY_POLICY,
+  VISUAL_FRAME_SANDBOX,
+  VISUAL_HEIGHT_MESSAGE,
+  visualDocument,
+} from "./visual.ts";

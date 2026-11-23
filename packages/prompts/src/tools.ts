@@ -1,5 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AvatarChoice, OperatorName, Profile, RoutineInstruction } from "@j3-bots/contracts";
+import {
+  AvatarChoice,
+  MAX_VISUAL_BYTES,
+  MAX_VISUAL_HEIGHT,
+  MAX_VISUAL_TITLE_LENGTH,
+  MIN_VISUAL_HEIGHT,
+  OperatorName,
+  Profile,
+  RoutineInstruction,
+} from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -68,6 +77,25 @@ const NoInput = Schema.Record(Schema.String, Schema.Never);
 
 const MemoryScope = Schema.Literals(["bot", "shared"]);
 
+const SayVisual = Schema.Struct({
+  path: described(
+    text(1, 1_024),
+    `An .html file in your workspace, usually under files/, at most ${MAX_VISUAL_BYTES / 1024} KB. Self-contained: inline <style> and <script>, images as data: URLs. It runs with no network, so remote scripts, fonts, images and fetches fail.`,
+  ),
+  title: described(
+    text(1, MAX_VISUAL_TITLE_LENGTH),
+    "What it shows, in a few words. Notifications and screen readers say only this.",
+  ),
+  height: Schema.optionalKey(
+    described(
+      Schema.Int.check(
+        Schema.isBetween({ minimum: MIN_VISUAL_HEIGHT, maximum: MAX_VISUAL_HEIGHT }),
+      ),
+      `Its height in CSS pixels, ${MIN_VISUAL_HEIGHT} to ${MAX_VISUAL_HEIGHT}, such as html_preview's contentHeight. The frame then fits the page.`,
+    ),
+  ),
+});
+
 const SayInput = toolInput({
   text: described(
     text(1, MAX_SPOKEN_TEXT),
@@ -77,6 +105,12 @@ const SayInput = toolInput({
     described(
       Schema.Array(text(1, 1_024)).check(Schema.isMaxLength(10)),
       "Files to attach: paths in your workspace, usually under files/.",
+    ),
+  ),
+  visual: Schema.optionalKey(
+    described(
+      SayVisual,
+      "A page shown above this message: a chart, a table, a diagram or a mockup. Your text then says what it means, without describing it.",
     ),
   ),
   to: Schema.optionalKey(
