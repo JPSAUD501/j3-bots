@@ -503,7 +503,7 @@ const LoopbackPort = Schema.Int.check(Schema.isBetween({ minimum: 1024, maximum:
 
 /**
  * How catching a sign-in started: `listening` on `port`, where the browser is
- * to come back to `http://127.0.0.1:<port>/oauth/callback`, for one sign-in,
+ * to come back to `http://127.0.0.1:<port>/oauth/callback/<issuer>`, for one sign-in,
  * until it does or ten minutes pass; or `failed`, when no listener could open.
  */
 export const SignInRelayStart = Schema.Union([

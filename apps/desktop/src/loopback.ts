@@ -6,8 +6,28 @@ import { SIGN_IN_RETURN_MAX } from "@j3-bots/desktop-bridge";
 // return itself is taken: anything else that reaches the port, such as the
 // browser asking for a favicon, is turned away and the listener waits on.
 
-/** The path the browser comes back to, as the server names it in the sign-in it starts. */
+/** Where every sign-in returns, under a path of its authorization server's own. */
 const CALLBACK_PATH = "/oauth/callback";
+
+/** An issuer's host, as the server writes it into a callback path: a name or an address, and a port. */
+const ISSUER_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?::\d{1,5})?$/;
+
+/**
+ * Whether `target` is a sign-in's return path, as the server writes one for
+ * each authorization server: `/oauth/callback/<issuer host>`, then the
+ * issuer's own path when it has one (`/oauth/callback/accounts.google.com`,
+ * `/oauth/callback/auth.example/tenant/`). The segment after the prefix can
+ * be nothing but a host, and the path is taken only as it is written: one a
+ * URL parser would read otherwise (`..`, `.`, a backslash, an encoded dot) is
+ * refused rather than relayed under another meaning. Which issuer's path it
+ * must be is the server's to check, against the redirect it gave.
+ */
+const isCallbackPath = (target: string, parsed: URL): boolean => {
+  const path = target.split("?", 1)[0] ?? "";
+  if (path !== parsed.pathname || !path.startsWith(`${CALLBACK_PATH}/`)) return false;
+  const host = path.slice(CALLBACK_PATH.length + 1).split("/", 1)[0] ?? "";
+  return ISSUER_HOST.test(host);
+};
 
 /** A request to the listener, as Node hands it over. */
 export interface LoopbackRequest {
@@ -38,7 +58,7 @@ export const arrival = (request: LoopbackRequest, port: number): Arrival => {
   const target = request.url ?? "";
   const url = `http://127.0.0.1:${port}${target}`;
   const parsed = target.startsWith("/") ? URL.parse(url) : null;
-  if (parsed === null || parsed.pathname !== CALLBACK_PATH) return { _tag: "refused", status: 404 };
+  if (parsed === null || !isCallbackPath(target, parsed)) return { _tag: "refused", status: 404 };
   if (url.length > SIGN_IN_RETURN_MAX) return { _tag: "refused", status: 400 };
   const state = parsed.searchParams.get("state");
   if (state === null || state === "") return { _tag: "refused", status: 400 };
