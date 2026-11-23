@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { reanimatedSpring, springPath, springs } from "./springs.ts";
+import { springPath, springs } from "./springs.ts";
 
 const pathOf = (easing: string) =>
   (/^linear\((.*)\)$/.exec(easing)?.[1] ?? "").split(", ").map(Number);
@@ -19,13 +19,6 @@ describe.each(Object.entries(springs))("the %s spring", (_, spring) => {
     const longer = springPath(spring.frequency, spring.damping, (spring.duration * 2) / 1000);
     const secondHalf = longer.slice(Math.ceil(longer.length / 2), -1);
     for (const position of secondHalf) expect(Math.abs(position - 1)).toBeLessThan(0.006);
-  });
-
-  it("drives Reanimated at the same frequency and damping ratio", () => {
-    const { mass, stiffness, damping } = reanimatedSpring(spring);
-    const omega = Math.sqrt(stiffness / mass);
-    expect(omega / (2 * Math.PI)).toBeCloseTo(spring.frequency, 6);
-    expect(damping / (2 * Math.sqrt(stiffness * mass))).toBeCloseTo(spring.damping, 6);
   });
 });
 

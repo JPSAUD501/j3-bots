@@ -51,6 +51,11 @@ export const colors = {
   blocked: themed("oklch(0.53 0.2 27)", "oklch(0.71 0.17 25)"),
   "blocked-surface": themed("oklch(0.975 0.015 20)", "oklch(0.2 0.05 25)"),
   success: themed("oklch(0.52 0.12 160)", "oklch(0.78 0.14 160)"),
+  /**
+   * The track of a switch that is on. Darker than `success` in dark, where the
+   * light thumb needs 3:1 against it.
+   */
+  "control-on": themed("oklch(0.52 0.12 160)", "oklch(0.6 0.13 160)"),
   /** The track of a switch that is off: a boundary of 3:1 against every canvas. */
   "control-off": themed("#82828a", "#6b6b73"),
   /**
@@ -76,6 +81,11 @@ export const shadows = {
   overlay: themed(
     "0 12px 32px -8px oklch(0 0 0 / 0.18), 0 2px 6px oklch(0 0 0 / 0.06)",
     "0 12px 32px -8px oklch(0 0 0 / 0.8), 0 0 0 1px oklch(1 0 0 / 0.07)",
+  ),
+  /** A switch's thumb, lifted off its track. */
+  thumb: themed(
+    "0 1px 3px oklch(0 0 0 / 0.2), 0 0 0 0.5px oklch(0 0 0 / 0.06)",
+    "0 1px 3px oklch(0 0 0 / 0.5)",
   ),
 } as const satisfies Record<string, Themed>;
 

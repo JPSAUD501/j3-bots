@@ -169,7 +169,7 @@ export function SwitchRow(props: {
   /** Shows the value it holds and takes no change, as while a save is under way. */
   readonly readOnly?: boolean;
 }) {
-  const on = useColor("accent-success");
+  const on = useColor("accent-control-on");
   const off = useColor("accent-control-off");
   const thumb = useColor("accent-control-thumb");
   return (

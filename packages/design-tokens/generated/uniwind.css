@@ -24,6 +24,7 @@
       --color-blocked: oklch(0.53 0.2 27);
       --color-blocked-surface: oklch(0.975 0.015 20);
       --color-success: oklch(0.52 0.12 160);
+      --color-control-on: oklch(0.52 0.12 160);
       --color-control-off: #82828a;
       --color-control-thumb: #ffffff;
       --color-avatar-ink: #ffffff;
@@ -62,6 +63,7 @@
       --color-blocked: oklch(0.71 0.17 25);
       --color-blocked-surface: oklch(0.2 0.05 25);
       --color-success: oklch(0.78 0.14 160);
+      --color-control-on: oklch(0.6 0.13 160);
       --color-control-off: #6b6b73;
       --color-control-thumb: #f5f5f6;
       --color-avatar-ink: #0b0b0c;
@@ -106,6 +108,7 @@
   --color-blocked: unset;
   --color-blocked-surface: unset;
   --color-success: unset;
+  --color-control-on: unset;
   --color-control-off: unset;
   --color-control-thumb: unset;
   --color-avatar-ink: unset;

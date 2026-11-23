@@ -322,7 +322,7 @@ export function Composer({
           />
         </div>
       )}
-      <div className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-xs has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-accent">
+      <div className="flex items-end gap-1 rounded-pill border border-input bg-surface p-1 shadow-raised has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-offset-2 has-[textarea:focus-visible]:outline-accent">
         {onAttachFiles && (
           <>
             <Button
@@ -661,7 +661,7 @@ export function MentionList({
       id={id}
       role="listbox"
       aria-label={t("mention.label")}
-      className="absolute start-0 bottom-0 z-10 flex max-h-60 w-full max-w-72 flex-col overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface p-1 shadow-lg"
+      className="absolute start-0 bottom-0 z-10 flex max-h-60 w-full max-w-72 flex-col overflow-y-auto overscroll-contain rounded-lg border border-border bg-surface p-1 shadow-overlay"
     >
       {options.map((option, index) => {
         const avatar = option._tag === "bot" ? avatars.get(option.id) : undefined;

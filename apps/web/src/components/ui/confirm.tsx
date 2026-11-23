@@ -45,7 +45,7 @@ export function Confirm({
             {body}
           </AlertDialog.Description>
           <div className="mt-3 flex flex-wrap justify-end gap-2">
-            <AlertDialog.Close render={<Button variant="secondary" />}>{cancel}</AlertDialog.Close>
+            <AlertDialog.Close render={<Button />}>{cancel}</AlertDialog.Close>
             <AlertDialog.Close render={<Button variant="destructive" />} onClick={onConfirm}>
               {confirm}
             </AlertDialog.Close>

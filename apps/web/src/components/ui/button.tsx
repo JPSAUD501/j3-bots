@@ -13,14 +13,15 @@ const buttonVariants = cva(
     touchTarget,
   ],
   {
-    defaultVariants: { variant: "outline", size: "default" },
+    defaultVariants: { variant: "secondary", size: "default" },
     variants: {
       variant: {
         /** The one action a card or dialog exists for. */
         primary: "border-foreground bg-foreground text-background hover:bg-foreground/85",
-        outline: "border-input bg-surface text-foreground hover:bg-muted",
-        /** A quiet filled action, such as Cancel beside the primary one. */
+        /** Every other action: quiet and filled. */
         secondary: "border-transparent bg-muted text-foreground hover:bg-muted-strong",
+        /** Only where an action needs a boundary, such as one that sits among filled fields. */
+        outline: "border-input bg-surface text-foreground hover:bg-muted",
         ghost: "border-transparent text-foreground hover:bg-muted",
         "ghost-muted":
           "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",

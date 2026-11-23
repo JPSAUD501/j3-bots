@@ -64,6 +64,7 @@
   --blocked: oklch(0.53 0.2 27);
   --blocked-surface: oklch(0.975 0.015 20);
   --success: oklch(0.52 0.12 160);
+  --control-on: oklch(0.52 0.12 160);
   --control-off: #82828a;
   --control-thumb: #ffffff;
   --avatar-ink: #ffffff;
@@ -80,6 +81,7 @@
   --bot-gray: oklch(0.532 0 0);
   --elevation-raised: 0 1px 2px oklch(0 0 0 / 0.04);
   --elevation-overlay: 0 12px 32px -8px oklch(0 0 0 / 0.18), 0 2px 6px oklch(0 0 0 / 0.06);
+  --elevation-thumb: 0 1px 3px oklch(0 0 0 / 0.2), 0 0 0 0.5px oklch(0 0 0 / 0.06);
 }
 
 .dark {
@@ -105,6 +107,7 @@
   --blocked: oklch(0.71 0.17 25);
   --blocked-surface: oklch(0.2 0.05 25);
   --success: oklch(0.78 0.14 160);
+  --control-on: oklch(0.6 0.13 160);
   --control-off: #6b6b73;
   --control-thumb: #f5f5f6;
   --avatar-ink: #0b0b0c;
@@ -121,6 +124,7 @@
   --bot-gray: oklch(0.93 0 0);
   --elevation-raised: none;
   --elevation-overlay: 0 12px 32px -8px oklch(0 0 0 / 0.8), 0 0 0 1px oklch(1 0 0 / 0.07);
+  --elevation-thumb: 0 1px 3px oklch(0 0 0 / 0.5);
 }
 
 :root {
@@ -219,6 +223,7 @@
   --color-blocked: var(--blocked);
   --color-blocked-surface: var(--blocked-surface);
   --color-success: var(--success);
+  --color-control-on: var(--control-on);
   --color-control-off: var(--control-off);
   --color-control-thumb: var(--control-thumb);
   --color-avatar-ink: var(--avatar-ink);
@@ -235,4 +240,5 @@
   --color-bot-gray: var(--bot-gray);
   --shadow-raised: var(--elevation-raised);
   --shadow-overlay: var(--elevation-overlay);
+  --shadow-thumb: var(--elevation-thumb);
 }

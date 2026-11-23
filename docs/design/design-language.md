@@ -1,8 +1,6 @@
 # Design language
 
-**Status:** the chrome is the Pips direction ([decision 0018](../decisions/0018-the-interface-follows-pips.md)) on the web, the desktop app, which draws the web build, and Android. The avatars, the bot palette, the conversation and the first run are being rebuilt for it, each by its own change; until then they keep their earlier form, and [Avatars](#avatars) and [Bot palette](#bot-palette) say what holds now. The values below are the ones in [`packages/design-tokens`](../../packages/design-tokens/src/tokens.ts), and the contrast figures are checked by its tests. The web client's development build has a gallery at `/gallery` that shows every component in every state, in both themes, with the springs to replay; it is the place to review the design, and it is not part of a production build.
-
-The chrome was checked on the web in Chromium, in light and dark, with the sample team: at 1280 px in the gallery and the app, at 390 px in the app, and in English and Brazilian Portuguese, with no console errors; and on Android, in a debug build on a Pixel 8 emulator, on the pairing screen in light and dark, with the bundled faces drawn. Not checked: iOS and iPadOS, where nothing has run, and where each face's family name is read from its file; macOS and Windows; and foldables.
+**Status:** the chrome is the Pips direction ([decision 0018](../decisions/0018-the-interface-follows-pips.md)) on the web, the desktop app, which draws the web build, and Android. The avatars, the bot palette, the conversation and the first run are being rebuilt for it, each by its own change; until then they keep their earlier form, and [Avatars](#avatars) and [Bot palette](#bot-palette) say what holds now. The values below are the ones in [`packages/design-tokens`](../../packages/design-tokens/src/tokens.ts), and the contrast figures are checked by its tests. The web client's development build has a gallery at `/gallery` that shows every component in every state, in both themes, with the springs to replay; it is the place to review the design, and it is not part of a production build. Nothing of it has run on iOS or iPadOS yet.
 
 ## Two references, one product
 
@@ -97,13 +95,14 @@ Near-monochrome neutrals carry the interface, on a true-black dark canvas. The f
 | `waiting-surface` | `oklch(0.975 0.03 85)` | `oklch(0.21 0.045 70)` | Header of a card awaiting the operator |
 | `blocked` | `oklch(0.53 0.2 27)` | `oklch(0.71 0.17 25)` | A turn cannot continue; destructive actions |
 | `blocked-surface` | `oklch(0.975 0.015 20)` | `oklch(0.2 0.05 25)` | |
-| `success` | `oklch(0.52 0.12 160)` | `oklch(0.78 0.14 160)` | A switch that is on; a routine that is on |
+| `success` | `oklch(0.52 0.12 160)` | `oklch(0.78 0.14 160)` | A routine that is on; a delivered run |
+| `control-on` | `oklch(0.52 0.12 160)` | `oklch(0.6 0.13 160)` | A switch that is on: `success`, darker in dark, so the light thumb stands out from it |
 | `control-off` | `#82828a` | `#6b6b73` | A switch that is off; the boundary of an empty checkbox or radio |
 | `control-thumb` | `#ffffff` | `#f5f5f6` | A switch's thumb, light in both themes |
 | `avatar-ink` | `#ffffff` | `#0b0b0c` | The mark inside an avatar, until the avatars change |
 | `scrim` | black at 30% | black at 62% | Behind a dialog or sheet that lies over content |
 
-Elevation is for what lies over other content. `raised` is a faint shadow under a card in light and none in dark; `overlay`, under popovers, menus, dialogs and sheets, is a soft drop shadow in light and, since no shadow shows on black, a darker one with a hairline of white at 7% in dark.
+Elevation is for what lies over other content. `raised` is a faint shadow under a card in light and none in dark; `overlay`, under popovers, menus, dialogs and sheets, is a soft drop shadow in light and, since no shadow shows on black, a darker one with a hairline of white at 7% in dark; `thumb` lifts a switch's thumb off its track. Tailwind's own shadow scale is removed, so only these exist, and a web test fails on a shadow class outside them.
 
 Destructive actions use `blocked`: there is no separate destructive red. Text is never drawn with a text token at reduced opacity, since that would put it below the measured contrast; the one exception is a disabled control (see [Accessibility](#accessibility)).
 
@@ -116,7 +115,8 @@ Destructive actions use `blocked`: there is no separate destructive red. Text is
 | `waiting` on `waiting-surface`, `blocked` on `blocked-surface` | 4.5 | 5.28 | 6.60 |
 | Text in both bubbles, and code inside them | 4.5 | 16.70 | 13.09 |
 | `accent-foreground` on `accent` | 4.5 | 19.01 | 18.16 |
-| `accent` (focus rings), state marks and `control-off` on the canvases and `muted` | 3 | 3.35 (`control-off` on `muted`) | 3.32 (the same) |
+| `accent` (focus rings), state marks, `control-on` and `control-off` on the canvases and `muted` | 3 | 3.35 (`control-off` on `muted`) | 3.32 (the same) |
+| `control-thumb` on `control-on` and `control-off` | 3 | 3.81 (on `control-off`) | 3.40 (on `control-on`) |
 | `border` on the canvases and `muted` | none | 1.07 | 2.49 |
 | `input` on the canvases and `muted` | none | 1.30 | 3.48 |
 
@@ -150,7 +150,7 @@ Three faces, bundled with every client under the SIL Open Font License, so the a
 | **JetBrains Mono** | Code, commands, identifiers and the steps of a turn, without ligatures, so `!=` and `->` read as typed | 400 |
 
 - The files hold Latin, Latin-1, Latin Extended-A, general punctuation and arrows. A character outside them, as in a bot's name in another script, is drawn in the platform's font.
-- On the web the faces are `@font-face` rules in the tokens' stylesheet, loaded from the bundle with the platform's font shown until they arrive. On Android they are embedded at build time, each family with its weights, so a weight picks its file; React Native has no inherited font, so every `Text` and `TextInput` comes from the app's own `text.tsx`, which sets the face.
+- On the web the faces are `@font-face` rules in the tokens' stylesheet, loaded from the bundle with the platform's font shown until they arrive. On Android they are embedded at build time, each family with its weights, so a weight picks its file; React Native has no inherited font for a `Text` on its own, so every `Text` and `TextInput` comes from the app's own `text.tsx`, which sets the face, and a lint rule refuses them from `react-native`. A `Text` nested in another sets no face unless it names one, so it inherits its parent's, as a line of a code block keeps the block's mono.
 - **Scale:** 11, 12, 13, 14, 15, 16 and 20 px for text, with line heights of 16, 16, 18, 20, 20, 24 and 26; 24, 30 and 40 px for display, with line heights of 28, 34 and 42. Message text is 14 on pointer devices and 16 on touch screens. Metadata (times, statuses) is 11 or 12. Tailwind's own scale is removed, so only these sizes exist.
 - **Weight:** text is regular (400) and medium (500); controls, a name that needs the operator, and buttons are semibold (600). Display is bold (700) only.
 - Message text sets no line longer than about 70 characters.
@@ -190,10 +190,10 @@ Every surface is built from the same few parts, each owning its look in the `ui`
 
 | Part | Look |
 | --- | --- |
-| Button | A pill, semibold. Variants: primary (filled with `accent`, the text color), secondary (filled `muted`, darkening to `muted-strong` on hover), outline, ghost, a quieter ghost, and destructive filled or outlined in `blocked`. Icon buttons are round and take the deeper press |
+| Button | A pill, semibold. Variants: secondary, the default for every action that is not the one a surface exists for (filled `muted`, darkening to `muted-strong` on hover); primary, for that one (filled with `accent`, the text color); outline, only where an action needs a boundary, as among filled fields; ghost, a quieter ghost, and destructive filled or outlined in `blocked`. Icon buttons are round and take the deeper press |
 | Field | Filled with `muted`, darker on hover, with no outline until it has focus, when it takes the focus ring; a field the operator got wrong takes a `blocked` border. Read-only text is muted |
 | Choice row | A rounded row with a box or a circle, `input` outlined, taking the row's press |
-| Switch | A pill, `success` when on and `control-off` when off, whose thumb springs across on `pop` |
+| Switch | A pill, `control-on` when on and `control-off` when off, whose thumb, lifted by the `thumb` shadow, springs across on `pop` |
 | Checkbox | A 16 px box with the 6 px radius, filled with the text color when checked |
 | Menu | A `surface` popover with `overlay` elevation, the 16 px radius, and rows of the 12 px radius that fill with `muted` when highlighted |
 | Dialog | A `surface` panel with the 20 px radius and `overlay` elevation over the `scrim`; on a phone, the whole screen. Its title is in the display face |

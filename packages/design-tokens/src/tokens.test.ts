@@ -85,10 +85,23 @@ describe.each(modes)("%s theme contrast", (mode) => {
   });
 
   it("draws focus rings, state marks and control boundaries at 3:1 against every surface", () => {
-    for (const mark of ["accent", "waiting", "blocked", "success", "control-off"] as const) {
+    for (const mark of [
+      "accent",
+      "waiting",
+      "blocked",
+      "success",
+      "control-on",
+      "control-off",
+    ] as const) {
       for (const bg of ["background", "surface", "sidebar", "muted"] as const) {
         expect(contrastRatio(color(mark), color(bg))).toBeGreaterThanOrEqual(3);
       }
+    }
+  });
+
+  it("sets a switch's thumb apart from its track at 3:1, on and off", () => {
+    for (const track of ["control-on", "control-off"] as const) {
+      expect(contrastRatio(color("control-thumb"), color(track))).toBeGreaterThanOrEqual(3);
     }
   });
 });

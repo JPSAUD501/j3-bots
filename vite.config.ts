@@ -17,6 +17,13 @@ const GENERATED_AND_VENDORED = [
   "packages/design-tokens/generated/**",
 ];
 
+// Only the engine adapter may know T3 Code exists (see the overrides below).
+const ONLY_THE_ENGINE_ADAPTER_KNOWS_T3 = {
+  group: ["@t3tools/*"],
+  message:
+    "Only packages/engine-t3 may import T3 Code. Use the Engine interface or @j3-bots/contracts.",
+};
+
 export default defineConfig({
   test: {
     environment: "node",
@@ -48,15 +55,18 @@ export default defineConfig({
       "eslint/no-empty-pattern": "error",
       "eslint/no-new": "error",
       "eslint/no-unneeded-ternary": "error",
-      // Only the engine adapter may know T3 Code exists (see the override below).
       "eslint/no-restricted-imports": [
         "error",
         {
-          patterns: [
+          patterns: [ONLY_THE_ENGINE_ADAPTER_KNOWS_T3],
+          // React Native has no inherited font: the app's own Text sets the face
+          // (see the override for apps/mobile/src/text.tsx below).
+          paths: [
             {
-              group: ["@t3tools/*"],
+              name: "react-native",
+              importNames: ["Text", "TextInput"],
               message:
-                "Only packages/engine-t3 may import T3 Code. Use the Engine interface or @j3-bots/contracts.",
+                "Import Text and TextInput from apps/mobile/src/text.tsx, which sets the face.",
             },
           ],
         },
@@ -104,6 +114,15 @@ export default defineConfig({
       {
         files: ["packages/engine-t3/**"],
         rules: { "eslint/no-restricted-imports": "off" },
+      },
+      {
+        files: ["apps/mobile/src/text.tsx"],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            { patterns: [ONLY_THE_ENGINE_ADAPTER_KNOWS_T3] },
+          ],
+        },
       },
       {
         // The client runtime's hooks were written before these React rules applied to them.

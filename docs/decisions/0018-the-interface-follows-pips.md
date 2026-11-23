@@ -26,7 +26,7 @@ It worked, and it read as a tool. The project owner judges J3 Bots against persi
 | No faces, no eyes, no blob characters | Each bot is a character with an eye and an antenna |
 | A geometric shape with an inner mark for state | A silhouette, with state in the eye, the antenna and the body |
 | Ten muted hues, equal in distinguishability over weight | Twelve vivid colors |
-| The platform's system font | Three bundled faces |
+| The platform's system font, with Inter Variable shipped on the web as a fallback | Three bundled faces |
 
 The reason is the same for each: the owner's reference is lively, and J3 Bots read as inert beside it. The developer tool's manner survives where it serves the operator: density, keyboard reach, work that is inspectable and never in the way.
 
@@ -43,7 +43,7 @@ What the earlier rules protected still holds, by other means:
 ## Consequences
 
 - The avatar system is replaced: new silhouettes, a new palette and a new renderer on each platform, and avatar appearance changes in the contract and the server. The old shapes and colors are migrated.
-- The bundled fonts add about 100 KB to the web client and 230 KB to the Android app, and their license travels with every release in the third-party notices.
+- On the web the bundled faces take about 100 KB, in place of the 213 KB of Inter Variable shipped as a fallback, so the bundle shrinks. Inter was fetched only where none of the system fonts listed before it existed; the new faces are fetched on every first load, then kept by the service worker. On Android they add about 230 KB. Their license travels with every release in the third-party notices.
 - Continuous avatar motion costs battery and frames that the earlier rules did not spend; the guard rails bound it, and they are part of the design, not an optimization.
 - Twelve vivid colors cannot all stay apart for every color vision the way ten muted ones did. Color is never the only thing that tells two bots apart: the silhouette does too.
 

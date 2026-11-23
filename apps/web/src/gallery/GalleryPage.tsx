@@ -141,7 +141,7 @@ export default function GalleryPage() {
                         role="radio"
                         aria-checked={l === locale}
                         onClick={() => setLocale(l)}
-                        className="rounded-sm px-2.5 py-1 text-xs aria-checked:bg-background aria-checked:shadow-sm"
+                        className="rounded-sm px-2.5 py-1 text-xs aria-checked:bg-background aria-checked:shadow-raised"
                       >
                         {LANGUAGE_NAMES[l]}
                       </button>
@@ -320,8 +320,8 @@ function PrimitivesSection() {
       <Labeled label="Buttons: hover, and press to feel the spring back">
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary">{t("editBot.save")}</Button>
-          <Button variant="secondary">{t("editBot.cancel")}</Button>
-          <Button>{t("details.freshStart")}</Button>
+          <Button>{t("editBot.cancel")}</Button>
+          <Button variant="outline">{t("details.freshStart")}</Button>
           <Button variant="ghost">{t("settings.title")}</Button>
           <Button variant="ghost-muted">{t("roster.new.cancel")}</Button>
           <Button variant="destructive">{t("details.delete", { name: "Scout" })}</Button>
