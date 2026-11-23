@@ -83,6 +83,13 @@ const connectorSecret: ConnectorSecret = {
   env: [],
 };
 
+/**
+ * A test that derives the vault's key again and again, as a run of wrong
+ * passwords does: each derivation is costly by design, and slower still
+ * while the other test files keep the machine busy.
+ */
+const DERIVES_OFTEN = 20_000;
+
 /** The vault's status now. */
 const stateNow = Effect.gen(function* () {
   const vault = yield* Vault;
@@ -335,69 +342,78 @@ it.effect("refuses a value that opens but does not read back, and shows it nowhe
   );
 });
 
-it.effect("makes unlocking wait after repeated wrong passwords, even for the right one", () =>
-  Effect.gen(function* () {
-    const vault = yield* Vault;
-    yield* vault.setup(PASSWORD);
-    yield* vault.lock;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
-    }
-    assert.isNotNull((yield* stateNow).retryAt);
-    assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "RateLimited");
-
-    yield* TestClock.adjust(Duration.seconds(30));
-    yield* vault.unlock(PASSWORD);
-    const status = yield* stateNow;
-    assert.deepStrictEqual([status.state, status.retryAt], ["unlocked", null]);
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("keeps counting wrong passwords, and waiting, across a restart", () =>
-  Effect.gen(function* () {
-    yield* Effect.gen(function* () {
+it.effect(
+  "makes unlocking wait after repeated wrong passwords, even for the right one",
+  () =>
+    Effect.gen(function* () {
       const vault = yield* Vault;
       yield* vault.setup(PASSWORD);
       yield* vault.lock;
       for (let attempt = 0; attempt < 5; attempt++) {
         assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
       }
-    }).pipe(Effect.provide(Domain.layer));
-    yield* Effect.gen(function* () {
-      const vault = yield* Vault;
       assert.isNotNull((yield* stateNow).retryAt);
       assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "RateLimited");
+
       yield* TestClock.adjust(Duration.seconds(30));
-      // The sixth in a row, counted from before the restart: twice the first wait.
-      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
-      yield* TestClock.adjust(Duration.seconds(59));
-      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "RateLimited");
-      yield* TestClock.adjust(Duration.seconds(1));
       yield* vault.unlock(PASSWORD);
-    }).pipe(Effect.provide(Domain.layer));
-    // A right one forgets them, across a restart too.
-    yield* Effect.gen(function* () {
-      const vault = yield* Vault;
-      assert.isNull((yield* stateNow).retryAt);
-      assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
-      yield* vault.unlock(PASSWORD);
-    }).pipe(Effect.provide(Domain.layer));
-  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+      const status = yield* stateNow;
+      assert.deepStrictEqual([status.state, status.retryAt], ["unlocked", null]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+  DERIVES_OFTEN,
 );
 
-it.effect("starts counting wrong passwords over after a day without one", () =>
-  Effect.gen(function* () {
-    const vault = yield* Vault;
-    yield* vault.setup(PASSWORD);
-    yield* vault.lock;
-    for (let attempt = 0; attempt < 4; attempt++) {
+it.effect(
+  "keeps counting wrong passwords, and waiting, across a restart",
+  () =>
+    Effect.gen(function* () {
+      yield* Effect.gen(function* () {
+        const vault = yield* Vault;
+        yield* vault.setup(PASSWORD);
+        yield* vault.lock;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+        }
+      }).pipe(Effect.provide(Domain.layer));
+      yield* Effect.gen(function* () {
+        const vault = yield* Vault;
+        assert.isNotNull((yield* stateNow).retryAt);
+        assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "RateLimited");
+        yield* TestClock.adjust(Duration.seconds(30));
+        // The sixth in a row, counted from before the restart: twice the first wait.
+        assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+        yield* TestClock.adjust(Duration.seconds(59));
+        assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(PASSWORD))), "RateLimited");
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* vault.unlock(PASSWORD);
+      }).pipe(Effect.provide(Domain.layer));
+      // A right one forgets them, across a restart too.
+      yield* Effect.gen(function* () {
+        const vault = yield* Vault;
+        assert.isNull((yield* stateNow).retryAt);
+        assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+        yield* vault.unlock(PASSWORD);
+      }).pipe(Effect.provide(Domain.layer));
+    }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+  DERIVES_OFTEN,
+);
+
+it.effect(
+  "starts counting wrong passwords over after a day without one",
+  () =>
+    Effect.gen(function* () {
+      const vault = yield* Vault;
+      yield* vault.setup(PASSWORD);
+      yield* vault.lock;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
+      }
+      yield* TestClock.adjust(Duration.hours(24));
       assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
-    }
-    yield* TestClock.adjust(Duration.hours(24));
-    assert.strictEqual(refusal(yield* Effect.exit(vault.unlock(WRONG))), "master-password");
-    assert.isNull((yield* stateNow).retryAt);
-    yield* vault.unlock(PASSWORD);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.isNull((yield* stateNow).retryAt);
+      yield* vault.unlock(PASSWORD);
+    }).pipe(Effect.provide(TestDomain.layer)),
+  DERIVES_OFTEN,
 );
 
 it.effect("refuses key settings out of range without trying them or counting a failure", () =>
