@@ -14,6 +14,7 @@ import {
 import type { AvatarShapeName, BotColor } from "@j3-bots/design-tokens/names";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { MemoryEditProblem } from "../presentation/saves.ts";
+import type { TemplateRead } from "../presentation/template.ts";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { scheduleInWords } from "./schedule.ts";
 import { dividerTime, timeInSentence, type TimeContext } from "./time.ts";
@@ -30,6 +31,23 @@ export const avatarShapeText = (shape: AvatarShapeName, { t }: I18n) => t(`avata
 
 /** A bot color's name, as a picker reads it out. */
 export const botColorText = (color: BotColor, { t }: I18n) => t(`avatar.color.${color}`);
+
+/** Why a file opened as a template cannot make a bot. */
+export function templateReadText(
+  read: Exclude<TemplateRead, { readonly _tag: "template" }>,
+  { t }: I18n,
+): string {
+  switch (read._tag) {
+    case "too-large":
+      return t("template.read.tooLarge");
+    case "newer":
+      return t("template.read.newer");
+    case "invalid":
+      return t("template.read.invalid");
+    case "unreadable":
+      return t("template.read.unreadable");
+  }
+}
 
 /** A permission mode's name, and what it lets a bot do. */
 export function permissionModeText(

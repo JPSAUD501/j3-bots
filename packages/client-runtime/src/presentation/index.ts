@@ -131,7 +131,9 @@ export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./s
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export {
   isTemplateFileName,
+  openTemplateFile,
   readTemplateFile,
+  sharedTemplate,
   templateFileName,
   templateFileText,
   templateFileTooLarge,

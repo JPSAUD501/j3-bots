@@ -2,7 +2,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import type { TemplateDraft } from "@j3-bots/client-runtime";
 import { type TemplateRead, templateStart } from "@j3-bots/client-runtime/presentation";
-import { permissionModeText } from "@j3-bots/client-runtime/wording";
+import { permissionModeText, templateReadText } from "@j3-bots/client-runtime/wording";
 import type { BotTemplate, EngineStatus, PermissionMode } from "@j3-bots/contracts";
 import { CopyIcon, CpuIcon, DownloadIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
@@ -196,24 +196,8 @@ export function ShareTemplateDialog({
   );
 }
 
-/** A file the operator opened as a template, read; `unreadable` when it could not be read at all. */
-export type TemplateOpened = TemplateRead | { readonly _tag: "unreadable" };
-
 /** What creating the bot answered. */
 export type TemplateCreated = "done" | "schedule" | "failed";
-
-const readProblem = (opened: Exclude<TemplateOpened, { _tag: "template" }>) => {
-  switch (opened._tag) {
-    case "too-large":
-      return "template.read.tooLarge";
-    case "newer":
-      return "template.read.newer";
-    case "invalid":
-      return "template.read.invalid";
-    case "unreadable":
-      return "template.read.unreadable";
-  }
-};
 
 interface TemplateFormProps {
   readonly template: BotTemplate;
@@ -250,8 +234,6 @@ export function TemplateForm({
   const { name } = template.profile;
   const creating = state === "creating";
   const ready = start.model._tag !== "none" && connected && !creating;
-  const asked = template.permissionMode;
-  const capped = asked !== "unknown" && asked !== start.permissionMode;
   return (
     <form
       className="flex min-h-0 flex-1 flex-col"
@@ -300,9 +282,11 @@ export function TemplateForm({
             <h3 id={modeId} className="text-xs font-medium text-muted-foreground">
               {t("template.permission")}
             </h3>
-            {capped && (
+            {start.asked !== null && (
               <p className="text-xs text-muted-foreground">
-                {t("template.permission.capped", { mode: permissionModeText(asked, i18n).name })}
+                {t("template.permission.capped", {
+                  mode: permissionModeText(start.asked, i18n).name,
+                })}
               </p>
             )}
             <PermissionModeChoices
@@ -345,9 +329,10 @@ export function NewFromTemplateDialog({
   ...form
 }: Omit<TemplateFormProps, "template"> & {
   /** Null closes the dialog. */
-  readonly opened: TemplateOpened | null;
+  readonly opened: TemplateRead | null;
 }) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const { held, closed } = useHeldWhileClosing(opened);
   const shown = held?.value ?? null;
   if (shown !== null && shown._tag !== "template") {
@@ -366,7 +351,7 @@ export function NewFromTemplateDialog({
           <Dialog.Popup className={`${alertDialog} max-w-sm gap-3 p-5`}>
             <Dialog.Title className={dialogTitle}>{t("template.create.title")}</Dialog.Title>
             <Dialog.Description className="text-sm text-muted-foreground">
-              {t(readProblem(shown))}
+              {templateReadText(shown, i18n)}
             </Dialog.Description>
             <div className="flex justify-end">
               <Button onClick={form.onClose}>{t("template.close")}</Button>

@@ -71,6 +71,7 @@ import {
   roomStopFailed,
   templateFileName,
   templateFileText,
+  type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
 import type { AppLink } from "@j3-bots/desktop-bridge";
 import { memoryFileName } from "@j3-bots/client-runtime/wording";
@@ -86,7 +87,6 @@ import { RoutineRunsDialog } from "../components/RoutineRuns";
 import {
   NewFromTemplateDialog,
   ShareTemplateDialog,
-  type TemplateOpened,
   type TemplateShare,
 } from "../components/TemplateDialogs";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
@@ -473,7 +473,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     readonly botId: BotId;
     readonly share: TemplateShare;
   } | null>(null);
-  const [opened, setOpened] = useState<TemplateOpened | null>(null);
+  const [opened, setOpened] = useState<TemplateRead | null>(null);
   const templatePicker = useRef<HTMLInputElement>(null);
   const openTemplate = (file: File) => void readTemplate(file).then(setOpened);
   useTemplateDrop(openTemplate);

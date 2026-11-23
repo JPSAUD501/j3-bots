@@ -9,11 +9,13 @@ import {
   type PermissionMode,
   TEMPLATE_FILE_EXTENSION,
   TEMPLATE_FORMAT,
+  TEMPLATE_MEDIA_TYPE,
   TEMPLATE_VERSION,
   templatePermissionMode,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { Shared, SharedFile } from "./share.ts";
 
 /** What reading a file as a template found. */
 export type TemplateRead =
@@ -23,7 +25,9 @@ export type TemplateRead =
   /** A template of a version after this build's, which may hold what it cannot show. */
   | { readonly _tag: "newer" }
   /** Not a template, or one that breaks the schema or its limits. */
-  | { readonly _tag: "invalid" };
+  | { readonly _tag: "invalid" }
+  /** The platform could not read the file at all. */
+  | { readonly _tag: "unreadable" };
 
 const decodeFile = Schema.decodeUnknownOption(BotTemplateFile);
 
@@ -54,6 +58,18 @@ export const readTemplateFile = (text: string): TemplateRead => {
     : { _tag: "invalid" };
 };
 
+/**
+ * Opens a file on the device as a template: one whose `size` is over the
+ * limit is refused before `text` reads it, and one that cannot be read says so.
+ */
+export const openTemplateFile = (
+  size: number,
+  text: () => Promise<string>,
+): Promise<TemplateRead> =>
+  templateFileTooLarge(size)
+    ? Promise.resolve({ _tag: "too-large" })
+    : text().then(readTemplateFile, (): TemplateRead => ({ _tag: "unreadable" }));
+
 const encodeTemplate = Schema.encodeSync(BotTemplate);
 
 /** The template as its file holds it: indented JSON, readable in any editor. */
@@ -76,6 +92,17 @@ export const templateFileName = (botName: string): string => {
 /** Whether a file's name says it is a template. */
 export const isTemplateFileName = (name: string): boolean =>
   name.toLowerCase().endsWith(TEMPLATE_FILE_EXTENSION);
+
+/**
+ * The template file a share is, when it is one and nothing else: a single
+ * file named as a template or of its media type, with no text or link. A
+ * share that holds anything more goes to a conversation's draft as it is.
+ */
+export const sharedTemplate = ({ text, url, files }: Shared): SharedFile | null => {
+  const [file, ...more] = files;
+  if (file === undefined || more.length > 0 || text !== null || url !== null) return null;
+  return isTemplateFileName(file.name) || file.mediaType === TEMPLATE_MEDIA_TYPE ? file : null;
+};
 
 /** The model a bot made from a template runs on here, as the preview shows it. */
 export type TemplateModel =
@@ -103,6 +130,8 @@ export interface TemplateStart {
    * less (`templatePermissionMode`); supervised while there is no model.
    */
   readonly permissionMode: PermissionMode;
+  /** The mode the template asks for, when the bot starts with less; null otherwise. */
+  readonly asked: PermissionMode | null;
 }
 
 /** `Provider · Model`, as the engine names them. */
@@ -123,7 +152,7 @@ export const templateStart = (
   template: BotTemplate,
   engine: EngineStatus | null,
 ): TemplateStart => {
-  const none: TemplateStart = { model: { _tag: "none" }, permissionMode: "supervised" };
+  const none = startWith({ _tag: "none" }, "supervised", template);
   if (engine === null) return none;
   const own = modelName(engine, template.model);
   const model: ChosenModel | null =
@@ -131,12 +160,23 @@ export const templateStart = (
       ? { _tag: "template", choice: template.model, name: own }
       : replacement(engine, template.model);
   if (model === null) return none;
+  return startWith(
+    model,
+    templatePermissionMode(template.permissionMode, defaultPermissionMode(engine, model.choice)),
+    template,
+  );
+};
+
+const startWith = (
+  model: TemplateModel,
+  permissionMode: PermissionMode,
+  template: BotTemplate,
+): TemplateStart => {
+  const asked = template.permissionMode;
   return {
     model,
-    permissionMode: templatePermissionMode(
-      template.permissionMode,
-      defaultPermissionMode(engine, model.choice),
-    ),
+    permissionMode,
+    asked: asked === "unknown" || asked === permissionMode ? null : asked,
   };
 };
 

@@ -1,20 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   isTemplateFileName,
-  readTemplateFile,
-  templateFileTooLarge,
+  openTemplateFile,
+  type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
 import { useEffect, useEffectEvent } from "react";
-import type { TemplateOpened } from "../components/TemplateDialogs";
 
-/**
- * Reads a file the operator picked or dropped as a template: one over the
- * limit is refused before its text is read.
- */
-export const readTemplate = (file: File): Promise<TemplateOpened> =>
-  templateFileTooLarge(file.size)
-    ? Promise.resolve({ _tag: "too-large" })
-    : file.text().then(readTemplateFile, (): TemplateOpened => ({ _tag: "unreadable" }));
+/** Reads a file the operator picked or dropped as a template. */
+export const readTemplate = (file: File): Promise<TemplateRead> =>
+  openTemplateFile(file.size, () => file.text());
 
 /**
  * A template file dropped anywhere on the page opens as one: `onTemplate`

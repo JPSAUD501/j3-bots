@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Cell, targetKey } from "@j3-bots/client-runtime";
-import { type Shared, type SharedDraft, sharedDraft } from "@j3-bots/client-runtime/presentation";
+import {
+  type Shared,
+  type SharedDraft,
+  sharedDraft,
+  sharedTemplate,
+} from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import type { EntryTarget } from "@j3-bots/contracts";
 import { File } from "expo-file-system";
@@ -8,6 +13,7 @@ import * as Sharing from "expo-sharing";
 import { useMemo } from "react";
 import { AppState, Platform } from "react-native";
 import { DeviceBlob } from "../platform/pick.ts";
+import { openTemplateAt } from "../template/opened.ts";
 import { carriesFiles, sharedOf } from "./shared.ts";
 
 /** A share received and not yet put in a draft. */
@@ -48,7 +54,10 @@ const receive = async () => {
   if (payloads.length === 0) return;
   const resolved = carriesFiles(payloads) ? await Sharing.getResolvedSharedPayloadsAsync() : [];
   const shared = sharedOf(payloads, resolved, sizeOf);
-  waiting.set(shared === null ? UNREADABLE : { _tag: "shared", shared });
+  // A template file shared on its own opens as one, to make a bot from.
+  const template = shared === null ? null : sharedTemplate(shared);
+  if (template !== null) await openTemplateAt(template.uri, template.size);
+  else waiting.set(shared === null ? UNREADABLE : { _tag: "shared", shared });
   // A share that arrived while this one was read stays, for the next read.
   if (sameShare(Sharing.getSharedPayloads(), payloads)) Sharing.clearSharedPayloads();
 };

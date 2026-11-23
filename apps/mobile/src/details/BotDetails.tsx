@@ -43,6 +43,7 @@ import { useSay } from "../toast.tsx";
 import { Button, Switch } from "../ui.tsx";
 import { FileCard } from "../conversation/FileCard.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
+import { useShareBotTemplate } from "../template/share.ts";
 import { useBotActions } from "./actions.ts";
 
 /** A read's list once loaded, or null while it loads; a bot that is gone has none. */
@@ -67,6 +68,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   );
   const navigation = useNavigation<Navigation>();
   const actions = useBotActions();
+  const shareTemplate = useShareBotTemplate();
   const engine = useEngineStatus();
   const routines = loadedList(useRoutines(bot.id));
   const files = loadedList(useBotFiles(bot.id));
@@ -95,6 +97,11 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
           variant="secondary"
           label={t("details.editProfile", { name })}
           onPress={() => navigation.navigate("editBot", { botId: bot.id })}
+        />
+        <Button
+          variant="secondary"
+          label={t("details.shareTemplate")}
+          onPress={() => shareTemplate(bot.id)}
         />
       </Profile>
 
