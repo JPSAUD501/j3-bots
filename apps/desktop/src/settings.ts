@@ -30,8 +30,7 @@ export type WindowState = typeof WindowState.Type;
  * present choice of this computer. Only a device that is not current is
  * replaced without the operator asking (`LocalDeviceRequest`).
  */
-export const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
-export type LocalDevice = typeof LocalDevice.Type;
+const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
 
 /**
  * What the app keeps between launches, besides what the page keeps in its own

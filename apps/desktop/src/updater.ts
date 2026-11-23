@@ -57,6 +57,14 @@ const updateMode = (): UpdateMode => {
   return installs ? "install" : "notify";
 };
 
+/** What installing an update does to the server this computer runs, if it runs one. */
+export interface InstallSteps {
+  /** Stops it before the update replaces the app, whose runtime it may run. */
+  readonly beforeInstall: Effect.Effect<void>;
+  /** Starts it again when the install failed and the app stays. */
+  readonly installFailed: Effect.Effect<void>;
+}
+
 /**
  * Serves the update's status to `window`'s page and keeps it current, for as
  * long as the scope lasts. `fromApp` says whether an IPC message comes from
@@ -65,7 +73,9 @@ const updateMode = (): UpdateMode => {
 export const serve = Effect.fn("desktop.updates")(function* (
   window: BrowserWindow,
   fromApp: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean,
+  steps: InstallSteps,
 ) {
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const check = yield* Effect.acquireRelease(
     Effect.sync(() => {
       let state: Updates = initial(updateMode());
@@ -89,16 +99,21 @@ export const serve = Effect.fn("desktop.updates")(function* (
       /**
        * Installs silently and starts the new version once this one has quit:
        * the NSIS installer starts it on Windows, and `restartApp` starts an
-       * AppImage, which electron-updater replaced. A failure is dispatched as
-       * an `error` before `quitAndInstall` returns, and the app stays.
+       * AppImage, which electron-updater replaced. The server this computer
+       * runs is stopped first, as T3 Code's desktop stops its own (read at
+       * db51b671, `apps/desktop/src/updates/DesktopUpdates.ts`). A failure is
+       * dispatched as an `error` before `quitAndInstall` returns, and the app
+       * stays, with the server started again.
        */
       const install = () => {
-        if (runningAppImage === null) {
-          autoUpdater.quitAndInstall(true, true);
-          return;
-        }
-        autoUpdater.quitAndInstall(true, false);
-        if (state.phase._tag === "installing") restartApp(installedTo ?? runningAppImage);
+        void runPromise(steps.beforeInstall).then(() => {
+          if (runningAppImage === null) autoUpdater.quitAndInstall(true, true);
+          else {
+            autoUpdater.quitAndInstall(true, false);
+            if (state.phase._tag === "installing") restartApp(installedTo ?? runningAppImage);
+          }
+          if (state.phase._tag === "failed") void runPromise(steps.installFailed);
+        });
       };
       const check = () => {
         if (!mayCheck(state)) return;

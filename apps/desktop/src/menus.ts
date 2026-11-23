@@ -4,6 +4,7 @@ import {
   DEFAULT_SHORTCUT,
   IPC_CHANNELS,
   LanguageReport,
+  LocalServerState,
   ShellCommand,
   type ShortcutChange,
   ShortcutRequest,
@@ -17,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import {
   app,
   type BrowserWindow,
@@ -44,6 +46,7 @@ const decodeTray = Schema.decodeUnknownOption(TrayReport);
 const decodeShortcut = Schema.decodeUnknownOption(ShortcutRequest);
 const encodeCommand = Schema.encodeSync(ShellCommand);
 const sameTray = Schema.toEquivalence(TrayReport);
+const sameLocalServer = Schema.toEquivalence(Schema.NullOr(LocalServerState));
 
 const MAC = process.platform === "darwin";
 
@@ -89,6 +92,8 @@ interface Options {
   readonly fromApp: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean;
   /** Restores, shows and focuses the window. */
   readonly bringForward: () => void;
+  /** The server this computer runs, in local mode, now and as it changes; `null` in any other. */
+  readonly localServer: Stream.Stream<LocalServerState | null>;
 }
 
 /**
@@ -102,6 +107,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
   appearance,
   fromApp,
   bringForward,
+  localServer,
 }: Options) {
   const settings = yield* DesktopSettings;
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
@@ -110,10 +116,11 @@ export const serve = Effect.fn("desktop.menus")(function* ({
   // One change of shortcut at a time, so two cannot both register and leave one untracked.
   const changing = yield* Semaphore.make(1);
 
-  yield* Effect.acquireRelease(
+  const { followLocalServer } = yield* Effect.acquireRelease(
     Effect.sync(() => {
       let i18n: I18n = createI18n(resolveLocale(app.getPreferredSystemLanguages()));
       let tray: TrayReport = { pairing: null, count: 0, waiting: [] };
+      let local: LocalServerState | null = null;
       const icon = new Tray(trayIcon(false, appearance.systemTheme()));
 
       const send = (command: ShellCommand) => {
@@ -352,7 +359,13 @@ export const serve = Effect.fn("desktop.menus")(function* ({
           return runPromise(changing.withPermits(1)(change(decoded.value.accelerator)));
         },
       );
-      return { icon, pageReplaced, stopFollowingTheme };
+      /** Shows `next`, the state of the server this computer runs, when it changed. */
+      const followLocalServer = (next: LocalServerState | null) => {
+        if (sameLocalServer(next, local)) return;
+        local = next;
+        trayMenu();
+      };
+      return { icon, pageReplaced, stopFollowingTheme, followLocalServer };
     }),
     ({ icon, pageReplaced, stopFollowingTheme }) =>
       Effect.sync(() => {
@@ -365,5 +378,9 @@ export const serve = Effect.fn("desktop.menus")(function* ({
         globalShortcut.unregisterAll();
         icon.destroy();
       }),
+  );
+  yield* localServer.pipe(
+    Stream.runForEach((state) => Effect.sync(() => followLocalServer(state))),
+    Effect.forkScoped,
   );
 });

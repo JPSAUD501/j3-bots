@@ -11,22 +11,32 @@ import * as Settings from "./settings.ts";
 
 const origin = Schema.decodeSync(ServerOrigin);
 const SERVER = origin("http://192.168.1.20:3737");
+const LOCAL = origin("http://127.0.0.1:3747");
+const DEVICE = "device-1";
 
 /**
  * A server choice over the settings in `file`, whose check answers `answer`,
  * and a page that records what is done to it, with the server kept as it
  * happens.
  */
-const setUp = (file: string, answer: ConnectRefusal | null = null) =>
+const setUp = (file: string, answer: ConnectRefusal | null = null, localAvailable = true) =>
   Effect.gen(function* () {
     const settings = yield* Settings.DesktopSettings;
     const done: Array<string> = [];
     const checked: Array<string> = [];
-    const choice = yield* ServerChoice.make((server) =>
-      Effect.sync(() => {
-        checked.push(server);
-        return answer;
-      }),
+    const local: ServerChoice.LocalServer = {
+      available: localAvailable,
+      prepare: Effect.succeed(LOCAL),
+      start: Effect.sync(() => done.push("start local server")),
+      stop: Effect.sync(() => done.push("stop local server")),
+    };
+    const choice = yield* ServerChoice.make(
+      (server) =>
+        Effect.sync(() => {
+          checked.push(server);
+          return answer;
+        }),
+      local,
     );
     const page: ServerChoice.Page = {
       clearStorage: Effect.gen(function* () {
@@ -121,6 +131,72 @@ describe("forgetting the server", () => {
       const { choice, page, done } = yield* setUp(yield* unwritableFile);
       assert.strictEqual(yield* choice.forget(page), "failed");
       assert.deepStrictEqual(done, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("running the bots on this computer", () => {
+  it.effect(
+    "forgets the named server with the page's storage, keeps this computer's and starts it",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(
+          JSON.stringify({ server: SERVER, localDevice: { id: DEVICE, current: true } }),
+        );
+        const { choice, page, done, settings } = yield* setUp(file);
+        assert.strictEqual(yield* choice.useThisComputer(page), "changed");
+        assert.deepStrictEqual(done, [
+          "clear (server http://192.168.1.20:3737)",
+          "start local server",
+          "open home (server http://127.0.0.1:3747)",
+        ]);
+        const now = yield* settings.get;
+        assert.strictEqual(now.mode, "local");
+        assert.strictEqual(now.server, LOCAL);
+        // Chosen again: its next sign-in, which replaces the device, needs no asking.
+        assert.deepStrictEqual(now.localDevice, { id: DEVICE, current: false });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("changes nothing where this computer cannot run the server", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(JSON.stringify({ server: SERVER }));
+      const { choice, page, done, settings } = yield* setUp(file, null, false);
+      assert.strictEqual(yield* choice.useThisComputer(page), "unavailable");
+      assert.deepStrictEqual(done, []);
+      assert.strictEqual((yield* settings.get).server, SERVER);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("is not left by forgetting the server, which would stop the bots", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+      const { choice, page, done } = yield* setUp(file);
+      assert.strictEqual(yield* choice.forget(page), "failed");
+      assert.deepStrictEqual(done, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops the server, keeps the device to replace, and opens the address screen", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(
+        JSON.stringify({
+          mode: "local",
+          server: LOCAL,
+          localDevice: { id: DEVICE, current: true },
+        }),
+      );
+      const { choice, page, done, settings } = yield* setUp(file);
+      assert.strictEqual(yield* choice.connectToServerInstead(page), "changed");
+      assert.deepStrictEqual(done, [
+        "stop local server",
+        "clear (server none)",
+        "open home (server none)",
+      ]);
+      const now = yield* settings.get;
+      assert.strictEqual(now.mode, "remote");
+      assert.isNull(now.server);
+      assert.deepStrictEqual(now.localDevice, { id: DEVICE, current: false });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

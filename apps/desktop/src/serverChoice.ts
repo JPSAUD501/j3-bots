@@ -3,6 +3,7 @@ import type {
   ConnectRefusal,
   ConnectResult,
   ForgetResult,
+  ModeChange,
   ServerOrigin,
 } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
@@ -29,9 +30,26 @@ export interface Page {
   readonly openHome: Effect.Effect<void>;
 }
 
+/** The server this computer runs, as choosing where the bots live acts on it. */
+export interface LocalServer {
+  /** Whether this computer can run it. */
+  readonly available: boolean;
+  /**
+   * Makes its home ready, the first time with ports chosen once, and answers
+   * the origin the page reaches it at. Fails, with a message to log, when
+   * the home cannot hold it.
+   */
+  readonly prepare: Effect.Effect<ServerOrigin, { readonly message: string }>;
+  /** Starts it, and keeps it running. */
+  readonly start: Effect.Effect<void>;
+  /** Stops it, gracefully, its data kept. */
+  readonly stop: Effect.Effect<void>;
+}
+
 /**
- * Naming the server and forgetting it, one at a time, so a check that ends
- * late never overwrites a newer choice.
+ * Naming the server, running the bots on this computer, and forgetting the
+ * server, one at a time, so a check that ends late never overwrites a newer
+ * choice.
  *
  * A device token must never reach a server other than the one that issued
  * it. The page keeps it in its storage, which it fills only while a server is
@@ -42,6 +60,7 @@ export interface Page {
  */
 export const make = Effect.fn("ServerChoice.make")(function* (
   check: (origin: ServerOrigin) => Effect.Effect<ConnectRefusal | null>,
+  local: LocalServer,
 ) {
   const settings = yield* DesktopSettings;
   const oneAtATime = yield* Semaphore.make(1);
@@ -73,6 +92,9 @@ export const make = Effect.fn("ServerChoice.make")(function* (
   const forget = Effect.fn("ServerChoice.forget")(function* (page: Page) {
     return yield* oneAtATime.withPermits(1)(
       Effect.gen(function* () {
+        // The server on this computer is not forgotten by signing out of it:
+        // that stops the bots, which only `connectToServerInstead` does.
+        if ((yield* settings.get).mode === "local") return "failed" satisfies ForgetResult;
         const saved = yield* settings
           .update((current) => ({ ...current, server: null }))
           .pipe(
@@ -92,5 +114,87 @@ export const make = Effect.fn("ServerChoice.make")(function* (
     );
   });
 
-  return { connect, forget } as const;
+  /**
+   * Runs the bots on this computer: forgets any server named before, with
+   * the page's storage, keeps the server on this computer as the page's, and
+   * starts it. The device this computer was signed in as before, if any, is
+   * signed in again once, without asking (`LocalDeviceRequest`).
+   */
+  const useThisComputer = Effect.fn("ServerChoice.useThisComputer")(function* (page: Page) {
+    return yield* oneAtATime.withPermits(1)(
+      Effect.gen(function* () {
+        if (!local.available) return "unavailable" satisfies ModeChange;
+        const prepared = yield* local.prepare.pipe(
+          Effect.map((server) => ({ _tag: "prepared" as const, server })),
+          Effect.catch((error) =>
+            Effect.logWarning("Preparing this computer's server failed", error.message).pipe(
+              Effect.as({ _tag: "not-prepared" as const }),
+            ),
+          ),
+        );
+        if (prepared._tag === "not-prepared") return "failed" satisfies ModeChange;
+        const { server } = prepared;
+        const kept = yield* page.clearStorage.pipe(
+          Effect.andThen(
+            settings.update((current) => ({
+              ...current,
+              mode: "local",
+              server,
+              localDevice:
+                current.localDevice === null ? null : { ...current.localDevice, current: false },
+            })),
+          ),
+          Effect.as(true),
+          Effect.catch((error) =>
+            Effect.logWarning("Choosing this computer failed", error).pipe(Effect.as(false)),
+          ),
+        );
+        if (!kept) return "failed" satisfies ModeChange;
+        yield* local.start;
+        yield* page.openHome;
+        return "changed" satisfies ModeChange;
+      }),
+    );
+  });
+
+  /**
+   * Stops running the bots on this computer, their data kept, and opens the
+   * server address screen. The page signs its device out first, while the
+   * server still runs; a device it could not is revoked by the next sign-in
+   * on this computer, which replaces it.
+   */
+  const connectToServerInstead = Effect.fn("ServerChoice.connectToServerInstead")(function* (
+    page: Page,
+  ) {
+    return yield* oneAtATime.withPermits(1)(
+      Effect.gen(function* () {
+        if ((yield* settings.get).mode !== "local") return "failed" satisfies ModeChange;
+        const saved = yield* settings
+          .update((current) => ({
+            ...current,
+            mode: "remote",
+            server: null,
+            localDevice:
+              current.localDevice === null ? null : { ...current.localDevice, current: false },
+          }))
+          .pipe(
+            Effect.as(true),
+            Effect.catch((error) =>
+              Effect.logWarning("Leaving this computer's server failed", error).pipe(
+                Effect.as(false),
+              ),
+            ),
+          );
+        if (!saved) return "failed" satisfies ModeChange;
+        yield* local.stop;
+        yield* page.clearStorage.pipe(
+          Effect.catch((error) => Effect.logWarning("Clearing the page's storage failed", error)),
+        );
+        yield* page.openHome;
+        return "changed" satisfies ModeChange;
+      }),
+    );
+  });
+
+  return { connect, forget, useThisComputer, connectToServerInstead } as const;
 });
