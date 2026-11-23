@@ -152,8 +152,6 @@ export const en = {
   "conversation.back": "Back to bots",
   "conversation.openDetails": "Show details for {name}",
   "conversation.details": "Details",
-  "conversation.stop": "Stop",
-  "conversation.stopping": "Stopping",
 
   "message.queued": "Queued",
   "message.waitingForModel": "Sent once a model is connected",
@@ -400,6 +398,7 @@ export const en = {
   "details.runsOn": "Runs on",
   "details.modelUnavailable": "Not available on the engine right now",
   "details.permissionMode": "Permission mode",
+  "details.stop": "Stop what it’s doing",
   "details.workingContext": "Working context",
   "details.freshStartHint":
     "A fresh start clears what {name} is holding in mind. Its conversation, memory, routines and files stay.",
@@ -464,6 +463,7 @@ export const en = {
   "room.stop.body":
     "The bots end what they are doing for {name}, and the work they left running for it. Anything else they’re doing goes on.",
   "room.stop.cancel": "Keep going",
+  "room.stopping": "Stopping",
   "room.stopFailed": "The work in {name} wasn’t stopped. Try again.",
   "room.composerArchived": "{name} is archived, so it takes no messages.",
 

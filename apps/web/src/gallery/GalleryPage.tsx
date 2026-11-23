@@ -1304,7 +1304,7 @@ function ComposerDemo({
 function ComposerSection() {
   return (
     <Section title="Conversation header and composer">
-      <Labeled label="Headers: a working bot (with Stop), a waiting bot (the line goes to the request), a blocked bot, a room with work under way (with Stop, which asks first), the same room while its work stops, a room at rest">
+      <Labeled label="Headers: a working bot, a waiting bot (the line goes to the request), a blocked bot, a room with work under way, the same room while its work stops, a room at rest. None offers Stop: it is in the details">
         <div className="flex flex-col gap-2">
           {(
             [
@@ -1322,10 +1322,8 @@ function ComposerSection() {
                 detailsOpen={false}
                 onToggleDetails={nothing}
                 onBack={nothing}
-                onStop={nothing}
                 onGoToWaiting={nothing}
                 folds={[]}
-                stopShortcut={shortcuts.stop}
                 onAnnounce={nothing}
               />
             </div>
@@ -1373,12 +1371,14 @@ const detailsIntents = {
   openAttachment: nothing,
   openMemoryFile: nothing,
   editProfile: nothing,
+  stop: nothing,
   freshStart: nothing,
   deleteBot: nothing,
 };
 
 const roomIntents = {
   editRoom: nothing,
+  stop: nothing,
   archiveRoom: () => Promise.resolve(),
   unarchiveRoom: () => Promise.resolve(),
   deleteRoom: nothing,
@@ -1456,6 +1456,7 @@ function DetailsSection() {
             files={team.files[scout.id] ?? []}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
@@ -1467,6 +1468,7 @@ function DetailsSection() {
             files={team.files[atlas.id] ?? []}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
@@ -1478,6 +1480,7 @@ function DetailsSection() {
             files={[]}
             modelName={null}
             intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
@@ -1499,6 +1502,7 @@ function DetailsSection() {
             files={null}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
@@ -1507,6 +1511,9 @@ function DetailsSection() {
         </Pane>
         <Pane>
           <RoomDetails room={team.room} intents={roomIntents} onClose={nothing} />
+        </Pane>
+        <Pane>
+          <RoomDetails room={stoppingRoom} intents={roomIntents} onClose={nothing} />
         </Pane>
         <Pane>
           <RoomDetails room={archivedRoom} intents={roomIntents} onClose={nothing} />

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Loaded } from "@j3-bots/client-runtime";
+import { canStop } from "@j3-bots/client-runtime/presentation";
 import {
   useBotFiles,
   useEngineStatus,
@@ -44,14 +45,15 @@ import { Button, Switch } from "../ui.tsx";
 import { FileCard } from "../conversation/FileCard.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
 import { useBotActions } from "./actions.ts";
+import { StopRow } from "./StopRow.tsx";
 
 /** A read's list once loaded, or null while it loads; a bot that is gone has none. */
 const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
   loaded === null || loaded._tag === "loading" ? null : loaded._tag === "ready" ? loaded.value : [];
 
 /**
- * Answers: what is this bot, and what runs without me. Its profile, its
- * routines with a switch to pause each, the files it sent, its memory, the
+ * Answers: what is this bot, and what runs without me. Its profile, Stop
+ * while it has work to stop, its routines with a switch to pause each, the files it sent, its memory, the
  * model it runs on, a fresh start, and, last and apart, deleting it.
  */
 export function BotDetails({ bot }: { readonly bot: Bot }) {
@@ -97,6 +99,8 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
           onPress={() => navigation.navigate("editBot", { botId: bot.id })}
         />
       </Profile>
+
+      {canStop(bot) && <StopRow label={t("details.stop")} onPress={() => actions.stop(bot)} />}
 
       <Section open title={t("details.routines")}>
         {routines === null ? (

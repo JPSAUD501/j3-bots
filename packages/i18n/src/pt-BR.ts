@@ -150,8 +150,6 @@ const sentences = {
   "conversation.back": "Voltar para os bots",
   "conversation.openDetails": "Mostrar detalhes de {name}",
   "conversation.details": "Detalhes",
-  "conversation.stop": "Parar",
-  "conversation.stopping": "Parando",
 
   "message.queued": "Na fila",
   "message.waitingForModel": "Enviada assim que um modelo conectar",
@@ -399,6 +397,7 @@ const sentences = {
   "details.runsOn": "Roda em",
   "details.modelUnavailable": "Indisponível no motor agora",
   "details.permissionMode": "Modo de permissão",
+  "details.stop": "Parar o que está fazendo",
   "details.workingContext": "Contexto de trabalho",
   "details.freshStartHint":
     "Recomeçar limpa o que {name} tem em mente. A conversa, a memória, as rotinas e os arquivos continuam.",
@@ -465,6 +464,7 @@ const sentences = {
   "room.stop.body":
     "Os bots encerram o que estão fazendo para {name}, e o trabalho que deixaram rodando para ela. O resto do que estão fazendo continua.",
   "room.stop.cancel": "Deixar continuar",
+  "room.stopping": "Parando",
   "room.stopFailed": "O trabalho em {name} não foi parado. Tente de novo.",
   "room.composerArchived": "{name} está arquivada, então não recebe mensagens.",
 

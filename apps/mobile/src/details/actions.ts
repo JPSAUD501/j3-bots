@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { refusedWith } from "@j3-bots/client-runtime";
-import { ROOM_MEMBERS } from "@j3-bots/client-runtime/presentation";
+import { ROOM_MEMBERS, roomStopFailed } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import type { Bot, Room } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
@@ -26,6 +26,8 @@ export function useBotActions() {
   const say = useSay();
   const leaveDeleted = useLeaveDeleted();
   return {
+    /** Stops the bot's work under way at once. */
+    stop: (bot: Bot) => void client.stopBot(bot.id),
     freshStart: (bot: Bot) =>
       void client
         .freshStart(bot.id)
@@ -56,6 +58,11 @@ export function useRoomActions() {
   const askForMembers = (room: Room) =>
     navigation.navigate("roomForm", { form: { _tag: "unarchive", roomId: room.id } });
   return {
+    /** Stops the work addressed to the room, once the operator confirmed it. */
+    stop: (room: Room) =>
+      void client.stopRoom(room.id).then((result) => {
+        if (roomStopFailed(result)) say(t("room.stopFailed", { name: room.name }));
+      }),
     /** Resolves once the server answered, whatever it said. */
     archive: (room: Room): Promise<void> =>
       client.updateRoom(room.id, { archived: true }).then((result) => {

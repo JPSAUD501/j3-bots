@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
 import { useTurnAnnouncement } from "@j3-bots/client-runtime/react";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
 import type { EntryId, RosterItem, WorkFoldEntry } from "@j3-bots/contracts";
-import { ChevronLeft, ChevronRight, CornerDownRight, Square } from "lucide-react-native";
+import { ChevronLeft, ChevronRight, CornerDownRight } from "lucide-react-native";
 import { useState } from "react";
 import { AccessibilityInfo, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
 import { RoomAvatar, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar, useOffline } from "../components/avatar/mood.tsx";
-import { useConfirm } from "../confirm.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";
 import { SwapText } from "../components/SwapText.tsx";
@@ -18,7 +16,7 @@ import { itemName } from "../screens/rosterItem.ts";
 
 /**
  * Who this is, and one line saying what it is doing now. The block with the
- * name opens the details. While the bot waits, "Waiting for you" at the end
+ * name opens the details, where Stop is while there is work to stop. While the bot waits, "Waiting for you" at the end
  * brings the card it waits on into view. Each change of state and each new
  * line is announced once, as it happens, then how the turn ended
  * (`useTurnAnnouncement`). Mount one per conversation, so moving to another
@@ -31,7 +29,6 @@ export function ConversationHeader({
   onBack,
   onOpenDetails,
   onGoToWaiting,
-  onStop,
   folds,
 }: {
   readonly item: RosterItem;
@@ -39,8 +36,6 @@ export function ConversationHeader({
   readonly onBack: (() => void) | null;
   readonly onOpenDetails: () => void;
   readonly onGoToWaiting: (entryId: EntryId) => void;
-  /** A bot's Stop runs at once; a room's, once the operator confirms it. */
-  readonly onStop: () => void;
   /** The conversation's work folds: when a turn ends, the line it folds into is said aloud. */
   readonly folds: ReadonlyArray<WorkFoldEntry>;
 }) {
@@ -54,8 +49,6 @@ export function ConversationHeader({
       : { text: t("room.members", { names: memberList(item.room, ctx) }), tone: "secondary" };
   const waitingOn =
     item._tag === "bot" && item.bot.state._tag === "waiting" ? item.bot.state.entryId : null;
-  const botStop = item._tag === "bot" && canStop(item.bot);
-  const roomStopping = item._tag === "room" ? roomStop(item.room) : "hidden";
 
   // The block with the name turns muted while pressed: the avatar's light keeps its ring in that color.
   const [pressed, setPressed] = useState(false);
@@ -64,16 +57,6 @@ export function ConversationHeader({
   // Each change of state and each new line is said once, then how the turn ended; not the first.
   const offline = useOffline();
   useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
-
-  const confirm = useConfirm();
-  const confirmRoomStop = () =>
-    confirm({
-      title: t("room.stop.title", { name }),
-      body: t("room.stop.body", { name }),
-      cancel: t("room.stop.cancel"),
-      confirm: t("room.stop"),
-      onConfirm: onStop,
-    });
 
   return (
     <View className="min-h-14 flex-row items-center gap-1 border-b border-border px-2">
@@ -134,21 +117,6 @@ export function ConversationHeader({
           className="size-11 items-center justify-center"
         >
           <Icon icon={CornerDownRight} size={18} color="accent-waiting" />
-        </Pressable>
-      )}
-      {(botStop || roomStopping !== "hidden") && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: roomStopping === "stopping" }}
-          onPress={
-            item._tag === "bot" ? onStop : roomStopping === "offered" ? confirmRoomStop : undefined
-          }
-          className="min-h-11 flex-row items-center gap-1.5 rounded-md border border-input px-3"
-        >
-          <Icon icon={Square} size={12} color="accent-foreground" filled />
-          <Text className="text-sm text-foreground">
-            {roomStopping === "stopping" ? t("conversation.stopping") : t("conversation.stop")}
-          </Text>
         </Pressable>
       )}
     </View>

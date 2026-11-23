@@ -26,7 +26,7 @@ The operator picks a bot in the roster and types.
 - While it works, its avatar shows the state and one line under its name says what it is doing right now. The operator can open the work to see every step, but nothing forces them to.
 - The answer arrives as a short message. Longer material arrives as a file or a card.
 - The operator can send another message at any time. It reaches the bot mid-turn and can redirect it.
-- "Stop" ends the work. It does not undo what was already done, and the bot says what was left running, if anything.
+- "Stop" ends the work. It does not undo what was already done, and the bot says what was left running, if anything. It sits in the bot's details, one press from the conversation's header, while there is work to stop; the conversation itself stays about what the bot is doing. On a computer, `Ctrl+.` (`⌘.` on macOS) stops it from the conversation.
 
 ### Being asked
 
@@ -54,7 +54,7 @@ The operator creates a room, adds two to six bots, and writes.
 - `@Name` gives a request one owner. `@everyone` asks each member in turn and is meant to be rare.
 - Bots answer each other in the room. The chain stops when a bot has nothing to add, or when the room's budget for consecutive bot turns runs out; then the room waits for the operator.
 - Approvals and questions never appear in a room. They go to the asking bot's own conversation, and the room shows that the bot is waiting.
-- While the room's work is under way, also work a bot left running in the background for it, the room's header offers Stop. It asks first, saying what ends (what the bots are doing for the room, and the work they left running for it) and that anything else they're doing goes on.
+- While the room's work is under way, also work a bot left running in the background for it, the room's details offer Stop. It asks first, saying what ends (what the bots are doing for the room, and the work they left running for it) and that anything else they're doing goes on.
 
 ### One bot hands work to another
 
