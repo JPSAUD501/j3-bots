@@ -111,7 +111,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 - Messages as bubbles, the operator's on one side and the bot's on the other, with timestamps between groups.
 - Cards inline: questions, approvals, files, handoffs, routines created or changed.
 - A finished turn's work folds into one line ("Worked for 2m") that opens to show the steps.
-- A composer labeled with the bot's name. Attachments and dictation are in the composer; nothing else is.
+- A composer labeled with the bot's name. Attachments and dictation are in the composer; nothing else is. A file stands in the message where the operator put it ("compare [image] with [image]"), and the bot reads it there, so "the second image" means the one it sees second. A tap on a file shows it: an image in a viewer, anything else in the app that opens it.
 
 ### Details
 
