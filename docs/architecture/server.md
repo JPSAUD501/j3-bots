@@ -368,7 +368,17 @@ A call whose audience is a room that is now archived fails with `Conflict("room-
 
 The bridge gives each request one id and reuses it when it retries the forward, so a retry finds the stored request, acts for the same turn, and returns the stored result instead of acting twice. If the engine cannot be reached, the server retries the match until the request's deadline and then fails it as retryable. A request has fifteen seconds end to end; past that nothing was committed and it fails as retryable.
 
-The `j3` tools are pre-approved in every permission mode, so they never raise an approval card. How each harness is told so is in [Engine](engine.md#provisioning).
+J3 Bots' own `j3` tools are pre-approved by name in every permission mode, so they never raise an approval card; a connector's tools are not, and follow the bot's permission mode. How each harness is told so is in [Engine](engine.md#provisioning).
+
+**Connector tools.** The bridge lists, after J3 Bots' own tools, the connector tools its session's bot is offered ([Connectors](#connectors)), each named `<connector>__<tool>`; none of J3 Bots' own tools has a `__` in its name. The bridge asks the server for the list (`/tools/list`) each time the harness lists, and falls back to J3 Bots' own tools when the server cannot be reached or the session is no bot's. Each bot's list has a version, which changes whenever the connectors say its offered tools may have, and which a server process never gives twice across restarts. Once the harness has listed, the bridge waits on the server for a version other than the one it listed (`/tools/changes`, answered at a change or after four minutes) and then sends `notifications/tools/list_changed`, so a grant reaches a bot without a new session: a Codex bot in the same turn, a Claude Code bot from its next turn ([Engine](engine.md#behaviors-j3-bots-designs-around)).
+
+A call to a connector tool:
+
+1. is refused when its arguments are not an object or are over the same 12,288 bytes as J3 Bots' own tools take;
+2. is matched to the engine's record of the call in the session's running admitted turn, as above, and claimed for its request in a transaction of its own, which commits before the connector is called, so the call is made once, and only for a running turn;
+3. goes to the connector's client, which refuses a tool the bot is not offered and answers the rest as text the bot reads as untrusted, or J3 Bots' own line when the connector could not answer. The answer goes back to the bot and is not stored: the operator's data stays at the connector. So a forward of a request claimed before, after a lost reply or a server restart, is answered that the call may or may not have taken effect, and that the bot should check before making it again.
+
+A connector call may take up to eleven minutes at the bridge, past the connector client's own deadline, and each harness's timeout for `j3` is twelve. A harness that gives up on a call sends `notifications/cancelled`; the bridge then abandons its forward without an answer, which interrupts the call at the server and, through the connector's client, at the connector's server. No progress is relayed: neither harness extends its timeout for it ([Engine](engine.md#behaviors-j3-bots-designs-around)). A connector call shows in the bot's work fold as a `connector` step, named by the connector and the tool, never by its arguments.
 
 | Tool | Purpose |
 | --- | --- |
