@@ -15,6 +15,7 @@ import { cn } from "../lib/cn";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
 import { RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
 import { LiveBotAvatar, useOffline } from "./avatar/mood";
+import { PrimaryBadge } from "./avatar/PrimaryBadge";
 import { toneClass } from "./RosterRow";
 import { SwapText } from "./SwapText";
 import { Kbd } from "./ui/kbd";
@@ -121,7 +122,9 @@ export function ConversationHeader({
           phone, where it is the only way to the details, the block is a full touch target. */}
       <div className="relative flex min-w-0 items-center @max-tablet:min-h-(--layout-touch-target) gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:hover]:[--avatar-cutout:var(--muted)] has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
         {subject._tag === "bot" ? (
-          <LiveBotAvatar bot={subject.bot} size={32} />
+          <PrimaryBadge primary={subject.bot.primary} size={32}>
+            <LiveBotAvatar bot={subject.bot} size={32} />
+          </PrimaryBadge>
         ) : (
           <RoomAvatar size={32} members={roomAvatarMembers(subject.room, bots)} />
         )}

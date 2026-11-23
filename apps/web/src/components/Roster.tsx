@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type { RosterItem, RosterItemKey, Section, SectionId } from "@j3-bots/contracts";
 import { BotIcon, PlusIcon, SearchIcon, SearchXIcon, UsersIcon, XIcon } from "lucide-react";
 import {
   useRef,
@@ -11,6 +11,8 @@ import {
   type RefCallback,
 } from "react";
 import {
+  arrangeRoster,
+  type BotItem,
   filterRoster,
   orderRoster,
   ROOM_MEMBERS,
@@ -20,6 +22,21 @@ import {
 import { useBots, useI18n } from "../app/context";
 import type { AvatarHandle } from "./avatar/BotAvatar";
 import { ReorderList, ReorderRow } from "./ReorderList";
+import {
+  type FoldedSections,
+  HiddenBots,
+  HiddenRow,
+  PinnedBots,
+  SectionBlock,
+} from "./RosterGroups";
+import {
+  RosterItemRows,
+  type RosterIntents,
+  type RosterMenuContext,
+  type RosterQuestion,
+  RosterQuestionDialog,
+  WithMenu,
+} from "./RosterMenu";
 import { RosterRow } from "./RosterRow";
 import { Button } from "./ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
@@ -30,12 +47,6 @@ const sameKey = (item: RosterItem, key: RosterItemKey | null) =>
     ? key._tag === "bot" && key.botId === item.bot.id
     : key._tag === "room" && key.roomId === item.room.id);
 
-/**
- * Arrow keys move from the search field into the rows and between them; Home
- * and End jump to the ends of the list. Up from the first row returns to search.
- * Only unmodified keys: `Alt+↑` and `Alt+↓` belong to the shell, which moves
- * between conversations with them.
- */
 /** The bot rows' avatars, by row key, so a row that rises can make its bot hop. */
 class RowAvatars {
   private readonly handles = new Map<string, AvatarHandle>();
@@ -61,6 +72,12 @@ class RowAvatars {
   }
 }
 
+/**
+ * Arrow keys move from the search field into the rows and between them; Home
+ * and End jump to the ends of the list. Up from the first row returns to search.
+ * Only unmodified keys: `Alt+↑` and `Alt+↓` belong to the shell, which moves
+ * between conversations with them.
+ */
 function moveFocus(event: KeyboardEvent<HTMLElement>) {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const rows = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-roster-row]")];
@@ -90,11 +107,16 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
 
 interface RosterProps {
   readonly items: ReadonlyArray<RosterItem>;
+  /** Null while the server has not said it has sections. */
+  readonly sections: ReadonlyArray<Section> | null;
   readonly selected: RosterItemKey | null;
   /** The link a row navigates with, such as a router link to its conversation. */
   readonly rowLink: (item: RosterItem) => ReactElement;
   readonly onNewBot: () => void;
   readonly onNewRoom: () => void;
+  readonly intents: RosterIntents;
+  /** The sections folded on this device: the shell's, since its keys skip what they hide. */
+  readonly folded: FoldedSections;
   readonly footer?: ReactNode;
   /**
    * The roster's landmark. It takes focus only from code, where neither a row
@@ -103,23 +125,139 @@ interface RosterProps {
   readonly ref?: Ref<HTMLElement>;
 }
 
-/** Answers: who do I have, who needs me, what is each of them doing. */
+/**
+ * Answers: who do I have, who needs me, what is each of them doing. Without
+ * a search it draws the pinned bots apart, then the rooms and the bots in no
+ * section, then each section, then a row that opens the hidden bots; a
+ * search lists every match, hidden bots included, as one list.
+ */
 export function Roster({
   items,
+  sections,
   selected,
   rowLink,
   onNewBot,
   onNewRoom,
+  intents,
+  folded,
   footer,
   ref,
 }: RosterProps) {
   const { t } = useI18n();
   const bots = useBots();
   const [query, setQuery] = useState("");
-  const rows = orderRoster(filterRoster(items, query));
-  const keys = rows.map((item) => rosterKeyText(rosterKeyOf(item)));
+  const [showHidden, setShowHidden] = useState(false);
+  const [question, setQuestion] = useState<RosterQuestion | null>(null);
+  const [renaming, setRenaming] = useState<SectionId | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [avatars] = useState(() => new RowAvatars());
+
+  const searching = query.trim() !== "";
+  const ordered = orderRoster(items);
+  const arranged = arrangeRoster(ordered, sections ?? []);
+  const menu: RosterMenuContext = {
+    intents,
+    sections,
+    primary:
+      items.find((item): item is BotItem => item._tag === "bot" && item.bot.primary)?.bot ?? null,
+    ask: setQuestion,
+    renameSection: setRenaming,
+  };
+
+  const row = (item: RosterItem) => {
+    const key = rosterKeyText(rosterKeyOf(item));
+    const name = item._tag === "bot" ? item.bot.profile.name : item.room.name;
+    return (
+      <ReorderRow key={key} rowKey={key}>
+        <WithMenu
+          rows={<RosterItemRows item={item} menu={menu} />}
+          label={t("roster.menu", { name })}
+          className=""
+          buttonClassName="top-1/2 right-2 -translate-y-1/2"
+        >
+          <RosterRow
+            item={item}
+            withMenu
+            avatarRef={avatars.ref(key)}
+            selected={sameKey(item, selected)}
+            render={rowLink(item)}
+            memberAvatars={
+              item._tag === "room"
+                ? item.room.members.flatMap((id) => {
+                    const bot = bots.get(id);
+                    return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
+                  })
+                : []
+            }
+          />
+        </WithMenu>
+      </ReorderRow>
+    );
+  };
+
+  /** One run of rows that travel together as their order changes. */
+  const list = (rows: ReadonlyArray<RosterItem>, view: string) => (
+    <ReorderList
+      view={{ keys: rows.map((item) => rosterKeyText(rosterKeyOf(item))), query: view }}
+      scroller={scroller}
+      onRise={(key) => avatars.hop(key)}
+    >
+      {rows.map(row)}
+    </ReorderList>
+  );
+
+  let body: ReactNode;
+  if (showHidden && !searching) {
+    body = (
+      <HiddenBots
+        items={arranged.hidden}
+        selected={selected}
+        rowLink={rowLink}
+        onBack={() => setShowHidden(false)}
+        onUnhide={(botId) => intents.placeBot(botId, { hidden: false })}
+      />
+    );
+  } else if (searching) {
+    const rows = orderRoster(filterRoster(items, query));
+    body = rows.length === 0 ? <RosterEmpty query={query.trim()} /> : list(rows, query.trim());
+  } else if (items.length === 0) {
+    body = <RosterEmpty query="" />;
+  } else {
+    body = (
+      <>
+        {arranged.pinned.length > 0 && (
+          <PinnedBots items={arranged.pinned} selected={selected} rowLink={rowLink} menu={menu} />
+        )}
+        {arranged.main.length > 0 && list(arranged.main, "")}
+        {arranged.sections.map(({ section, items: rows }, index) => (
+          <SectionBlock
+            key={section.id}
+            section={section}
+            index={index}
+            sections={sections ?? []}
+            unread={rows.some((item) => item.unread)}
+            folded={folded.has(section.id)}
+            onFold={(fold) => folded.set(section.id, fold)}
+            renaming={renaming === section.id}
+            onRename={(name) => {
+              setRenaming(null);
+              if (name !== null && name !== section.name) {
+                intents.updateSection(section.id, { name });
+              }
+            }}
+            onStartRename={() => setRenaming(section.id)}
+            menu={menu}
+          >
+            {rows.length > 0 ? list(rows, `section:${section.id}`) : null}
+          </SectionBlock>
+        ))}
+        {arranged.hidden.length > 0 && (
+          <HiddenRow items={arranged.hidden} onOpen={() => setShowHidden(true)} />
+        )}
+      </>
+    );
+  }
+
   return (
     <nav
       ref={ref}
@@ -180,44 +318,20 @@ export function Roster({
           </MenuPopup>
         </Menu>
       </div>
-      {/* The list keeps its own place as rows move (`ReorderList`), so the browser's anchoring stays out. */}
+      {/* The lists keep their own place as rows move (`ReorderList`), so the browser's anchoring stays out. */}
       <div
         ref={scroller}
         className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 [overflow-anchor:none]"
       >
-        {rows.length === 0 ? (
-          <RosterEmpty query={query.trim()} />
-        ) : (
-          <ReorderList
-            view={{ keys, query: query.trim() }}
-            scroller={scroller}
-            onRise={(key) => avatars.hop(key)}
-          >
-            {rows.map((item) => {
-              const key = rosterKeyText(rosterKeyOf(item));
-              return (
-                <ReorderRow key={key} rowKey={key}>
-                  <RosterRow
-                    item={item}
-                    avatarRef={avatars.ref(key)}
-                    selected={sameKey(item, selected)}
-                    render={rowLink(item)}
-                    memberAvatars={
-                      item._tag === "room"
-                        ? item.room.members.flatMap((id) => {
-                            const bot = bots.get(id);
-                            return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
-                          })
-                        : []
-                    }
-                  />
-                </ReorderRow>
-              );
-            })}
-          </ReorderList>
-        )}
+        {body}
       </div>
       {footer}
+      <RosterQuestionDialog
+        question={question}
+        onClose={() => setQuestion(null)}
+        intents={intents}
+        primary={menu.primary}
+      />
     </nav>
   );
 }

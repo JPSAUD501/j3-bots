@@ -12,7 +12,7 @@ It worked, and it read as a tool. The project owner judges J3 Bots against persi
 
 **J3 Bots adopts the Pips direction.** Every surface follows it, and the [design language](../design/design-language.md) describes it.
 
-- **The bots are characters.** Each is a small creature with one lens eye and an antenna, in one of twelve silhouettes and twelve vivid colors. The eye blinks, glances and follows the pointer; it narrows while the bot works and widens when the bot needs the operator. The antenna's tip is the status light. The avatar carries every state, so there is no corner badge and no spinner.
+- **The bots are characters.** Each is a small creature with one lens eye and an antenna, in one of twelve silhouettes and twelve vivid colors. The eye blinks, glances and follows the pointer; it narrows while the bot works and widens when the bot needs the operator. The antenna's tip is the status light. The avatar carries every state, so no corner badge carries a state and there is no spinner; the one mark at an avatar's corner, the primary bot's star, names a role.
 - **The chrome stays quiet**: near-monochrome, with a true-black dark canvas. The focus ring, links and the primary action are the text color; color belongs to the bots and to state.
 - **Three bundled faces**: Bricolage Grotesque for display, Instrument Sans for text, JetBrains Mono for code. They ship with the app under the SIL Open Font License, and nothing loads from a font service.
 - **Motion is quick and springy.** Moves run on three springs, `pop`, `soft` and `slide`, named by frequency and damping so the web (a CSS `linear()` easing) and Android (a Reanimated spring) draw the same motion. Pressed controls go down and spring back.

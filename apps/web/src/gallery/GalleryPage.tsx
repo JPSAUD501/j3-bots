@@ -92,7 +92,11 @@ import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
+import { Roster } from "../components/Roster";
+import { HiddenBots, SectionBlock, useFoldedSections } from "../components/RosterGroups";
+import type { RosterIntents, RosterMenuContext } from "../components/RosterMenu";
 import { RosterRow } from "../components/RosterRow";
+import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
 import { SecretRequestCard } from "../components/SecretRequestCard";
@@ -111,6 +115,7 @@ import { LANGUAGE_NAMES, notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
 import { addresseeLine } from "@j3-bots/client-runtime/wording";
+import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
@@ -176,6 +181,7 @@ export default function GalleryPage() {
                 <AvatarsSection />
                 <NotificationsSection />
                 <RosterSection />
+                <RosterOrganizeSection />
                 <BubblesSection />
                 <CardsSection />
                 <WorkSection />
@@ -586,6 +592,20 @@ function AvatarsSection() {
           ))}
         </div>
       </Labeled>
+      <Labeled label="The primary bot's mark at 24, 32, 40 and 52 px: it names a role, so the light still says what the bot is doing">
+        <div className="flex flex-wrap items-end gap-4">
+          {([24, 32, 40, 52] as const).map((size) => (
+            <PrimaryBadge key={size} primary size={size}>
+              <BotAvatar
+                avatar={team.bots.scout.profile.avatar}
+                seed={team.bots.scout.id}
+                state="working"
+                size={size}
+              />
+            </PrimaryBadge>
+          ))}
+        </div>
+      </Labeled>
       <Labeled label="The first 24 bots' looks, in the order new bots take them, and a room">
         <div className="flex flex-wrap items-end gap-3">
           {firstLooks.map((avatar) => (
@@ -737,6 +757,105 @@ function RosterSection() {
           </li>
         ))}
       </ul>
+    </Section>
+  );
+}
+
+/** The roster alone, at its width beside a conversation, with its own copy of the sample team. */
+function RosterFrame() {
+  const source = useSampleSource();
+  const folded = useFoldedSections(source.data.sections);
+  const [selected, setSelected] = useState<RosterItemKey | null>({
+    _tag: "bot",
+    botId: ids.atlas,
+  });
+  return (
+    <div className="flex h-full flex-col bg-sidebar">
+      <Roster
+        items={source.data.roster ?? []}
+        sections={source.data.sections}
+        selected={selected}
+        rowLink={(item) => rowButton(() => setSelected(rowKey(item)))}
+        onNewBot={nothing}
+        onNewRoom={nothing}
+        intents={rosterIntents(source.intents, {
+          selected,
+          select: setSelected,
+          setDetailsOpen: nothing,
+        })}
+        folded={folded}
+      />
+    </div>
+  );
+}
+
+const quietIntents: RosterIntents = {
+  placeBot: nothing,
+  pinRoom: nothing,
+  markRead: nothing,
+  markUnread: nothing,
+  createSection: () => Promise.resolve(null),
+  updateSection: nothing,
+  deleteSection: nothing,
+  openDetails: nothing,
+  deleteBot: nothing,
+};
+
+const quietMenu: RosterMenuContext = {
+  intents: quietIntents,
+  sections: team.sections,
+  primary: team.bots.scout,
+  ask: nothing,
+  renameSection: nothing,
+};
+
+const homeSection = team.sections[0];
+const hiddenBots = team.roster.flatMap((item) =>
+  item._tag === "bot" && item.bot.hidden ? [item] : [],
+);
+
+function RosterOrganizeSection() {
+  return (
+    <Section title="Organizing the roster">
+      <Frame
+        label="The pinned bots as large avatars, the primary one marked; rooms and the bots in no section; a section with bots, one with none yet; the row to the hidden bots. Right-click a row or tile, or its “…”, for its menu"
+        width={340}
+        height={980}
+      >
+        <RosterFrame />
+      </Frame>
+      {homeSection !== undefined && (
+        // A section being named takes focus as it appears, so the gallery leaves it to the roster above.
+        <Labeled label="A folded section with something unread">
+          <div className="flex w-(--layout-roster-width) max-w-full flex-col rounded-md bg-sidebar p-2">
+            <SectionBlock
+              section={homeSection}
+              index={0}
+              sections={team.sections}
+              unread
+              folded
+              onFold={nothing}
+              renaming={false}
+              onStartRename={nothing}
+              onRename={nothing}
+              menu={quietMenu}
+            >
+              {null}
+            </SectionBlock>
+          </div>
+        </Labeled>
+      )}
+      <Frame label="The hidden conversations, each with Unhide" width={340} height={220}>
+        <div className="h-full bg-sidebar p-2">
+          <HiddenBots
+            items={hiddenBots}
+            selected={null}
+            rowLink={() => rowButton(nothing)}
+            onBack={nothing}
+            onUnhide={nothing}
+          />
+        </div>
+      </Frame>
     </Section>
   );
 }

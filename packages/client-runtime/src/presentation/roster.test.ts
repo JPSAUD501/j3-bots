@@ -14,7 +14,14 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, preview } from "../../test/fixtures.ts";
 import type { IntentResult } from "../intents/Actions.ts";
-import { arrangeRoster, filterRoster, orderRoster, roomStop, roomStopFailed } from "./roster.ts";
+import {
+  arrangedOrder,
+  arrangeRoster,
+  filterRoster,
+  orderRoster,
+  roomStop,
+  roomStopFailed,
+} from "./roster.ts";
 
 const row = (b: Bot, lastEntry: EntryPreview | null = null, unread = false): RosterItem => ({
   _tag: "bot",
@@ -92,6 +99,20 @@ describe("arrangeRoster", () => {
       ["Work", ["Ana", "Bia"]],
     ]);
     expect(names(arranged.hidden)).toEqual(["Away"]);
+    expect(names(arrangedOrder(arranged, () => false))).toEqual([
+      "Pinned",
+      "Launch",
+      "Loose",
+      "Orphan",
+      "Ana",
+      "Bia",
+    ]);
+    expect(names(arrangedOrder(arranged, (id) => id === work.id))).toEqual([
+      "Pinned",
+      "Launch",
+      "Loose",
+      "Orphan",
+    ]);
   });
 });
 

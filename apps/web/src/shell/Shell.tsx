@@ -13,11 +13,12 @@ import {
 import {
   addressed,
   addresseeOf,
+  arrangedOrder,
+  arrangeRoster,
   arrivalCounts,
   buildTimeline,
   canStop,
   liveTurn,
-  filterRoster,
   openingHeld,
   orderRoster,
   readThrough,
@@ -41,6 +42,7 @@ import {
   QuietRoom,
 } from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
+import { useFoldedSections } from "../components/RosterGroups";
 import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
@@ -55,6 +57,7 @@ import { useSeenEntries } from "../lib/useSeenEntries";
 import { addresseeLine, botModelName } from "@j3-bots/client-runtime/wording";
 import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
+import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
 interface ShellNavigation {
@@ -94,6 +97,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const [containerRef, layout] = useShellLayout();
 
   const rosterItems = data.roster ?? [];
+  const folded = useFoldedSections(data.sections);
   const bots = rosterItems.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
   const item =
     selected === null
@@ -193,7 +197,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         return true;
       case "next":
       case "previous": {
-        const rows = orderRoster(filterRoster(rosterItems, ""));
+        // In the order the roster draws them, so the keys walk what the operator sees.
+        const rows = arrangedOrder(
+          arrangeRoster(orderRoster(rosterItems), data.sections ?? []),
+          folded.has,
+        );
         const forward = action === "next";
         const index = item === null ? -1 : rows.indexOf(item);
         // With nothing selected, down starts at the top and up at the bottom.
@@ -353,6 +361,9 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       rowLink={navigation.rowLink}
       onNewBot={intents.newBot}
       onNewRoom={intents.newRoom}
+      sections={data.sections}
+      intents={rosterIntents(intents, navigation)}
+      folded={folded}
       footer={<SettingsButton data={data} intents={intents} />}
       ref={rosterRef}
     />

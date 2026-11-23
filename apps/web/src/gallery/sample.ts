@@ -15,6 +15,7 @@ import {
   RoomId,
   RoutineId,
   RoutineRunId,
+  SectionId,
   TimeZone,
   WorkStepId,
   type Attachment,
@@ -30,6 +31,7 @@ import {
   type Room,
   type RosterItem,
   type Routine,
+  type Section,
   type Settings,
   type UsageRoutine,
   type UsageTurn,
@@ -108,7 +110,9 @@ export function sampleTeam(now: DateTime.Utc) {
     shape: string,
     color: string,
     state: BotState,
-    extra: Partial<Pick<Bot, "pinned" | "hidden" | "primary" | "permissionMode">> = {},
+    extra: Partial<
+      Pick<Bot, "pinned" | "hidden" | "primary" | "permissionMode" | "sectionId">
+    > = {},
   ): Bot {
     return {
       id,
@@ -126,13 +130,20 @@ export function sampleTeam(now: DateTime.Utc) {
       primary: extra.primary ?? false,
       pinned: extra.pinned ?? false,
       hidden: extra.hidden ?? false,
-      sectionId: null,
+      sectionId: extra.sectionId ?? null,
       state,
       settingsHeld: false,
       opening: false,
       createdAt: ago(60 * 24 * 30),
     };
   }
+
+  // One section with bots in it, and one the operator made and has not filled yet.
+  const sections: ReadonlyArray<Section> = [
+    { id: SectionId.make("section-home"), name: "Home" },
+    { id: SectionId.make("section-later"), name: "Later" },
+  ];
+  const home = { sectionId: SectionId.make("section-home") };
 
   const bots = {
     scout: bot(
@@ -164,21 +175,29 @@ export function sampleTeam(now: DateTime.Utc) {
       since: ago(4),
     }),
     // Idle with a reply not yet read: the roster shows Wren as done.
-    wren: bot(ids.wren, "Wren", "Writing", "horns", "orchid", { _tag: "idle" }),
+    wren: bot(ids.wren, "Wren", "Writing", "horns", "orchid", { _tag: "idle" }, { pinned: true }),
     ledger: bot(ids.ledger, "Ledger", "Receipts", "ghost", "honey", {
       _tag: "blocked",
       failure: "usage-limit",
       retryAt: ahead(95),
     }),
-    otto: bot(ids.otto, "Otto", "Calendar", "block", "iris", { _tag: "idle" }),
-    maple: bot(ids.maple, "Maple", "Groceries", "toes", "tomato", {
-      _tag: "working",
-      since: ago(14),
-      stalled: true,
-      quietSince: ago(12),
-      activity: "Comparing prices",
-      tool: null,
-    }),
+    otto: bot(ids.otto, "Otto", "Calendar", "block", "iris", { _tag: "idle" }, home),
+    maple: bot(
+      ids.maple,
+      "Maple",
+      "Groceries",
+      "toes",
+      "tomato",
+      {
+        _tag: "working",
+        since: ago(14),
+        stalled: true,
+        quietSince: ago(12),
+        activity: "Comparing prices",
+        tool: null,
+      },
+      home,
+    ),
     iris: bot(ids.iris, "Iris", "Travel", "bean", "sky", {
       _tag: "waiting",
       entryId: EntryId.make("iris-s1"),
@@ -811,6 +830,7 @@ export function sampleTeam(now: DateTime.Utc) {
     entries,
     workSteps,
     roster,
+    sections,
     routines,
     files,
     memory,
