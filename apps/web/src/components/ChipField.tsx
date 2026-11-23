@@ -166,7 +166,7 @@ export interface FieldChange {
 }
 
 /** A file's chip in the field: its key, and what it shows. */
-export interface FieldChip {
+interface FieldChip {
   readonly key: string;
   readonly content: ReactNode;
 }

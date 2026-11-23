@@ -27,7 +27,7 @@ const extensions: Readonly<Record<string, string>> = {
  * system may clear them. Null for a file that does not show as an image
  * (`showsImage`), or whose bytes cannot be had.
  */
-export function imageFile(client: J3Client, attachment: Attachment): Promise<string | null> {
+function imageFile(client: J3Client, attachment: Attachment): Promise<string | null> {
   if (!showsImage(attachment)) return Promise.resolve(null);
   const known = asked.get(attachment.id);
   if (known !== undefined) return known;

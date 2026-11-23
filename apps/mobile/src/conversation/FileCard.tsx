@@ -73,7 +73,7 @@ export function FileCard({ attachment }: { readonly attachment: Attachment }) {
 }
 
 /** The icon of a file's kind. */
-export function FileKindIcon({
+function FileKindIcon({
   mediaType,
   size = 16,
   color = "accent-muted-foreground",
