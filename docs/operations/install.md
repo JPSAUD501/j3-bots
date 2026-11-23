@@ -202,7 +202,7 @@ J3_HOME=/home/j3bots/.j3-bots j3-bots service install
 
 Run it from a shell whose `PATH` has the harness, so the service gets that `PATH`. `J3_HOME` keeps the service on its data directory: a bare `service install` from a shell with another `J3_HOME`, or none, would point the service at that shell's.
 
-Whatever reaches the models, a bot runs commands as this user, so it can read the provider key or the sign-in from its shell (**Verified** for the key in Codex's shell snapshot; [Security: secrets](../architecture/security.md#secrets)). Treat everything a bot can reach as yours to lose.
+Whatever reaches the models, a bot runs commands as this user, so it can read the provider key or the sign-in from its shell (**Verified** for the key in a Codex command's environment; [Security: secrets](../architecture/security.md#secrets)). Treat everything a bot can reach as yours to lose.
 
 ## Pair a device
 

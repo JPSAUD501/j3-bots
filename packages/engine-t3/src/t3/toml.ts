@@ -21,8 +21,8 @@ import {
 // parser checks the file before the edit, and checks after it that everything
 // the writer does not own reads the same.
 
-/** A value J3 Bots writes: a string, or a list of strings. */
-type TomlValue = string | ReadonlyArray<string>;
+/** A value J3 Bots writes: a string, a boolean, or a list of strings. */
+type TomlValue = string | boolean | ReadonlyArray<string>;
 
 /** A table to write: its path (`["mcp_servers", "j3"]` is `[mcp_servers.j3]`) and its keys, in order. */
 export interface TomlTable {
@@ -64,8 +64,11 @@ const BARE_KEY = /^[A-Za-z0-9_-]+$/;
 
 const keyText = (key: string) => (BARE_KEY.test(key) ? key : tomlString(key));
 
-const valueText = (value: TomlValue): string =>
-  typeof value === "string" ? tomlString(value) : `[${value.map(tomlString).join(", ")}]`;
+const valueText = (value: TomlValue): string => {
+  if (typeof value === "string") return tomlString(value);
+  if (typeof value === "boolean") return String(value);
+  return `[${value.map(tomlString).join(", ")}]`;
+};
 
 const pathText = (path: ReadonlyArray<string>) => path.map(keyText).join(".");
 

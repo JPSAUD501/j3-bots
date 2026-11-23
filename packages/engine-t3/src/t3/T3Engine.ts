@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Config from "effect/Config";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -336,6 +337,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   );
   /** One writer of the engine's settings, the connection and the harness homes at a time. */
   const provisioning = yield* Semaphore.make(1);
+  /** The home folder the engine is given (`engineEnvironment`), which a Codex bot's commands get. */
+  const userHome = yield* Config.option(Config.String("HOME")).pipe(
+    Effect.map(Option.getOrUndefined),
+    Effect.orElseSucceed(() => undefined),
+  );
   /** Run before each start of the engine, while it is stopped (`Supervisor.beforeStart`). */
   const provisionEngine = Effect.gen(function* () {
     yield* provision({
@@ -346,6 +352,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       systemPromptFile: options.systemPromptFile,
       basePrompt: yield* Ref.get(basePrompt),
       sharedSkills: options.sharedSkills,
+      userHome,
     });
   }).pipe(
     provisioning.withPermits(1),
