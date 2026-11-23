@@ -77,7 +77,7 @@ const FIRST_WAIT = Duration.seconds(30);
 const MAX_WAIT = Duration.hours(1);
 
 /** How long unlocking waits after `failures` wrong passwords in a row; none before `FREE_ATTEMPTS`. */
-export const unlockWait = (failures: number): Option.Option<Duration.Duration> =>
+const unlockWait = (failures: number): Option.Option<Duration.Duration> =>
   failures < FREE_ATTEMPTS
     ? Option.none()
     : Option.some(

@@ -110,7 +110,7 @@ export class Vault extends Context.Service<
 >()("@j3-bots/client-runtime/stores/Vault") {}
 
 /** The result of a request to the vault, for a UI that shows outcomes rather than causes. */
-export const vaultResult = <A>(exit: Exit.Exit<A, VaultError | NotPaired>): VaultResult<A> => {
+const vaultResult = <A>(exit: Exit.Exit<A, VaultError | NotPaired>): VaultResult<A> => {
   if (Exit.isSuccess(exit)) return { _tag: "done", value: exit.value };
   const error = Cause.findErrorOption(exit.cause);
   if (error._tag === "None") return { _tag: "failed", failure: { _tag: "unexpected" } };
@@ -127,7 +127,7 @@ const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
 const ID_LENGTH = 24;
 
 /** A new login's id, from `bytes` random bytes: 120 bits, in the alphabet the contract takes. */
-export const credentialIdOf = (bytes: Uint8Array): CredentialId =>
+const credentialIdOf = (bytes: Uint8Array): CredentialId =>
   Schema.decodeSync(CredentialId)(
     `cred_${Array.from(bytes.subarray(0, ID_LENGTH), (byte) => ID_ALPHABET.charAt(byte & 31)).join("")}`,
   );
