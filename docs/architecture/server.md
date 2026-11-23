@@ -227,7 +227,7 @@ A notice follows from the outcome: cancelled wakes get none, and failed ones sho
 
 ## Questions, approvals and secrets
 
-Two kinds of card wait on the operator, with separate lifecycles.
+Two kinds of card wait on the operator, with separate lifecycles. A third, a bot's request for help in its browser, has its own ([Help in the browser](#help-in-the-browser)).
 
 **A bot's `ask`** is a J3 Bots question. The card stores the wake it came from and the audience of the turn that asked: the conversation, or the room. The bot ends its turn after asking. The card does not expire. Answering or dismissing it closes the card and creates a `user` wake carrying the answer in the same transaction, with the stored audience; that wake's turn delivers there. An answer is never steered into a running turn and never shares an envelope with a steer: one that arrives before the turn that asked has ended waits for it, and then starts the next turn. The answer's envelope is defined in [Prompt architecture](../prompts/architecture.md#wake-envelopes).
 
@@ -324,6 +324,7 @@ The `j3` tools are pre-approved in every permission mode, so they never raise an
 | `message_bot` | Send a message to one teammate, by bot id. `urgent` wakes them now; otherwise it waits for their next turn. Returns only an acknowledgement. See [Teammate messages](#teammate-messages). |
 | `remember`, `forget`, `recall` | Write, remove and search memory, in the bot's own scope or the shared one. |
 | `set_routine` | Create, change, pause, resume or delete one of the bot's own routines, by the same commands, checks and routine-change entries as the operator's, with the bot as the author and no approval card. A schedule and a time without an offset, also in an update of a routine whose schedule kept another zone, are read in the operator's zone as it is set at the call: the operator speaks in their own zone. Returns the routine as saved. A webhook routine's address is a credential. It lives in the routine itself, which the operator is shown, also through their live subscription and an operator edit's command receipt; in the stored tool result, which answers a replayed request; and wherever the bot then puts it: the calling system, a private `say` (`to: "dm"` in a room), or a command it runs, whose text shows in that command's work step like any command. The server never adds it to entries, notices or logs on its own. In a routine's side session the only call taken is `pause` of the routine that session runs, so a routine can stop itself once its job is done; every other call is refused. |
+| `request_browser_help` | Ask the operator to do one step in the bot's browser that only they can, on its front tab, as a card. Ends the turn. Refused in a routine's side session and when the bot has no tab open. See [Help in the browser](#help-in-the-browser). |
 | `list_routines` | The bot's own routines with their ids, instructions, triggers, whether each is paused, and their last runs. |
 | `list_teammates` | Names, titles and jobs of the operator's other bots and the rooms this bot is in. |
 | `create_bot`, `update_bot` | Primary bot only by default: create a teammate with a name and a job, or refine one. |
@@ -491,7 +492,7 @@ The concurrent-turns budget counts one fact, read again before each first send: 
 
 The server sends a notification when a bot adds an entry to a conversation or room and no connected client currently has it in view. A bot that starts waiting on the operator adds a card, so a question, an approval or a credential request notifies the same way.
 
-**What notifies.** A bot's message, its question, approval and credential cards, and a message to a teammate that it marked urgent, once, by the sender's card. Nothing else does: the operator's own entries, a turn's work fold, notices (quiet lines by design; the roster shows a blocked bot), routine changes (the bot's own message about one notifies) and teammate messages that are not urgent. Every notification follows from an entry, so a routine run that ends silently, which adds none, never notifies, and one that speaks notifies like any message.
+**What notifies.** A bot's message, its question, approval, credential and browser help cards, and a message to a teammate that it marked urgent, once, by the sender's card. Nothing else does: the operator's own entries, a turn's work fold, notices (quiet lines by design; the roster shows a blocked bot), routine changes (the bot's own message about one notifies) and teammate messages that are not urgent. Every notification follows from an entry, so a routine run that ends silently, which adds none, never notifies, and one that speaks notifies like any message.
 
 **What is in view.** Each socket reports what the operator is looking at through it (`client.view`): a conversation or room, or nothing. A client reports a target only while its window shows it uncovered (no details sheet or dialog, such as Settings, an editor or a confirmation, over it), is visible and has focus; otherwise it reports nothing. The server keeps each socket's report in memory, and forgets it with the socket, so a client reports it again on every connection. An entry is in view when a socket of a device paired and not revoked reports its target.
 
@@ -550,6 +551,24 @@ A query that does not decode becomes a socket that closes at once with 1008. A r
 - anything else: 1013.
 
 **Nothing is kept.** A picture lives in memory only, for as long as its viewer: the one in flight, the newest waiting behind it, and the last one the client drew, for a socket that takes the viewer over. None is written to disk or to the database, logged, cached or sent in a push. What a client types goes to the engine and nowhere else. The request log records the socket's path without its query, so a ticket is not logged ([Security: the bot's browser](security.md#the-bots-browser)).
+
+### Help in the browser
+
+Some steps on a page are the operator's to take: a check that a person is there, a sign-in the bot has no credential for, a one-time code, a code to scan, a passkey. The bot asks for one with `request_browser_help`, giving a reason from that list (or `other`) and a note in its own words. It never names a tab: the server takes the bot's front tab, so the bot never sees, and cannot forge, a tab's id.
+
+**The card.** The request adds a `browser-help` entry to the bot's own conversation, also during a room turn, as an engine request's card goes there; the room is told the bot waits in its conversation, as for a secret request. The entry shows the reason, the note, the page's host name (only for an `http` or `https` page, never its path or query) and the tab's `BrowserTabRef`, which a client opens the browser on. A row in `browser_help_cards` keeps what the entry does not show: the audience and the dispatch that began the turn's work, the engine's id for the tab, which never leaves the server, and when the card stops waiting. Like an `ask`, the request ends the turn's delivery, and the tool's result tells the bot to end its turn and leave the browser alone until the answer wakes it. It notifies as a card of its own kind, `browser-help`, which Android shows in a channel of its own.
+
+The request is refused, with nothing written, in a routine's side session, where nobody waits to help; when the bot has no tab open; for work the operator stopped; and while another of the bot's browser help cards waits.
+
+**How it closes.** Once, in one of three ways, each in the transaction that wakes the bot:
+
+- **The operator answers** `done` ("Pronto") or `declined` ("Não consigo") through `card.answer`, with a receipt as for any card. Before the answer is applied, any device of theirs that holds one of the bot's tabs lets go of it, and the server waits up to 5 s for the engine to report the tabs released, so the turn the answer wakes can act on them. An answer to a closed card fails with `Conflict("card-closed")`.
+- **The tab closes.** Once the card's tab has been missing from the engine's tabs for two minutes, the card expires (`tab-closed`). The grace keeps a short gap, while the server follows the engine's tabs again, from closing it.
+- **Nobody answers.** An hour after the request, the card expires (`timed-out`), but only while no device holds one of the bot's tabs: an operator still at work in the browser keeps it open.
+
+Each close records a `system` wake, `browser-help`, with the outcome and the host name, for the audience of the turn that asked, so the bot carries on where it was asked. On `done` the envelope tells it to take a fresh snapshot before it acts. An answer is the operator's word, which a Stop never cancels ahead of time. An expiry continues the work that asked, so a Stop that covers that work drops it, as it drops the work's other wakes.
+
+**A takeover without a card.** The operator can take a tab the bot did not ask about. The bot's actions on it then fail with `humanControl`, while its reads still work ([Engine](engine.md#the-bots-browser)), and its browser rules tell it to stop and end its turn. When the operator gives the browser back (no device holds any of the bot's tabs any more), the server wakes the bot once (`handed-back`) if a turn of its main session ran while they held it and nothing else will wake it about the browser: no card was open or closed meanwhile, no browser help wake waits, and the operator did not stop that turn's work. The wake goes to that turn's audience. A takeover while the bot was idle wakes nothing.
 
 ## Client API
 

@@ -20,7 +20,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Message.** One entry in a conversation or a room, written by the operator or by a bot. Bot messages are short by design.
 
-**Card.** A structured entry in a conversation that is not prose: a question with options, an approval request, a file, a routine that was created, a handoff between bots.
+**Card.** A structured entry in a conversation that is not prose: a question with options, an approval request, a request for help in the bot's browser, a file, a routine that was created, a handoff between bots.
 
 **Room.** A group chat with the operator and two to six bots. A room has a name, members, a host and its own message history. Bots keep their own memory in a room; they share only what is said there.
 
@@ -84,6 +84,8 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 **Approval.** A request from a bot to do one specific thing that its permission mode does not allow outright. Only the operator can grant one.
 
 **Question.** A bot asking the operator to choose. It arrives as a card with options, not as prose.
+
+**Help in the browser.** A bot asking the operator to do one step in its browser that only a person can: a check that a person is there, a sign-in, a one-time code, a code to scan, a passkey. It arrives as a card that opens the browser on the bot's tab. The operator does the step there and answers on the card that they did it or cannot, and the answer wakes the bot. A card nobody answers expires, with its tab or after an hour.
 
 **Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, or one bot's room message may mention, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.
 
