@@ -24,7 +24,8 @@ import {
 } from "electron";
 import { AppImageUpdater, autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 import { type DownloadCheckPorts, verifyDownload } from "./downloadCheck.ts";
-import { electronFetch } from "./electronFetch.ts";
+import { electronFetch, electronFetchUpTo } from "./electronFetch.ts";
+import { feedOf, newestRelease, type ReleaseChoicePorts } from "./releaseChoice.ts";
 import { restartApp, runningAppImage } from "./restart.ts";
 import { DesktopSettings } from "./settings.ts";
 import {
@@ -38,11 +39,12 @@ import {
   type Updates,
 } from "./updates.ts";
 
-// Updating the app from its release feed: electron-updater checks at launch
-// and every six hours and downloads in the background; each download is
-// checked against the release's signed checksums (`downloadCheck.ts`), and
-// the operator restarts into the new version from the page (`updates.ts`
-// decides when).
+// Updating the app from its releases: at launch and every six hours the app
+// picks the newest release its channel offers (`releaseChoice.ts`),
+// electron-updater reads that release's feed file and downloads it in the
+// background, each download is checked against the release's signed
+// checksums (`downloadCheck.ts`), and the operator restarts into the new
+// version from the page (`updates.ts` decides when).
 
 const CHECK_EVERY = "6 hours";
 
@@ -53,14 +55,34 @@ const encodeStatus = Schema.encodeSync(UpdateStatus);
 const decodeSaving = Schema.decodeUnknownOption(SavingReport);
 const decodeChannel = Schema.decodeUnknownOption(UpdateChannelRequest);
 
+/** The most GitHub's answer for a page of releases may hold; each release lists all its files. */
+const RELEASES_BODY_LIMIT = 8 * 1024 * 1024;
+
+/** What choosing a release reads: GitHub's API, over the system's network stack. */
+const releaseChoice: ReleaseChoicePorts = {
+  getJson: async (url, signal) => {
+    const response = await electronFetchUpTo(RELEASES_BODY_LIMIT)(url, {
+      signal,
+      headers: {
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        "user-agent": `j3-bots-desktop/${app.getVersion()}`,
+      },
+    });
+    if (response.status === 404) return null;
+    if (response.status !== 200) throw new Error(`GitHub answered ${response.status}.`);
+    return response.json();
+  },
+};
+
 /**
  * What checking a download reads: the release's files from the repository
- * the feed is (`releaseFile`), over the system's network stack, and the
+ * the releases are (`releaseFile`), over the system's network stack, and the
  * release key. A file the release does not have answers 404.
  */
 const downloadCheck: DownloadCheckPorts = {
-  releaseFile: async (version, name) => {
-    const response = await electronFetch(releaseFile(version, name));
+  releaseFile: async (version, name, signal) => {
+    const response = await electronFetch(releaseFile(version, name), { signal });
     if (response.status === 404) return null;
     if (response.status !== 200) throw new Error(`The release answered ${response.status}.`);
     return new Uint8Array(await response.arrayBuffer());
@@ -71,20 +93,20 @@ const downloadCheck: DownloadCheckPorts = {
 };
 
 /**
- * Points electron-updater at the releases of `channel`: the stable ones, read
- * from the release GitHub marks as the latest and its `latest*.yml`, or the
- * nightly builds too, the newest prerelease whose version is a nightly one
- * and its `nightly*.yml` (read in electron-updater 6.8.9,
- * `providers/GitHubProvider.js`). Setting a channel also lets electron-updater
- * install an older version (`AppUpdater.js`, `set channel`); the app never
- * does, so a nightly build waits on the stable channel until a stable release
- * is newer than it.
+ * Points electron-updater at the newest release `channel` offers, and says
+ * whether there is one. A development build keeps the `dev-app-update.yml`
+ * it was given. The feed is set before each check and never through
+ * electron-updater's `channel`, whose setter would let it install an older
+ * version (`AppUpdater.js`, `set channel`); the app never does.
  */
-const follow = (channel: UpdateChannel) => {
-  autoUpdater.channel = channel === "nightly" ? "nightly" : "latest";
-  autoUpdater.allowPrerelease = channel === "nightly";
-  autoUpdater.allowDowngrade = false;
-};
+const pointAtNewest = (channel: UpdateChannel) =>
+  app.isPackaged
+    ? Effect.map(newestRelease(channel, releaseChoice), (newest) => {
+        if (Option.isNone(newest)) return false;
+        autoUpdater.setFeedURL(feedOf(newest.value));
+        return true;
+      })
+    : Effect.succeed(true);
 
 /**
  * How this build updates. An NSIS install and an AppImage install a newer
@@ -130,7 +152,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
   const check = yield* Effect.acquireRelease(
     Effect.sync(() => {
       let state: Updates = initial(updateMode(), updateChannel);
-      follow(state.channel);
+      autoUpdater.allowDowngrade = false;
       // Where the build installs, downloaded in the background and installed
       // only when the operator asks, never as the app quits.
       autoUpdater.autoDownload = state.installs;
@@ -159,7 +181,6 @@ export const serve = Effect.fn("desktop.updates")(function* (
           case "verify":
             return verify(action.version);
           case "follow-channel":
-            follow(state.channel);
             return check();
         }
       };
@@ -181,8 +202,10 @@ export const serve = Effect.fn("desktop.updates")(function* (
                   ),
                 ),
               );
-        void runPromise(verdict).then((matched) =>
-          dispatch({ _tag: "verified", version, matched }),
+        // A check that broke rather than refused refuses as well.
+        void runPromise(verdict).then(
+          (matched) => dispatch({ _tag: "verified", version, matched }),
+          () => dispatch({ _tag: "verified", version, matched: false }),
         );
       };
       /**
@@ -207,11 +230,15 @@ export const serve = Effect.fn("desktop.updates")(function* (
       const check = () => {
         if (!mayCheck(state)) return;
         dispatch({ _tag: "check-started" });
-        // The check, then the download it starts. A failure of either also
-        // arrives as an `error` event.
-        autoUpdater
-          .checkForUpdates()
-          .then((result) => result?.downloadPromise)
+        // The release to read, then electron-updater's check of it and the
+        // download it starts. A failure of those also arrives as an `error` event.
+        void runPromise(pointAtNewest(state.channel))
+          .then(async (found) => {
+            if (!found) return dispatch({ _tag: "not-available" });
+            await (
+              await autoUpdater.checkForUpdates()
+            )?.downloadPromise;
+          })
           .catch(() => dispatch({ _tag: "failed" }));
       };
 
@@ -247,20 +274,22 @@ export const serve = Effect.fn("desktop.updates")(function* (
         if (fromApp(event)) dispatch({ _tag: "restart-requested" });
       });
       /**
-       * Keeps the operator's channel, then follows it. One that is not kept,
-       * or that comes while a version is on its way, changes nothing; the
-       * answer says which channel holds.
+       * Follows the operator's channel at once, unless a version is on its
+       * way, then keeps it. Choosing and following happen together, so no
+       * check can start on the old channel in between. What is saved is the
+       * channel that holds when the save runs, so saves that overlap end on
+       * the last choice. A save that fails leaves the choice for this run
+       * only; the answer says which channel holds.
        */
       const choose = Effect.fn("desktop.chooseUpdateChannel")(function* (channel: UpdateChannel) {
         if (channel === state.channel || !mayChooseChannel(state)) return status();
+        dispatch({ _tag: "channel-chosen", channel });
         const saved = yield* settings
-          .update((current) => ({ ...current, updateChannel: channel }))
+          .update((current) => ({ ...current, updateChannel: state.channel }))
           .pipe(Effect.result);
         if (saved._tag === "Failure") {
           yield* Effect.logWarning("Saving the app's update channel failed", saved.failure);
-          return status();
         }
-        dispatch({ _tag: "channel-chosen", channel });
         return status();
       });
       ipcMain.handle(IPC_CHANNELS.setUpdateChannel, (event, request: unknown) => {

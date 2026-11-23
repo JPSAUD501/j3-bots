@@ -10,10 +10,13 @@ import {
   type VerificationCase,
 } from "@j3-bots/release/testing";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import {
   type DownloadCheckPorts,
   type DownloadRefusal,
   installableName,
+  RELEASE_FILES_WITHIN,
   verifyDownload,
 } from "./downloadCheck.ts";
 
@@ -126,6 +129,26 @@ describe("checking a download against the release's signed checksums", () => {
         sha256File: () => Promise.reject(new Error("ENOENT")),
       });
       assert.deepStrictEqual([offline, gone], ["unreadable", "unreadable"]);
+    }),
+  );
+
+  it.effect("refuses, and stops asking, when the release does not answer in time", () =>
+    Effect.gen(function* () {
+      assert.isDefined(good);
+      const asked: Array<AbortSignal> = [];
+      const fiber = yield* outcome(
+        { file: `${CACHE}/${appImage}`, version: TEST_VERSION },
+        {
+          ...ports(good, TEST_FILES[appImage] ?? "", "linux"),
+          releaseFile: (_version, _name, signal) => {
+            asked.push(signal);
+            return new Promise(() => {});
+          },
+        },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust(RELEASE_FILES_WITHIN);
+      assert.strictEqual(yield* Fiber.join(fiber), "unreadable");
+      assert.isTrue(asked.length > 0 && asked.every((signal) => signal.aborted));
     }),
   );
 });

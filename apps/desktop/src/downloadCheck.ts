@@ -7,6 +7,7 @@ import {
   SUMS_FILE,
   verifySums,
 } from "@j3-bots/release";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -44,6 +45,13 @@ class DownloadRefused extends Schema.TaggedError<DownloadRefused>()("DownloadRef
   }
 }
 
+/**
+ * How long the release's checksums and signature may take to arrive. One
+ * that does not answer refuses the download, rather than keeping the app
+ * checking it with every other update step held.
+ */
+export const RELEASE_FILES_WITHIN = Duration.seconds(30);
+
 /** The extension of the file electron-updater installs on each platform the app installs itself on. */
 const INSTALLABLE: Partial<Record<NodeJS.Platform, string>> = {
   linux: ".AppImage",
@@ -65,8 +73,15 @@ export const installableName = (path: string, platform: NodeJS.Platform): string
 
 /** What checking a download needs from its surroundings: the network, the file, the key. */
 export interface DownloadCheckPorts {
-  /** A file of release `version` by name: its bytes, or null when the release has none. */
-  readonly releaseFile: (version: string, name: string) => Promise<Uint8Array | null>;
+  /**
+   * A file of release `version` by name: its bytes, or null when the release
+   * has none. `signal` aborts the request once it is no longer awaited.
+   */
+  readonly releaseFile: (
+    version: string,
+    name: string,
+    signal: AbortSignal,
+  ) => Promise<Uint8Array | null>;
   /** The SHA-256 of the file at `path`, lowercase hex. */
   readonly sha256File: (path: string) => Promise<string>;
   readonly check: SignatureCheck;
@@ -78,7 +93,8 @@ export interface DownloadCheckPorts {
  * Succeeds only when the release's `SHA256SUMS` carries the release key's
  * signature and names that version, the file is one this platform installs,
  * and the list gives it the digest it has. The signature comes first: nothing
- * about the file is trusted before the list it is checked against is.
+ * about the file is trusted before the list it is checked against is. The
+ * list and its signature must arrive within `RELEASE_FILES_WITHIN`.
  */
 export const verifyDownload = Effect.fn("desktop.verifyDownload")(function* (
   { file, version }: { readonly file: string; readonly version: string },
@@ -86,13 +102,18 @@ export const verifyDownload = Effect.fn("desktop.verifyDownload")(function* (
 ) {
   const refuse = (reason: DownloadRefusal) => new DownloadRefused({ version, file, reason });
   const [sums, signature] = yield* Effect.tryPromise({
-    try: () =>
+    try: (signal) =>
       Promise.all([
-        ports.releaseFile(version, SUMS_FILE),
-        ports.releaseFile(version, SIGNATURE_FILE),
+        ports.releaseFile(version, SUMS_FILE, signal),
+        ports.releaseFile(version, SIGNATURE_FILE, signal),
       ]),
     catch: () => refuse("unreadable"),
-  });
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: RELEASE_FILES_WITHIN,
+      orElse: () => Effect.fail(refuse("unreadable")),
+    }),
+  );
   if (sums === null) return yield* refuse("checksums-missing");
   const verified = verifySums({ version, sums, signature, check: ports.check });
   if (Result.isFailure(verified)) return yield* refuse(verified.failure);

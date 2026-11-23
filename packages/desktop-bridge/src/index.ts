@@ -409,9 +409,13 @@ export type UpdatePhase = typeof UpdatePhase.Type;
 export const releasePage = (version: AppVersion): string =>
   `https://github.com/JPSAUD501/j3-bots/releases/tag/${releaseTag(version)}`;
 
+/** The folder the files of the release that carries `version` download from, ending in `/`. */
+export const releaseFolder = (version: AppVersion): string =>
+  `https://github.com/JPSAUD501/j3-bots/releases/download/${releaseTag(version)}/`;
+
 /** A file `name` of the release that carries `version`, in the same repository. */
 export const releaseFile = (version: AppVersion, name: string): string =>
-  `https://github.com/JPSAUD501/j3-bots/releases/download/${releaseTag(version)}/${encodeURIComponent(name)}`;
+  `${releaseFolder(version)}${encodeURIComponent(name)}`;
 
 /**
  * The app's own version, the releases it follows (`channel`), and where
