@@ -132,7 +132,6 @@ const fakes = Layer.effect(
 const notFaked = () => Effect.die("Not faked");
 
 const unserved = Layer.mergeAll(
-  Server.connectorsUnserved,
   J3Rpcs.toLayerHandler(
     "message.send",
     Effect.gen(function* () {
