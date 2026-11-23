@@ -6,7 +6,13 @@
  * caller's.
  */
 import { iconArt, type IconArt, type IconFrame } from "../appIconArt.ts";
-import { avatarViewBox } from "../avatar.ts";
+import {
+  AVATAR_SMALL,
+  avatarFrame,
+  avatarSignals,
+  avatarViewBox,
+  type AvatarFace,
+} from "../avatar.ts";
 import { parseColor, toSrgb8 } from "../color.ts";
 import type { Themed } from "../tokens.ts";
 import { drawAvatar, type AvatarPaint } from "./avatarRaster.ts";
@@ -162,20 +168,67 @@ export function renderAppIcon(icon: AppIcon, art: IconArt = iconArt): Uint8Array
 }
 
 /**
- * The tray's icon as a PNG `size` px square on a clear background: the Pip
- * whole in `theme`, the one the system draws its tray in, its light lit in
- * the waiting color while something waits on the operator. A `size` that is
- * not a whole number of px, at least 1, throws a `RangeError`.
+ * The tray's Pip while something waits on the operator: the waiting state's
+ * still form, its eye wide, its antenna tall, its light grown and ringed in
+ * the waiting color. It changes the tip's size and shape as well as its
+ * color, since on Linux and Windows nothing beside the tray says it.
  */
-export function renderTrayIcon(attention: boolean, theme: keyof Themed, size: number) {
+const TRAY_ATTENTION = {
+  lidTop: 0,
+  lidBottom: 0,
+  shut: 0,
+  pupil: 8.6,
+  antennaAngle: 0,
+  antennaLength: 22,
+  light: "waiting",
+  lightScale: 1.8,
+  signal: "ping",
+  ping: 0.85,
+  pingOpacity: 1,
+} as const satisfies Partial<AvatarFace>;
+
+/**
+ * Room above the ring, in the avatar's units: over a px at the tray's
+ * smallest, 16 px, so its edge stays clear of the image's.
+ */
+const TRAY_MARGIN = 9;
+
+/** The tray's Pip, its light the body's own while nothing waits. */
+const trayFace = (art: IconArt, attention: boolean): AvatarFace =>
+  attention ? { ...art.face, ...TRAY_ATTENTION } : { ...art.face, light: "body", signal: null };
+
+/**
+ * The square the tray frames, the same in both states so the Pip stays put:
+ * the Pip whole, grown upward until the attention form's ring and its
+ * cutout fit, measured with a small avatar's proportions, the largest.
+ */
+function trayFrame(art: IconArt): IconFrame {
+  const frame = avatarFrame(art.avatar.shape, trayFace(art, true), AVATAR_SMALL);
+  const { from, spread } = avatarSignals.ping;
+  // The ring's outer edge, from the light's center.
+  const ring = (from + TRAY_ATTENTION.ping * spread + avatarSignals.stroke / 2) * frame.signal[0];
+  const top = Math.min(art.whole.y, frame.light.y - Math.max(ring, frame.lightCut) - TRAY_MARGIN);
+  const size = art.whole.y + art.whole.size - top;
+  return { x: art.whole.x + (art.whole.size - size) / 2, y: top, size };
+}
+
+/**
+ * The tray's icon as a PNG `size` px square on a clear background, from
+ * `art`: the Pip whole in `theme`, the one the system draws its tray in, in
+ * its attention form (`TRAY_ATTENTION`) while something waits on the
+ * operator. A `size` that is not a whole number of px, at least 1, throws a
+ * `RangeError`.
+ */
+export function renderTrayIcon(
+  attention: boolean,
+  theme: keyof Themed,
+  size: number,
+  art: IconArt = iconArt,
+) {
   if (!isPixelCount(size)) {
     throw new RangeError(`An icon's size is a whole number of px, at least 1, not ${size}.`);
   }
   const canvas = new Canvas(size, size);
-  const art: IconArt = {
-    ...iconArt,
-    face: { ...iconArt.face, light: attention ? "waiting" : "body", signal: null },
-  };
-  drawFramed(canvas, art, art.whole, size, theme, {});
+  drawFramed(canvas, { ...art, face: trayFace(art, attention) }, trayFrame(art), size, theme, {});
   return canvas.png();
 }

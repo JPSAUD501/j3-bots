@@ -74,7 +74,7 @@ const rest: AvatarFace = {
  * The three candidates the owner chooses from. The two not chosen go when
  * one is: only `iconArt` below names one.
  */
-export const iconCandidates = {
+const iconCandidates = {
   /** One bold Pip filling a black plate. */
   a: {
     avatar: { shape: "dome", color: "tangerine" },

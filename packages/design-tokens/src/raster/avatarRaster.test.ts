@@ -8,6 +8,7 @@ import { parseColor, toSrgb8 } from "../color.ts";
 import { colors } from "../tokens.ts";
 import { drawAvatar, renderStillAvatar, renderStillRoomAvatar } from "./avatarRaster.ts";
 import { Canvas } from "./canvas.ts";
+import { readPng } from "./readPng.ts";
 
 /** An idle bot looking straight ahead, as the client runtime's still form draws one. */
 const idle: AvatarFace = {
@@ -219,16 +220,7 @@ describe("renderStillRoomAvatar", () => {
     const part = size * 0.68;
     const back = { shape: "loaf", color: "teal" } as const;
     const front = { shape: "loaf", color: "tangerine" } as const;
-    const decode = (png: Uint8Array<ArrayBuffer>) => {
-      const view = new DataView(png.buffer, png.byteOffset);
-      const idat = 8 + 25;
-      const rows = inflateSync(png.subarray(idat + 8, idat + 8 + view.getUint32(idat)));
-      // Each row is its filter byte, then four bytes a pixel.
-      return (x: number, y: number) => {
-        const at = y * (1 + size * 4) + 1 + x * 4;
-        return Array.from(rows.subarray(at, at + 4));
-      };
-    };
+    const decode = (png: Uint8Array<ArrayBuffer>) => readPng(png).rgba;
     const room = decode(renderStillRoomAvatar([back, front], idle, "light", size));
     const backAlone = decode(renderStillRoomAvatar([back], idle, "light", size));
     const frontAlone = new Canvas(size, size);
