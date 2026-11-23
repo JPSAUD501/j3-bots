@@ -12,6 +12,7 @@ import { motion, reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { AccessibilityInfo } from "react-native";
 import Animated, { FadeInUp, FadeOutUp } from "react-native-reanimated";
 import { Text } from "./text.tsx";
+import { OVERLAY_ELEVATION } from "./theme.ts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const pop = reanimatedSpring(springs.pop);
@@ -62,7 +63,7 @@ export function Toasts({ children }: { readonly children: ReactNode }) {
         >
           <Text
             className="max-w-sm rounded-lg bg-foreground px-4 py-2.5 text-sm text-background"
-            style={{ elevation: 6 }}
+            style={{ elevation: OVERLAY_ELEVATION }}
           >
             {shown.text}
           </Text>

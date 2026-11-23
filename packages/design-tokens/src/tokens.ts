@@ -14,6 +14,9 @@ export interface Themed {
 
 const themed = (light: string, dark: string): Themed => ({ light, dark });
 
+const sidebar = themed("#f6f6f7", "#09090a");
+const muted = themed("#f0f0f2", "#19191c");
+
 /**
  * Interface colors: near-monochrome chrome on a true-black dark canvas. Color
  * on screen belongs to the bots and to state; the focus ring, links and the
@@ -23,9 +26,14 @@ export const colors = {
   background: themed("#ffffff", "#000000"),
   /** Cards, popovers, dialogs, sheets, the composer. */
   surface: themed("#ffffff", "#101012"),
-  sidebar: themed("#f6f6f7", "#09090a"),
-  /** A quiet filled control, a field, and the hover and selection fill of a row. */
-  muted: themed("#f0f0f2", "#19191c"),
+  sidebar,
+  /** A quiet filled control, a field, and the selection fill of a row. */
+  muted,
+  /** The hover fill of a row in the sidebar: most of the way from `sidebar` to `muted`, so selection stays a step stronger. */
+  "row-hover": themed(
+    mixOklab(muted.light, sidebar.light, 0.55),
+    mixOklab(muted.dark, sidebar.dark, 0.55),
+  ),
   /** The hover fill of a control that is already `muted`. */
   "muted-strong": themed("#e5e5e9", "#242428"),
   border: themed("#e8e8ec", "oklch(1 0 0 / 0.09)"),
@@ -63,6 +71,8 @@ export const colors = {
   "control-thumb": themed("#ffffff", "#f5f5f6"),
   /** Marks drawn over a bot's color, such as the composer's send arrow on the conversation's tint. */
   "avatar-ink": themed("#ffffff", "#0b0b0c"),
+  /** The thumb of every scrollbar, thin and laid over whatever scrolls. */
+  scrollbar: themed("oklch(0 0 0 / 0.22)", "oklch(1 0 0 / 0.22)"),
   /** Behind sheets and dialogs. */
   scrim: themed("oklch(0 0 0 / 0.3)", "oklch(0 0 0 / 0.62)"),
 } as const satisfies Record<string, Themed>;

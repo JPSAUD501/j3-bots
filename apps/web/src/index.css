@@ -50,11 +50,11 @@
     background: color-mix(in oklab, var(--accent) 24%, transparent);
   }
 
-  /* Thin scroll bars in the text's own grey, with no track or arrows: the
+  /* Thin scroll bars in the `scrollbar` grey, with no track or arrows: the
      desktop app and a browser draw the same quiet bar, in either theme. */
   * {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent) transparent;
+    scrollbar-color: var(--scrollbar) transparent;
   }
 
   button:not(:disabled),
@@ -349,16 +349,20 @@
   }
 }
 
-/* The details pane beside the conversation slides open and closed. */
-@keyframes pane-open {
+/*
+ * The details beside the conversation slide in from the end edge and back out
+ * (`--pane-from`, set per direction), by a transform, so nothing is laid out
+ * again while they move.
+ */
+@keyframes pane-in {
   from {
-    width: 0;
+    translate: var(--pane-from) 0;
   }
 }
 
-@keyframes pane-close {
+@keyframes pane-out {
   to {
-    width: 0;
+    translate: var(--pane-from) 0;
   }
 }
 

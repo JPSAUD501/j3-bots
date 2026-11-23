@@ -2,7 +2,7 @@
 import { useNavigation, usePreventRemove } from "@react-navigation/native";
 import { Check, type LucideIcon, Minus, Plus } from "lucide-react-native";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Alert, Switch, View } from "react-native";
+import { AccessibilityInfo, Alert, Switch, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -77,21 +77,23 @@ export function SkeletonRows(props: { readonly count?: number }) {
   }, [reduced, opacity]);
   const breathing = useAnimatedStyle(() => ({ opacity: opacity.get() }));
   return (
+    // The fade in and the breathing each own a view, so neither overrides the other's opacity.
     <Animated.View
       accessible
       accessibilityLabel={t("details.loading")}
       entering={FadeIn.delay(150)}
-      style={breathing}
     >
-      {Array.from({ length: props.count ?? 2 }, (_, index) => (
-        <View key={index} className="min-h-11 flex-row items-center gap-3 py-2">
-          <View className="size-5 rounded-sm bg-muted" />
-          <View className="flex-1 gap-2">
-            <View className="h-3 w-2/3 rounded-sm bg-muted" />
-            <View className="h-2.5 w-1/3 rounded-sm bg-muted" />
+      <Animated.View style={breathing}>
+        {Array.from({ length: props.count ?? 2 }, (_, index) => (
+          <View key={index} className="min-h-11 flex-row items-center gap-3 py-2">
+            <View className="size-5 rounded-sm bg-muted" />
+            <View className="flex-1 gap-2">
+              <View className="h-3 w-2/3 rounded-sm bg-muted" />
+              <View className="h-2.5 w-1/3 rounded-sm bg-muted" />
+            </View>
           </View>
-        </View>
-      ))}
+        ))}
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -201,7 +203,10 @@ function StepButton(props: {
       accessibilityLabel={props.label}
       disabled={to === null}
       onPress={() => {
-        if (to !== null) props.onChange(String(to));
+        if (to === null) return;
+        props.onChange(String(to));
+        // Focus stays on the button, so the number it typed is read out.
+        AccessibilityInfo.announceForAccessibility(String(to));
       }}
       className={`size-11 items-center justify-center rounded-pill bg-muted ${to === null ? "opacity-40" : ""}`}
     >
@@ -296,7 +301,7 @@ export function Segmented<T extends string>(props: {
             accessibilityState={{ checked: selected }}
             accessibilityLabel={option.label}
             onPress={() => props.onChange(option.value)}
-            className={`min-h-10 items-center justify-center rounded-pill px-3 ${selected ? "bg-surface" : ""}`}
+            className={`min-h-11 items-center justify-center rounded-pill px-3 ${selected ? "bg-surface" : ""}`}
           >
             <Text
               numberOfLines={1}

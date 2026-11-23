@@ -62,6 +62,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { SearchX } from "lucide-react-native";
 import { AppState, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { Text } from "../text.tsx";
@@ -70,6 +71,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { CommandLine } from "../components/CommandLine.tsx";
 import { PendingButton } from "../components/form.tsx";
+import { StateMark } from "../components/States.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { useRoomActions } from "../details/actions.ts";
 import { enteringWhen, openIn, popIn, settleIn, useReducedMotion } from "../motion.ts";
@@ -447,6 +449,7 @@ export function Gone({ onBack }: { readonly onBack: () => void }) {
   const { t } = usePresentation().i18n;
   return (
     <Centered>
+      <StateMark icon={SearchX} />
       <Title>{t("empty.gone.title")}</Title>
       <Body>{t("empty.gone.body")}</Body>
       <Button label={t("empty.gone.back")} onPress={onBack} />

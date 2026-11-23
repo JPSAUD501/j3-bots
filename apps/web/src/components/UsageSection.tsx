@@ -19,7 +19,8 @@ import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { timeInSentence, windowText } from "@j3-bots/client-runtime/wording";
 import { BotAvatar } from "./avatar/BotAvatar";
-import { Loading, Section } from "./SettingsSection";
+import { Section } from "./SettingsSection";
+import { SkeletonRows } from "./ui/skeleton";
 import { Button } from "./ui/button";
 
 /** The turns as a read answered them, stale or not. */
@@ -55,7 +56,7 @@ export function UsageSection({
   if (engine === null) {
     return (
       <Section title={t("settings.usage")}>
-        <Loading />
+        <SkeletonRows />
       </Section>
     );
   }
@@ -190,7 +191,7 @@ function ProviderCard({
       {turns !== "failed" && (
         <div className={cn(anyWindows && "border-t border-border pt-2.5")}>
           {turns === "loading" ? (
-            <Loading />
+            <SkeletonRows />
           ) : provider.bots.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               {/* Turns not read yet may have used it. */}

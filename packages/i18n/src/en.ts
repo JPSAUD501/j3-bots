@@ -390,7 +390,7 @@ export const en = {
   "room.memberCount.one": "One bot",
   "room.memberCount.other": "{count} bots",
   "room.archivedBadge": "Archived",
-  "room.archiveSection": "Archiving",
+  "room.archiveSection": "Archive",
   "room.host": "Host",
   "room.budget": "Replies between bots",
   "room.hopLimit.one": "Bots may reply to each other once before the room waits for you.",

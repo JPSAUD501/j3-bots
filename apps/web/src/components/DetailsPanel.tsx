@@ -40,6 +40,7 @@ import { RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { FileCard } from "./FileCard";
 import { Button } from "./ui/button";
+import { SkeletonRows } from "./ui/skeleton";
 import { Confirm } from "./ui/confirm";
 import { Switch } from "./ui/switch";
 
@@ -151,28 +152,6 @@ const rowButton =
 /** A quiet sentence where a list would be. */
 function Quiet({ children }: { children: ReactNode }) {
   return <p className="appear text-sm text-muted-foreground">{children}</p>;
-}
-
-/**
- * The shape of rows still loading, as tall as the rows that replace them, so
- * the pane does not shift while it is read. Screen readers hear "Loading…".
- */
-function SkeletonRows({ count = 2 }: { count?: number }) {
-  const { t } = useI18n();
-  return (
-    <div role="status" className="-mx-2 flex flex-col">
-      <span className="sr-only">{t("details.loading")}</span>
-      {Array.from({ length: count }, (_, index) => (
-        <span key={index} aria-hidden className="flex items-center gap-3 px-2 py-2.5">
-          <span className="skeleton size-4 shrink-0" />
-          <span className="flex flex-1 flex-col gap-1.5">
-            <span className="skeleton h-3 w-2/3" />
-            <span className="skeleton h-2.5 w-1/3" />
-          </span>
-        </span>
-      ))}
-    </div>
-  );
 }
 
 /** What the danger zone holds: last and on its own, below a hairline. */
@@ -513,7 +492,12 @@ export function RoomDetails({
     return bot ? [bot] : [];
   });
   return (
-    <PanelFrame title={name} onClose={onClose} headingRef={headingRef} headingId={headingId}>
+    <PanelFrame
+      title={t("conversation.details")}
+      onClose={onClose}
+      headingRef={headingRef}
+      headingId={headingId}
+    >
       <Profile
         picture={<RoomAvatar
             members={members.map((bot) => ({ id: bot.id, avatar: bot.profile.avatar }))}

@@ -5,6 +5,7 @@ import { Text } from "../text.tsx";
 import { useI18n } from "../i18n.ts";
 import { ChangeServer } from "../Leave.tsx";
 import { Button, Centered, Title } from "../ui.tsx";
+import { Working } from "./States.tsx";
 
 /**
  * One line while the server is out of reach; nothing while connected. Once
@@ -52,6 +53,7 @@ export function Connecting() {
     <Centered>
       <ConnectionLine loaded={false} />
       <Title>{t("firstRun.connecting.title")}</Title>
+      <Working />
     </Centered>
   );
 }

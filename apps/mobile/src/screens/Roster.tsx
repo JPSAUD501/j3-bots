@@ -13,15 +13,16 @@ import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Bot, Plus, Search, SearchX, Users, X } from "lucide-react-native";
-import { useCallback, useEffect, useState } from "react";
+import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, type FlatListProps, View } from "react-native";
-import Animated, { FadeIn, useSharedValue } from "react-native-reanimated";
+import { useSharedValue } from "react-native-reanimated";
 import { displaySpacing, Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AvatarHold, AvatarRow, rowsOnScreen } from "../components/avatar/BotAvatar.tsx";
 import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { Menu, type MenuEntry } from "../components/Menu.tsx";
+import { StateMark } from "../components/States.tsx";
+import { Menu, type MenuAnchor, type MenuEntry } from "../components/Menu.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
@@ -133,7 +134,10 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const openConversation = useOpenConversation();
   const placeholder = useColor("accent-muted-foreground");
   const [query, setQuery] = useState("");
-  const [offeringNew, setOfferingNew] = useState(false);
+  // New's menu opens under its button, measured as it opens.
+  const newButton = useRef<ComponentRef<typeof View>>(null);
+  const [newAt, setNewAt] = useState<MenuAnchor | null>(null);
+  const sideBySide = useSideBySide();
   const selectedText = selected === null ? null : rosterKeyText(selected);
   // The rows on screen, by key; the others' avatars hold still. Stable, as the list requires.
   const [onScreen] = useState(rowsOnScreen);
@@ -168,19 +172,29 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
       <View className="flex-row items-center gap-1 ps-4 pe-2 pt-3">
-        <Text
-          accessibilityRole="header"
-          face="display"
-          className="flex-1 text-3xl text-foreground"
-          style={{ letterSpacing: displaySpacing(30) }}
-        >
-          {t("roster.label")}
-        </Text>
+        {/* Alone on a phone the roster is titled; beside a conversation it needs no title. */}
+        {sideBySide ? (
+          <View className="flex-1" />
+        ) : (
+          <Text
+            accessibilityRole="header"
+            face="display"
+            className="flex-1 text-3xl text-foreground"
+            style={{ letterSpacing: displaySpacing(30) }}
+          >
+            {t("roster.label")}
+          </Text>
+        )}
         <PressScale
           depth="round"
           accessibilityRole="button"
           accessibilityLabel={t("roster.new")}
-          onPress={() => setOfferingNew(true)}
+          ref={newButton}
+          onPress={() =>
+            newButton.current?.measureInWindow((x, y, width, height) =>
+              setNewAt({ x, y, width, height }),
+            )
+          }
           className="size-11 items-center justify-center rounded-pill active:bg-muted"
         >
           <Icon icon={Plus} size={22} color="accent-foreground" />
@@ -188,8 +202,8 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
         <SettingsEntry />
       </View>
       <Menu
-        open={offeringNew}
-        onClose={() => setOfferingNew(false)}
+        anchor={newAt}
+        onClose={() => setNewAt(null)}
         label={t("roster.new")}
         entries={newEntries}
       />
@@ -228,14 +242,12 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
           data={rows}
           keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
           ListEmptyComponent={
-            <Animated.View entering={FadeIn.duration(200)} className="items-center gap-3 px-6 py-12">
-              <View className="size-14 items-center justify-center rounded-pill bg-muted">
-                <Icon icon={searching ? SearchX : Bot} size={24} color="accent-muted-foreground" />
-              </View>
+            <View className="items-center gap-3 px-6 py-12">
+              <StateMark icon={searching ? SearchX : Bot} />
               <Body>
                 {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
               </Body>
-            </Animated.View>
+            </View>
           }
           renderItem={({ item }) => {
             const key = rosterKeyOf(item);

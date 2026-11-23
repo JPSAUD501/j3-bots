@@ -6,13 +6,14 @@ import { displaySpacing, Text } from "../text.tsx";
 /**
  * Who the details are about, centered as on a profile: the picture, the name
  * in the display face with its badge, quiet lines under it, and the actions
- * on it. Empty lines are left out.
+ * on it. The lines are `ProfileLine`s, set where they stand, so two lines
+ * that read the same never clash.
  */
 export function Profile(props: {
   readonly picture: ReactNode;
   readonly name: string;
   readonly badge: string | null;
-  readonly lines: ReadonlyArray<string>;
+  readonly lines: ReactNode;
   readonly children?: ReactNode;
 }) {
   return (
@@ -34,18 +35,17 @@ export function Profile(props: {
           </Text>
         )}
       </View>
-      {props.lines
-        .filter((line) => line !== "")
-        .map((line) => (
-          <Text key={line} className="mt-1 text-center text-sm text-muted-foreground">
-            {line}
-          </Text>
-        ))}
+      {props.lines}
       {props.children !== undefined && (
         <View className="mt-4 flex-row flex-wrap justify-center gap-2">{props.children}</View>
       )}
     </View>
   );
+}
+
+/** One quiet line under a profile's name. */
+export function ProfileLine(props: { readonly children: string }) {
+  return <Text className="mt-1 text-center text-sm text-muted-foreground">{props.children}</Text>;
 }
 
 /** What cannot be undone: last and on its own, below a hairline. */

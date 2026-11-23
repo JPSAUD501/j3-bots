@@ -111,7 +111,7 @@ export function Roster({
               type="button"
               aria-label={t("roster.search.clear")}
               onClick={() => setQuery("")}
-              className="pressable-round -me-1.5 flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-pill hover:bg-muted-strong hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+              className="pressable-round -me-1.5 flex size-6 shrink-0 pointer-coarse:-me-3 pointer-coarse:size-11 cursor-pointer items-center justify-center rounded-pill hover:bg-muted-strong hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
             >
               <XIcon className="size-3.5" aria-hidden />
             </button>

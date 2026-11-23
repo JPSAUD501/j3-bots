@@ -83,7 +83,7 @@ export function RosterRow({
   );
   const own: ComponentProps<"button"> & DataAttributes = {
     className:
-      "group/row pressable pressable-row flex h-(--layout-row-pointer) w-full items-center gap-3 rounded-lg px-2.5 text-start hover:bg-(--row-hover) focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent data-selected:bg-muted pointer-coarse:h-(--layout-row-touch) [--row-hover:color-mix(in_oklab,var(--muted)_55%,var(--sidebar))]",
+      "group/row pressable pressable-row flex h-(--layout-row-pointer) w-full items-center gap-3 rounded-lg px-2.5 text-start hover:bg-row-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent data-selected:bg-muted pointer-coarse:h-(--layout-row-touch)",
     type: render ? undefined : "button",
     "data-selected": selected ? "" : undefined,
     "aria-current": selected ? "page" : undefined,

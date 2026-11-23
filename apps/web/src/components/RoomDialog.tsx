@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
+import { Radio } from "@base-ui/react/radio";
+import { RadioGroup } from "@base-ui/react/radio-group";
 import type { Bot } from "@j3-bots/contracts";
 import { CheckIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
-import { useEffect, useId } from "react";
+import { useEffect, useId, useState } from "react";
 import type { IntentFailure } from "@j3-bots/client-runtime";
 import {
   hopLimitSteps,
@@ -133,6 +135,13 @@ export function RoomForm({
         : t("roomForm.unarchive");
   const membersInvalid = problems.has("members") || form.membersRefused;
   const hopSteps = hopLimitSteps(values.hopLimit, defaultHopLimit);
+  // The number a minus or plus typed, read out politely: focus stays on the button.
+  const [stepped, setStepped] = useState("");
+  const step = (to: number | null) => {
+    if (busy || to === null) return;
+    setStepped(String(to));
+    form.change({ ...values, hopLimit: String(to) });
+  };
 
   return (
     <form
@@ -264,9 +273,13 @@ export function RoomForm({
             {hostId === null && (
               <p className="text-2xs text-muted-foreground">{t("roomForm.host.pick")}</p>
             )}
-            <ul
+            <RadioGroup
               id={ids.host}
-              role="radiogroup"
+              value={hostId}
+              onValueChange={(id) => {
+                if (id !== null) form.pickHost(id);
+              }}
+              readOnly={busy}
               aria-labelledby={ids.hostLabel}
               aria-invalid={problems.has("host") || undefined}
               aria-describedby={
@@ -274,36 +287,25 @@ export function RoomForm({
               }
               className="flex flex-wrap gap-1.5"
             >
-              {members.map((bot) => {
-                const picked = bot.id === hostId;
-                return (
-                  <li key={bot.id}>
-                    <button
-                      type="button"
-                      role="radio"
-                      aria-checked={picked}
-                      aria-disabled={busy || undefined}
-                      data-checked={picked ? "" : undefined}
-                      onClick={() => {
-                        if (!busy) form.pickHost(bot.id);
-                      }}
-                      className="group/option pressable flex h-9 items-center gap-2 rounded-pill border border-input ps-1.5 pe-3.5 text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-accent aria-disabled:cursor-default data-checked:border-foreground data-checked:bg-foreground data-checked:text-background pointer-coarse:h-11"
-                    >
-                      <span className="flex size-6 items-center justify-center rounded-pill bg-background">
-                        <BotAvatar
-                          avatar={bot.profile.avatar}
-                          seed={bot.id}
-                          state="idle"
-                          size={20}
-                          still
-                        />
-                      </span>
-                      {bot.profile.name}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+              {members.map((bot) => (
+                <Radio.Root
+                  key={bot.id}
+                  value={bot.id}
+                  className="pressable flex h-9 cursor-pointer items-center gap-2 rounded-pill border border-input ps-1.5 pe-3.5 text-sm outline-none hover:bg-muted focus-visible:outline-2 focus-visible:outline-accent data-checked:border-foreground data-checked:bg-foreground data-checked:text-background data-readonly:cursor-default pointer-coarse:h-11"
+                >
+                  <span className="flex size-6 items-center justify-center rounded-pill bg-background">
+                    <BotAvatar
+                      avatar={bot.profile.avatar}
+                      seed={bot.id}
+                      state="idle"
+                      size={20}
+                      still
+                    />
+                  </span>
+                  {bot.profile.name}
+                </Radio.Root>
+              ))}
+            </RadioGroup>
             <p id={ids.hostHint} className="text-2xs text-muted-foreground">
               {t("roomForm.host.hint")}
             </p>
@@ -325,11 +327,7 @@ export function RoomForm({
               aria-label={t("roomForm.hopLimit.fewer")}
               aria-controls={ids.hopLimit}
               aria-disabled={busy || hopSteps.fewer === null || undefined}
-              onClick={() => {
-                if (!busy && hopSteps.fewer !== null) {
-                  form.change({ ...values, hopLimit: String(hopSteps.fewer) });
-                }
-              }}
+              onClick={() => step(hopSteps.fewer)}
             >
               <MinusIcon />
             </Button>
@@ -341,7 +339,10 @@ export function RoomForm({
               readOnly={busy}
               autoComplete="off"
               placeholder={defaultHopLimit === null ? undefined : String(defaultHopLimit)}
-              onChange={(event) => form.change({ ...values, hopLimit: event.currentTarget.value })}
+              onChange={(event) => {
+                setStepped("");
+                form.change({ ...values, hopLimit: event.currentTarget.value });
+              }}
               aria-invalid={problems.has("hop-limit") || undefined}
               aria-describedby={
                 problems.has("hop-limit")
@@ -358,14 +359,13 @@ export function RoomForm({
               aria-label={t("roomForm.hopLimit.more")}
               aria-controls={ids.hopLimit}
               aria-disabled={busy || hopSteps.more === null || undefined}
-              onClick={() => {
-                if (!busy && hopSteps.more !== null) {
-                  form.change({ ...values, hopLimit: String(hopSteps.more) });
-                }
-              }}
+              onClick={() => step(hopSteps.more)}
             >
               <PlusIcon />
             </Button>
+            <span aria-live="polite" className="sr-only">
+              {stepped}
+            </span>
           </div>
           <p id={ids.hopLimitHint} className="text-2xs text-muted-foreground">
             {t("roomForm.hopLimit.hint")}

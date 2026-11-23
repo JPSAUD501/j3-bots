@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { reanimatedSpring, type Spring, springs } from "@j3-bots/design-tokens";
+import { motion, reanimatedSpring, type Spring, springs } from "@j3-bots/design-tokens";
 import { type ComponentProps, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { AccessibilityInfo } from "react-native";
-import Animated, { FadeInDown, ZoomIn } from "react-native-reanimated";
+import Animated, {
+  type EntryExitAnimationFunction,
+  FadeInDown,
+  withSpring,
+  withTiming,
+  ZoomIn,
+} from "react-native-reanimated";
 
 /** Whether the platform asks for reduced motion, following the setting as it changes. */
 export function useReducedMotion(): boolean {
@@ -104,6 +110,24 @@ export const openIn = () => {
 export const popIn = (delay = 0) => {
   const { mass, stiffness, damping } = reanimatedSpring(springs.pop);
   return ZoomIn.springify().mass(mass).stiffness(stiffness).damping(damping).delay(delay);
+};
+
+const popSpring = reanimatedSpring(springs.pop);
+
+/**
+ * Something that arrives in place of nothing, such as an empty state's mark:
+ * it fades in and pops up from a little smaller on `pop`, as the web's
+ * `appear` does.
+ */
+export const appear: EntryExitAnimationFunction = () => {
+  "worklet";
+  return {
+    initialValues: { opacity: 0, transform: [{ scale: 0.96 }] },
+    animations: {
+      opacity: withTiming(1, { duration: motion.state }),
+      transform: [{ scale: withSpring(1, popSpring) }],
+    },
+  };
 };
 
 type Entering = NonNullable<ComponentProps<typeof Animated.View>["entering"]>;

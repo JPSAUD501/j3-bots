@@ -51,7 +51,8 @@ import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { PairingQr } from "./PairingQr";
-import { Loading, Section } from "./SettingsSection";
+import { Section } from "./SettingsSection";
+import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
@@ -203,7 +204,7 @@ function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: 
   if (engine === null) {
     return (
       <Section title={t("settings.engine")}>
-        <Loading />
+        <SkeletonRows />
       </Section>
     );
   }
@@ -250,7 +251,7 @@ function YouSection({
   const { t } = useI18n();
   return (
     <Section title={t("settings.you")}>
-      {settings === null ? <Loading /> : <YouForm settings={settings} {...form} />}
+      {settings === null ? <SkeletonRows /> : <YouForm settings={settings} {...form} />}
     </Section>
   );
 }
@@ -397,7 +398,7 @@ function NotificationsSection({
   if (settings === null) {
     return (
       <Section title={t("settings.notifications")}>
-        <Loading />
+        <SkeletonRows />
       </Section>
     );
   }
@@ -530,7 +531,7 @@ function DevicesSection({
   return (
     <Section title={t("settings.devices")}>
       {devices === null ? (
-        <Loading />
+        <SkeletonRows />
       ) : (
         <ul className="flex flex-col gap-1.5">
           {devices.map((device) => {

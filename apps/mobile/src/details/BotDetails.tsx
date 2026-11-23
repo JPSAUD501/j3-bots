@@ -34,7 +34,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { confirm, DeleteButton, Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { PressScale } from "../press.tsx";
-import { Apart, Profile } from "./Profile.tsx";
+import { Apart, Profile, ProfileLine } from "./Profile.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { usePresentation } from "../presentation.tsx";
@@ -83,7 +83,12 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         picture={<LiveBotAvatar bot={bot} size={96} />}
         name={name}
         badge={bot.primary ? t("details.primary") : null}
-        lines={[title, job === "" ? t("details.noJob", { name }) : job]}
+        lines={
+          <>
+            {title !== "" && <ProfileLine>{title}</ProfileLine>}
+            <ProfileLine>{job === "" ? t("details.noJob", { name }) : job}</ProfileLine>
+          </>
+        }
       >
         <Button
           variant="secondary"

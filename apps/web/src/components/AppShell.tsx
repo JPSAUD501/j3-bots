@@ -77,14 +77,20 @@ export function AppShell({
           <aside
             aria-labelledby={detailsHeadingId}
             inert={pane.leaving}
-            data-leaving={pane.leaving ? "" : undefined}
-            onAnimationEnd={(event) => {
-              if (event.target === event.currentTarget) pane.gone();
-            }}
-            className="flex w-(--layout-details-width) shrink-0 animate-[pane-open_var(--duration-slide)_var(--ease-slide)] justify-end overflow-hidden border-s border-border bg-background data-leaving:animate-[pane-close_var(--duration-state)_var(--ease-out)_forwards]"
+            className="flex w-(--layout-details-width) shrink-0 overflow-hidden"
           >
-            {/* As wide as the open pane throughout, so nothing in it reflows while it slides. */}
-            <div className="flex w-(--layout-details-width) shrink-0 flex-col pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)]">
+            {/*
+             * The pane takes its room at once, so the conversation is laid out
+             * once as it opens and once after it closes, and the details slide
+             * in and out over that room with a transform, never resizing it.
+             */}
+            <div
+              data-leaving={pane.leaving ? "" : undefined}
+              onAnimationEnd={(event) => {
+                if (event.target === event.currentTarget && pane.leaving) pane.gone();
+              }}
+              className="flex w-(--layout-details-width) shrink-0 animate-[pane-in_var(--duration-slide)_var(--ease-slide)] flex-col border-s border-border bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] [--pane-from:100%] rtl:[--pane-from:-100%] data-leaving:animate-[pane-out_var(--duration-state)_var(--ease-out)_forwards]"
+            >
               {pane.shown}
             </div>
           </aside>
@@ -106,7 +112,7 @@ export function AppShell({
               aria-modal
               initialFocus={detailsHeadingRef}
               finalFocus={returnFocusRef}
-              className="absolute inset-0 z-20 flex flex-col bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none transition-transform duration-(--duration-slide) ease-slide data-ending-style:translate-x-full data-ending-style:duration-(--duration-state) data-ending-style:ease-out data-starting-style:translate-x-full @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-overlay"
+              className="absolute inset-0 z-20 flex flex-col bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none transition-transform duration-(--duration-slide) ease-slide data-ending-style:translate-x-full data-ending-style:duration-(--duration-state) data-ending-style:ease-out data-starting-style:translate-x-full rtl:data-ending-style:-translate-x-full rtl:data-starting-style:-translate-x-full @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-overlay"
             >
               {pane.shown}
             </Dialog.Popup>

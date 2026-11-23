@@ -33,7 +33,7 @@ export function Segmented<T extends string>({
           key={option.value}
           value={option.value}
           className={cn(
-            "pressable flex h-7 min-w-0 flex-1 cursor-pointer items-center justify-center truncate rounded-pill px-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent pointer-coarse:h-9",
+            "pressable flex h-7 min-w-0 flex-1 cursor-pointer items-center justify-center truncate rounded-pill px-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent pointer-coarse:h-11",
             "data-checked:bg-surface data-checked:text-foreground data-checked:shadow-raised",
           )}
         >

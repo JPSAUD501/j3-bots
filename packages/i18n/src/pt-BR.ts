@@ -389,7 +389,7 @@ const sentences = {
   "room.memberCount.one": "Um bot",
   "room.memberCount.other": "{count} bots",
   "room.archivedBadge": "Arquivada",
-  "room.archiveSection": "Arquivamento",
+  "room.archiveSection": "Arquivar",
   "room.host": "Anfitrião",
   "room.budget": "Respostas entre bots",
   "room.hopLimit.one":

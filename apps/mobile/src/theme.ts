@@ -13,3 +13,9 @@ export const useColor = (className: string): string => {
   if (color === undefined) throw new Error(`${className} names no theme color.`);
   return color;
 };
+
+/**
+ * How high what floats over the app sits, as Android's elevation: a menu, a
+ * toast. The web's `overlay` shadow, which Uniwind cannot draw here.
+ */
+export const OVERLAY_ELEVATION = 8;

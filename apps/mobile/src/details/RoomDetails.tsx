@@ -12,7 +12,7 @@ import type { Navigation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 import { useRoomActions } from "./actions.ts";
-import { Apart, Profile } from "./Profile.tsx";
+import { Apart, Profile, ProfileLine } from "./Profile.tsx";
 
 /**
  * A room's details: who is in it, who hosts, how long bots may talk among
@@ -44,7 +44,11 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         }
         name={name}
         badge={archived ? t("room.archivedBadge") : null}
-        lines={[archived ? t("room.archivedLine") : plural("room.memberCount", members.length)]}
+        lines={
+          <ProfileLine>
+            {archived ? t("room.archivedLine") : plural("room.memberCount", members.length)}
+          </ProfileLine>
+        }
       >
         {!archived && (
           <Button
