@@ -16,6 +16,7 @@ describe("the tray's menu", () => {
     const model = trayModel(
       { pairing, count: 5, waiting: [waiting("Wren"), waiting("Scout")] },
       null,
+      false,
       createI18n("en"),
     );
     assert.strictEqual(model.count, 5);
@@ -28,6 +29,7 @@ describe("the tray's menu", () => {
     const one = trayModel(
       { pairing, count: 1, waiting: [waiting("Wren")] },
       null,
+      false,
       createI18n("pt-BR"),
     );
     assert.strictEqual(one.summary, "1 precisa de você");
@@ -39,7 +41,7 @@ describe("the tray's menu", () => {
     const en = createI18n("en");
     const pt = createI18n("pt-BR");
     const summary = (local: Parameters<typeof trayModel>[1], i18n = en) =>
-      trayModel(report, local, i18n).summary;
+      trayModel(report, local, false, i18n).summary;
     assert.strictEqual(summary({ state: "ready" }), "1 needs you");
     assert.strictEqual(summary({ state: "starting" }), "Starting your bots…");
     const updating = { _tag: "updating", from: "0.3.0", to: "0.3.1" } as const;
@@ -69,8 +71,21 @@ describe("the tray's menu", () => {
     assert.strictEqual(summary({ state: "failed" }, pt), "Os bots não iniciaram");
     // What waits is still listed, under the line that says the bots are not running.
     assert.deepStrictEqual(
-      trayModel(report, { state: "stopped" }, en).entries.map((entry) => entry.label),
+      trayModel(report, { state: "stopped" }, false, en).entries.map((entry) => entry.label),
       ["Wren"],
     );
+  });
+
+  it("says that phones reach the bots on this computer, only while they do", () => {
+    const report = { pairing, count: 0, waiting: [] };
+    const ready = { state: "ready" } as const;
+    assert.strictEqual(trayModel(report, ready, true, createI18n("en")).phone, "Phone access on");
+    assert.strictEqual(
+      trayModel(report, ready, true, createI18n("pt-BR")).phone,
+      "Uso pelo celular ligado",
+    );
+    assert.isNull(trayModel(report, ready, false, createI18n("en")).phone);
+    // Outside local mode there is no server on this computer for a phone to reach.
+    assert.isNull(trayModel(report, null, true, createI18n("en")).phone);
   });
 });

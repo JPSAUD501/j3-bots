@@ -158,10 +158,10 @@ export const make = Effect.fn("ServerChoice.make")(function* (
   });
 
   /**
-   * Stops running the bots on this computer, their data kept, and opens the
-   * server address screen. The page signs its device out first, while the
-   * server still runs; a device it could not is revoked by the next sign-in
-   * on this computer, which replaces it.
+   * Stops running the bots on this computer, their data kept, turns phone
+   * access off, and opens the server address screen. The page signs its
+   * device out first, while the server still runs; a device it could not is
+   * revoked by the next sign-in on this computer, which replaces it.
    */
   const connectToServerInstead = Effect.fn("ServerChoice.connectToServerInstead")(function* (
     page: Page,
@@ -176,6 +176,9 @@ export const make = Effect.fn("ServerChoice.make")(function* (
             server: null,
             localDevice:
               current.localDevice === null ? null : { ...current.localDevice, current: false },
+            // Coming back to this computer later starts its server on this
+            // computer alone, not on whatever network it is on by then.
+            phoneAccess: false,
           }))
           .pipe(
             Effect.as(true),

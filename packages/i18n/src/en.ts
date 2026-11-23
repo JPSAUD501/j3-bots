@@ -1136,6 +1136,49 @@ export const en = {
   "settings.startWithSystem.hint":
     "Opens in the tray when you sign in to this computer, so your bots are back without opening the app.",
   "settings.startWithSystem.failed": "That couldn’t be changed. Try again.",
+  "settings.phone": "Use from your phone",
+  "settings.phone.hint": "Your phone reaches the bots on this computer over the same network.",
+  "settings.phone.trust":
+    "Turn it on only on a network you trust, like your home’s: the connection isn’t encrypted. Not on café or hotel Wi-Fi.",
+  "settings.phone.sameNetwork":
+    "Your phone reaches this computer only on that same network, not when you’re out.",
+  "settings.phone.awake": "Your bots keep running only while this computer is on and awake.",
+  "settings.phone.turningOn": "Turning on…",
+  "settings.phone.on": "On at {address}",
+  "settings.phone.public":
+    "This network gives this computer a public address, so your bots stay on this computer only. Use a private network, like your home’s.",
+  "settings.phone.unavailable":
+    "Your bots couldn’t open to the network, so they stay on this computer only.",
+  "settings.phone.noNetwork":
+    "This computer isn’t on a local network. Connect it to Wi-Fi or a cable.",
+  "settings.phone.retry": "Try again",
+  "settings.phone.failed": "That couldn’t be changed. Try again.",
+  "settings.phone.restart.title": "Restart your bots?",
+  "settings.phone.restart.body.one":
+    "A bot is working. This restarts the bots on this computer, which stops that work.",
+  "settings.phone.restart.body.other":
+    "{count} bots are working. This restarts the bots on this computer, which stops their work.",
+  "settings.phone.restart": "Restart",
+  "settings.phone.restart.cancel": "Not now",
+  "settings.phone.firewall.windows":
+    "Windows may ask whether J3 Bots can use private networks. Allow it, or your phone can’t connect.",
+  "settings.phone.firewall.mac":
+    "macOS may ask whether J3 Bots can accept incoming connections. Allow it, or your phone can’t connect.",
+  "settings.phone.firewall.linux":
+    "If this computer uses ufw, it blocks your phone without saying so. Allow the port with:",
+  "settings.phone.firewall.copy": "Copy the command that allows the port",
+  "settings.phone.pair": "Pair a phone",
+  "settings.phone.pair.again": "Get another code",
+  "settings.phone.pair.scan":
+    "Scan it with your phone’s camera, or open J3 Bots on the phone and enter:",
+  "settings.phone.pair.address": "Address",
+  "settings.phone.pair.code": "Code",
+  "settings.phone.pair.expiresIn": "Expires in {time}",
+  "settings.phone.pair.expired": "This code expired.",
+  "settings.phone.pair.locked":
+    "Too many wrong codes were tried, so pairing is locked until {time}.",
+  "settings.phone.pair.unlock": "Unlock and get a code",
+  "settings.phone.pair.failed": "No code was made. Try again.",
   "settings.browser": "This browser",
   "settings.thisDevice": "This device",
   "settings.thisDevice.unencrypted":
@@ -1198,6 +1241,7 @@ export const en = {
   "desktop.tray.local.restarting": "Bots stopped · restarting in {seconds} s",
   "desktop.tray.local.restartingNow": "Bots stopped · restarting…",
   "desktop.tray.local.failed": "Bots couldn’t start",
+  "desktop.tray.phoneOn": "Phone access on",
   "update.version": "J3 Bots {version}",
   "update.unavailable": "This build doesn’t update itself.",
   "update.upToDate": "Up to date.",

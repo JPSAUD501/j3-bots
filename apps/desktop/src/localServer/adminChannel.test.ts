@@ -12,7 +12,7 @@ import * as AdminChannel from "./adminChannel.ts";
 const STATUS = JSON.stringify({
   version: "0.3.0",
   pid: 4242,
-  listener: { port: 3747 },
+  listener: { address: "127.0.0.1", port: 3747 },
   engine: { state: { _tag: "ready" } },
   webClient: "not-built",
 });
@@ -68,7 +68,7 @@ describe("the admin channel", () => {
       assert.deepStrictEqual(status, {
         version: "0.3.0",
         pid: 4242,
-        listener: { port: 3747 },
+        listener: { address: "127.0.0.1", port: 3747 },
         engine: { state: { _tag: "ready" } },
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

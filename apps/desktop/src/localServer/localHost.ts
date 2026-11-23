@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type LocalServerState, ServerOrigin, type ServerUpdate } from "@j3-bots/desktop-bridge";
+import * as Network from "@j3-bots/server/network";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -13,6 +14,7 @@ import * as AdminChannel from "./adminChannel.ts";
 import * as Credential from "./credential.ts";
 import * as Home from "./home.ts";
 import * as Orphans from "./orphans.ts";
+import * as PhoneAccess from "./phoneAccess.ts";
 import * as Runtime from "./runtime.ts";
 import * as ServerProcess from "./serverProcess.ts";
 import * as ShellPath from "./shellPath.ts";
@@ -138,6 +140,13 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
 
   const checkHome = Home.checkHome(home, options.platform, options.windowsPrivacy);
 
+  // Where each start listens: on this computer alone, or, while the operator
+  // lets phones reach it, on the network.
+  const network = yield* Network.Network.pipe(Effect.provide(Network.layer));
+  const phone = yield* PhoneAccess.listening({
+    publicAddress: network.ipv4Addresses.pipe(Effect.map(Network.publicAddressOf)),
+  });
+
   /** Starts the server from `runtime`. */
   const run = Effect.fn("LocalHost.run")(function* (runtime: Runtime.Runtime) {
     yield* fs.makeDirectory(serverFolder, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
@@ -147,7 +156,7 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
       env: serverEnvironment(options.env, {
         path: yield* shellPath,
         home,
-        host: "127.0.0.1",
+        host: yield* phone.hostForLaunch,
       }),
       logFile,
       platform: options.platform,
@@ -267,5 +276,15 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     name: Credential.deviceName(options.hostname),
   });
 
-  return { available, local, supervisor, state, changes, retryUpdate, signIn, logFile } as const;
+  return {
+    available,
+    local,
+    supervisor,
+    phone,
+    state,
+    changes,
+    retryUpdate,
+    signIn,
+    logFile,
+  } as const;
 });

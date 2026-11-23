@@ -138,7 +138,7 @@ import {
   useReportLanguage,
   useReportTray,
 } from "./desktopMenus";
-import { desktop } from "./desktop";
+import { desktop, systemOf } from "./desktop";
 import {
   asksSilently,
   localScreen,
@@ -578,6 +578,13 @@ function useLocalHere(origin: URL) {
         setStartWithSystem(held);
         return held;
       }),
+    phone: {
+      access: desktopLocal.phoneAccess,
+      follow: desktopLocal.onPhoneAccess,
+      system: systemOf(navigator.userAgent),
+      set: desktopLocal.setPhoneAccess,
+      pairingLink: desktopLocal.localPairingLink,
+    },
   };
 
   const createFirst = ({ name, avatar }: { name: string; avatar: AvatarChoice }) => {

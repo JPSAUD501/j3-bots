@@ -10,12 +10,14 @@ import {
   LocalDeviceRequest,
   LocalDeviceResult,
   LocalPairingLink,
+  LocalPairingRequest,
   LocalServerState,
   type ModeChange,
   NetworkState,
   OpenRequest,
   type OpenResult,
   PhoneAccess,
+  PhoneAccessChange,
   PhoneAccessRequest,
   SealRequest,
   type SealResult,
@@ -53,6 +55,7 @@ import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import * as LinkHandler from "./linkHandler.ts";
 import * as LocalHost from "./localServer/localHost.ts";
+import * as PhoneAccessControl from "./localServer/phoneAccess.ts";
 import { quitGate } from "./localServer/quitGate.ts";
 import { thisComputer } from "./localServer/thisComputer.ts";
 import * as Menus from "./menus.ts";
@@ -108,16 +111,12 @@ const decodeSealRequest = Schema.decodeUnknownOption(SealRequest);
 const decodeOpenRequest = Schema.decodeUnknownOption(OpenRequest);
 const decodeLocalDeviceRequest = Schema.decodeUnknownOption(LocalDeviceRequest);
 const decodePhoneAccessRequest = Schema.decodeUnknownOption(PhoneAccessRequest);
+const decodePairingRequest = Schema.decodeUnknownOption(LocalPairingRequest);
 const encodeLocalDevice = Schema.encodeSync(LocalDeviceResult);
 const encodeLocalServer = Schema.encodeSync(Schema.NullOr(LocalServerState));
 const encodePhoneAccess = Schema.encodeSync(PhoneAccess);
+const encodePhoneAccessChange = Schema.encodeSync(PhoneAccessChange);
 const encodePairingLink = Schema.encodeSync(LocalPairingLink);
-
-/**
- * Phone access to the server on this computer: off, until the app can open
- * it to the network (a later version).
- */
-const PHONE_ACCESS_OFF: PhoneAccess = { on: false, origins: [] };
 
 /** Whether the system has a network, as the page is told. */
 const networkState = () => encodeNetwork({ online: net.isOnline() });
@@ -281,6 +280,33 @@ const program = Effect.gen(function* () {
     localHost.local,
   );
 
+  // Phones on this computer's network reaching its server. A move of the
+  // server is one step with the changes of where the bots live: it never
+  // starts a server the operator just left.
+  const phone = yield* PhoneAccessControl.serve({
+    listening: localHost.phone,
+    supervisor,
+    restart: choice.whileLocal(Effect.andThen(supervisor.stop, supervisor.start)),
+  });
+
+  const setPhoneAccess = Effect.fn("desktop.setPhoneAccess")(function* (
+    event: IpcMainInvokeEvent,
+    request: unknown,
+  ) {
+    const decoded = decodePhoneAccessRequest(request);
+    if (!fromApp(event) || Option.isNone(decoded)) return null;
+    return encodePhoneAccessChange(yield* phone.set(decoded.value));
+  });
+
+  const localPairingLink = Effect.fn("desktop.localPairingLink")(function* (
+    event: IpcMainInvokeEvent,
+    request: unknown,
+  ) {
+    const decoded = decodePairingRequest(request);
+    if (!fromApp(event) || Option.isNone(decoded)) return null;
+    return encodePairingLink(yield* phone.pairingLink(decoded.value.unlock));
+  });
+
   const connect = Effect.fn("desktop.connect")(function* (
     event: IpcMainInvokeEvent,
     request: unknown,
@@ -361,7 +387,7 @@ const program = Effect.gen(function* () {
           mode,
           localAvailable: localHost.available,
           localServer: runSync(localServerNow),
-          phoneAccess: PHONE_ACCESS_OFF,
+          phoneAccess: runSync(phone.current),
           startWithSystem,
         });
       });
@@ -387,22 +413,23 @@ const program = Effect.gen(function* () {
         fromApp(event) ? encodeLocalServer(runSync(localServerNow)) : null,
       );
       ipcMain.on(IPC_CHANNELS.retryLocalServer, (event) => {
-        if (fromApp(event)) void runPromise(choice.whileLocal(supervisor.retry));
+        if (fromApp(event)) {
+          void runPromise(
+            choice.whileLocal(Effect.andThen(phone.tryNetworkAgain, supervisor.retry)),
+          );
+        }
       });
       ipcMain.on(IPC_CHANNELS.retryServerUpdate, (event) => {
         if (fromApp(event)) void runPromise(choice.whileLocal(localHost.retryUpdate));
       });
-      ipcMain.handle(IPC_CHANNELS.setPhoneAccess, (event, request: unknown) => {
-        const decoded = decodePhoneAccessRequest(request);
-        if (!fromApp(event) || Option.isNone(decoded)) return null;
-        return encodePhoneAccess(
-          decoded.value.on
-            ? { ...PHONE_ACCESS_OFF, refusedReason: "unavailable" }
-            : PHONE_ACCESS_OFF,
-        );
-      });
-      ipcMain.handle(IPC_CHANNELS.localPairingLink, (event) =>
-        fromApp(event) ? encodePairingLink({ _tag: "unavailable" }) : null,
+      ipcMain.handle(IPC_CHANNELS.setPhoneAccess, (event, request: unknown) =>
+        runPromise(setPhoneAccess(event, request)),
+      );
+      ipcMain.handle(IPC_CHANNELS.phoneAccess, (event) =>
+        fromApp(event) ? runPromise(phone.refresh.pipe(Effect.map(encodePhoneAccess))) : null,
+      );
+      ipcMain.handle(IPC_CHANNELS.localPairingLink, (event, request: unknown) =>
+        runPromise(localPairingLink(event, request)),
       );
       // A restart, as once a keyring is unlocked: Chromium keeps the
       // encryption it set up for the process, so only a new one sees the
@@ -426,6 +453,7 @@ const program = Effect.gen(function* () {
         ipcMain.removeAllListeners(IPC_CHANNELS.retryLocalServer);
         ipcMain.removeAllListeners(IPC_CHANNELS.retryServerUpdate);
         ipcMain.removeHandler(IPC_CHANNELS.setPhoneAccess);
+        ipcMain.removeHandler(IPC_CHANNELS.phoneAccess);
         ipcMain.removeHandler(IPC_CHANNELS.localPairingLink);
         ipcMain.removeAllListeners(IPC_CHANNELS.relaunch);
       }),
@@ -548,6 +576,7 @@ const program = Effect.gen(function* () {
     fromApp,
     bringForward: forward,
     localServer: localServerChanges,
+    phoneAccess: phone.changes,
   });
   // The page follows the server this computer runs.
   yield* localServerChanges.pipe(
@@ -560,6 +589,17 @@ const program = Effect.gen(function* () {
     ),
     Effect.forkScoped,
   );
+  // The page follows phone access.
+  yield* phone.changes.pipe(
+    Stream.runForEach((access) =>
+      Effect.sync(() => {
+        if (!window.isDestroyed()) {
+          window.webContents.send(IPC_CHANNELS.phoneAccessChanged, encodePhoneAccess(access));
+        }
+      }),
+    ),
+    Effect.forkScoped,
+  );
   // After sleep the network may have changed under the page: it is told, so
   // the client tries again at once rather than when its backoff ends.
   yield* Effect.acquireRelease(
@@ -567,8 +607,9 @@ const program = Effect.gen(function* () {
       const resumed = () => {
         if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.resumed, networkState());
         // The server was frozen with the system, not stopped: it should
-        // answer at once, and is started again if it does not.
-        void runPromise(supervisor.ping);
+        // answer at once, and is started again if it does not. The network
+        // it is reached at may be another now.
+        void runPromise(Effect.andThen(supervisor.ping, phone.refresh));
       };
       powerMonitor.on("resume", resumed);
       return resumed;

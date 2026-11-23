@@ -175,6 +175,7 @@ describe("the desktop bridge", () => {
       retryLocalServer: call,
       retryServerUpdate: call,
       setPhoneAccess: call,
+      onPhoneAccess: call,
       localPairingLink: call,
       setStartWithSystem: call,
     };

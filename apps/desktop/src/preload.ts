@@ -79,8 +79,17 @@ const bridge: DesktopBridge = {
   },
   retryLocalServer: () => ipcRenderer.send(IPC_CHANNELS.retryLocalServer),
   retryServerUpdate: () => ipcRenderer.send(IPC_CHANNELS.retryServerUpdate),
-  setPhoneAccess: (on) => ipcRenderer.invoke(IPC_CHANNELS.setPhoneAccess, { on }),
-  localPairingLink: () => ipcRenderer.invoke(IPC_CHANNELS.localPairingLink),
+  setPhoneAccess: (request) => ipcRenderer.invoke(IPC_CHANNELS.setPhoneAccess, request),
+  onPhoneAccess: (listener) => {
+    const forward = (_event: unknown, access: unknown) => listener(access);
+    ipcRenderer.on(IPC_CHANNELS.phoneAccessChanged, forward);
+    // Then phone access now, its addresses read again, as `onLocalServer` does.
+    void ipcRenderer.invoke(IPC_CHANNELS.phoneAccess).then(listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.phoneAccessChanged, forward);
+    };
+  },
+  localPairingLink: (request) => ipcRenderer.invoke(IPC_CHANNELS.localPairingLink, request),
   setStartWithSystem: (on) => ipcRenderer.invoke(IPC_CHANNELS.setStartWithSystem, { on }),
 };
 
