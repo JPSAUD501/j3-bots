@@ -129,7 +129,8 @@ const cmdReadsInQuotes = (word: string): boolean =>
  * of it rather than as a command of its own. What quotes cannot keep from
  * `cmd.exe` is refused rather than run as something else: `%` and `!`, which
  * it would expand, a `"`, which would end the quoting, and a control
- * character. **Assumed**: not yet run on Windows.
+ * character. **Verified** on Windows 11: a `.cmd` in a folder named
+ * `R&D^(Co)` ran through `cmd.exe` with its arguments.
  */
 export const invocation = (
   executable: string,
