@@ -1,0 +1,164 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Nightly
+
+# Builds `main` once a day when it changed since the last nightly, as a
+# pre-release of the next patch, and keeps the last seven
+# (docs/decisions/0031-a-release-is-signed-and-a-nightly-is-a-pre-release-of-the-next-patch.md).
+# The build is the release workflow's, called with the nightly's version: the
+# same files, signed with the same keys, plus the desktop's feed files for the
+# `nightly` channel, published as soon as they are up. See
+# docs/operations/releasing.md#nightlies.
+#
+# It runs on `main` only, from the schedule or by hand: never on a pull
+# request. The signing jobs it calls read their keys through the
+# `release-signing` and `android-signing` environments, which admit `main`.
+on:
+  schedule:
+    # Once a day at 04:41 UTC, off the hour that every other schedule takes.
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # Whether `main` moved since the last published nightly and passed CI, and
+  # if so this one's version. It reads releases and runs, and writes nothing.
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.plan.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Only main
+        run: |
+          if [[ "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "::error::A nightly is built from main only, not $GITHUB_REF."
+            exit 1
+          fi
+
+      - name: Checkout the version script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/nightly-version.sh
+          sparse-checkout-cone-mode: false
+
+      # The last nightly is the newest published pre-release whose tag is a
+      # nightly's: its version, with no `v`. A nightly whose run failed was
+      # never published, so the next run builds that commit again. A nightly
+      # is published with no review, so it is built only from a commit whose
+      # CI run on `main` passed; one still running, failed or cancelled waits
+      # for the next day. The version is the patch after the newest published
+      # release or release candidate, so a nightly sorts above both.
+      - name: Compare with the last nightly
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          number='(0|[1-9][0-9]*)'
+          nightly="^$number\.$number\.$number-nightly\.[0-9]{8}\.[1-9][0-9]*$"
+          release="^v$number\.$number\.$number(-rc\.([1-9][0-9]*))?$"
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.draft | not) | [.tag_name, (.prerelease | tostring), .published_at] | @tsv' \
+            > "$RUNNER_TEMP/published"
+          last=
+          while IFS=$'\t' read -r tag prerelease _; do
+            if [[ "$prerelease" == true && "$tag" =~ $nightly ]]; then last="$tag"; break; fi
+          done < <(sort -t$'\t' -k3,3r "$RUNNER_TEMP/published")
+          if [[ -n "$last" ]] && [[ "$(gh api "repos/$GH_REPO/commits/$last" --jq .sha)" == "$GITHUB_SHA" ]]; then
+            echo "main is at $GITHUB_SHA, which $last was built from: no nightly today." >> "$GITHUB_STEP_SUMMARY"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ci="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=1" \
+            --jq '.workflow_runs[0] // empty | "\(.status) \(.conclusion)"')"
+          if [[ "$ci" != "completed success" ]]; then
+            echo "::warning::CI on main at $GITHUB_SHA has ${ci:-no run} rather than a pass: no nightly today."
+            echo "CI on main at $GITHUB_SHA has ${ci:-no run} rather than a pass: no nightly today." >> "$GITHUB_STEP_SUMMARY"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A release or a release candidate, marked as a pre-release only when
+          # it is a candidate, ordered by major, minor, patch, then the
+          # candidates before the release.
+          newest="$(
+            while IFS=$'\t' read -r tag prerelease _; do
+              [[ "$tag" =~ $release ]] || continue
+              rc="${BASH_REMATCH[5]}"
+              [[ "$prerelease" == "$([[ -n "$rc" ]] && echo true || echo false)" ]] || continue
+              printf '%s %s %s %s %s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+                "$([[ -n "$rc" ]] && echo 0 || echo 1)" "${rc:-0}" "${tag#v}"
+            done < "$RUNNER_TEMP/published" | sort -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n | tail -n 1 | cut -d' ' -f6
+          )"
+          if [[ -z "$newest" ]]; then
+            echo "::error::No published release or release candidate to name the nightly after."
+            exit 1
+          fi
+          version="$(scripts/nightly-version.sh "$newest" "$(date -u +%Y%m%d)" "$GITHUB_RUN_NUMBER")"
+          echo "Building $version from $GITHUB_SHA, after ${last:-no nightly} and $newest." >> "$GITHUB_STEP_SUMMARY"
+          echo "build=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    # The release workflow's `draft` and `publish` jobs create and upload to
+    # the release; its other jobs ask for no more than read.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      nightly-version: ${{ needs.plan.outputs.version }}
+
+  # Deletes every nightly but the newest seven published, and their tags, and
+  # the drafts that runs which failed left. It runs no code from the
+  # repository: only `gh` on the release list.
+  prune:
+    name: Keep the last seven
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Delete older nightlies
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          nightly='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-nightly\.[0-9]{8}\.[1-9][0-9]*$'
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.prerelease) | [.tag_name, (.draft | tostring), (.published_at // .created_at)] | @tsv' \
+            > "$RUNNER_TEMP/releases"
+          kept=0
+          while IFS=$'\t' read -r tag draft _; do
+            [[ "$tag" =~ $nightly ]] || continue
+            if [[ "$draft" == true ]]; then
+              # A draft has no tag yet: only the release is deleted.
+              echo "Deleting the draft $tag, left by a run that failed."
+              gh release delete "$tag" --yes < /dev/null
+            elif ((kept < 7)); then
+              kept=$((kept + 1))
+            else
+              echo "Deleting $tag and its tag."
+              gh release delete "$tag" --cleanup-tag --yes < /dev/null
+            fi
+          done < <(sort -t$'\t' -k3,3r "$RUNNER_TEMP/releases")

@@ -7,14 +7,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as ChildProcess from "effect/process/ChildProcess";
 import { runToEnd, searchPathWithoutNode } from "./host.ts";
-import { encoded, latestPage, mirror, releaseArchive, releaseFiles, sha256 } from "./mirror.ts";
+import { latestPage, MIRROR_PUBLIC_KEY, mirror, releaseArchive, releaseFiles } from "./mirror.ts";
 
 // scripts/install.sh, run as a stranger runs it, against a static mirror of a
 // GitHub release that holds the archive `pnpm release` built: the archive is
-// checked against SHA256SUMS and installed, and `j3-bots uninstall
-// --delete-data` takes everything away again. The service is left out
-// (`--no-service`): a CI runner has no systemd user manager to run it in.
-// Needs the archive in J3_RELEASE_ARCHIVE.
+// checked against SHA256SUMS, signed with the mirror's key, and installed, and
+// `j3-bots uninstall --delete-data` takes everything away again. The service
+// is left out (`--no-service`): a CI runner has no systemd user manager to run
+// it in. Needs the archive in J3_RELEASE_ARCHIVE. scripts/install.test.ts
+// checks the refusals of a bad signature or digest, which need no release.
 
 const INSTALL_SCRIPT = `${import.meta.dirname}/../../../scripts/install.sh`;
 
@@ -57,7 +58,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("install.sh", (it) =
           yield* fs.readFile(path.resolve(INSTALL_SCRIPT)),
         );
         const site = yield* mirror(files);
-        const env = { ...host.env, J3_RELEASE_BASE_URL: site.url };
+        const env = {
+          ...host.env,
+          J3_RELEASE_BASE_URL: site.url,
+          J3_RELEASE_PUBLIC_KEY: MIRROR_PUBLIC_KEY,
+        };
         // Data a stranger already has from a server that ran, which only --delete-data deletes.
         yield* fs.makeDirectory(path.join(host.data, "bots"), { recursive: true, mode: 0o700 });
         yield* fs.writeFileString(path.join(host.data, "j3.sqlite"), "");
@@ -126,25 +131,6 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("install.sh", (it) =
       assert.include(pre.output, "is not a stable version");
       assert.deepStrictEqual(pre.served, ["/latest"]);
       assert.isFalse(yield* host.fs.exists(host.install));
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("refuses an archive that does not match SHA256SUMS, and installs nothing", () =>
-    Effect.gen(function* () {
-      const host = yield* strangersHost();
-      const { name, version, bytes } = yield* releaseArchive("J3_RELEASE_ARCHIVE");
-      const site = yield* mirror(releaseFiles(version, name, bytes, sha256(encoded("other"))));
-      const refused = yield* runToEnd(
-        ChildProcess.make(
-          "sh",
-          [host.path.resolve(INSTALL_SCRIPT), "--version", `v${version}`, "--no-service"],
-          { env: { ...host.env, J3_RELEASE_BASE_URL: site.url }, extendEnv: false },
-        ),
-      );
-      assert.notStrictEqual(refused.exitCode, 0, refused.output);
-      assert.include(refused.output, "does not match its checksum in SHA256SUMS");
-      assert.isFalse(yield* host.fs.exists(host.install));
-      assert.isFalse(yield* host.fs.exists(host.launcher));
     }).pipe(Effect.scoped),
   );
 

@@ -37,7 +37,13 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as RpcClient from "effect/rpc/RpcClient";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import { freePort, runToEnd, searchPathWithoutNode } from "../smoke/host.ts";
-import { latestPage, mirror, releaseArchive, releaseFiles } from "../smoke/mirror.ts";
+import {
+  latestPage,
+  MIRROR_PUBLIC_KEY,
+  mirror,
+  releaseArchive,
+  releaseFiles,
+} from "../smoke/mirror.ts";
 import * as AdminClient from "../src/admin/AdminClient.ts";
 import type { AdminStatus } from "../src/admin/protocol.ts";
 import { HARNESSES } from "../src/engine/harnesses.ts";
@@ -240,6 +246,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
           HOME: home,
           LANG: "C.UTF-8",
           J3_RELEASE_BASE_URL: site.url,
+          J3_RELEASE_PUBLIC_KEY: MIRROR_PUBLIC_KEY,
           // The unit goes where the manager reads it; it runs with `HOME` above.
           XDG_CONFIG_HOME: manager.configHome,
           XDG_RUNTIME_DIR: yield* Config.String("XDG_RUNTIME_DIR"),

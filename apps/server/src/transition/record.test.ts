@@ -143,6 +143,10 @@ describe("whether a release may start on a home", () => {
       "0.3.0-alpha",
       "0.3.0-alpha.1",
       "0.3.0-beta",
+      // Nightlies (decision 0031): by day, then run, below the release candidates.
+      "0.3.0-nightly.20261124.57",
+      "0.3.0-nightly.20261124.58",
+      "0.3.0-nightly.20261125.3",
       "0.3.0-rc.2",
       "0.3.0-rc.10",
       "0.3.0",

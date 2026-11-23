@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { androidVersionCode } from "./androidVersionCode.ts";
 
-/** Each version in the order a phone must accept them as updates. */
+/** Each version in the order a phone must accept them as updates, across both formulas. */
 const releases = [
   "0.0.0",
   "0.1.0-rc.1",
@@ -13,24 +13,44 @@ const releases = [
   "0.1.99",
   "0.2.0-rc.1",
   "0.2.0",
+  "0.3.0-rc.1",
+  "0.3.0",
+  "0.3.1-nightly.20260101.1",
+  "0.3.1-nightly.20261124.57",
+  "0.3.1-nightly.20261125.58",
+  "0.3.1-nightly.20500821.9000",
+  "0.3.1-rc.1",
+  "0.3.1-rc.98",
+  "0.3.1",
+  "0.3.2-nightly.20261201.70",
+  "0.3.2",
   "0.99.99",
   "1.0.0",
   "1.4.1",
   "1.5.0",
-  "2099.99.99",
+  "20.99.99",
 ];
 
 describe("androidVersionCode", () => {
-  it("grows with the version, a release candidate below its release", () => {
+  it("grows with the version: nightlies, then release candidates, then the release", () => {
     const codes = releases.map(androidVersionCode);
     expect(codes).toEqual([...codes].sort((a, b) => a - b));
     expect(new Set(codes).size).toBe(codes.length);
   });
 
-  it("is major, minor, patch and stage in fixed places", () => {
-    expect(androidVersionCode("1.4.1")).toBe(1_040_199);
-    expect(androidVersionCode("1.5.0-rc.3")).toBe(1_050_003);
-    expect(androidVersionCode("2099.99.99")).toBeLessThanOrEqual(2_100_000_000);
+  it("keeps the codes that shipped up to 0.3.0, and puts the parts in fixed places after", () => {
+    expect(androidVersionCode("0.1.0-rc.1")).toBe(10_001);
+    expect(androidVersionCode("0.3.0")).toBe(30_099);
+    expect(androidVersionCode("0.3.1-nightly.20261124.57")).toBe(3_010_328);
+    expect(androidVersionCode("1.5.0-rc.3")).toBe(105_009_003);
+    expect(androidVersionCode("1.4.1")).toBe(104_019_999);
+    expect(androidVersionCode("20.99.99")).toBeLessThanOrEqual(2_100_000_000);
+  });
+
+  it("gives two nightlies of one day the same code, which Android installs over each other", () => {
+    expect(androidVersionCode("0.3.1-nightly.20261124.57")).toBe(
+      androidVersionCode("0.3.1-nightly.20261124.58"),
+    );
   });
 
   it("refuses a version it cannot order", () => {
@@ -42,10 +62,18 @@ describe("androidVersionCode", () => {
       "1.4.0-rc",
       "1.4.0-rc.0",
       "1.4.0-rc.99",
+      "0.2.0-rc.99",
       "1.4.0-rc.1.2",
       "1.100.0",
       "1.4.100",
-      "2100.0.0",
+      "21.0.0",
+      "0.3.0-nightly.20261124.57",
+      "0.3.1-nightly.20251231.1",
+      "0.3.1-nightly.20500822.1",
+      "0.3.1-nightly.20261131.1",
+      "0.3.1-nightly.2026112.1",
+      "0.3.1-nightly.20261124.0",
+      "0.3.1-nightly.20261124",
     ])
       expect(() => androidVersionCode(version), version).toThrow(version);
   });

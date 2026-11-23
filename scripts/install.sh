@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # Installs J3 Bots from a GitHub release: the server archive for this machine,
-# checked against the release's SHA256SUMS, the j3-bots command, and the
-# systemd user service. Needs sh, tar, curl or wget, and sha256sum or shasum:
-# no Node, Git or root. After T3 Code's scripts/install.sh.
+# checked against the release's SHA256SUMS once its signature is checked, the
+# j3-bots command, and the systemd user service. Needs sh, tar, curl or wget,
+# sha256sum or shasum, and OpenSSL 3: no Node, Git or root. After T3 Code's
+# scripts/install.sh.
 #
 #   curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/latest/download/install.sh | sh
 #   curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/install.sh | sh -s -- --version 0.1.0-rc.1
+#
+# A release's tag is v<version>; a nightly's is its version alone, such as
+# 0.3.1-nightly.20261124.57.
 #
 # Options:
 #   --version <version>  install this release, a pre-release included
@@ -20,11 +24,14 @@
 #   J3_BIN_DIR           where the j3-bots command goes (default: ~/.local/bin)
 #   J3_HOME              the data directory (default: ~/.j3-bots)
 #   J3_RELEASE_BASE_URL  the releases page, or a mirror of it that serves
-#                        <base>/latest and <base>/download/v<version>/<file>
+#                        <base>/latest and <base>/download/<tag>/<file>
 #                        (default: https://github.com/JPSAUD501/j3-bots/releases).
-#                        The mirror is trusted as the publisher: it serves the
-#                        SHA256SUMS the archive is checked against. For tests
-#                        and self-hosted mirrors.
+#                        Its SHA256SUMS must be signed like the release's, so a
+#                        mirror of a release serves the release's own files.
+#   J3_RELEASE_PUBLIC_KEY  with J3_RELEASE_BASE_URL only: the Ed25519 public key
+#                        (PEM) the mirror's SHA256SUMS is signed with, taken as
+#                        well as the release keys below. For tests, and for a
+#                        mirror that builds and signs its own releases.
 #
 # What it installs (docs/decisions/0015-a-release-is-a-self-contained-archive.md):
 #
@@ -115,6 +122,19 @@ elif command -v shasum > /dev/null 2>&1; then
   checksum() { shasum -a 256 < "$1" | cut -d' ' -f1; }
 else
   fail "sha256sum or shasum is needed to check the download. Install one of them, then run this again."
+fi
+# The release's SHA256SUMS is signed with Ed25519, which OpenSSL checks over a
+# file's raw bytes from version 3 on (`pkeyutl -rawin`). LibreSSL, which also
+# answers to `openssl`, is not OpenSSL 3.
+command -v openssl > /dev/null 2>&1 ||
+  fail "OpenSSL 3 is needed to check the release's signature. Install OpenSSL 3 (on Debian, Ubuntu or Raspberry Pi OS: \`sudo apt install openssl\`), then run this again."
+openssl_version="$(openssl version 2> /dev/null || true)"
+case "$openssl_version" in
+  "OpenSSL "[3-9].* | "OpenSSL "[1-9][0-9]*.*) ;;
+  *) fail "OpenSSL 3 or newer is needed to check the release's signature, and this machine has ${openssl_version:-an openssl that does not say its version}. Install OpenSSL 3 (Debian 12, Ubuntu 22.04 and Raspberry Pi OS bookworm ship it), then run this again." ;;
+esac
+if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ] && [ -z "${J3_RELEASE_BASE_URL:-}" ]; then
+  fail "J3_RELEASE_PUBLIC_KEY names the key of a mirror, so it is taken only with J3_RELEASE_BASE_URL. Unset it to install from the release page."
 fi
 
 # The same question `j3-bots service install` asks, before anything is downloaded.
@@ -212,6 +232,41 @@ fetch() {
   fi
 }
 
+# The public keys a release's SHA256SUMS may be signed with, one PEM block each:
+# release-keys/*.pem, the same text (scripts/release-keys.test.ts checks it).
+# A signature is good when any of them verifies it.
+release_keys() {
+  cat << 'KEYS'
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAnL4CWfO6teDA5jgo0VoeOOnrxy5a7R3y0DNeJeCRDfg=
+-----END PUBLIC KEY-----
+KEYS
+}
+
+# Whether <sums> is signed by one of the release's keys (or the mirror's), with
+# the signature in <signature>: one line of base64, the 64 bytes of an Ed25519
+# signature over the file's exact bytes. verify_signature <sums> <signature>.
+verify_signature() {
+  [ "$(wc -l < "$2")" -eq 1 ] && [ "$(wc -c < "$2")" -eq 89 ] &&
+    grep -Eq '^[A-Za-z0-9+/]{86}==$' "$2" || return 1
+  openssl base64 -d -A -in "$2" -out "$work/signature" 2> /dev/null || return 1
+  rm -f "$work"/key-*.pem
+  {
+    release_keys
+    if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ]; then printf '%s\n' "$J3_RELEASE_PUBLIC_KEY"; fi
+  } | awk -v dir="$work" '
+    /^-----BEGIN PUBLIC KEY-----$/ { n++; inside = 1 }
+    inside { print > (dir "/key-" n ".pem") }
+    /^-----END PUBLIC KEY-----$/ { inside = 0 }'
+  for key in "$work"/key-*.pem; do
+    [ -f "$key" ] || continue
+    if openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in "$1" -sigfile "$work/signature" > /dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Downloads <url> into <file>, with a progress bar on a terminal.
 download() {
   if [ "$downloader" = curl ]; then
@@ -244,7 +299,11 @@ fi
 stem="j3-bots-$version-linux-$arch"
 archive="$stem.tar.gz"
 target="$versions_dir/$version"
-download_url="$base_url/download/v$version"
+case "$version" in
+  *-nightly.*) tag="$version" ;;
+  *) tag="v$version" ;;
+esac
+download_url="$base_url/download/$tag"
 
 # Before anything in them is used: a release already there is run as it is.
 # A folder made below is checked once it is made.
@@ -261,6 +320,13 @@ else
   say "Installing J3 Bots $version for linux-$arch."
   fetch "$download_url/SHA256SUMS" "$work/SHA256SUMS" ||
     fail "Could not download $download_url/SHA256SUMS. Check the version (a pre-release by its full name, such as 0.1.0-rc.1) and the network."
+  # The signature first: nothing in SHA256SUMS is read until it is checked.
+  fetch "$download_url/SHA256SUMS.sig" "$work/SHA256SUMS.sig" ||
+    fail "Could not download $download_url/SHA256SUMS.sig, the signature that shows the release is J3 Bots', so nothing was installed. Releases before 0.3.1 have none: install one of those with the install.sh on its own release page. Otherwise check the network, then run this again."
+  key_name="the J3 Bots release key"
+  if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ]; then key_name="the J3 Bots release key or the mirror's key in J3_RELEASE_PUBLIC_KEY"; fi
+  verify_signature "$work/SHA256SUMS" "$work/SHA256SUMS.sig" ||
+    fail "The signature on J3 Bots $version's SHA256SUMS does not match $key_name, so nothing was installed: these are not the files that were published. Run this again; if it happens again, the download is being changed on the way."
   expected="$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1; exit }' "$work/SHA256SUMS")"
   [ -n "$expected" ] || fail "J3 Bots $version has no archive for linux-$arch."
 

@@ -4,26 +4,40 @@ name: Release
 # Builds a release when a version tag is pushed: a draft GitHub release for
 # the tag; the desktop app's packages with electron-updater's feed files, each
 # with the server runtime of its platform where local mode runs; the
-# server's archives for linux-x64 and linux-arm64, with SHA256SUMS and
-# scripts/install.sh; the Android app's signed APK; and then their upload to
-# the draft. A maintainer reads the draft and publishes it: installed apps are
-# offered, and install.sh finds, only a published release. See
-# docs/operations/releasing.md.
+# server's archives for linux-x64 and linux-arm64; the Android app's signed
+# APK; scripts/install.sh; SHA256SUMS of all of them and its signature; and
+# then their upload to the draft. A maintainer reads the draft and publishes
+# it: installed apps are offered, and install.sh finds, only a published
+# release. The nightly workflow (nightly.yml) calls it for a build of `main`
+# with the version it names, and publishes that one itself, as a
+# pre-release. See docs/operations/releasing.md.
 #
-# Only a pushed `v*` tag runs it, never a pull request, so no code from a fork
-# runs here. Every job but `android-sign` uses the run's own GITHUB_TOKEN and
-# no other secret: the desktop builds are unsigned, and `android` builds the
-# APK unsigned. `android-sign` alone reads secrets: the four that hold the
-# key that signs the APK, in the `android-signing` environment, which admits
-# only `v*` tags. It runs no code from the repository or the build. Only the
-# two jobs that run no code from the repository may write: `draft` creates
-# the release and `publish` uploads to it. The jobs that build read, and the
-# last job of each build hands what it made to `publish` as a `release-*`
-# artifact; each such job is in `publish`'s `needs`, which a job added later
-# joins too, or its files are left out.
+# Only a pushed `v*` tag or the nightly on `main` runs it, never a pull
+# request, so no code from a fork runs here. Every job but `android-sign` and
+# `sign` uses the run's own GITHUB_TOKEN and no other secret: the desktop
+# builds are unsigned, and `android` builds the APK unsigned. `android-sign`
+# reads the four secrets that hold the key that signs the APK, in the
+# `android-signing` environment; `sign` reads the key that signs SHA256SUMS,
+# in the `release-signing` environment. Both environments admit only `v*`
+# tags, which only admins may create (the "release tags" ruleset), and the
+# branch `main`, where the nightly runs. A nightly's tag is its bare version,
+# 1.2.4-nightly.20261124.57, outside `v*`: the workflow token that creates
+# and deletes nightly tags therefore opens neither environment. Neither job
+# runs code from the repository or the build. Only the two jobs that run no code from the repository may write:
+# `draft` creates the release and `publish` uploads to it. The jobs that build
+# read, and the last job of each build hands what it made to `checksums` and
+# `publish` as a `release-*` artifact; each such job is in the `needs` of
+# both, which a job added later joins too, or `publish` refuses to upload a
+# file SHA256SUMS does not list.
 on:
   push:
     tags: ["v*"]
+  workflow_call:
+    inputs:
+      nightly-version:
+        description: The nightly's version, x.y.z-nightly.YYYYMMDD.run (scripts/nightly-version.sh).
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -41,30 +55,65 @@ jobs:
       contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
     steps:
-      # The tag names the version the packages carry: v1.2.3, or a release
-      # candidate, v1.2.3-rc.1. Only the versions the Android app can number
+      # A pushed tag names the version the packages carry: v1.2.3, or a
+      # release candidate, v1.2.3-rc.1. The nightly names its own,
+      # 1.2.4-nightly.20261124.57, and only the nightly may: a pushed tag of
+      # that form is refused. A nightly's tag is its version with no `v`, so
+      # that it stays outside the `v*` tags the signing environments admit. Only the versions the Android app can number
       # are taken: this is the grammar and the limits of androidVersionCode
-      # (apps/mobile/src/androidVersionCode.ts), which the Android build runs.
-      # This job may write, so it runs no code from the repository and checks
-      # the tag itself; a change to either check is made to both.
-      - name: Version from the tag
+      # (apps/mobile/src/androidVersionCode.ts), which the Android build runs,
+      # for versions after 0.3.0. This job may write, so it runs no code from
+      # the repository and checks the version itself; a change to either check
+      # is made to both.
+      - name: Check the version
         id: version
         shell: bash
+        env:
+          NIGHTLY_VERSION: ${{ inputs.nightly-version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
           number='(0|[1-9][0-9]*)'
-          if ! [[ "$version" =~ ^$number\.$number\.$number(-rc\.([1-9][0-9]*))?$ ]]; then
-            echo "::error::$GITHUB_REF_NAME is not v followed by x.y.z or x.y.z-rc.n, the versions the Android app can number."
+          if [[ -n "$NIGHTLY_VERSION" ]]; then
+            version="$NIGHTLY_VERSION"
+            if ! [[ "$version" =~ ^$number\.$number\.$number-nightly\.([0-9]{8})\.[1-9][0-9]{0,8}$ ]]; then
+              echo "::error::$version is not a nightly's version, x.y.z-nightly.YYYYMMDD.run."
+              exit 1
+            fi
+            day="${BASH_REMATCH[4]}" rc=
+            # A real day from 2026-01-01, whose days from then, plus one, are
+            # the stage of the Android version code, below 9,000.
+            if [[ "$(date -u -d "$day" +%Y%m%d 2> /dev/null)" != "$day" ]] ||
+              (($(date -u -d "$day" +%s) < $(date -u -d 20260101 +%s) || $(date -u -d "$day" +%s) > $(date -u -d 20500821 +%s))); then
+              echo "::error::$version is dated $day, which is not a day from 2026-01-01 to 2050-08-21, the nightlies the Android app can number."
+              exit 1
+            fi
+          else
+            version="${GITHUB_REF_NAME#v}"
+            if ! [[ "$version" =~ ^$number\.$number\.$number(-rc\.([1-9][0-9]*))?$ ]]; then
+              echo "::error::$GITHUB_REF_NAME is not v followed by x.y.z or x.y.z-rc.n, the versions a tag may name."
+              exit 1
+            fi
+            rc="${BASH_REMATCH[5]}"
+          fi
+          major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
+          # Lengths first, so no number is too long for the shell's arithmetic.
+          if ((${#major} > 2 || major > 20 || ${#minor} > 2 || ${#patch} > 2 || ${#rc} > 2)) || [[ "$rc" == 99 ]]; then
+            echo "::error::$version is outside what the Android app can number: a major version up to 20, a minor and a patch up to 99, a release candidate up to rc.98."
             exit 1
           fi
-          major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}" rc="${BASH_REMATCH[5]}"
-          # Lengths first, so no number is too long for the shell's arithmetic.
-          if ((${#major} > 4 || major > 2099 || ${#minor} > 2 || ${#patch} > 2 || ${#rc} > 2)) || [[ "$rc" == 99 ]]; then
-            echo "::error::$GITHUB_REF_NAME is outside what the Android app can number: a major version up to 2099, a minor and a patch up to 99, a release candidate up to rc.98."
+          # Versions up to 0.3.0 keep the code they shipped with, which has no
+          # room for a nightly.
+          if [[ -n "$NIGHTLY_VERSION" ]] && ((major == 0 && (minor < 3 || (minor == 3 && patch == 0)))); then
+            echo "::error::$version is a nightly of 0.3.0 or before; nightlies start at 0.3.1."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ -n "$NIGHTLY_VERSION" ]]; then
+            echo "tag=$version" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          fi
 
       # The draft's notes give the certificate's digest, and a re-run keeps a
       # draft that exists, so the digest must be right before it is written.
@@ -78,32 +127,43 @@ jobs:
             exit 1
           fi
 
-      # A version with a pre-release part (1.2.3-rc.1) is drafted as a
-      # pre-release, so publishing it never makes it the latest release,
-      # which apps on a release version read.
+      # A version with a pre-release part (1.2.3-rc.1, or a nightly) is
+      # drafted as a pre-release, so publishing it never makes it the latest
+      # release, which apps on a release version read. A pushed tag's draft is
+      # made on the tag; a nightly's on the commit it builds, and its tag is
+      # made when `publish` publishes it.
       - name: Create the draft
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          NIGHTLY: ${{ inputs.nightly-version != '' }}
           ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
         run: |
           wanted=false
           prerelease=()
           if [[ "$VERSION" == *-* ]]; then wanted=true; prerelease=(--prerelease); fi
-          # A draft made by hand is used only if it is marked as the tag says.
-          if marked="$(gh release view "$GITHUB_REF_NAME" --json isPrerelease --jq .isPrerelease 2> /dev/null)"; then
+          # A draft made by hand, or by an earlier try of this run, is used
+          # only if it is marked as the version says.
+          if marked="$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease 2> /dev/null)"; then
             if [[ "$marked" != "$wanted" ]]; then
-              echo "::error::The release for $GITHUB_REF_NAME exists and is $([[ "$marked" == true ]] || echo "not ")marked as a pre-release, which its version says it $([[ "$wanted" == true ]] && echo "is" || echo "is not")."
+              echo "::error::The release for $TAG exists and is $([[ "$marked" == true ]] || echo "not ")marked as a pre-release, which its version says it $([[ "$wanted" == true ]] && echo "is" || echo "is not")."
               exit 1
             fi
-            echo "A release for $GITHUB_REF_NAME exists already; the files are uploaded to it only if it is a draft."
+            echo "A release for $TAG exists already; the files are uploaded to it only if it is a draft."
             exit 0
           fi
-          gh release create "$GITHUB_REF_NAME" --draft "${prerelease[@]}" --verify-tag \
-            --title "J3 Bots $VERSION" \
-            --notes "The desktop builds are unsigned. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature. The server installs on x64 and arm64 Linux with systemd: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/install.sh | sh -s -- --version $VERSION\`. SHA256SUMS holds the digest of each server archive and of install.sh. The Android app is j3-bots-$VERSION-android-arm64.apk: install it on the phone and allow installs from the app that opens it. Its signing certificate's SHA-256 is $ANDROID_CERT_SHA256."
+          notes="The desktop builds are unsigned. macOS and Windows warn before opening an unsigned app. A Mac build and the deb say when a newer version is out; the AppImage and the Windows install update themselves. Linux packages need no signature. The server installs on x64 and arm64 Linux with systemd: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$TAG/install.sh | sh -s -- --version $VERSION\`. SHA256SUMS holds the SHA-256 of every other file of the release, and SHA256SUMS.sig its Ed25519 signature with the J3 Bots release key (release-keys/ in the repository), which install.sh, the server and the apps check before they trust a digest. The Android app is j3-bots-$VERSION-android-arm64.apk: install it on the phone and allow installs from the app that opens it. Its signing certificate's SHA-256 is $ANDROID_CERT_SHA256."
+          if [[ "$NIGHTLY" == true ]]; then
+            gh release create "$TAG" --draft --prerelease --target "$GITHUB_SHA" \
+              --title "J3 Bots $VERSION (nightly)" \
+              --notes "A nightly build of main at $GITHUB_SHA, published without review. Nightlies are for trying what comes next; the last seven are kept. $notes"
+          else
+            gh release create "$TAG" --draft "${prerelease[@]}" --verify-tag \
+              --title "J3 Bots $VERSION" --notes "$notes"
+          fi
 
   desktop:
     name: Desktop (${{ matrix.name }})
@@ -174,7 +234,9 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           VERSION: ${{ needs.draft.outputs.version }}
           TARGETS: ${{ matrix.targets }}
-        run: vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
+        run: |
+          # shellcheck disable=SC2086 # TARGETS is several flags, split on purpose.
+          vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
 
       # The runtime as packaged (and, on macOS, signed) runs on this runner:
       # its release.json and files are right for the tag, its Node is the
@@ -325,8 +387,11 @@ jobs:
 
   # Signs the APK `android` built, with the key in the `android-signing`
   # environment, whose four secrets this job alone reads. The environment
-  # admits only `v*` tags, so whoever may push one may use the key; the
-  # repository's "release tags" ruleset leaves that to admins. The job checks
+  # admits only `v*` tags and the branch `main`, so whoever may push such a tag
+  # or merge to `main` may use the key: the repository's "release tags"
+  # ruleset lets only admins create, move or delete a `v*` tag, and gives no
+  # bypass to GitHub Actions, and `main` takes a change only through a pull
+  # request and its checks. Nightly tags are outside `v*`. The job checks
   # nothing out, installs nothing and runs nothing from the repository or the
   # build: only the runner image's own `apksigner` and `zipalign`, on the APK's
   # bytes. That keeps the key from the build, not the build from the key: the
@@ -430,13 +495,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # SHA256SUMS of both archives and install.sh, which install.sh checks a
-  # download against. It reads files and runs none of them.
+  # SHA256SUMS of every file the release publishes: the desktop packages and
+  # their feed files, the server archives, the APK as `android-sign` signed it,
+  # and install.sh. Each line is `<sha256>  <name>`, as `sha256sum` writes it,
+  # sorted by name (docs/operations/releasing.md#what-verifies-a-release). Everything that
+  # installs a release checks a download against it, once `sign` has signed
+  # it. It reads files and runs none of them.
   checksums:
     name: Checksums and install script
-    needs: server
+    needs: [desktop, server, android-sign]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
     defaults:
@@ -450,34 +519,153 @@ jobs:
           sparse-checkout: scripts/install.sh
           sparse-checkout-cone-mode: false
 
-      - name: Download the archives
+      - name: Download what the jobs built
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: release-server-linux-*
-          path: server
-          merge-multiple: true
+          pattern: release-*
+          path: release
 
+      # Each artifact is in a folder of its own, release/<name>/. This job's
+      # and `sign`'s own, from an earlier try of the run, are not built files.
+      # SHA256SUMS names files, not their folders, so no two may share a name,
+      # as `publish` checks again.
       - name: Write SHA256SUMS
         run: |
+          rm -rf release/release-checksums release/release-signature
           mkdir checksums
           cp scripts/install.sh checksums/
-          (cd server && sha256sum -- *.tar.gz) > checksums/SHA256SUMS
-          (cd checksums && sha256sum -- install.sh) >> checksums/SHA256SUMS
+          duplicates="$(find release checksums -type f -printf '%f\n' | sort | uniq -d)"
+          if [[ -n "$duplicates" ]]; then
+            echo "::error::Files built by more than one job share a name: $duplicates"
+            exit 1
+          fi
+          find release checksums -type f -print0 |
+            while IFS= read -r -d '' file; do
+              printf '%s  %s\n' "$(sha256sum < "$file" | cut -d' ' -f1)" "${file##*/}"
+            done | LC_ALL=C sort -k2 > SHA256SUMS
+          mv SHA256SUMS checksums/
           cat checksums/SHA256SUMS
 
-      - name: Hand them to the publish job
+      - name: Hand them to the sign and publish jobs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-server-checksums
+          name: release-checksums
           path: |
             checksums/SHA256SUMS
             checksums/install.sh
           if-no-files-found: error
           retention-days: 7
 
+  # Signs SHA256SUMS with the release key, the secret RELEASE_SIGNING_KEY of
+  # the `release-signing` environment, which this job alone reads. The
+  # environment admits only `v*` tags and `main`, as `android-signing` does
+  # (see `android-sign`). As `android-sign` does, the job installs nothing and
+  # runs nothing from the repository or the build: it checks out only the
+  # public keys in release-keys/, which are data, and runs the runner image's
+  # own `openssl` on SHA256SUMS's bytes. The key is on disk, readable by the
+  # runner's user only, from the step that writes it to the step that deletes
+  # it, which runs even when signing fails. The signature is then checked
+  # with the public keys committed at the commit being built, so a key that
+  # is not the release's never signs a release: the keys in release-keys/,
+  # which this build carries, or one in release-keys/retiring/, which only a
+  # release that hands installs over to a new key has
+  # (docs/operations/releasing.md#if-the-key-leaks). SHA256SUMS.sig is the
+  # 64-byte Ed25519 signature in base64, one line.
+  sign:
+    name: Sign SHA256SUMS
+    needs: checksums
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: release-signing
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check the signing secret
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          if [[ -z "$RELEASE_SIGNING_KEY" ]]; then
+            echo "::error::RELEASE_SIGNING_KEY is not set in the release-signing environment. docs/operations/releasing.md says how to set it."
+            exit 1
+          fi
+
+      - name: Checkout the public keys
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            release-keys/*.pem
+            release-keys/retiring/*.pem
+          sparse-checkout-cone-mode: false
+
+      - name: Download SHA256SUMS
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-checksums
+          path: checksums
+
+      - name: Write the signing key
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/release-signing.pem"
+
+      - name: Sign
+        run: |
+          mkdir signature
+          openssl pkeyutl -sign -inkey "$RUNNER_TEMP/release-signing.pem" -rawin -in checksums/SHA256SUMS |
+            openssl base64 -A > signature/SHA256SUMS.sig
+          echo >> signature/SHA256SUMS.sig
+
+      - name: Delete the signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release-signing.pem"
+
+      # One line of 88 characters, the base64 of 64 bytes, made by one of the
+      # keys that install.sh, the server and the apps carry, or by a retiring
+      # key, which the installs this release replaces carry and it does not.
+      - name: Check the signature with the release keys
+        run: |
+          openssl version
+          if ! grep -Eqx '[A-Za-z0-9+/]{86}==' signature/SHA256SUMS.sig || [[ "$(wc -c < signature/SHA256SUMS.sig)" != 89 ]]; then
+            echo "::error::SHA256SUMS.sig is not one line of base64 of an Ed25519 signature."
+            exit 1
+          fi
+          openssl base64 -d -A -in signature/SHA256SUMS.sig -out "$RUNNER_TEMP/signature"
+          verifies() {
+            openssl pkeyutl -verify -pubin -inkey "$1" -rawin -in checksums/SHA256SUMS -sigfile "$RUNNER_TEMP/signature" > /dev/null 2>&1
+          }
+          shopt -s nullglob
+          for key in release-keys/*.pem; do
+            if verifies "$key"; then
+              echo "SHA256SUMS is signed by $key."
+              exit 0
+            fi
+          done
+          for key in release-keys/retiring/*.pem; do
+            if verifies "$key"; then
+              echo "::warning::SHA256SUMS is signed by the retiring key $key, which this release no longer carries: it is the release that hands installs over to the keys in release-keys/."
+              exit 0
+            fi
+          done
+          echo "::error::The signature does not verify with any key in release-keys/ or release-keys/retiring/: RELEASE_SIGNING_KEY is not a release key."
+          exit 1
+
+      - name: Hand the signature to the publish job
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-signature
+          path: signature/SHA256SUMS.sig
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Upload to the draft
-    needs: [draft, desktop, server, android-sign, checksums]
+    needs: [draft, desktop, server, android-sign, checksums, sign]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -502,15 +690,68 @@ jobs:
             exit 1
           fi
 
+      # SHA256SUMS lists exactly the files uploaded beside it, each with the
+      # digest of the bytes uploaded: a job whose files reach `publish` but
+      # not `checksums` would otherwise publish a file nothing can check.
+      - name: Check SHA256SUMS lists every file
+        run: |
+          sums="$(find release -type f -name SHA256SUMS)"
+          find release -type f ! -name SHA256SUMS ! -name SHA256SUMS.sig -print0 |
+            while IFS= read -r -d '' file; do
+              printf '%s  %s\n' "$(sha256sum < "$file" | cut -d' ' -f1)" "${file##*/}"
+            done | LC_ALL=C sort -k2 > "$RUNNER_TEMP/expected"
+          if ! diff -u "$RUNNER_TEMP/expected" "$sums"; then
+            echo "::error::SHA256SUMS does not list exactly the files to upload, with their digests."
+            exit 1
+          fi
+
       # Never onto a published release: what installed apps already read
       # changes only through a new version.
       - name: Upload to the draft
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft.outputs.tag }}
         run: |
-          if [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" != "true" ]]; then
-            echo "::error::The release for $GITHUB_REF_NAME is not a draft; nothing is uploaded to it."
+          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+            echo "::error::The release for $TAG is not a draft; nothing is uploaded to it."
             exit 1
           fi
-          find release -type f -print0 | xargs -0 gh release upload "$GITHUB_REF_NAME" --clobber
+          find release -type f -print0 | xargs -0 gh release upload "$TAG" --clobber
+
+      # The draft may be one that existed before this run, made by hand or by
+      # an earlier try, and the upload replaces only files of the same name.
+      # So the draft as GitHub holds it must have exactly SHA256SUMS, its
+      # signature and the files SHA256SUMS lists, each fully uploaded, or
+      # nothing is published from it: a file someone else put on it would
+      # otherwise be published beside the signed ones.
+      - name: Check the draft holds only the signed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft.outputs.tag }}
+        run: |
+          sums="$(find release -type f -name SHA256SUMS)"
+          { printf '%s\n' SHA256SUMS SHA256SUMS.sig; cut -c67- "$sums"; } | LC_ALL=C sort > "$RUNNER_TEMP/signed"
+          gh release view "$TAG" --json assets --jq '.assets[] | [.name, .state] | @tsv' > "$RUNNER_TEMP/assets"
+          not_uploaded="$(awk -F'\t' '$2 != "uploaded" { print $1 }' "$RUNNER_TEMP/assets")"
+          if [[ -n "$not_uploaded" ]]; then
+            echo "::error::Files on the draft for $TAG are not fully uploaded: $not_uploaded"
+            exit 1
+          fi
+          cut -f1 "$RUNNER_TEMP/assets" | LC_ALL=C sort > "$RUNNER_TEMP/on-draft"
+          if ! diff -u "$RUNNER_TEMP/signed" "$RUNNER_TEMP/on-draft"; then
+            echo "::error::The draft for $TAG does not hold exactly SHA256SUMS, SHA256SUMS.sig and the files SHA256SUMS lists. A line marked + is a file nobody signed: delete it from the draft, then re-run this job."
+            exit 1
+          fi
+
+      # A nightly is published as soon as its files are up, as a pre-release,
+      # which makes its tag, the bare version, on the commit it was built
+      # from. A pushed tag's draft waits for a maintainer.
+      - name: Publish the nightly
+        if: inputs.nightly-version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false --prerelease --latest=false
