@@ -1,0 +1,200 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { replaceFile } from "../files.ts";
+import { HOME_ENTRIES } from "../home/entries.ts";
+
+// What a home records of the releases that ran on it, and what that lets a
+// host start next (docs/decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md):
+//
+//   <home>/state/runtime.json     RuntimeRecord
+//
+// A transition writes it once the server it started became ready, and a host
+// once a server it started as it is became ready (`recordReady`), so it names
+// the last release whose server became ready on this home, and whether that
+// was a rollback, from which release. A host that is about to start a
+// release asks `decideStart` first: a release other than the recorded one
+// takes a snapshot before it starts, and one older than the home's data, or
+// one that cannot tell, does not start at all.
+
+/** The record's own format: a release that changes it incompatibly writes another. */
+const RECORD_SCHEMA = 1;
+
+const RuntimeRecord = Schema.Struct({
+  schema: Schema.Literal(RECORD_SCHEMA),
+  /** The last release whose server became ready on the home. */
+  version: Schema.String,
+  readyAt: Schema.DateTimeUtc,
+  /** Present when it became ready by a rollback: the release rolled back from. */
+  rollback: Schema.optionalKey(Schema.Struct({ from: Schema.String })),
+});
+export type RuntimeRecord = typeof RuntimeRecord.Type;
+
+const RuntimeRecordJson = Schema.fromJsonString(Schema.toCodecJson(RuntimeRecord));
+
+/** What a home's record says, as `readRuntimeRecord` finds it. */
+export type RecordedRuntime =
+  /** No record: no release that records one became ready on the home yet. */
+  | { readonly _tag: "none" }
+  /** A record this release cannot read: a newer release's format, or a damaged file. */
+  | { readonly _tag: "unreadable" }
+  | { readonly _tag: "recorded"; readonly record: RuntimeRecord };
+
+const recordFile = (path: Path.Path, home: string) =>
+  path.join(home, HOME_ENTRIES.state, "runtime.json");
+
+/** The record of `home`. A file that is there but cannot be read is `unreadable`, never `none`. */
+export const readRuntimeRecord = Effect.fn("transition.readRuntimeRecord")(function* (
+  home: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = recordFile(path, home);
+  const read = yield* Effect.result(fs.readFileString(file));
+  if (read._tag === "Failure") {
+    return read.failure.reason._tag === "NotFound"
+      ? ({ _tag: "none" } satisfies RecordedRuntime)
+      : ({ _tag: "unreadable" } satisfies RecordedRuntime);
+  }
+  return yield* Schema.decodeEffect(RuntimeRecordJson)(read.success).pipe(
+    Effect.map((record): RecordedRuntime => ({ _tag: "recorded", record })),
+    Effect.orElseSucceed((): RecordedRuntime => ({ _tag: "unreadable" })),
+  );
+});
+
+/** Records that the server of `version` became ready on `home` now, by a rollback from `rollbackFrom` if one. */
+export const writeRuntimeRecord = Effect.fn("transition.writeRuntimeRecord")(function* (
+  home: string,
+  version: string,
+  rollbackFrom: Option.Option<string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const file = recordFile(path, home);
+  const record: RuntimeRecord = {
+    schema: RECORD_SCHEMA,
+    version,
+    readyAt: yield* DateTime.now,
+    ...Option.match(rollbackFrom, {
+      onNone: () => ({}),
+      onSome: (from) => ({ rollback: { from } }),
+    }),
+  };
+  yield* fs.makeDirectory(path.dirname(file), { recursive: true, mode: 0o700 });
+  yield* replaceFile(file, yield* Schema.encodeEffect(RuntimeRecordJson)(record), 0o600);
+});
+
+/**
+ * Records that the server of `version` became ready on `home` outside a
+ * transition: what a host does once a release `decideStart` let start as it
+ * is answers ready, so the next release to start on the home is a change.
+ */
+export const recordReady = (home: string, version: string) =>
+  writeRuntimeRecord(home, version, Option.none());
+
+/** A version as releases are numbered: `0.3.0`, `0.3.0-rc.1`, semantic versioning's order. */
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/** -1, 0 or 1 as `a` sorts before, with or after `b`. */
+const sign = <T extends number | string>(a: T, b: T) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** A pre-release's identifiers in order: numbers sort below names, and fewer below more. */
+const comparePrerelease = (a: ReadonlyArray<string>, b: ReadonlyArray<string>): number => {
+  for (let index = 0; index < Math.min(a.length, b.length); index++) {
+    const [x, y] = [a[index] ?? "", b[index] ?? ""];
+    const [xNumber, yNumber] = [/^\d+$/.test(x), /^\d+$/.test(y)];
+    const order =
+      xNumber && yNumber
+        ? sign(Number(x), Number(y))
+        : xNumber !== yNumber
+          ? xNumber
+            ? -1
+            : 1
+          : sign(x, y);
+    if (order !== 0) return order;
+  }
+  return sign(a.length, b.length);
+};
+
+/** How `a` orders against `b`, -1, 0 or 1; none when either is not a version releases are numbered with. */
+export const compareVersions = (a: string, b: string): Option.Option<number> => {
+  const [x, y] = [SEMVER.exec(a), SEMVER.exec(b)];
+  if (x === null || y === null) return Option.none();
+  for (const part of [1, 2, 3]) {
+    const order = sign(Number(x[part]), Number(y[part]));
+    if (order !== 0) return Option.some(order);
+  }
+  const [xPre, yPre] = [x[4], y[4]];
+  if (xPre === undefined || yPre === undefined) {
+    // A release sorts after its pre-releases.
+    return Option.some(xPre === yPre ? 0 : xPre === undefined ? 1 : -1);
+  }
+  return Option.some(comparePrerelease(xPre.split("."), yPre.split(".")));
+};
+
+/**
+ * What a host may do about starting a release on a home:
+ *
+ * - `start`: the home's data is that release's own; start it as it is. For
+ *   the release a rollback that has not finished ends on, `rollBack` is
+ *   what starts it, since it also finishes the rollback.
+ * - `snapshot-then-start`: a newer release than the one recorded; start it
+ *   through a transition, which takes a snapshot first and rolls back to the
+ *   recorded release if it never becomes ready.
+ * - `refuse-downgrade`: an older release than the one recorded, whose
+ *   runtime is kept: start the recorded one instead. Only a rollback a
+ *   transition makes starts an older release, on the snapshot it put back.
+ * - `refuse-unknown-schema`: nothing on this computer is known to read the
+ *   home's data with that release: a record it cannot read, a newer release
+ *   recorded whose runtime is not kept (an older app installed by hand), a
+ *   version that cannot be ordered, or a rollback that has not finished to
+ *   another release.
+ */
+export type StartDecision =
+  | "start"
+  | "snapshot-then-start"
+  | "refuse-downgrade"
+  | "refuse-unknown-schema";
+
+/** What `decideStart` decides from. */
+export interface StartFacts {
+  /** What the home's record says. */
+  readonly recorded: RecordedRuntime;
+  /** The release about to start. */
+  readonly starting: string;
+  /** The releases whose runtime is kept on this computer, ready to start. */
+  readonly kept: ReadonlyArray<string>;
+  /**
+   * The release a rollback of the home ends on, while it has not finished
+   * (its snapshot's mark): its data is that release's, put back part way.
+   */
+  readonly rollingBackTo: Option.Option<string>;
+}
+
+/** Whether `facts.starting` may start on the home, and how: see `StartDecision`. */
+export const decideStart = (facts: StartFacts): StartDecision => {
+  const { recorded, starting, kept, rollingBackTo } = facts;
+  if (Option.isSome(rollingBackTo)) {
+    // A rollback this core made starts its own release on the snapshot it puts back.
+    return rollingBackTo.value === starting ? "start" : "refuse-unknown-schema";
+  }
+  switch (recorded._tag) {
+    case "none":
+      return "start";
+    case "unreadable":
+      return "refuse-unknown-schema";
+    case "recorded":
+      break;
+  }
+  const { version } = recorded.record;
+  if (version === starting) return "start";
+  const order = compareVersions(starting, version);
+  // Two builds of one version cannot be ordered either.
+  if (Option.isNone(order) || order.value === 0) return "refuse-unknown-schema";
+  if (order.value > 0) return "snapshot-then-start";
+  return kept.includes(version) ? "refuse-downgrade" : "refuse-unknown-schema";
+};

@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Console from "effect/Console";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -15,9 +12,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { AdminClient } from "../admin/AdminClient.ts";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
-import { holdHome, holdLock, shellWord } from "../home/Home.ts";
+import { holdHome, shellWord } from "../home/Home.ts";
 import * as Installation from "../installation.ts";
-import { isWithin, realLocation } from "../paths.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";
@@ -33,30 +29,28 @@ import {
   writeLauncher,
 } from "./layout.ts";
 import { fetchRelease, isRelease, targetVersion } from "./release.ts";
+import { type ServerProbe } from "../transition/readiness.ts";
+import { type Side, StepFailed } from "../transition/switch.ts";
+import * as Transition from "../transition/transition.ts";
 import {
   backupsElsewhere,
   listSnapshots,
-  markRestoring,
-  pruneSnapshots,
   restoreBytes,
-  restoreSnapshot,
   rollbackSnapshot,
   type Snapshot,
   type SnapshotRelease,
   snapshotBytes,
-  takeSnapshot,
   unfinishedRollback,
-  unmarkRestoring,
-  UPDATE_LOCK,
 } from "./snapshot.ts";
-import { rollBackOver, type Side, StepFailed, switchOver, type SwitchOutcome } from "./switch.ts";
 
 // `j3-bots update` and `j3-bots update --rollback`, run by the release that is
 // installed, which can always start itself again
 // (docs/decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md). An
 // update prepares without changing anything (the release downloaded and
-// checked into `versions/`, its engine fetched), then switches (`switch.ts`),
-// then keeps two of everything: releases, snapshots and engine runtimes.
+// checked into `versions/`, its engine fetched), then runs the version
+// transition (`../transition/transition.ts`) with the systemd service's
+// steps, which keeps two of everything: releases, snapshots and engine
+// runtimes.
 //
 // With the service installed, the release that runs is the one its unit
 // starts, not the one the command runs: an update cut off after the new
@@ -65,23 +59,17 @@ import { rollBackOver, type Side, StepFailed, switchOver, type SwitchOutcome } f
 // the command at it.
 //
 // An update or a rollback holds `<home>/backups/update.lock` from start to
-// end, so a second one is refused, and reads what runs and whether a
-// rollback is unfinished only once it holds it. It holds the home's
-// `server.lock`, which a running server holds, while it copies the databases
-// or puts them back, so no server, in or outside the service, runs on them
-// then.
-
-/** How long a started release has to answer as itself with its engine ready. Its engine is fetched already. */
-const READY_WITHIN = Duration.minutes(5);
+// end (`TransitionLock`), so a second one is refused, and reads what runs and
+// whether a rollback is unfinished only once it holds it. The transition
+// holds the home's `server.lock`, which a running server holds, while it
+// copies the databases or puts them back, so no server, in or outside the
+// service, runs on them then.
 
 /** Free space an update needs where the data directory is, beyond twice the files it copies. */
 const HOME_ROOM = 1024 ** 3;
 
 /** Free space a release needs where the install is: its archive and its unpacked folder. */
 const RELEASE_ROOM = 512 * 1024 ** 2;
-
-/** How many releases, snapshots and engine runtimes an update keeps. */
-const KEEP = 2;
 
 /** Why an update or a rollback did not start. Nothing was changed. */
 class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused", {
@@ -268,21 +256,6 @@ const runRelease = Effect.fn("update.runRelease")(function* (
   return exit === 0;
 });
 
-/**
- * Holds `<home>/backups/update.lock` for the scope, or fails while another
- * update or rollback holds it.
- */
-const holdUpdate = Effect.fn("update.holdUpdate")(function* (home: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const backups = path.join(home, HOME_ENTRIES.backups);
-  yield* fs.makeDirectory(backups, { recursive: true, mode: 0o700 });
-  yield* holdLock(
-    path.join(backups, UPDATE_LOCK),
-    () => new UpdateRefused({ reason: "busy", detail: home }),
-  );
-});
-
 /** Runs `effect` holding the home's `server.lock`, which a server outside the service may hold. */
 const withHome = <A, E, R>(home: string, effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(Effect.andThen(holdHome(home), effect)).pipe(
@@ -307,57 +280,20 @@ const serviceRunning = Effect.fn("update.serviceRunning")(function* (installed: 
 });
 
 /**
- * Waits for the service's own server to answer as `version`, with its engine
- * ready, within `READY_WITHIN`. Only the version, the process and the
- * engine's state are read from its reply, so a newer release's reply reads.
+ * What the service's own server is now: gone once the unit failed, and
+ * otherwise the unit's main process and the server's status reply.
  */
-const awaitReady = Effect.fn("update.awaitReady")(function* (
-  installed: Installed,
-  version: string,
-  step: StepFailed["step"],
-) {
+const probeService = Effect.fn("update.probeService")(function* (installed: Installed) {
   const path = yield* Path.Path;
   const admin = yield* AdminClient;
-  const systemd = yield* Systemd;
-  const socket = path.join(installed.home, HOME_ENTRIES.adminSocket);
-  const poll = Effect.gen(function* () {
-    const unit = yield* systemd.unitState(Unit.UNIT_NAME);
-    if (unit.active === "failed") return { _tag: "failed", reason: "the service failed" } as const;
-    const answer = Option.flatten(yield* admin.readiness(socket).pipe(Effect.option));
-    if (
-      Option.isNone(answer) ||
-      answer.value.version !== version ||
-      !Option.contains(unit.mainPid, answer.value.pid)
-    ) {
-      return { _tag: "waiting" } as const;
-    }
-    switch (answer.value.engine.state._tag) {
-      case "ready":
-        return { _tag: "ready" } as const;
-      case "incompatible":
-        return {
-          _tag: "failed",
-          reason: "its engine is not the version it is pinned to",
-        } as const;
-      default:
-        return { _tag: "waiting" } as const;
-    }
-  });
-  const outcome = yield* poll.pipe(
-    Effect.repeat({
-      schedule: Schedule.spaced(Duration.seconds(1)),
-      until: (state) => state._tag !== "waiting",
-    }),
-    Effect.timeoutOption(READY_WITHIN),
+  const unit = yield* (yield* Systemd).unitState(Unit.UNIT_NAME);
+  if (unit.active === "failed") {
+    return { _tag: "exited", reason: "the service failed" } satisfies ServerProbe;
+  }
+  const answer = Option.flatten(
+    yield* admin.readiness(path.join(installed.home, HOME_ENTRIES.adminSocket)).pipe(Effect.option),
   );
-  if (Option.isSome(outcome) && outcome.value._tag === "ready") return;
-  return yield* new StepFailed({
-    step,
-    reason:
-      Option.isSome(outcome) && outcome.value._tag === "failed"
-        ? `J3 Bots ${version} did not start: ${outcome.value.reason}`
-        : `J3 Bots ${version} did not answer with its engine ready within ${Duration.format(READY_WITHIN)}`,
-  });
+  return { _tag: "running", pid: unit.mainPid, answer } satisfies ServerProbe;
 });
 
 /** What the steps of the switch run with. */
@@ -368,11 +304,12 @@ type SwitchServices =
   | AdminClient
   | ChildProcessSpawner.ChildProcessSpawner;
 
-/** The steps that stop, start and point at the two releases of an install. */
+/** The service's steps for the two releases of an install: stop, start, probe, point the command at, prune. */
 const releaseSteps = (
   installed: Installed,
   releases: Record<Side, { readonly version: string; readonly root: string }>,
-) => ({
+): Transition.HostSteps<SwitchServices> => ({
+  supervised: installed.service,
   stop: Effect.gen(function* () {
     yield* (yield* Systemd).stop(Unit.UNIT_NAME);
   }).pipe(Effect.mapError((cause) => new StepFailed({ step: "stop", reason: cause.message }))),
@@ -394,21 +331,8 @@ const releaseSteps = (
             ),
       ),
     ),
-  ready: (side: Side) =>
-    awaitReady(installed, releases[side].version, side === "new" ? "await-new" : "await-old"),
-  mark: (snapshot: Snapshot) =>
-    markRestoring(snapshot).pipe(
-      Effect.mapError((cause) => new StepFailed({ step: "mark", reason: cause.message })),
-    ),
-  restore: (snapshot: Snapshot) =>
-    withHome(installed.home, restoreSnapshot(installed.home, snapshot)).pipe(
-      Effect.mapError((cause) => new StepFailed({ step: "restore", reason: cause.message })),
-    ),
-  unmark: (snapshot: Snapshot) =>
-    unmarkRestoring(snapshot).pipe(
-      Effect.mapError((cause) => new StepFailed({ step: "unmark", reason: cause.message })),
-    ),
-  pointCommand: (side: Side) =>
+  probe: () => probeService(installed),
+  adopt: (side: Side) =>
     writeLauncher({
       install: installed.install,
       launcher: installed.launcher,
@@ -417,11 +341,19 @@ const releaseSteps = (
       Effect.mapError(
         (cause) =>
           new StepFailed({
-            step: "command",
+            step: "adopt",
             reason: `${installed.launcher} could not be pointed at J3 Bots ${releases[side].version}: ${cause.message}`,
           }),
       ),
     ),
+  pruneRuntimes: Effect.fn("update.pruneReleases")(function* (keep) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const folder of yield* installedVersions(installed.install)) {
+      if (keep.includes(path.basename(folder)) || !(yield* isRelease(folder))) continue;
+      yield* fs.remove(folder, { recursive: true });
+    }
+  }),
 });
 
 /** Bytes free where `location` is, or none when that cannot be read. */
@@ -454,49 +386,17 @@ const releaseOf = Effect.fn("update.releaseOf")(function* (root: string) {
     );
 });
 
-/** Keeps the `KEEP` releases, snapshots and engine runtimes an update leaves; a failure here only warns. */
-const prune = Effect.fn("update.prune")(function* (
-  installed: Installed,
-  from: SnapshotRelease,
-  to: SnapshotRelease,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  for (const folder of yield* installedVersions(installed.install)) {
-    const version = path.basename(folder);
-    if (version === from.version || version === to.version) continue;
-    if (yield* isRelease(folder)) yield* fs.remove(folder, { recursive: true });
-  }
-  yield* pruneSnapshots(installed.home, KEEP);
-  if (from.engine !== undefined && to.engine !== undefined) {
-    const realHome = Option.getOrElse(yield* realLocation(installed.home), () => installed.home);
-    yield* EngineLive.pruneRuntimes({
-      home: path.join(installed.home, HOME_ENTRIES.engine),
-      keep: [from.engine, to.engine],
-      isPrivate: (location) =>
-        realLocation(location).pipe(
-          Effect.map((real) => Option.isSome(real) && isWithin(realHome, real.value)),
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-        ),
-    });
-  }
-});
-
 type UpdateResult =
   | { readonly _tag: "current"; readonly version: string }
   /** The service ran `version` already; the command now runs it too. */
   | { readonly _tag: "repointed"; readonly version: string }
   | { readonly _tag: "declined" }
-  | {
+  | ({
       readonly _tag: "switched";
       readonly from: string;
       readonly to: string;
       readonly service: boolean;
-      readonly outcome: SwitchOutcome<Snapshot>;
-      /** Why keeping two of everything failed, which leaves only more on disk. */
-      readonly pruning: Option.Option<string>;
-    };
+    } & Transition.TransitionResult);
 
 /** Fails while a rollback has not finished: only `--rollback` may change the home then. */
 const checkNoUnfinishedRollback = Effect.fn("update.checkNoUnfinishedRollback")(function* (
@@ -543,8 +443,12 @@ const checkBackupsBeside = Effect.fn("update.checkBackupsBeside")(function* (hom
  */
 const lockedInstall = Effect.gen(function* () {
   // The home the lock is in comes from the install; it does not change with the release that runs.
-  yield* holdUpdate((yield* located).home);
-  return yield* located;
+  const { home } = yield* located;
+  const lock = yield* Transition.TransitionLock.hold(
+    home,
+    () => new UpdateRefused({ reason: "busy", detail: home }),
+  );
+  return { installed: yield* located, lock };
 });
 
 /**
@@ -558,7 +462,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   readonly confirm: (bots: Option.Option<number>) => Effect.Effect<boolean, never, R>;
   readonly say: (line: string) => Effect.Effect<void, never, R>;
 }) {
-  const installed = yield* lockedInstall;
+  const { installed, lock } = yield* lockedInstall;
   const path = yield* Path.Path;
   yield* checkNoUnfinishedRollback(installed.home);
   const from = installed.release;
@@ -620,28 +524,18 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
       ? `Stopping the service, copying the databases, and starting J3 Bots ${version}…`
       : "Copying the databases…",
   );
-  const outcome = yield* switchOver<Snapshot, SwitchServices>({
-    ...steps,
-    service: installed.service,
-    snapshot: withHome(
-      installed.home,
-      takeSnapshot({ home: installed.home, from: fromRelease, to: toRelease }),
-    ).pipe(Effect.mapError((cause) => new StepFailed({ step: "snapshot", reason: cause.message }))),
+  const result = yield* Transition.transition({
+    lock,
+    from: fromRelease,
+    to: toRelease,
+    steps,
   });
-  const pruning =
-    outcome._tag === "updated"
-      ? yield* prune(installed, fromRelease, toRelease).pipe(
-          Effect.as(Option.none<string>()),
-          Effect.catch((cause) => Effect.succeedSome(cause.message)),
-        )
-      : Option.none<string>();
   return {
     _tag: "switched",
     from: from.version,
     to: version,
     service: installed.service,
-    outcome,
-    pruning,
+    ...result,
   } satisfies UpdateResult;
 }, Effect.scoped);
 
@@ -650,13 +544,11 @@ const engineOf = (release: Installation.ReleaseManifest) =>
 
 type RollbackResult =
   | { readonly _tag: "declined" }
-  | {
+  | ({
       readonly _tag: "rolled-back";
       readonly snapshot: Snapshot;
       readonly service: boolean;
-      /** The step that failed, if one did: the rollback stopped there. */
-      readonly failed: Option.Option<StepFailed>;
-    };
+    } & Transition.RollbackResult);
 
 /**
  * Puts back `rollbackSnapshot` and starts the release it was taken from, once
@@ -669,7 +561,7 @@ type RollbackResult =
 export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
   readonly confirm: (snapshot: Snapshot) => Effect.Effect<boolean, never, R>;
 }) {
-  const installed = yield* lockedInstall;
+  const { installed, lock } = yield* lockedInstall;
   const path = yield* Path.Path;
   yield* checkBackupsBeside(installed.home);
   const chosen = yield* rollbackSnapshot(installed.home, installed.release.version);
@@ -703,14 +595,11 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
     old: { version: from.version, root: oldRoot },
     new: { version: to.version, root: installed.root },
   });
-  const failed = yield* rollBackOver<Snapshot, SwitchServices>(
-    { ...steps, service: installed.service },
-    snapshot,
-  );
+  const result = yield* Transition.rollBack({ lock, snapshot, steps });
   return {
     _tag: "rolled-back",
     snapshot,
     service: installed.service,
-    failed,
+    ...result,
   } satisfies RollbackResult;
 }, Effect.scoped);
