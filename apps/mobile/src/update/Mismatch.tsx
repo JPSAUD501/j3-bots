@@ -37,7 +37,7 @@ export function Mismatch(props: {
       </Body>
       <View className="w-full gap-3" style={{ maxWidth: layout.textColumn }}>
         {side === "server" ? (
-          <ServerUpdatePanel controls={false} />
+          <ServerUpdatePanel place="behind" />
         ) : (
           <PhoneUpdatePanel controls={false} />
         )}

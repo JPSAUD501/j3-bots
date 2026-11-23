@@ -16,7 +16,7 @@ export function AboutSection(props: { readonly onLayout?: (y: number) => void })
     <View onLayout={(event) => props.onLayout?.(event.nativeEvent.layout.y)}>
       <Section title={t("settings.about")}>
         <Text className="text-sm font-medium text-foreground">{t("about.server")}</Text>
-        <ServerUpdatePanel controls />
+        <ServerUpdatePanel place="settings" />
         <Text className="pt-2 text-sm font-medium text-foreground">{t("about.thisApp")}</Text>
         <PhoneUpdatePanel controls />
       </Section>

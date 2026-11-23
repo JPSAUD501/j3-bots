@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Readable, UpdateResult } from "@j3-bots/client-runtime";
+import { isRunning, type Readable, type UpdateResult } from "@j3-bots/client-runtime";
 import {
   useJ3Client,
   useReadable,
@@ -8,6 +8,7 @@ import {
 } from "@j3-bots/client-runtime/react";
 import {
   type ServerUpdateLine,
+  serverBehindLine,
   serverUpdateLine,
   startRefusalText,
   type UpdateTone,
@@ -15,7 +16,7 @@ import {
 } from "@j3-bots/client-runtime/wording";
 import type { ReceivedUpdateStatus, ReleaseVersion, UpdateChannel } from "@j3-bots/contracts";
 import Constants from "expo-constants";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppState, Linking, View } from "react-native";
 import { ConnectCommand } from "../components/Engine.tsx";
 import { Problem, Quiet, Segmented } from "../components/form.tsx";
@@ -140,10 +141,13 @@ function useStartServerUpdate() {
 /**
  * The server's updates: what it runs, what it is offered and the one tap
  * that takes it, how an update under way goes, and how the last one ended.
- * With `controls`, also the server's channel and a check of its feed now.
- * Opening it reads the status again.
+ * Opening it reads the status again. In Settings it also has the server's
+ * channel and a check of its feed now. On the screen that says the server
+ * is behind this app, it has the server check its feed once instead: the
+ * server looks only every few hours, so it may not have seen the release
+ * this app came from, and the screen says there is none only after that.
  */
-export function ServerUpdatePanel(props: { readonly controls: boolean }) {
+export function ServerUpdatePanel(props: { readonly place: "settings" | "behind" }) {
   const i18n = useI18n();
   const { t } = i18n;
   const client = useJ3Client();
@@ -152,12 +156,28 @@ export function ServerUpdatePanel(props: { readonly controls: boolean }) {
   const { start, pending, problem } = useStartServerUpdate();
   const [requestProblem, setRequestProblem] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const controls = props.place === "settings";
   useEffect(() => {
     client.serverUpdate.refresh();
   }, [client]);
 
+  const unsure =
+    props.place === "behind" &&
+    view._tag === "status" &&
+    view.status.available === null &&
+    view.status.canUpdate._tag === "able" &&
+    !isRunning(view.status.state);
+  const asked = useRef(false);
+  const [checked, setChecked] = useState(false);
+  useEffect(() => {
+    if (!unsure || asked.current) return;
+    asked.current = true;
+    void client.serverUpdate.check().finally(() => setChecked(true));
+  }, [unsure, client]);
+
   const status = lastStatus(view);
-  const shown: ServerUpdateLine | null = serverUpdateLine(view, i18n);
+  const shown: ServerUpdateLine | null =
+    props.place === "behind" ? serverBehindLine(view, checked, i18n) : serverUpdateLine(view, i18n);
   const result = resultToShow(ended, status);
   const resultLine = result === null ? null : updateResultLine(result, i18n);
   const channel = status?.channel;
@@ -211,13 +231,13 @@ export function ServerUpdatePanel(props: { readonly controls: boolean }) {
         </View>
       )}
       <Problem>{problem}</Problem>
-      {props.controls && channel !== undefined && channel !== "unknown" && (
+      {controls && channel !== undefined && channel !== "unknown" && (
         <ChannelChoice
           value={channel}
           onChange={(next) => void request(() => client.serverUpdate.setChannel(next))}
         />
       )}
-      {props.controls && view._tag !== "unsupported" && (
+      {controls && view._tag !== "unsupported" && (
         <View className="items-start">
           <Button
             label={t("update.check")}
