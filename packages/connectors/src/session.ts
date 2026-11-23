@@ -381,7 +381,9 @@ const sentValues = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string>
  * otherwise (encoded, split, cased), is not found.
  */
 export const scrubberOf = (values: ReadonlyArray<string>): ((text: string) => string) => {
-  const secrets = [...new Set(values.flatMap((value) => [value, JSON.stringify(value).slice(1, -1)]))]
+  const secrets = [
+    ...new Set(values.flatMap((value) => [value, JSON.stringify(value).slice(1, -1)])),
+  ]
     .filter((value) => value.length >= MIN_SCRUBBED)
     // The longest first, so a value that holds another is taken whole.
     .toSorted((a, b) => b.length - a.length);

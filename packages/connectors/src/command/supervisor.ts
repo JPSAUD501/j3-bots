@@ -155,9 +155,10 @@ export const makeSupervisor = <K extends string>(
           return rest;
         }),
       );
-      const command = yield* options
-        .start(key)
-        .pipe(Scope.provide(life), Effect.tapError(() => failed(key, startedAt)));
+      const command = yield* options.start(key).pipe(
+        Scope.provide(life),
+        Effect.tapError(() => failed(key, startedAt)),
+      );
       yield* Effect.logInfo("A command connector's process started.").pipe(
         Effect.annotateLogs({ connector: key }),
       );

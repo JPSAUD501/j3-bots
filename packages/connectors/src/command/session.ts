@@ -79,7 +79,9 @@ export const openCommandSession = (
     });
     const args = options.args.map(Redacted.value);
     if (interpreterReads(options.platform, executable, args)) {
-      yield* Effect.logWarning("A command's arguments would be read by Windows' command interpreter");
+      yield* Effect.logWarning(
+        "A command's arguments would be read by Windows' command interpreter",
+      );
       return yield* new CommandFailed({ reason: "exited" });
     }
     const running = yield* startProcess({
@@ -120,8 +122,8 @@ export const openCommandSession = (
             : transport.stalled
               ? new NotMcp()
               : ended || failure._tag === "Unreachable"
-              ? new CommandFailed({ reason: "exited" })
-              : failure,
+                ? new CommandFailed({ reason: "exited" })
+                : failure,
         ),
       );
 

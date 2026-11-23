@@ -54,6 +54,10 @@ describe("pinRefusal", () => {
     // npm exec reads `--package` after the package too, so it must follow `--`.
     assert.strictEqual(refusal("npm exec server@1.0.0 --package=other"), "unclear");
     assert.strictEqual(refusal("npm x server@1.0.0"), "unclear");
+    // An option before npm's or uv's own command may hide which command runs.
+    assert.strictEqual(refusal("npm --yes exec server@latest"), "unclear");
+    assert.strictEqual(refusal("uv --quiet tool run mcp-server-time"), "unclear");
+    assert.strictEqual(refusal("uv --directory /srv tool run mcp-server-time"), "unclear");
     assert.strictEqual(refusal("npx -c tools@1.0.0"), "shell");
     assert.strictEqual(refusal("npm exec --call=anything"), "shell");
   });

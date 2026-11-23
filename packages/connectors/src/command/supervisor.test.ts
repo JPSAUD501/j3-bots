@@ -150,8 +150,10 @@ describe("the command connectors' supervisor", () => {
           restarts: 3,
         });
         yield* Effect.flip(Effect.scoped(supervisor.use("notes")));
-        yield* eventually(
-          Effect.map(supervisor.running, (running) => running.includes("notes")),
+        yield* eventually(Effect.map(Ref.get(attempts), (n) => n === 3));
+        // A use now gets the process the supervisor started by itself, not a fourth.
+        yield* Effect.scoped(
+          Effect.flatMap(supervisor.use("notes"), (session) => answerOf(session, "whoami")),
         );
         assert.strictEqual(yield* Ref.get(attempts), 3);
         // The second attempt was the supervisor's own, so its failure is told; the first was the use's.

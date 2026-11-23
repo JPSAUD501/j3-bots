@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- The folder a coverage variable would name.
+// @effect-diagnostics nodeBuiltinImport:off processEnvInEffect:off -- The test sets a variable Node itself reads when it starts a child, in the folder it would name.
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";

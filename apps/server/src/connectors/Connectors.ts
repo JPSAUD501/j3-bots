@@ -72,6 +72,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { BotStore } from "../bots/BotStore.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
+import { keyedLock } from "../turns/keyedLock.ts";
 import { Vault } from "../vault/Vault.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
@@ -407,6 +408,12 @@ export const layer = Layer.effect(
       if (Option.isNone(connector)) return "";
       return fingerprint(offeredOf(connector.value, yield* seenOf(id)));
     });
+
+    /**
+     * One operator's change of a connector at a time: each reads its vault
+     * record and writes it back whole, so two at once would lose one.
+     */
+    const perConnector = keyedLock();
 
     /** Runs `change`, then tells subscribers, and the connector's bots when what they get changed. */
     const changing = Effect.fn("Connectors.changing")(function* <A, E>(
@@ -1153,14 +1160,20 @@ export const layer = Layer.effect(
       readonly command?: CommandLine;
     }) {
       const now = yield* DateTime.now;
-      if (input.command !== undefined) {
-        yield* replaceCommand(yield* require(input.connectorId), input.command, now);
-      }
-      const connector = yield* require(input.connectorId);
-      if (input.values !== undefined) yield* replaceValues(connector, input.values, now);
-      if (input.name !== undefined) yield* store.update(connector.id, { name: input.name }, now);
-      yield* touch(connector.id);
-      return yield* render(yield* require(connector.id));
+      yield* perConnector.run(input.connectorId)(
+        Effect.gen(function* () {
+          if (input.command !== undefined) {
+            yield* replaceCommand(yield* require(input.connectorId), input.command, now);
+          }
+          const connector = yield* require(input.connectorId);
+          if (input.values !== undefined) yield* replaceValues(connector, input.values, now);
+          if (input.name !== undefined) {
+            yield* store.update(connector.id, { name: input.name }, now);
+          }
+        }),
+      );
+      yield* touch(input.connectorId);
+      return yield* render(yield* require(input.connectorId));
     });
 
     /** Replaces the values the connector's form took: those `values` names, the rest as they were. */

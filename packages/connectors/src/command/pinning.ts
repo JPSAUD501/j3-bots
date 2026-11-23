@@ -116,10 +116,19 @@ interface Launched {
   readonly optionsAfterPackage: boolean;
 }
 
-/** The launcher `program` and `args` run; none for any other program. */
-const launcherOf = (program: string, args: ReadonlyArray<string>): Option.Option<Launched> => {
+/**
+ * The launcher `program` and `args` run; none for any other program, and
+ * `unclear` for `npm` or `uv` with an option before its command, which may
+ * take the next word as its value and hide which command runs.
+ */
+const launcherOf = (
+  program: string,
+  args: ReadonlyArray<string>,
+): Option.Option<Launched> | "unclear" => {
   const name = programName(program);
-  if (name === "npx") return Option.some({ launcher: "npm-exec", args, optionsAfterPackage: false });
+  if ((name === "npm" || name === "uv") && args[0]?.startsWith("-") === true) return "unclear";
+  if (name === "npx")
+    return Option.some({ launcher: "npm-exec", args, optionsAfterPackage: false });
   if (name === "npm" && (args[0] === "exec" || args[0] === "x")) {
     return Option.some({ launcher: "npm-exec", args: args.slice(1), optionsAfterPackage: true });
   }
@@ -183,6 +192,7 @@ export const pinRefusal = (
   args: ReadonlyArray<string>,
 ): Option.Option<PinRefusal> => {
   const found = launcherOf(program, args);
+  if (found === "unclear") return Option.some("unclear");
   if (Option.isNone(found)) return Option.none();
   const { launcher } = found.value;
   const packages = packagesOf(found.value);
