@@ -29,6 +29,12 @@ const RELEASES = "https://github.com/pingdotgg/t3code/releases/download";
 
 export const releaseUrl = (file: string) => `${RELEASES}/v${pin.version}/${file}`;
 
+/** How a release platform's standalone server archive is packed: Windows' as a zip, the others' as a gzipped tar. */
+export type ArchiveFormat = "tar.gz" | "zip";
+
+export const archiveFormat = (releasePlatform: string): ArchiveFormat =>
+  releasePlatform.startsWith("win32-") ? "zip" : "tar.gz";
+
 /** The standalone server archive for a release platform such as `linux-x64`. */
 export const archiveName = (releasePlatform: string) =>
-  `t3-${pin.version}-${releasePlatform}.tar.gz`;
+  `t3-${pin.version}-${releasePlatform}.${archiveFormat(releasePlatform)}`;

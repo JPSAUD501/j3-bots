@@ -13,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -24,6 +25,8 @@ import { boundedCommand, engineEnvironment } from "./Command.ts";
 import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./PrivateFiles.ts";
+import { makeProcesses, servesHome } from "./Processes.ts";
+import { inJob } from "./WindowsJob.ts";
 
 // Runs the engine as a child process and says, at every moment, whether it can
 // take commands. Being down is a state, not a failure: the supervisor restarts
@@ -32,12 +35,17 @@ import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./Private
 // The engine is ready only when it answers as the pinned version and accepts
 // J3 Bots' credential. An engine J3 Bots started and then lost track of (the
 // server crashed and left it running) is found by the environment id recorded
-// when it started, and stopped before a new one starts. Any other program on
+// when it started, and stopped before a new one starts, as `Processes.ts`
+// stops a process on each system. Any other program on
 // the port, whether or not it answers HTTP, is left alone: the engine waits
 // for the port, as `port-in-use`, instead of being started to fail there.
 //
 // A restart asked for stops the engine and starts it again at once, with
 // `beforeStart` run between, so what it provisions reaches every harness.
+//
+// On Windows the engine runs in a job that ends every process it started once
+// the engine has ended, crashed or been stopped (`WindowsJob.ts`): nothing it
+// started survives into the next run or past the server's stop.
 
 type UnavailableReason = Extract<EngineStatus["state"], { readonly _tag: "unavailable" }>["reason"];
 
@@ -75,9 +83,12 @@ const HEALTH_FAILURES = 3;
 /** A run this long resets the restart backoff. */
 const STABLE_RUN = Duration.minutes(1);
 const BACKOFF_MAX_MS = 30_000;
-/** How long the engine gets to stop on SIGTERM before SIGKILL, when the server stops. */
-const ENGINE_STOP = "10 seconds";
-/** How long a lost engine gets to stop on SIGTERM, and then on SIGKILL. */
+/**
+ * How long the engine gets to stop on SIGTERM before SIGKILL, when the server
+ * stops; on Windows, also how long a stop then waits for the engine to be gone.
+ */
+const ENGINE_STOP = Duration.seconds(10);
+/** How long a lost engine gets to stop on SIGTERM, and then to be gone once killed. */
 const ORPHAN_TERM_GRACE = Duration.seconds(10);
 const ORPHAN_KILL_GRACE = Duration.seconds(5);
 
@@ -158,6 +169,8 @@ export interface Supervision {
 export const supervise = Effect.fn("engine.supervise")(function* <E>(input: SupervisorInput<E>) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const http = yield* HttpClient.HttpClient;
+  const parentEnvironment = yield* Effect.sync(() => process.env);
+  const processes = yield* makeProcesses(process.platform, parentEnvironment);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { state } = input;
@@ -171,56 +184,48 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   // harness a bot runs in its shell.
   const defaults = harnessDefaultHomes(path, input.home);
   const environment = {
-    ...engineEnvironment(yield* Effect.sync(() => process.env)),
+    ...engineEnvironment(parentEnvironment, process.platform),
     CLAUDE_CONFIG_DIR: defaults.claudeCode,
     CODEX_HOME: defaults.codex,
   };
 
+  const serve = [
+    "serve",
+    "--base-dir",
+    input.home,
+    "--port",
+    String(input.port),
+    "--host",
+    "127.0.0.1",
+    "--no-browser",
+  ];
+  const onWindows = process.platform === "win32";
+  const launched = onWindows
+    ? inJob(environment, input.executable, serve)
+    : { command: input.executable, args: serve };
   const engine = boundedCommand(
-    input.executable,
-    [
-      "serve",
-      "--base-dir",
-      input.home,
-      "--port",
-      String(input.port),
-      "--host",
-      "127.0.0.1",
-      "--no-browser",
-    ],
-    { stdin: "ignore", stdout: "ignore", stderr: "ignore", env: environment, extendEnv: false },
+    launched.command,
+    launched.args,
+    {
+      stdin: "ignore",
+      // On Windows the launcher prints the engine's id.
+      stdout: onWindows ? "pipe" : "ignore",
+      stderr: "ignore",
+      env: environment,
+      extendEnv: false,
+    },
     ENGINE_STOP,
   );
 
-  /** Runs a short system command; its exit code, or -1 if it could not run. */
-  const system = (executable: string, args: ReadonlyArray<string>) =>
-    spawner.exitCode(boundedCommand(executable, args, { stdin: "ignore", stderr: "ignore" })).pipe(
-      Effect.map(Number),
-      Effect.orElseSucceed(() => -1),
-    );
-
-  const isAlive = (pid: number) =>
-    system("ps", ["-p", String(pid), "-o", "pid="]).pipe(Effect.map((code) => code === 0));
-
-  /** Whether `pid` is an engine serving this data directory, by its command line. */
-  const servesHome = (pid: number) =>
-    spawner.string(boundedCommand("ps", ["-p", String(pid), "-o", "args="])).pipe(
-      Effect.map((args) => {
-        const words = args.trim().split(/\s+/);
-        return words.includes("serve") && args.includes(` ${input.home} `);
-      }),
-      Effect.orElseSucceed(() => false),
-    );
-
-  const waitUntilGone = (pid: number, grace: Duration.Duration) =>
-    isAlive(pid).pipe(
-      Effect.repeat({
-        schedule: Schedule.spaced(Duration.millis(250)),
-        until: (alive) => !alive,
-      }),
-      Effect.timeoutOption(grace),
-      Effect.map(Option.isSome),
-    );
+  /** The engine `pid` names, if it is one serving this data directory, by its command line. */
+  const servingThisHome = (pid: number) =>
+    processes
+      .lookUp(pid)
+      .pipe(
+        Effect.map(
+          Option.filter((found) => servesHome(process.platform, found.commandLine, input.home)),
+        ),
+      );
 
   const recorded = fs.readFileString(recordFile).pipe(
     Effect.map(decodeEngineProcess),
@@ -237,22 +242,20 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
    * Stops an engine this data directory's supervisor started and lost: the
    * port answers with the environment id recorded at its start, and the
    * recorded process still serves this data directory. SIGTERM, then SIGKILL
-   * after a grace period. Returns whether the port is free afterwards; any
-   * other program on the port is never signalled.
+   * after a grace period; on Windows, a tree kill of the process found, as
+   * long as it has the start time found (`Processes.ts`). Returns whether the
+   * port is free afterwards; any other program on the port is never signalled.
    */
   const stopLostEngine = Effect.fnUntraced(function* (environmentId: string) {
     const lost = yield* recorded;
     if (Option.isNone(lost) || lost.value.environmentId !== environmentId) return false;
     const { pid } = lost.value;
-    if (!(yield* servesHome(pid))) return false;
+    const found = yield* servingThisHome(pid);
+    if (Option.isNone(found)) return false;
     yield* Effect.logWarning(
       `Stopping the engine a previous J3 Bots process left running (${pid}).`,
     );
-    yield* system("kill", ["-TERM", String(pid)]);
-    if (!(yield* waitUntilGone(pid, ORPHAN_TERM_GRACE))) {
-      yield* system("kill", ["-KILL", String(pid)]);
-      yield* waitUntilGone(pid, ORPHAN_KILL_GRACE);
-    }
+    yield* processes.stop(found.value, ORPHAN_TERM_GRACE, ORPHAN_KILL_GRACE);
     return yield* check.pipe(
       Effect.repeat({
         schedule: Schedule.spaced(Duration.millis(250)),
@@ -310,8 +313,46 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       }
       yield* input.beforeStart;
       yield* SubscriptionRef.set(state, { _tag: "starting" });
+      // On Windows the handle is the launcher's, which can end before the
+      // engine it ended has: a stop returns once the engine is gone too, so
+      // what follows it (a restart, an update's snapshot) finds its files
+      // free. Registered before the spawn, this runs after the spawn's stop.
+      const launchedEngine = yield* Ref.make(Option.none<number>());
+      if (onWindows) {
+        yield* Effect.addFinalizer(() =>
+          Ref.get(launchedEngine).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.void,
+                onSome: (pid) => processes.waitUntilGone(pid, ENGINE_STOP),
+              }),
+            ),
+            Effect.asVoid,
+          ),
+        );
+      }
       const handle = yield* spawner.spawn(engine);
       const exited = yield* handle.exitCode.pipe(Effect.forkScoped);
+      // The engine's own id: on Windows, the one its launcher prints.
+      const enginePid = onWindows
+        ? yield* Effect.raceFirst(
+            handle.stdout.pipe(
+              Stream.decodeText,
+              Stream.splitLines,
+              Stream.runHead,
+              Effect.map(Option.map(Number)),
+              Effect.map(Option.filter(Number.isSafeInteger)),
+            ),
+            Fiber.await(exited).pipe(Effect.as(Option.none<number>())),
+          ).pipe(Effect.timeoutOption(STARTUP_TIMEOUT), Effect.map(Option.flatten))
+        : Option.some(Number(handle.pid));
+      if (Option.isNone(enginePid)) {
+        yield* Effect.logWarning(
+          "The engine's launcher ended or stalled before it started the engine.",
+        );
+        return true;
+      }
+      yield* Ref.set(launchedEngine, enginePid);
 
       const healthy = check.pipe(
         Effect.repeat({
@@ -333,7 +374,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
         });
         return false;
       }
-      yield* record(Number(handle.pid), up.environmentId);
+      yield* record(enginePid.value, up.environmentId);
       if (!(yield* settle(up.environmentId))) return true;
 
       // Healthy until it exits or stops answering.

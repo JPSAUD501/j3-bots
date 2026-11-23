@@ -12,6 +12,10 @@
       "types": "./src/transition/index.ts",
       "import": "./src/transition/index.ts"
     },
+    "./windows-acl": {
+      "types": "./src/home/windowsAcl.ts",
+      "import": "./src/home/windowsAcl.ts"
+    },
     "./testing": {
       "types": "./src/testing/index.ts",
       "import": "./src/testing/index.ts"
@@ -24,6 +28,7 @@
     "test": "vp test run --config ../../vite.config.ts --dir src",
     "every-surface:host": "node every-surface/host.ts",
     "smoke:release": "vp test run --config ../../vite.config.ts --dir smoke",
+    "smoke:windows": "vp test run --config ../../vite.config.ts smoke/windows.test.ts",
     "upgrade-check": "vp test run --config ../../vite.config.ts --dir upgrade-check"
   },
   "dependencies": {

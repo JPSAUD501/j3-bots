@@ -103,10 +103,13 @@ it.effect("writes only over the revision the writer read", () =>
     assert.isTrue(Exit.isFailure(stale));
     const current = yield* memory.read(shared, path);
     assert.strictEqual(Option.getOrThrow(current).text, "two");
-    // Private state: only this user may open it, whatever the umask.
-    const { sharedMemory } = yield* Layout.Layout;
-    const info = yield* (yield* FileSystem.FileSystem).stat(`${sharedMemory}/${path}`);
-    assert.strictEqual(info.mode & 0o777, 0o600);
+    // Private state: only this user may open it, whatever the umask. On
+    // Windows a file has no such mode: it takes the private home's list.
+    if (process.platform !== "win32") {
+      const { sharedMemory } = yield* Layout.Layout;
+      const info = yield* (yield* FileSystem.FileSystem).stat(`${sharedMemory}/${path}`);
+      assert.strictEqual(info.mode & 0o777, 0o600);
+    }
   }).pipe(Effect.provide(files)),
 );
 
