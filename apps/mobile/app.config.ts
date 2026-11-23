@@ -61,9 +61,11 @@ const fontsIn = (projectRoot: string) => {
 
 /**
  * The canvas the app opens on, in each theme: its first screen, and what
- * shows before it. The accent colors what the system draws for the app.
+ * shows before it. The accent colors what the system draws for the app; the
+ * icon's plate is its adaptive icon's background, and its Pip's color tints
+ * a notification's icon.
  */
-const { canvas, accent } = nativeColors;
+const { canvas, accent, iconPlate, iconPip } = nativeColors;
 
 const variantOf = (value: string | undefined): keyof typeof VARIANTS => {
   switch (value) {
@@ -128,7 +130,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
       adaptiveIcon: {
         foregroundImage: icon("adaptive-foreground.png"),
         monochromeImage: icon("adaptive-monochrome.png"),
-        backgroundColor: canvas.light,
+        backgroundColor: iconPlate,
       },
       ...(googleServicesFile === undefined ? {} : { googleServicesFile }),
       // Added by dependencies, used by nothing the app does. Notifications
@@ -150,7 +152,7 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
     plugins: [
       ["expo-font", fontsIn(projectRoot)],
       // The splash screen on the canvas of the theme the system is in, with
-      // the ensemble in that theme's colors. It stays until the first screen
+      // the icon's Pip in that theme's colors. It stays until the first screen
       // has drawn in the operator's theme (index.ts).
       [
         "expo-splash-screen",
@@ -223,9 +225,10 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
           // Android draws a notification's icon from its alpha alone: the
           // launcher icon, which is opaque, would show as a white square.
           icon: icon("notification.png"),
-          // What Android tints the icon with in the notification itself. It
-          // takes one color, so the light theme's, as `primaryColor`.
-          color: accent.light,
+          // What Android tints the icon with in the notification itself: the
+          // icon's Pip, as the launcher shows it, which reads on a light shade
+          // and a dark one, where the chrome's near-black accent would not.
+          color: iconPip,
         },
       ],
       "./plugins/accentColor.js",

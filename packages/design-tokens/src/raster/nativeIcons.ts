@@ -7,23 +7,30 @@
  * notification icon. The web app draws its own as it builds, with the same
  * `renderAppIcon`.
  */
+import { iconArt } from "../appIconArt.ts";
+import { botPalette } from "../botPalette.ts";
 import { hexColor } from "../color.ts";
 import { colors } from "../tokens.ts";
 import { desktopIcon, macIcon, renderAppIcon, type AppIcon } from "./appIcon.ts";
 import { icoFile } from "./ico.ts";
 
 /**
- * Android's adaptive icon is a 108 dp square of which only a 66 dp circle is
- * sure to show: the row's corners stay inside it.
+ * Android's adaptive icon is a 108 dp square of which a mask shows the middle
+ * 72 dp: the plate's frame spans that, and what lies past it shows only as
+ * the launcher moves the icon.
  */
-const ADAPTIVE_WIDTH = 0.55;
-/** iOS and Android's legacy launcher cut the corners of a square themselves. */
-const SQUARE_WIDTH = 0.7;
+const ADAPTIVE_WIDTH = 72 / 108;
+/**
+ * A themed icon's mark stays inside the 66 dp circle every mask keeps, with
+ * room around it, as the system's own icons leave.
+ */
+const MONOCHROME_WIDTH = (66 / 108) * 0.82;
 /**
  * Android's splash screen shows its image in a 288 dp square, masked to a
- * 192 dp circle when the image has no background of its own.
+ * 192 dp circle when the image has no background of its own: the Pip whole
+ * stays well inside it.
  */
-const SPLASH_WIDTH = 0.6;
+const SPLASH_WIDTH = 0.5;
 
 /**
  * Android's status bar draws a notification's icon in a 24 dp square, from
@@ -54,94 +61,68 @@ export const nativeIconFiles: ReadonlyArray<
     () => icoFile(WINDOWS_SIZES.map((size) => ({ size, png: renderAppIcon(desktopIcon(size)) }))),
   ],
   ["mac.png", png(macIcon(SOURCE))],
-  [
-    "square.png",
-    png({
-      size: SOURCE,
-      theme: "light",
-      plate: { kind: "square" },
-      art: "ensemble",
-      width: SQUARE_WIDTH,
-    }),
-  ],
+  // iOS, and Android's launcher before adaptive icons, cut a square's corners themselves.
+  ["square.png", png({ size: SOURCE, plate: { kind: "square" }, framing: "plate", width: 1 })],
+  // iOS draws its dark icon's background itself: the Pip alone, in the dark palette.
   [
     "square-dark.png",
-    png({
-      size: SOURCE,
-      theme: "dark",
-      plate: { kind: "none" },
-      art: "ensemble",
-      width: SQUARE_WIDTH,
-    }),
+    png({ size: SOURCE, plate: { kind: "none" }, framing: "plate", width: 1, theme: "dark" }),
   ],
   [
     "square-tinted.png",
-    png({
-      size: SOURCE,
-      theme: "light",
-      plate: { kind: "none" },
-      art: "ensemble",
-      width: SQUARE_WIDTH,
-      silhouette: true,
-    }),
+    png({ size: SOURCE, plate: { kind: "none" }, framing: "plate", width: 1, silhouette: true }),
   ],
+  // The plate is the adaptive icon's background layer, a color (`colors.json`).
   [
     "adaptive-foreground.png",
     png({
       size: SOURCE,
-      theme: "light",
       plate: { kind: "none" },
-      art: "ensemble",
+      framing: "plate",
       width: ADAPTIVE_WIDTH,
+      ground: iconArt.plate,
     }),
   ],
   [
     "adaptive-monochrome.png",
     png({
       size: SOURCE,
-      theme: "light",
       plate: { kind: "none" },
-      art: "ensemble",
-      width: ADAPTIVE_WIDTH,
+      framing: "whole",
+      width: MONOCHROME_WIDTH,
       silhouette: true,
     }),
   ],
-  // The lead alone, as the desktop's smallest icons show it: three shapes at
-  // a status bar's size read as noise.
   [
     "notification.png",
     png({
       size: NOTIFICATION_SIZE,
-      theme: "light",
       plate: { kind: "none" },
-      art: "lead",
+      framing: "whole",
       width: NOTIFICATION_WIDTH,
       silhouette: true,
     }),
   ],
-  [
-    "splash-light.png",
-    png({
-      size: SOURCE,
-      theme: "light",
-      plate: { kind: "none" },
-      art: "ensemble",
-      width: SPLASH_WIDTH,
-    }),
-  ],
-  [
-    "splash-dark.png",
-    png({
-      size: SOURCE,
-      theme: "dark",
-      plate: { kind: "none" },
-      art: "ensemble",
-      width: SPLASH_WIDTH,
-    }),
-  ],
-  // Colors as native configurations take them: the canvas, for the adaptive
-  // icon's background and the splash screen's, and the accent, for what the
-  // system draws in the app's own color (a dialog's buttons, a text cursor).
+  // The Pip whole on each theme's canvas, in that theme's palette.
+  ...(["light", "dark"] as const).map(
+    (theme) =>
+      [
+        `splash-${theme}.png`,
+        png({
+          size: SOURCE,
+          plate: { kind: "none" },
+          framing: "whole",
+          width: SPLASH_WIDTH,
+          theme,
+          ground: colors.background[theme],
+        }),
+      ] as const,
+  ),
+  // Colors as native configurations take them: the canvas, for the splash
+  // screen's background; the accent, for what the system draws in the app's
+  // own color (a dialog's buttons, a text cursor); the icon's plate, for the
+  // adaptive icon's background; and the icon's Pip, which tints a
+  // notification's icon, as the launcher shows it.
   [
     "colors.json",
     () => {
@@ -149,7 +130,16 @@ export const nativeIconFiles: ReadonlyArray<
         light: hexColor(colors[role].light),
         dark: hexColor(colors[role].dark),
       });
-      return `${JSON.stringify({ canvas: themed("background"), accent: themed("accent") }, null, 2)}\n`;
+      return `${JSON.stringify(
+        {
+          canvas: themed("background"),
+          accent: themed("accent"),
+          iconPlate: iconArt.plate,
+          iconPip: hexColor(botPalette[iconArt.avatar.color][iconArt.palette]),
+        },
+        null,
+        2,
+      )}\n`;
     },
   ],
 ];

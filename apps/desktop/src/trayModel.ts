@@ -8,7 +8,10 @@ import type { I18n } from "@j3-bots/i18n";
 // tray only words it.
 
 export interface TrayModel {
-  /** How many need the operator: the icon's badge, and its title where the system shows one. */
+  /**
+   * How many need the operator: the icon's Pip lights while any do, and its
+   * title shows the count where the system shows one.
+   */
   readonly count: number;
   /** Its menu's first line, and its hover text: how many need the operator, or that nothing does. */
   readonly summary: string;

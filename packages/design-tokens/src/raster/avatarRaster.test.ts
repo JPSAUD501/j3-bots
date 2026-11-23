@@ -8,6 +8,7 @@ import { parseColor, toSrgb8 } from "../color.ts";
 import { colors } from "../tokens.ts";
 import { drawAvatar, renderStillAvatar, renderStillRoomAvatar } from "./avatarRaster.ts";
 import { Canvas } from "./canvas.ts";
+import { readPng } from "./readPng.ts";
 
 /** An idle bot looking straight ahead, as the client runtime's still form draws one. */
 const idle: AvatarFace = {
@@ -137,6 +138,53 @@ describe("a still avatar at 96 px", () => {
   });
 });
 
+describe("an avatar's paint", () => {
+  const size = 96;
+  const pixel = (canvas: Canvas, p: { x: number; y: number }) => {
+    const at = (Math.floor(p.y) * size + Math.floor(p.x)) * 4;
+    return Array.from(canvas.pixels.subarray(at, at + 4));
+  };
+  const toPx = (p: { x: number; y: number }) => ({
+    x: ((p.x - avatarViewBox.x) * size) / avatarViewBox.size,
+    y: ((p.y - avatarViewBox.y) * size) / avatarViewBox.size,
+  });
+  const box = { x: 0, y: 0, size };
+
+  it("as a silhouette, is white where it is drawn and cuts out its lens", () => {
+    const face = { ...idle, pupil: 5 };
+    const canvas = new Canvas(size, size);
+    drawAvatar(canvas, { shape: "dome", color: "tomato" }, face, "light", box, {
+      silhouette: true,
+    });
+    const drawn = pixelsOf(canvas).filter((p) => (p.rgba[3] ?? 0) > 0);
+    expect(drawn.every((p) => near(p.rgba, [255, 255, 255]))).toBe(true);
+    const frame = avatarFrame("dome", face, size);
+    // The lens's edge, past the pupil and inside the eye, is clear; the pupil is white.
+    const eye = { x: frame.eye[4], y: frame.eye[5] };
+    expect(pixel(canvas, toPx({ x: eye.x - 10, y: eye.y }))[3]).toBe(0);
+    expect(pixel(canvas, toPx(eye))[3]).toBe(255);
+    // The body around the eye stays.
+    expect(pixel(canvas, toPx({ x: eye.x, y: eye.y + 22 }))[3]).toBe(255);
+  });
+
+  it("fills a status light's cutout with the ground it is drawn on, and clears it without one", () => {
+    const face = { ...idle, light: "blocked" as const };
+    const frame = avatarFrame("dome", face, size);
+    // In the band between the light and the cutout's edge.
+    const band = toPx({
+      x: frame.light.x,
+      y: frame.light.y + (frame.light.r + frame.lightCut) / 2,
+    });
+    const ground = [20, 40, 60] as const;
+    const onGround = new Canvas(size, size, ground);
+    drawAvatar(onGround, { shape: "dome", color: "teal" }, face, "dark", box, { ground });
+    const clear = new Canvas(size, size, ground);
+    drawAvatar(clear, { shape: "dome", color: "teal" }, face, "dark", box);
+    expect(pixel(onGround, band)).toEqual([...ground, 255]);
+    expect(pixel(clear, band)[3]).toBe(0);
+  });
+});
+
 describe("renderStillAvatar", () => {
   it("writes a PNG of the size asked, whose image data holds every pixel", () => {
     const size = 40;
@@ -172,16 +220,7 @@ describe("renderStillRoomAvatar", () => {
     const part = size * 0.68;
     const back = { shape: "loaf", color: "teal" } as const;
     const front = { shape: "loaf", color: "tangerine" } as const;
-    const decode = (png: Uint8Array<ArrayBuffer>) => {
-      const view = new DataView(png.buffer, png.byteOffset);
-      const idat = 8 + 25;
-      const rows = inflateSync(png.subarray(idat + 8, idat + 8 + view.getUint32(idat)));
-      // Each row is its filter byte, then four bytes a pixel.
-      return (x: number, y: number) => {
-        const at = y * (1 + size * 4) + 1 + x * 4;
-        return Array.from(rows.subarray(at, at + 4));
-      };
-    };
+    const decode = (png: Uint8Array<ArrayBuffer>) => readPng(png).rgba;
     const room = decode(renderStillRoomAvatar([back, front], idle, "light", size));
     const backAlone = decode(renderStillRoomAvatar([back], idle, "light", size));
     const frontAlone = new Canvas(size, size);

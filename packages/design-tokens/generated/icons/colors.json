@@ -6,5 +6,7 @@
   "accent": {
     "light": "#101012",
     "dark": "#f5f5f6"
-  }
+  },
+  "iconPlate": "#000000",
+  "iconPip": "#8d66fa"
 }

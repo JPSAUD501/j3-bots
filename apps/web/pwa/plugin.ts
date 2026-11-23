@@ -2,15 +2,14 @@
 // @effect-diagnostics nodeBuiltinImport:off -- build tooling that runs in Vite's Node process, outside any Effect program.
 import { createHash } from "node:crypto";
 import type { Plugin } from "vite-plus";
-import { canvasColor, darkCanvasColor, iconPng, iconSvg } from "./icons.ts";
+import { canvasColor, darkCanvasColor, favicon, plateIcon, squareIcon } from "./icons.ts";
 import { serviceWorkerSource } from "./serviceWorker.ts";
 
 const NAME = "J3 Bots";
 const SERVICE_WORKER = "sw.js";
 
-/** Icons shown as they are fill more of the square than maskable ones, whose edge a launcher may crop. */
-const SHOWN_WIDTH = 0.74;
-const MASKABLE_WIDTH = 0.62;
+/** A maskable icon keeps what matters in the middle 80% circle, which every mask shows. */
+const MASKABLE_WIDTH = 0.8;
 
 interface GeneratedFile {
   readonly type: string;
@@ -27,7 +26,6 @@ const manifest = {
   background_color: canvasColor,
   theme_color: canvasColor,
   icons: [
-    { src: "/icon.svg", type: "image/svg+xml", sizes: "any", purpose: "any" },
     { src: "/icon-192.png", type: "image/png", sizes: "192x192", purpose: "any" },
     { src: "/icon-512.png", type: "image/png", sizes: "512x512", purpose: "any" },
     { src: "/icon-maskable-512.png", type: "image/png", sizes: "512x512", purpose: "maskable" },
@@ -40,17 +38,17 @@ const files: Readonly<Record<string, GeneratedFile>> = {
     type: "application/manifest+json",
     body: () => `${JSON.stringify(manifest, null, 2)}\n`,
   },
-  "icon.svg": { type: "image/svg+xml", body: iconSvg },
-  "icon-192.png": { type: "image/png", body: () => iconPng(192, SHOWN_WIDTH) },
-  "icon-512.png": { type: "image/png", body: () => iconPng(512, SHOWN_WIDTH) },
-  "icon-maskable-512.png": { type: "image/png", body: () => iconPng(512, MASKABLE_WIDTH) },
+  "favicon.ico": { type: "image/x-icon", body: favicon },
+  "icon-192.png": { type: "image/png", body: () => plateIcon(192) },
+  "icon-512.png": { type: "image/png", body: () => plateIcon(512) },
+  "icon-maskable-512.png": { type: "image/png", body: () => squareIcon(512, MASKABLE_WIDTH) },
   // iOS takes its home-screen icon from here, not the manifest, and rounds its corners itself.
-  "apple-touch-icon.png": { type: "image/png", body: () => iconPng(180, SHOWN_WIDTH) },
+  "apple-touch-icon.png": { type: "image/png", body: () => squareIcon(180, 1) },
 };
 
 /**
  * Makes the build an installable web app: a manifest, icons drawn from the
- * avatar shapes, and a service worker that keeps the app shell for offline
+ * icon art, and a service worker that keeps the app shell for offline
  * launch. Development serves the manifest and icons but no service worker,
  * which would keep stale modules between edits.
  */
@@ -71,7 +69,7 @@ export function pwa(): Plugin {
       },
       {
         tag: "link",
-        attrs: { rel: "icon", href: "/icon.svg", type: "image/svg+xml" },
+        attrs: { rel: "icon", href: "/favicon.ico", sizes: "16x16 24x24 32x32 48x48 64x64" },
         injectTo: "head",
       },
       {
