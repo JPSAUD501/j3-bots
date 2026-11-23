@@ -14,13 +14,13 @@ Early. The install command below installs the latest published release; what eac
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Server      | Runs bots on Claude Code and Codex: conversations, memory, approvals, routines on a schedule or a webhook, bot-to-bot messages and rooms. Installs as a systemd user service on x64 and arm64 Linux, and updates itself with a snapshot to roll back to. |
 | Web client  | Served by the server; installable as an app over HTTPS.                                                                                                                                                                                                  |
-| Desktop app | Builds for Linux, macOS and Windows, unsigned. Runs the bots on the computer it is open on, or connects to a server.                                                                                                                                     |
+| Desktop app | Builds for Linux, macOS and Windows, unsigned. Runs the bots on the computer it is open on (Linux and Windows, x64), or connects to a server.                                                                                                            |
 | Mobile app  | An Expo app: pairing, the roster, conversations, and sending to a bot from the share sheet. Each release has a signed Android APK to [install on the phone](docs/architecture/clients.md#installing-the-android-app).                                    |
 | Engine      | Pinned to one T3 Code release, in [`engine.json`](engine.json).                                                                                                                                                                                          |
 
 ## Quick start
 
-**On this computer.** Download the desktop app for Linux, macOS or Windows from the [latest release](https://github.com/JPSAUD501/j3-bots/releases/latest), open it and choose **Use this computer**. Your bots live on this computer and sleep when it sleeps. The first run walks you through your first bot; Settings can start the app with the system, so they are back when you sign in.
+**On this computer.** Download the desktop app for Linux or Windows (x64) from the [latest release](https://github.com/JPSAUD501/j3-bots/releases/latest), open it and choose **Use this computer**. On a Mac the app connects to a server: it does not run the bots there yet. Your bots live on this computer and sleep when it sleeps. The first run walks you through your first bot; Settings can start the app with the system, so they are back when you sign in.
 
 **On a server that stays on.** On a Linux machine with systemd, as the user J3 Bots will run as:
 

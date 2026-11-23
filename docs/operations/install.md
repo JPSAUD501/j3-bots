@@ -2,6 +2,8 @@
 
 This guide takes a Linux machine from nothing to a browser paired with your own J3 Bots server and a first bot that answers. The server runs as a systemd user service of one user, and bots act as that user. Once it runs, [Operating J3 Bots](operating.md) covers configuration, logs, updates, backups and removal, and [Reaching it from elsewhere](exposing.md) covers HTTPS, Tailscale, proxies and webhooks.
 
+> On a Linux x64 or Windows x64 computer of your own, the desktop app can run the bots itself, with nothing to install but the app: choose "Use this computer" on its first screen ([Clients: Desktop](../architecture/clients.md#desktop)). The bots then sleep when the computer sleeps. This guide is for a server of its own, which keeps them awake.
+
 > The one-line command below installs the latest published release. To run code no release has yet, install [from a checkout](#from-a-checkout), or build a release archive and install it from a local mirror as [Releasing](releasing.md#trying-an-install-locally) describes.
 
 ## Supported systems
@@ -13,7 +15,7 @@ This guide takes a Linux machine from nothing to a browser paired with your own 
 | macOS | Not supported for the server. The service is a systemd unit, and the engine starts each harness in a systemd scope. |
 | Windows 10 and 11 on x64 | Supported only as the desktop app's local server: the app starts the server as its own child, in a private home in the app's data, and stops it when it quits. There is no `j3-bots` command, service or installer on Windows, so this guide does not apply there. CI runs the server's and the engine adapter's tests on Windows Server 2025, except those of the command line, the service, the installer and the admin socket, then a smoke of the built server as the desktop app runs it, the real engine included, and starts the server runtime each Windows package carries (**Verified**, on every pull request). Each bot's harness runs as the user's own process, not in a systemd scope ([Engine: isolation](../architecture/engine.md#isolation)). |
 
-Clients run anywhere: the web client in a browser, and the desktop app on Linux, macOS and Windows ([Releasing](releasing.md)), each connected to your server over the network.
+Clients run anywhere: the web client in a browser, and the desktop app on Linux, macOS and Windows ([Releasing](releasing.md)), each connected to your server over the network. On Linux x64 and Windows x64 the desktop app can also be the server, for the bots on that computer.
 
 ## What you need
 
