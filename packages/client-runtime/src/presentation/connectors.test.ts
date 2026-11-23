@@ -7,6 +7,7 @@ import {
   type ConnectorSuggestionEntry,
   EntryId,
   EntryOrder,
+  RegistryName,
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../../test/fixtures.ts";
@@ -111,7 +112,7 @@ describe("a bot's suggestion of a connector", () => {
   });
 
   it("opens a gallery entry's page for the bot that asked, and lets no one in yet", () => {
-    const ref = { _tag: "registry", name: "com.example/tracker" } as const;
+    const ref = { _tag: "registry", name: RegistryName.make("com.example/tracker") } as const;
     expect(suggestionConnect(suggesting({ _tag: "listing", ref }), [], bots)).toEqual({
       letIn: null,
       open: {
