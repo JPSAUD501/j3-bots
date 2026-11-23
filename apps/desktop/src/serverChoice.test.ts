@@ -202,10 +202,15 @@ describe("running the bots on this computer", () => {
 });
 
 describe("the settings file", () => {
-  const REMOTE = { mode: "remote", server: SERVER, localDevice: null } as const;
-  const NONE = { mode: null, server: null, localDevice: null } as const;
+  const REMOTE = {
+    mode: "remote",
+    server: SERVER,
+    localDevice: null,
+    startWithSystem: false,
+  } as const;
+  const NONE = { mode: null, server: null, localDevice: null, startWithSystem: false } as const;
 
-  it("reads the server, the window, the shortcut and the appearance each on its own", () => {
+  it("reads the server, the window, the shortcut, the appearance and starting with the system each on its own", () => {
     const window = { x: 10, y: 20, width: 800, height: 600, maximized: false };
     const shortcut = "Control+Alt+K";
     assert.deepStrictEqual(
@@ -239,6 +244,16 @@ describe("the settings file", () => {
         dropped: ["appearance"],
       },
     );
+    assert.deepStrictEqual(
+      Settings.decodeSettings(JSON.stringify({ server: SERVER, startWithSystem: "yes" })),
+      {
+        settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
+        dropped: ["startWithSystem"],
+      },
+    );
+    assert.isTrue(
+      Settings.decodeSettings(JSON.stringify({ startWithSystem: true })).settings.startWithSystem,
+    );
     assert.deepStrictEqual(Settings.decodeSettings("{ not json"), {
       settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
       dropped: [],
@@ -262,6 +277,7 @@ describe("the settings file", () => {
         window: null,
         shortcut: null,
         appearance: "system",
+        startWithSystem: false,
       },
     );
   });

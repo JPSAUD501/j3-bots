@@ -799,6 +799,47 @@ const sentences = {
   "server.change.body":
     "O app esquece {address} e o acesso deste dispositivo lá, com os rascunhos e as mensagens não enviadas. O dispositivo pode continuar em Dispositivos nesse servidor, e outro dispositivo pode removê-lo de lá.",
   "server.change.cancel": "Manter este servidor",
+
+  "where.title": "Onde os bots vão ficar?",
+  "where.body": "Dá para mudar depois, nas Configurações.",
+  "where.thisComputer": "Usar neste computador",
+  "where.thisComputer.hint": "Os bots ficam neste computador e dormem quando ele dorme.",
+  "where.thisComputer.pending": "Preparando…",
+  "where.thisComputer.failed":
+    "Não foi possível preparar este computador para os bots. Tente de novo.",
+  "where.thisComputer.unavailable":
+    "Este computador não consegue rodar os bots. Conecte a um servidor.",
+  "where.server": "Conectar a um servidor",
+
+  "local.waiting": "Iniciando o J3 Bots neste computador…",
+  "local.line.starting": "Iniciando os bots…",
+  "local.line.stopped": "Os bots estão parados.",
+  "local.line.start": "Iniciar",
+  "local.line.restarting": "Os bots pararam.",
+  "local.line.failed": "Os bots não iniciaram.",
+  "local.failed.title": "Os bots não iniciaram",
+  "local.failed.unknown": "Algo impediu o J3 Bots de iniciar neste computador.",
+  "local.failed.retry": "Tentar de novo",
+  "local.failed.details": "Ver detalhes",
+  "local.failed.hideDetails": "Ocultar detalhes",
+  "local.failed.noLog": "O J3 Bots não escreveu nada antes de parar.",
+  "local.signedOut.title": "Este computador foi desconectado",
+  "local.signedOut.body":
+    "O acesso dele foi encerrado, talvez por outro dispositivo. Os bots e os dados deles continuam aqui.",
+  "local.signedOut.signIn": "Entrar de novo neste computador",
+  "local.signedOut.pending": "Entrando…",
+  "local.signedOut.failed": "Este computador não conseguiu entrar. Tente de novo.",
+  "local.signInFailed.title": "Este computador não conseguiu entrar",
+  "local.signInFailed.body":
+    "Os bots continuam neste computador. Entre de novo; se continuar falhando, reinicie o J3 Bots.",
+  "local.stopping": "Parando os bots neste computador…",
+  "local.stop": "Parar de usar este computador",
+  "local.stop.title": "Parar de usar este computador?",
+  "local.stop.body":
+    "Os bots deste computador param. Os dados deles ficam guardados aqui e voltam se você escolher este computador de novo. Depois, você pode conectar a um servidor.",
+  "local.stop.cancel": "Continuar usando",
+  "local.stop.pending": "Parando…",
+  "local.stop.failed": "Não foi possível parar os bots deste computador. Tente de novo.",
   "pairing.server": "Servidor: {address}",
 
   "links.pairingServer":
@@ -806,6 +847,7 @@ const sentences = {
   "links.nameServerFirst":
     "Conecte ao seu servidor e pareie este dispositivo primeiro, depois abra esse link de novo.",
   "links.pairFirst": "Pareie este dispositivo primeiro. O link abre assim que ele estiver pareado.",
+  "links.chooseFirst": "Escolha primeiro onde os bots ficam e depois abra o link de novo.",
   "links.otherServer":
     "Esse link de pareamento é de outro servidor, {address}. Para parear com ele, troque de servidor primeiro e abra o link de novo.",
   "links.alreadyPaired": "Este dispositivo já está pareado com {address}.",
@@ -824,6 +866,8 @@ const sentences = {
   "gate.storage.desktopTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.desktopBody":
     "O J3 Bots não conseguiu ler o acesso que guarda neste dispositivo para {address}. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots. Trocar para outro servidor, ou para este de novo, desconecta este dispositivo aqui.",
+  "gate.storage.localBody":
+    "O J3 Bots não conseguiu ler o acesso que guarda para os bots deste computador. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots.",
   "gate.storage.mobileTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.mobileBody":
     "O J3 Bots não conseguiu ler o acesso que guarda no armazenamento seguro deste dispositivo. Tente de novo ou reinicie o app. Esquecer o acesso desconecta este dispositivo aqui, para que você possa pareá-lo de novo.",
@@ -1075,6 +1119,16 @@ const sentences = {
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
   "settings.pair.offline": "Disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
   "settings.server": "Servidor",
+  "settings.where": "Onde os bots ficam",
+  "settings.where.local": "Neste computador",
+  "settings.where.server": "Num servidor",
+  "settings.where.useThisComputer.title": "Usar neste computador?",
+  "settings.where.useThisComputer.body":
+    "O app esquece {address} e o acesso deste dispositivo lá, como ao trocar de servidor. Os bots de lá continuam rodando. Depois, os bots ficam neste computador.",
+  "settings.startWithSystem": "Iniciar com o sistema",
+  "settings.startWithSystem.hint":
+    "Abre na bandeja quando você entra neste computador, e os bots voltam sem você abrir o app.",
+  "settings.startWithSystem.failed": "Não foi possível mudar isso. Tente de novo.",
   "settings.browser": "Este navegador",
   "settings.thisDevice": "Este dispositivo",
   "settings.thisDevice.unencrypted":

@@ -869,6 +869,27 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       }).pipe(Effect.scoped, Effect.provide(client())),
   );
 
+  it.effect("keeps a credential it was given without a code, connects, and keeps it", () =>
+    Effect.gen(function* () {
+      // A credential the server issued to this device by another way than a code.
+      const given = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return yield* savedCredential;
+      }).pipe(Effect.scoped, Effect.provide(client()));
+      if (Option.isNone(given)) return assert.fail("The pairing was not saved");
+
+      yield* Effect.gen(function* () {
+        const connection = yield* Connection;
+        yield* waitFor(connection.state, (state) => state._tag === "unpaired");
+        yield* connection.adopt(given.value);
+        yield* waitFor(connection.state, isConnected);
+        assert.strictEqual(yield* connection.deviceId, given.value.deviceId);
+        const stored = yield* savedCredential;
+        assert.isTrue(Option.isSome(stored) && stored.value.deviceId === given.value.deviceId);
+      }).pipe(Effect.scoped, Effect.provide(client()));
+    }),
+  );
+
   it.effect("asks to pair again when the ticket route refuses the saved credential", () =>
     Effect.gen(function* () {
       const connection = yield* Connection;

@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import type * as ServerChoice from "../serverChoice.ts";
+import { DesktopSettings } from "../settings.ts";
 import * as AdminChannel from "./adminChannel.ts";
 import * as Credential from "./credential.ts";
 import * as Home from "./home.ts";
@@ -79,9 +80,16 @@ export const serverEnvironment = (
 
 const decodeOrigin = Schema.decodeUnknownEffect(ServerOrigin);
 
+/** The port of the loopback origin the app keeps for its server. */
+const portOf = (origin: ServerOrigin): number => {
+  const url = new URL(origin);
+  return url.port === "" ? 80 : Number(url.port);
+};
+
 export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const settings = yield* DesktopSettings;
   const serverFolder = path.join(options.userData, "server");
   const home = path.join(serverFolder, "home");
   const logFile = path.join(serverFolder, "server.log");
@@ -123,6 +131,24 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
       Effect.mapError(
         (refusal) =>
           new Supervisor.LaunchFailed({ reason: refusal.message, fix: refusal.fix, retry: false }),
+      ),
+    );
+    // Every start makes the home ready, as choosing this computer did, on the
+    // port the page is kept on: a config.json that went missing is written
+    // again rather than left to the server's own defaults.
+    const kept = (yield* settings.get).server;
+    yield* (
+      kept === null
+        ? Home.prepareHome(home, Home.choosePorts())
+        : Home.prepareKeptHome(home, portOf(kept))
+    ).pipe(
+      Effect.mapError((error) =>
+        error._tag === "HomePortMoved"
+          ? new Supervisor.LaunchFailed({ reason: error.message, fix: error.fix, retry: false })
+          : new Supervisor.LaunchFailed({
+              reason: error.message,
+              retry: error._tag === "NoFreePorts" || error._tag === "PlatformError",
+            }),
       ),
     );
     const runtime = yield* Runtime.install({

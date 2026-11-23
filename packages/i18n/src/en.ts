@@ -790,6 +790,46 @@ export const en = {
   "server.change.body":
     "This app forgets {address} and this device’s sign-in there, with its drafts and unsent messages. The device may still show under Devices on that server, and another device can remove it there.",
   "server.change.cancel": "Keep this server",
+
+  "where.title": "Where will your bots live?",
+  "where.body": "You can change this later in Settings.",
+  "where.thisComputer": "Use this computer",
+  "where.thisComputer.hint": "Your bots live on this computer and sleep when it sleeps.",
+  "where.thisComputer.pending": "Setting up…",
+  "where.thisComputer.failed": "This computer couldn’t be set up for your bots. Try again.",
+  "where.thisComputer.unavailable":
+    "This computer can’t run the bots. Connect to a server instead.",
+  "where.server": "Connect to a server",
+
+  "local.waiting": "Starting J3 Bots on this computer…",
+  "local.line.starting": "Starting your bots…",
+  "local.line.stopped": "Your bots are stopped.",
+  "local.line.start": "Start them",
+  "local.line.restarting": "Your bots stopped.",
+  "local.line.failed": "Your bots couldn’t start.",
+  "local.failed.title": "Your bots couldn’t start",
+  "local.failed.unknown": "Something stopped J3 Bots from starting on this computer.",
+  "local.failed.retry": "Try again",
+  "local.failed.details": "See details",
+  "local.failed.hideDetails": "Hide details",
+  "local.failed.noLog": "J3 Bots wrote nothing before it stopped.",
+  "local.signedOut.title": "This computer was signed out",
+  "local.signedOut.body":
+    "Its access was ended, maybe from another device. Your bots and their data are still here.",
+  "local.signedOut.signIn": "Sign in again on this computer",
+  "local.signedOut.pending": "Signing in…",
+  "local.signedOut.failed": "This computer couldn’t sign in. Try again.",
+  "local.signInFailed.title": "This computer couldn’t sign in",
+  "local.signInFailed.body":
+    "Your bots are still on this computer. Sign in again; if it keeps failing, restart J3 Bots.",
+  "local.stopping": "Stopping the bots on this computer…",
+  "local.stop": "Stop using this computer",
+  "local.stop.title": "Stop using this computer?",
+  "local.stop.body":
+    "The bots on this computer stop. Their data stays here, and they come back if you choose this computer again. Next, you can connect to a server.",
+  "local.stop.cancel": "Keep using it",
+  "local.stop.pending": "Stopping…",
+  "local.stop.failed": "The bots on this computer couldn’t be stopped. Try again.",
   "pairing.server": "Server: {address}",
 
   "links.pairingServer":
@@ -797,6 +837,7 @@ export const en = {
   "links.nameServerFirst":
     "Connect to your server and pair this device first, then open that link again.",
   "links.pairFirst": "Pair this device first. The link opens once it’s paired.",
+  "links.chooseFirst": "Choose where your bots live first, then open that link again.",
   "links.otherServer":
     "That pairing link is for another server, {address}. To pair with it, change server first, then open the link again.",
   "links.alreadyPaired": "This device is already paired with {address}.",
@@ -815,6 +856,8 @@ export const en = {
   "gate.storage.desktopTitle": "This device’s sign-in can’t be read",
   "gate.storage.desktopBody":
     "J3 Bots couldn’t read the sign-in it keeps on this device for {address}. If your system’s keychain or keyring is locked, unlock it, then restart J3 Bots. Changing to another server, or to this one again, signs this device out here.",
+  "gate.storage.localBody":
+    "J3 Bots couldn’t read the sign-in it keeps for the bots on this computer. If your system’s keychain or keyring is locked, unlock it, then restart J3 Bots.",
   "gate.storage.mobileTitle": "This device’s sign-in can’t be read",
   "gate.storage.mobileBody":
     "J3 Bots couldn’t read the sign-in it keeps in this device’s secure storage. Try again, or restart the app. Forgetting the sign-in signs this device out here, so you can pair it again.",
@@ -1059,6 +1102,16 @@ export const en = {
   "settings.pair.failed": "No code was made. Try again.",
   "settings.pair.offline": "Available once this device is connected to J3 Bots again.",
   "settings.server": "Server",
+  "settings.where": "Where your bots live",
+  "settings.where.local": "On this computer",
+  "settings.where.server": "On a server",
+  "settings.where.useThisComputer.title": "Use this computer?",
+  "settings.where.useThisComputer.body":
+    "This app forgets {address} and this device’s sign-in there, as when you change server. The bots there keep running. Then your bots live on this computer.",
+  "settings.startWithSystem": "Start with the system",
+  "settings.startWithSystem.hint":
+    "Opens in the tray when you sign in to this computer, so your bots are back without opening the app.",
+  "settings.startWithSystem.failed": "That couldn’t be changed. Try again.",
   "settings.browser": "This browser",
   "settings.thisDevice": "This device",
   "settings.thisDevice.unencrypted":

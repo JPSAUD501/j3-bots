@@ -47,6 +47,7 @@ import {
 import { desktopIcon, renderAppIcon } from "@j3-bots/design-tokens/raster";
 import * as Appearance from "./appearance.ts";
 import * as AppLinks from "./appLinks.ts";
+import * as Autostart from "./autostart.ts";
 import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./assets.ts";
 import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
@@ -182,6 +183,9 @@ const lockNavigation = (contents: WebContents) => {
 
 const program = Effect.gen(function* () {
   yield* Effect.promise(() => app.whenReady());
+  // Started by the system as the operator signed in: the app opens in the
+  // tray, its window shown only when they ask for it.
+  const hidden = Autostart.launchedHidden();
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const settings = yield* Settings.DesktopSettings;
@@ -350,7 +354,7 @@ const program = Effect.gen(function* () {
           event.returnValue = null;
           return;
         }
-        const { server, mode } = runSync(settings.get);
+        const { server, mode, startWithSystem } = runSync(settings.get);
         event.returnValue = encodeState({
           server,
           pairingCode: links.takeCarriedCode(server),
@@ -358,7 +362,7 @@ const program = Effect.gen(function* () {
           localAvailable: localHost.available,
           localServer: runSync(localServerNow),
           phoneAccess: PHONE_ACCESS_OFF,
-          startWithSystem: false,
+          startWithSystem,
         });
       });
       ipcMain.handle(IPC_CHANNELS.connect, (event, request: unknown) =>
@@ -470,6 +474,7 @@ const program = Effect.gen(function* () {
       if ((yield* settings.get).mode === "local") yield* supervisor.start;
     }),
   });
+  yield* Autostart.serve(fromApp);
 
   // Quit, from the tray, the menu or the system, waits for the server this
   // computer runs to stop; nothing is left running behind the app.
@@ -570,6 +575,7 @@ const program = Effect.gen(function* () {
   );
 
   window.once("ready-to-show", () => {
+    if (hidden && !launchedWhileStarting) return;
     window.show();
     if (launchedWhileStarting) window.focus();
   });
@@ -597,6 +603,8 @@ const program = Effect.gen(function* () {
 if (app.requestSingleInstanceLock()) {
   app.on("second-instance", (_event, argv) => {
     links.receive(argv);
+    // The system starting the app again as the operator signs in shows nothing.
+    if (Autostart.startsHidden(argv)) return;
     if (bringForward === null) launchedWhileStarting = true;
     else bringForward();
   });

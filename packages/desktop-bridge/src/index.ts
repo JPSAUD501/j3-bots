@@ -182,6 +182,19 @@ export const LocalPairingLink = Schema.Union([
 ]);
 export type LocalPairingLink = typeof LocalPairingLink.Type;
 
+export const StartWithSystemRequest = Schema.Struct({ on: Schema.Boolean });
+export type StartWithSystemRequest = typeof StartWithSystemRequest.Type;
+
+/**
+ * How changing whether the app starts with the system ended: `changed`, or
+ * `not-saved`, and the system starts the app as it did; `on` is what holds now.
+ */
+export const StartWithSystemChange = Schema.Struct({
+  outcome: Schema.Literals(["changed", "not-saved"]),
+  on: Schema.Boolean,
+});
+export type StartWithSystemChange = typeof StartWithSystemChange.Type;
+
 /**
  * The address the operator typed on the server address screen, as typed, and
  * the pairing link that filled it in, if one did: once the server the link
@@ -511,5 +524,6 @@ export const HostedBridge = Schema.Struct({
   retryLocalServer: Callable,
   setPhoneAccess: Callable,
   localPairingLink: Callable,
+  setStartWithSystem: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

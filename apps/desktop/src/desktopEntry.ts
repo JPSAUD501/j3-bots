@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// The Linux desktop entry that makes the app the handler of its links. The
+// The Linux desktop entries the app writes: the one that makes it the handler
+// of its links, and the one that starts it as the operator signs in. The
 // escaping follows the Desktop Entry Specification as T3 Code applies it
 // (MIT, read at c6ca01b3, `apps/desktop/src/app/DesktopLinuxUrlHandler.ts`).
 
@@ -61,5 +62,29 @@ export const renderLinkHandlerEntry = ({ name, command, scheme }: LinkHandlerEnt
     "NoDisplay=true",
     "StartupNotify=false",
     `MimeType=x-scheme-handler/${scheme};`,
+    "",
+  ].join("\n");
+
+interface AutostartEntry {
+  /** The name the desktop's list of startup applications shows. */
+  readonly name: string;
+  /** The program, then its arguments: the app, started hidden in the tray. */
+  readonly command: ReadonlyArray<string>;
+}
+
+/**
+ * The entry in the user's autostart folder that starts the app as they sign
+ * in (the XDG Autostart Specification). It stays listed, so the desktop's own
+ * list of startup applications shows it.
+ */
+export const renderAutostartEntry = ({ name, command }: AutostartEntry): string =>
+  [
+    "[Desktop Entry]",
+    "Type=Application",
+    `Name=${escapeString(name)}`,
+    `Exec=${command.map(execWord).join(" ")}`,
+    "Terminal=false",
+    "StartupNotify=false",
+    "X-GNOME-Autostart-enabled=true",
     "",
   ].join("\n");

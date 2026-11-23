@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConnectionState } from "@j3-bots/client-runtime";
+import type { LocalServerState } from "@j3-bots/desktop-bridge";
 import * as DateTime from "effect/DateTime";
 import { createContext, use, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useI18n } from "../app/context";
@@ -24,8 +25,20 @@ const Speaking = createContext(false);
 /** Whether the connection line above is saying why the server is out of reach. */
 export const useConnectionLineShown = (): boolean => use(Speaking);
 
+/** In local mode, the server this computer runs, which the line speaks of first while it is down. */
+export interface LocalLine {
+  readonly server: LocalServerState;
+  /** While it waits to restart: when it starts again. */
+  readonly restartAt: DateTime.Utc | null;
+  /** Starts it again now. */
+  readonly onRetry: () => void;
+  /** Shows why it did not start, once it failed. */
+  readonly onDetails: () => void;
+}
+
 interface ConnectionBannerProps {
   readonly state: ConnectionState;
+  readonly local?: LocalLine | undefined;
   /** Whether a connection has been made since the page loaded. */
   readonly everConnected: boolean;
   readonly onRetryNow: () => void;
@@ -35,21 +48,36 @@ interface ConnectionBannerProps {
 
 /**
  * One quiet line above the shell while the server is out of reach: what is
- * happening, and Try now when a retry is waiting. Connected, it takes no
- * room. Its text is a live region, so each change is read out once. Shown,
- * it is the top of the screen, so it takes the device's top inset and what
- * lies under it does not.
+ * happening, and Try now when a retry is waiting. In local mode, while the
+ * server on this computer is not running, it says that first, with what
+ * starts it again. Connected, it takes no room. Its text is a live region, so
+ * each change is read out once. Shown, it is the top of the screen, so it
+ * takes the device's top inset and what lies under it does not.
  */
 export function ConnectionBanner({
   state,
+  local,
   everConnected,
   onRetryNow,
   children,
 }: ConnectionBannerProps) {
   const { t } = useI18n();
-  const retryAt = state._tag === "waiting" ? state.retryAt : null;
+  const down = local !== undefined && local.server.state !== "ready" ? local : null;
+  const retryAt = down !== null ? down.restartAt : state._tag === "waiting" ? state.retryAt : null;
   const seconds = useSecondsUntil(retryAt);
   const text = ((): string | null => {
+    if (down !== null) {
+      switch (down.server.state) {
+        case "starting":
+          return t("local.line.starting");
+        case "stopped":
+          return t("local.line.stopped");
+        case "restarting":
+          return t("local.line.restarting");
+        case "failed":
+          return t("local.line.failed");
+      }
+    }
     switch (state._tag) {
       case "offline":
         return t("connection.offline");
@@ -84,7 +112,37 @@ export function ConnectionBanner({
               {text}
             </span>
             <span aria-hidden>{text ?? lastText}</span>
-            {state._tag === "waiting" && (
+            {down?.server.state === "stopped" && (
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={down.onRetry}>
+                {t("local.line.start")}
+              </Button>
+            )}
+            {down?.server.state === "failed" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={down.onDetails}
+              >
+                {t("local.failed.details")}
+              </Button>
+            )}
+            {down?.server.state === "restarting" && (
+              <>
+                <span aria-hidden className="tabular-nums">
+                  {seconds > 0 ? t("connection.retryIn", { seconds }) : t("connection.retrying")}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={down.onRetry}
+                >
+                  {t("connection.retryNow")}
+                </Button>
+              </>
+            )}
+            {down === null && state._tag === "waiting" && (
               <>
                 {/* Changes every second, so it is shown and not announced. */}
                 <span aria-hidden className="tabular-nums">

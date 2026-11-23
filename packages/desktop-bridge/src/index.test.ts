@@ -149,6 +149,7 @@ describe("the desktop bridge", () => {
       retryLocalServer: call,
       setPhoneAccess: call,
       localPairingLink: call,
+      setStartWithSystem: call,
     };
     const state = { ...LOCAL_OFF, server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));
