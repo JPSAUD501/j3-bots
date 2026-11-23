@@ -87,7 +87,7 @@ import { MessageBubble } from "./MessageBubble.tsx";
 import { AnimatedView } from "./animated.ts";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { ToLatest } from "./ToLatest.tsx";
-import { VisualHeights } from "./VisualCard.tsx";
+import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
 import { type TurnBot, WorkFold } from "./WorkFold.tsx";
 
@@ -261,8 +261,8 @@ export function ConversationView({
   );
   const [composerHeight, setComposerHeight] = useState(0);
   const [column, setColumn] = useState(0);
-  // A cache the visuals fill, not state: the conversation is mounted once per conversation.
-  const [visualHeights] = useState(() => new Map<EntryId, number>());
+  // The conversation is mounted once per conversation, and so is what its visuals share.
+  const [visuals] = useState(conversationVisuals);
   const widths = useMemo(() => {
     const { max, bubbleShare, cardShare } = layout.entryWidth;
     return {
@@ -333,7 +333,7 @@ export function ConversationView({
             setColumn(Math.min(event.nativeEvent.layout.width, layout.textColumn))
           }
         >
-          <VisualHeights value={visualHeights}>
+          <ConversationVisualsContext value={visuals}>
             <EntryWidths value={widths}>
               {quiet ? (
                 item._tag === "bot" ? (
@@ -364,12 +364,15 @@ export function ConversationView({
                     </View>
                   )}
                   extraData={{ room, widths, arrived, openingHold, turnBot }}
-                  onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) =>
+                  onScroll={({
+                    nativeEvent: { contentOffset, contentSize, layoutMeasurement },
+                  }) => {
+                    visuals.scrolled();
                     end.follow(
                       contentSize.height - layoutMeasurement.height - contentOffset.y,
                       layoutMeasurement.height,
-                    )
-                  }
+                    );
+                  }}
                   scrollEventThrottle={64}
                   alignItemsAtEnd
                   initialScrollAtEnd
@@ -394,7 +397,7 @@ export function ConversationView({
                 />
               )}
             </EntryWidths>
-          </VisualHeights>
+          </ConversationVisualsContext>
           {/* Over the composer, riding on the keyboard with it. */}
           {!quiet && (
             <KeyboardStickyView

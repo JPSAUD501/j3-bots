@@ -167,6 +167,31 @@ The desktop app updates itself from the repository's GitHub releases with electr
 
 - **What leaves the device.** The mobile app's dictation uses the platform's speech recognizer ([Clients: mobile](clients.md#mobile)), and the microphone only from the press of Dictate until Stop, or until the conversation leaves the screen or the app leaves the foreground. Recognition on the device sends nothing; online, the operator's audio goes to the device's speech service (usually Google's on Android, Apple's on iOS) for as long as dictation is on. The app asks Android for the on-device recognizer where it has the device's language installed (**Read** in `expo-speech-recognition` 58.0.1, `ExpoSpeechService.kt`), and takes iOS to recognize online; that the on-device recognizer then sends nothing is **Assumed** from Android's own description of it. While it listens, the line under the composer says whether recognition may run online. Nothing goes to the J3 Bots server but the text, once the operator sends it.
 
+## Visuals on Android
+
+The Android app draws a bot's visual in its own native view (`apps/mobile/modules/visual-view`), a WebView configured for an untrusted page:
+
+- **An opaque origin.** The page is loaded as a `data:` URL, so its origin is `null`. It has no cookie, no `localStorage` and no IndexedDB; each throws `SecurityError`.
+- **No network, twice.** The content security policy that `visualDocument` puts first allows none, and the WebView blocks network loads and network images as well (`blockNetworkLoads`, `blockNetworkImage`).
+- **No way out.** The WebView refuses every navigation on its own thread, with no timeout: a link, `location`, a meta refresh, `window.open` (multiple windows are off, and `onCreateWindow` refuses) and a form. Nothing reaches the system browser.
+- **Nothing else of the device.** Off: file access, content URIs, DOM storage, the database, the cache, third-party cookies, saved form data and geolocation. Permission requests (camera, microphone) are denied, the file chooser does not open, and `alert`, `confirm`, `prompt` and `beforeunload` are cancelled, so no dialog draws over the app. Nothing the page logs reaches the device's log.
+- **One string in.** The page reaches the app only through `postMessage(string)`. A string over 256 characters is dropped, and only the latest message waits for the app's main thread. The app reads only `{type: "j3-visual-height", height}` from it, clamped (`readVisualHeight`).
+- **A dead renderer** shows "Couldn't show this visual" instead of taking the app down (`onRenderProcessGone`).
+
+**Verified** on the Pixel 8 emulator (Android 16), with a page that tries each way out, inline and full screen:
+- the origin was `null`;
+- cookies, `localStorage` and IndexedDB threw `SecurityError`;
+- `eval` threw `EvalError`;
+- `fetch` failed and the remote image fired `onerror`;
+- `window.open` returned `null`;
+- `alert` and `confirm` showed nothing;
+- the iframe failed with `net::ERR_BLOCKED_BY_CSP`;
+- the page recorded policy violations for `script-src`, `connect-src`, `img-src`, `form-action` and `frame-src`;
+- after a scripted `location` change, a meta refresh, a scripted link click, a form submit and a real tap on a link, the page was still there and the app was still in front;
+- messages with another `type`, with an extra field, and of 5,000 characters changed nothing.
+
+That a screen reader skips the inline page is **Assumed**. The view sets `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS` on the WebView, and its React parent does the same, but the test driver's accessibility tree still lists the page's nodes, and TalkBack was not run.
+
 ## Secrets
 
 - J3 Bots never asks the operator to paste a secret into a conversation, and the base prompt tells bots not to either.

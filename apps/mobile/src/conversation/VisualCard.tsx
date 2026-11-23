@@ -2,47 +2,51 @@
 import type { EntryId, Visual } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { Maximize2, X } from "lucide-react-native";
-import { createContext, use, useEffect, useState } from "react";
+import { use, useEffect, useState, useSyncExternalStore } from "react";
 import { Modal, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { Text } from "../text.tsx";
 import { canShowVisuals, VisualFrame } from "./VisualFrame.tsx";
+import { type ConversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
 
-/**
- * The height each visual of the conversation last reported, kept while the
- * conversation is open: a visual the list unmounts as it scrolls away comes
- * back at its own height, and nothing around it moves.
- */
-export const VisualHeights = createContext<Map<EntryId, number> | null>(null);
+const notMoving = () => false;
+const noSubscription = () => () => undefined;
 
 /** Where a visual starts when neither the bot nor the page has said how tall it is. */
 const UNMEASURED_HEIGHT = 240;
 
 /**
- * How long a visual waits, once its row is drawn, before its page loads: a
- * row that only passes by in a fling stays a placeholder and never starts a
- * WebView. The list draws only rows near the screen, so at most those load.
+ * How long a visual waits, once its row is drawn and the list is still,
+ * before its page loads: a row that only passes by in a fling stays a
+ * placeholder and never starts a WebView. The list draws only rows near the
+ * screen, so at most those load. Once loaded, it stays while its row does.
  */
 const SETTLE_MS = 150;
 
-/** Whether the row has stayed drawn for `SETTLE_MS`. */
-function useSettled(): boolean {
+/** Whether the row has stayed drawn, with the list still, for `SETTLE_MS`. */
+function useSettled(visuals: ConversationVisuals | null): boolean {
+  const moving = useSyncExternalStore(
+    visuals?.subscribe ?? noSubscription,
+    visuals?.moving ?? notMoving,
+  );
   const [settled, setSettled] = useState(false);
   useEffect(() => {
+    if (settled || moving) return;
     const timer = setTimeout(() => setSettled(true), SETTLE_MS);
     return () => clearTimeout(timer);
-  }, []);
+  }, [settled, moving]);
   return settled;
 }
 
 type Shown = "loading" | "shown" | "failed";
 
 /**
- * The page a bot's message `id` showed above its words, drawn in the conversation at the height it reports
- * (clamped to the contract's range), in the app's current theme. It is only
+ * The page a bot's message `id` showed above its words, drawn in the
+ * conversation at the height it reports (clamped to the contract's range), in
+ * the app's current theme. It is only
  * drawn there: a press opens it full screen, where the operator can touch,
  * scroll and zoom it. Until it has painted, its title holds its place; one
  * that cannot be drawn says so in a line, under its title.
@@ -50,10 +54,10 @@ type Shown = "loading" | "shown" | "failed";
 export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visual: Visual }) {
   const { t } = useI18n();
   const widths = use(EntryWidths);
-  const heights = use(VisualHeights);
-  const settled = useSettled();
+  const visuals = use(ConversationVisualsContext);
+  const settled = useSettled(visuals);
   const [height, setHeight] = useState(
-    () => heights?.get(id) ?? visual.height ?? UNMEASURED_HEIGHT,
+    () => visuals?.heights.get(id) ?? visual.height ?? UNMEASURED_HEIGHT,
   );
   const [shown, setShown] = useState<Shown>(canShowVisuals ? "loading" : "failed");
   const [open, setOpen] = useState(false);
@@ -99,7 +103,7 @@ export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visu
                   html={visual.html}
                   interactive={false}
                   onHeight={(reported) => {
-                    heights?.set(id, reported);
+                    visuals?.heights.set(id, reported);
                     setHeight(reported);
                   }}
                   onLoaded={() => setShown("shown")}

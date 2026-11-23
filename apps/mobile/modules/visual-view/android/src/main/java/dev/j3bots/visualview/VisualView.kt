@@ -95,6 +95,12 @@ class VisualView(context: Context, appContext: AppContext) : ExpoView(context, a
     view.isVerticalScrollBarEnabled = interactive
     view.isHorizontalScrollBarEnabled = interactive
     view.overScrollMode = if (interactive) View.OVER_SCROLL_IF_CONTENT_SCROLLS else View.OVER_SCROLL_NEVER
+    // Only drawn, it takes no focus, and a screen reader reads the card's title instead of the page.
+    view.isFocusable = interactive
+    view.isFocusableInTouchMode = interactive
+    view.importantForAccessibility =
+      if (interactive) View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+      else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
     val next = document ?: return
     if (next == loaded || failed) return
     loaded = next
