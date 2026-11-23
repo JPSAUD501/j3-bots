@@ -61,16 +61,19 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
 import { BotStore } from "../bots/BotStore.ts";
 import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
+import { transactional } from "../persistence/transaction.ts";
 import { Vault } from "../vault/Vault.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
 import { addressOf, credentialsOf, usesVault, vaultIdOf } from "./credentials.ts";
+import { offers, serviceOf } from "./suggestions.ts";
 import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
 
 /**
@@ -267,6 +270,7 @@ export const layer = Layer.effect(
     const signIns = yield* ConnectorSignIns;
     const bots = yield* BotStore;
     const workspaces = yield* Workspaces;
+    const sql = yield* SqlClient.SqlClient;
     const entries = yield* Entries;
     const receipts = yield* CommandReceipts;
     const random = yield* SecureRandom.SecureRandom;
@@ -326,6 +330,46 @@ export const layer = Layer.effect(
      */
     const grantsChanged = Effect.fn("Connectors.grantsChanged")(function* (ids: Iterable<BotId>) {
       for (const id of new Set(ids)) yield* workspaces.render(id);
+    });
+
+    /**
+     * Closes a suggestion card as `connected`, if it still waits: read and
+     * written in one transaction, so a Not now another device committed
+     * meanwhile stands.
+     */
+    const cardConnected = Effect.fn("Connectors.cardConnected")(function* (
+      id: EntryId,
+      connector: StoredConnector,
+    ) {
+      const card = yield* suggestionCard(id);
+      if (Option.isNone(card) || card.value.status._tag !== "pending") return;
+      yield* entries.update({
+        ...card.value,
+        status: { _tag: "connected", connectorId: connector.id },
+      });
+    }, transactional(sql));
+
+    /**
+     * Closes as `connected` the cards that bots now given `connector` still
+     * show for it, however the operator gave it: from the card, from the
+     * gallery or from the connector's page.
+     */
+    const suggestionsMet = Effect.fn("Connectors.suggestionsMet")(function* (
+      connector: StoredConnector,
+      gained: Iterable<BotId>,
+    ) {
+      const service = serviceOf(connector);
+      for (const botId of new Set(gained)) {
+        const cards = yield* entries.ofKind(
+          { _tag: "conversation", botId },
+          "connector-suggestion",
+        );
+        for (const card of cards) {
+          if (card.status._tag === "pending" && offers(card, service)) {
+            yield* cardConnected(card.id, connector);
+          }
+        }
+      }
     });
 
     const offeredNow = Effect.fn("Connectors.offeredNow")(function* (id: ConnectorId) {
@@ -812,10 +856,7 @@ export const layer = Layer.effect(
       const card = yield* suggestionCard(suggestion);
       if (Option.isNone(card) || card.value.status._tag !== "pending") return;
       if (!(yield* botsOf(connector)).includes(card.value.author.botId)) return;
-      yield* entries.update({
-        ...card.value,
-        status: { _tag: "connected", connectorId: connector.id },
-      });
+      yield* cardConnected(card.value.id, connector);
     });
 
     /**
@@ -930,6 +971,7 @@ export const layer = Layer.effect(
           );
       }
       yield* closeSuggestion(input.suggestion, connector);
+      yield* suggestionsMet(connector, yield* botsOf(connector));
       yield* grantsChanged(yield* botsOf(connector));
       yield* toolsTouched(yield* botsOf(connector));
       yield* touch(input.id);
@@ -1036,10 +1078,9 @@ export const layer = Layer.effect(
       for (const lost of before.filter((id) => !after.includes(id))) {
         yield* closeSessions(input.connectorId, lost);
       }
-      const changed = [
-        ...before.filter((id) => !after.includes(id)),
-        ...after.filter((id) => !before.includes(id)),
-      ];
+      const gained = after.filter((id) => !before.includes(id));
+      const changed = [...before.filter((id) => !after.includes(id)), ...gained];
+      yield* suggestionsMet(connector, gained);
       yield* grantsChanged(changed);
       yield* toolsTouched(changed);
       yield* touch(input.connectorId);

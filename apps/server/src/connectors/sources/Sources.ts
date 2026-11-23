@@ -22,6 +22,7 @@ import {
   curatedDetails,
   curatedEntry,
   curatedFind,
+  curatedVariants,
   curatedForm,
   curatedListing,
   curatedMatches,
@@ -110,6 +111,11 @@ export class ConnectorSources extends Context.Service<
      * curated list, never of the registry, which anyone can publish to.
      */
     readonly find: (service: string, language: Language) => Option.Option<ConnectorListing>;
+    /**
+     * The listings that are the same service as `ref`: itself and the curated
+     * entries that connect to the same address another way.
+     */
+    readonly variants: (ref: ListingRef) => ReadonlyArray<ListingRef>;
     /** One listing's page. */
     readonly get: (
       ref: ListingRef,
@@ -165,6 +171,12 @@ export const layer = Layer.effect(
         Option.map(Option.fromUndefinedOr(curatedFind(list, service)), (entry) =>
           curatedListing(entry, language),
         ),
+
+      variants: (ref) => {
+        if (ref._tag === "registry") return [ref];
+        const found = curatedVariants(list, ref.key);
+        return found.length === 0 ? [ref] : found;
+      },
 
       search: Effect.fn("ConnectorSources.search")(function* ({ query, language, all }) {
         const fromList = list.connectors

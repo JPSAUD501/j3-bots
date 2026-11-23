@@ -4,9 +4,7 @@ import {
   BotId,
   Conflict,
   type ConnectorGlyph,
-  type ConnectorSuggestionEntry,
   type EntryTarget,
-  type ListingRef,
   MAX_ATTACHMENT_SIZE,
   type MessageEntry,
   RoomId,
@@ -34,6 +32,7 @@ import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
 import { ConnectorStore } from "../connectors/ConnectorStore.ts";
 import { ConnectorSources } from "../connectors/sources/Sources.ts";
+import { fold, type OfferedService, offers, sameListing } from "../connectors/suggestions.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
@@ -156,37 +155,10 @@ const answer = (result: Schema.Json) =>
     onSome: ({ reason }) => Effect.fail(new TurnToolRefused({ reason })),
   });
 
-/** Text folded for matching a service's name: lower case, without accents or surrounding spaces. */
-const fold = (value: string) => value.trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-
-const sameListing = (a: ListingRef, b: ListingRef) =>
-  a._tag === "curated"
-    ? b._tag === "curated" && a.key === b.key
-    : b._tag === "registry" && a.name === b.name;
-
-/** What a connector suggestion offers, and the gallery entry it is, if any. */
-interface Suggested {
-  readonly subject: ConnectorSuggestionEntry["subject"];
-  readonly name: string;
+/** What a connector suggestion offers, and with what glyph. */
+interface Suggested extends OfferedService {
   readonly glyph: ConnectorGlyph | null;
-  readonly listing: ListingRef | null;
 }
-
-/**
- * Whether an earlier suggestion card offered the same service: the same
- * connector, the same gallery entry, or the same name, so a connector the
- * operator added from an entry, or removed again, is the entry it came from.
- */
-const sameService = (card: ConnectorSuggestionEntry, suggested: Suggested) => {
-  if (fold(card.name) === fold(suggested.name)) return true;
-  if (card.subject._tag === "connector") {
-    return (
-      suggested.subject._tag === "connector" &&
-      card.subject.connectorId === suggested.subject.connectorId
-    );
-  }
-  return suggested.listing !== null && sameListing(card.subject.ref, suggested.listing);
-};
 
 /** A request as its stored result is looked up: under its id, for its caller and its tool. */
 const RequestKey = Schema.Struct({
@@ -1193,17 +1165,20 @@ export const layer = Layer.effect(
       )(
         Effect.gen(function* () {
           const refused = (reason: string) => ({ _tag: "refused", reason }) satisfies Schema.Json;
-          // The card keeps a gallery entry's name as the service gives it,
-          // which no shipped entry words apart from its English one.
+          // The card keeps the entry's English name: the server knows no
+          // operator's language, and a client words a gallery card from its
+          // listing. Only a variant's name (Linear with a key) differs by one.
           const listing = gallery.find(input.connector, "en");
+          const variants = Option.match(listing, {
+            onNone: () => [],
+            onSome: (entry) => gallery.variants(entry.ref),
+          });
           const wanted = fold(input.connector);
           const own = (yield* connectorStore.all).find(
-            (connector) =>
-              fold(connector.name) === wanted ||
-              connector.slug === wanted ||
-              (Option.isSome(listing) &&
-                connector.listing !== null &&
-                sameListing(connector.listing, listing.value.ref)),
+            ({ name, slug, listing: from }) =>
+              fold(name) === wanted ||
+              slug === wanted ||
+              (from !== null && variants.some((ref) => sameListing(from, ref))),
           );
           const suggested: Suggested | null =
             own !== undefined
@@ -1211,7 +1186,7 @@ export const layer = Layer.effect(
                   subject: { _tag: "connector", connectorId: own.id },
                   name: own.name,
                   glyph: own.glyph,
-                  listing: own.listing,
+                  listings: own.listing === null ? [] : gallery.variants(own.listing),
                 }
               : Option.match(listing, {
                   onNone: () => null,
@@ -1219,7 +1194,7 @@ export const layer = Layer.effect(
                     subject: { _tag: "listing", ref: entry.ref },
                     name: entry.name,
                     glyph: entry.glyph,
-                    listing: entry.ref,
+                    listings: variants,
                   }),
                 });
           if (suggested === null) return refused(SUGGESTION_REFUSED.unknown(input.connector));
@@ -1232,14 +1207,13 @@ export const layer = Layer.effect(
           }
           const target = yield* requireTarget(found.botId, conversation);
           const earlier = (yield* entries.ofKind(target, "connector-suggestion")).filter((card) =>
-            sameService(card, suggested),
+            offers(card, suggested),
           );
-          if (earlier.some((card) => card.status._tag === "dismissed")) {
-            return refused(SUGGESTION_REFUSED.declined(name));
-          }
-          if (earlier.some((card) => card.status._tag === "pending")) {
-            return refused(SUGGESTION_REFUSED.pending(name));
-          }
+          // Named as the operator saw it on the earlier card.
+          const declined = earlier.find((card) => card.status._tag === "dismissed");
+          if (declined !== undefined) return refused(SUGGESTION_REFUSED.declined(declined.name));
+          const waiting = earlier.find((card) => card.status._tag === "pending");
+          if (waiting !== undefined) return refused(SUGGESTION_REFUSED.pending(waiting.name));
           yield* entries.append({
             target,
             entry: {

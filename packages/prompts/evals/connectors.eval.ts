@@ -292,17 +292,23 @@ const suggested = (calls: ReadonlyArray<Call>) =>
 
 const BOARD_ASKED = "what's on my Linear board this week?";
 
+/** What `suggest_connector` answers when it shows a card. */
+const SHOWN = JSON.stringify({ status: "shown", note: SUGGESTION_SHOWN });
+
 const suggestionCase: Case = {
   name: "suggests the connector a task needs, once, and asks for no key",
   scenario: scenario(userWake(BOARD_ASKED), { connected: [] }),
   grades: ({ calls }) => {
     const made = suggested(calls);
+    const cards = named(calls, "suggest_connector").filter((call) => call.output === SHOWN);
     return [
       gradeFromCalls(
-        "suggests Linear once",
-        made.length === 1 && /linear/i.test(made[0]?.connector ?? "")
+        "shows one Linear card",
+        made.length === 1 && cards.length === 1 && /linear/i.test(made[0]?.connector ?? "")
           ? []
-          : [`suggested ${JSON.stringify(made.map(({ connector }) => connector))}`],
+          : [
+              `suggested ${JSON.stringify(made.map(({ connector }) => connector))}, ${cards.length} shown`,
+            ],
       ),
       gradeFromCalls(
         "asks for no key or token",
@@ -328,7 +334,7 @@ const suggestedEarlier: EarlierTurn = {
     {
       name: "suggest_connector",
       input: { connector: "Linear", reason: "To read the issues on your board this week." },
-      output: JSON.stringify({ status: "shown", note: SUGGESTION_SHOWN }),
+      output: SHOWN,
     },
     {
       name: "say",

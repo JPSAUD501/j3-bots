@@ -116,19 +116,43 @@ it.effect("shows one card for a gallery connector, and none again after its Not 
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("shows no card for a service the gallery lacks", () =>
+it.effect("takes another gallery entry for the same service as that service", () =>
+  Effect.gen(function* () {
+    const ana = yield* working("Ana");
+    assert.deepStrictEqual(yield* suggest(ana, "Linear", "call-8"), shown);
+    const [card] = yield* suggestionCards(ana.bot.id);
+    assert.isDefined(card);
+    // The gallery also connects Linear with a key.
+    assert.deepStrictEqual(
+      yield* suggest(ana, "Linear (API key)", "call-9"),
+      refused(SUGGESTION_REFUSED.pending("Linear")),
+    );
+    yield* notNow(card);
+    assert.deepStrictEqual(
+      yield* suggest(ana, "linear-key", "call-10"),
+      refused(SUGGESTION_REFUSED.declined("Linear")),
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("shows no card for a service the gallery lacks, or for a word only its texts use", () =>
   Effect.gen(function* () {
     const ana = yield* working("Ana");
     assert.deepStrictEqual(
       yield* suggest(ana, "Quillwork", "call-4"),
       refused(SUGGESTION_REFUSED.unknown("Quillwork")),
     );
+    // Gmail's category is "Email and calendar": a card for it would offer another service.
+    assert.deepStrictEqual(
+      yield* suggest(ana, "calendar", "call-7"),
+      refused(SUGGESTION_REFUSED.unknown("calendar")),
+    );
     assert.deepStrictEqual(yield* suggestionCards(ana.bot.id), []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(
-  "offers the operator's own connector to a bot without it, and none to a bot that has it",
+  "offers the operator's own connector to a bot without it, none to a bot that has it, and closes the card once its bot has it",
   () =>
     Effect.gen(function* () {
       const connector = yield* notion;
@@ -145,6 +169,11 @@ it.effect(
         refused(SUGGESTION_REFUSED.usable("Notion")),
       );
       assert.deepStrictEqual(yield* suggestionCards(ben.bot.id), []);
+
+      // Given from the connector's page, not from the card.
+      yield* connector.grant([ben.bot.id, ana.bot.id]);
+      const [closed] = yield* suggestionCards(ana.bot.id);
+      assert.strictEqual(closed?.status._tag, "connected");
     }).pipe(Effect.scoped, Effect.provide(domain)),
   SLOW,
 );
