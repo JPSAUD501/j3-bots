@@ -32,6 +32,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0024](0024-the-local-server-is-a-supervised-child-of-the-app.md) | The local-mode server is a supervised child of the app | Proposed |
 | [0025](0025-a-file-stands-where-the-operator-placed-it.md) | A file stands where the operator placed it, as a mark in the draft's text | Accepted |
 | [0031](0031-a-release-is-signed-and-a-nightly-is-a-pre-release-of-the-next-patch.md) | A release is signed, and a nightly is a pre-release of the next patch | Accepted |
+| [0032](0032-updates-are-served-outside-the-protocol.md) | Updates are served outside the protocol, and offer only a signed, newer release | Proposed |
 | [0036](0036-phone-access-restarts-the-local-server-on-the-network.md) | Phone access restarts the local server on the network, under the server's own `lan` rules | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

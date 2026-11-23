@@ -10,7 +10,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 
 | Entity | What it holds |
 | --- | --- |
-| Settings | One row: the operator's name, their time zone and whether it was set, the budgets, notification preferences |
+| Settings | One row: the operator's name, their time zone and whether it was set, the budgets, notification preferences, the update channel |
 | Bot | Profile, model, permission mode, how many times its model or permission mode changed, workspace path and the real path it had when first provisioned, engine project id, whether its conversation was told that its main session is not ready, the count of model or permission mode changes at which the engine refused its permission mode, and the refusal of it its conversation was told of |
 | Conversation | One per bot. A sequence of entries, and how far the operator has read |
 | Section | A named group of bots in the roster: its name and its place among the others. A bot names the one it is in, or none |
@@ -64,6 +64,7 @@ providers/
 state/
   shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
   runtime.json       the release this home's data was last handed to, whether by a rollback, and a transition under way
+  release-feed.json  the newest release each channel last offered, whether it verified, and when the feed checks next
 backups/
   <snapshot>/        the databases and settings a version transition copied before it changed release
   update.lock        held by the one version transition or rollback running
@@ -537,6 +538,18 @@ Unread has one source of truth: the conversation's read mark against its newest 
 **A room's past entries after it ends.** Archiving a room expires its open `ask` cards, so a client's stale answer to one fails with `Conflict("card-closed")`; a Retry of its message or notice fails with `Conflict("room-archived")` until the room is restored. Deleting a room deletes its entries, so a stale answer, and a Retry of anything that was in it, fails with `NotFound`.
 
 The server pages history by `order`; a client asks for older entries as the operator scrolls.
+
+## Release feed
+
+The server learns of newer releases on its own, so a client can offer to update it (`UPDATE_HTTP_PATHS`, [Clients: updates](clients.md#updates-outside-the-protocol)). `ReleaseFeed` (`apps/server/src/releases/`) does it:
+
+- **The channel** is a setting of the server, `Settings.updateChannel`: `stable`, the default, or `nightly`. Stable reads GitHub's REST API `releases/latest`, the newest published release that is not a pre-release. Nightly reads `releases?per_page=30` and takes the newest release that is either a nightly build, a pre-release tagged `v<X.Y.Z>-nightly.<YYYYMMDD>.<N>`, or a stable release. A draft, a release candidate, any other tag, or a pre-release flag that contradicts the tag is passed over. Versions order as semantic versioning does (`@j3-bots/release`, `compareVersions`), so a nightly sorts after the stable release it follows and before the next one.
+- **Only newer, only verified.** The newest release on the channel is offered only when it sorts after the running version, never when it is the same or older: no downgrade. Before it is offered, the feed downloads its `SHA256SUMS` and `SHA256SUMS.sig` from the releases page and verifies them ([Security: updates](security.md#updates)). A release that fails is reported as `refused`, with why, and is not offered; the verdict is kept, so a release is verified once. A server on stable that runs a nightly, after its operator moved it from nightly, is offered nothing until a stable release newer than that nightly exists, and says it is waiting for one (`waitingForStable`).
+- **When.** A minute after the server starts when no check is due later, then every 6 hours, give or take 30 minutes so servers started together do not ask together, and at once when the channel changes. A client may ask for a check; one within a minute of the last answers what that one found. Checks run one at a time; a check asked for while one runs waits for it.
+- **Asking little.** No token: the API allows an address 60 requests an hour without one, shared by every machine behind it. A check is one request (two downloads more, from the releases page, only for a release not verified yet), so a server makes one every 6 hours on its own (four an hour at most while checks fail), and the checks clients ask for add at most one a minute. Each request carries the ETag of the last answer, which GitHub answers 304 when nothing changed, with nothing to decode. A 304 still counts against the limit without a token (**Verified** against `api.github.com`, 2026-11-24: `x-ratelimit-remaining` fell by one for each 304). A 403 or 429 is a rate limit: the next check waits for `retry-after`, or for `x-ratelimit-reset` when no requests are left, and at least 15 minutes, doubled after each check that does not finish, up to 6 hours. What the last check found still stands meanwhile.
+- **Kept across a restart.** What the feed found, the ETags and the verdicts are written to `state/release-feed.json`, so a restart, an update's included, asks nothing before the next check is due. A file that cannot be read is a cache lost: the feed starts again from nothing.
+
+`J3_RELEASE_FEED_URL` replaces the API (default `https://api.github.com/repos/JPSAUD501/j3-bots`), for tests and mirrors: it must answer `<base>/releases/latest` and `<base>/releases`. Downloads come from `J3_RELEASE_BASE_URL`, as `j3-bots update` and `install.sh` take them.
 
 ## Configuration
 

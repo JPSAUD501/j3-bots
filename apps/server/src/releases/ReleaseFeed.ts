@@ -48,9 +48,10 @@ import { trustedReleaseKeys } from "./keys.ts";
 // Which newer release this server is offered, checked against its signature
 // (docs/architecture/server.md, "Release feed"). It reads GitHub's REST API
 // for the repository's releases, without a token: `releases/latest` for the
-// stable channel, `releases?per_page=30` for nightly. Each check is a
-// conditional request with the answer's ETag, which GitHub answers 304 without
-// counting it against the 60 requests an hour it allows a machine. A release
+// stable channel, `releases?per_page=30` for nightly: one request a check,
+// of the 60 an hour GitHub allows an address without a token. Each is
+// conditional, with the last answer's ETag, so an unchanged list is a 304
+// with nothing to decode (it still counts against the limit). A release
 // is available only once its `SHA256SUMS.sig` verifies and only when it is
 // newer than the running one: never a downgrade.
 //
