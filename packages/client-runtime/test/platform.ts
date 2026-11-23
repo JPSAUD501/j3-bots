@@ -102,7 +102,13 @@ const network = Layer.effectContext(
     };
     return Context.make(
       Network,
-      Network.of({ status: SubscriptionRef.get(status), changes: SubscriptionRef.changes(status) }),
+      Network.of({
+        // Asynchronous, as a phone's answer is: nothing may read it synchronously.
+        status: Effect.promise(() => Promise.resolve()).pipe(
+          Effect.andThen(SubscriptionRef.get(status)),
+        ),
+        changes: SubscriptionRef.changes(status),
+      }),
     ).pipe(
       Context.add(
         Socket.WebSocketConstructor,

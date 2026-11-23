@@ -287,6 +287,17 @@ export class Connection extends Context.Service<
     readonly bearer: (
       pairing: DeviceId,
     ) => Effect.Effect<Redacted.Redacted<DeviceToken>, NotPaired>;
+    /**
+     * The address of the socket at `path` beside the RPC socket, for the
+     * credential this window holds now, with a fresh one-use ticket and
+     * `query`: the media socket's. Fails with `NotPaired` without a
+     * credential, or when the server refuses it, which the RPC socket finds
+     * out on its own; with `ServerUnreachable` when no ticket could be had.
+     */
+    readonly socketAddress: (
+      path: string,
+      query: Readonly<Record<string, string>>,
+    ) => Effect.Effect<string, NotPaired | ServerHttp.ServerUnreachable>;
     /** This device's id, as the server knows it. Fails with `NotPaired` without a credential. */
     readonly deviceId: Effect.Effect<DeviceId, NotPaired>;
     /**
@@ -763,6 +774,13 @@ export const layer = Layer.effect(
         const current = yield* paired;
         if (current.deviceId !== held) return yield* new NotPaired();
         return current.token;
+      }),
+      socketAddress: Effect.fn("Connection.socketAddress")(function* (path, query) {
+        const current = yield* paired;
+        const grant = yield* http
+          .socketTicket(current.token)
+          .pipe(Effect.catchTag("NotAuthenticated", () => Effect.fail(new NotPaired())));
+        return http.socketUrl(grant.ticket, path, query);
       }),
       deviceId: Effect.map(paired, (current) => current.deviceId),
       awaitConnected: awaitSession(0).pipe(Effect.asVoid),

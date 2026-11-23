@@ -4,6 +4,9 @@ import type {
   Bot,
   BotFile,
   BotId,
+  BrowserInput,
+  BrowserTab,
+  BrowserTabRef,
   CommandId,
   Device,
   DeviceId,
@@ -57,6 +60,7 @@ import type {
   WindowLocks,
 } from "./ports.ts";
 import type { Readable } from "./Store.ts";
+import * as Browser from "./stores/Browser.ts";
 import * as Conversations from "./stores/Conversations.ts";
 import * as Details from "./stores/Details.ts";
 import * as Devices from "./stores/Devices.ts";
@@ -99,6 +103,7 @@ export const layer = SignOut.layer.pipe(
       Presence.layer,
       Usage.layer,
       ProviderSetup.layer,
+      Browser.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -136,6 +141,26 @@ export interface UsageHandle {
 export interface LoadedHandle<A> {
   readonly state: Readable<Loaded<A>>;
   readonly release: () => void;
+}
+
+/** One tab of a bot's browser, shown while held. See `Browser.BrowserView`. */
+export interface BrowserViewHandle {
+  readonly state: Readable<Browser.BrowserViewState>;
+  readonly picture: Readable<Browser.BrowserPicture | null>;
+  readonly probe: Readable<Browser.BrowserProbe | null>;
+  readonly cursor: Readable<Browser.BrowserCursor | null>;
+  /** Calls `listener` with each answer to a `probe`. Returns the function that stops it. */
+  readonly onProbe: (listener: (probe: Browser.BrowserProbe) => void) => () => void;
+  /** Calls `listener` with each move and click of the bot's pointer. Returns the function that stops it. */
+  readonly onCursor: (listener: (cursor: Browser.BrowserCursor) => void) => () => void;
+  /** The picture `sequence` is drawn: the next may come. */
+  readonly ack: (sequence: number) => void;
+  readonly send: (input: BrowserInput) => void;
+  /**
+   * Closes the view's socket. It gives nothing back: a tab this device holds
+   * stays its own for the server's grace period, unless `release` was sent.
+   */
+  readonly close: () => void;
 }
 
 /** A file's bytes, or why there are none. */
@@ -369,6 +394,18 @@ export interface J3Client {
     request: ProviderConnectionRequest,
   ) => Promise<ProviderSetup.ConnectEndpointResult>;
 
+  /** The tabs the bot has open in its browser, live while held. */
+  readonly openBrowserTabs: (botId: BotId) => LoadedHandle<ReadonlyArray<BrowserTab>>;
+  /**
+   * Shows one tab: its pictures and who holds it, on a socket of its own that
+   * opens again after a drop and while the app is in the foreground. `size`
+   * is read for each socket.
+   */
+  readonly openBrowserView: (input: {
+    readonly ref: BrowserTabRef;
+    readonly size: () => Browser.BrowserViewSize;
+  }) => BrowserViewHandle;
+
   readonly setView: (target: EntryTarget | null) => void;
   /** Calls `listener` for each notification. Returns the function that stops it. */
   readonly onNotification: (listener: (notification: Notification) => void) => () => void;
@@ -413,6 +450,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         presence: yield* Presence.Presence,
         usage: yield* Usage.Usage,
         providerSetup: yield* ProviderSetup.ProviderSetup,
+        browser: yield* Browser.Browser,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -438,6 +476,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     };
     return { value, release };
   };
+
+  /** Calls `listener` with each value `readable` takes but null, until the returned function is called. */
+  const each = <A>(readable: Readable<A | null>, listener: (value: A) => void) =>
+    readable.subscribe(() => {
+      const value = readable.get();
+      if (value !== null) listener(value);
+    });
 
   /** Calls `listener` for each item of `stream` until the returned function is called. */
   const listen = <A>(stream: Stream.Stream<A>, listener: (item: A) => void) => {
@@ -612,6 +657,25 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     cancelSignIn: (harness) => fire(services.providerSetup.cancelSignIn(harness)),
     harnessLocations: () => run.promise(services.providerSetup.harnesses),
     connectEndpoint: (request) => run.promise(services.providerSetup.connect(request)),
+
+    openBrowserTabs: (botId) => {
+      const { value, release } = hold(services.browser.tabs(botId));
+      return { state: value, release };
+    },
+    openBrowserView: (input) => {
+      const { value, release } = hold(services.browser.view(input));
+      return {
+        state: value.state,
+        picture: value.picture,
+        probe: value.probe,
+        cursor: value.cursor,
+        onProbe: (listener) => each(value.probe, listener),
+        onCursor: (listener) => each(value.cursor, listener),
+        ack: (sequence) => fire(value.ack(sequence)),
+        send: (frame) => fire(value.send(frame)),
+        close: release,
+      };
+    },
 
     setView: (target) => fire(services.presence.setView(target)),
     onNotification: (listener) => listen(services.presence.notifications, listener),

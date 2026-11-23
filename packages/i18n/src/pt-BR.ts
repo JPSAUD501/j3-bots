@@ -1186,6 +1186,36 @@ const sentences = {
   "settings.signOut.body.mobile":
     "Este celular perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",
   "settings.signOut.cancel": "Continuar conectado",
+  "browser.status.bot": "O bot está navegando",
+  "browser.status.you": "Você está no controle",
+  "browser.status.anotherDevice": "Em outro aparelho",
+  "browser.status.nobody": "Ninguém está usando esta página",
+  "browser.take": "Assumir controle",
+  "browser.done": "Pronto",
+  "browser.cantDoIt": "Não consigo",
+  "browser.keyboard": "Teclado",
+  "browser.close": "Fechar",
+  "browser.page": "A página em {site}",
+  "browser.connecting": "Abrindo a página…",
+  "browser.reconnecting": "Reconectando…",
+  "browser.noTab": "O bot não tem nenhuma página aberta.",
+  "browser.gone": "Esta página foi fechada.",
+  "browser.replaced": "Esta página está aberta em outra janela.",
+  "browser.showHere": "Mostrar aqui",
+  "browser.failed": "Não foi possível abrir esta página.",
+  "browser.retry": "Tentar de novo",
+  "browser.setupNeeded.sandbox":
+    "O navegador só inicia quando o computador do servidor permitir o uso da sandbox. Rode j3-bots doctor lá para ver como.",
+  "browser.setupNeeded.libraries":
+    "O navegador só inicia quando o computador do servidor tiver as bibliotecas de que precisa. Rode j3-bots doctor lá para ver como.",
+  "browser.handBack.title": "Devolver o controle?",
+  "browser.handBack.body": "O bot não consegue usar o navegador enquanto você está no controle.",
+  "browser.handBack.confirm": "Devolver",
+  "browser.handBack.keep": "Continuar no controle",
+  "browser.dialog.from": "{site} diz",
+  "browser.dialog.leave": "Sair desta página?",
+  "browser.dialog.accept": "OK",
+  "browser.dialog.dismiss": "Cancelar",
 } as const satisfies Catalog;
 
 export const ptBR: AddingNone<typeof sentences> = sentences;
