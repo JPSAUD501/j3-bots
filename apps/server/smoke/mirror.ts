@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- the mirror is a node:http server, and its SHA256SUMS is made with node:crypto.
+// @effect-diagnostics nodeBuiltinImport:off -- the mirror is a node:http server, and its SHA256SUMS is made and signed with node:crypto.
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import * as Config from "effect/Config";
@@ -9,7 +9,8 @@ import * as Path from "effect/Path";
 
 // A static mirror of a GitHub release page, as `J3_RELEASE_BASE_URL` names one
 // for scripts/install.sh and `j3-bots update`: `<base>/latest` and
-// `<base>/download/v<version>/<file>`.
+// `<base>/download/v<version>/<file>`. Its SHA256SUMS are signed with a key
+// made for the run, which `J3_RELEASE_PUBLIC_KEY` names to install.sh.
 
 /** A mirror serving `files` by path and noting each path asked for, for the scope. */
 export const mirror = (files: ReadonlyMap<string, Uint8Array>) =>
@@ -44,6 +45,17 @@ export const mirror = (files: ReadonlyMap<string, Uint8Array>) =>
     (running) => Effect.sync(() => running.close()),
   );
 
+const mirrorKey = NodeCrypto.generateKeyPairSync("ed25519");
+
+/** The public key the mirror signs with, as `J3_RELEASE_PUBLIC_KEY` takes it. */
+export const MIRROR_PUBLIC_KEY = mirrorKey.publicKey
+  .export({ type: "spki", format: "pem" })
+  .toString();
+
+/** SHA256SUMS.sig for `sums`: the Ed25519 signature in base64, one line. */
+const signature = (sums: Uint8Array) =>
+  encoded(`${NodeCrypto.sign(null, sums, mirrorKey.privateKey).toString("base64")}\n`);
+
 export const sha256 = (bytes: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
@@ -60,17 +72,15 @@ export const releaseArchive = Effect.fn("releaseArchive")(function* (variable: s
   return { name, version, bytes: yield* fs.readFile(archive) };
 });
 
-/** One release on a release page, `version`, with its archive and its SHA256SUMS. */
-export const releaseFiles = (
-  version: string,
-  archive: string,
-  bytes: Uint8Array,
-  digest = sha256(bytes),
-) =>
-  new Map<string, Uint8Array>([
+/** One release on a release page, `version`, with its archive and its signed SHA256SUMS. */
+export const releaseFiles = (version: string, archive: string, bytes: Uint8Array) => {
+  const sums = encoded(`${sha256(bytes)}  ${archive}\n`);
+  return new Map<string, Uint8Array>([
     [`/download/v${version}/${archive}`, bytes],
-    [`/download/v${version}/SHA256SUMS`, encoded(`${digest}  ${archive}\n`)],
+    [`/download/v${version}/SHA256SUMS`, sums],
+    [`/download/v${version}/SHA256SUMS.sig`, signature(sums)],
   ]);
+};
 
 /** The answer of a release page's `latest`, asked for JSON, when `tag` is the latest release. */
 export const latestPage = (tag: string) => encoded(`{"id":1,"tag_name":"${tag}","update_url":"/"}`);

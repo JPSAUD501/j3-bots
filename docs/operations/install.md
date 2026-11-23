@@ -21,7 +21,7 @@ Clients run anywhere: the web client in a browser, and the desktop app on Linux,
 
 - About 3 GB of free disk. The engine is about 200 MB once downloaded; the database and the bots' files grow with use.
 - About 1.5 GB of free memory while a bot works: the server takes about 120 MB and the engine about 400 MB with no turn running, and each harness adds its own while it runs, about 225 MB for Claude Code ([measured on a Raspberry Pi 4](#raspberry-pi)).
-- `sh`, `tar`, `curl` or `wget`, and `sha256sum` or `shasum`. A release carries its own Node: no Node, pnpm, Git or Docker is needed.
+- `sh`, `tar`, `curl` or `wget`, `sha256sum` or `shasum`, and OpenSSL 3 or newer, which checks the release's signature. Debian 12, Ubuntu 22.04 and Raspberry Pi OS bookworm ship OpenSSL 3; on an older system, install it before you run the installer. A release carries its own Node: no Node, pnpm, Git or Docker is needed.
 - Root access only for `loginctl enable-linger`, so the service starts at boot, and to create a dedicated user if you make one. The installer itself refuses to run as root.
 - A way for bots to reach their models: an endpoint in front of your subscriptions, or a harness signed in ([Connect the providers](#connect-the-providers)).
 
@@ -58,10 +58,10 @@ That address answers only once a release that is not a pre-release is published.
 curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/install.sh | sh -s -- --version 0.1.0-rc.1
 ```
 
-`install.sh` refuses root, a system other than x64 or arm64 Linux, and, unless given `--no-service`, a user with no systemd user manager. Then it:
+`install.sh` refuses root, a system other than x64 or arm64 Linux, a machine without OpenSSL 3, and, unless given `--no-service`, a user with no systemd user manager. Then it:
 
-1. finds the latest release, or the one `--version` names (a pre-release, which it never picks by itself);
-2. downloads the archive for this machine and checks it against the release's `SHA256SUMS`;
+1. finds the latest release, or the one `--version` names (a pre-release or a nightly, which it never picks by itself);
+2. downloads the release's `SHA256SUMS` and its signature, `SHA256SUMS.sig`, and checks the signature with the J3 Bots release key it carries; then downloads the archive for this machine and checks it against its digest in `SHA256SUMS`. It installs nothing when either check fails, and says which ([Releasing: what verifies a release](releasing.md#what-verifies-a-release));
 3. unpacks it into `~/.local/share/j3-bots/versions/<version>/`, outside the data directory;
 4. writes the `j3-bots` command, `~/.local/bin/j3-bots`, which runs that version, and records where it is in `~/.local/share/j3-bots/launcher`;
 5. runs `j3-bots doctor` ([What doctor says](#what-doctor-says)), then `j3-bots service install` ([The service](#the-service)), unless `--no-service`;
