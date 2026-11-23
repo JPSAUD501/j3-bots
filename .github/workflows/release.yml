@@ -19,8 +19,11 @@ name: Release
 # reads the four secrets that hold the key that signs the APK, in the
 # `android-signing` environment; `sign` reads the key that signs SHA256SUMS,
 # in the `release-signing` environment. Both environments admit only `v*`
-# tags and `main`, and neither job runs code from the repository or the
-# build. Only the two jobs that run no code from the repository may write:
+# tags, which only admins may create (the "release tags" ruleset), and the
+# branch `main`, where the nightly runs. A nightly's tag is its bare version,
+# 1.2.4-nightly.20261124.57, outside `v*`: the workflow token that creates
+# and deletes nightly tags therefore opens neither environment. Neither job
+# runs code from the repository or the build. Only the two jobs that run no code from the repository may write:
 # `draft` creates the release and `publish` uploads to it. The jobs that build
 # read, and the last job of each build hands what it made to `checksums` and
 # `publish` as a `release-*` artifact; each such job is in the `needs` of
@@ -57,7 +60,8 @@ jobs:
       # A pushed tag names the version the packages carry: v1.2.3, or a
       # release candidate, v1.2.3-rc.1. The nightly names its own,
       # 1.2.4-nightly.20261124.57, and only the nightly may: a pushed tag of
-      # that form is refused. Only the versions the Android app can number
+      # that form is refused. A nightly's tag is its version with no `v`, so
+      # that it stays outside the `v*` tags the signing environments admit. Only the versions the Android app can number
       # are taken: this is the grammar and the limits of androidVersionCode
       # (apps/mobile/src/androidVersionCode.ts), which the Android build runs,
       # for versions after 0.3.0. This job may write, so it runs no code from
@@ -105,7 +109,11 @@ jobs:
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if [[ -n "$NIGHTLY_VERSION" ]]; then
+            echo "tag=$version" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          fi
 
       # The draft's notes give the certificate's digest, and a re-run keeps a
       # draft that exists, so the digest must be right before it is written.
@@ -379,8 +387,11 @@ jobs:
 
   # Signs the APK `android` built, with the key in the `android-signing`
   # environment, whose four secrets this job alone reads. The environment
-  # admits only `v*` tags, so whoever may push one may use the key; the
-  # repository's "release tags" ruleset leaves that to admins. The job checks
+  # admits only `v*` tags and the branch `main`, so whoever may push such a tag
+  # or merge to `main` may use the key: the repository's "release tags"
+  # ruleset lets only admins create, move or delete a `v*` tag, and gives no
+  # bypass to GitHub Actions, and `main` takes a change only through a pull
+  # request and its checks. Nightly tags are outside `v*`. The job checks
   # nothing out, installs nothing and runs nothing from the repository or the
   # build: only the runner image's own `apksigner` and `zipalign`, on the APK's
   # bytes. That keeps the key from the build, not the build from the key: the
@@ -547,16 +558,19 @@ jobs:
 
   # Signs SHA256SUMS with the release key, the secret RELEASE_SIGNING_KEY of
   # the `release-signing` environment, which this job alone reads. The
-  # environment admits only `v*` tags and `main`, the refs this workflow runs
-  # on. As `android-sign` does, the job installs nothing and runs nothing from
-  # the repository or the build: it checks out only the public keys in
-  # release-keys/, which are data, and runs the runner image's own `openssl`
-  # on SHA256SUMS's bytes. The key is on disk, readable by the runner's user
-  # only, from the step that writes it to the step that deletes it, which
-  # runs even when signing fails. The signature is then checked with the
-  # committed public keys, so a key that is not the release's never signs a
-  # release. SHA256SUMS.sig is the 64-byte Ed25519 signature in base64, one
-  # line.
+  # environment admits only `v*` tags and `main`, as `android-signing` does
+  # (see `android-sign`). As `android-sign` does, the job installs nothing and
+  # runs nothing from the repository or the build: it checks out only the
+  # public keys in release-keys/, which are data, and runs the runner image's
+  # own `openssl` on SHA256SUMS's bytes. The key is on disk, readable by the
+  # runner's user only, from the step that writes it to the step that deletes
+  # it, which runs even when signing fails. The signature is then checked
+  # with the public keys committed at the commit being built, so a key that
+  # is not the release's never signs a release: the keys in release-keys/,
+  # which this build carries, or one in release-keys/retiring/, which only a
+  # release that hands installs over to a new key has
+  # (docs/operations/releasing.md#if-the-key-leaks). SHA256SUMS.sig is the
+  # 64-byte Ed25519 signature in base64, one line.
   sign:
     name: Sign SHA256SUMS
     needs: checksums
@@ -582,7 +596,9 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-          sparse-checkout: release-keys/*.pem
+          sparse-checkout: |
+            release-keys/*.pem
+            release-keys/retiring/*.pem
           sparse-checkout-cone-mode: false
 
       - name: Download SHA256SUMS
@@ -610,7 +626,8 @@ jobs:
         run: rm -f "$RUNNER_TEMP/release-signing.pem"
 
       # One line of 88 characters, the base64 of 64 bytes, made by one of the
-      # keys that install.sh, the server and the apps carry.
+      # keys that install.sh, the server and the apps carry, or by a retiring
+      # key, which the installs this release replaces carry and it does not.
       - name: Check the signature with the release keys
         run: |
           openssl version
@@ -619,13 +636,23 @@ jobs:
             exit 1
           fi
           openssl base64 -d -A -in signature/SHA256SUMS.sig -out "$RUNNER_TEMP/signature"
+          verifies() {
+            openssl pkeyutl -verify -pubin -inkey "$1" -rawin -in checksums/SHA256SUMS -sigfile "$RUNNER_TEMP/signature" > /dev/null 2>&1
+          }
+          shopt -s nullglob
           for key in release-keys/*.pem; do
-            if openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in checksums/SHA256SUMS -sigfile "$RUNNER_TEMP/signature" > /dev/null 2>&1; then
+            if verifies "$key"; then
               echo "SHA256SUMS is signed by $key."
               exit 0
             fi
           done
-          echo "::error::The signature does not verify with any key in release-keys/: RELEASE_SIGNING_KEY is not the release key."
+          for key in release-keys/retiring/*.pem; do
+            if verifies "$key"; then
+              echo "::warning::SHA256SUMS is signed by the retiring key $key, which this release no longer carries: it is the release that hands installs over to the keys in release-keys/."
+              exit 0
+            fi
+          done
+          echo "::error::The signature does not verify with any key in release-keys/ or release-keys/retiring/: RELEASE_SIGNING_KEY is not a release key."
           exit 1
 
       - name: Hand the signature to the publish job
@@ -692,9 +719,35 @@ jobs:
           fi
           find release -type f -print0 | xargs -0 gh release upload "$TAG" --clobber
 
+      # The draft may be one that existed before this run, made by hand or by
+      # an earlier try, and the upload replaces only files of the same name.
+      # So the draft as GitHub holds it must have exactly SHA256SUMS, its
+      # signature and the files SHA256SUMS lists, each fully uploaded, or
+      # nothing is published from it: a file someone else put on it would
+      # otherwise be published beside the signed ones.
+      - name: Check the draft holds only the signed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft.outputs.tag }}
+        run: |
+          sums="$(find release -type f -name SHA256SUMS)"
+          { printf '%s\n' SHA256SUMS SHA256SUMS.sig; cut -c67- "$sums"; } | LC_ALL=C sort > "$RUNNER_TEMP/signed"
+          gh release view "$TAG" --json assets --jq '.assets[] | [.name, .state] | @tsv' > "$RUNNER_TEMP/assets"
+          not_uploaded="$(awk -F'\t' '$2 != "uploaded" { print $1 }' "$RUNNER_TEMP/assets")"
+          if [[ -n "$not_uploaded" ]]; then
+            echo "::error::Files on the draft for $TAG are not fully uploaded: $not_uploaded"
+            exit 1
+          fi
+          cut -f1 "$RUNNER_TEMP/assets" | LC_ALL=C sort > "$RUNNER_TEMP/on-draft"
+          if ! diff -u "$RUNNER_TEMP/signed" "$RUNNER_TEMP/on-draft"; then
+            echo "::error::The draft for $TAG does not hold exactly SHA256SUMS, SHA256SUMS.sig and the files SHA256SUMS lists. A line marked + is a file nobody signed: delete it from the draft, then re-run this job."
+            exit 1
+          fi
+
       # A nightly is published as soon as its files are up, as a pre-release,
-      # which makes its tag on the commit it was built from. A pushed tag's
-      # draft waits for a maintainer.
+      # which makes its tag, the bare version, on the commit it was built
+      # from. A pushed tag's draft waits for a maintainer.
       - name: Publish the nightly
         if: inputs.nightly-version != ''
         env:

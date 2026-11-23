@@ -10,6 +10,9 @@
 #   curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/latest/download/install.sh | sh
 #   curl -fsSL https://github.com/JPSAUD501/j3-bots/releases/download/v0.1.0-rc.1/install.sh | sh -s -- --version 0.1.0-rc.1
 #
+# A release's tag is v<version>; a nightly's is its version alone, such as
+# 0.3.1-nightly.20261124.57.
+#
 # Options:
 #   --version <version>  install this release, a pre-release included
 #                        (default: the latest release, never a pre-release)
@@ -21,7 +24,7 @@
 #   J3_BIN_DIR           where the j3-bots command goes (default: ~/.local/bin)
 #   J3_HOME              the data directory (default: ~/.j3-bots)
 #   J3_RELEASE_BASE_URL  the releases page, or a mirror of it that serves
-#                        <base>/latest and <base>/download/v<version>/<file>
+#                        <base>/latest and <base>/download/<tag>/<file>
 #                        (default: https://github.com/JPSAUD501/j3-bots/releases).
 #                        Its SHA256SUMS must be signed like the release's, so a
 #                        mirror of a release serves the release's own files.
@@ -251,7 +254,10 @@ verify_signature() {
   {
     release_keys
     if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ]; then printf '%s\n' "$J3_RELEASE_PUBLIC_KEY"; fi
-  } | awk -v dir="$work" '/^-----BEGIN PUBLIC KEY-----$/ { n++ } n { print > (dir "/key-" n ".pem") }'
+  } | awk -v dir="$work" '
+    /^-----BEGIN PUBLIC KEY-----$/ { n++; inside = 1 }
+    inside { print > (dir "/key-" n ".pem") }
+    /^-----END PUBLIC KEY-----$/ { inside = 0 }'
   for key in "$work"/key-*.pem; do
     [ -f "$key" ] || continue
     if openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in "$1" -sigfile "$work/signature" > /dev/null 2>&1; then
@@ -293,7 +299,11 @@ fi
 stem="j3-bots-$version-linux-$arch"
 archive="$stem.tar.gz"
 target="$versions_dir/$version"
-download_url="$base_url/download/v$version"
+case "$version" in
+  *-nightly.*) tag="$version" ;;
+  *) tag="v$version" ;;
+esac
+download_url="$base_url/download/$tag"
 
 # Before anything in them is used: a release already there is run as it is.
 # A folder made below is checked once it is made.

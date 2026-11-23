@@ -26,14 +26,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Whether `main` moved since the last published nightly, and if so this
-  # one's version. It reads releases and writes nothing.
+  # Whether `main` moved since the last published nightly and passed CI, and
+  # if so this one's version. It reads releases and runs, and writes nothing.
   plan:
     name: Plan
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       build: ${{ steps.plan.outputs.build }}
       version: ${{ steps.plan.outputs.version }}
@@ -56,31 +57,59 @@ jobs:
           sparse-checkout-cone-mode: false
 
       # The last nightly is the newest published pre-release whose tag is a
-      # nightly's. A nightly whose run failed was never published, so the
-      # next run builds that commit again.
+      # nightly's: its version, with no `v`. A nightly whose run failed was
+      # never published, so the next run builds that commit again. A nightly
+      # is published with no review, so it is built only from a commit whose
+      # CI run on `main` passed; one still running, failed or cancelled waits
+      # for the next day. The version is the patch after the newest published
+      # release or release candidate, so a nightly sorts above both.
       - name: Compare with the last nightly
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          nightly='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-nightly\.[0-9]{8}\.[1-9][0-9]*$'
-          gh api "repos/$GH_REPO/releases?per_page=100" \
-            --jq '[.[] | select(.prerelease and (.draft | not))] | sort_by(.published_at) | reverse | .[].tag_name' \
+          number='(0|[1-9][0-9]*)'
+          nightly="^$number\.$number\.$number-nightly\.[0-9]{8}\.[1-9][0-9]*$"
+          release="^v$number\.$number\.$number(-rc\.([1-9][0-9]*))?$"
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.draft | not) | [.tag_name, (.prerelease | tostring), .published_at] | @tsv' \
             > "$RUNNER_TEMP/published"
           last=
-          while read -r tag; do
-            if [[ "$tag" =~ $nightly ]]; then last="$tag"; break; fi
-          done < "$RUNNER_TEMP/published"
+          while IFS=$'\t' read -r tag prerelease _; do
+            if [[ "$prerelease" == true && "$tag" =~ $nightly ]]; then last="$tag"; break; fi
+          done < <(sort -t$'\t' -k3,3r "$RUNNER_TEMP/published")
           if [[ -n "$last" ]] && [[ "$(gh api "repos/$GH_REPO/commits/$last" --jq .sha)" == "$GITHUB_SHA" ]]; then
             echo "main is at $GITHUB_SHA, which $last was built from: no nightly today." >> "$GITHUB_STEP_SUMMARY"
             echo "build=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # GitHub's latest release is never a pre-release or a draft.
-          stable="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
-          version="$(scripts/nightly-version.sh "${stable#v}" "$(date -u +%Y%m%d)" "$GITHUB_RUN_NUMBER")"
-          echo "Building $version from $GITHUB_SHA, after ${last:-no nightly} and the stable $stable." >> "$GITHUB_STEP_SUMMARY"
+          ci="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=1" \
+            --jq '.workflow_runs[0] // empty | "\(.status) \(.conclusion)"')"
+          if [[ "$ci" != "completed success" ]]; then
+            echo "::warning::CI on main at $GITHUB_SHA has ${ci:-no run} rather than a pass: no nightly today."
+            echo "CI on main at $GITHUB_SHA has ${ci:-no run} rather than a pass: no nightly today." >> "$GITHUB_STEP_SUMMARY"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # A release or a release candidate, marked as a pre-release only when
+          # it is a candidate, ordered by major, minor, patch, then the
+          # candidates before the release.
+          newest="$(
+            while IFS=$'\t' read -r tag prerelease _; do
+              [[ "$tag" =~ $release ]] || continue
+              rc="${BASH_REMATCH[5]}"
+              [[ "$prerelease" == "$([[ -n "$rc" ]] && echo true || echo false)" ]] || continue
+              printf '%s %s %s %s %s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" \
+                "$([[ -n "$rc" ]] && echo 0 || echo 1)" "${rc:-0}" "${tag#v}"
+            done < "$RUNNER_TEMP/published" | sort -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n | tail -n 1 | cut -d' ' -f6
+          )"
+          if [[ -z "$newest" ]]; then
+            echo "::error::No published release or release candidate to name the nightly after."
+            exit 1
+          fi
+          version="$(scripts/nightly-version.sh "$newest" "$(date -u +%Y%m%d)" "$GITHUB_RUN_NUMBER")"
+          echo "Building $version from $GITHUB_SHA, after ${last:-no nightly} and $newest." >> "$GITHUB_STEP_SUMMARY"
           echo "build=true" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -115,7 +144,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          nightly='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-nightly\.[0-9]{8}\.[1-9][0-9]*$'
+          nightly='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-nightly\.[0-9]{8}\.[1-9][0-9]*$'
           gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
             --jq '.[] | select(.prerelease) | [.tag_name, (.draft | tostring), (.published_at // .created_at)] | @tsv' \
             > "$RUNNER_TEMP/releases"

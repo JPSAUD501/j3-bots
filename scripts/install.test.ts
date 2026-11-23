@@ -16,10 +16,14 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 const SCRIPT = NodePath.join(import.meta.dirname, "install.sh");
 const VERSION = "9.9.9";
+const NIGHTLY = "9.9.10-nightly.20261124.57";
 const ARCH = process.arch === "arm64" ? "arm64" : "x64";
-const STEM = `j3-bots-${VERSION}-linux-${ARCH}`;
-const ARCHIVE = `${STEM}.tar.gz`;
-const DOWNLOAD = `/download/v${VERSION}`;
+const archiveName = (version: string) => `j3-bots-${version}-linux-${ARCH}.tar.gz`;
+const ARCHIVE = archiveName(VERSION);
+/** Where a release's files are: under its tag, `v<version>`, or a nightly's, its version alone. */
+const downloadOf = (version: string) =>
+  `/download/${version.includes("-nightly.") ? version : `v${version}`}`;
+const DOWNLOAD = downloadOf(VERSION);
 
 const scratch: Array<string> = [];
 const servers: Array<NodeHttp.Server> = [];
@@ -46,19 +50,23 @@ const keyPair = () => {
 
 /** The stand-in release archive: a release.json and a j3-bots that says its version. */
 const archive = (() => {
-  let bytes: Buffer | undefined;
-  return () => {
-    if (bytes !== undefined) return bytes;
+  const made = new Map<string, Buffer>();
+  return (version = VERSION) => {
+    const found = made.get(version);
+    if (found !== undefined) return found;
     const root = folder("j3-install-archive-");
-    NodeFS.mkdirSync(NodePath.join(root, STEM, "bin"), { recursive: true });
-    NodeFS.writeFileSync(NodePath.join(root, STEM, "release.json"), `{"version":"${VERSION}"}\n`);
+    const name = archiveName(version);
+    const stem = name.slice(0, -".tar.gz".length);
+    NodeFS.mkdirSync(NodePath.join(root, stem, "bin"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(root, stem, "release.json"), `{"version":"${version}"}\n`);
     NodeFS.writeFileSync(
-      NodePath.join(root, STEM, "bin", "j3-bots"),
-      `#!/bin/sh\necho "j3-bots v${VERSION}"\n`,
+      NodePath.join(root, stem, "bin", "j3-bots"),
+      `#!/bin/sh\necho "j3-bots v${version}"\n`,
       { mode: 0o755 },
     );
-    NodeChildProcess.execFileSync("tar", ["-czf", ARCHIVE, STEM], { cwd: root });
-    bytes = NodeFS.readFileSync(NodePath.join(root, ARCHIVE));
+    NodeChildProcess.execFileSync("tar", ["-czf", name, stem], { cwd: root });
+    const bytes = NodeFS.readFileSync(NodePath.join(root, name));
+    made.set(version, bytes);
     return bytes;
   };
 })();
@@ -84,14 +92,17 @@ const mirror = async (files: ReadonlyMap<string, string | Uint8Array>) => {
 const release = (
   signer: ReturnType<typeof keyPair>,
   replaced: { readonly digest?: string; readonly sums?: string; readonly signature?: string } = {},
+  version = VERSION,
 ) => {
-  const sums = `${replaced.digest ?? sha256(archive())}  ${ARCHIVE}\n`;
+  const name = archiveName(version);
+  const download = downloadOf(version);
+  const sums = `${replaced.digest ?? sha256(archive(version))}  ${name}\n`;
   const files = new Map<string, string | Uint8Array>([
-    [`${DOWNLOAD}/${ARCHIVE}`, archive()],
-    [`${DOWNLOAD}/SHA256SUMS`, replaced.sums ?? sums],
+    [`${download}/${name}`, archive(version)],
+    [`${download}/SHA256SUMS`, replaced.sums ?? sums],
   ]);
   const signature = replaced.signature ?? signer.sign(Buffer.from(sums));
-  if (signature !== "") files.set(`${DOWNLOAD}/SHA256SUMS.sig`, signature);
+  if (signature !== "") files.set(`${download}/SHA256SUMS.sig`, signature);
   return files;
 };
 
@@ -122,10 +133,11 @@ const install = (
   url: string | undefined,
   env: Readonly<Record<string, string>> = {},
   path: { readonly left?: ReadonlyArray<string>; readonly replaced?: Record<string, string> } = {},
+  version = VERSION,
 ) => {
   const home = folder("j3-install-home-");
   return new Promise<{ code: number | null; output: string; home: string }>((resolve) => {
-    const child = NodeChildProcess.spawn("sh", [SCRIPT, "--version", VERSION, "--no-service"], {
+    const child = NodeChildProcess.spawn("sh", [SCRIPT, "--version", version, "--no-service"], {
       env: {
         PATH: searchPath(path.left ?? [], path.replaced ?? {}),
         HOME: home,
@@ -141,8 +153,8 @@ const install = (
   });
 };
 
-const installed = (home: string) =>
-  NodeFS.existsSync(NodePath.join(home, ".local", "share", "j3-bots", "versions", VERSION)) ||
+const installed = (home: string, version = VERSION) =>
+  NodeFS.existsSync(NodePath.join(home, ".local", "share", "j3-bots", "versions", version)) ||
   NodeFS.existsSync(NodePath.join(home, ".local", "bin", "j3-bots"));
 
 describe("install.sh", () => {
@@ -158,6 +170,19 @@ describe("install.sh", () => {
       `${DOWNLOAD}/SHA256SUMS`,
       `${DOWNLOAD}/SHA256SUMS.sig`,
       `${DOWNLOAD}/${ARCHIVE}`,
+    ]);
+  });
+
+  it("downloads a nightly from its tag, which is its version with no v", async () => {
+    const signer = keyPair();
+    const site = await mirror(release(signer, {}, NIGHTLY));
+    const result = await install(site.url, { J3_RELEASE_PUBLIC_KEY: signer.publicKey }, {}, NIGHTLY);
+    expect(result.code, result.output).toBe(0);
+    expect(installed(result.home, NIGHTLY)).toBe(true);
+    expect(site.served).toEqual([
+      `/download/${NIGHTLY}/SHA256SUMS`,
+      `/download/${NIGHTLY}/SHA256SUMS.sig`,
+      `/download/${NIGHTLY}/${archiveName(NIGHTLY)}`,
     ]);
   });
 
