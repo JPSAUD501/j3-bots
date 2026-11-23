@@ -1420,6 +1420,11 @@ export const en = {
   "connect.getOne": "Where to get one",
   "connect.setup": "Set it up first",
   "connect.setup.open": "Open the setup page",
+  "connect.issuer": "Issuer",
+  "connect.issuer.hint":
+    "The address of the service's sign-in server, as its guide gives it, such as https://accounts.google.com.",
+  "connect.issuer.invalid":
+    "Enter the issuer as an https:// address, as the service's guide gives it.",
   "connect.clientId": "Client ID",
   "connect.clientSecret": "Client secret",
   "connect.client.hint": "From the app you registered at the service for J3 Bots.",

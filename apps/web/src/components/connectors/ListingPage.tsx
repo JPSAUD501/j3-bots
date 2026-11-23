@@ -135,6 +135,7 @@ function ConnectForm({
   const ownApp = listing.connect === "own-app";
   const [grant, setGrant] = useState<ConnectorGrant>(() => initialGrant(bots, forBot));
   const [values, setValues] = useState<ReadonlyMap<FieldKey, string>>(new Map());
+  const [issuer, setIssuer] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [problems, setProblems] = useState<FormProblems | null>(null);
@@ -149,7 +150,7 @@ function ConnectForm({
       ref: listing.ref,
       fields: listing.fields,
       values,
-      client: ownApp ? { clientId, clientSecret } : null,
+      client: ownApp ? { issuer, clientId, clientSecret } : null,
     });
     if (draft._tag === "invalid") {
       setProblems(draft.problems);
@@ -214,6 +215,15 @@ function ConnectForm({
       )}
       {ownApp && (
         <>
+          <LineField
+            label={t("connect.issuer")}
+            hint={t("connect.issuer.hint")}
+            problem={problems?.issuer ? t("connect.issuer.invalid") : null}
+            value={issuer}
+            onChange={setIssuer}
+            readOnly={submitting}
+            mono
+          />
           <LineField
             label={t("connect.clientId")}
             hint={t("connect.client.hint")}

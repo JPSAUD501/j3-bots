@@ -48,6 +48,7 @@ const fields: ReadonlyArray<ConnectorField> = [
   },
 ];
 const ref = { _tag: "curated", key: CuratedKey.make("linear") } as const;
+const noClient = { issuer: "", clientId: "", clientSecret: "" };
 
 describe("a gallery entry's form", () => {
   it("sends each value it was given, redacted, and leaves out an empty optional one", () => {
@@ -62,19 +63,27 @@ describe("a gallery entry's form", () => {
     expect(source.oauthClient).toBeNull();
   });
 
-  it("asks for a required field left empty, and an own app's client id", () => {
+  it("asks for a required field left empty, and an own app's whole client", () => {
     expect(
       problems(listingSource({ ref, fields, values: new Map(), client: null })).missing,
     ).toEqual([token]);
-    const own = problems(
+    const own = problems(listingSource({ ref, fields: [], values: new Map(), client: noClient }));
+    expect([own.issuer, own.clientId]).toEqual([true, true]);
+  });
+
+  it("sends an own app's client with the issuer it is registered at", () => {
+    const source = ready(
       listingSource({
         ref,
         fields: [],
         values: new Map(),
-        client: { clientId: " ", clientSecret: "s" },
+        client: { issuer: " https://accounts.example.com ", clientId: " app ", clientSecret: "s" },
       }),
     );
-    expect(own.clientId).toBe(true);
+    if (source._tag !== "listing" || source.oauthClient === null) throw new Error("No client");
+    expect(source.oauthClient.issuer).toBe("https://accounts.example.com");
+    expect(source.oauthClient.clientId).toBe("app");
+    expect(source.oauthClient.clientSecret && plain(source.oauthClient.clientSecret)).toBe("s");
   });
 });
 
@@ -96,7 +105,7 @@ describe("a connector added by its address", () => {
     name: "",
     url: "https://mcp.example.com/mcp",
     headers: [],
-    client: null,
+    client: noClient,
     privateNetwork: false,
   };
 
@@ -126,11 +135,19 @@ describe("a connector added by its address", () => {
     ).toEqual([0]);
   });
 
-  it("refuses a client secret without its id, and sends no client when both are empty", () => {
-    expect(
-      problems(remoteSource({ ...base, client: { clientId: "", clientSecret: "s" } })).clientId,
-    ).toBe(true);
-    const source = ready(remoteSource({ ...base, client: { clientId: "", clientSecret: "" } }));
+  it("refuses a client without its id or with an issuer that is not https, and sends none when it is empty", () => {
+    const withSecret = problems(
+      remoteSource({ ...base, client: { ...noClient, clientSecret: "s" } }),
+    );
+    expect([withSecret.issuer, withSecret.clientId]).toEqual([true, true]);
+    const plainHttp = problems(
+      remoteSource({
+        ...base,
+        client: { issuer: "http://accounts.example.com", clientId: "app", clientSecret: "" },
+      }),
+    );
+    expect([plainHttp.issuer, plainHttp.clientId]).toEqual([true, false]);
+    const source = ready(remoteSource(base));
     expect(source._tag === "remote" && source.oauthClient).toBeNull();
   });
 });

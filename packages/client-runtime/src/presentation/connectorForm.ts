@@ -9,7 +9,7 @@ import {
   HeaderName,
   Label,
   type ListingRef,
-  type OAuthClientInput,
+  OAuthClientInput,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -25,8 +25,9 @@ export interface PairInput {
   readonly value: string;
 }
 
-/** An OAuth client as its two fields hold it. */
+/** An OAuth client as its fields hold it: the issuer it is registered at, its id and its secret. */
 export interface ClientInput {
+  readonly issuer: string;
   readonly clientId: string;
   readonly clientSecret: string;
 }
@@ -34,13 +35,14 @@ export interface ClientInput {
 /**
  * What a form got wrong, each where the operator typed it: a field the
  * listing requires left empty (`missing`), an argument too long for a command
- * (`args`), or the rows of `headers` and `env` whose names do not fit.
+ * (`args`), a client's issuer that is not an https: address (`issuer`), or the rows of `headers` and `env` whose names do not fit.
  */
 export interface FormProblems {
   readonly name: boolean;
   readonly url: boolean;
   readonly command: boolean;
   readonly args: boolean;
+  readonly issuer: boolean;
   readonly clientId: boolean;
   readonly missing: ReadonlyArray<FieldKey>;
   readonly headers: ReadonlyArray<number>;
@@ -56,6 +58,7 @@ const noProblems: FormProblems = {
   url: false,
   command: false,
   args: false,
+  issuer: false,
   clientId: false,
   missing: [],
   headers: [],
@@ -67,6 +70,7 @@ const hasProblems = (problems: FormProblems) =>
   problems.url ||
   problems.command ||
   problems.args ||
+  problems.issuer ||
   problems.clientId ||
   problems.missing.length > 0 ||
   problems.headers.length > 0 ||
@@ -78,6 +82,7 @@ const decodeAddress = Schema.decodeUnknownOption(remoteFields.fields.url);
 const decodeArgs = Schema.decodeUnknownOption(commandFields.fields.args);
 const decodeHeaderName = Schema.decodeUnknownOption(HeaderName);
 const decodeEnvName = Schema.decodeUnknownOption(EnvName);
+const decodeIssuer = Schema.decodeUnknownOption(OAuthClientInput.fields.issuer);
 const isCommand = Schema.is(ConnectorCommand.fields.command);
 
 /** The host of an address the operator typed, read before it is redacted, or none when it is not one. */
@@ -87,15 +92,32 @@ const hostOf = (text: string): Option.Option<string> =>
 /** A row the operator left blank, which the form drops rather than refuses. */
 const blank = (pair: PairInput) => pair.name.trim() === "" && pair.value === "";
 
-/** The client, or null when both its fields are empty; a secret without an id is a problem. */
-const client = (input: ClientInput | null): Option.Option<OAuthClientInput | null> => {
-  if (input === null) return Option.some(null);
+/**
+ * The client the operator typed: `none` when every field is empty, or the
+ * fields it still needs, since the server uses a client only with the issuer
+ * it names.
+ */
+type ClientDraft =
+  | { readonly _tag: "none" }
+  | { readonly _tag: "ready"; readonly client: OAuthClientInput }
+  | { readonly _tag: "invalid"; readonly issuer: boolean; readonly clientId: boolean };
+
+const clientDraft = (input: ClientInput): ClientDraft => {
+  const typedIssuer = input.issuer.trim();
   const clientId = input.clientId.trim();
-  if (clientId === "") return input.clientSecret === "" ? Option.some(null) : Option.none();
-  return Option.some({
-    clientId,
-    clientSecret: input.clientSecret === "" ? null : Redacted.make(input.clientSecret),
-  });
+  if (typedIssuer === "" && clientId === "" && input.clientSecret === "") return { _tag: "none" };
+  const issuer = decodeIssuer(typedIssuer);
+  if (Option.isNone(issuer) || clientId === "") {
+    return { _tag: "invalid", issuer: Option.isNone(issuer), clientId: clientId === "" };
+  }
+  return {
+    _tag: "ready",
+    client: {
+      issuer: issuer.value,
+      clientId,
+      clientSecret: input.clientSecret === "" ? null : Redacted.make(input.clientSecret),
+    },
+  };
 };
 
 /**
@@ -118,6 +140,12 @@ const pairs = <N>(
     else refused.push(index);
   });
   return { decoded, refused };
+};
+
+/** The client of an entry that takes one, which it needs: left empty, it is missing both fields. */
+const requiredClient = (input: ClientInput): ClientDraft => {
+  const draft = clientDraft(input);
+  return draft._tag === "none" ? { _tag: "invalid", issuer: true, clientId: true } : draft;
 };
 
 /**
@@ -164,15 +192,15 @@ export function listingSource(input: {
   readonly client: ClientInput | null;
 }): SourceDraft {
   const values = fieldValues(input.fields, input.values);
-  const oauthClient = client(input.client);
-  const clientMissing =
-    input.client !== null && (Option.isNone(oauthClient) || oauthClient.value === null);
-  const problems = {
+  const oauthClient: ClientDraft =
+    input.client === null ? { _tag: "none" } : requiredClient(input.client);
+  const problems: FormProblems = {
     ...noProblems,
     missing: values._tag === "invalid" ? values.missing : [],
-    clientId: clientMissing,
+    issuer: oauthClient._tag === "invalid" && oauthClient.issuer,
+    clientId: oauthClient._tag === "invalid" && oauthClient.clientId,
   };
-  if (values._tag === "invalid" || hasProblems(problems) || Option.isNone(oauthClient)) {
+  if (values._tag === "invalid" || hasProblems(problems) || oauthClient._tag === "invalid") {
     return { _tag: "invalid", problems };
   }
   return {
@@ -181,7 +209,7 @@ export function listingSource(input: {
       _tag: "listing",
       ref: input.ref,
       values: values.values,
-      oauthClient: oauthClient.value,
+      oauthClient: oauthClient._tag === "ready" ? oauthClient.client : null,
     },
   };
 }
@@ -195,7 +223,7 @@ export function remoteSource(input: {
   readonly name: string;
   readonly url: string;
   readonly headers: ReadonlyArray<PairInput>;
-  readonly client: ClientInput | null;
+  readonly client: ClientInput;
   readonly privateNetwork: boolean;
 }): SourceDraft {
   const typedUrl = input.url.trim();
@@ -204,19 +232,20 @@ export function remoteSource(input: {
   const host = hostOf(typedUrl);
   const name = decodeLabel(typedName === "" && Option.isSome(host) ? host.value : typedName);
   const headers = pairs(input.headers, (text) => decodeHeaderName(text));
-  const oauthClient = client(input.client);
+  const oauthClient = clientDraft(input.client);
   const problems: FormProblems = {
     ...noProblems,
     name: Option.isSome(url) && Option.isNone(name),
     url: Option.isNone(url),
-    clientId: Option.isNone(oauthClient),
+    issuer: oauthClient._tag === "invalid" && oauthClient.issuer,
+    clientId: oauthClient._tag === "invalid" && oauthClient.clientId,
     headers: headers.refused,
   };
   if (
     hasProblems(problems) ||
     Option.isNone(url) ||
     Option.isNone(name) ||
-    Option.isNone(oauthClient)
+    oauthClient._tag === "invalid"
   ) {
     return { _tag: "invalid", problems };
   }
@@ -227,7 +256,7 @@ export function remoteSource(input: {
       name: name.value,
       url: url.value,
       headers: headers.decoded,
-      oauthClient: oauthClient.value,
+      oauthClient: oauthClient._tag === "ready" ? oauthClient.client : null,
       privateNetwork: input.privateNetwork,
     },
   };

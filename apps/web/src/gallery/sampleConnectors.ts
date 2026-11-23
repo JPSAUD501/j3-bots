@@ -156,7 +156,7 @@ function sampleDetails(ref: ListingRef): ConnectorListingDetails | undefined {
               "Open the cloud console and make a project for J3 Bots.",
               "Turn on the Calendar API for it.",
               "Make an OAuth client of the web application kind, and add the address J3 Bots shows as its redirect.",
-              "Copy its client ID and secret here.",
+              "Copy its client ID and secret here, with the issuer https://accounts.example.com.",
             ],
             url: SetupPageUrl.make("https://console.example.com/credentials"),
           }

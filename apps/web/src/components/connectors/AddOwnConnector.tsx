@@ -56,6 +56,7 @@ export function AddOwnConnector({
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [headers, setHeaders] = useState<ReadonlyArray<KeyedPair>>([]);
+  const [issuer, setIssuer] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [command, setCommand] = useState("");
@@ -71,7 +72,13 @@ export function AddOwnConnector({
 
   const draft = (privateNetwork: boolean): SourceDraft =>
     way === "address"
-      ? remoteSource({ name, url, headers, client: { clientId, clientSecret }, privateNetwork })
+      ? remoteSource({
+          name,
+          url,
+          headers,
+          client: { issuer, clientId, clientSecret },
+          privateNetwork,
+        })
       : commandSource({ name, command, args, env });
 
   const send = (source: ConnectorSource) => {
@@ -174,6 +181,15 @@ export function AddOwnConnector({
           </PageSection>
           <PageSection title={`${t("addOwn.client")} (${t("connect.optional")})`}>
             <p className="text-xs text-muted-foreground">{t("addOwn.client.hint")}</p>
+            <LineField
+              label={t("connect.issuer")}
+              hint={t("connect.issuer.hint")}
+              problem={problems?.issuer ? t("connect.issuer.invalid") : null}
+              value={issuer}
+              onChange={setIssuer}
+              readOnly={submitting}
+              mono
+            />
             <LineField
               label={t("connect.clientId")}
               problem={
