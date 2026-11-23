@@ -359,6 +359,11 @@ export const BotRpcs = RpcGroup.make(
       hidden: Schema.optionalKey(Schema.Boolean),
       /** Lets the bot use the browser (`Bot.browser`), or stops it. */
       browser: Schema.optionalKey(Schema.Boolean),
+      /**
+       * Lets the bot have its allowed logins filled (`Bot.vault`), or stops
+       * it. Applies to the next fill, also during a turn.
+       */
+      vault: Schema.optionalKey(Schema.Boolean),
       /** Moves the bot into a section, or out of its section with null. */
       sectionId: Schema.optionalKey(Schema.NullOr(SectionId)),
     },
