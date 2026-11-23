@@ -81,6 +81,15 @@ const bridge: DesktopBridge = {
   setPhoneAccess: (on) => ipcRenderer.invoke(IPC_CHANNELS.setPhoneAccess, { on }),
   localPairingLink: () => ipcRenderer.invoke(IPC_CHANNELS.localPairingLink),
   setStartWithSystem: (on) => ipcRenderer.invoke(IPC_CHANNELS.setStartWithSystem, { on }),
+  catchSignIn: (request) => ipcRenderer.invoke(IPC_CHANNELS.catchSignIn, request),
+  stopCatchingSignIn: () => ipcRenderer.send(IPC_CHANNELS.stopCatchingSignIn),
+  onSignInReturn: (listener) => {
+    const forward = (_event: unknown, signInReturn: unknown) => listener(signInReturn);
+    ipcRenderer.on(IPC_CHANNELS.signInReturned, forward);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.signInReturned, forward);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

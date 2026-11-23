@@ -1304,4 +1304,6 @@ export const en = {
   "oauthCallback.title": "J3 Bots",
   "oauthCallback.signedIn": "Connected. You can close this tab and go back to J3 Bots.",
   "oauthCallback.failed": "This connection didn't finish. Go back to J3 Bots and try again.",
+  "signInReturn.title": "Back to J3 Bots",
+  "signInReturn.body": "You can close this tab. J3 Bots finishes connecting in the app.",
 } as const;

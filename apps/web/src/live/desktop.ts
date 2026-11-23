@@ -18,6 +18,8 @@ import {
   ShortcutChange,
   ShortcutStatus,
   StartWithSystemChange,
+  SignInRelayStart,
+  SignInReturn,
   type TrayReport,
   OpenResult,
   SealResult,
@@ -145,6 +147,18 @@ export interface Desktop {
   readonly localDevice: (again: boolean) => Promise<LocalDeviceResult | null>;
   /** Changes whether the app starts with the system; `null` when the app gave no answer the page understands. */
   readonly setStartWithSystem: (on: boolean) => Promise<StartWithSystemChange | null>;
+  /**
+   * Listens on this computer's loopback for the browser's return from a
+   * connector's sign-in, in place of any listener before: the port it
+   * listens on, or `null` when the app could not listen.
+   */
+  readonly catchSignIn: (language: Language) => Promise<number | null>;
+  readonly stopCatchingSignIn: () => void;
+  /**
+   * Calls `listener` with the address the browser came back to from each
+   * sign-in the app caught; answers a function that stops it.
+   */
+  readonly onSignInReturn: (listener: (url: string) => void) => () => void;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -164,6 +178,8 @@ const decodeModeChange = Schema.decodeUnknownOption(ModeChange);
 const decodeLocalServer = Schema.decodeUnknownOption(Schema.NullOr(LocalServerState));
 const decodeLocalDevice = Schema.decodeUnknownOption(LocalDeviceResult);
 const decodeStartWithSystem = Schema.decodeUnknownOption(StartWithSystemChange);
+const decodeRelayStart = Schema.decodeUnknownOption(SignInRelayStart);
+const decodeSignInReturn = Schema.decodeUnknownOption(SignInReturn);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -291,5 +307,20 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     },
     localDevice: (again) => ask(() => bridge.localDevice({ again }), decodeLocalDevice),
     setStartWithSystem: (on) => ask(() => bridge.setStartWithSystem(on), decodeStartWithSystem),
+    catchSignIn: (language) =>
+      ask(() => bridge.catchSignIn({ language }), decodeRelayStart).then((answer) =>
+        answer?._tag === "listening" ? answer.port : null,
+      ),
+    stopCatchingSignIn: () => {
+      bridge.stopCatchingSignIn();
+    },
+    onSignInReturn: (listener) => {
+      const stop: unknown = bridge.onSignInReturn((signInReturn: unknown) =>
+        Option.map(decodeSignInReturn(signInReturn), ({ url }) => listener(url)),
+      );
+      return () => {
+        if (typeof stop === "function") stop();
+      };
+    },
   }),
 });

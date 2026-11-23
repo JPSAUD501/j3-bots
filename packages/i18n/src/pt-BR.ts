@@ -1323,6 +1323,8 @@ const sentences = {
   "oauthCallback.title": "J3 Bots",
   "oauthCallback.signedIn": "Conectado. Você pode fechar esta aba e voltar ao J3 Bots.",
   "oauthCallback.failed": "Esta conexão não terminou. Volte ao J3 Bots e tente de novo.",
+  "signInReturn.title": "De volta ao J3 Bots",
+  "signInReturn.body": "Você pode fechar esta aba. O J3 Bots termina de conectar no app.",
 } as const satisfies Catalog;
 
 export const ptBR: AddingNone<typeof sentences> = sentences;

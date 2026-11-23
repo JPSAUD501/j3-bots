@@ -59,6 +59,7 @@ import * as Menus from "./menus.ts";
 import { externalUrl, isAppUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
 import { restartApp } from "./restart.ts";
+import * as SignInRelay from "./signInRelay.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
 import * as Settings from "./settings.ts";
@@ -539,6 +540,7 @@ const program = Effect.gen(function* () {
     appIcon: path.join(webRoot, "icon-192.png"),
   });
   yield* links.serve({ window, fromApp, bringForward: forward });
+  yield* SignInRelay.serve({ window, fromApp, bringForward: forward });
   yield* LinkHandler.register(SCHEME).pipe(Effect.forkScoped);
   yield* Menus.serve({
     window,

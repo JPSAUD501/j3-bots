@@ -482,6 +482,43 @@ export const ShortcutChange = Schema.Struct({
 });
 export type ShortcutChange = typeof ShortcutChange.Type;
 
+/**
+ * A connector's sign-in, as the page asks the app to catch the browser's
+ * return from it, in the language the page that waits for it shows.
+ */
+export const SignInRelayRequest = Schema.Struct({ language: Language });
+export type SignInRelayRequest = typeof SignInRelayRequest.Type;
+
+/** The longest address a browser's return from a sign-in may be. */
+export const SIGN_IN_RETURN_MAX = 8192;
+
+/** An `http://127.0.0.1:<port>/…` address on this computer's loopback, as the app listens on one. */
+export const LoopbackAddress = Schema.String.check(
+  Schema.isMaxLength(SIGN_IN_RETURN_MAX),
+  Schema.isPattern(/^http:\/\/127\.0\.0\.1:\d{1,5}\/[^\s]*$/),
+);
+
+/**
+ * How catching a sign-in started: `listening` on `port`, where the browser is
+ * to come back to `http://127.0.0.1:<port>/oauth/callback`, for one sign-in,
+ * until it does or ten minutes pass; or `failed`, when no listener could open.
+ */
+export const SignInRelayStart = Schema.Union([
+  Schema.TaggedStruct("listening", {
+    port: Schema.Int.check(Schema.isBetween({ minimum: 1024, maximum: 65_535 })),
+  }),
+  Schema.TaggedStruct("failed", {}),
+]);
+export type SignInRelayStart = typeof SignInRelayStart.Type;
+
+/**
+ * The browser came back from a sign-in to the address the app listened on:
+ * that address as the browser asked for it, with the query the provider added.
+ * It carries an authorization code, which the page hands only to the server.
+ */
+export const SignInReturn = Schema.Struct({ url: LoopbackAddress });
+export type SignInReturn = typeof SignInReturn.Type;
+
 /** A function, called only to have its answer decoded. */
 const Callable = Schema.declare(
   (input: unknown): input is (...args: ReadonlyArray<unknown>) => unknown =>
@@ -525,5 +562,8 @@ export const HostedBridge = Schema.Struct({
   setPhoneAccess: Callable,
   localPairingLink: Callable,
   setStartWithSystem: Callable,
+  catchSignIn: Callable,
+  stopCatchingSignIn: Callable,
+  onSignInReturn: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

@@ -16,6 +16,8 @@ import {
   SavingReport,
   ServerOrigin,
   ShellCommand,
+  SignInRelayStart,
+  SignInReturn,
   TrayReport,
   UpdateStatus,
 } from "./index.ts";
@@ -150,6 +152,9 @@ describe("the desktop bridge", () => {
       setPhoneAccess: call,
       localPairingLink: call,
       setStartWithSystem: call,
+      catchSignIn: call,
+      stopCatchingSignIn: call,
+      onSignInReturn: call,
     };
     const state = { ...LOCAL_OFF, server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));
@@ -188,6 +193,22 @@ describe("the desktop bridge", () => {
     assert.isFalse(decodes(NotificationRequest, { ...request, target: { _tag: "settings" } }));
     const { pairing: _pairing, ...unpaired } = request;
     assert.isFalse(decodes(NotificationRequest, unpaired));
+  });
+
+  it("hands the page a sign-in's return only from the app's own loopback", () => {
+    assert.isTrue(
+      decodes(SignInReturn, { url: "http://127.0.0.1:51734/oauth/callback?code=a&state=b" }),
+    );
+    for (const url of [
+      "https://127.0.0.1:51734/oauth/callback?state=b",
+      "http://localhost:51734/oauth/callback?state=b",
+      "http://127.0.0.1.attacker.example:80/oauth/callback?state=b",
+      "http://127.0.0.1:51734/oauth/callback?state=b\nx",
+    ]) {
+      assert.isFalse(decodes(SignInReturn, { url }), url);
+    }
+    assert.isTrue(decodes(SignInRelayStart, { _tag: "listening", port: 51734 }));
+    assert.isFalse(decodes(SignInRelayStart, { _tag: "listening", port: 80 }));
   });
 
   it("hands the page a click only with what it was about and the pairing that received it", () => {
