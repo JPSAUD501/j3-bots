@@ -26,6 +26,7 @@ import {
   createNewBot,
   deliveryIs,
   engineSession,
+  finishRunning,
   flushed,
   gateSettled,
   holdGate,
@@ -390,33 +391,6 @@ const writeMessage = (target: EntryTarget, text: string) =>
       },
     });
     return entry.id;
-  });
-
-/**
- * The bot's next turn says it is done and ends, so no `undelivered` wake
- * follows it.
- */
-const finishRunning = (botId: BotId, previous: Parameters<typeof nextTurn>[1] = null) =>
-  Effect.gen(function* () {
-    const control = yield* TestEngineControl;
-    const session = yield* engineSession(botId);
-    const turnId = yield* nextTurn(botId, previous);
-    const args = { text: "Done.", done: true };
-    yield* control.toolCall({
-      sessionId: session,
-      turnId,
-      tool: "say",
-      input: args,
-      recorded: "now",
-    });
-    yield* (yield* BotTools).call({
-      requestId: `say-${turnId}`,
-      sessionId: session,
-      tool: "say",
-      arguments: args,
-    });
-    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
-    return turnId;
   });
 
 it.effect("coalesces waiting wakes only with wakes of the same kind and audience", () =>

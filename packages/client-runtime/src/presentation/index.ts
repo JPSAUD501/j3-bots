@@ -18,7 +18,13 @@ export {
 } from "./botEdit.ts";
 export { firstSeen, see } from "./changes.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
-export { connectCommand, providerGate } from "./engine.ts";
+export {
+  connectCommand,
+  hasDefaultModel,
+  type OpeningHold,
+  openingHeld,
+  providerGate,
+} from "./engine.ts";
 export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";
 export { type FileIcon, fileIcon, fileKind } from "./files.ts";
 export { webAddress } from "./links.ts";
@@ -41,6 +47,15 @@ export {
   movedOption,
 } from "./mentions.ts";
 export { type Inline, parseMessageText } from "./messageText.ts";
+export {
+  defaultBotName,
+  firstLooks,
+  makingProgress,
+  nextStep,
+  type OnboardingStep,
+  previousStep,
+  showsConnect,
+} from "./onboarding.ts";
 export {
   notificationOpening,
   type NotificationOpening,

@@ -20,6 +20,7 @@ import {
   addresseeOf,
   mentionedNames,
   mentionedWhoLeft,
+  type OpeningHold,
   type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
@@ -76,6 +77,8 @@ interface TimelineProps {
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Whether the operator's answer to a card is still on its way. */
   readonly submitting: (entryId: EntryId) => boolean;
+  /** What holds the bot's hello back, which the operator's messages behind it wait for (`openingHeld`). */
+  readonly openingHold?: OpeningHold | null;
   readonly intents: TimelineIntents;
   /** The rows that just arrived at the end, by key: they settle into place as they mount. */
   readonly arrived?: ReadonlySet<string>;
@@ -92,6 +95,7 @@ export function Timeline({
   room,
   workSteps,
   submitting,
+  openingHold = null,
   intents,
   arrived,
   flyFrom,
@@ -181,6 +185,7 @@ export function Timeline({
                 onOpenAttachment={intents.openAttachment}
                 onRetry={() => intents.retryMessage(message.id)}
                 submitting={submitting(message.id)}
+                openingHold={openingHold}
               />
             </div>
           );

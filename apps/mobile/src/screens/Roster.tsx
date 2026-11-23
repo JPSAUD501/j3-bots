@@ -18,12 +18,12 @@ import { Alert, FlatList, Pressable, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
-import { FirstRun } from "../components/FirstRun.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
 import { useI18n } from "../i18n.ts";
+import { Onboarding } from "../onboarding/Onboarding.tsx";
 import { useSideBySide } from "../layout.ts";
 import { asItWas, type Navigation, type Screens, useOpenConversation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
@@ -44,7 +44,8 @@ type Props = NativeStackScreenProps<Screens, "roster">;
 export function RosterScreen({ navigation, route }: Props) {
   const roster = useReadable(useJ3Client().roster);
   const sideBySide = useSideBySide();
-  useNotificationTaps(useOpenConversation());
+  const openConversation = useOpenConversation();
+  useNotificationTaps(openConversation);
   const selected = route.params?.item ?? null;
   // The first bot's conversation opens straight from the first run: the first run stays from the
   // press of Create until the conversation covers the roster, or opens beside it, so the roster
@@ -82,7 +83,12 @@ export function RosterScreen({ navigation, route }: Props) {
   }, [sideBySide, selected, navigation]);
   // Before the first bot there is nothing to list or open: the first run takes the whole screen.
   if ((roster._tag === "ready" && roster.value.length === 0) || openingFirstBot) {
-    return <FirstRun onCreating={setOpeningFirstBot} />;
+    return (
+      <Onboarding
+        onCreating={setOpeningFirstBot}
+        onArrived={(botId) => openConversation({ _tag: "bot", botId })}
+      />
+    );
   }
   if (!sideBySide) return <RosterList selected={null} />;
   return (

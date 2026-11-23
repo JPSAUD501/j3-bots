@@ -256,6 +256,75 @@
   }
 }
 
+/*
+ * The first run's motion. Each animation is drawn along a spring the element's
+ * style names (`springAnimation`); these say only where it starts or ends.
+ * A step slides along the reading direction, so it reverses in right-to-left.
+ */
+@layer components {
+  .onboarding {
+    --onboarding-dir: 1;
+  }
+
+  .onboarding:dir(rtl) {
+    --onboarding-dir: -1;
+  }
+
+  .onboarding-pulse {
+    animation: onboarding-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes onboarding-in {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--onboarding-shift, 0px) * var(--onboarding-dir, 1)));
+  }
+}
+
+@keyframes onboarding-out {
+  to {
+    opacity: 0;
+    transform: translateX(calc(var(--onboarding-shift, 0px) * var(--onboarding-dir, 1)));
+  }
+}
+
+@keyframes onboarding-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes onboarding-hop {
+  from {
+    transform: translateY(-10px) scale(1.06, 0.95);
+  }
+}
+
+@keyframes onboarding-float {
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes onboarding-ring {
+  from {
+    opacity: 0.55;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}
+
+@keyframes onboarding-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

@@ -35,6 +35,7 @@ import {
   SessionRowId,
 } from "./model.ts";
 import { Observer, type Synchronized } from "./Observer.ts";
+import { behindOpeningSql } from "./openings.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { SessionGate } from "./SessionGate.ts";
@@ -50,8 +51,12 @@ export type StopScope =
 
 /**
  * `keepOpening`: the bot's `first-run` wake, while the engine has not got it,
- * waits on instead of being cancelled. A change of provider stops the work in
- * progress but not the hello a new bot has yet to send.
+ * waits on instead of being cancelled, and so do the operator's messages held
+ * behind an opening that has not ended (`behindOpeningSql`,
+ * `Pipeline.sendMessage`). A change of provider stops the work in progress but
+ * not the hello a new bot has yet to send, nor what the operator wrote while
+ * it waited. Once the opening has ended, those messages are ordinary work, and
+ * the Stop cancels them as it does any other.
  */
 interface StopOptions {
   readonly keepOpening: boolean;
@@ -327,7 +332,7 @@ export const layer = Layer.effect(
       const pending = yield* sql<{ readonly id: string; readonly kind: string }>`
         SELECT id, kind FROM wakes
         WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}
-          ${options.keepOpening ? sql`AND NOT (${opening})` : sql``}
+          ${options.keepOpening ? sql`AND NOT (${opening}) AND NOT ${behindOpeningSql(sql, "wakes")}` : sql``}
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
       yield* sql.afterCommit(signals.stops.fire);

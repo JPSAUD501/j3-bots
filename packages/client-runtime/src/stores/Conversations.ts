@@ -244,8 +244,11 @@ export type MessageStatus =
   | { readonly _tag: "not-sent"; readonly failure: IntentFailure }
   /** The server answered, and this device could not record the answer yet. */
   | { readonly _tag: "unrecorded" }
-  /** Recorded; not every recipient has it yet. */
-  | { readonly _tag: "queued" }
+  /**
+   * Recorded; not every recipient has it yet. `behindOpening`: it waits
+   * behind the bot's hello, which waits for a provider.
+   */
+  | { readonly _tag: "queued"; readonly behindOpening?: true }
   | { readonly _tag: "delivered" }
   | { readonly _tag: "cancelled" }
   /** Retryable with `retryMessage`. */
@@ -257,7 +260,9 @@ export const messageStatus = (message: MessageEntry | OutgoingMessage): MessageS
   }
   switch (message.delivery._tag) {
     case "pending":
-      return { _tag: "queued" };
+      return message.delivery.behindOpening === true
+        ? { _tag: "queued", behindOpening: true }
+        : { _tag: "queued" };
     case "delivered":
       return { _tag: "delivered" };
     case "cancelled":

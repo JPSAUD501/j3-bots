@@ -3,18 +3,22 @@ import { useId, useRef, useState, type ReactElement } from "react";
 import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client-runtime";
 import type { PairingCode } from "@j3-bots/contracts";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
+import type { I18n } from "@j3-bots/i18n";
 import { useI18n, usePresentation } from "../app/context";
 import type { DesktopServer, DesktopUpdate } from "../shell/data";
 import { AppUpdate } from "./AppUpdate";
-import { Centered, Ensemble, Heading } from "./EmptyStates";
+import { bigFieldClass, BigButton, FirstScreen, FormProblem } from "../onboarding/parts";
+import { Centered, Heading } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { Button } from "./ui/button";
-import { lineField } from "./ui/field";
 
-/** A name for this device that the operator recognises in their list: browser and system. */
-export function guessDeviceName(userAgent: string): string {
+/**
+ * A name for this device that the operator recognises in their list: browser
+ * and system, in the operator's language.
+ */
+export function guessDeviceName(userAgent: string, t: I18n["t"]): string {
   const browser = /Electron\//.test(userAgent)
-    ? "Desktop app"
+    ? t("pairing.deviceGuess.app")
     : /Edg\//.test(userAgent)
       ? "Edge"
       : /Firefox\//.test(userAgent)
@@ -23,7 +27,7 @@ export function guessDeviceName(userAgent: string): string {
           ? "Chrome"
           : /Safari\//.test(userAgent)
             ? "Safari"
-            : "Browser";
+            : t("pairing.deviceGuess.browser");
   const system = /iPhone/.test(userAgent)
     ? "iPhone"
     : /iPad/.test(userAgent)
@@ -37,7 +41,7 @@ export function guessDeviceName(userAgent: string): string {
             : /Linux/.test(userAgent)
               ? "Linux"
               : null;
-  return system === null ? browser : `${browser} on ${system}`;
+  return system === null ? browser : t("pairing.deviceGuess", { browser, system });
 }
 
 interface PairingProps {
@@ -123,25 +127,23 @@ export function Pairing({
   }
 
   return (
-    <Centered>
-      <Ensemble />
-      <Heading
-        title={t("pairing.title")}
-        body={parts<"pairing.body", ReactElement>("pairing.body", {
-          command: (
-            <code key="command" className="font-mono text-foreground">
-              j3-bots pair
-            </code>
-          ),
-        })}
-      />
+    <FirstScreen
+      title={t("pairing.title")}
+      body={parts<"pairing.body", ReactElement>("pairing.body", {
+        command: (
+          <code key="command" className="font-mono text-foreground">
+            j3-bots pair
+          </code>
+        ),
+      })}
+    >
       {reason !== "new" && (
-        <p className="max-w-sm rounded-md bg-muted px-3 py-2 text-sm">
+        <p className="w-full rounded-lg bg-muted px-4 py-3 text-sm">
           {reason === "signed-out" ? t("pairing.signedOut") : t("pairing.stillListed")}
         </p>
       )}
-      <div className="flex max-w-xs flex-col items-center gap-1 text-xs text-muted-foreground">
-        <span className="font-mono text-sm break-all text-foreground">
+      <div className="flex w-full flex-col items-center gap-1 text-sm text-muted-foreground">
+        <span className="font-mono break-all text-foreground">
           {t("pairing.server", { address })}
         </span>
         {server !== undefined && (
@@ -161,7 +163,7 @@ export function Pairing({
         )}
       </div>
       <form
-        className="flex w-full max-w-xs flex-col gap-3 text-start"
+        className="flex w-full flex-col gap-4 text-start"
         onSubmit={(event) => {
           event.preventDefault();
           if (!ready) return;
@@ -173,8 +175,8 @@ export function Pairing({
           });
         }}
       >
-        <div className="flex flex-col gap-1">
-          <label htmlFor={codeId} className="text-xs">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={codeId} className="text-sm font-medium">
             {t("pairing.code")}
           </label>
           <input
@@ -195,11 +197,11 @@ export function Pairing({
             placeholder="ABCDE-12345"
             aria-invalid={state._tag === "failed" && state.reason._tag === "invalid-code"}
             aria-describedby={error === null ? undefined : errorId}
-            className={`${lineField} font-mono tracking-wider uppercase placeholder:normal-case`}
+            className={`${bigFieldClass} text-center font-mono tracking-widest uppercase placeholder:normal-case`}
           />
         </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor={nameId} className="text-xs">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={nameId} className="text-sm font-medium">
             {t("pairing.deviceName")}
           </label>
           <input
@@ -207,15 +209,13 @@ export function Pairing({
             value={name}
             onChange={(event) => setName(event.currentTarget.value)}
             maxLength={200}
-            className={lineField}
+            className={bigFieldClass}
           />
         </div>
-        <Button type="submit" variant="primary" aria-disabled={!ready}>
+        <BigButton type="submit" disabled={!ready}>
           {state._tag === "pairing" ? t("pairing.pairing") : t("pairing.submit")}
-        </Button>
-        <p id={errorId} role="alert" className="text-xs text-blocked empty:hidden">
-          {error}
-        </p>
+        </BigButton>
+        <FormProblem id={errorId}>{error}</FormProblem>
         {server === undefined &&
           state._tag === "failed" &&
           state.reason._tag === "incompatible-server" && (
@@ -232,7 +232,7 @@ export function Pairing({
             <Button onClick={restart}>{t("gate.restart")}</Button>
           )}
       </form>
-    </Centered>
+    </FirstScreen>
   );
 }
 

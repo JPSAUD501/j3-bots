@@ -3,10 +3,9 @@ import type { ConnectRefusal, ConnectResult } from "@j3-bots/desktop-bridge";
 import { useId, useState, type ReactElement } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
-import { Centered, Ensemble, Heading } from "./EmptyStates";
+import { bigFieldClass, BigButton, FirstScreen, FormProblem } from "../onboarding/parts";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
-import { lineField } from "./ui/field";
 
 interface ServerAddressProps {
   /** Resolves with the app's answer; once connected, the page loads again on that server. */
@@ -64,19 +63,17 @@ export function ServerAddress({
   }
 
   return (
-    <Centered>
-      <Ensemble />
-      <Heading
-        title={t("server.title")}
-        body={parts<"server.body", ReactElement>("server.body", { command })}
-      />
+    <FirstScreen
+      title={t("server.title")}
+      body={parts<"server.body", ReactElement>("server.body", { command })}
+    >
       {notice !== null && (
-        <p role="status" className="max-w-sm rounded-md bg-muted px-3 py-2 text-sm break-words">
+        <p role="status" className="w-full rounded-lg bg-muted px-4 py-3 text-sm break-words">
           {notice}
         </p>
       )}
       <form
-        className="flex w-full max-w-xs flex-col gap-3 text-start"
+        className="flex w-full flex-col gap-4 text-start"
         onSubmit={(event) => {
           event.preventDefault();
           if (!ready) return;
@@ -91,8 +88,8 @@ export function ServerAddress({
           });
         }}
       >
-        <div className="flex flex-col gap-1">
-          <label htmlFor={fieldId} className="text-xs">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={fieldId} className="text-sm font-medium">
             {t("server.address")}
           </label>
           <input
@@ -107,17 +104,17 @@ export function ServerAddress({
             placeholder="192.168.1.20:3737"
             aria-invalid={state._tag === "failed"}
             aria-describedby={state._tag === "failed" ? errorId : undefined}
-            className={`${lineField} font-mono`}
+            className={`${bigFieldClass} font-mono`}
           />
         </div>
-        <Button type="submit" variant="primary" aria-disabled={!ready}>
+        <BigButton type="submit" disabled={!ready}>
           {state._tag === "checking" ? t("server.checking") : t("server.submit")}
-        </Button>
-        <p id={errorId} role="alert" className="text-xs text-blocked empty:hidden">
+        </BigButton>
+        <FormProblem id={errorId}>
           {state._tag === "failed" ? failureText(state.reason) : null}
-        </p>
+        </FormProblem>
       </form>
-    </Centered>
+    </FirstScreen>
   );
 }
 

@@ -9,14 +9,10 @@ import { Problem, SwitchRow, TextField } from "./form.tsx";
 
 /**
  * A name, and whether the bot becomes the primary one; the bot asks the rest
- * itself. `onCreating` is told when Create is pressed, and told again if the
- * bot was not created; `onCreated` gets the new bot once it exists.
+ * itself. `onCreated` gets the new bot once it exists.
  */
 export function NewBotForm(props: {
-  /** Whether "primary" starts on: the first bot is the primary one unless the operator says otherwise. */
-  readonly primaryAtFirst: boolean;
   readonly onCreated: (botId: BotId) => void;
-  readonly onCreating?: (creating: boolean) => void;
   /** Told whether a name is typed and not created yet. */
   readonly onNameChange?: (typed: boolean) => void;
   /** Before Create, as Cancel; absent where there is nothing to go back to. */
@@ -25,7 +21,7 @@ export function NewBotForm(props: {
   const { t } = useI18n();
   const client = useJ3Client();
   const [name, setName] = useState("");
-  const [primary, setPrimary] = useState(props.primaryAtFirst);
+  const [primary, setPrimary] = useState(false);
   const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
   const trimmed = name.trim();
   const ready = trimmed !== "" && state !== "creating";
@@ -59,7 +55,6 @@ export function NewBotForm(props: {
           onPress={() => {
             if (!ready) return;
             setState("creating");
-            props.onCreating?.(true);
             void client.createBot({ name: trimmed, primary }).then((result) => {
               // A created bot opens, which takes the form off the screen: until then it stays
               // creating, so Create cannot make a second bot.
@@ -67,7 +62,6 @@ export function NewBotForm(props: {
                 props.onCreated(result.value.id);
               } else {
                 setState("failed");
-                props.onCreating?.(false);
               }
             });
           }}

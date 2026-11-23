@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  AvatarChoice,
   Bot,
   BotFile,
   BotId,
@@ -51,6 +52,7 @@ const memoryKey = (scope: MemoryScope) => (scope._tag === "bot" ? `bot:${scope.b
 export interface BotDraft {
   readonly name: Profile["name"];
   readonly title?: Profile["title"];
+  readonly avatar?: AvatarChoice;
   readonly job?: Profile["job"];
   readonly model?: ModelChoice;
   readonly permissionMode?: PermissionMode;

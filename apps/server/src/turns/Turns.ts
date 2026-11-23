@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Equivalence from "effect/Equivalence";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { Bots } from "../bots/Bots.ts";
 import { EngineSessions } from "../bots/EngineSessions.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { RoutineRunner } from "../routines/RoutineRunner.ts";
@@ -46,6 +47,7 @@ export const layer = Layer.effectDiscard(
     const readiness = yield* Readiness;
     const rotations = yield* Rotations;
     const sessions = yield* EngineSessions;
+    const bots = yield* Bots;
     const scope = yield* Effect.scope;
 
     /** A failure is logged and the sequence goes on. */
@@ -104,15 +106,26 @@ export const layer = Layer.effectDiscard(
           ),
         ),
         // A provider's state holds some wakes (`Pipeline`): the dispatcher
-        // looks again as soon as it changes, once the state it reads has it.
+        // looks again as soon as it changes, once the state it reads has it,
+        // and after a bot still waiting for its hello on a provider the server
+        // chose has moved to one that is ready (`Bots.adoptDefaults`). Which
+        // provider is the default depends also on which list a model, so a
+        // ready provider whose models arrive later counts as a change too.
         supervised(
           "Following the providers",
           engineState.changes.pipe(
             Stream.map((status) =>
-              status.providers.map((provider) => `${provider.id}:${provider.status._tag}`),
+              status.providers.map(
+                (provider) =>
+                  `${provider.id}:${provider.status._tag}:${provider.models.length > 0}`,
+              ),
             ),
             Stream.changesWith(Equivalence.Array(Equivalence.String)),
-            Stream.runForEach(() => signals.dispatch.fire),
+            Stream.runForEach(() =>
+              step("New bots could not move to the default model", bots.adoptDefaults()).pipe(
+                Effect.andThen(signals.dispatch.fire),
+              ),
+            ),
           ),
         ),
         supervised("The dispatcher", pipeline.runDispatcher),

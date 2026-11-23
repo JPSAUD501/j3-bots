@@ -59,6 +59,7 @@ import {
   addresseeOf,
   buildTimeline,
   mentionOptions,
+  type OnboardingStep,
 } from "@j3-bots/client-runtime/presentation";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { BotsProvider, I18nProvider, useI18n } from "../app/context";
@@ -69,7 +70,8 @@ import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
-import { FirstRun, NoSelection, QuietConversation } from "../components/EmptyStates";
+import { NoSelection, QuietConversation } from "../components/EmptyStates";
+import { Onboarding } from "../onboarding/Onboarding";
 import { HandoffCard } from "../components/HandoffCard";
 import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
@@ -168,6 +170,8 @@ export default function GalleryPage() {
                 <EditingSection />
                 <RoomsSection />
                 <UsageGallerySection />
+                <FirstRunSection />
+                <FirstRunWideSection />
                 <EmptyStatesSection />
                 <ConnectionSection />
                 <ShellSection />
@@ -1513,8 +1517,6 @@ const engines = {
   },
 } as const;
 
-const created = () => Promise.resolve();
-
 /** The sample engine with Codex signed in again and Claude Code's windows changed by `windows`. */
 const usageEngine = (
   windows: (usage: ReadonlyArray<UsageWindow>) => ReadonlyArray<UsageWindow>,
@@ -1681,57 +1683,112 @@ function UsageGallerySection() {
 const speakingFirst = {
   ...team.bots.moss,
   state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false },
+  opening: true,
 } as const;
+
+/** A bot just created on a provider not connected yet: its hello waits for it. */
+const waitingFirst = { ...team.bots.moss, opening: true } as const;
+
+/** The first run at `step`, as a phone shows it, with the engine `engine`. */
+function FirstRunAt({
+  step,
+  engine = team.engine,
+}: {
+  step: OnboardingStep;
+  engine?: EngineStatus | null;
+}) {
+  return (
+    <Onboarding
+      engine={engine}
+      initialStep={step}
+      initialName="Nova"
+      onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
+      onArrived={arrived}
+    />
+  );
+}
+
+const arrived = () => {};
+
+function FirstRunSection() {
+  return (
+    <Section title="First run">
+      <div className="flex flex-wrap gap-4">
+        <Frame label="Welcome" width={390} height={760}>
+          <FirstRunAt step="welcome" />
+        </Frame>
+        <Frame label="The first bot's name, with a default" width={390} height={760}>
+          <FirstRunAt step="name" />
+        </Frame>
+        <Frame label="Its look; with a provider, this step creates it" width={390} height={760}>
+          <FirstRunAt step="look" />
+        </Frame>
+        <Frame label="No provider connected: one command, live" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.connect} />
+        </Frame>
+        <Frame label="The engine still checking its providers" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.checking} />
+        </Frame>
+        <Frame label="No provider can run a bot" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.unusable} />
+        </Frame>
+        <Frame label="The engine not running" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.down} />
+        </Frame>
+        <Frame label="A provider connected while the step is read" width={390} height={760}>
+          <FirstRunAt step="connect" />
+        </Frame>
+        <Frame label="The arrival, saying hello" width={390} height={760}>
+          <FirstRunAt step="arrival" />
+        </Frame>
+        <Frame label="The arrival, before a provider is connected" width={390} height={760}>
+          <FirstRunAt step="arrival" engine={engines.connect} />
+        </Frame>
+        <Frame label="The whole first run, live, with a provider" width={390} height={760}>
+          <ShellFrame initial={null} firstRun />
+        </Frame>
+        <Frame label="The whole first run, live, with no provider" width={390} height={760}>
+          <ShellFrame initial={null} firstRun engine={engines.connect} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
+function FirstRunWideSection() {
+  return (
+    <Section title="First run on a wide window" stacked>
+      <div className="flex flex-col gap-6">
+        <Frame label="Wide, live, with a provider" width={1280} height={760}>
+          <ShellFrame initial={null} firstRun />
+        </Frame>
+        <Frame label="Wide, live, with no provider" width={1280} height={760}>
+          <ShellFrame initial={null} firstRun engine={engines.connect} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
 
 function EmptyStatesSection() {
   return (
     <Section title="Empty states">
       <div className="flex flex-wrap gap-4">
-        <Frame label="First run: connecting" width={340} height={360}>
-          <FirstRun engine={engines.starting} onCreateBot={created} />
-        </Frame>
-        <Frame label="First run: engine not running" width={340} height={360}>
-          <FirstRun engine={engines.down} onCreateBot={created} />
-        </Frame>
-        <Frame label="First run: the engine's port is taken" width={340} height={360}>
-          <FirstRun engine={engines.portInUse} onCreateBot={created} />
-        </Frame>
-        <Frame label="First run: the engine did not install" width={340} height={360}>
-          <FirstRun engine={engines.installFailed} onCreateBot={created} />
-        </Frame>
-        <Frame
-          label="First run: the engine refused the server's credential"
-          width={340}
-          height={360}
-        >
-          <FirstRun engine={engines.credentialRefused} onCreateBot={created} />
-        </Frame>
-        <Frame label="First run: wrong engine version" width={340} height={360}>
-          <FirstRun engine={engines.incompatible} onCreateBot={created} />
-        </Frame>
-        <Frame label="First run: the engine still checking a provider" width={400} height={420}>
-          <FirstRun engine={engines.checking} onCreateBot={created} />
-        </Frame>
-        <Frame label="First run: connect the providers, with one command" width={400} height={460}>
-          <FirstRun engine={engines.connect} onCreateBot={created} />
-        </Frame>
-        <Frame label="First run: a provider ready with no model listed" width={400} height={420}>
-          <FirstRun engine={engines.noModels} onCreateBot={created} />
-        </Frame>
-        <Frame label="First run: one provider limited, one unavailable" width={400} height={420}>
-          <FirstRun engine={engines.unusable} onCreateBot={created} />
-        </Frame>
-        <Frame label="No bots yet: creating one opens its conversation" width={760} height={480}>
-          <ShellFrame initial={null} firstRun />
-        </Frame>
         <Frame label="Nothing selected" width={340} height={360}>
           <NoSelection nextShortcut={shortcuts.nextBot.label} />
         </Frame>
         <Frame label="A quiet conversation" width={340} height={360}>
-          <QuietConversation bot={team.bots.moss} />
+          <QuietConversation bot={team.bots.moss} engine={team.engine} />
         </Frame>
         <Frame label="A new bot, about to speak first" width={340} height={360}>
-          <QuietConversation bot={speakingFirst} />
+          <QuietConversation bot={speakingFirst} engine={team.engine} />
+        </Frame>
+        <Frame
+          label="A new bot whose provider is not connected: its hello waits"
+          width={340}
+          height={420}
+        >
+          <QuietConversation bot={waitingFirst} engine={engines.connect} />
         </Frame>
       </div>
     </Section>
@@ -1777,7 +1834,7 @@ function ConnectionSection() {
         <Frame
           label="Pairing: a new device (any code is refused as wrong)"
           width={390}
-          height={560}
+          height={760}
         >
           <Pairing
             reason="new"
@@ -1789,7 +1846,7 @@ function ConnectionSection() {
         <Frame
           label="Pairing: opened from a QR code, its code filled in (any code is refused as wrong)"
           width={390}
-          height={560}
+          height={760}
         >
           <Pairing
             reason="new"
@@ -1802,7 +1859,7 @@ function ConnectionSection() {
         <Frame
           label="Pairing: signed out elsewhere (any code meets the lockout)"
           width={390}
-          height={560}
+          height={760}
         >
           <Pairing
             reason="signed-out"
@@ -1817,7 +1874,7 @@ function ConnectionSection() {
         <Frame
           label="Pairing: signed out here without reaching the server"
           width={390}
-          height={600}
+          height={760}
         >
           <Pairing
             reason="still-listed"
@@ -1850,12 +1907,14 @@ function ShellFrame({
   initial,
   details = false,
   firstRun = false,
+  engine,
 }: {
   initial: RosterItemKey | null;
   details?: boolean;
   firstRun?: boolean;
+  engine?: EngineStatus;
 }) {
-  const source = useSampleSource({ firstRun });
+  const source = useSampleSource(engine === undefined ? { firstRun } : { firstRun, engine });
   const [selected, setSelected] = useState(initial);
   const [detailsOpen, setDetailsOpen] = useState(details);
   return (

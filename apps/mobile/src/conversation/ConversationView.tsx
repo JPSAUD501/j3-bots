@@ -7,6 +7,8 @@ import {
   buildTimeline,
   mentionedNames,
   mentionedWhoLeft,
+  openingHeld,
+  type OpeningHold,
   readThrough,
   roomStopFailed,
   rosterKeyOf,
@@ -20,12 +22,14 @@ import {
   useConversation,
   useConversationEnd,
   useDraft,
+  useEngineStatus,
   useJ3Client,
   useSelected,
 } from "@j3-bots/client-runtime/react";
 import {
   addresseeLine,
   dividerTime,
+  heldHelloText,
   quietConversationText,
   resendLabel,
 } from "@j3-bots/client-runtime/wording";
@@ -59,14 +63,16 @@ import {
   useState,
 } from "react";
 import { AppState, View } from "react-native";
+import Animated from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
+import { CommandLine } from "../components/CommandLine.tsx";
 import { PendingButton } from "../components/form.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { useRoomActions } from "../details/actions.ts";
-import { enteringWhen, openIn, settleIn, useReducedMotion } from "../motion.ts";
+import { enteringWhen, openIn, popIn, settleIn, useReducedMotion } from "../motion.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
@@ -249,6 +255,13 @@ export function ConversationView({
 
   const room = item._tag === "room" ? item.room : null;
   const nameOf = (botId: BotId) => bots.get(botId)?.profile.name;
+  const engine = useEngineStatus();
+  const engineNow = engine._tag === "ready" ? engine.value : null;
+  // Kept while the hold reads the same, so the list redraws its rows only when it changes.
+  const openingHold = useMemo(
+    () => (item._tag === "bot" ? openingHeld(item.bot, engineNow) : null),
+    [item, engineNow],
+  );
 
   const draft = useDraft(target);
   // Who the message wakes as the draft stands: only mentions picked, and still standing, count.
@@ -328,12 +341,13 @@ export function ConversationView({
                       row={row}
                       room={room}
                       arriving={arrived.has(row.key)}
+                      openingHold={openingHold}
                       onOpenBot={onOpenBot}
                       onOpenRoutine={openRoutine}
                     />
                   </View>
                 )}
-                extraData={{ room, widths, arrived }}
+                extraData={{ room, widths, arrived, openingHold }}
                 onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) =>
                   end.follow(
                     contentSize.height - layoutMeasurement.height - contentOffset.y,
@@ -440,17 +454,36 @@ export function Gone({ onBack }: { readonly onBack: () => void }) {
   );
 }
 
-/** A bot's conversation before anything is said in it. */
+/**
+ * A bot's conversation before anything is said in it. A first hello waiting
+ * for a provider says so, with the command that connects one when there is.
+ */
 function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) {
   const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const status = useEngineStatus();
+  const name = bot.profile.name;
+  const held = openingHeld(bot, status._tag === "ready" ? status.value : null);
   return (
     <View
       className="flex-1 items-center justify-center gap-4 px-6"
       style={{ paddingBottom: bottom }}
     >
-      <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
-      <Title>{bot.profile.name}</Title>
-      <Body>{quietConversationText(bot, ctx)}</Body>
+      <Animated.View entering={popIn()}>
+        <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
+      </Animated.View>
+      <Title>{name}</Title>
+      <Body>
+        {held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}
+      </Body>
+      {held?._tag === "connect" && (
+        <View className="w-full max-w-sm gap-2">
+          <Text className="text-center text-sm text-muted-foreground">
+            {t("empty.quiet.connectHint")}
+          </Text>
+          <CommandLine command={held.command} />
+        </View>
+      )}
     </View>
   );
 }
@@ -463,6 +496,7 @@ function Row({
   row,
   room,
   arriving,
+  openingHold,
   onOpenBot,
   onOpenRoutine,
 }: {
@@ -471,6 +505,8 @@ function Row({
   readonly room: Pick<Room, "members" | "hostId"> | null;
   /** It just arrived at the end: it settles into place as it mounts. */
   readonly arriving: boolean;
+  /** What holds the bot's hello back, which the operator's messages behind it wait for (`openingHeld`). */
+  readonly openingHold: OpeningHold | null;
   readonly onOpenBot: (botId: BotId) => void;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
 }) {
@@ -493,7 +529,13 @@ function Row({
       return message._tag === "outgoing" ? (
         <OutgoingMessage row={row} message={message} room={room} arriving={arriving} />
       ) : (
-        <ServerMessage row={row} message={message} room={room} arriving={arriving} />
+        <ServerMessage
+          row={row}
+          message={message}
+          room={room}
+          arriving={arriving}
+          openingHold={openingHold}
+        />
       );
     }
     case "card": {
@@ -601,11 +643,13 @@ function ServerMessage({
   message,
   room,
   arriving,
+  openingHold,
 }: {
   readonly row: MessageRow;
   readonly message: MessageEntry;
   readonly room: Pick<Room, "members" | "hostId"> | null;
   readonly arriving: boolean;
+  readonly openingHold: OpeningHold | null;
 }) {
   const client = useJ3Client();
   const bots = useBots();
@@ -627,6 +671,7 @@ function ServerMessage({
       mentionable={highlighted(message.mentions, [])}
       onRetry={() => void client.retryMessage(message.id)}
       submitting={submitting}
+      openingHold={openingHold}
     />
   );
 }

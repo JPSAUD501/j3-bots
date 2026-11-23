@@ -26,6 +26,7 @@ export {
 } from "./message.ts";
 export {
   entrySummary,
+  heldHelloText,
   type LineTone,
   memberList,
   noticeText,
@@ -36,6 +37,7 @@ export {
   type StatusLine,
   usageLimitText,
 } from "./status.ts";
+export { connectStepText, type ConnectStepText } from "./onboarding.ts";
 export { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
 export {
   activityTime,

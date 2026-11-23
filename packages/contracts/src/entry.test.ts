@@ -5,7 +5,7 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { EntryId, EntryOrder } from "./base.ts";
 import { BotState } from "./bot.ts";
-import { EntryPreview, ReceivedEntry } from "./entry.ts";
+import { EntryPreview, MessageDelivery, ReceivedEntry } from "./entry.ts";
 
 // As the socket carries them: JSON, which a client decodes with the contract.
 const EntriesJson = Schema.toCodecJson(Schema.Array(ReceivedEntry));
@@ -103,5 +103,27 @@ describe("an entry a client receives", () => {
       createdAt: "2026-11-20T10:00:00.000Z",
     });
     assert.strictEqual(preview.kind, "unknown");
+  });
+});
+
+describe("a message held behind a bot's hello across versions", () => {
+  /** A message's delivery as a client from before `behindOpening` decodes it. */
+  const Before = Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    Schema.TaggedStruct("delivered", {}),
+    Schema.TaggedStruct("cancelled", {}),
+    Schema.TaggedStruct("failed", {
+      reason: Schema.Literals(["rejected", "unresolved", "stopped"]),
+    }),
+  ]);
+  const held = Schema.encodeSync(MessageDelivery)({ _tag: "pending", behindOpening: true });
+
+  it("reads as an ordinary pending message to an older client", () => {
+    assert.deepStrictEqual(Schema.decodeSync(Before)(held), { _tag: "pending" });
+  });
+
+  it("reads an older server's pending message as waiting behind nothing", () => {
+    const older = Schema.encodeSync(Before)({ _tag: "pending" });
+    assert.deepStrictEqual(Schema.decodeSync(MessageDelivery)(older), { _tag: "pending" });
   });
 });

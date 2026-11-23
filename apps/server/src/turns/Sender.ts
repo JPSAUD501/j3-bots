@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
-import { EngineState } from "../engine/EngineState.ts";
+import { EngineState, providerReady } from "../engine/EngineState.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Layout } from "../Layout.ts";
 import { Time, timeText } from "../persistence/columns.ts";
@@ -166,7 +166,8 @@ export const layer = Layer.effect(
     const path = yield* Path.Path;
     const targets = stopTargets(sql);
     const { admitsStart } = admission(sql, yield* SettingsStore);
-    const limitOf = providerLimit(sql, yield* EngineState);
+    const engineState = yield* EngineState;
+    const limitOf = providerLimit(sql, engineState);
     const entries = yield* Entries;
     const readiness = yield* Readiness;
     const { sessionLost } = sessionLoss(sql, entries, ledger, yield* WorkSteps, signals);
@@ -585,7 +586,8 @@ export const layer = Layer.effect(
 
     /**
      * Whether the dispatch is automated work its provider's usage limit holds
-     * now (`automatedSql`), and whether it goes into its bot's main session.
+     * now (`automatedSql`), whether it goes into its bot's main session, and
+     * whether it carries the bot's opening.
      */
     const automatedStart = SqlSchema.findOne({
       Request: DispatchRowId,
@@ -593,15 +595,24 @@ export const layer = Layer.effect(
         automated: Schema.BooleanFromBit,
         provider_id: ProviderId,
         main: Schema.BooleanFromBit,
+        opening: Schema.BooleanFromBit,
       }),
       execute: (id) => sql`
         SELECT ${automatedSql(sql, sql.literal("ls_dispatch.id"))} AS automated,
-          ls_session.provider_id, ls_session.purpose = 'main' AS main
+          ls_session.provider_id, ls_session.purpose = 'main' AS main,
+          EXISTS (
+            SELECT 1 FROM wakes ls_wake
+            WHERE ls_wake.dispatch_id = ls_dispatch.id
+              AND json_extract(ls_wake.payload_json, '$._tag') = 'first-run'
+          ) AS opening
         FROM dispatches ls_dispatch
         JOIN sessions ls_session ON ls_session.id = ls_dispatch.session_id
         WHERE ls_dispatch.id = ${id}
       `,
     });
+
+    const WAIT = { _tag: "wait" } as const;
+    const RELEASE = { _tag: "release" } as const;
 
     /**
      * What becomes of a first start that cannot be sent now, because no turn
@@ -614,16 +625,24 @@ export const layer = Layer.effect(
      * limit never holds, would wait behind it until the reset. Its wakes
      * wait as pending wakes, which the planner holds until then. A routine's
      * start, in a side session, holds nothing else, and waits.
+     * The bot's opening is released while the engine does not report its
+     * session's provider ready, as it last reported it: the hello waits as a
+     * pending wake for a provider that can run it (`Pipeline`,
+     * `openingHeld`), and the bot can still move to another provider
+     * (`Bots.adoptDefaults`). The provider may have gone since it was planned.
      */
     const startHold = Effect.fn("Sender.startHold")(function* (row: DispatchRow) {
       if (!(yield* admitsStart(row.session_id))) {
-        return row.audience_room_id === null ? ("wait" as const) : ("release" as const);
+        return row.audience_room_id === null ? WAIT : RELEASE;
       }
       const start = yield* automatedStart(row.id).pipe(Effect.orDie);
-      if (!start.automated || Option.isNone(yield* limitOf(start.provider_id))) {
-        return "send" as const;
+      if (start.opening && !providerReady(yield* engineState.current, start.provider_id)) {
+        return RELEASE;
       }
-      return start.main ? ("release" as const) : ("wait" as const);
+      if (!start.automated || Option.isNone(yield* limitOf(start.provider_id))) {
+        return { _tag: "send", opening: start.opening } as const;
+      }
+      return start.main ? RELEASE : WAIT;
     });
 
     /**
@@ -651,10 +670,15 @@ export const layer = Layer.effect(
      * written before the original landed, is released too: what is left of
      * the read message goes no more (`Ledger.settleRead`), and the rest is
      * planned again without it.
+     * A first start of the bot's opening needs its provider ready, which may
+     * have gone while the send waited for the gate, and is released otherwise
+     * (`startHold`). Once it is claimed, the operator's messages behind it
+     * wait like any other (`Ledger.openingSent`).
      */
     const claim = (row: DispatchRow) =>
       transaction(
         Effect.gen(function* () {
+          let opening = false;
           /** Back to planning: its wakes wait again, unless a Stop holds them. */
           const releaseFirst = Effect.gen(function* () {
             const current = yield* ledger.find(row.id);
@@ -669,8 +693,9 @@ export const layer = Layer.effect(
           }
           if (row.attempts === 0 && row.delivery === "start") {
             const hold = yield* startHold(row);
-            if (hold === "release") return yield* releaseFirst;
-            if (hold === "wait") return "refused" as const;
+            if (hold._tag === "release") return yield* releaseFirst;
+            if (hold._tag === "wait") return "refused" as const;
+            opening = hold.opening;
             if (row.audience_room_id !== null) {
               const room = yield* roomStart({
                 dispatchId: row.id,
@@ -705,7 +730,9 @@ export const layer = Layer.effect(
               )
             RETURNING attempts
           `;
-          return claimed.length > 0 ? ("claimed" as const) : ("refused" as const);
+          if (claimed.length === 0) return "refused" as const;
+          if (opening) yield* ledger.openingSent(row.id);
+          return "claimed" as const;
         }),
       ).pipe(Effect.withSpan("Sender.claim"));
 
@@ -824,7 +851,7 @@ export const layer = Layer.effect(
       // it is released before anything is staged (`startHold`), so the
       // room's order is read again and the operator's word may go first. Its
       // wakes wait, as pending wakes, for what held it.
-      if (firstSend && row.delivery === "start" && (yield* startHold(row)) === "release") {
+      if (firstSend && row.delivery === "start" && (yield* startHold(row))._tag === "release") {
         yield* releaseUnsent(row.id);
         return "settled" as const;
       }

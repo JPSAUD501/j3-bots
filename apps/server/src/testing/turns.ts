@@ -59,6 +59,10 @@ export const createNewBot = (name: string, model?: ModelChoice) =>
     });
   });
 
+const sameStatus = (a: ProviderStatus["status"], b: ProviderStatus["status"]) =>
+  a._tag === b._tag &&
+  (a._tag !== "unavailable" || b._tag !== "unavailable" || a.checking === b.checking);
+
 /** The engine reports the provider in `status` from now on, and the server has taken it in. */
 export const providerIs = (providerId: ProviderId, status: ProviderStatus["status"]) =>
   Effect.gen(function* () {
@@ -68,7 +72,26 @@ export const providerIs = (providerId: ProviderId, status: ProviderStatus["statu
       engineState.current.pipe(
         Effect.map((now) =>
           now.providers.some(
-            (provider) => provider.id === providerId && provider.status._tag === status._tag,
+            (provider) => provider.id === providerId && sameStatus(provider.status, status),
+          ),
+        ),
+      ),
+    );
+  });
+
+/** The engine lists these models of the provider from now on, and the server has taken them in. */
+export const providerLists = (providerId: ProviderId, models: ProviderStatus["models"]) =>
+  Effect.gen(function* () {
+    yield* (yield* TestProviders).setModels(providerId, models);
+    const engineState = yield* EngineState;
+    yield* until(
+      engineState.current.pipe(
+        Effect.map((now) =>
+          now.providers.some(
+            (provider) =>
+              provider.id === providerId &&
+              provider.models.length === models.length &&
+              provider.models.every((model, index) => model.id === models[index]?.id),
           ),
         ),
       ),
@@ -236,6 +259,33 @@ export const admittedTurn = (botId: BotId) =>
 /** Waits for a turn other than `previous` to be running. */
 export const nextTurn = (botId: BotId, previous: TurnId | null = null) =>
   eventually(admittedTurn(botId).pipe(Effect.map(Option.filter((turnId) => turnId !== previous))));
+
+/**
+ * The bot's next turn says it is done and ends, so no `undelivered` wake
+ * follows it.
+ */
+export const finishRunning = (botId: BotId, previous: Parameters<typeof nextTurn>[1] = null) =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const session = yield* engineSession(botId);
+    const turnId = yield* nextTurn(botId, previous);
+    const args = { text: "Done.", done: true };
+    yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "say",
+      input: args,
+      recorded: "now",
+    });
+    yield* (yield* BotTools).call({
+      requestId: `say-${turnId}`,
+      sessionId: session,
+      tool: "say",
+      arguments: args,
+    });
+    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    return turnId;
+  });
 
 /** Waits until the server saw the bot's turn end. */
 export const turnEnded = (botId: BotId) =>

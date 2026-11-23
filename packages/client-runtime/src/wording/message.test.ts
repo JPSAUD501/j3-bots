@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Invalid } from "@j3-bots/contracts";
-import { createI18n } from "@j3-bots/i18n";
 import { describe, expect, it } from "vite-plus/test";
+import { at, context, plain } from "../../test/fixtures.ts";
 import { deliveryLine, fileSize } from "./message.ts";
 
 describe("delivery line", () => {
-  const en = createI18n("en");
-  const settled = { submitting: false, leftRoom: [] };
+  const en = context("2026-11-20T15:00:00Z", "en", {});
+  const settled = { submitting: false, leftRoom: [], openingHold: null };
 
   it("says a message the engine found too long apart from any other refusal", () => {
     const refused = (reason: "message-length" | "mentions") =>
@@ -26,7 +26,7 @@ describe("delivery line", () => {
       _tag: "not-sent",
       failure: { _tag: "refused", error: new Invalid({ reason: "mentions" }) },
     } as const;
-    expect(deliveryLine(status, { submitting: false, leftRoom: ["Ana", "Scout"] }, en)).toBe(
+    expect(deliveryLine(status, { ...settled, leftRoom: ["Ana", "Scout"] }, en)).toBe(
       "Not sent: Ana and Scout are no longer in this room",
     );
   });
@@ -34,7 +34,25 @@ describe("delivery line", () => {
   it("reads a failed message as queued again while its retry is on its way", () => {
     const failed = { _tag: "failed", reason: "stopped" } as const;
     expect(deliveryLine(failed, settled, en)).toBe("Not delivered: the work was stopped");
-    expect(deliveryLine(failed, { submitting: true, leftRoom: [] }, en)).toBe("Queued");
+    expect(deliveryLine(failed, { ...settled, submitting: true }, en)).toBe("Queued");
+  });
+
+  it("says when a message the server holds behind the bot's hello goes, as what holds the hello says", () => {
+    const behind = { _tag: "queued", behindOpening: true } as const;
+    const connect = { ...settled, openingHold: { _tag: "connect", command: "connect" } } as const;
+    expect(deliveryLine(behind, connect, en)).toBe("Sent once a model is connected");
+    const limit = (resetsAt: string | null) =>
+      ({
+        ...settled,
+        openingHold: { _tag: "limit", resetsAt: resetsAt === null ? null : at(resetsAt) },
+      }) as const;
+    expect(plain(deliveryLine(behind, limit("2026-11-20T16:30:00Z"), en) ?? "")).toBe(
+      "Sent when the usage limit resets at 1:30 PM",
+    );
+    expect(deliveryLine(behind, limit(null), en)).toBe("Sent when the usage limit resets");
+    // Queued behind a hello already on its way, or behind nothing, it waits like any message.
+    expect(deliveryLine({ _tag: "queued" }, connect, en)).toBe("Queued");
+    expect(deliveryLine(behind, settled, en)).toBe("Queued");
   });
 
   it("says nothing once every recipient has the message", () => {

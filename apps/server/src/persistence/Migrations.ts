@@ -22,6 +22,8 @@ import Migration0014 from "./migrations/0014_no_engine_dismissals.ts";
 import Migration0015 from "./migrations/0015_refused_openings.ts";
 import Migration0016 from "./migrations/0016_refused_permission_modes.ts";
 import Migration0017 from "./migrations/0017_device_time_zone.ts";
+import Migration0018 from "./migrations/0018_default_models.ts";
+import Migration0019 from "./migrations/0019_held_messages.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -45,6 +47,8 @@ const migrations = SqliteMigrator.fromRecord({
   "15_refused_openings": Migration0015,
   "16_refused_permission_modes": Migration0016,
   "17_device_time_zone": Migration0017,
+  "18_default_models": Migration0018,
+  "19_held_messages": Migration0019,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });
@@ -106,3 +110,10 @@ export const migrate = Effect.fn("migrate")(function* (loader: Migrator.Loader) 
 
 /** Applies every migration of this server the database has not recorded yet. */
 export const runMigrations = () => migrate(migrations);
+
+/**
+ * The migrations through `last`, as the release that ended with it applied
+ * them: a test writes the database such a release left, then upgrades it.
+ */
+export const migrationsThrough = (last: number): Migrator.Loader =>
+  Effect.map(migrations, (all) => all.filter(([id]) => id <= last));

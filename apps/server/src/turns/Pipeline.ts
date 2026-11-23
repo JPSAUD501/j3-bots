@@ -42,7 +42,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
-import { EngineState } from "../engine/EngineState.ts";
+import { EngineState, providerReady } from "../engine/EngineState.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
@@ -80,6 +80,7 @@ import {
 import { modeRefusedSql } from "./modeRefusals.ts";
 import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { notices } from "./notices.ts";
+import { behindOpeningSql, openingUnsentSql } from "./openings.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
 import { automatedSql, providerLimit } from "./providerLimit.ts";
@@ -385,6 +386,59 @@ export const layer = Layer.effect(
     });
 
     /**
+     * The hello waits for a provider that can run it rather than fail before
+     * it starts: nobody asked for it, so nobody waits on it either. It is held
+     * while the engine does not report the bot's provider ready: signed out,
+     * at its limit, unavailable, or not reported at all, as while the engine
+     * is down or right after it started. Written or not, it is sent once the
+     * provider is ready, which wakes the dispatcher; the send's claim checks
+     * again (`Sender`).
+     */
+    const openingHeld = Effect.fn("Pipeline.openingHeld")(function* (botId: BotId) {
+      const bot = yield* bots.find(botId);
+      if (Option.isNone(bot)) return false;
+      return !providerReady(yield* engineState.current, bot.value.bot.model.providerId);
+    });
+
+    const OpeningState = Schema.Struct({
+      id: Schema.String,
+      unsent: Schema.BooleanFromBit,
+      holds: Schema.BooleanFromBit,
+    });
+
+    /**
+     * The bot's opening that has not ended, if it has one: whether the engine
+     * does not have it yet (`openingUnsentSql`), and whether an operator's
+     * message waits behind it already.
+     */
+    const openingState = SqlSchema.findOneOption({
+      Request: BotId,
+      Result: OpeningState,
+      execute: (botId) => sql`
+        SELECT o.id,
+          ${openingUnsentSql(sql, { wakeId: sql.literal("o.id") })} AS unsent,
+          EXISTS (SELECT 1 FROM wakes h WHERE h.behind_opening_id = o.id) AS holds
+        FROM wakes o
+        WHERE o.bot_id = ${botId} AND json_extract(o.payload_json, '$._tag') = 'first-run'
+          AND o.status IN ('pending', 'dispatched')
+        ORDER BY o.rowid DESC LIMIT 1
+      `,
+    });
+
+    /**
+     * The opening an operator's message written now waits behind, if any:
+     * one the engine does not have yet while its provider is not ready
+     * (`openingHeld`), and one that holds a message already, until it ends,
+     * so the messages keep their order whatever the provider does meanwhile.
+     */
+    const openingToWaitBehind = Effect.fn("Pipeline.openingToWaitBehind")(function* (botId: BotId) {
+      const opening = yield* openingState(botId).pipe(Effect.orDie);
+      if (Option.isNone(opening)) return null;
+      const { id, unsent, holds } = opening.value;
+      return holds || (unsent && (yield* openingHeld(botId))) ? { id, unsent } : null;
+    });
+
+    /**
      * The operator wrote in the bot's conversation: a hello the bot has not
      * sent yet would open a conversation already open, under an envelope
      * saying they have not written. Its `first-run` wake is cancelled while
@@ -470,6 +524,12 @@ export const layer = Layer.effect(
           if (alone !== null && !fitsAlone(alone)) {
             return yield* new Invalid({ reason: "message-length" });
           }
+          // Decided in this transaction with the wake it writes: nothing the
+          // dispatcher does meanwhile can take the opening from under it.
+          const behind =
+            input.target._tag === "conversation"
+              ? yield* openingToWaitBehind(input.target.botId)
+              : null;
           const entry = yield* entries.append({
             target: input.target,
             commandId,
@@ -479,7 +539,10 @@ export const layer = Layer.effect(
               text: input.text,
               attachments: files,
               mentions: input.mentions ?? { _tag: "bots", ids: [] },
-              delivery: { _tag: "pending" },
+              delivery:
+                behind?.unsent === true
+                  ? { _tag: "pending", behindOpening: true }
+                  : { _tag: "pending" },
               commandId,
             },
           });
@@ -506,10 +569,17 @@ export const layer = Layer.effect(
                 hops: 0,
                 retryOf: null,
                 cause: { _tag: "operator" },
+                ...(behind === null ? {} : { behindOpening: behind.id }),
               },
             ]);
-            // The operator spoke first: there is no conversation left to open.
-            yield* withdrawOpening(input.target.botId);
+            if (behind === null) {
+              // The operator spoke first: there is no conversation left to open.
+              yield* withdrawOpening(input.target.botId);
+            } else {
+              // The hello waits for its provider: the message waits behind
+              // it, and goes once it has ended. Its retry is offered no more.
+              yield* closeOpeningRetries(input.target.botId);
+            }
           } else if (room !== undefined) {
             yield* routing.operatorMessage({ room, message: entry });
           }
@@ -743,12 +813,17 @@ export const layer = Layer.effect(
     // wakes written in one transaction share their time. A routine's wake is
     // never planned into the main session: it waits for a side session of its
     // own (`docs/architecture/server.md`, Sessions).
+    // An operator's message behind the bot's opening is not among them until
+    // the opening has ended (`behindOpeningSql`): it never reaches the
+    // opening's turn, and goes in the order it was written once that turn is
+    // over, whatever became of it.
     const pendingOf = SqlSchema.findAll({
       Request: Schema.String,
       Result: WakeRow,
       execute: (botId) => sql`
-        SELECT ${sql.literal(WAKE_COLUMNS)} FROM wakes
+        SELECT ${sql.literal(WAKE_COLUMNS)} FROM wakes w
         WHERE bot_id = ${botId} AND status = 'pending' AND kind <> 'routine'
+          AND NOT ${behindOpeningSql(sql, "w")}
         ORDER BY priority, rowid
       `,
     });
@@ -834,21 +909,6 @@ export const layer = Layer.effect(
       if (Option.isNone(limit)) return false;
       outcome.until(limit.value.resetsAt);
       return true;
-    });
-
-    /**
-     * The hello waits for a provider that can run it rather than fail before
-     * it starts: nobody asked for it, so nobody waits on it either. It is held
-     * while the engine reports the bot's provider as anything but ready (one
-     * the engine does not report holds nothing). Written or not, it is sent
-     * once the provider is ready, which wakes the dispatcher.
-     */
-    const openingHeld = Effect.fn("Pipeline.openingHeld")(function* (botId: BotId) {
-      const bot = yield* bots.find(botId);
-      if (Option.isNone(bot)) return false;
-      const status = yield* engineState.current;
-      const provider = status.providers.find((p) => p.id === bot.value.bot.model.providerId);
-      return provider !== undefined && provider.status._tag !== "ready";
     });
 
     /** The files a wake's message carries, as the engine's limits count them. */
@@ -1012,17 +1072,26 @@ export const layer = Layer.effect(
           delivery,
         } satisfies Plan;
       }
+      // The opening goes before anything else, unless it waits for its
+      // provider; the operator's messages behind it wait for it to end
+      // (`pendingOf`).
+      const opening = pending.find((wake) => wake.payload_json._tag === "first-run");
+      const others = pending.filter((wake) => wake !== opening);
+      const candidates =
+        opening === undefined
+          ? pending
+          : (yield* openingHeld(botId))
+            ? others
+            : [opening, ...others];
       let head: WakeRow | undefined;
-      for (const wake of pending) {
+      for (const wake of candidates) {
         if (yield* mayStart(botId, wake, session.value.id)) {
           head = wake;
           break;
         }
       }
       if (head === undefined) return null;
-      if (head.payload_json._tag === "first-run") {
-        if (yield* openingHeld(botId)) return null;
-      } else if (head.priority !== PRIORITY.user) {
+      if (head.payload_json._tag !== "first-run" && head.priority !== PRIORITY.user) {
         // Every automated wake waits for the reset, a bot's room message too.
         if (yield* providerLimited(botId, outcome)) return null;
       }

@@ -88,6 +88,9 @@ const sentences = {
   "conversation.stopping": "Parando",
 
   "message.queued": "Na fila",
+  "message.waitingForModel": "Enviada assim que um modelo conectar",
+  "message.waitingForReset": "Enviada quando o limite de uso renovar",
+  "message.waitingForResetAt": "Enviada quando o limite de uso renovar {when}",
   "message.cancelled": "Não enviada: você parou o bot antes",
   "message.failed.rejected": "Não entregue: o motor recusou",
   "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
@@ -440,26 +443,14 @@ const sentences = {
   "firstRun.incompatible.title": "O motor está na versão errada",
   "firstRun.incompatible.body":
     "O motor está na versão {running}, e esta versão do J3 Bots precisa da {pinned}.",
-  "firstRun.connect.title": "Conecte seus provedores",
-  "firstRun.connect.body":
-    "Os bots chegam aos modelos por um endpoint que você roda, como um proxy na frente das suas assinaturas. Rode isto na máquina que roda o J3 Bots: ele pede o endereço e a chave do endpoint. Esta página atualiza quando os provedores estiverem prontos.",
   "firstRun.connect.copy": "Copiar o comando que conecta seus provedores",
   "firstRun.connect.copied": "Copiado",
   "firstRun.connect.selected": "Comando selecionado. Copie manualmente.",
-  "firstRun.checking.title": "Verificando seus provedores",
-  "firstRun.checking.body":
-    "O motor verifica cada provedor ao iniciar, o que pode levar até um minuto. Esta página atualiza quando ele terminar.",
-  "firstRun.unavailable.title": "Nenhum provedor pode rodar um bot agora",
-  "firstRun.unavailable.body":
-    "O estado de cada provedor está abaixo. Esta página atualiza assim que um deles estiver pronto.",
   "provider.ready": "Pronto",
   "provider.notConnected": "Não conectado",
   "provider.noModels": "Conectado, mas o motor ainda não lista nenhum modelo dele",
   "provider.unavailable": "Indisponível agora",
   "provider.checking": "Verificando…",
-  "firstRun.create.title": "Conheça seu primeiro bot",
-  "firstRun.create.body":
-    "Dê um nome a ele. Ele vai perguntar para que você o quer, uma pergunta por vez.",
   "firstRun.create.name": "Nome do bot",
   "firstRun.create.placeholder": "Um nome, como Scout",
   "firstRun.create.primary":
@@ -467,11 +458,62 @@ const sentences = {
   "firstRun.create.submit": "Criar bot",
   "firstRun.create.failed": "O bot não foi criado. Tente de novo.",
 
+  "commandLine.copy": "Copiar",
+  "commandLine.copyFailed": "Não deu para copiar. Toque e segure o comando para selecioná-lo.",
+  "onboarding.welcome.body":
+    "Colegas de equipe que moram na sua própria máquina. Eles lembram das coisas, seguem trabalhando quando você sai e perguntam quando precisam de você.",
+  "onboarding.welcome.start": "Conhecer meu primeiro bot",
+  "onboarding.back": "Voltar",
+  "onboarding.progress": "Passo {current} de {count}",
+  "onboarding.continue": "Continuar",
+  "onboarding.name.title": "Como vai se chamar seu primeiro bot?",
+  "onboarding.name.label": "Nome do bot",
+  "onboarding.name.hint": "Pode deixar assim ou mudar quando quiser.",
+  "onboarding.look.title": "Escolha o visual de {name}",
+  "onboarding.look.options": "Visuais",
+  "onboarding.look.option": "Visual {number} de {count}",
+  "onboarding.look.hint": "Dá para trocar depois, nos detalhes do bot.",
+  "onboarding.create": "Criar {name}",
+  "onboarding.connect.title": "{name} precisa de um modelo para pensar",
+  "onboarding.connect.body":
+    "Os bots pensam com modelos de IA como o Claude ou o GPT, e nenhum está conectado ao seu servidor ainda. Rode isto na máquina onde o J3 Bots está instalado: ele pede o endereço do serviço que acessa seus modelos e a chave dele.",
+  "onboarding.connect.login": "Prefere entrar com sua própria conta do Claude ou do ChatGPT?",
+  "onboarding.connect.loginLink": "Veja o provider login no guia de instalação",
+  "onboarding.connect.later":
+    "Sem pressa: crie {name} agora. O bot dá oi assim que um modelo for conectado.",
+  "onboarding.connect.ready.title": "Um modelo está conectado",
+  "onboarding.connect.ready.body": "Tudo pronto para {name} dar oi.",
+  "onboarding.connect.checking.title": "Procurando um modelo para {name}",
+  "onboarding.connect.checking.body":
+    "O J3 Bots confere o Claude Code e o Codex sempre que inicia. Leva até um minuto.",
+  "onboarding.connect.unavailable.title": "Nenhum modelo consegue rodar {name} agora",
+  "onboarding.connect.unavailable.body":
+    "Nem o Claude Code nem o Codex conseguem rodar um bot no seu servidor neste momento. Esta tela atualiza assim que um deles conseguir.",
+  "onboarding.connect.status.waiting": "Esperando um modelo…",
+  "onboarding.connect.status.ready": "Conectado",
+  "onboarding.connect.status.checking": "Verificando…",
+  "onboarding.connect.status.unavailable": "Nada consegue rodar um bot ainda",
+  "onboarding.connect.status.connecting": "Esperando o servidor…",
+  "onboarding.connect.status.starting": "Iniciando…",
+  "onboarding.connect.status.engineOut": "Parado",
+  "onboarding.arrival.title": "{name} chegou",
+  "onboarding.arrival.hello": "Dando oi…",
+  "onboarding.arrival.waiting": "{name} dá oi assim que um modelo for conectado.",
+  "onboarding.failed":
+    "Não deu para criar {name}. Veja se este aparelho ainda alcança seu servidor e tente de novo.",
+  "onboarding.failedNoModel":
+    "Não deu para criar {name}: seu servidor ainda não tem um modelo para usar. Conecte um e tente de novo.",
+
   "empty.noSelection.title": "Escolha com quem falar",
   "empty.noSelection.body": "Escolha um bot ou uma sala na lista.",
   "empty.noSelection.shortcut": "vai para o próximo",
   "empty.quiet.speaksFirst": "{name} fala primeiro. Está se preparando.",
   "empty.quiet.body": "Nenhuma mensagem ainda. Diga a {name} do que você precisa.",
+  "empty.quiet.waitingForModel": "{name} dá oi assim que um modelo for conectado.",
+  "empty.quiet.waitingForReset": "{name} dá oi quando o limite de uso renovar.",
+  "empty.quiet.waitingForResetAt": "{name} dá oi quando o limite de uso renovar {when}.",
+  "empty.quiet.connectHint":
+    "Para conectar um, rode isto na máquina onde o J3 Bots está instalado.",
 
   "message.sending": "Enviando…",
   "message.notSent.left.one": "Não enviada: {names} não está mais nesta sala",
@@ -591,6 +633,9 @@ const sentences = {
     "Pareado, mas o J3 Bots não conseguiu guardar o acesso com criptografia neste dispositivo. Desbloqueie o chaveiro do sistema, reinicie o J3 Bots e pareie de novo com um código novo.",
   "pairing.storageFailed.mobile":
     "Pareado, mas o armazenamento seguro deste dispositivo não guardou o acesso. Pareie de novo com um código novo.",
+  "pairing.deviceGuess": "{browser} no {system}",
+  "pairing.deviceGuess.app": "App para computador",
+  "pairing.deviceGuess.browser": "Navegador",
 
   "server.title": "Onde o J3 Bots está rodando?",
   "server.body":

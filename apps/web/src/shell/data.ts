@@ -4,12 +4,14 @@ import type {
   ConversationItem,
   Draft,
   DraftMention,
+  IntentResult,
   PairingOffer,
   RecentTurnsState,
   SettingsChange,
   SettingsSaves,
 } from "@j3-bots/client-runtime";
 import type {
+  AvatarChoice,
   BotFile,
   BotId,
   Device,
@@ -107,6 +109,13 @@ export interface ShellData {
 /** A pairing code for another device and where it reaches the server, or why there is none. */
 type PairingStart = ({ readonly _tag: "started" } & PairingOffer) | { readonly _tag: "failed" };
 
+/** A bot to create: its name, whether it becomes the primary one, and its look, or the server's choice. */
+interface NewBot {
+  readonly name: string;
+  readonly primary: boolean;
+  readonly avatar?: AvatarChoice;
+}
+
 /** What the operator can ask for from the shell. Every intent is carried out by the client runtime. */
 export interface ShellIntents extends TimelineIntents {
   readonly setRoutineEnabled: BotDetailsIntents["setRoutineEnabled"];
@@ -143,8 +152,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly stopRoom: (roomId: RoomId) => void;
   /** Absent where there is no dictation. */
   readonly dictate?: (target: EntryTarget) => void;
-  /** Resolves with the new bot's id once the server has created it. */
-  readonly createBot: (name: string, primary: boolean) => Promise<BotId>;
+  /** Resolves with the new bot's id once the server has created it, or with why it did not. */
+  readonly createBot: (draft: NewBot) => Promise<IntentResult<BotId>>;
   readonly newBot: () => void;
   readonly newRoom: () => void;
   /** Opens the form that changes a room's name, members, host and hop limit. */

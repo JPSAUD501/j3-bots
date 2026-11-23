@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { messageStatus } from "@j3-bots/client-runtime";
-import { type GroupPosition, type TimelineMessage } from "@j3-bots/client-runtime/presentation";
+import {
+  type GroupPosition,
+  type OpeningHold,
+  type TimelineMessage,
+} from "@j3-bots/client-runtime/presentation";
 import { deliveryLine } from "@j3-bots/client-runtime/wording";
 import type { Avatar, Bot } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
@@ -15,7 +19,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { AvatarShape } from "../components/Avatar.tsx";
-import { useI18n } from "../i18n.ts";
+import { usePresentation } from "../presentation.tsx";
 
 import { FileCard } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
@@ -131,6 +135,7 @@ export function MessageBubble({
   retryLabel,
   tint = null,
   arriving = false,
+  openingHold = null,
 }: {
   readonly message: TimelineMessage;
   readonly position: GroupPosition;
@@ -150,8 +155,11 @@ export function MessageBubble({
   readonly tint?: Avatar | null;
   /** It just arrived at the end of the conversation, and settles into place. */
   readonly arriving?: boolean;
+  /** What holds the bot's hello back, which a message the server says waits behind it waits for. */
+  readonly openingHold?: OpeningHold | null;
 }) {
-  const i18n = useI18n();
+  const ctx = usePresentation();
+  const { i18n } = ctx;
   const { t } = i18n;
   const widths = use(EntryWidths);
   const fromOperator = message._tag === "outgoing" || message.author._tag === "operator";
@@ -159,7 +167,9 @@ export function MessageBubble({
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
   const troubled = failed || status._tag === "unrecorded";
-  const delivery = fromOperator ? deliveryLine(status, { submitting, leftRoom }, i18n) : null;
+  const delivery = fromOperator
+    ? deliveryLine(status, { submitting, leftRoom, openingHold }, ctx)
+    : null;
   useAnnounced(delivery);
   const bubble = useTint(tint).bubble;
   const motion = useArrival(arriving, fromOperator, message.text);

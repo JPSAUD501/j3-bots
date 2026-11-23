@@ -25,6 +25,7 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { notices, operatorWroteSql } from "./notices.ts";
+import { openingUnsentSql } from "./openings.ts";
 import { fromBeforeFreshStartSql } from "./rotationRequests.ts";
 import {
   AudienceColumn,
@@ -164,8 +165,16 @@ const mayHaveLandedSql = (sql: SqlClient.SqlClient, dispatch: Statement.Fragment
   )
 `;
 
-const sameDelivery = (a: MessageDelivery, b: MessageDelivery): boolean =>
-  a._tag === "failed" ? b._tag === "failed" && a.reason === b.reason : a._tag === b._tag;
+const sameDelivery = (a: MessageDelivery, b: MessageDelivery): boolean => {
+  switch (a._tag) {
+    case "failed":
+      return b._tag === "failed" && a.reason === b.reason;
+    case "pending":
+      return b._tag === "pending" && a.behindOpening === b.behindOpening;
+    default:
+      return a._tag === b._tag;
+  }
+};
 
 /**
  * The state of dispatches and their wakes, and the delivery each message shows
@@ -271,6 +280,12 @@ export class Ledger extends Context.Service<
      */
     readonly refreshMessages: (entryIds: ReadonlyArray<EntryId>) => Effect.Effect<void>;
     /**
+     * The dispatch was claimed for its first send: when it carries the bot's
+     * opening, the operator's messages behind it show they wait like any
+     * other, no longer for a provider.
+     */
+    readonly openingSent: (dispatchId: DispatchRowId) => Effect.Effect<void>;
+    /**
      * The dispatch's wakes of teammate messages that reached the recipient
      * otherwise, as by another wake that landed late: never sent again.
      */
@@ -370,12 +385,16 @@ export const layer = Layer.effect(
       failure_reason: Schema.NullOr(WakeFailure),
       dispatch_status: Schema.NullOr(DispatchStatus),
       recipient_left: Schema.BooleanFromBit,
+      waits_for_provider: Schema.BooleanFromBit,
     });
     const deliveryRows = SqlSchema.findAll({
       Request: EntryId,
       Result: DeliveryRow,
       execute: (entryId) => sql`
-        SELECT w.bot_id, w.status, w.failure_reason, d.status AS dispatch_status, w.recipient_left
+        SELECT w.bot_id, w.status, w.failure_reason, d.status AS dispatch_status, w.recipient_left,
+          w.status = 'pending' AND w.behind_opening_id IS NOT NULL
+            AND ${openingUnsentSql(sql, { wakeId: sql.literal("w.behind_opening_id") })}
+            AS waits_for_provider
         FROM wakes w LEFT JOIN dispatches d ON d.id = w.dispatch_id
         WHERE w.source_entry_id = ${entryId}
           AND NOT EXISTS (SELECT 1 FROM wakes r WHERE r.retry_of = w.id)
@@ -409,7 +428,9 @@ export const layer = Layer.effect(
       }
       if (delivered === rows.length) return { _tag: "delivered" };
       if (delivered + cancelled === rows.length) return { _tag: "cancelled" };
-      return { _tag: "pending" };
+      return rows.some((row) => row.waits_for_provider)
+        ? { _tag: "pending", behindOpening: true }
+        : { _tag: "pending" };
     };
 
     /**
@@ -536,6 +557,14 @@ export const layer = Layer.effect(
         }
       }
     });
+
+    const openingSent = Effect.fn("Ledger.openingSent")(function* (dispatchId: DispatchRowId) {
+      const rows = yield* sql<{ readonly source_entry_id: string }>`
+        SELECT DISTINCT h.source_entry_id FROM wakes h JOIN wakes o ON o.id = h.behind_opening_id
+        WHERE o.dispatch_id = ${dispatchId} AND h.source_entry_id IS NOT NULL
+      `;
+      yield* refreshMessages(rows.map((row) => EntryId.make(row.source_entry_id)));
+    }, Effect.orDie);
 
     /** The received cards of the held messages the dispatch's envelope carried. */
     const heldCarried = Effect.fn("Ledger.heldCarried")(function* (dispatchId: DispatchRowId) {
@@ -1263,6 +1292,7 @@ export const layer = Layer.effect(
       undeliveredRetryable,
       cancelWakes,
       refreshMessages,
+      openingSent,
       readHandoffWakes,
       carriesRead,
       heldRemoved,

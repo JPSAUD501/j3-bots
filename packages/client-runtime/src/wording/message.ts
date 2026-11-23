@@ -9,9 +9,11 @@ import {
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { FileProblem, MessageProblem } from "../files/limits.ts";
 import { type IntentFailure, refusedWith } from "../intents/Actions.ts";
+import type { OpeningHold } from "../presentation/engine.ts";
 import { fileKind } from "../presentation/files.ts";
 import type { DraftFile } from "../stores/Drafts.ts";
 import type { MessageStatus } from "../stores/Conversations.ts";
+import { timeInSentence, type TimeContext } from "./time.ts";
 
 const failedKeys = {
   rejected: "message.failed.rejected",
@@ -48,24 +50,44 @@ const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null =
   }
 };
 
+/** When a message behind the bot's hello goes, as what holds the hello says. */
+const behindOpeningText = (hold: OpeningHold, ctx: TimeContext): string => {
+  const { t } = ctx.i18n;
+  if (hold._tag !== "limit") return t("message.waitingForModel");
+  return hold.resetsAt === null
+    ? t("message.waitingForReset")
+    : t("message.waitingForResetAt", { when: timeInSentence(hold.resetsAt, ctx) });
+};
+
 /**
  * What the operator reads under their message, or null when there is nothing
  * to say. `submitting`: a retry is on its way. `leftRoom`: the members the
  * message mentions who have left the room, for which the server refused it,
- * said in place of the refusal.
+ * said in place of the refusal. `openingHold`: what holds the bot's hello
+ * back (`openingHeld`), which a message the server says waits behind it
+ * (`behindOpening`) waits for too; any other message reads as queued.
  */
 export function deliveryLine(
   status: MessageStatus,
   {
     submitting,
     leftRoom,
-  }: { readonly submitting: boolean; readonly leftRoom: ReadonlyArray<string> },
-  i18n: I18n,
+    openingHold,
+  }: {
+    readonly submitting: boolean;
+    readonly leftRoom: ReadonlyArray<string>;
+    readonly openingHold: OpeningHold | null;
+  },
+  ctx: TimeContext,
 ): string | null {
+  const { i18n } = ctx;
   if (status._tag === "not-sent" && leftRoom.length > 0) {
     return i18n.plural("message.notSent.left", leftRoom.length, {
       names: new Intl.ListFormat(i18n.locale, { type: "conjunction" }).format(leftRoom),
     });
+  }
+  if (status._tag === "queued" && status.behindOpening === true && openingHold !== null) {
+    return behindOpeningText(openingHold, ctx);
   }
   const key = statusKey(status, submitting);
   return key === null ? null : i18n.t(key);

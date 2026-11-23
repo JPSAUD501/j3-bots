@@ -6,6 +6,7 @@ import { messageStatus } from "@j3-bots/client-runtime";
 import {
   clockTime,
   type GroupPosition,
+  type OpeningHold,
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
 import { usePresentation } from "../app/context";
@@ -77,6 +78,8 @@ interface MessageBubbleProps {
    */
   readonly arriving?: boolean;
   readonly flyFrom?: RefObject<HTMLElement | null>;
+  /** What holds the bot's hello back, which a message the server says waits behind it waits for. */
+  readonly openingHold?: OpeningHold | null;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left in a tint of its color. */
@@ -94,6 +97,7 @@ export function MessageBubble({
   tint = null,
   arriving = false,
   flyFrom,
+  openingHold = null,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -104,7 +108,11 @@ export function MessageBubble({
   const failed = status._tag === "failed" || status._tag === "not-sent";
   // The device could not record what the server answered: a problem, though nothing to retry.
   const troubled = failed || status._tag === "unrecorded";
-  const deliveryText = deliveryLine(status, { submitting, leftRoom: leftRoom ?? [] }, ctx.i18n);
+  const deliveryText = deliveryLine(
+    status,
+    { submitting, leftRoom: leftRoom ?? [], openingHold },
+    ctx,
+  );
   // Sent again, Send again goes; focus that was on it moves to the message, which stays whatever
   // its delivery line then says, even nothing.
   const { target, actions } = useFocusAfterActions<HTMLDivElement>(failed);

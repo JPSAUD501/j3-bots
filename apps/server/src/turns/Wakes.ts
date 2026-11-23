@@ -33,6 +33,11 @@ export interface NewWake {
   /** The failed wake an operator's retry sends again. */
   readonly retryOf: string | null;
   /**
+   * The opening wake an operator's message waits behind, written while the
+   * hello waited for its provider (`Pipeline`, `sendMessage`).
+   */
+  readonly behindOpening?: string;
+  /**
    * What led to it: the operator, whose word a Stop never cancels ahead of
    * time; a routine's trigger, which carries the operator's saved word the
    * same way; the bot's own work that began with the dispatch written at
@@ -118,13 +123,14 @@ export const layer = Layer.effect(
         yield* sql`
           INSERT INTO wakes (
             id, bot_id, kind, priority, audience, audience_room_id, routine_id, hops,
-            payload_json, status, source_entry_id, retry_of, created_at, updated_at
+            payload_json, status, source_entry_id, retry_of, behind_opening_id, created_at,
+            updated_at
           ) VALUES (
             ${id}, ${wake.botId}, ${wake.kind},
             ${priorityOf(wake.kind, wake.cause._tag === "operator")}, ${audience}, ${roomId},
             ${wake.payload._tag === "routine" ? wake.payload.routineId : null}, ${wake.hops},
             ${yield* encodePayload(wake.payload)}, 'pending', ${wake.sourceEntryId},
-            ${wake.retryOf}, ${at}, ${at}
+            ${wake.retryOf}, ${wake.behindOpening ?? null}, ${at}, ${at}
           )
         `;
         written.push(id);
