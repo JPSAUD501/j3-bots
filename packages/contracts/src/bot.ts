@@ -86,7 +86,16 @@ const since = { since: Schema.DateTimeUtc };
  * Set by the server when the turn has shown no activity for long enough that it
  * may be stuck. Clients show it; they never derive it from their own timers.
  */
-const stalled = { stalled: Schema.Boolean };
+const stalled = {
+  stalled: Schema.Boolean,
+  /**
+   * While the turn is stalled, when it last showed activity: what "No activity
+   * for…" counts from. Null while it is not, and from a server that predates it.
+   */
+  quietSince: Schema.NullOr(Schema.DateTimeUtc).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
+};
 
 /**
  * What the bot is doing. A bot is in exactly one state. Whether it has said
@@ -110,7 +119,17 @@ export const BotState = Schema.Union([
     tool: StepTool,
   }),
   /** The bot asked a question or needs an approval: the card awaiting the operator. */
-  Schema.TaggedStruct("waiting", { entryId: EntryId }),
+  Schema.TaggedStruct("waiting", {
+    entryId: EntryId,
+    /**
+     * When the turn that waits on the card started (an approval the engine
+     * holds it on); null while the bot waits between turns, on a card it
+     * asked, and from a server that predates it.
+     */
+    since: Schema.NullOr(Schema.DateTimeUtc).pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed(null)),
+    ),
+  }),
   /** The turn cannot continue. */
   Schema.TaggedStruct("blocked", {
     /** Open: the server builds a bot's state and never reads one back. */

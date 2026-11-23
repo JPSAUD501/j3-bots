@@ -2,7 +2,7 @@
 import { EntryId, EntryOrder, type WorkFoldEntry } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { workFoldTitle } from "./work.ts";
+import { workDoneText, workFoldTitle } from "./work.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", {});
 
@@ -12,6 +12,7 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
   order: EntryOrder.make(1),
   author: { _tag: "system" },
   createdAt: at("2026-11-20T14:00:00Z"),
+  turnStartedAt: null,
   status,
   stepCount: 3,
 });
@@ -21,7 +22,16 @@ const finished = (
   waitedMs: number,
   background = false,
   ending: "completed" | "interrupted" | "failed" = "completed",
-) => fold({ _tag: "finished", finishedAt: at(finishedAt), ending, waitedMs, background });
+  waitedBeforeMs = 0,
+) =>
+  fold({
+    _tag: "finished",
+    finishedAt: at(finishedAt),
+    ending,
+    waitedMs,
+    waitedBeforeMs,
+    background,
+  });
 
 describe("workFoldTitle", () => {
   it("gives no duration while the turn runs, nor while the work it handed off still runs", () => {
@@ -44,5 +54,58 @@ describe("workFoldTitle", () => {
     expect(plain(workFoldTitle(finished("2026-11-20T14:05:00Z", 3 * 60_000), ctx))).toBe(
       "Worked for 2m",
     );
+  });
+
+  it("counts from the turn's start, as the turn's clock did, when the server says it", () => {
+    const fromTurn: WorkFoldEntry = {
+      ...finished("2026-11-20T14:01:12Z", 0),
+      // The first step came 20 s into the turn; the clock had counted from its start.
+      createdAt: at("2026-11-20T14:00:20Z"),
+      turnStartedAt: at("2026-11-20T14:00:00Z"),
+    };
+    expect(plain(workFoldTitle(fromTurn, ctx))).toBe("Worked for 1m 12s");
+    const ptBR = context("2026-11-20T15:00:00Z", "pt-BR", {});
+    expect(plain(workFoldTitle(fromTurn, ptBR))).toBe("Trabalhou por 1 min 12 s");
+  });
+
+  it("leaves out a wait before the fold was written only when it counts from the turn's start", () => {
+    // Two minutes on an approval before the first step, one after.
+    const waited = finished("2026-11-20T14:05:00Z", 60_000, false, "completed", 2 * 60_000);
+    expect(plain(workFoldTitle(waited, ctx))).toBe("Worked for 4m");
+    const fromTurn = { ...waited, turnStartedAt: at("2026-11-20T13:58:00Z") };
+    expect(plain(workFoldTitle(fromTurn, ctx))).toBe("Worked for 4m");
+  });
+
+  it("says how a turn stopped or failed before its first step ended, and when", () => {
+    const before = (finishedAt: string, ending: "interrupted" | "failed"): WorkFoldEntry => ({
+      ...finished(finishedAt, 0, false, ending),
+      createdAt: at(finishedAt),
+      turnStartedAt: at("2026-11-20T14:00:00Z"),
+      stepCount: 0,
+    });
+    expect(plain(workFoldTitle(before("2026-11-20T14:01:04Z", "interrupted"), ctx))).toBe(
+      "Stopped after 1m 4s",
+    );
+    expect(plain(workFoldTitle(before("2026-11-20T14:00:12Z", "failed"), ctx))).toBe(
+      "Failed after 12s",
+    );
+  });
+
+  it("says how every turn ended", () => {
+    const ended = (ending: "completed" | "interrupted" | "failed") =>
+      plain(workFoldTitle(finished("2026-11-20T14:01:12Z", 0, false, ending), ctx));
+    expect(ended("completed")).toBe("Worked for 1m 12s");
+    expect(ended("interrupted")).toBe("Stopped after 1m 12s");
+    expect(ended("failed")).toBe("Failed after 1m 12s");
+  });
+});
+
+describe("workDoneText", () => {
+  it("says a turn stopped or failed before its first step did only that", () => {
+    expect(workDoneText(null, "interrupted", ctx.i18n)).toBe("Stopped");
+    expect(workDoneText(null, "failed", ctx.i18n)).toBe("Failed");
+    expect(workDoneText(null, null, ctx.i18n)).toBe("Did some work");
+    const ran = { kind: "command", tool: null, label: "git status" } as const;
+    expect(plain(workDoneText(ran, "interrupted", ctx.i18n))).toBe("Ran git status");
   });
 });

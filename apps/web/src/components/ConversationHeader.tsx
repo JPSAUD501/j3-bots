@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EntryId, Room } from "@j3-bots/contracts";
+import type { Bot, EntryId, Room, WorkFoldEntry } from "@j3-bots/contracts";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -7,21 +7,16 @@ import {
   PanelRightIcon,
   SquareIcon,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useLayoutEffect,
-  useRef,
-  type RefObject,
-} from "react";
+import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
 import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
+import { useTurnAnnouncement } from "@j3-bots/client-runtime/react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
 import { RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
-import { LiveBotAvatar } from "./avatar/mood";
+import { LiveBotAvatar, useOffline } from "./avatar/mood";
 import { toneClass } from "./RosterRow";
+import { SwapText } from "./SwapText";
 import { Kbd } from "./ui/kbd";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
@@ -38,22 +33,19 @@ interface ConversationHeaderProps {
   readonly onStop: () => void;
   /** Brings the card a waiting bot needs answered into view. */
   readonly onGoToWaiting: (entryId: EntryId) => void;
+  /** The conversation's work folds: when a turn ends, the line it folds into is said aloud. */
+  readonly folds: ReadonlyArray<WorkFoldEntry>;
   readonly stopShortcut: { readonly label: string; readonly aria: string };
   /** The name's button, which opens the details. */
   readonly titleRef?: RefObject<HTMLButtonElement | null>;
   /**
-   * Told the status line at each change of state, for screen readers. The
+   * Told the status line at each change of state and each new line, then the
+   * line a turn folds into, for screen readers (`useTurnAnnouncement`). The
    * region that speaks it lies outside the conversation, so a dialog over the
    * conversation hides all of it from assistive technology (see `isCovered`).
    */
   readonly onAnnounce: (text: string) => void;
 }
-
-/** What a bot is doing, as a transition between states: activity text changing within one does not count. */
-const stateOf = (bot: Bot) =>
-  bot.state._tag === "thinking" || bot.state._tag === "working"
-    ? `${bot.state._tag}:${bot.state.stalled}`
-    : bot.state._tag;
 
 /**
  * Who this is, and one line saying what it is doing now. The name opens the
@@ -69,6 +61,7 @@ export function ConversationHeader({
   onBack,
   onStop,
   onGoToWaiting,
+  folds,
   stopShortcut,
   titleRef,
   onAnnounce,
@@ -109,16 +102,9 @@ export function ConversationHeader({
     if (document.activeElement !== detailsToggle.current) titleRef?.current?.focus();
   });
 
-  // The announcement is fixed at each change of state; the first state is not announced.
-  const state = subject._tag === "bot" ? stateOf(subject.bot) : null;
-  const text = line?.text ?? "";
-  const announce = useEffectEvent(() => onAnnounce(text));
-  const announced = useRef(state);
-  useEffect(() => {
-    if (announced.current === state) return;
-    announced.current = state;
-    announce();
-  }, [state]);
+  // Each change of state and each new line is said once, then how the turn ended; not the first.
+  const offline = useOffline();
+  useTurnAnnouncement(subject._tag === "bot" ? subject.bot : null, folds, offline, ctx, onAnnounce);
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border px-2 @tablet:px-3">
@@ -172,12 +158,10 @@ export function ConversationHeader({
                 toneClass[line.tone],
               )}
             >
-              {line.text}
+              <SwapText text={line.text} />
             </button>
           ) : (
-            <span className={cn("max-w-full truncate text-2xs", toneClass[line.tone])}>
-              {line.text}
-            </span>
+            <SwapText text={line.text} className={cn("text-2xs", toneClass[line.tone])} />
           )}
         </span>
       </div>

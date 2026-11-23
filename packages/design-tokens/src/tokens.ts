@@ -192,6 +192,11 @@ export const motion = {
   state: 200,
   /** A scrim or a larger fade. */
   slow: 300,
+  /**
+   * One line of status giving way to the next, on `eases.out`: the old line
+   * leaves upward as the new one rises in.
+   */
+  swap: 260,
 } as const;
 
 /** In px. */

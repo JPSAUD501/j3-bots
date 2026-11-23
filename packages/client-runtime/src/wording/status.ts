@@ -5,6 +5,7 @@ import {
   type Entry,
   type EntryPreview,
   entryText,
+  foldEnding,
   type FailureClass,
   type MessageEntry,
   type Room,
@@ -91,7 +92,10 @@ function failureText(
  * received.
  */
 function previewSummary(
-  preview: Pick<EntryPreview, "kind" | "author" | "text" | "recipientId" | "step" | "notice">,
+  preview: Pick<
+    EntryPreview,
+    "kind" | "author" | "text" | "recipientId" | "step" | "ending" | "notice"
+  >,
   ctx: PresentationContext,
   { owner, current }: { readonly owner: BotId | null; readonly current: boolean },
 ): string {
@@ -115,7 +119,7 @@ function previewSummary(
     case "secret-request":
       return t(current ? "summary.needsSecret" : "summary.askedSecret", { label: text });
     case "work-fold":
-      return workDoneText(preview.step, ctx.i18n);
+      return workDoneText(preview.step, preview.ending, ctx.i18n);
     case "notice":
       if (preview.notice === null) return t("summary.notice");
       return preview.notice._tag === "unknown"
@@ -190,9 +194,13 @@ export function noticeText(
   }
 }
 
-/** A turn the server reports as stalled: how long it has been quiet. */
-function stalledLine(since: DateTime.Utc, ctx: PresentationContext): StatusLine {
-  const duration = shortDuration(millisBetween(since, ctx.now), ctx.i18n);
+/**
+ * A turn the server reports as stalled: how long it has been quiet, from its
+ * last activity, or only that it has been when the server does not say.
+ */
+function stalledLine(quietSince: DateTime.Utc | null, ctx: PresentationContext): StatusLine {
+  if (quietSince === null) return { text: ctx.i18n.t("presence.stalledQuiet"), tone: "waiting" };
+  const duration = shortDuration(millisBetween(quietSince, ctx.now), ctx.i18n);
   return { text: ctx.i18n.t("presence.stalled", { duration }), tone: "waiting" };
 }
 
@@ -213,6 +221,7 @@ export function entrySummary(
       text: entryText(entry),
       recipientId: entry._tag === "handoff" ? entry.recipientId : null,
       step: null,
+      ending: foldEnding(entry),
       notice: entry._tag === "notice" ? entry.notice : null,
     },
     ctx,
@@ -248,11 +257,11 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
         };
       case "thinking":
         return state.stalled
-          ? stalledLine(state.since, ctx)
+          ? stalledLine(state.quietSince, ctx)
           : { text: t("presence.thinking"), tone: "default" };
       case "working":
         return state.stalled
-          ? stalledLine(state.since, ctx)
+          ? stalledLine(state.quietSince, ctx)
           : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
       case "idle":
         if (lastEntry === null && item.bot.opening) {
@@ -308,11 +317,11 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
   switch (state._tag) {
     case "thinking":
       return state.stalled
-        ? stalledLine(state.since, ctx)
+        ? stalledLine(state.quietSince, ctx)
         : { text: t("presence.thinking"), tone: "default" };
     case "working":
       return state.stalled
-        ? stalledLine(state.since, ctx)
+        ? stalledLine(state.quietSince, ctx)
         : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
     case "waiting":
       return { text: t("presence.waiting"), tone: "waiting" };

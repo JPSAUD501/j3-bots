@@ -22,6 +22,7 @@ import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
+  awaitEntry,
   command,
   concurrentTurns,
   conversation,
@@ -43,6 +44,8 @@ import {
   until,
 } from "../testing/turns.ts";
 import { BotTools } from "../tools/BotTools.ts";
+import { BotStates } from "../turns/BotStates.ts";
+import { Cards } from "../turns/Cards.ts";
 import { MAX_INDETERMINATE_ANSWERS } from "../turns/model.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { SessionGate } from "../turns/SessionGate.ts";
@@ -386,6 +389,63 @@ it.effect(
       yield* sendToBot(bot.id, "Anything new?");
       yield* until(timesSent(main, "Anything new?").pipe(Effect.map((n) => n === 1)));
       assert.strictEqual(yield* timesSent(main, text), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "keeps the clock of the turn in the bot's conversation while a routine starts beside it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const states = yield* BotStates;
+      yield* concurrentTurns(2);
+      const bot = yield* createBot("Ana");
+      const main = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Clean up the build.");
+      const turnId = yield* nextTurn(bot.id);
+      yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag === "thinking")));
+      const thinking = yield* states.of(bot.id);
+      if (thinking._tag !== "thinking")
+        return yield* Effect.die(new Error("The bot does not think"));
+      const ours = (state: Bot["state"]) =>
+        state._tag !== "idle" &&
+        state._tag !== "blocked" &&
+        state.since !== null &&
+        DateTime.Equivalence(state.since, thinking.since);
+
+      // The turn holds on an approval; a minute later a routine's run starts in a side session.
+      yield* TestClock.adjust(Duration.seconds(30));
+      yield* control.openRequest({
+        sessionId: main,
+        turnId,
+        request: {
+          _tag: "approval",
+          kind: "command",
+          action: "rm -rf build",
+          detail: null,
+          reason: null,
+          exact: true,
+          sessionGrant: null,
+        },
+      });
+      const card = yield* awaitEntry(bot.id, "approval");
+      yield* TestClock.adjust(Duration.minutes(1));
+      const { routine } = yield* ranRoutineOf(bot);
+      yield* sideTurn(routine.id);
+
+      const waiting = yield* states.of(bot.id);
+      assert.isTrue(waiting._tag === "waiting" && waiting.entryId === card.id && ours(waiting));
+
+      // Once the approval closes, the state is the conversation's turn again, still on its clock.
+      yield* (yield* Cards).answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: { _tag: "approval", decision: "allow-once" },
+      });
+      yield* (yield* Cards).respondPending;
+      yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag !== "waiting")));
+      const after = yield* states.of(bot.id);
+      assert.isTrue(after._tag === "thinking" && ours(after));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

@@ -165,6 +165,7 @@
   --duration-fast: 150ms;
   --duration-state: 200ms;
   --duration-slow: 300ms;
+  --duration-swap: 260ms;
   --duration-pop: 571ms;
   --duration-soft: 562ms;
   --duration-slide: 392ms;

@@ -55,6 +55,7 @@ export const en = {
   "presence.waiting": "Waiting for you",
   "presence.waiting.goTo": "Waiting for you: go to the request",
   "presence.stalled": "No activity for {duration}",
+  "presence.stalledQuiet": "No recent activity",
 
   "failure.usageLimit": "Usage limit reached",
   "failure.usageLimitUntil": "Usage limit reached, resets {when}",
@@ -75,6 +76,8 @@ export const en = {
   "summary.needsSecret": "Needs a credential: {label}",
   "summary.askedSecret": "Asked for a credential: {label}",
   "summary.workFold": "Did some work",
+  "summary.workStopped": "Stopped",
+  "summary.workFailed": "Failed",
   "summary.notice": "Left a notice",
   "summary.ran": "Ran {label}",
   "summary.edited": "Edited {label}",
@@ -209,6 +212,9 @@ export const en = {
   "work.stepRunning": "Running",
   "work.stepDone": "Done",
   "work.stepFailed": "Failed",
+  "work.live": "{status}, {duration} so far",
+  "work.offline": "Last known: {status}",
+  "work.showSteps": "Steps so far",
 
   "tool.backgroundTask.did": "Started a background task",
   "tool.backgroundTask.doing": "Starting a background task",

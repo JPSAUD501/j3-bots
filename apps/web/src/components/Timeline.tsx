@@ -11,6 +11,7 @@ import type {
   QuestionAnswers,
   Room,
   RoutineId,
+  WorkFoldEntry,
   WorkStep,
 } from "@j3-bots/contracts";
 import type * as Redacted from "effect/Redacted";
@@ -34,7 +35,7 @@ import { QuestionCard } from "./QuestionCard";
 import { RoutineChangeCard } from "./RoutineChangeCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimeDivider } from "./TimeDivider";
-import { WorkFold } from "./WorkFold";
+import { type TurnBot, WorkFold } from "./WorkFold";
 
 /** What the operator can do from a timeline. Each is an intent; the client runtime carries it out. */
 export interface TimelineIntents {
@@ -84,6 +85,11 @@ interface TimelineProps {
   readonly arrived?: ReadonlySet<string>;
   /** Where the operator's messages fly from as they arrive: the composer's field. */
   readonly flyFrom?: RefObject<HTMLElement | null>;
+  /**
+   * In a bot's conversation, the bot: the row of its turn under way says
+   * what it is doing (`withLiveTurn`). Null in a room.
+   */
+  readonly turnBot?: TurnBot | null;
 }
 
 /**
@@ -99,6 +105,7 @@ export function Timeline({
   intents,
   arrived,
   flyFrom,
+  turnBot = null,
 }: TimelineProps) {
   const bots = useBots();
   const i18n = useI18n();
@@ -117,6 +124,27 @@ export function Timeline({
           return (
             <div key={item.key} className={settles}>
               <TimeDivider at={item.at} />
+            </div>
+          );
+        }
+        if (item.kind === "work") {
+          const { fold } = item;
+          return (
+            <div
+              key={item.key}
+              {...(fold === null ? {} : { "data-seen-id": fold.id })}
+              className={cn(arriving && "arrive-pop origin-left")}
+            >
+              <WorkFold
+                fold={fold}
+                live={item.live ? turnBot : null}
+                steps={fold === null ? null : workSteps(fold.id)}
+                onOpenChange={(open) => {
+                  if (fold === null) return;
+                  if (open) intents.openWorkFold(fold.id);
+                  else intents.closeWorkFold(fold.id);
+                }}
+              />
             </div>
           );
         }
@@ -193,7 +221,7 @@ export function Timeline({
         const { entry } = item;
         return (
           <div key={item.key} data-seen-id={entry.id} className={settles}>
-            <Card entry={entry} submitting={submitting} workSteps={workSteps} intents={intents} />
+            <Card entry={entry} submitting={submitting} intents={intents} />
           </div>
         );
       })}
@@ -201,16 +229,14 @@ export function Timeline({
   );
 }
 
-/** One card, notice or fold: every entry that is not a message. */
+/** One card or notice: every entry that is neither a message nor a turn's work. */
 function Card({
   entry,
   submitting,
-  workSteps,
   intents,
 }: {
-  entry: Exclude<Entry, MessageEntry>;
+  entry: Exclude<Entry, MessageEntry | WorkFoldEntry>;
   submitting: TimelineProps["submitting"];
-  workSteps: TimelineProps["workSteps"];
   intents: TimelineIntents;
 }) {
   switch (entry._tag) {
@@ -238,16 +264,6 @@ function Card({
           onProvide={(value) => intents.provideSecret(entry.id, value)}
           onDecline={() => intents.declineSecret(entry.id)}
           submitting={submitting(entry.id)}
-        />
-      );
-    case "work-fold":
-      return (
-        <WorkFold
-          entry={entry}
-          steps={workSteps(entry.id)}
-          onOpenChange={(open) =>
-            open ? intents.openWorkFold(entry.id) : intents.closeWorkFold(entry.id)
-          }
         />
       );
     case "notice":

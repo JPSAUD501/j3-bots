@@ -235,6 +235,9 @@ const callHostTool = async (turn: Turn, tool: string, input: Record<string, unkn
   return failed ? Option.none<string>() : Option.some(text);
 };
 
+/** The commands the `steps` script runs, in turn. */
+const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"];
+
 /**
  * Every script the conformance suite uses.
  *
@@ -244,6 +247,9 @@ const callHostTool = async (turn: Turn, tool: string, input: Record<string, unkn
  * - `approval`: asks permission for a write, then says whether it was granted.
  * - `question`: asks one multiple-choice question and repeats the answer.
  * - `speak`: sends `text` to the user through the engine's `send_to_user` tool.
+ * - `steps`: thinks for `think` ms (default 2000), runs `count` commands
+ *   (default 3) of `each` ms (default 4000), then speaks `text` as `speak`
+ *   does. For a turn's work as a client shows it while it runs.
  * - `secret`: asks for a secret through the engine's `request_secret` tool.
  * - `delegate`: hands a task to a child agent through the engine's
  *   `delegate_task` tool, then ends; the engine wakes the session when the
@@ -342,6 +348,35 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
     await say(turn, Option.isSome(colour) ? `You picked ${String(colour.value)}.` : "No answer.");
     reportUsage(turn);
     return "end_turn";
+  },
+  steps: async (turn) => {
+    const count = Number(turn.args.get("count") ?? "3");
+    const each = Number(turn.args.get("each") ?? "4000");
+    await sleep(Number(turn.args.get("think") ?? "2000"), turn.signal);
+    for (let index = 0; index < count && !turn.signal.aborted; index++) {
+      const command = STEP_COMMANDS[index % STEP_COMMANDS.length] ?? "true";
+      const toolCallId = `step-${NodeCrypto.randomUUID()}`;
+      update(turn.sessionId, {
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title: command,
+        kind: "execute",
+        status: "in_progress",
+        rawInput: { command },
+      });
+      await sleep(each, turn.signal);
+      update(turn.sessionId, {
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "completed",
+      });
+    }
+    if (turn.signal.aborted) return "cancelled";
+    await callHostTool(turn, "send_to_user", {
+      message: turn.args.get("text") ?? "Done: every step passed.",
+    });
+    reportUsage(turn);
+    return turn.signal.aborted ? "cancelled" : "end_turn";
   },
   speak: async (turn) => {
     await callHostTool(turn, "send_to_user", {

@@ -3,7 +3,13 @@
  * What the server does for entries, done by hand for the sample: numbering
  * them in order and cutting them down to a roster preview. Development only.
  */
-import { EntryOrder, PREVIEW_LENGTH, type Entry, type EntryPreview } from "@j3-bots/contracts";
+import {
+  EntryOrder,
+  foldEnding,
+  PREVIEW_LENGTH,
+  type Entry,
+  type EntryPreview,
+} from "@j3-bots/contracts";
 
 type WithoutOrder<T> = T extends unknown ? Omit<T, "order"> : never;
 
@@ -40,6 +46,7 @@ export const previewOf = (entry: Entry): EntryPreview => ({
   text: previewText(entry).slice(0, PREVIEW_LENGTH),
   recipientId: entry._tag === "handoff" ? entry.recipientId : null,
   step: null,
+  ending: foldEnding(entry),
   notice: entry._tag === "notice" ? entry.notice : null,
   createdAt: entry.createdAt,
 });

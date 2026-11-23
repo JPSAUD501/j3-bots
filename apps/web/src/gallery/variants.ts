@@ -376,6 +376,7 @@ export function galleryVariants(now: DateTime.Utc) {
   ): WorkFoldEntry => ({
     _tag: "work-fold",
     ...base(name),
+    turnStartedAt: ago(6),
     stepCount,
     status,
   });
@@ -415,6 +416,7 @@ export function galleryVariants(now: DateTime.Utc) {
           finishedAt: ago(1),
           ending: "completed",
           waitedMs: 0,
+          waitedBeforeMs: 0,
           background: false,
         },
         4,
@@ -435,6 +437,7 @@ export function galleryVariants(now: DateTime.Utc) {
           finishedAt: ago(2),
           ending: "completed",
           waitedMs: 0,
+          waitedBeforeMs: 0,
           background: true,
         },
         2,
@@ -453,6 +456,7 @@ export function galleryVariants(now: DateTime.Utc) {
           finishedAt: ago(3),
           ending: "completed",
           waitedMs: 0,
+          waitedBeforeMs: 0,
           background: false,
         },
         12,
@@ -468,6 +472,7 @@ export function galleryVariants(now: DateTime.Utc) {
           finishedAt: ago(2),
           ending: "interrupted",
           waitedMs: 0,
+          waitedBeforeMs: 0,
           background: false,
         },
         2,
@@ -478,7 +483,14 @@ export function galleryVariants(now: DateTime.Utc) {
     {
       entry: fold(
         "fold-failed",
-        { _tag: "finished", finishedAt: ago(0), ending: "failed", waitedMs: 0, background: false },
+        {
+          _tag: "finished",
+          finishedAt: ago(0),
+          ending: "failed",
+          waitedMs: 0,
+          waitedBeforeMs: 0,
+          background: false,
+        },
         1,
       ),
       steps: [step("web", "Read the vendor’s status page", "failed")],

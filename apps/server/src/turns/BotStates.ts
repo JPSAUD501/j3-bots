@@ -19,6 +19,9 @@ import { shownStep } from "./shownStep.ts";
 
 const Card = Schema.Struct({ entry_id: EntryId });
 
+/** A card an engine request holds a turn on, with when that turn started, while it runs. */
+const EngineCard = Schema.Struct({ entry_id: EntryId, turn_started_at: Schema.NullOr(Time) });
+
 const RunningTurn = Schema.Struct({
   started_at: Time,
   last_activity_at: Time,
@@ -65,11 +68,16 @@ export const layer = Layer.effect(
     const engineState = yield* EngineState;
     const changes = yield* ChangeLog;
 
+    // The request's own turn, not whichever turn of the bot runs: a routine's
+    // side session may run one of its own meanwhile.
     const engineCard = SqlSchema.findOneOption({
       Request: BotId,
-      Result: Card,
+      Result: EngineCard,
       execute: (botId) => sql`
-        SELECT r.entry_id FROM engine_requests r JOIN sessions s ON s.id = r.session_id
+        SELECT r.entry_id, t.started_at AS turn_started_at
+        FROM engine_requests r JOIN sessions s ON s.id = r.session_id
+        LEFT JOIN turns t ON t.session_id = r.session_id AND t.engine_turn_id = r.engine_turn_id
+          AND t.finished_at IS NULL
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND r.closed_at IS NULL
         ORDER BY r.rowid LIMIT 1
       `,
@@ -83,7 +91,7 @@ export const layer = Layer.effect(
         FROM sessions s JOIN turns t
           ON t.session_id = s.id AND t.engine_turn_id = s.admitted_turn_id
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND t.finished_at IS NULL
-        ORDER BY t.started_at DESC LIMIT 1
+        ORDER BY s.purpose = 'main' DESC, t.started_at DESC LIMIT 1
       `,
     });
 
@@ -146,25 +154,32 @@ export const layer = Layer.effect(
 
     const of = Effect.fn("BotStates.of")(function* (botId: BotId) {
       const card = yield* engineCard(botId);
-      if (Option.isSome(card)) return { _tag: "waiting", entryId: card.value.entry_id } as const;
+      if (Option.isSome(card)) {
+        return {
+          _tag: "waiting",
+          entryId: card.value.entry_id,
+          since: card.value.turn_started_at,
+        } as const;
+      }
 
+      // The turn in the bot's own conversation first, then a routine's.
       const turn = yield* runningTurn(botId);
       if (Option.isSome(turn)) {
         const now = yield* DateTime.now;
-        const stalled = Duration.isGreaterThan(
-          DateTime.distance(turn.value.last_activity_at, now),
-          STALL_AFTER,
-        );
+        const quiet = turn.value.last_activity_at;
+        const stalled = Duration.isGreaterThan(DateTime.distance(quiet, now), STALL_AFTER);
+        const quietSince = stalled ? quiet : null;
         const since = turn.value.started_at;
         const fold = turn.value.work_fold_entry_id;
         const step = fold === null ? Option.none() : yield* shown(fold);
-        if (Option.isNone(step)) return { _tag: "thinking", since, stalled } as const;
+        if (Option.isNone(step)) return { _tag: "thinking", since, stalled, quietSince } as const;
         const latest = step.value;
         const running = latest.status === "running";
         return {
           _tag: "working",
           since,
           stalled,
+          quietSince,
           activity: running ? latest.label : null,
           tool: running ? latest.tool : null,
         } as const;
@@ -193,7 +208,10 @@ export const layer = Layer.effect(
       }
 
       const asked = yield* askCard(botId);
-      if (Option.isSome(asked)) return { _tag: "waiting", entryId: asked.value.entry_id } as const;
+      // No turn runs: the bot waits between turns, on a card it asked.
+      if (Option.isSome(asked)) {
+        return { _tag: "waiting", entryId: asked.value.entry_id, since: null } as const;
+      }
       return { _tag: "idle" } as const;
     }, Effect.orDie);
 

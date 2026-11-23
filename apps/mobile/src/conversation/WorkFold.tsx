@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { millisBetween, shortDuration } from "@j3-bots/client-runtime/presentation";
-import { useWorkSteps } from "@j3-bots/client-runtime/react";
-import { stepText, workFoldTitle } from "@j3-bots/client-runtime/wording";
-import type { WorkFoldEntry, WorkStep } from "@j3-bots/contracts";
 import {
-  Bot,
+  liveTurn,
+  millisBetween,
+  shortDuration,
+  turnClock,
+  turnElapsed,
+} from "@j3-bots/client-runtime/presentation";
+import { useWorkSteps } from "@j3-bots/client-runtime/react";
+import { stepText, turnLabel, turnLine, workFoldTitle } from "@j3-bots/client-runtime/wording";
+import type { Bot, EntryPreview, WorkFoldEntry, WorkStep } from "@j3-bots/contracts";
+import {
+  Bot as BotIcon,
   Check,
   ChevronRight,
   Ellipsis,
@@ -19,7 +25,7 @@ import {
 } from "lucide-react-native";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { useEffect, useState } from "react";
-import { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import {
   FadeIn,
   FadeOut,
@@ -28,8 +34,12 @@ import {
   withSpring,
 } from "react-native-reanimated";
 import { Text } from "../text.tsx";
+import { LiveBotAvatar, useOffline } from "../components/avatar/mood.tsx";
 import { Icon } from "../components/Icon.tsx";
-import { useReducedMotion, useStep } from "../motion.ts";
+import { toneClass } from "../components/RosterRow.tsx";
+import { SwapText } from "../components/SwapText.tsx";
+import { enteringWhen, settleIn, useReducedMotion, useStep } from "../motion.ts";
+import { useSeconds } from "../seconds.ts";
 import { usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { AnimatedView } from "./animated.ts";
@@ -41,59 +51,197 @@ const stepIcon = {
   search: Search,
   web: Globe,
   tool: Wrench,
-  delegation: Bot,
+  delegation: BotIcon,
   other: Ellipsis,
 } as const satisfies Record<WorkStep["kind"], LucideIcon>;
 
+/** The bot of a turn under way, as its row shows it. */
+export interface TurnBot {
+  readonly bot: Bot;
+  /** The bot's latest entry, so its avatar speaks while a message of its own arrives. */
+  readonly lastEntry: EntryPreview | null;
+}
+
 /**
- * A turn's work in one line, "Worked for 2m", that opens to every step.
- * Never opens by itself; its steps are read only while it is open.
+ * A turn's work in one row. While the turn runs: a small copy of the bot, one
+ * line saying what it is doing now and the turn's clock. When it ends, the
+ * row folds into one quiet line, "Worked for 2m", that opens to every step,
+ * as the running row does once there are steps. Never opens by itself; its
+ * steps are read only while it is open.
  */
-export function WorkFold({ entry }: { readonly entry: WorkFoldEntry }) {
-  const ctx = usePresentation();
-  const { plural } = ctx.i18n;
-  const { status } = entry;
+export function WorkFold({
+  fold,
+  live,
+}: {
+  /** The turn's fold; null for a turn under way that has done no work yet. */
+  readonly fold: WorkFoldEntry | null;
+  /** While the turn runs, its bot: the row says what it is doing, and for how long. */
+  readonly live: TurnBot | null;
+}) {
   const [open, setOpen] = useState(false);
-  const failed = status._tag === "finished" && status.ending === "failed";
-  const title = workFoldTitle(entry, ctx);
-  const count = entry.stepCount > 0 ? plural("work.steps", entry.stepCount) : null;
-  const turn = useSharedValue(0);
-  useEffect(() => {
-    turn.set(withSpring(open ? 1 : 0, reanimatedSpring(springs.pop)));
-  }, [open, turn]);
-  const chevron = useAnimatedStyle(() => ({ transform: [{ rotate: `${turn.get() * 90}deg` }] }));
+  // The row folds into its line once the turn it showed ends; one that was over when it mounted is just there.
+  const [wasLive, setWasLive] = useState(live !== null);
+  if (live !== null && !wasLive) setWasLive(true);
+  const folding = live === null && wasLive;
+  const toggle = () => setOpen((was) => !was);
   return (
     <View className="mt-3 px-4">
-      <PressScale
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open }}
-        accessibilityLabel={count === null ? title : `${title}, ${count}`}
-        onPress={() => setOpen((was) => !was)}
-        frame={{ alignSelf: "flex-start", marginStart: -8 }}
-        className="min-h-11 flex-row items-center gap-1.5 rounded-md px-2"
-      >
-        <AnimatedView style={chevron}>
-          <Icon
-            icon={ChevronRight}
-            size={14}
-            color={failed ? "accent-blocked" : "accent-muted-foreground"}
-          />
+      {live !== null ? (
+        <LiveLine
+          turn={live}
+          hasSteps={fold !== null && fold.stepCount > 0}
+          open={open}
+          onToggle={toggle}
+        />
+      ) : fold !== null ? (
+        <AnimatedView {...enteringWhen(folding, settleIn(springs.pop))}>
+          {fold.stepCount > 0 ? (
+            <FoldLine fold={fold} open={open} onToggle={toggle} />
+          ) : (
+            <EndLine fold={fold} />
+          )}
         </AnimatedView>
-        {/* Running, the line carries a quiet live mark: the bot is still at it. */}
-        {status._tag === "running" && <LiveMark />}
-        <Text className={`text-xs ${failed ? "text-blocked" : "text-muted-foreground"}`}>
-          {title}
-        </Text>
-        {count !== null && <Text className="text-xs text-muted-foreground">· {count}</Text>}
-      </PressScale>
-      {open && (
+      ) : null}
+      {open && fold !== null && fold.stepCount > 0 && (
         <AnimatedView entering={opening} exiting={closing}>
-          <Steps foldId={entry.id} />
+          <Steps foldId={fold.id} />
         </AnimatedView>
       )}
     </View>
   );
 }
+
+/** A chevron that turns a quarter on `pop` as what it opens opens. */
+function useChevron(open: boolean) {
+  const turn = useSharedValue(open ? 1 : 0);
+  useEffect(() => {
+    turn.set(withSpring(open ? 1 : 0, reanimatedSpring(springs.pop)));
+  }, [open, turn]);
+  return useAnimatedStyle(() => ({ transform: [{ rotate: `${turn.get() * 90}deg` }] }));
+}
+
+const failedOf = (fold: WorkFoldEntry) =>
+  fold.status._tag === "finished" && fold.status.ending === "failed";
+
+/** A turn stopped or failed before its first step: how it ended, with nothing to open. */
+function EndLine({ fold }: { readonly fold: WorkFoldEntry }) {
+  const ctx = usePresentation();
+  return (
+    <View className="min-h-11 justify-center">
+      <Text className={`text-xs ${failedOf(fold) ? "text-blocked" : "text-muted-foreground"}`}>
+        {workFoldTitle(fold, ctx)}
+      </Text>
+    </View>
+  );
+}
+
+/** The folded line: how the turn ended and how long it worked, and how many steps. */
+function FoldLine({
+  fold,
+  open,
+  onToggle,
+}: {
+  readonly fold: WorkFoldEntry;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+}) {
+  const ctx = usePresentation();
+  const { plural } = ctx.i18n;
+  const { status } = fold;
+  const failed = failedOf(fold);
+  const title = workFoldTitle(fold, ctx);
+  const count = plural("work.steps", fold.stepCount);
+  const chevron = useChevron(open);
+  return (
+    <PressScale
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open }}
+      accessibilityLabel={`${title}, ${count}`}
+      onPress={onToggle}
+      frame={{ alignSelf: "flex-start", marginStart: -8 }}
+      className="min-h-11 flex-row items-center gap-1.5 rounded-md px-2"
+    >
+      <AnimatedView style={chevron}>
+        <Icon
+          icon={ChevronRight}
+          size={14}
+          color={failed ? "accent-blocked" : "accent-muted-foreground"}
+        />
+      </AnimatedView>
+      {/* A fold whose turn this client no longer sees running carries the quiet live mark. */}
+      {status._tag === "running" && <LiveMark />}
+      <Text className={`text-xs ${failed ? "text-blocked" : "text-muted-foreground"}`}>
+        {title}
+      </Text>
+      <Text className="text-xs text-muted-foreground">· {count}</Text>
+    </PressScale>
+  );
+}
+
+/**
+ * The running row: the bot at list size in its state, what it is doing now,
+ * swapping as it moves to a new step, and the turn's clock, counted from the
+ * turn's start on the server. Once there are steps, a chevron opens them.
+ * TalkBack reads the line and the time so far in whole minutes, so its label
+ * changes once a minute, not each tick; out of touch, only the line. The
+ * header says each new line aloud.
+ */
+function LiveLine({
+  turn,
+  hasSteps,
+  open,
+  onToggle,
+}: {
+  readonly turn: TurnBot;
+  readonly hasSteps: boolean;
+  readonly open: boolean;
+  readonly onToggle: () => void;
+}) {
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const offline = useOffline();
+  const started = liveTurn(turn.bot);
+  // Out of touch, the app cannot say how long the turn has run: the clock stops showing.
+  const now = useSeconds(started !== null && !offline);
+  const line = turnLine(turn.bot, offline, ctx);
+  const elapsed = started === null || offline ? null : turnElapsed(started, now);
+  const chevron = useChevron(open);
+  return (
+    <View className="min-h-11 flex-row items-center gap-2.5">
+      <View
+        accessible
+        accessibilityLabel={turnLabel(line, elapsed, ctx)}
+        className="min-w-0 flex-1 flex-row items-center gap-2.5"
+      >
+        <LiveBotAvatar bot={turn.bot} lastEntry={turn.lastEntry} size={24} />
+        <View className="min-w-0 flex-1">
+          <SwapText text={line.text} className={`text-xs ${toneClass[line.tone]}`} />
+        </View>
+        {elapsed !== null && (
+          <Text face="mono" className="text-2xs text-muted-foreground" style={styles.tabular}>
+            {turnClock(elapsed)}
+          </Text>
+        )}
+      </View>
+      {hasSteps && (
+        <PressScale
+          depth="round"
+          accessibilityRole="button"
+          accessibilityLabel={t("work.showSteps")}
+          accessibilityState={{ expanded: open }}
+          onPress={onToggle}
+          className="size-11 items-center justify-center rounded-pill"
+        >
+          <AnimatedView style={chevron}>
+            <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />
+          </AnimatedView>
+        </PressScale>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({ tabular: { fontVariant: ["tabular-nums"] } });
 
 /** The steps fade in as the fold opens and out as it closes; at once under reduced motion. */
 const opening = FadeIn.duration(180);

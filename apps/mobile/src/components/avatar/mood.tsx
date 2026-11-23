@@ -6,6 +6,9 @@ import { type AvatarGround, type AvatarHandle, BotAvatar } from "./BotAvatar.tsx
 
 const Offline = createContext(false);
 
+/** Whether the app has lost sight of the server long enough that what it shows may be out of date. */
+export const useOffline = (): boolean => useContext(Offline);
+
 /**
  * Tells the avatars below it whether the app can see the server
  * (`useAsleep`). In the background nothing is on screen, so that counts as

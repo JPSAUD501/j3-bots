@@ -51,7 +51,7 @@ describe("orderRoster", () => {
       row(bot("Recent"), preview("2026-11-20T14:00:00Z")),
       row(bot("Older"), preview("2026-11-20T09:00:00Z")),
       row(bot("Unread"), preview("2026-11-19T09:00:00Z"), true),
-      row(bot("Asking", { _tag: "waiting", entryId: EntryId.make("ask") })),
+      row(bot("Asking", { _tag: "waiting", entryId: EntryId.make("ask"), since: null })),
       row(bot("Pinned", { _tag: "idle" }, { pinned: true })),
     ];
     expect(names(orderRoster(items))).toEqual([

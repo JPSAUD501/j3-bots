@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { type BotId, type Conflict, Invalid, type NotFound, WorkStepId } from "@j3-bots/contracts";
-import { Engine } from "@j3-bots/engine-t3";
+import { Engine, type TurnOutcome } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -23,13 +23,19 @@ import {
   conversation,
   createBot,
   engineSession,
+  finishRunning,
   nextTurn,
+  noticesOf,
   sendToBot,
   stopSettled,
   turnEnded,
   until,
 } from "../testing/turns.ts";
+import { Roster } from "../roster/Roster.ts";
+import { BotTools } from "../tools/BotTools.ts";
+import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
+import { STALL_AFTER } from "./model.ts";
 import { Stops } from "./Stops.ts";
 
 const value = { _tag: "provide", value: Redacted.make("test-token") } as const;
@@ -519,9 +525,9 @@ const workedMs = (botId: BotId) =>
     );
     const fold = yield* awaitEntry(botId, "work-fold");
     if (fold.status._tag !== "finished") return yield* Effect.die(new Error("The fold runs"));
-    const spanMs =
-      DateTime.toEpochMillis(fold.status.finishedAt) - DateTime.toEpochMillis(fold.createdAt);
-    return spanMs - fold.status.waitedMs;
+    const from = fold.turnStartedAt ?? fold.createdAt;
+    const spanMs = DateTime.toEpochMillis(fold.status.finishedAt) - DateTime.toEpochMillis(from);
+    return spanMs - fold.status.waitedMs - fold.status.waitedBeforeMs;
   });
 
 it.effect("leaves out of a turn's work the time it waited on a card, and only that time", () =>
@@ -564,5 +570,338 @@ it.effect("counts the time after a refused answer as waiting, until the turn end
 
     // Only the minute before the card was work.
     assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.minutes(1)));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "counts a turn's work and its wait on a card from the turn's start, as its clock does",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const states = yield* BotStates;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Clean up.");
+      const turnId = yield* nextTurn(bot.id);
+      yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag === "thinking")));
+      const thinking = yield* states.of(bot.id);
+      if (thinking._tag !== "thinking")
+        return yield* Effect.die(new Error("The bot does not think"));
+
+      // The turn thinks for 20 seconds before its first step.
+      yield* TestClock.adjust(Duration.seconds(20));
+      const stepAt = yield* DateTime.now;
+      yield* control.step({
+        sessionId: session,
+        turnId,
+        step: {
+          id: WorkStepId.make("step-1"),
+          kind: "command",
+          tool: null,
+          label: "ls build",
+          status: "completed",
+          startedAt: stepAt,
+          finishedAt: stepAt,
+        },
+      });
+      const fold = yield* awaitEntry(bot.id, "work-fold");
+      assert.isTrue(
+        fold.turnStartedAt !== null && DateTime.Equivalence(fold.turnStartedAt, thinking.since),
+      );
+
+      yield* TestClock.adjust(Duration.seconds(10));
+      yield* control.openRequest({
+        sessionId: session,
+        turnId,
+        request: {
+          _tag: "approval",
+          kind: "command",
+          action: "rm -rf build",
+          detail: null,
+          reason: null,
+          exact: true,
+          sessionGrant: null,
+        },
+      });
+      const card = yield* awaitEntry(bot.id, "approval");
+      // Waiting within the turn, the clock still counts from its start.
+      const waiting = yield* states.of(bot.id);
+      assert.isTrue(
+        waiting._tag === "waiting" &&
+          waiting.entryId === card.id &&
+          waiting.since !== null &&
+          DateTime.Equivalence(waiting.since, thinking.since),
+      );
+
+      yield* TestClock.adjust(Duration.minutes(2));
+      yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "interrupted" } });
+      // The 30 seconds before the card, the first 20 of them before the fold was written.
+      assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(30)));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps a wait before the turn's first step apart from the time after its fold", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Clean up.");
+    const turnId = yield* nextTurn(bot.id);
+
+    // Ten seconds of thought, then two minutes on an approval, before any step.
+    yield* TestClock.adjust(Duration.seconds(10));
+    yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "approval",
+        kind: "command",
+        action: "rm -rf build",
+        detail: null,
+        reason: null,
+        exact: true,
+        sessionGrant: null,
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "approval");
+    yield* TestClock.adjust(Duration.minutes(2));
+    yield* (yield* Cards).answer({
+      commandId: command(),
+      entryId: card.id,
+      answer: { _tag: "approval", decision: "allow-once" },
+    });
+    yield* (yield* Cards).respondPending;
+    yield* until(
+      awaitEntry(bot.id, "approval").pipe(Effect.map((found) => found.status._tag !== "pending")),
+    );
+    const stepAt = yield* DateTime.now;
+    yield* control.step({
+      sessionId: session,
+      turnId,
+      step: {
+        id: WorkStepId.make("step-1"),
+        kind: "command",
+        tool: null,
+        label: "rm -rf build",
+        status: "completed",
+        startedAt: stepAt,
+        finishedAt: stepAt,
+      },
+    });
+    yield* awaitEntry(bot.id, "work-fold");
+    yield* TestClock.adjust(Duration.seconds(30));
+    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+
+    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(40)));
+    const fold = yield* awaitEntry(bot.id, "work-fold");
+    // A client that counts from the fold's writing never sees the wait before it.
+    assert.deepStrictEqual(
+      fold.status._tag === "finished"
+        ? [fold.status.waitedMs, fold.status.waitedBeforeMs]
+        : undefined,
+      [0, Duration.toMillis(Duration.minutes(2))],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/**
+ * The bot thinks for `thinking`, then its turn ends by `end` before any step:
+ * its conversation's work folds, read again from the start as a client that
+ * reloads reads them, and when the turn started.
+ */
+const endsBeforeItsFirstStep = <E, R>(
+  thinking: Duration.Duration,
+  end: (botId: BotId) => Effect.Effect<void, E, R>,
+) =>
+  Effect.gen(function* () {
+    const states = yield* BotStates;
+    const bot = yield* createBot("Ana");
+    yield* sendToBot(bot.id, "Look into the outage.");
+    yield* nextTurn(bot.id);
+    yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag === "thinking")));
+    const started = yield* states.of(bot.id);
+    if (started._tag !== "thinking") return yield* Effect.die(new Error("The bot does not think"));
+    yield* TestClock.adjust(thinking);
+    yield* end(bot.id);
+    yield* turnEnded(bot.id);
+    const entries = yield* conversation(bot.id);
+    const folds = entries.flatMap((entry) => (entry._tag === "work-fold" ? [entry] : []));
+    return { bot, entries, folds, started: started.since };
+  });
+
+/** The engine ends the bot's running turn with `outcome`. */
+const engineEnds = (outcome: TurnOutcome) => (botId: BotId) =>
+  Effect.gen(function* () {
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: yield* engineSession(botId),
+      turnId: yield* nextTurn(botId),
+      outcome,
+    });
+  });
+
+it.effect("says a turn the operator stopped before its first step was stopped, and when", () =>
+  Effect.gen(function* () {
+    const { bot, folds, started } = yield* endsBeforeItsFirstStep(Duration.seconds(64), (botId) =>
+      Effect.gen(function* () {
+        yield* (yield* Stops).stopBot({ commandId: command(), botId });
+        yield* stopSettled;
+      }),
+    );
+    const [fold] = folds;
+    assert.strictEqual(folds.length, 1);
+    assert.strictEqual(fold?.stepCount, 0);
+    assert.isTrue(fold?.turnStartedAt != null && DateTime.Equivalence(fold.turnStartedAt, started));
+    assert.strictEqual(
+      fold?.status._tag === "finished" ? fold.status.ending : undefined,
+      "interrupted",
+    );
+    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(64)));
+    // The roster says it stopped, not that it worked.
+    const item = (yield* (yield* Roster).items).find(
+      (found) => found._tag === "bot" && found.bot.id === bot.id,
+    );
+    assert.deepStrictEqual(
+      [item?.lastEntry?.kind, item?.lastEntry?.step, item?.lastEntry?.ending],
+      ["work-fold", null, "interrupted"],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("says a turn that failed before its first step failed, and when", () =>
+  Effect.gen(function* () {
+    const { bot, folds } = yield* endsBeforeItsFirstStep(
+      Duration.seconds(12),
+      engineEnds({ _tag: "failed", failure: "provider-error", retryAt: null }),
+    );
+    assert.deepStrictEqual(
+      folds.map((fold) => [fold.stepCount, fold.status._tag === "finished" && fold.status.ending]),
+      [[0, "failed"]],
+    );
+    assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(12)));
+    // The notice written after the fold, with what went wrong and its retry, is what the roster shows.
+    const notices = (yield* conversation(bot.id)).flatMap((entry) =>
+      entry._tag === "notice" ? [[entry.notice, entry.retryable]] : [],
+    );
+    assert.deepStrictEqual(notices, [[{ _tag: "turn-failed", failure: "provider-error" }, true]]);
+    const item = (yield* (yield* Roster).items).find(
+      (found) => found._tag === "bot" && found.bot.id === bot.id,
+    );
+    assert.deepStrictEqual(
+      [item?.lastEntry?.kind, item?.lastEntry?.notice],
+      ["notice", { _tag: "turn-failed", failure: "provider-error" }],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("leaves no fold for a turn that completed before its first step: its reply says it", () =>
+  Effect.gen(function* () {
+    // `finishRunning` has the bot say "Done." before its turn completes.
+    const { entries, folds } = yield* endsBeforeItsFirstStep(Duration.seconds(5), finishRunning);
+    assert.deepStrictEqual(folds, []);
+    assert.isTrue(entries.some((entry) => entry._tag === "message" && entry.text === "Done."));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "says a turn cut short before its first step by a session lost while the server was down",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { bot, session } = yield* Effect.gen(function* () {
+        const states = yield* BotStates;
+        const bot = yield* createBot("Ana");
+        const session = yield* engineSession(bot.id);
+        yield* sendToBot(bot.id, "Look into the outage.");
+        yield* nextTurn(bot.id);
+        yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag === "thinking")));
+        return { bot, session };
+      }).pipe(Effect.provide(Domain.layer));
+      yield* control.loseSession(session);
+
+      yield* Effect.gen(function* () {
+        yield* until(noticesOf(bot.id).pipe(Effect.map((kinds) => kinds.includes("session-lost"))));
+        const folds = (yield* conversation(bot.id)).flatMap((entry) =>
+          entry._tag === "work-fold" ? [entry] : [],
+        );
+        assert.deepStrictEqual(
+          folds.map((fold) => [
+            fold.stepCount,
+            fold.status._tag === "finished" && fold.status.ending,
+          ]),
+          [[0, "interrupted"]],
+        );
+      }).pipe(Effect.provide(Domain.layer));
+    }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect("counts the operator's answer to a card as the turn's activity", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const states = yield* BotStates;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Clean up.");
+    const turnId = yield* nextTurn(bot.id);
+    yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "approval",
+        kind: "command",
+        action: "rm -rf build",
+        detail: null,
+        reason: null,
+        exact: true,
+        sessionGrant: null,
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "approval");
+    // The operator answers long after the card arrived.
+    yield* TestClock.adjust(Duration.sum(STALL_AFTER, Duration.minutes(5)));
+    yield* (yield* Cards).answer({
+      commandId: command(),
+      entryId: card.id,
+      answer: { _tag: "approval", decision: "allow-once" },
+    });
+    yield* (yield* Cards).respondPending;
+    yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag !== "waiting")));
+    const after = yield* states.of(bot.id);
+    assert.deepStrictEqual(
+      after._tag === "thinking" ? [after.stalled, after.quietSince] : after._tag,
+      [false, null],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("waits on an ask card after its turn with no turn's start to count from", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Deploy it.");
+    const turnId = yield* nextTurn(bot.id);
+    const args = { prompt: "Which region?", options: [{ label: "Europe", value: "eu-west-1" }] };
+    yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "ask",
+      input: args,
+      recorded: "now",
+    });
+    yield* (yield* BotTools).call({
+      requestId: "call-1",
+      sessionId: session,
+      tool: "ask",
+      arguments: args,
+    });
+    const card = yield* awaitEntry(bot.id, "question");
+    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
+    yield* turnEnded(bot.id);
+
+    assert.deepStrictEqual(yield* (yield* BotStates).of(bot.id), {
+      _tag: "waiting",
+      entryId: card.id,
+      since: null,
+    });
   }).pipe(Effect.provide(TestDomain.layer)),
 );

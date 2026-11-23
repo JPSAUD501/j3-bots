@@ -11,6 +11,7 @@ import type { DataAttributes } from "../lib/dataAttributes";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import { type AvatarHandle, RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
+import { SwapText } from "./SwapText";
 
 export const toneClass: Record<LineTone, string> = {
   default: "text-muted-foreground",
@@ -77,7 +78,7 @@ export function RosterRow({
           )}
         </span>
         <span className="flex items-center gap-2">
-          <span className={cn("truncate text-xs", toneClass[line.tone])}>{line.text}</span>
+          <SwapText text={line.text} className={cn("text-xs", toneClass[line.tone])} />
           {item.unread &&
             (unreadDot ? (
               <span className="ms-auto size-2 shrink-0 rounded-pill bg-accent">

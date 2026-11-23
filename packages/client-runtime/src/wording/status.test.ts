@@ -38,7 +38,7 @@ describe("rosterLine", () => {
       _tag: "bot",
       botId: bot("Scout").id,
     });
-    const waiting = bot("Scout", { _tag: "waiting", entryId: question.entryId });
+    const waiting = bot("Scout", { _tag: "waiting", entryId: question.entryId, since: null });
     expect(rosterLine(row(waiting, question), ctx)).toEqual({
       text: "Asks: Which day?",
       tone: "waiting",
@@ -71,7 +71,11 @@ describe("rosterLine", () => {
   });
 
   it("says a waiting bot needs the operator when its last entry is not what it waits on", () => {
-    const waiting = bot("Scout", { _tag: "waiting", entryId: EntryId.make("elsewhere") });
+    const waiting = bot("Scout", {
+      _tag: "waiting",
+      entryId: EntryId.make("elsewhere"),
+      since: null,
+    });
     expect(rosterLine(row(waiting, preview("2026-11-20T14:50:00Z")), ctx)).toEqual({
       text: "Needs you",
       tone: "waiting",
@@ -113,6 +117,7 @@ describe("rosterLine", () => {
       _tag: "thinking",
       since: at("2026-11-20T14:59:00Z"),
       stalled: false,
+      quietSince: null,
     });
     const quiet = [opening, thinking, opening].map((b) => quietConversationText(b, ctx));
     expect(new Set(quiet).size).toBe(1);
@@ -132,15 +137,25 @@ describe("rosterLine", () => {
     expect(rosterLine(row(blocked), ctx).tone).toBe("blocked");
   });
 
-  it("says how long a stalled turn has been quiet", () => {
-    const stalled = bot("Scout", {
-      _tag: "working",
-      since: at("2026-11-20T14:48:00Z"),
-      stalled: true,
-      activity: "Reading",
-      tool: null,
+  it("says how long a stalled turn has been quiet, from its last activity, not its start", () => {
+    const stalled = (quietSince: string | null) =>
+      bot("Scout", {
+        _tag: "working",
+        since: at("2026-11-20T14:20:00Z"),
+        stalled: true,
+        quietSince: quietSince === null ? null : at(quietSince),
+        activity: "Reading",
+        tool: null,
+      });
+    expect(rosterLine(row(stalled("2026-11-20T14:48:00Z")), ctx)).toEqual({
+      text: "No activity for 12m",
+      tone: "waiting",
     });
-    expect(rosterLine(row(stalled), ctx)).toEqual({ text: "No activity for 12m", tone: "waiting" });
+    // A server that does not say when it went quiet: no duration to give.
+    expect(rosterLine(row(stalled(null)), ctx)).toEqual({
+      text: "No recent activity",
+      tone: "waiting",
+    });
   });
 
   it("shows the last thing said, with who said it in a room", () => {

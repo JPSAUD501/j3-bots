@@ -34,7 +34,7 @@ const room = (name: string, unread: boolean): RosterItem => ({
 });
 
 const asking = (name: string, extra: Partial<Bot> = {}) =>
-  bot(name, { _tag: "waiting", entryId: EntryId.make(`card-${name}`) }, extra);
+  bot(name, { _tag: "waiting", entryId: EntryId.make(`card-${name}`), since: null }, extra);
 
 describe("the tray", () => {
   it("lists the bots and rooms that need the operator, in roster order", () => {

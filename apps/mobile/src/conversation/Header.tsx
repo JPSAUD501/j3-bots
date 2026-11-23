@@ -1,37 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
+import { useTurnAnnouncement } from "@j3-bots/client-runtime/react";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
-import type { Bot, EntryId, RosterItem } from "@j3-bots/contracts";
+import type { EntryId, RosterItem, WorkFoldEntry } from "@j3-bots/contracts";
 import { ChevronLeft, ChevronRight, CornerDownRight, Square } from "lucide-react-native";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useState } from "react";
 import { AccessibilityInfo, Alert, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
 import { RoomAvatar } from "../components/avatar/BotAvatar.tsx";
-import { LiveBotAvatar } from "../components/avatar/mood.tsx";
+import { LiveBotAvatar, useOffline } from "../components/avatar/mood.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";
+import { SwapText } from "../components/SwapText.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
-
-/** What a bot is doing, as a transition between states: activity text changing within one does not count. */
-const stateOf = (bot: Bot) =>
-  bot.state._tag === "thinking" || bot.state._tag === "working"
-    ? `${bot.state._tag}:${bot.state.stalled}`
-    : bot.state._tag;
 
 /**
  * Who this is, and one line saying what it is doing now. The block with the
  * name opens the details. While the bot waits, "Waiting for you" at the end
- * brings the card it waits on into view. A change of state is announced
- * once, as it happens. Mount one per conversation, so moving to another
+ * brings the card it waits on into view. Each change of state and each new
+ * line is announced once, as it happens, then how the turn ended
+ * (`useTurnAnnouncement`). Mount one per conversation, so moving to another
  * announces nothing.
  */
+const announce = (text: string) => AccessibilityInfo.announceForAccessibility(text);
+
 export function ConversationHeader({
   item,
   onBack,
   onOpenDetails,
   onGoToWaiting,
   onStop,
+  folds,
 }: {
   readonly item: RosterItem;
   /** On a phone, back to the roster; beside the roster there is none. */
@@ -40,6 +40,8 @@ export function ConversationHeader({
   readonly onGoToWaiting: (entryId: EntryId) => void;
   /** A bot's Stop runs at once; a room's, once the operator confirms it. */
   readonly onStop: () => void;
+  /** The conversation's work folds: when a turn ends, the line it folds into is said aloud. */
+  readonly folds: ReadonlyArray<WorkFoldEntry>;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -58,15 +60,9 @@ export function ConversationHeader({
   const [pressed, setPressed] = useState(false);
   const ground = pressed ? "muted" : "background";
 
-  const state = item._tag === "bot" ? stateOf(item.bot) : null;
-  const announced = useRef(state);
-  const text = line?.text ?? "";
-  const announce = useEffectEvent(() => AccessibilityInfo.announceForAccessibility(text));
-  useEffect(() => {
-    if (announced.current === state) return;
-    announced.current = state;
-    announce();
-  }, [state]);
+  // Each change of state and each new line is said once, then how the turn ended; not the first.
+  const offline = useOffline();
+  useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
 
   const confirmRoomStop = () =>
     Alert.alert(t("room.stop.title", { name }), t("room.stop.body", { name }), [
@@ -116,14 +112,18 @@ export function ConversationHeader({
           </View>
           {/* The line keeps its place when it says nothing, so the name never moves as the bot's
               state changes. */}
-          <Text
-            numberOfLines={1}
-            className={`text-2xs ${line === null ? "" : toneClass[line.tone]}`}
-            importantForAccessibility={line === null ? "no" : "auto"}
-            accessibilityElementsHidden={line === null}
-          >
-            {line?.text ?? " "}
-          </Text>
+          {line === null ? (
+            <Text
+              numberOfLines={1}
+              className="text-2xs"
+              importantForAccessibility="no"
+              accessibilityElementsHidden
+            >
+              {" "}
+            </Text>
+          ) : (
+            <SwapText text={line.text} className={`text-2xs ${toneClass[line.tone]}`} />
+          )}
         </View>
       </Pressable>
       {waitingOn !== null && (

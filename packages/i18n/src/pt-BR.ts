@@ -53,6 +53,7 @@ const sentences = {
   "presence.waiting": "Esperando por você",
   "presence.waiting.goTo": "Esperando por você: ir para o pedido",
   "presence.stalled": "Sem atividade há {duration}",
+  "presence.stalledQuiet": "Sem atividade recente",
 
   "failure.usageLimit": "Limite de uso atingido",
   "failure.usageLimitUntil": "Limite de uso atingido, renova {when}",
@@ -73,6 +74,8 @@ const sentences = {
   "summary.needsSecret": "Precisa de uma credencial: {label}",
   "summary.askedSecret": "Pediu uma credencial: {label}",
   "summary.workFold": "Trabalhou um pouco",
+  "summary.workStopped": "Parou",
+  "summary.workFailed": "Falhou",
   "summary.notice": "Deixou um aviso",
   "summary.ran": "Rodou {label}",
   "summary.edited": "Editou {label}",
@@ -207,6 +210,9 @@ const sentences = {
   "work.stepRunning": "Em andamento",
   "work.stepDone": "Concluído",
   "work.stepFailed": "Falhou",
+  "work.live": "{status}, {duration} até agora",
+  "work.offline": "Último estado conhecido: {status}",
+  "work.showSteps": "Passos até agora",
 
   "tool.backgroundTask.did": "Iniciou uma tarefa em segundo plano",
   "tool.backgroundTask.doing": "Iniciando uma tarefa em segundo plano",

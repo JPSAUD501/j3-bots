@@ -297,11 +297,22 @@ export type TurnEnding = typeof TurnEnding.Type;
 
 /**
  * One turn's work, folded into a line. Its steps are read with
- * `entries.workSteps`. The line says how long the bot worked: from the fold's
- * first step to the end of its turn, less `waitedMs`.
+ * `entries.workSteps`. The line says how long the bot worked: from the start
+ * of its turn (`turnStartedAt`) to its end, less `waitedBeforeMs` and
+ * `waitedMs`; from a server that predates `turnStartedAt`, from the fold's
+ * first step, less `waitedMs`. A turn stopped or failed before its first step
+ * has a fold of no steps, so how it ended stays in the conversation.
  */
 export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
   ...entry,
+  /**
+   * When the fold's turn started, the time a working bot's state counts from
+   * (`BotState` `since`), so the fold and the turn's clock agree. Null from a
+   * server, or a fold, that predates it.
+   */
+  turnStartedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   stepCount: NonNegativeInt,
   status: Schema.Union([
     Schema.TaggedStruct("running", {}),
@@ -309,11 +320,17 @@ export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
       finishedAt: Schema.DateTimeUtc,
       ending: TurnEnding,
       /**
-       * How long of it the turn waited on the operator: for a card it asked
-       * them to answer (an approval, a question, a credential), from the
-       * card's arrival until it closed.
+       * How long the turn waited on the operator after the fold was
+       * written: for a card it asked them to answer (an approval, a
+       * question, a credential), from the card's arrival until it closed.
        */
       waitedMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
+      /**
+       * How long the turn waited on the operator before its fold was written,
+       * from `turnStartedAt`: kept apart from `waitedMs`, which counts from the
+       * fold's creation as clients before `turnStartedAt` read it.
+       */
+      waitedBeforeMs: NonNegativeInt.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
       /**
        * Work the turn handed off still runs, as the engine last reported:
        * a background task it started, say. The fold's steps go on changing
@@ -613,6 +630,10 @@ export const entryText = (entry: Entry): string => {
   }
 };
 
+/** How a work fold's turn ended, once it has; null for a fold still running and every other entry. */
+export const foldEnding = (entry: Entry): TurnEnding | null =>
+  entry._tag === "work-fold" && entry.status._tag === "finished" ? entry.status.ending : null;
+
 /**
  * What the roster shows under a name: the latest entry, cut short. `text` is
  * the message, the question or the action, at most `PREVIEW_LENGTH` characters,
@@ -631,6 +652,13 @@ export const EntryPreview = Schema.Struct({
    * with none, for every other entry, and from a server that predates it.
    */
   step: Schema.NullOr(StepSummary).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * How a work fold's turn ended, once it has (`foldEnding`), so a fold of no
+   * steps, a turn stopped or failed before its first, says so; `null` while
+   * it runs, for every other entry, and from a server that predates it. A
+   * failed turn's notice comes after its fold, so the roster previews that.
+   */
+  ending: Schema.NullOr(TurnEnding).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   /**
    * A notice's own words, of any kind; `null` for every other entry, and
    * from a server that predates it.

@@ -16,6 +16,7 @@ import {
   arrivalCounts,
   buildTimeline,
   canStop,
+  liveTurn,
   filterRoster,
   openingHeld,
   orderRoster,
@@ -23,6 +24,7 @@ import {
   rosterKeyOf,
   rosterKeyText,
   rosterTarget,
+  withLiveTurn,
 } from "@j3-bots/client-runtime/presentation";
 import { useArrivals, useConversationEnd } from "@j3-bots/client-runtime/react";
 import { BotsProvider, useI18n } from "../app/context";
@@ -278,7 +280,17 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   // What arrives at the end of the open conversation settles in, and is counted while the
   // operator reads above it.
-  const rows = useMemo(() => buildTimeline(shownItems ?? []), [shownItems]);
+  // In a bot's conversation, its turn under way shows in the timeline, once.
+  const shownBot = item?._tag === "bot" ? item.bot : null;
+  const shownTurn = useMemo(() => (shownBot === null ? null : liveTurn(shownBot)), [shownBot]);
+  const rows = useMemo(
+    () => withLiveTurn(buildTimeline(shownItems ?? []), shownTurn),
+    [shownItems, shownTurn],
+  );
+  const folds = useMemo(
+    () => (shownItems ?? []).flatMap((entry) => (entry._tag === "work-fold" ? [entry] : [])),
+    [shownItems],
+  );
   const arrived = useArrivals(
     selectionKey,
     rows.map((row) => row.key),
@@ -399,6 +411,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             else intents.stopRoom(item.room.id);
           }}
           onGoToWaiting={goToEntry}
+          folds={folds}
           stopShortcut={shortcuts.stop}
           titleRef={titleRef}
           onAnnounce={(text) =>
@@ -452,6 +465,9 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
                   intents={intents}
                   arrived={arrived}
                   flyFrom={composerRef}
+                  turnBot={
+                    item._tag === "bot" ? { bot: item.bot, lastEntry: item.lastEntry } : null
+                  }
                 />
               </div>
             </div>

@@ -23,6 +23,7 @@ import {
   PairingCode,
   ProviderId,
   type ProviderStatus,
+  type Bot,
   type Room,
   RoomId,
   type RosterItem,
@@ -64,6 +65,8 @@ import {
   avatarSeed,
   avatarStates,
   buildTimeline,
+  liveTurn,
+  withLiveTurn,
   mentionOptions,
   type OnboardingStep,
 } from "@j3-bots/client-runtime/presentation";
@@ -842,11 +845,15 @@ function BubblesSection() {
       <Labeled label="A conversation">
         <div className="max-w-(--layout-text-column)">
           <Timeline
-            rows={buildTimeline(team.entries[`bot:${ids.scout}`] ?? [])}
+            rows={withLiveTurn(
+              buildTimeline(team.entries[`bot:${ids.scout}`] ?? []),
+              liveTurn(team.bots.scout),
+            )}
             room={null}
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
+            turnBot={{ bot: team.bots.scout, lastEntry: null }}
           />
         </div>
       </Labeled>
@@ -901,15 +908,85 @@ function CardsSection() {
   );
 }
 
+/** Scout in each state a turn under way can be in, from the sample's `now`. */
+const turnStates = (() => {
+  const ago = (seconds: number) =>
+    DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) - seconds * 1000);
+  const as = (state: Bot["state"]): Bot => ({ ...team.bots.scout, state });
+  const running = variants.folds[0];
+  return [
+    {
+      name: "thinking",
+      bot: as({ _tag: "thinking", since: ago(7), stalled: false, quietSince: null }),
+      fold: null,
+    },
+    {
+      name: "working",
+      bot: as({
+        _tag: "working",
+        since: ago(72),
+        stalled: false,
+        quietSince: null,
+        activity: "pnpm test billing",
+        tool: null,
+      }),
+      fold: running?.entry ?? null,
+    },
+    {
+      name: "waiting",
+      bot: as({ _tag: "waiting", entryId: EntryId.make("variant-approval"), since: ago(134) }),
+      fold: running?.entry ?? null,
+    },
+    {
+      name: "stalled",
+      bot: as({
+        _tag: "working",
+        since: ago(1220),
+        stalled: true,
+        quietSince: ago(780),
+        activity: null,
+        tool: null,
+      }),
+      fold: running?.entry ?? null,
+    },
+    {
+      name: "past an hour",
+      bot: as({
+        _tag: "working",
+        since: ago(3723),
+        stalled: false,
+        quietSince: null,
+        activity: null,
+        tool: "browser",
+      }),
+      fold: running?.entry ?? null,
+    },
+  ] as const;
+})();
+
 function WorkSection() {
   return (
-    <Section title="Work folds">
-      <Labeled label="Running, finished, loading its steps, stopped, failed">
+    <Section title="A turn's work">
+      <Labeled label="Under way: thinking before any step, working on a step (its steps open), waiting on the operator, stalled, past an hour">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          {turnStates.map(({ name, bot, fold }) => (
+            <WorkFold
+              key={name}
+              fold={fold}
+              live={{ bot, lastEntry: null }}
+              steps={fold === null ? null : (variants.folds[0]?.steps ?? null)}
+              onOpenChange={nothing}
+            />
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="Folded: running with no turn seen, finished, loading its steps, stopped, failed">
         <div className="flex flex-col gap-2">
           {variants.folds.map(({ entry, steps, open }) => (
             <WorkFold
               key={entry.id}
-              entry={entry}
+              fold={entry}
+              live={null}
               steps={steps}
               defaultOpen={open}
               onOpenChange={nothing}
@@ -1113,6 +1190,7 @@ function ComposerSection() {
                 onBack={nothing}
                 onStop={nothing}
                 onGoToWaiting={nothing}
+                folds={[]}
                 stopShortcut={shortcuts.stop}
                 onAnnounce={nothing}
               />
@@ -1778,7 +1856,7 @@ function UsageGallerySection() {
 /** A bot just created: its first turn has started and nothing is in its conversation yet. */
 const speakingFirst = {
   ...team.bots.moss,
-  state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false },
+  state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false, quietSince: null },
   opening: true,
 } as const;
 

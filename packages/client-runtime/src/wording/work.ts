@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { StepSummary, StepTool, WorkFoldEntry, WorkStep, WorkTool } from "@j3-bots/contracts";
+import type {
+  StepSummary,
+  StepTool,
+  TurnEnding,
+  WorkFoldEntry,
+  WorkStep,
+  WorkTool,
+} from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { firstLine } from "../presentation/roster.ts";
@@ -52,10 +59,21 @@ export function activityText(activity: string | null, tool: StepTool, i18n: I18n
   return activity ?? i18n.t("presence.working");
 }
 
-/** What a turn's work did, from the step that says it best, as the roster says it. */
-export function workDoneText(step: StepSummary | null, i18n: I18n): string {
+/**
+ * What a turn's work did, from the step that says it best, as the roster says
+ * it. With no step, a turn stopped or failed before its first says only that.
+ */
+export function workDoneText(
+  step: StepSummary | null,
+  ending: TurnEnding | null,
+  i18n: I18n,
+): string {
   const { t } = i18n;
-  if (step === null) return t("summary.workFold");
+  if (step === null) {
+    if (ending === "interrupted") return t("summary.workStopped");
+    if (ending === "failed") return t("summary.workFailed");
+    return t("summary.workFold");
+  }
   const words = wordsOf(step.tool);
   if (words !== null) return t(words.did);
   const label = firstLine(step.label);
@@ -83,16 +101,20 @@ export function workDoneText(step: StepSummary | null, i18n: I18n): string {
  * A work fold's title. While the turn runs it says so, with no duration: the
  * time is not known until it ends. Once the turn has completed with work it
  * handed off still running, it says that. Otherwise it says how the turn
- * ended and how long it worked, less the time it waited on the operator; a
- * turn stopped or failed says so even while work it handed off still runs,
- * and then says that too.
+ * ended and how long it worked, from the turn's start, as its clock counted,
+ * less the time it waited on the operator; a turn stopped or failed says so
+ * even while work it handed off still runs, and then says that too.
  */
 export function workFoldTitle(entry: WorkFoldEntry, ctx: PresentationContext): string {
   const { t } = ctx.i18n;
   const { status } = entry;
   if (status._tag === "running") return t("presence.working");
   if (status.background && status.ending === "completed") return t("work.inBackground");
-  const worked = Math.max(0, millisBetween(entry.createdAt, status.finishedAt) - status.waitedMs);
+  // From the turn's start, less every wait since; from an older server, from the fold's first step.
+  const waited =
+    entry.turnStartedAt === null ? status.waitedMs : status.waitedMs + status.waitedBeforeMs;
+  const from = entry.turnStartedAt ?? entry.createdAt;
+  const worked = Math.max(0, millisBetween(from, status.finishedAt) - waited);
   const duration = shortDuration(worked, ctx.i18n);
   switch (status.ending) {
     case "completed":
