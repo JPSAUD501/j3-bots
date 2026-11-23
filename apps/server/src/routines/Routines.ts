@@ -108,6 +108,8 @@ export interface RoutineDraft {
   readonly name: string;
   readonly instruction: string;
   readonly trigger: RoutineTrigger;
+  /** False creates it paused, as a template's routines are. On when left out. */
+  readonly enabled?: boolean;
 }
 
 /** The changes `routine.update` may ask for. */
@@ -409,17 +411,20 @@ export const layer = Layer.effect(
         apply: Effect.gen(function* () {
           yield* requireBot(input.botId);
           const now = yield* DateTime.now;
-          const next = yield* plannedRun(input.draft.trigger, now);
+          // Planned also for a paused routine: a trigger the server refuses is refused either way.
+          const planned = yield* plannedRun(input.draft.trigger, now);
+          const enabled = input.draft.enabled ?? true;
+          const next = enabled ? planned : Option.none();
           const id = RoutineId.make(yield* ids.make("routine"));
           const secret = input.draft.trigger._tag === "webhook" ? yield* newSecret : null;
           const at = timeText(now);
           yield* sql`
             INSERT INTO routines (
-              id, bot_id, name, instruction, trigger_json, webhook_secret, next_run_at,
+              id, bot_id, name, instruction, trigger_json, enabled, webhook_secret, next_run_at,
               created_at, updated_at
             ) VALUES (
               ${id}, ${input.botId}, ${input.draft.name}, ${input.draft.instruction},
-              ${yield* encodeTrigger(input.draft.trigger)}, ${secret},
+              ${yield* encodeTrigger(input.draft.trigger)}, ${enabled ? 1 : 0}, ${secret},
               ${Option.match(next, { onNone: () => null, onSome: timeText })}, ${at}, ${at}
             )
           `;

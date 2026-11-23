@@ -6,6 +6,7 @@ import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Bots from "./bots/Bots.ts";
 import * as BotStore from "./bots/BotStore.ts";
 import * as EngineSessions from "./bots/EngineSessions.ts";
+import * as Templates from "./bots/Templates.ts";
 import * as Workspaces from "./bots/Workspaces.ts";
 import * as CommandReceipts from "./commands/CommandReceipts.ts";
 import * as Devices from "./devices/Devices.ts";
@@ -64,6 +65,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
   Layer.provideMerge(
     Layer.mergeAll(
       Bots.layer,
+      Templates.layer,
       Roster.layer,
       Speech.layer,
       Pipeline.layer,

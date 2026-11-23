@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type Avatar,
+  AvatarChoice,
   Bot,
   type BotId,
   BotId as BotIdSchema,
+  type BotTemplate,
   type CommandError,
   CommandId,
+  defaultPermissionMode,
   type EngineStatus,
   Conflict,
   Invalid,
@@ -13,13 +16,18 @@ import {
   NotFound,
   type PermissionMode,
   ProviderId,
+  type RoutineTrigger,
+  templatePermissionMode,
+  type TemplateTrigger,
 } from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -28,15 +36,17 @@ import { Attachments } from "../attachments/Attachments.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import {
   defaultModelIn,
-  defaultPermissionModeIn,
   EngineState,
   providerReady,
 } from "../engine/EngineState.ts";
 import { Ids } from "../Ids.ts";
+import { WORKSPACE_ENTRIES } from "../home/entries.ts";
 import { Layout } from "../Layout.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Sections } from "../sections/Sections.ts";
+import { Routines } from "../routines/Routines.ts";
+import { SettingsStore } from "../settings/SettingsStore.ts";
 import { Ledger } from "../turns/Ledger.ts";
 import { rotationRequests } from "../turns/rotationRequests.ts";
 import { Signals } from "../turns/Signals.ts";
@@ -47,6 +57,7 @@ import { Wakes } from "../turns/Wakes.ts";
 import { freeAvatar } from "@j3-bots/design-tokens/names";
 import { type BotChanges, BotStore, type Chooser, type StoredBot } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
+import { SKILL_FILE } from "./Templates.ts";
 import { Workspaces } from "./Workspaces.ts";
 
 /** What a new bot is given; what is left out takes the server's default. */
@@ -59,6 +70,25 @@ export interface BotDraft {
   readonly permissionMode?: PermissionMode;
   readonly primary?: boolean;
 }
+
+/** What a template brings to a new bot, and what the operator chose for it. */
+export interface FromTemplate {
+  readonly template: BotTemplate;
+  /** The operator's pick; left out, the template's where the engine offers it, or the default. */
+  readonly model?: ModelChoice;
+  /** The operator's pick; left out, `templatePermissionMode`. */
+  readonly permissionMode?: PermissionMode;
+}
+
+const isAvatarChoice = Schema.is(AvatarChoice);
+
+/** Whether the engine offers `model` now. */
+const offered = (status: EngineStatus, model: ModelChoice) =>
+  status.providers.some(
+    (provider) =>
+      provider.id === model.providerId &&
+      provider.models.some((candidate) => candidate.id === model.modelId),
+  );
 
 /**
  * Bots: creating, changing and deleting them, with what each of those means
@@ -74,6 +104,18 @@ export class Bots extends Context.Service<
     readonly create: (input: {
       readonly commandId: CommandId;
       readonly draft: BotDraft;
+    }) => Effect.Effect<Bot, CommandError>;
+    /**
+     * Creates a bot from a template as `create` creates one, in the same
+     * transaction as the template's routines, each created paused, and its
+     * skills, written to the new workspace's `skills/<name>/SKILL.md`. The
+     * template reaches nothing else: the bot is never primary, and its
+     * routines run in the operator's time zone. Skills written before the
+     * transaction failed are removed with the workspace they started.
+     */
+    readonly createFromTemplate: (input: {
+      readonly commandId: CommandId;
+      readonly from: FromTemplate;
     }) => Effect.Effect<Bot, CommandError>;
     /**
      * Succeeds once the change is saved. A model of another provider stops
@@ -140,6 +182,10 @@ export const layer = Layer.effect(
     const changes = yield* ChangeLog;
     const layout = yield* Layout;
     const ids = yield* Ids;
+    const routines = yield* Routines;
+    const settingsStore = yield* SettingsStore;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const signals = yield* Signals;
     const stops = yield* Stops;
     const wakes = yield* Wakes;
@@ -171,12 +217,7 @@ export const layer = Layer.effect(
       status: EngineStatus,
       model: ModelChoice,
     ) {
-      const offered = status.providers.some(
-        (provider) =>
-          provider.id === model.providerId &&
-          provider.models.some((candidate) => candidate.id === model.modelId),
-      );
-      if (!offered) return yield* new Invalid({ reason: "model" });
+      if (!offered(status, model)) return yield* new Invalid({ reason: "model" });
     });
 
     /** Makes `botId` the one primary bot, telling subscribers about the one it replaces. */
@@ -256,7 +297,7 @@ export const layer = Layer.effect(
         permissionModeByServer
           ? {
               model: fallback.value,
-              permissionMode: defaultPermissionModeIn(status, fallback.value),
+              permissionMode: defaultPermissionMode(status, fallback.value),
             }
           : { model: fallback.value },
       );
@@ -408,18 +449,30 @@ export const layer = Layer.effect(
         }).pipe(Effect.withSpan("Bots.adoptDefaults")),
       );
 
-    const create = Effect.fn("Bots.create")(function* (input: {
+    /**
+     * Saves a new bot, and what `furnish` adds to it in the same transaction,
+     * under one receipt. `draft` is decided there, from the engine's status
+     * then; a permission mode it leaves out is `permissionMode`'s, for the
+     * model the bot gets.
+     */
+    const insert = Effect.fn("Bots.insert")(function* (input: {
       readonly commandId: CommandId;
-      readonly draft: BotDraft;
+      readonly method: "bot.create" | "bot.createFromTemplate";
+      readonly payload: unknown;
+      readonly draft: (status: EngineStatus) => BotDraft;
+      readonly permissionMode: (status: EngineStatus, model: ModelChoice) => PermissionMode;
+      /** Who a permission mode is recorded as chosen by. */
+      readonly permissionModeChooser: (draft: BotDraft) => Chooser;
+      readonly furnish: (botId: BotId) => Effect.Effect<void, CommandError>;
     }) {
-      const { draft } = input;
       const bot = yield* receipts.once({
         commandId: input.commandId,
-        method: "bot.create",
-        payload: input.draft,
+        method: input.method,
+        payload: input.payload,
         result: Bot,
         apply: Effect.gen(function* () {
           const status = yield* engineState.current;
+          const draft = input.draft(status);
           const model = draft.model ?? Option.getOrNull(defaultModelIn(status));
           if (model === null) return yield* new Invalid({ reason: "model" });
           yield* checkModel(status, model);
@@ -436,12 +489,13 @@ export const layer = Layer.effect(
             },
             model,
             modelChooser: draft.model === undefined ? "server" : "operator",
-            permissionMode: draft.permissionMode ?? defaultPermissionModeIn(status, model),
-            permissionModeChooser: draft.permissionMode === undefined ? "server" : "operator",
+            permissionMode: draft.permissionMode ?? input.permissionMode(status, model),
+            permissionModeChooser: input.permissionModeChooser(draft),
             primary: draft.primary === true,
             workspacePath: layout.workspace(id),
             at,
           });
+          yield* input.furnish(id);
           // The bot opens its conversation: its first turn is this wake's,
           // written once, with the bot, and dispatched like any other. Its
           // cause is the operator's, as the creation is, also when the primary
@@ -476,6 +530,89 @@ export const layer = Layer.effect(
       );
       return bot;
     });
+
+    const create = (input: { readonly commandId: CommandId; readonly draft: BotDraft }) =>
+      insert({
+        commandId: input.commandId,
+        method: "bot.create",
+        payload: input.draft,
+        draft: () => input.draft,
+        permissionMode: defaultPermissionMode,
+        permissionModeChooser: (draft) =>
+          draft.permissionMode === undefined ? "server" : "operator",
+        furnish: () => Effect.void,
+      });
+
+    /** A template's trigger as the operator's routine runs it: a schedule in their time zone. */
+    const triggerOf = Effect.fnUntraced(function* (trigger: TemplateTrigger) {
+      if (trigger._tag === "webhook") return trigger satisfies RoutineTrigger;
+      const { timeZone } = yield* settingsStore.get;
+      return { _tag: "schedule", cron: trigger.cron, timeZone } satisfies RoutineTrigger;
+    });
+
+    /**
+     * The template's routines, paused, then its skills, last, so a routine the
+     * server refuses writes none. A write that fails removes the workspace the
+     * skills started, which belongs to no bot once the transaction rolls back.
+     */
+    const furnishFrom = (template: BotTemplate) =>
+      Effect.fnUntraced(function* (botId: BotId) {
+        for (const routine of template.routines) {
+          yield* routines.create({
+            commandId: null,
+            botId,
+            draft: {
+              name: routine.name,
+              instruction: routine.instruction,
+              trigger: yield* triggerOf(routine.trigger),
+              enabled: false,
+            },
+            author: { _tag: "operator" },
+          });
+        }
+        const workspace = layout.workspace(botId);
+        const skills = path.join(workspace, WORKSPACE_ENTRIES.skills);
+        yield* Effect.forEach(
+          template.skills,
+          (skill) => layout.writeFile(path.join(skills, skill.name, SKILL_FILE), skill.text),
+          { discard: true },
+        ).pipe(
+          Effect.catchTags({
+            PrivateLocationExposed: () => new Conflict({ reason: "private-location" }),
+            PlatformError: Effect.die,
+          }),
+          Effect.onError(() => fs.remove(workspace, { recursive: true }).pipe(Effect.ignore)),
+        );
+      });
+
+    const createFromTemplate = (input: {
+      readonly commandId: CommandId;
+      readonly from: FromTemplate;
+    }) => {
+      const { template, model, permissionMode } = input.from;
+      return insert({
+        commandId: input.commandId,
+        method: "bot.createFromTemplate",
+        payload: input.from,
+        draft: (status) => {
+          const chosen = model ?? (offered(status, template.model) ? template.model : undefined);
+          const { avatar } = template.profile;
+          return {
+            name: template.profile.name,
+            title: template.profile.title,
+            job: template.profile.job,
+            ...(isAvatarChoice(avatar) ? { avatar } : {}),
+            ...(chosen === undefined ? {} : { model: chosen }),
+            ...(permissionMode === undefined ? {} : { permissionMode }),
+          };
+        },
+        permissionMode: (status, botModel) =>
+          templatePermissionMode(template.permissionMode, defaultPermissionMode(status, botModel)),
+        // What the operator saw before creating it: a later move to the default model keeps it.
+        permissionModeChooser: () => "operator",
+        furnish: furnishFrom(template),
+      });
+    };
 
     const remove = Effect.fn("Bots.remove")(function* (input: {
       readonly commandId: CommandId;
@@ -541,6 +678,6 @@ export const layer = Layer.effect(
       });
     });
 
-    return Bots.of({ create, update, adoptDefaults, freshStart, remove });
+    return Bots.of({ create, createFromTemplate, update, adoptDefaults, freshStart, remove });
   }),
 );

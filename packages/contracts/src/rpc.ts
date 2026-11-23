@@ -52,6 +52,7 @@ import {
 } from "./provider.ts";
 import { Section, SectionName } from "./section.ts";
 import { Settings, SettingsChange, TimeZone } from "./settings.ts";
+import { BotTemplate } from "./template.ts";
 
 // ---------------------------------------------------------------------------
 // Conventions
@@ -357,6 +358,41 @@ export const BotRpcs = RpcGroup.make(
    */
   Rpc.make("bot.delete", {
     payload: { ...command, botId: BotId, deleteFiles: Schema.Boolean },
+    error: CommandError,
+  }),
+  /**
+   * The bot as a template another J3 Bots can create a bot from: its profile
+   * and job, its model and permission mode, the `SKILL.md` of each skill in
+   * its workspace and its routines but one-time ones, built from those alone
+   * (`BotTemplate`). Its memory, conversation, files and everything else of
+   * this machine stay out. A skill whose folder or `SKILL.md` is a link, or
+   * not what it should be, or whose name or text breaks the template's
+   * limits, stays out too; so do skills and routines past the limits.
+   */
+  Rpc.make("bot.template", {
+    payload: { botId: BotId },
+    success: BotTemplate,
+    error: NotFound,
+  }),
+  /**
+   * Creates a bot from a template the operator has seen in full, as
+   * `bot.create` creates one, with the template's skills in its workspace and
+   * its routines, every one of them paused. The template is untrusted: it
+   * reaches nothing but the new bot, which is never made primary. `model`
+   * left out takes the template's where the engine offers it, and the
+   * server's default otherwise; `permissionMode` left out takes the
+   * template's unless that model's default (`defaultPermissionMode`) allows
+   * less (`templatePermissionMode`). Fails with `Invalid("schedule")`,
+   * creating nothing, when a routine's schedule is one the server refuses.
+   */
+  Rpc.make("bot.createFromTemplate", {
+    payload: {
+      ...command,
+      template: BotTemplate,
+      model: Schema.optionalKey(ModelChoice),
+      permissionMode: Schema.optionalKey(PermissionMode),
+    },
+    success: Bot,
     error: CommandError,
   }),
   /** Files the bot delivered, newest first, before `before`. */
