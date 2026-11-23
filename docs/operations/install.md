@@ -209,7 +209,7 @@ J3 Bots signs each harness in anew, in its own home. It never reads, copies or s
 - **When the harness can only sign in from a terminal.** One that gives the app no page within 30 seconds, or ends saying it needs a terminal, is reported as such, and the app offers an endpoint instead. `provider login`, in a terminal on that computer, still works.
 - **For an account with only an API key.** A sign-in needs an account the harness's maker signs in; use an endpoint that takes the key.
 - **When Codex keeps its sign-in in the system's keyring.** Set so, it writes no `auth.json`, which is where J3 Bots finds a Codex sign-in, so the sign-in reports that nothing was left to use. Use an endpoint, or keep Codex's default.
-- **When your organization manages the harness.** A policy installed for Claude Code or Codex on this computer applies to J3 Bots' harnesses too, so one that requires or forbids a way of signing in holds there as well.
+- **When the computer is managed.** A policy installed for T3 Code on this computer (`/etc/t3code/policy.json` on Linux) applies to the engine too and can refuse what J3 Bots asks of it, and one installed for Claude Code or Codex themselves applies to J3 Bots' harnesses as it does to yours.
 - **While a provider connection is stored.** The endpoint still serves the models, and the app says so after a sign-in. No command removes a stored connection yet.
 
 One gap is known: the engine itself can still write into your own `~/.claude` and `~/.codex` as it starts ([#86](https://github.com/JPSAUD501/j3-bots/issues/86)).
