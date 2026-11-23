@@ -60,9 +60,19 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 **Model.** What the bot runs on: a provider instance and a model slug from the engine, such as Claude Code with a specific Claude model. Chosen per bot and changeable.
 
+## Where the bots live
+
+The bots live where J3 Bots runs. The operator chooses where in the desktop app's first screen and changes it in Settings, under "Where your bots live". There are two places:
+
+**This computer.** The desktop app runs J3 Bots itself, on the computer it is open on, and signs that computer in without a code. The bots live there and sleep when it sleeps; they are back once it wakes and the app runs, which it can do by itself when it starts with the system. The interface says "Use this computer" and "Stop using this computer". Stopping keeps the bots and their data on the computer, and they come back when the operator chooses it again.
+
+**A server.** J3 Bots runs as a service on a machine that stays on, and every device pairs with it: a browser, a phone, or the desktop app connected to it. The interface says "Connect to a server" and, in Settings, "On a server".
+
+The machine J3 Bots runs on is never called a "host": a host is a room's bot.
+
 ## What bots keep
 
-**Workspace.** A folder on the host that belongs to one bot. It holds the bot's memory, its skills, and the files it produces. It is a plain directory the operator can open.
+**Workspace.** A folder on the machine J3 Bots runs on that belongs to one bot. It holds the bot's memory, its skills, and the files it produces. It is a plain directory the operator can open.
 
 **Memory.** Durable facts a bot keeps across sessions, stored as Markdown files in its workspace. Memory has two tiers:
 
