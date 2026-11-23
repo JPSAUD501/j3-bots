@@ -1183,6 +1183,40 @@ describe("a connector's `j3` call", () => {
         assert.notInclude(JSON.stringify(steps), "roadmap");
       }),
   );
+
+  it.effect("named `send_to_user` is a connector's step, never the bot speaking", () =>
+    Effect.gen(function* () {
+      const mirror = emptyMirror();
+      applyEvent(mirror, run("running", 1));
+      const { view } = replacement(mirror, false, at);
+      for (const [id, toolName, message] of [
+        ["item-host", "send_to_user", "Shown to the operator."],
+        ["item-claude", "mcp__j3__example__send_to_user", "Sent through a connector."],
+        ["item-codex", "j3.example__send_to_user", "Sent through a connector."],
+      ] as const) {
+        applyEvent(
+          mirror,
+          item({ id, type: "dynamic_tool", toolName, input: { message }, status: "running" }),
+        );
+      }
+      yield* digestToolCalls(mirror);
+      const events = diff(mirror, view, at);
+
+      assert.deepStrictEqual(
+        events.flatMap((event) => (event._tag === "host-speech" ? [event.text] : [])),
+        ["Shown to the operator."],
+      );
+      assert.deepStrictEqual(
+        events.flatMap((event) =>
+          event._tag === "step" ? [{ tool: event.step.tool, label: event.step.label }] : [],
+        ),
+        [
+          { tool: "connector", label: "Example: send to user" },
+          { tool: "connector", label: "Example: send to user" },
+        ],
+      );
+    }),
+  );
 });
 
 describe("a turn the engine ran on recovered context", () => {

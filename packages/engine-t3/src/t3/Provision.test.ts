@@ -422,6 +422,27 @@ describe("the bridge's tools", () => {
 });
 
 describe("a Codex instance's config.toml", () => {
+  it.effect("takes J3 Bots' server, its approvals included, into an inline `mcp_servers`", () =>
+    Effect.gen(function* () {
+      const { fs, path, files, input } = yield* setUp;
+      const configFile = path.join(input.home, "codex", "config.toml");
+      yield* files.folder(path.join(input.home, "codex"));
+      yield* files.write(configFile, 'mcp_servers = { github = { command = "gh" } }\n');
+      yield* provision(input);
+
+      const config = parse(yield* fs.readFileString(configFile));
+      assert.deepStrictEqual(config["mcp_servers"], {
+        github: { command: "gh" },
+        j3: {
+          command: "/usr/bin/node",
+          args: ["bridge.js"],
+          tool_timeout_sec: 720,
+          tools: { say: { approval_mode: "approve" }, ask: { approval_mode: "approve" } },
+        },
+      });
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
   it.effect("is J3 Bots' only in its own keys and tables; Codex's own settings stay", () =>
     Effect.gen(function* () {
       const { fs, path, files, input, instances } = yield* setUp;

@@ -4,6 +4,7 @@ import * as NodeHttp from "node:http";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -121,7 +122,9 @@ export const routes = Layer.mergeAll(
     ToolChangesResponse,
     (request) =>
       Effect.gen(function* () {
-        return yield* (yield* ToolLists).changes(request);
+        const change = yield* (yield* ToolLists).changes(request);
+        // No bot's session: the bridge waits a while before it asks again.
+        return Option.getOrElse(change, () => HttpServerResponse.empty({ status: 404 }));
       }),
   ),
 );

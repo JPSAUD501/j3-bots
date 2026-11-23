@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import type { ToolBridge } from "../Engine.ts";
 import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./PrivateFiles.ts";
 import { linkSharedSkills } from "./SkillLinks.ts";
-import { editToml, type TomlEdit, type TomlTable } from "./toml.ts";
+import { editToml, type TomlEdit, type TomlInline, type TomlTable } from "./toml.ts";
 
 // Everything J3 Bots writes into the engine's data directory and the provider
 // homes it owns. Every file is written whole to a new file and renamed
@@ -363,23 +363,31 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
             ],
           },
         ];
+  // Only J3 Bots' own tools are approved ahead, each by name; the server's
+  // default stays Codex's, so a connector's tool follows the session's mode.
+  // **Verified** with Codex 0.171.0: an approved tool runs without asking in
+  // Supervised, any other asks, and in Full access none does. A call past
+  // `tool_timeout_sec` is cut off, also one that reports progress. The
+  // approvals are an inline `tools` table, the same TOML as a
+  // `[mcp_servers.j3.tools.<name>]` table each, so that the server's table is
+  // one pair also where the file writes `mcp_servers` as an inline table.
   const tools: TomlTable = {
     path: ["mcp_servers", TOOL_SERVER],
     values: [
       ["command", input.toolBridge.command],
       ["args", input.toolBridge.args],
       ["tool_timeout_sec", input.toolBridge.callTimeoutSeconds],
+      [
+        "tools",
+        {
+          inline: input.toolBridge.preApproved.map((tool): readonly [string, TomlInline] => [
+            tool,
+            { inline: [["approval_mode", "approve"]] },
+          ]),
+        },
+      ],
     ],
   };
-  // Only J3 Bots' own tools are approved ahead, each by name; the server's
-  // default stays Codex's, so a connector's tool follows the session's mode.
-  // **Verified** with Codex 0.171.0: an approved tool runs without asking in
-  // Supervised, any other asks, and in Full access none does. A call past
-  // `tool_timeout_sec` is cut off, also one that reports progress.
-  const preApproved: ReadonlyArray<TomlTable> = input.toolBridge.preApproved.map((tool) => ({
-    path: ["mcp_servers", TOOL_SERVER, "tools", tool],
-    values: [["approval_mode", "approve"]],
-  }));
   const features: TomlTable = {
     path: ["features"],
     values: [
@@ -407,7 +415,7 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
       ["shell_environment_policy", "set"],
       ["features"],
     ],
-    tables: [...modelProvider, tools, ...preApproved, ...commandHome, features],
+    tables: [...modelProvider, tools, ...commandHome, features],
   };
 };
 

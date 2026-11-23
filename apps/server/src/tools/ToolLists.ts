@@ -50,9 +50,13 @@ export class ToolLists extends Context.Service<
     readonly list: (sessionId: SessionId) => Effect.Effect<ToolListResponse>;
     /**
      * Answers once the session's list has a version other than `since`, or
-     * with `since` itself after a wait of a few minutes with no change.
+     * with `since` itself after a wait of a few minutes with no change. A
+     * session that is no bot's gets `None` at once: only a session's own
+     * bridge, which knows its id, can hold a wait open.
      */
-    readonly changes: (request: ToolChangesRequest) => Effect.Effect<ToolChangesResponse>;
+    readonly changes: (
+      request: ToolChangesRequest,
+    ) => Effect.Effect<Option.Option<ToolChangesResponse>>;
   }
 >()("@j3-bots/server/tools/ToolLists") {}
 
@@ -98,10 +102,7 @@ export const layer = Layer.effect(
 
     const waitForChange = Effect.fn("ToolLists.changes")(function* (request: ToolChangesRequest) {
       const caller = yield* sessions.ofEngineSession(request.sessionId);
-      if (Option.isNone(caller)) {
-        yield* Effect.sleep(CHANGE_WAIT);
-        return { version: request.since };
-      }
+      if (Option.isNone(caller)) return Option.none();
       const botId = caller.value.botId;
       const changed = yield* SubscriptionRef.changes(changes).pipe(
         Stream.map((counts) => versionOf(counts, botId)),
@@ -109,7 +110,9 @@ export const layer = Layer.effect(
         Stream.runHead,
         Effect.timeoutOption(CHANGE_WAIT),
       );
-      return { version: Option.getOrElse(Option.flatten(changed), () => request.since) };
+      return Option.some({
+        version: Option.getOrElse(Option.flatten(changed), () => request.since),
+      });
     });
 
     return ToolLists.of({ list, changes: waitForChange });

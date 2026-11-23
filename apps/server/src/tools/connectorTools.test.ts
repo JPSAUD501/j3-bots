@@ -6,6 +6,7 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL, toolList } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import type { OfferedTool } from "../connectors/Connectors.ts";
 import { TestConnectors } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -90,9 +91,9 @@ it.effect("tells a bridge waiting on its list when the bot's offered tools chang
     yield* (yield* TestConnectors).offer(ana.bot.id, [search]);
     const changed = yield* Fiber.join(waiting);
 
-    assert.notStrictEqual(changed.version, before.version);
     const after = yield* lists.list(ana.session);
-    assert.strictEqual(after.version, changed.version);
+    assert.notStrictEqual(after.version, before.version);
+    assert.deepStrictEqual(changed, Option.some({ version: after.version }));
     assert.include(
       after.tools.map((tool) => tool.name),
       "notion__search",
@@ -122,6 +123,34 @@ it.effect("makes a connector call the bot's turn made at the connector once", ()
     assert.strictEqual(repeated._tag, "refused");
     assert.deepStrictEqual(yield* callsBy(ana.bot.id), ["notion__search"]);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "makes a connector call whose record the engine closed while it waited on its approval",
+  () =>
+    Effect.gen(function* () {
+      const ana = yield* working("Ana", [search]);
+      const engine = yield* TestEngineControl;
+      const args = { query: "roadmap" };
+      // Codex closes its record of the call while the operator is still deciding.
+      const callId = yield* engine.toolCall({
+        sessionId: ana.session,
+        turnId: ana.turnId,
+        tool: "notion__search",
+        input: args,
+        recorded: "now",
+      });
+      yield* engine.closeToolCall({ sessionId: ana.session, turnId: ana.turnId, callId });
+
+      const request = { sessionId: ana.session, tool: "notion__search", arguments: args };
+      const reply = yield* (yield* BotTools).call({ requestId: "call-1", ...request });
+      // Another request finds the call claimed, and no other one in the turn.
+      const another = yield* (yield* BotTools).call({ requestId: "call-2", ...request });
+
+      assert.strictEqual(reply._tag, "text");
+      assert.deepStrictEqual(another, { _tag: "refused", message: NO_TURN_REFUSAL });
+      assert.deepStrictEqual(yield* callsBy(ana.bot.id), ["notion__search"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("refuses a connector tool the bot is not offered, though another bot is", () =>
@@ -169,10 +198,18 @@ it.effect("refuses a connector call from a session that is no bot's", () =>
 
     assert.strictEqual(reply._tag, "refused");
     assert.deepStrictEqual(yield* callsBy(ana.bot.id), []);
-    // Its bridge lists only J3 Bots' own tools.
+    // Its bridge lists only J3 Bots' own tools, and cannot hold a wait for a change open.
     assert.deepStrictEqual(
       yield* listed(SessionId.make("thread-of-no-bot")),
       toolList.map((tool) => tool.name),
+    );
+    assert.isTrue(
+      Option.isNone(
+        yield* (yield* ToolLists).changes({
+          sessionId: SessionId.make("thread-of-no-bot"),
+          since: "any",
+        }),
+      ),
     );
   }).pipe(Effect.provide(TestDomain.layer)),
 );

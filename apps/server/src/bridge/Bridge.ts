@@ -103,7 +103,8 @@ const keyOf = (id: RpcId) => `${typeof id}:${id}`;
  * and the connector tools the session's bot is offered; when that changes,
  * the bridge tells the harness to list again. A forward keeps one id across
  * its retries, so the server acts on a call once however often it arrives,
- * and a call the harness cancels is abandoned at the server.
+ * and a call the harness cancels, or leaves running when it closes the
+ * bridge's input, is abandoned at the server.
  */
 export const serve = Effect.fn("Bridge.serve")(function* (options: {
   /** The tool endpoint's origin, such as `http://127.0.0.1:3739`. */
@@ -190,18 +191,23 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
     if (Option.isNone(options.session)) {
       return textResult("This bridge was not started by a J3 Bots session.", true);
     }
+    const connector = isConnectorTool(call.value.name);
     const requestId = Base64Url.encode(yield* random.randomBytes(16));
     const answer = yield* forward({
       requestId,
       sessionId: options.session.value,
       tool: call.value.name,
       arguments: call.value.arguments ?? {},
-    }).pipe(
-      Effect.timeout(isConnectorTool(call.value.name) ? CONNECTOR_CALL_DEADLINE : FORWARD_DEADLINE),
-      Effect.option,
-    );
+    }).pipe(Effect.timeout(connector ? CONNECTOR_CALL_DEADLINE : FORWARD_DEADLINE), Effect.option);
     if (Option.isNone(answer)) {
-      return textResult("J3 Bots could not be reached. Try the call again.", true);
+      // The server may have made a connector's call before its answer was
+      // lost, and a new call is a new request: the bot is told to look first.
+      return textResult(
+        connector
+          ? "J3 Bots did not answer this call, so it may or may not have taken effect at the connector. Check before you make it again."
+          : "J3 Bots could not be reached. Try the call again.",
+        true,
+      );
     }
     switch (answer.value._tag) {
       case "result":
@@ -275,8 +281,9 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
     Stream.filter(Option.isSome),
     Stream.runForEach((message) => received(message.value)),
   );
-  // The harness closed its end: answer what it asked, then stop.
-  yield* FiberMap.awaitEmpty(requests);
+  // The harness closed its end and reads no answer any more: what it asked is
+  // abandoned at the server, as a cancelled call is, and the bridge stops.
+  yield* FiberMap.clear(requests);
   yield* Queue.end(output);
   yield* Fiber.join(writer);
 }, Effect.scoped);

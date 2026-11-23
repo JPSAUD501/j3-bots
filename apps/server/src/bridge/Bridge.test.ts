@@ -21,6 +21,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import type { OfferedTool } from "../connectors/Connectors.ts";
@@ -29,6 +30,7 @@ import { TestConnectors } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createBot, engineSession, nextTurn, sendToBot } from "../testing/turns.ts";
 import * as ToolEndpoint from "../tools/ToolEndpoint.ts";
+import { CONNECTOR_CALL_DEADLINE } from "../tools/protocol.ts";
 import { serve } from "./Bridge.ts";
 
 /** The endpoint over the whole domain, and Node's own HTTP client, which the bridge runs with. */
@@ -113,11 +115,33 @@ const runBridgeWith = (
     };
   });
 
-/** Runs the bridge over `requests` as its standard input, and answers what it wrote, by id. */
+/** The id of a request, or `undefined` for a notification. */
+const idOf = (message: object): number | undefined =>
+  "id" in message && typeof message.id === "number" ? message.id : undefined;
+
+/** Waits until the bridge has answered the request with this id. */
+const answered = (output: Output, id: number) => output.shows(`"id":${id},`);
+
+/**
+ * Runs the bridge over `requests` as its standard input, which it closes once
+ * every request is answered, and answers what it wrote, by id.
+ */
 const runBridge = (session: Option.Option<SessionId>, requests: ReadonlyArray<object>) =>
-  runBridgeWith(session, () => Stream.fromIterable(requests)).pipe(
-    Effect.map(({ replies }) => replies),
-  );
+  runBridgeWith(session, (output) =>
+    Stream.concat(
+      Stream.fromIterable(requests),
+      Stream.fromEffect(
+        Effect.forEach(
+          requests.flatMap((request) => {
+            const id = idOf(request);
+            return id === undefined ? [] : [id];
+          }),
+          (id) => answered(output, id),
+          { discard: true },
+        ),
+      ).pipe(Stream.drain),
+    ),
+  ).pipe(Effect.map(({ replies }) => replies));
 
 const call = (id: number, name: string, args: object) => ({
   jsonrpc: "2.0",
@@ -208,6 +232,33 @@ it.layer(endpoint, { excludeTestServices: true })("j3 bridge", (it) => {
   );
 });
 
+/** A bot in a turn whose `notion__search` call, once forwarded, runs until interrupted. */
+const callThatRuns = Effect.fn(function* (name: string) {
+  const bot = yield* createBot(name);
+  const session = yield* engineSession(bot.id);
+  const connectors = yield* TestConnectors;
+  yield* connectors.offer(bot.id, [search]);
+  yield* sendToBot(bot.id, "Find the roadmap.");
+  const turnId = yield* nextTurn(bot.id);
+  const args = { query: "roadmap" };
+  yield* (yield* TestEngineControl).toolCall({
+    sessionId: session,
+    turnId,
+    tool: "notion__search",
+    input: args,
+    recorded: "now",
+  });
+  const started = yield* Deferred.make<void>();
+  const abandoned = yield* Deferred.make<void>();
+  yield* connectors.answerWith(() =>
+    Deferred.succeed(started, undefined).pipe(
+      Effect.andThen(Effect.never),
+      Effect.onInterrupt(() => Deferred.succeed(abandoned, undefined)),
+    ),
+  );
+  return { session, request: call(1, "notion__search", args), started, abandoned };
+});
+
 // The test clock: what the bridge waits on, it waits for in the test.
 it.layer(endpoint)("j3 bridge with connectors", (it) => {
   it.effect("tells the harness to list again once the bot is offered a connector's tool", () =>
@@ -232,7 +283,7 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
                 Effect.as({ jsonrpc: "2.0", id: 3, method: "tools/list" }),
               ),
           ),
-        ),
+        ).pipe(Stream.concat(Stream.fromEffect(answered(output, 3)).pipe(Stream.drain))),
       );
 
       assert.deepStrictEqual(notifications, ["notifications/tools/list_changed"]);
@@ -243,32 +294,11 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
 
   it.effect("abandons a connector's call the harness cancels, and does not answer it", () =>
     Effect.gen(function* () {
-      const bot = yield* createBot("Dov");
-      const session = yield* engineSession(bot.id);
-      const connectors = yield* TestConnectors;
-      yield* connectors.offer(bot.id, [search]);
-      yield* sendToBot(bot.id, "Find the roadmap.");
-      const turnId = yield* nextTurn(bot.id);
-      const args = { query: "roadmap" };
-      yield* (yield* TestEngineControl).toolCall({
-        sessionId: session,
-        turnId,
-        tool: "notion__search",
-        input: args,
-        recorded: "now",
-      });
-      const started = yield* Deferred.make<void>();
-      const abandoned = yield* Deferred.make<void>();
-      yield* connectors.answerWith(() =>
-        Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Effect.never),
-          Effect.onInterrupt(() => Deferred.succeed(abandoned, undefined)),
-        ),
-      );
+      const { session, request, started, abandoned } = yield* callThatRuns("Dov");
 
       const { replies } = yield* runBridgeWith(Option.some(session), () =>
         Stream.concat(
-          Stream.make(call(1, "notion__search", args)),
+          Stream.make(request),
           Stream.fromEffect(
             Deferred.await(started).pipe(
               Effect.as({
@@ -278,11 +308,57 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
               }),
             ),
           ),
+          // The input stays open until the call is abandoned: the cancel did it.
+        ).pipe(Stream.concat(Stream.fromEffect(Deferred.await(abandoned)).pipe(Stream.drain))),
+      );
+
+      assert.strictEqual(replies.size, 0);
+    }),
+  );
+
+  it.effect("abandons a connector's call still running when the harness closes the input", () =>
+    Effect.gen(function* () {
+      const { session, request, started, abandoned } = yield* callThatRuns("Eli");
+
+      const { replies } = yield* runBridgeWith(Option.some(session), () =>
+        Stream.concat(
+          Stream.make(request),
+          Stream.fromEffect(Deferred.await(started)).pipe(Stream.drain),
         ),
       );
 
       yield* Deferred.await(abandoned);
       assert.strictEqual(replies.size, 0);
     }),
+  );
+});
+
+// Past a connector call's deadline: a test clock of its own, which no other test shares.
+it.layer(endpoint)("j3 bridge with a connector call that gets no answer", (it) => {
+  it.effect(
+    "tells the bot to check before it calls again when a connector's call got no answer",
+    () =>
+      Effect.gen(function* () {
+        const { session, request, started, abandoned } = yield* callThatRuns("Fay");
+
+        const { replies } = yield* runBridgeWith(Option.some(session), (output) =>
+          Stream.concat(
+            Stream.make(request),
+            Stream.fromEffect(
+              Deferred.await(started).pipe(
+                Effect.andThen(TestClock.adjust(CONNECTOR_CALL_DEADLINE)),
+                Effect.andThen(answered(output, 1)),
+              ),
+            ).pipe(Stream.drain),
+          ),
+        );
+
+        yield* Deferred.await(abandoned);
+        assert.isTrue(replies.get(1)?.isError);
+        assert.include(
+          replies.get(1)?.content?.[0]?.text ?? "",
+          "may or may not have taken effect",
+        );
+      }),
   );
 });

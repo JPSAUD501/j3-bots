@@ -21,8 +21,20 @@ import {
 // parser checks the file before the edit, and checks after it that everything
 // the writer does not own reads the same.
 
-/** A value J3 Bots writes: a string, a boolean, a number (always a TOML float), or a list of strings. */
-type TomlValue = string | boolean | number | ReadonlyArray<string>;
+/**
+ * A value J3 Bots writes: a string, a boolean, a number (always a TOML float),
+ * a list of strings, or an inline table.
+ */
+type TomlValue = string | boolean | number | ReadonlyArray<string> | TomlInline;
+
+/**
+ * An inline table, its pairs in order. A table J3 Bots owns holds its own
+ * sub-tables this way, so that it is one pair wherever the file puts it,
+ * inside an inline table too.
+ */
+export interface TomlInline {
+  readonly inline: ReadonlyArray<readonly [string, TomlValue]>;
+}
 
 /** A table to write: its path (`["mcp_servers", "j3"]` is `[mcp_servers.j3]`) and its keys, in order. */
 export interface TomlTable {
@@ -68,8 +80,13 @@ const valueText = (value: TomlValue): string => {
   if (typeof value === "string") return tomlString(value);
   if (typeof value === "boolean") return String(value);
   if (typeof value === "number") return Number.isInteger(value) ? value.toFixed(1) : String(value);
+  if ("inline" in value) return `{ ${pairsText(value.inline)} }`;
   return `[${value.map(tomlString).join(", ")}]`;
 };
+
+function pairsText(pairs: ReadonlyArray<readonly [string, TomlValue]>): string {
+  return pairs.map(([key, value]) => `${keyText(key)} = ${valueText(value)}`).join(", ");
+}
 
 const pathText = (path: ReadonlyArray<string>) => path.map(keyText).join(".");
 
@@ -81,9 +98,7 @@ const render = (table: TomlTable) =>
 
 /** A table as a pair inside an inline table, its path relative to that table's. */
 const renderInline = (table: TomlTable, under: ReadonlyArray<string>) =>
-  `${pathText(table.path.slice(under.length))} = { ${table.values
-    .map(([key, value]) => `${keyText(key)} = ${valueText(value)}`)
-    .join(", ")} }`;
+  `${pathText(table.path.slice(under.length))} = { ${pairsText(table.values)} }`;
 
 // ---------------------------------------------------------------------------
 // Reading statements

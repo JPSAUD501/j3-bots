@@ -1063,11 +1063,6 @@ const label = (text: string | null | undefined, fallback: string) => {
 
 type DynamicTool = Extract<Item, { type: "dynamic_tool" }>;
 
-const SEND_TO_USER = /(^|__|\/|\.)send_to_user$/;
-
-const isHostSpeech = (item: Item): item is DynamicTool =>
-  item.type === "dynamic_tool" && item.toolName !== null && SEND_TO_USER.test(item.toolName);
-
 /**
  * How each harness names a `j3` tool on the engine's item: `mcp__j3__say` on
  * Claude Code, `j3.say` on Codex and on ACP agents (**Read** at `db51b67`,
@@ -1081,6 +1076,19 @@ const j3ToolOf = (item: Item): string | undefined =>
   item.type === "dynamic_tool" && item.toolName !== null
     ? J3_TOOL.exec(item.toolName)?.[1]
     : undefined;
+
+const SEND_TO_USER = /(^|__|\/|\.)send_to_user$/;
+
+/**
+ * A call to the engine's own `send_to_user`. Never one on the `j3` server: a
+ * connector's tool there may be named `<slug>__send_to_user` by its remote
+ * server, and its input is not speech.
+ */
+const isHostSpeech = (item: Item): item is DynamicTool =>
+  item.type === "dynamic_tool" &&
+  item.toolName !== null &&
+  SEND_TO_USER.test(item.toolName) &&
+  j3ToolOf(item) === undefined;
 
 /** Takes the digest of every `j3` tool call input the mirror has not digested yet. */
 export const digestToolCalls = (mirror: Mirror): Effect.Effect<void> =>

@@ -104,7 +104,21 @@ interface Pin {
    */
   readonly digest: ToolInputDigest;
   readonly audience: Audience;
+  /** Whether a call the engine closed already is still the request's (`Calls`). */
+  readonly calls: Calls;
 }
+
+/**
+ * Which of the turn's calls a request may claim: J3 Bots' own tools only an
+ * open one; a connector's tool also one the engine closed, since Codex's
+ * record of a call closes while the call still waits on its approval
+ * (`docs/architecture/server.md`, Connector tools). Either way the call is
+ * the running admitted turn's, and no other request's.
+ */
+type Calls = "open" | "open-or-closed";
+
+/** The least `engine_tool_calls.open` a call of `calls` has. */
+const minimumOpen = (calls: Calls) => (calls === "open" ? 1 : 0);
 
 const Candidate = Schema.Struct({
   engine_call_id: Schema.String,
@@ -117,6 +131,7 @@ const CallKey = Schema.Struct({
   sessionId: SessionRowId,
   tool: Schema.String,
   digest: ToolInputDigest,
+  calls: Schema.Literals(["open", "open-or-closed"]),
 });
 
 const StoredResult = Schema.Struct({ result_json: json(Schema.Json) });
@@ -240,17 +255,17 @@ export const layer = Layer.effect(
       `,
     });
 
-    /** The oldest open call in the running admitted turn that matches and no request claimed. */
+    /** The oldest call in the running admitted turn that matches, is `calls`, and no request claimed. */
     const candidate = SqlSchema.findOneOption({
       Request: CallKey,
       Result: Candidate,
-      execute: ({ sessionId, tool, digest }) => sql`
+      execute: ({ sessionId, tool, digest, calls }) => sql`
         SELECT c.engine_call_id, c.engine_turn_id, t.audience, t.audience_room_id
         FROM engine_tool_calls c
         JOIN sessions s ON s.id = c.session_id AND s.admitted_turn_id = c.engine_turn_id
         JOIN turns t ON t.session_id = c.session_id AND t.engine_turn_id = c.engine_turn_id
         WHERE c.session_id = ${sessionId} AND c.tool = ${tool} AND c.input_digest = ${digest}
-          AND c.open = 1 AND t.finished_at IS NULL
+          AND c.open >= ${minimumOpen(calls)} AND t.finished_at IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM tool_calls p
             WHERE p.session_id = c.session_id AND p.engine_call_id = c.engine_call_id
@@ -270,6 +285,7 @@ export const layer = Layer.effect(
     const match = Effect.fn("Speech.match")(function* (
       call: Request,
       caller: BotSession,
+      calls: Calls,
     ): Effect.fn.Return<Matched, TurnEnded | TurnToolRetry> {
       const sessionId = caller.id;
       const session = yield* engineSessionOf(sessionId).pipe(Effect.orDie);
@@ -297,7 +313,9 @@ export const layer = Layer.effect(
           if (Option.isSome(stored)) return { _tag: "stored", result: stored.value.result_json };
           return yield* new TurnEnded();
         }
-        const found = yield* candidate({ sessionId, tool: call.tool, digest }).pipe(Effect.orDie);
+        const found = yield* candidate({ sessionId, tool: call.tool, digest, calls }).pipe(
+          Effect.orDie,
+        );
         if (Option.isSome(found)) {
           return {
             _tag: "pin",
@@ -309,6 +327,7 @@ export const layer = Layer.effect(
               callId: found.value.engine_call_id,
               digest,
               audience: audienceOf(found.value),
+              calls,
             },
           };
         }
@@ -321,8 +340,9 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The call is still open in the session's admitted turn, with the
-     * arguments it was matched by, and that turn has not finished.
+     * The call is still the session's admitted turn's, open unless the pin
+     * takes a closed one too, with the arguments it was matched by, and that
+     * turn has not finished.
      */
     const stillAdmitted = (found: Pin) =>
       sql<{ readonly n: number }>`
@@ -331,7 +351,7 @@ export const layer = Layer.effect(
         JOIN turns t ON t.session_id = c.session_id AND t.engine_turn_id = c.engine_turn_id
         WHERE c.session_id = ${found.sessionId} AND c.engine_call_id = ${found.callId}
           AND c.engine_turn_id = ${found.turnId} AND c.input_digest = ${found.digest}
-          AND c.open = 1 AND t.finished_at IS NULL
+          AND c.open >= ${minimumOpen(found.calls)} AND t.finished_at IS NULL
           AND s.retired_at IS NULL AND s.lost_at IS NULL
       `.pipe(
         Effect.orDie,
@@ -1112,7 +1132,7 @@ export const layer = Layer.effect(
       // A forward retried under the same id returns what the first one did.
       const stored = yield* storedResult(keyOf(call)).pipe(Effect.orDie);
       if (Option.isSome(stored)) return stored.value.result_json;
-      const matched = yield* match(call, call.caller);
+      const matched = yield* match(call, call.caller, "open");
       if (matched._tag === "stored") return matched.result;
       const found = matched.pin;
       switch (call.tool) {
@@ -1162,11 +1182,19 @@ export const layer = Layer.effect(
      * transaction of its own, which commits before the connector is called,
      * so the call is made there once. Its answer is not stored (the operator's
      * data stays at the connector), so a forward of a request claimed before
-     * cannot be answered again, and is cut off.
+     * cannot be answered again, and is cut off. The match has admission's
+     * deadline, past which nothing was claimed and the bridge forwards the
+     * request again; the claim, once begun, is not cut short by it, so a claim
+     * that committed is always followed by the call.
      */
-    const claimCall = Effect.fn("TurnTools.claim")(function* (call: ClaimedCall) {
+    const claim = Effect.fn("TurnTools.claim")(function* (call: ClaimedCall) {
       if (yield* claimedBefore(call)) return yield* new CallCutOff();
-      const matched = yield* match(call, call.caller);
+      const matched = yield* match(call, call.caller, "open-or-closed").pipe(
+        Effect.timeoutOrElse({
+          duration: ADMISSION_DEADLINE,
+          orElse: () => Effect.fail(new TurnToolRetry()),
+        }),
+      );
       // Nothing is stored for a connector's call: only a claim made meanwhile.
       if (matched._tag === "stored") return yield* new CallCutOff();
       yield* transaction(
@@ -1177,15 +1205,6 @@ export const layer = Layer.effect(
         }),
       );
     });
-
-    /** As `admitted`: past the deadline nothing was claimed, and the bridge forwards the request again. */
-    const claim = (call: ClaimedCall) =>
-      claimCall(call).pipe(
-        Effect.timeoutOrElse({
-          duration: ADMISSION_DEADLINE,
-          orElse: () => Effect.fail(new TurnToolRetry()),
-        }),
-      );
 
     return TurnTools.of({ call: admitted, claim });
   }),
