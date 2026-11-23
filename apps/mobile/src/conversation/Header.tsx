@@ -80,7 +80,13 @@ export function ConversationHeader({
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2.5 rounded-md px-1.5 active:bg-muted"
       >
         {item._tag === "bot" ? (
-          <LiveBotAvatar bot={item.bot} lastEntry={item.lastEntry} size={32} ground={ground} />
+          <LiveBotAvatar
+            bot={item.bot}
+            lastEntry={item.lastEntry}
+            size={32}
+            ground={ground}
+            markPrimary
+          />
         ) : (
           <RoomAvatar size={32} ground={ground} members={roomAvatarMembers(item.room, bots)} />
         )}

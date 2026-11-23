@@ -85,7 +85,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
       contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
     >
       <Profile
-        picture={<LiveBotAvatar bot={bot} size={96} />}
+        picture={<LiveBotAvatar bot={bot} size={96} markPrimary />}
         name={name}
         badge={bot.primary ? t("details.primary") : null}
         lines={

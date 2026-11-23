@@ -101,17 +101,33 @@ export const rosterMotion = (
 export const lifts = (move: RowMove): boolean => move !== "step";
 
 /**
+ * Where each row starts in a list whose rows are `heights` tall, in order:
+ * the sum of the heights above it.
+ */
+export const rowTops = (heights: ReadonlyArray<number>): ReadonlyArray<number> => {
+  const tops: number[] = [];
+  let top = 0;
+  for (const height of heights) {
+    tops.push(top);
+    top += height;
+  }
+  return tops;
+};
+
+/**
  * Where a scrolled list keeps its place as its rows go from `before` to
- * `after`: for each place in `before`, how many places the first row from
- * there on that stays listed and does not lift moved. The row first in view
- * keeps where it is on screen by the list scrolling that far, so rows moving
- * above the view do not push what the operator is looking at, and a row that
- * lifts away does not carry the view with it.
+ * `after`: for each place in `before`, how far the first row from there on
+ * that stays listed and does not lift moved. The row first in view keeps
+ * where it is on screen by the list scrolling that far, so rows moving above
+ * the view do not push what the operator is looking at, and a row that lifts
+ * away does not carry the view with it. Distances are in rows, or, for a list
+ * whose rows differ in height, in what `tops` (`rowTops`) measures them in.
  */
 export function keptPlaces(
   before: ReadonlyArray<string>,
   after: ReadonlyArray<string>,
   moves: ReadonlyMap<string, RowMove>,
+  tops?: { readonly before: ReadonlyArray<number>; readonly after: ReadonlyArray<number> },
 ): ReadonlyArray<number> {
   const now = new Map(after.map((key, index) => [key, index]));
   const kept: number[] = [];
@@ -120,7 +136,10 @@ export function keptPlaces(
     const key = before[index] ?? "";
     const at = now.get(key);
     const move = moves.get(key);
-    if (at !== undefined && (move === undefined || !lifts(move))) anchored = at - index;
+    if (at !== undefined && (move === undefined || !lifts(move))) {
+      anchored =
+        tops === undefined ? at - index : (tops.after[at] ?? 0) - (tops.before[index] ?? 0);
+    }
     kept[index] = anchored;
   }
   return kept;
