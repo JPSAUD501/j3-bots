@@ -495,9 +495,46 @@ The server sends a notification when a bot adds an entry to a conversation or ro
 
 **Push delivery.** For each device to push, the server writes a delivery in the transaction that adds the entry, worded then, in the language the device registered with, from the shared catalog (`packages/i18n`): the title is the bot's name, or the room's, and the body is the entry's first line when the operator allows previews, or else a fixed sentence saying what arrived, such as "Sent you a message"; the fixed sentence is kept as well. A bot or room with no name to show gets none, nor does a registration the server can no longer read, which is logged. Neither working out who hears of an entry nor writing its pushes ever fails the entry: a failure is logged by the entry and the failure's tag, and the entry and its change commit without its pushes; the devices with a socket open are still told once they were worked out. The **push worker** sends each through the push sender, Expo's service for now ([decision 0014](../decisions/0014-push-goes-through-a-push-sender.md)), with data naming the device, the conversation or room and the entry, the delivery's id as its key, and, to an Android device, the entry's kind (`NotificationKind`) as the notification channel it shows in, which the app creates one of for each kind. Each send is claimed before it is made: recorded as begun, with the time the next may begin, only while its deadline has not passed and the device still has the registration the pass read, generation included: a delivery whose device was revoked, unregistered or registered again before it went out, even during the pass sending it, is not sent to the registration it no longer has. The claim reads the settings in its own transaction and words the send by them: none while notifications are off, which drops the delivery, and the fixed sentence once previews are off, never the other way. A change to the settings commits before a claim, and holds for its send, or after it, once that send is under way. After a crash or a lost reply, the same delivery goes again at that time with the same key, which the service uses to replace a notification still shown rather than add a second. A pass reads at most fifty due receipts, then sends at most fifty due pushes for at most a minute, and runs again soon while more are due, so slow sends never keep a later pass from reading the receipts and ending what passed its deadline first. A send the service does not take is tried again, from 5 seconds doubling to 5 minutes: one the service did not answer in 30 seconds, could not be reached for, or answered with 429 or 5xx, and one it refused because too many went to the device (`MessageRateExceeded`). The first of the former also ends the pass's sends and records, durably, when the service may next be tried, as long as that send waits: no send begins before then, one for a delivery written since included, so a service that does not answer is not asked again early, the other sends wait without a send counted, and receipts, read first, never wait on it. A send is tried at most eight times and within an hour of the entry; past either bound the delivery is dropped, logged, and counted on the registration's failures, as is a message the service refuses for good. Once the service took a message, its words are deleted and its receipt is read fifteen minutes later, then every thirty minutes for up to a day; each request for receipts stands alone, so one that fails does not lose another's answers. A receipt that says it was handed on ends the delivery; one that says too many went to the device drops it, logged but not counted as a failure, since its words are gone. A device the service says it no longer reaches (`DeviceNotRegistered`, in the answer to a send or in a receipt) loses its registration, and gets no pushes until it registers again; that answer, like a failure counted, holds only for the registration the send went to, by its generation, so a device that registered again since, even with the same token in the same millisecond, keeps its new one. The logs name deliveries and devices, Expo's documented error codes and a failure's tag, never a token, a failure's text or what a push says.
 
+## The bot's browser
+
+A bot that browses does it in the engine's browser ([Engine: the bot's browser](engine.md#the-bots-browser)). The server shows the operator what the bot has open and lets a paired device take a tab over: to sign in, to answer what the bot cannot, to show it where to click. It never acts on a page itself.
+
+**The tabs.** `BrowserTabs` follows the engine's tabs of every session still in use for as long as the server runs, and gives each the bot whose session opened it. A tab of no bot's session is left out. Clients name a tab by a `BrowserTabRef` the server mints the first time it sees it. A ref names nothing once the tab closes, nor after a restart, so a client never keeps one. `browser.subscribe` streams one bot's tabs, a snapshot and then the whole list on every change, as the device that asked sees them:
+- `controller` is `you` when this device holds the tab, `another-device` when another one does, and `bot` otherwise;
+- `front` is the tab that most recently opened or navigated.
+
+**The media socket.** `GET /api/browser/ws` shows one tab. The upgrade is authenticated as the RPC socket's is, before it becomes a socket ([Client API](#client-api)):
+- a device token as a bearer, or a one-use ticket;
+- the client gate's `Host` check first, as on every route;
+- without a credential, a 401.
+
+A query that does not decode becomes a socket that closes at once with 1008. A ref the server does not know gets `gone` and a normal close. The contract's `BrowserServerFrame` and `BrowserClientFrame` are what it carries, besides the pictures. A client frame that does not decode is dropped unread.
+
+**One viewer per device and tab.** `BrowserViewers` opens one engine viewer for a device's first socket on a tab. The device's next socket on the same tab takes that viewer over, control included, and the socket before it closes with 4409. Two devices on one tab have a viewer each, so each can tell who holds it.
+
+**Pacing.** One picture is in flight to a client at a time.
+- A picture that arrives while one is in flight waits. A newer one takes its place, and the engine is acknowledged for the one dropped unsent.
+- The engine is acknowledged for a picture only once the client acknowledged it, so a slow client slows the engine's capture rather than piling pictures up.
+- A socket whose write buffer would pass 2 MiB is dropped: one picture in flight never comes near that, so only a client that stopped reading gets there.
+
+**Dropped links, and the grace.**
+- The server pings every 15 s, and a socket it has heard nothing from for 45 s counts as dropped.
+- A device that does not hold the tab gives up its viewer when its socket leaves.
+- A device that holds the tab keeps it, and its viewer, for 60 s. A socket of that device that comes back within that time gets the viewer as it was: control, the page's size and the last picture the client drew. After 60 s the viewer closes, which gives the tab back to the bot.
+
+**Revocation.** Revoking a device closes its viewers at once, those in their grace included, and their sockets with 1008. A held tab goes back to the bot then, not after the grace.
+
+**Ends.** When the engine's stream ends, the socket ends with it:
+- the tab closed: `gone`, then a normal close;
+- the host needs setting up before the browser can start: `setup-needed` with what it lacks;
+- the browser restarted: 1012, and the client connects again;
+- anything else: 1013.
+
+**Nothing is kept.** A picture lives in memory only, for as long as its viewer: the one in flight, the newest waiting behind it, and the last one the client drew, for a socket that takes the viewer over. None is written to disk or to the database, logged, cached or sent in a push. What a client types goes to the engine and nowhere else. The request log records the socket's path without its query, so a ticket is not logged ([Security: the bot's browser](security.md#the-bots-browser)).
+
 ## Client API
 
-Clients use one WebSocket to the server, with typed requests and subscriptions defined in `packages/contracts`, plus a few HTTP routes for what a socket does badly (pairing, file transfer).
+Clients use one WebSocket to the server, with typed requests and subscriptions defined in `packages/contracts`, plus a few HTTP routes for what a socket does badly (pairing, file transfer), and the media socket that shows the bot's browser ([The bot's browser](#the-bots-browser)).
 
 Each of the server's listeners (this one, the tool endpoint and the admin channel) binds only once its routes are built, so a request that arrives the moment a port opens is answered, never dropped. Node accepts connections as soon as a server binds and answers a request only once a handler is attached; bound first, a listener would leave a request that arrived in between waiting forever. Between the bind and the attach, Effect resumes from Node's listen callback synchronously, with nothing that waits in between, so no request can arrive unhandled. A step a listener takes after binding that does wait, such as setting the admin socket's mode, runs once its handler is attached.
 
