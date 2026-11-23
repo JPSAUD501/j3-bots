@@ -1032,6 +1032,7 @@ function LiveShell({
       ? {
           _tag: "relay",
           listen: () => desktopApp.catchSignIn(i18n.locale),
+          expect: desktopApp.expectSignIn,
           onReturn: desktopApp.onSignInReturn,
           stop: desktopApp.stopCatchingSignIn,
         }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { arrival, landingPage } from "./loopback.ts";
+import { arrival, landingPage, signInCatch } from "./loopback.ts";
 
 const PORT = 51734;
 const host = `127.0.0.1:${PORT}`;
@@ -12,11 +12,13 @@ describe("catching the browser's return from a sign-in", () => {
     assert.deepStrictEqual(get("/oauth/callback?code=abc&state=s1"), {
       _tag: "returned",
       url: "http://127.0.0.1:51734/oauth/callback?code=abc&state=s1",
+      state: "s1",
     });
     // The provider's refusal comes back the same way, for the server to read.
     assert.deepStrictEqual(get("/oauth/callback?error=access_denied&state=s1"), {
       _tag: "returned",
       url: "http://127.0.0.1:51734/oauth/callback?error=access_denied&state=s1",
+      state: "s1",
     });
   });
 
@@ -47,6 +49,42 @@ describe("catching the browser's return from a sign-in", () => {
       _tag: "refused",
       status: 400,
     });
+  });
+
+  it("takes only the return with this sign-in's state, once, and is not spent by another", () => {
+    const relayed: Array<string> = [];
+    let focused = 0;
+    const caught = signInCatch(PORT, {
+      relay: (url) => relayed.push(url),
+      focus: () => {
+        focused += 1;
+      },
+    });
+    const callback = (state: string) => ({
+      method: "GET",
+      url: `/oauth/callback?code=c&state=${state}`,
+      host,
+    });
+    // Before the server's state is known, nothing is taken.
+    assert.deepStrictEqual(caught.answer(callback("right-state")), {
+      _tag: "refused",
+      status: 400,
+    });
+    caught.expect("right-state");
+    // A forged return, with another state or one of the same length, leaves the sign-in waiting.
+    for (const forged of ["wrong", "wrong-state", "right-stat"]) {
+      assert.deepStrictEqual(caught.answer(callback(forged)), { _tag: "refused", status: 400 });
+    }
+    assert.deepStrictEqual(relayed, []);
+    assert.strictEqual(focused, 0);
+    assert.deepStrictEqual(caught.answer(callback("right-state")), { _tag: "returned" });
+    // A reload of the page it landed on relays nothing more.
+    assert.deepStrictEqual(caught.answer(callback("right-state")), {
+      _tag: "refused",
+      status: 404,
+    });
+    assert.deepStrictEqual(relayed, [`http://${host}/oauth/callback?code=c&state=right-state`]);
+    assert.strictEqual(focused, 1);
   });
 
   it("shows a page that runs nothing and says nothing it was not given", () => {

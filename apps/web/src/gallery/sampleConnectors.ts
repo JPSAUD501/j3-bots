@@ -374,7 +374,7 @@ export function sampleConnectorsIntents(
     beginSignIn: (id) => {
       signingIn = id;
       return done({
-        authorizationUrl: Redacted.make("https://auth.example.com/authorize"),
+        authorizationUrl: Redacted.make("https://auth.example.com/authorize?state=sample"),
         expiresAt: DateTime.makeUnsafe(Date.now() + 10 * 60_000),
       });
     },

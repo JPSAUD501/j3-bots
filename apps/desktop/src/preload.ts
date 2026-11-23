@@ -82,7 +82,8 @@ const bridge: DesktopBridge = {
   localPairingLink: () => ipcRenderer.invoke(IPC_CHANNELS.localPairingLink),
   setStartWithSystem: (on) => ipcRenderer.invoke(IPC_CHANNELS.setStartWithSystem, { on }),
   catchSignIn: (request) => ipcRenderer.invoke(IPC_CHANNELS.catchSignIn, request),
-  stopCatchingSignIn: () => ipcRenderer.send(IPC_CHANNELS.stopCatchingSignIn),
+  expectSignIn: (request) => ipcRenderer.invoke(IPC_CHANNELS.expectSignIn, request),
+  stopCatchingSignIn: (request) => ipcRenderer.send(IPC_CHANNELS.stopCatchingSignIn, request),
   onSignInReturn: (listener) => {
     const forward = (_event: unknown, signInReturn: unknown) => listener(signInReturn);
     ipcRenderer.on(IPC_CHANNELS.signInReturned, forward);

@@ -1919,6 +1919,7 @@ const sampleConnectorId = (index: number) => {
 const relay: SignInRoute = {
   _tag: "relay",
   listen: () => Promise.resolve(51734),
+  expect: () => Promise.resolve(true),
   onReturn: () => nothing,
   stop: nothing,
 };

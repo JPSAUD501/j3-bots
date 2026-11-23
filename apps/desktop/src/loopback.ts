@@ -18,18 +18,19 @@ export interface LoopbackRequest {
 }
 
 /**
- * `returned`: the browser came back from the sign-in, to `url`, and the
- * listener's work is done. `refused`: anything else, answered with `status`.
+ * `returned`: the browser came back from a sign-in, to `url`, carrying
+ * `state`. `refused`: anything else, answered with `status`.
  */
 export type Arrival =
-  | { readonly _tag: "returned"; readonly url: string }
+  | { readonly _tag: "returned"; readonly url: string; readonly state: string }
   | { readonly _tag: "refused"; readonly status: 400 | 404 | 405 };
 
 /**
- * What a request to the listener on `port` is. It is the return only when it
- * names this listener by its own address, which a page that reached the port
- * under another name (DNS rebinding) cannot, and carries the `state` the
- * server's sign-in put in it: with it, a code or the provider's error.
+ * What a request to the listener on `port` is. It looks like the return only
+ * when it names this listener by its own address, which a page that reached
+ * the port under another name (DNS rebinding) cannot, and carries a `state`:
+ * with it, a code or the provider's error. Whether it is this sign-in's state
+ * is `signInCatch`'s to say.
  */
 export const arrival = (request: LoopbackRequest, port: number): Arrival => {
   if (request.host !== `127.0.0.1:${port}`) return { _tag: "refused", status: 400 };
@@ -41,7 +42,61 @@ export const arrival = (request: LoopbackRequest, port: number): Arrival => {
   if (url.length > SIGN_IN_RETURN_MAX) return { _tag: "refused", status: 400 };
   const state = parsed.searchParams.get("state");
   if (state === null || state === "") return { _tag: "refused", status: 400 };
-  return { _tag: "returned", url };
+  return { _tag: "returned", url, state };
+};
+
+/** Whether two secrets are equal, in a time that depends on their lengths alone. */
+const sameSecret = (a: string, b: string): boolean => {
+  if (a.length !== b.length) return false;
+  let difference = 0;
+  for (let index = 0; index < a.length; index++) {
+    difference |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  }
+  return difference === 0;
+};
+
+/** What the listener answers a request with: the landing page, or an error that says nothing. */
+type Answer =
+  | { readonly _tag: "returned" }
+  | { readonly _tag: "refused"; readonly status: 400 | 404 | 405 };
+
+/**
+ * One sign-in's catch on the listener at `port`. Only the return that carries
+ * the state the server put in this sign-in (`expect`, told before the browser
+ * opens it) is taken, once: it is relayed to the page and the window comes
+ * forward. Anything else, a return before the state is known or with another
+ * state included, is refused and changes nothing, so a process or a page that
+ * reaches the port first cannot spend the sign-in.
+ */
+export interface SignInCatch {
+  readonly expect: (state: string) => void;
+  readonly answer: (request: LoopbackRequest) => Answer;
+}
+
+export const signInCatch = (
+  port: number,
+  returned: { readonly relay: (url: string) => void; readonly focus: () => void },
+): SignInCatch => {
+  let expected: string | null = null;
+  let taken = false;
+  return {
+    expect: (state) => {
+      expected = state;
+    },
+    answer: (request) => {
+      const arrived = arrival(request, port);
+      if (arrived._tag === "refused") return arrived;
+      // The browser comes back once: a reload of the page it landed on relays nothing more.
+      if (taken) return { _tag: "refused", status: 404 };
+      if (expected === null || !sameSecret(arrived.state, expected)) {
+        return { _tag: "refused", status: 400 };
+      }
+      taken = true;
+      returned.relay(arrived.url);
+      returned.focus();
+      return { _tag: "returned" };
+    },
+  };
 };
 
 const escapeHtml = (text: string) =>

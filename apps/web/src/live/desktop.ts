@@ -28,6 +28,7 @@ import {
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 /** A token as the desktop app sealed it, and how it is kept. */
@@ -153,7 +154,13 @@ export interface Desktop {
    * listens on, or `null` when the app could not listen.
    */
   readonly catchSignIn: (language: Language) => Promise<number | null>;
-  readonly stopCatchingSignIn: () => void;
+  /**
+   * Tells the listener on `port` the state of the sign-in it waits for, which
+   * the only return it takes carries: whether it still listens and took it.
+   */
+  readonly expectSignIn: (port: number, state: Redacted.Redacted<string>) => Promise<boolean>;
+  /** Stops the listener on `port`, if it still listens. */
+  readonly stopCatchingSignIn: (port: number) => void;
   /**
    * Calls `listener` with the address the browser came back to from each
    * sign-in the app caught; answers a function that stops it.
@@ -179,6 +186,7 @@ const decodeLocalServer = Schema.decodeUnknownOption(Schema.NullOr(LocalServerSt
 const decodeLocalDevice = Schema.decodeUnknownOption(LocalDeviceResult);
 const decodeStartWithSystem = Schema.decodeUnknownOption(StartWithSystemChange);
 const decodeRelayStart = Schema.decodeUnknownOption(SignInRelayStart);
+const decodeExpected = Schema.decodeUnknownOption(Schema.Boolean);
 const decodeSignInReturn = Schema.decodeUnknownOption(SignInReturn);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
@@ -311,8 +319,12 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
       ask(() => bridge.catchSignIn({ language }), decodeRelayStart).then((answer) =>
         answer?._tag === "listening" ? answer.port : null,
       ),
-    stopCatchingSignIn: () => {
-      bridge.stopCatchingSignIn();
+    expectSignIn: (port, state) =>
+      ask(() => bridge.expectSignIn({ port, state: Redacted.value(state) }), decodeExpected).then(
+        (taken) => taken === true,
+      ),
+    stopCatchingSignIn: (port) => {
+      bridge.stopCatchingSignIn({ port });
     },
     onSignInReturn: (listener) => {
       const stop: unknown = bridge.onSignInReturn((signInReturn: unknown) =>

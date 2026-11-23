@@ -153,6 +153,7 @@ describe("the desktop bridge", () => {
       localPairingLink: call,
       setStartWithSystem: call,
       catchSignIn: call,
+      expectSignIn: call,
       stopCatchingSignIn: call,
       onSignInReturn: call,
     };
