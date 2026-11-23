@@ -116,6 +116,32 @@ describe("openSession", () => {
   );
 
   it.effect(
+    "asks for a sign-in with more scope when the server answers 403 insufficient_scope",
+    () =>
+      Effect.gen(function* () {
+        const challenge = 'Bearer error="insufficient_scope", scope="issues:write"';
+        const fake = yield* fakeMcpServer({
+          tools: [{ name: "search" }],
+          call: echo,
+          authorize: (authorization) => authorization === `Bearer ${RENEWED}`,
+          refusal: { status: 403, challenge },
+        });
+        const current = yield* Ref.make(TOKEN);
+        const seen = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([]);
+        const credentials: ConnectorCredentials = {
+          current: Effect.map(Ref.get(current), bearer),
+          rejected: (wwwAuthenticate) =>
+            Ref.update(seen, (all) => [...all, wwwAuthenticate]).pipe(
+              Effect.andThen(Ref.set(current, RENEWED)),
+            ),
+        };
+        const session = yield* open(fake.url, credentials);
+        yield* session.listTools;
+        assert.deepStrictEqual(yield* Ref.get(seen), [Option.some(challenge)]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
     "refuses a stored header that would start another header or replace the transport's",
     () =>
       Effect.gen(function* () {

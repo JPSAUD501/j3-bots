@@ -170,9 +170,22 @@ const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
   });
 
 /**
- * A fetch that signs each request with the credentials as they are now. On a
- * 401 it reports the refusal, which may renew them, and sends the request
- * once more; a second 401 means the operator must sign in again.
+ * Whether the server refused the credentials: a `401`, or a `403` whose
+ * challenge says the token lacks a scope (MCP 2025-11-25, "Runtime
+ * insufficient scope errors"), which a new sign-in with that scope answers.
+ */
+const refusedCredentials = (response: Response): boolean => {
+  if (response.status === 401) return true;
+  if (response.status !== 403) return false;
+  const challenge = response.headers.get("www-authenticate") ?? "";
+  return /^\s*Bearer\b/i.test(challenge) && /\berror\s*=\s*"?insufficient_scope"?/i.test(challenge);
+};
+
+/**
+ * A fetch that signs each request with the credentials as they are now. When
+ * the server refuses them it reports the refusal, which may renew them, and
+ * sends the request once more; a second refusal means the operator must sign
+ * in again.
  */
 const signingFetch =
   (guarded: GuardedFetch, credentials: ConnectorCredentials): GuardedFetch =>
@@ -180,11 +193,11 @@ const signingFetch =
     const attempt = async () =>
       guarded(input, { ...init, headers: signed(init?.headers, await run(credentials.current)) });
     const first = await attempt();
-    if (first.status !== 401) return first;
+    if (!refusedCredentials(first)) return first;
     await first.body?.cancel();
     await run(credentials.rejected(Option.fromNullishOr(first.headers.get("www-authenticate"))));
     const second = await attempt();
-    if (second.status !== 401) return second;
+    if (!refusedCredentials(second)) return second;
     await second.body?.cancel();
     throw new NeedsSignIn();
   };

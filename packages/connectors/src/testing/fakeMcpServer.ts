@@ -48,8 +48,9 @@ export interface FakeMcpServer {
 export interface FakeOptions {
   readonly tools: ReadonlyArray<FakeTool>;
   readonly call: (name: string, args: unknown, headers: NodeHttp.IncomingHttpHeaders) => FakeAnswer;
-  /** Answers 401 unless `authorization` is accepted. */
+  /** Answers `refusal` (401 `invalid_token` by default) unless `authorization` is accepted. */
   readonly authorize?: (authorization: string | undefined) => boolean;
+  readonly refusal?: { readonly status: number; readonly challenge: string };
 }
 
 const Rpc = Schema.Struct({
@@ -98,7 +99,11 @@ export const fakeMcpServer = (options: FakeOptions) =>
               options.authorize !== undefined &&
               !options.authorize(request.headers.authorization)
             ) {
-              response.writeHead(401, { "www-authenticate": 'Bearer error="invalid_token"' });
+              const refusal = options.refusal ?? {
+                status: 401,
+                challenge: 'Bearer error="invalid_token"',
+              };
+              response.writeHead(refusal.status, { "www-authenticate": refusal.challenge });
               response.end();
               return;
             }
