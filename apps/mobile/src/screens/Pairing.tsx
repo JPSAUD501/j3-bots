@@ -50,7 +50,7 @@ function Field(props: {
         textContentType={props.kind === "code" ? "oneTimeCode" : "none"}
         maxLength={props.kind === "address" ? 2048 : props.kind === "code" ? 24 : 200}
         face={props.kind === "name" ? "text" : "mono"}
-        className={`${bigFieldClass} ${props.invalid ? "border-blocked" : "border-input focus:border-foreground"} ${props.kind === "code" ? "text-center tracking-widest" : ""}`}
+        className={`${bigFieldClass} text-lg ${props.invalid ? "border-blocked" : "border-transparent focus:border-foreground"} ${props.kind === "code" ? "text-center tracking-widest" : ""}`}
       />
     </View>
   );

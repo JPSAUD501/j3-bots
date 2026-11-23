@@ -947,9 +947,11 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       });
     },
     createBot: (draft) =>
-      j3.createBot(draft).then((result) =>
-        result._tag === "done" ? { _tag: "done", value: result.value.id } : result,
-      ),
+      j3
+        .createBot(draft)
+        .then((result) =>
+          result._tag === "done" ? { _tag: "done", value: result.value.id } : result,
+        ),
     newBot: () => setNewBot(true),
     newRoom: () => setRoomForm({ _tag: "create" }),
     editRoom: (roomId) => setRoomForm({ _tag: "edit", roomId }),

@@ -61,7 +61,7 @@ import {
   useState,
 } from "react";
 import { AppState, View } from "react-native";
-import Animated, { ZoomIn } from "react-native-reanimated";
+import Animated from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -70,8 +70,7 @@ import { CommandLine } from "../components/CommandLine.tsx";
 import { PendingButton } from "../components/form.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { useRoomActions } from "../details/actions.ts";
-import { enteringWhen, openIn, settleIn, useReducedMotion } from "../motion.ts";
-import { pop } from "../onboarding/springs.ts";
+import { enteringWhen, openIn, popIn, settleIn, useReducedMotion } from "../motion.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
@@ -465,9 +464,7 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
       className="flex-1 items-center justify-center gap-4 px-6"
       style={{ paddingBottom: bottom }}
     >
-      <Animated.View
-        entering={ZoomIn.springify().mass(pop.mass).stiffness(pop.stiffness).damping(pop.damping)}
-      >
+      <Animated.View entering={popIn()}>
         <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
       </Animated.View>
       <Title>{name}</Title>

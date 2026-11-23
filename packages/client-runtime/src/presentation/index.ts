@@ -88,7 +88,6 @@ export {
   rosterTarget,
 } from "./roster.ts";
 export { shownSaveProblem } from "./saves.ts";
-export { eases, type Spring, springs } from "./springs.ts";
 export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export {

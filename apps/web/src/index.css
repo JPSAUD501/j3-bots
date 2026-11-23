@@ -289,13 +289,6 @@
   }
 }
 
-@keyframes onboarding-pop {
-  from {
-    opacity: 0;
-    transform: scale(0.4);
-  }
-}
-
 @keyframes onboarding-rise {
   from {
     opacity: 0;

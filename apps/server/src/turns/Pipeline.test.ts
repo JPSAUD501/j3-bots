@@ -308,29 +308,31 @@ const sentInOrder = (sessionId: SessionId, texts: ReadonlyArray<string>) =>
     return received.flatMap((dispatch) => texts.filter((text) => dispatch.text.includes(text)));
   });
 
-it.effect("holds what the operator writes while the hello waits, and sends it after the hello", () =>
-  Effect.gen(function* () {
-    const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
-    yield* providerIs(providerId, { _tag: "sign-in-required", command: "connect" });
-    const bot = yield* createNewBot("Ana", TestDomain.OTHER_PROVIDER_MODEL);
-    const session = yield* engineSession(bot.id);
-    const first = yield* sendToBot(bot.id, "Book the venue.");
-    const second = yield* sendToBot(bot.id, "And the caterer.");
-    yield* flushed(bot.id);
-    assert.deepStrictEqual(yield* sentInOrder(session, [FIRST_RUN, "Book the venue."]), []);
-    yield* deliveryIs(first, "pending");
+it.effect(
+  "holds what the operator writes while the hello waits, and sends it after the hello",
+  () =>
+    Effect.gen(function* () {
+      const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
+      yield* providerIs(providerId, { _tag: "sign-in-required", command: "connect" });
+      const bot = yield* createNewBot("Ana", TestDomain.OTHER_PROVIDER_MODEL);
+      const session = yield* engineSession(bot.id);
+      const first = yield* sendToBot(bot.id, "Book the venue.");
+      const second = yield* sendToBot(bot.id, "And the caterer.");
+      yield* flushed(bot.id);
+      assert.deepStrictEqual(yield* sentInOrder(session, [FIRST_RUN, "Book the venue."]), []);
+      yield* deliveryIs(first, "pending");
 
-    // Connected: the hello goes first, and the messages reach its turn, in order.
-    yield* providerIs(providerId, { _tag: "ready" });
-    yield* until(Effect.map(timesSent(session, "And the caterer."), (times) => times === 1));
-    yield* finishRunning(bot.id);
-    yield* deliveryIs(first, "delivered");
-    yield* deliveryIs(second, "delivered");
-    assert.deepStrictEqual(
-      yield* sentInOrder(session, [FIRST_RUN, "Book the venue.", "And the caterer."]),
-      [FIRST_RUN, "Book the venue.", "And the caterer."],
-    );
-  }).pipe(Effect.provide(TestDomain.layer)),
+      // Connected: the hello goes first, and the messages reach its turn, in order.
+      yield* providerIs(providerId, { _tag: "ready" });
+      yield* until(Effect.map(timesSent(session, "And the caterer."), (times) => times === 1));
+      yield* finishRunning(bot.id);
+      yield* deliveryIs(first, "delivered");
+      yield* deliveryIs(second, "delivered");
+      assert.deepStrictEqual(
+        yield* sentInOrder(session, [FIRST_RUN, "Book the venue.", "And the caterer."]),
+        [FIRST_RUN, "Book the venue.", "And the caterer."],
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("keeps a message held behind the hello through the move to a ready provider", () =>

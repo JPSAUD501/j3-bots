@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type Spring, springs } from "@j3-bots/client-runtime/presentation";
+import type { springs } from "@j3-bots/design-tokens";
 import { useSyncExternalStore } from "react";
 
 const reducedQuery = "(prefers-reduced-motion: reduce)";
@@ -19,12 +19,13 @@ export const useReducedMotion = (): boolean =>
   );
 
 /**
- * A CSS `animation` that plays `keyframes` along `spring`. Reduced motion
- * needs nothing here: the page's reduced-motion rule ends every animation at
- * once, which leaves each element in its still form.
+ * A CSS `animation` that plays `keyframes` along one of the design tokens'
+ * springs, by its `--ease-*` and `--duration-*` names. Reduced motion needs
+ * nothing here: the page's reduced-motion rule ends every animation at once,
+ * which leaves each element in its still form.
  */
 export const springAnimation = (
   keyframes: string,
-  spring: Spring = springs.slide,
+  spring: keyof typeof springs = "slide",
   delay = 0,
-): string => `${keyframes} ${spring.duration}ms ${spring.easing} ${delay}ms both`;
+): string => `${keyframes} var(--duration-${spring}) var(--ease-${spring}) ${delay}ms both`;

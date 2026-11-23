@@ -2,9 +2,11 @@
 import * as Clipboard from "expo-clipboard";
 import { Check, Copy } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import { Pressable, Text, View } from "react-native";
-import { Icon } from "./Icon.tsx";
+import { View } from "react-native";
 import { useI18n } from "../i18n.ts";
+import { PressScale } from "../press.tsx";
+import { Text } from "../text.tsx";
+import { Icon } from "./Icon.tsx";
 
 /** How long the button says Copied before it offers Copy again, in ms. */
 const COPIED_FOR = 2000;
@@ -30,10 +32,10 @@ export function CommandLine({ command }: { readonly command: string }) {
   return (
     <View className="gap-1">
       <View className="flex-row items-center gap-2 rounded-md bg-code-background py-1.5 ps-3.5 pe-1.5">
-        <Text selectable className="flex-1 font-mono text-sm text-foreground">
+        <Text selectable face="mono" className="flex-1 text-sm text-foreground">
           {command}
         </Text>
-        <Pressable
+        <PressScale
           accessibilityRole="button"
           accessibilityLabel={copied ? t("firstRun.connect.copied") : t("firstRun.connect.copy")}
           onPress={() => {
@@ -42,13 +44,13 @@ export function CommandLine({ command }: { readonly command: string }) {
               () => setOutcome({ result: "failed" }),
             );
           }}
-          className="min-h-11 flex-row items-center gap-1.5 rounded-md border border-input bg-surface px-3 active:bg-muted"
+          className="min-h-11 flex-row items-center gap-1.5 rounded-pill border border-input bg-surface px-4 active:bg-muted"
         >
           <Icon icon={copied ? Check : Copy} size={16} color="accent-foreground" />
           <Text className="text-sm font-medium text-foreground">
             {copied ? t("firstRun.connect.copied") : t("commandLine.copy")}
           </Text>
-        </Pressable>
+        </PressScale>
       </View>
       {outcome.result === "failed" && (
         <Text accessibilityLiveRegion="polite" className="text-xs text-blocked">

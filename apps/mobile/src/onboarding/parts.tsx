@@ -2,40 +2,46 @@
 import { firstLooks } from "@j3-bots/client-runtime/presentation";
 import type { AvatarChoice } from "@j3-bots/contracts";
 import { type ComponentRef, type ReactNode, useEffect, useRef } from "react";
-import { AccessibilityInfo, Pressable, Text, type TextStyle, View } from "react-native";
+import { AccessibilityInfo, View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
   withSequence,
-  withSpring,
   withTiming,
-  ZoomIn,
 } from "react-native-reanimated";
 import { BotAvatar } from "../components/Avatar.tsx";
-import { useReducedMotion } from "../motion.ts";
-import { pop } from "./springs.ts";
+import { popIn, useReducedMotion } from "../motion.ts";
+import { PressScale } from "../press.tsx";
+import { displaySpacing, Text } from "../text.tsx";
 
 // What the screens before the first bot share: pairing, and the steps that make it.
 
 const idle = { _tag: "idle" } as const;
 
-/** Display sizes the type scale does not have yet: titles and the welcome's name. */
-export const TITLE = { fontSize: 26, lineHeight: 32 } as const;
-export const DISPLAY = { fontSize: 40, lineHeight: 44 } as const;
+/**
+ * The app's filled text field, at the larger height of the screens before the
+ * first bot. The caller sets the type size: two sizes in one class list do not
+ * say which one wins.
+ */
+export const bigFieldClass = "min-h-13 rounded-md border bg-muted px-4 text-foreground";
 
-/** A text field of the screens before the first bot, in their large type. */
-export const bigFieldClass = "h-13 rounded-lg border-2 bg-surface px-4 text-lg text-foreground";
+/** A step's title, or the larger display line of the welcome and the arrival, in the display face. */
+const titleSizes = {
+  title: { className: "text-3xl", spacing: displaySpacing(30) },
+  display: { className: "text-4xl", spacing: displaySpacing(40) },
+} as const;
 
 /** A screen's title; it takes a screen reader's focus when the screen comes in. */
 export function StepTitle({
   children,
-  style,
+  size = "title",
 }: {
   readonly children: ReactNode;
-  readonly style?: TextStyle;
+  readonly size?: keyof typeof titleSizes;
 }) {
+  const { className, spacing } = titleSizes[size];
   const ref = useRef<ComponentRef<typeof Text>>(null);
   useEffect(() => {
     if (ref.current !== null) AccessibilityInfo.sendAccessibilityEvent(ref.current, "focus");
@@ -44,8 +50,9 @@ export function StepTitle({
     <Text
       ref={ref}
       accessibilityRole="header"
-      className="text-center font-semibold text-foreground"
-      style={style ?? TITLE}
+      face="display"
+      className={`text-center text-foreground ${className}`}
+      style={{ letterSpacing: spacing }}
     >
       {children}
     </Text>
@@ -62,29 +69,17 @@ export function BigButton({
   readonly onPress: () => void;
   readonly disabled?: boolean;
 }) {
-  const scale = useSharedValue(1);
-  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
   return (
-    <Pressable
+    <PressScale
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      onPressIn={() => {
-        scale.set(withSpring(0.97, pop));
-      }}
-      onPressOut={() => {
-        scale.set(withSpring(1, pop));
-      }}
+      className={`min-h-13 items-center justify-center rounded-pill bg-accent px-6 ${disabled ? "opacity-50" : ""}`}
     >
-      <Animated.View
-        className={`min-h-13 items-center justify-center rounded-full bg-foreground px-6 ${disabled ? "opacity-50" : ""}`}
-        style={style}
-      >
-        <Text className="text-lg font-medium text-background">{label}</Text>
-      </Animated.View>
-    </Pressable>
+      <Text className="text-lg font-semibold text-accent-foreground">{label}</Text>
+    </PressScale>
   );
 }
 
@@ -134,13 +129,7 @@ export function Cast({ compact = false }: { readonly compact?: boolean }) {
               marginTop: -size / 2,
             }}
           >
-            <Animated.View
-              entering={ZoomIn.springify()
-                .mass(pop.mass)
-                .stiffness(pop.stiffness)
-                .damping(pop.damping)
-                .delay(90 * index)}
-            >
+            <Animated.View entering={popIn(90 * index)}>
               <Float period={member.float} still={reduced}>
                 <BotAvatar avatar={member.look} state={idle} size={size} />
               </Float>

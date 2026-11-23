@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   defaultBotName,
-  eases,
   firstLooks,
   makingProgress,
   nextStep,
@@ -9,8 +8,8 @@ import {
   previousStep,
   providerGate,
   showsConnect,
-  springs,
 } from "@j3-bots/client-runtime/presentation";
+import { springs } from "@j3-bots/design-tokens";
 import { type IntentResult, refusedWith } from "@j3-bots/client-runtime";
 import { connectStepText, providerLine } from "@j3-bots/client-runtime/wording";
 import type { AvatarChoice, BotId, EngineStatus } from "@j3-bots/contracts";
@@ -179,9 +178,8 @@ export function Onboarding({
 
   const progress = makingProgress(step, connect);
   const canGoBack = previousStep(step, connect) !== null;
-  const style: CSSProperties & Record<"--onboarding-bot" | "--onboarding-ease-out", string> = {
+  const style: CSSProperties & Record<"--onboarding-bot", string> = {
     "--onboarding-bot": `var(--bot-${look.color})`,
-    "--onboarding-ease-out": eases.out,
   };
 
   const screen = (at: OnboardingStep, current: boolean): ReactNode => {
@@ -216,9 +214,7 @@ export function Onboarding({
           />
         );
       case "connect":
-        return (
-          <ConnectStep engine={engine} name={botName} failure={failure} onCreate={create} />
-        );
+        return <ConnectStep engine={engine} name={botName} failure={failure} onCreate={create} />;
       case "arrival":
         return <Arrival engine={engine} name={botName} created={created} />;
     }
@@ -287,7 +283,7 @@ function Layer({
       ? {}
       : leaving
         ? {
-            animation: `onboarding-out ${springs.slide.duration / 2}ms var(--onboarding-ease-out) both`,
+            animation: "onboarding-out calc(var(--duration-slide) / 2) var(--ease-out) both",
             ["--onboarding-shift" as string]: `${-sign * SLIDE}px`,
           }
         : {
@@ -319,13 +315,9 @@ function Progress({ index, count }: { readonly index: number; readonly count: nu
         <span
           key={dot}
           className={cn(
-            "h-1.5 rounded-full bg-foreground transition-[width,opacity]",
+            "h-1.5 rounded-full bg-foreground transition-[width,opacity] duration-(--duration-soft) ease-soft",
             dot === index ? "w-5" : "w-1.5 opacity-25",
           )}
-          style={{
-            transitionDuration: `${springs.soft.duration}ms`,
-            transitionTimingFunction: springs.soft.easing,
-          }}
         />
       ))}
     </span>
@@ -351,12 +343,8 @@ function Hero({
       className="relative flex shrink-0 justify-center pt-4 pb-6 [--avatar-cutout:var(--background)]"
     >
       <span
-        className="relative block transition-transform"
-        style={{
-          transform: arrived ? "translateY(56px) scale(1.5)" : "none",
-          transitionDuration: `${springs.pop.duration}ms`,
-          transitionTimingFunction: springs.pop.easing,
-        }}
+        className="relative block transition-transform duration-(--duration-pop) ease-pop"
+        style={{ transform: arrived ? "translateY(56px) scale(1.5)" : "none" }}
       >
         {arrived && (
           <span className="absolute inset-0" style={{ color: "var(--onboarding-bot)" }}>
@@ -365,20 +353,17 @@ function Hero({
                 key={ring}
                 className="absolute inset-0 rounded-full border-2 border-current"
                 style={{
-                  animation: `onboarding-ring 1400ms var(--onboarding-ease-out) ${springs.pop.duration / 2 + ring * 220}ms both`,
+                  animation: `onboarding-ring 1400ms var(--ease-out) calc(var(--duration-pop) / 2 + ${ring * 220}ms) both`,
                 }}
               />
             ))}
           </span>
         )}
-        <span
-          className="block"
-          style={{ animation: springAnimation("onboarding-pop", springs.pop) }}
-        >
+        <span className="pop-in block">
           <span
             key={pokes}
             className="block"
-            style={{ animation: springAnimation("onboarding-hop", springs.pop) }}
+            style={{ animation: springAnimation("onboarding-hop", "pop") }}
           >
             <BotAvatar avatar={look} state={idle} size={96} />
           </span>
@@ -427,9 +412,7 @@ function Welcome({
         <Cast />
         <div className="flex flex-col gap-3">
           <StepTitle>
-            <span className="text-(length:--onboarding-display) leading-none font-bold tracking-tight">
-              J3 Bots
-            </span>
+            <span className="display-type text-4xl">J3 Bots</span>
           </StepTitle>
           <p className="max-w-xs text-lg text-pretty text-muted-foreground">
             {t("onboarding.welcome.body")}
@@ -488,7 +471,7 @@ function NameStep({
           onChange={(event) => onName(event.currentTarget.value)}
           className={cn(
             bigFieldClass,
-            "mt-2 h-14 text-center text-(length:--onboarding-title) pointer-coarse:h-14 font-semibold focus-visible:border-(--onboarding-bot)",
+            "mt-2 h-14 text-center display-type text-3xl pointer-coarse:h-14 focus-visible:outline-(color:--onboarding-bot)",
           )}
         />
         <p id={hintId} className="text-sm text-muted-foreground">
@@ -662,8 +645,8 @@ function Arrival({
       <div className="mt-24 flex flex-col items-center gap-2">
         {created && (
           <h1
-            className="text-(length:--onboarding-display) leading-tight font-bold tracking-tight"
-            style={{ animation: springAnimation("onboarding-pop", springs.pop, 260) }}
+            className="display-type text-4xl"
+            style={{ animation: springAnimation("pop-in", "pop", 260) }}
           >
             {t("onboarding.arrival.title", { name })}
           </h1>
@@ -673,7 +656,7 @@ function Arrival({
           {created && (
             <span
               className="block"
-              style={{ animation: springAnimation("onboarding-rise", springs.soft, 420) }}
+              style={{ animation: springAnimation("onboarding-rise", "soft", 420) }}
             >
               {ready ? t("onboarding.arrival.hello") : t("onboarding.arrival.waiting", { name })}
             </span>

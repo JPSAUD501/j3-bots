@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ReactNode } from "react";
 import { Button } from "../components/ui/button";
+import { textField } from "../components/ui/field";
+import { cn } from "../lib/cn";
 import { Cast } from "./Cast";
 
-/** A text field of the screens before the first bot, in their large type. */
-export const bigFieldClass =
-  "h-12 w-full rounded-lg border-2 border-input bg-surface px-4 text-lg placeholder:text-muted-foreground focus-visible:border-foreground focus-visible:outline-none aria-invalid:border-blocked pointer-coarse:h-13";
+/** The app's text field, in the larger type of the screens before the first bot. */
+export const bigFieldClass = cn(textField, "h-12 px-4 text-lg pointer-coarse:h-13");
 
 /** The title of one screen before the first bot. Focus moves to it when its screen comes in. */
 export function StepTitle({ children }: { readonly children: ReactNode }) {
   return (
-    <h1
-      tabIndex={-1}
-      data-step-title
-      className="text-(length:--onboarding-title) leading-tight font-semibold tracking-tight text-balance outline-none"
-    >
+    <h1 tabIndex={-1} data-step-title className="display-type text-3xl text-balance outline-none">
       {children}
     </h1>
   );
@@ -39,7 +36,7 @@ export function BigButton({
       variant="primary"
       onClick={onClick}
       aria-disabled={disabled}
-      className="onboarding-press h-12 w-full rounded-pill text-lg pointer-coarse:h-13"
+      className="h-12 w-full text-lg pointer-coarse:h-13"
     >
       {children}
     </Button>

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
-import { connectCommand, openingHeld, springs } from "@j3-bots/client-runtime/presentation";
+import { connectCommand, openingHeld } from "@j3-bots/client-runtime/presentation";
 import { ensemble } from "@j3-bots/design-tokens";
 import type { ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
@@ -10,7 +10,6 @@ import {
   type ProviderTone,
   quietConversationText,
 } from "@j3-bots/client-runtime/wording";
-import { springAnimation } from "../onboarding/motion";
 import { BotAvatar } from "./BotAvatar";
 import { CommandLine } from "./CommandLine";
 import { useConnectionLineShown } from "./ConnectionBanner";
@@ -143,10 +142,7 @@ export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineSta
   const held = openingHeld(bot, engine);
   return (
     <Centered>
-      <span
-        className="[--avatar-cutout:var(--background)]"
-        style={{ animation: springAnimation("onboarding-pop", springs.pop) }}
-      >
+      <span className="pop-in [--avatar-cutout:var(--background)]">
         <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
       </span>
       <Heading

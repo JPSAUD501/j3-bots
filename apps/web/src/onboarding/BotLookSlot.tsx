@@ -43,7 +43,7 @@ export function BotLookSlot({
             })}
             onClick={() => onLook(option)}
             className={cn(
-              "onboarding-press flex size-16 items-center justify-center rounded-lg border-2 border-transparent bg-surface transition-[border-color,background-color] duration-(--duration-fast) hover:bg-muted pointer-coarse:size-18",
+              "pressable flex size-16 items-center justify-center rounded-lg border-2 border-transparent bg-surface hover:bg-muted pointer-coarse:size-18",
               chosen && "border-foreground",
             )}
           >

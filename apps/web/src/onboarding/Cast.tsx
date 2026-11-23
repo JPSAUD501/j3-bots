@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { firstLooks, springs } from "@j3-bots/client-runtime/presentation";
+import { firstLooks } from "@j3-bots/client-runtime/presentation";
 import type { AvatarChoice } from "@j3-bots/contracts";
 import { BotAvatar } from "../components/BotAvatar";
 import { cn } from "../lib/cn";
@@ -52,12 +52,12 @@ export function Cast({ compact = false }: { readonly compact?: boolean }) {
         >
           <span
             className="block"
-            style={{ animation: springAnimation("onboarding-pop", springs.pop, 90 * index) }}
+            style={{ animation: springAnimation("pop-in", "pop", 90 * index) }}
           >
             <span
               className="block"
               style={{
-                animation: `onboarding-float ${member.float}ms ease-in-out ${springs.pop.duration + 90 * index}ms infinite`,
+                animation: `onboarding-float ${member.float}ms ease-in-out calc(var(--duration-pop) + ${90 * index}ms) infinite`,
               }}
             >
               <BotAvatar avatar={member.look} state={idle} size={Math.round(member.size * scale)} />

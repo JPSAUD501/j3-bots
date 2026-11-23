@@ -18,7 +18,7 @@ import {
   type EngineStatus,
   PROFILE_LIMITS,
 } from "@j3-bots/contracts";
-import type { BotColor } from "@j3-bots/design-tokens";
+import { type BotColor, reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import * as ExpoCrypto from "expo-crypto";
 import { ChevronLeft } from "lucide-react-native";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
@@ -28,10 +28,7 @@ import {
   KeyboardAvoidingView,
   Linking,
   Platform,
-  Pressable,
   ScrollView,
-  Text,
-  TextInput,
   View,
 } from "react-native";
 import Animated, {
@@ -49,7 +46,6 @@ import Animated, {
   withSequence,
   withSpring,
   withTiming,
-  ZoomIn,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BotAvatar } from "../components/Avatar.tsx";
@@ -57,11 +53,16 @@ import { ProviderRow } from "../components/Engine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { useI18n } from "../i18n.ts";
-import { useReducedMotion } from "../motion.ts";
+import { popIn, useReducedMotion } from "../motion.ts";
 import { useColor } from "../theme.ts";
 import { CommandLine } from "../components/CommandLine.tsx";
-import { BigButton, bigFieldClass, Cast, DISPLAY, StepTitle, TITLE } from "./parts.tsx";
-import { pop, slide, soft } from "./springs.ts";
+import { PressScale } from "../press.tsx";
+import { displaySpacing, Text, TextInput } from "../text.tsx";
+import { BigButton, bigFieldClass, Cast, StepTitle } from "./parts.tsx";
+
+const pop = reanimatedSpring(springs.pop);
+const soft = reanimatedSpring(springs.soft);
+const slide = reanimatedSpring(springs.slide);
 
 const idle = { _tag: "idle" } as const;
 
@@ -228,9 +229,7 @@ export function Onboarding({
       );
       break;
     case "connect":
-      screen = (
-        <ConnectStep engine={engine} name={botName} failure={failure} onCreate={create} />
-      );
+      screen = <ConnectStep engine={engine} name={botName} failure={failure} onCreate={create} />;
       break;
     case "arrival":
       screen = <Arrival engine={engine} name={botName} created={created} />;
@@ -246,16 +245,17 @@ export function Onboarding({
       <View className="h-14 flex-row items-center px-2">
         <View className="w-11">
           {canGoBack && (
-            <Pressable
+            <PressScale
+              depth="round"
               accessibilityRole="button"
               accessibilityLabel={t("onboarding.back")}
               onPress={back}
-              className="size-11 items-center justify-center rounded-md active:bg-muted"
+              className="size-11 items-center justify-center rounded-pill active:bg-muted"
             >
               <View style={I18nManager.isRTL ? { transform: [{ scaleX: -1 }] } : undefined}>
                 <Icon icon={ChevronLeft} size={22} color="accent-muted-foreground" />
               </View>
-            </Pressable>
+            </PressScale>
           )}
         </View>
         <View className="flex-1 items-center">
@@ -345,9 +345,7 @@ function Hero({
       className="items-center pt-4 pb-6"
       style={{ zIndex: 1 }}
     >
-      <Animated.View
-        entering={ZoomIn.springify().mass(pop.mass).stiffness(pop.stiffness).damping(pop.damping)}
-      >
+      <Animated.View entering={popIn()}>
         <Animated.View style={style}>
           {arrived &&
             !reduced &&
@@ -411,7 +409,7 @@ function Welcome({ onStart }: { readonly onStart: () => void }) {
       <View className="flex-1 items-center justify-center gap-6">
         <Cast />
         <View className="items-center gap-3">
-          <StepTitle style={DISPLAY}>J3 Bots</StepTitle>
+          <StepTitle size="display">J3 Bots</StepTitle>
           <Text className="max-w-xs text-center text-lg text-muted-foreground">
             {t("onboarding.welcome.body")}
           </Text>
@@ -450,8 +448,9 @@ function NameStep({
         selectTextOnFocus
         returnKeyType="next"
         onSubmitEditing={onContinue}
-        className={`${bigFieldClass} mt-2 w-full border-input text-center font-semibold focus:border-foreground`}
-        style={{ fontSize: TITLE.fontSize }}
+        face="display"
+        className={`${bigFieldClass} mt-2 w-full border-transparent text-center text-3xl focus:border-foreground`}
+        style={{ letterSpacing: displaySpacing(30) }}
       />
       <Text className="text-center text-sm text-muted-foreground">{t("onboarding.name.hint")}</Text>
     </StepFrame>
@@ -519,7 +518,7 @@ function BotLookSlot({
       {firstLooks.map((option, index) => {
         const chosen = option.shape === look.shape && option.color === look.color;
         return (
-          <Pressable
+          <PressScale
             key={`${option.shape}/${option.color}`}
             accessibilityRole="radio"
             accessibilityState={{ checked: chosen }}
@@ -531,7 +530,7 @@ function BotLookSlot({
             className={`size-16 items-center justify-center rounded-lg border-2 bg-surface active:bg-muted ${chosen ? "border-foreground" : "border-transparent"}`}
           >
             <BotAvatar avatar={option} state={idle} size={40} ground="surface" />
-          </Pressable>
+          </PressScale>
         );
       })}
     </View>
@@ -672,14 +671,8 @@ function Arrival({
   return (
     <StepFrame actions={null}>
       <View className="mt-24 items-center gap-2">
-        <Animated.View
-          entering={ZoomIn.springify()
-            .mass(pop.mass)
-            .stiffness(pop.stiffness)
-            .damping(pop.damping)
-            .delay(260)}
-        >
-          <StepTitle style={DISPLAY}>{t("onboarding.arrival.title", { name })}</StepTitle>
+        <Animated.View entering={popIn(260)}>
+          <StepTitle size="display">{t("onboarding.arrival.title", { name })}</StepTitle>
         </Animated.View>
         <Animated.Text
           entering={FadeIn.delay(420)}
