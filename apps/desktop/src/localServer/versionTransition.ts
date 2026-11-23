@@ -385,7 +385,8 @@ export const make = Effect.fn("VersionTransition.make")(function* (
     switch (outcome._tag) {
       case "updated":
       case "cut-off-rolled-back":
-        yield* SubscriptionRef.set(update, Option.none());
+        // Once it answers, as the page sees it: until then the line still says it updates.
+        yield* Ref.set(afterReady, SubscriptionRef.set(update, Option.none()));
         break;
       case "rolled-back":
         yield* Effect.logWarning("The new server did not start; the one before runs again", {

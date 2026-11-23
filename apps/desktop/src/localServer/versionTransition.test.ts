@@ -145,6 +145,13 @@ describe("the version of the server on this computer", () => {
         engine: `engine-of-${OLD}`,
       });
       assert.deepStrictEqual((yield* Runtime.kept(here.runtimes)).sort(), [OLD, NEW]);
+      // The page hears of the update until the server answers.
+      assert.deepStrictEqual(Option.getOrNull(yield* versions.update), {
+        _tag: "updating",
+        from: OLD,
+        to: NEW,
+      });
+      yield* versions.onReady;
       assert.isTrue(Option.isNone(yield* versions.update));
 
       // The next start runs it as it is, and records it once it answers.
@@ -228,6 +235,7 @@ describe("the version of the server on this computer", () => {
       const retried = yield* versions.launch;
       assert.strictEqual(yield* here.versionOf(retried), NEW);
       assert.strictEqual(Option.getOrThrow(yield* here.record).version, NEW);
+      yield* versions.onReady;
       assert.isTrue(Option.isNone(yield* versions.update));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
