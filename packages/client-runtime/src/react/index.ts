@@ -2,6 +2,8 @@
 import type {
   BotFile,
   BotId,
+  BrowserTab,
+  BrowserTabRef,
   EntryId,
   EntryOrder,
   EntryTarget,
@@ -19,9 +21,16 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ConversationHandle, J3Client, UsageHandle, WorkStepsHandle } from "../client.ts";
+import type {
+  BrowserViewHandle,
+  ConversationHandle,
+  J3Client,
+  UsageHandle,
+  WorkStepsHandle,
+} from "../client.ts";
 import { type ActionState, cardAction } from "../intents/Actions.ts";
 import type { Readable } from "../Store.ts";
+import type { BrowserViewSize } from "../stores/Browser.ts";
 import { type ConversationState, targetKey } from "../stores/Conversations.ts";
 import type { Draft } from "../stores/Drafts.ts";
 import type { RoutineRuns } from "../stores/Details.ts";
@@ -136,6 +145,25 @@ export const useRoutineRuns = (routineId: RoutineId | null): Loaded<RoutineRuns>
   useHeldState<Loaded<RoutineRuns>>(
     useHeld(routineId, same, (client, id) => client.openRoutineRuns(id)),
   );
+
+/** A bot's browser tabs, live, while mounted. A null `botId` reads nothing. */
+export const useBrowserTabs = (botId: BotId | null): Loaded<ReadonlyArray<BrowserTab>> | null =>
+  useHeldState<Loaded<ReadonlyArray<BrowserTab>>>(
+    useHeld(botId, same, (client, id) => client.openBrowserTabs(id)),
+  );
+
+/**
+ * A view of the tab `ref` names while mounted, or null for the first render
+ * and while `ref` is null. `size` is read for each socket the view opens.
+ */
+export const useBrowserView = (
+  ref: BrowserTabRef | null,
+  size: () => BrowserViewSize,
+): BrowserViewHandle | null =>
+  useHeld(ref, same, (client, value) => {
+    const view = client.openBrowserView({ ref: value, size });
+    return { ...view, release: view.close };
+  });
 
 /**
  * The conversation or room while the component is mounted: its state, or

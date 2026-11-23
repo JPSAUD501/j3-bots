@@ -22,9 +22,14 @@ interface Confirmation {
   readonly body: string;
   /** The answer that keeps things as they are, which comes first. */
   readonly cancel: string;
-  /** The answer that acts, which cannot be undone. */
+  /** The answer that acts, which cannot be undone unless `reversible`. */
   readonly confirm: string;
   readonly onConfirm: () => void;
+  /**
+   * The answer that acts can be taken back, as giving a bot back its browser
+   * tab can: it is the primary answer then, not a destructive one.
+   */
+  readonly reversible?: boolean;
 }
 
 const AskContext = createContext<((confirmation: Confirmation) => void) | null>(null);
@@ -32,7 +37,8 @@ const AskContext = createContext<((confirmation: Confirmation) => void) | null>(
 const pop = reanimatedSpring(springs.pop);
 
 /**
- * Asks before something that cannot be undone, in the app's own short dialog
+ * Asks before something that cannot be undone, or before leaving something
+ * the operator holds, in the app's own short dialog
  * rather than the system's alert, so it reads and moves like every other
  * surface: a `surface` panel over the scrim that pops in from slightly
  * smaller on `pop` and leaves on `out`. The answer that keeps things as they
@@ -136,7 +142,12 @@ function Panel({
       <View className="flex-row flex-wrap justify-end gap-2 pt-4">
         {/* Each takes its share of the row it is on, so answers that wrap stack evenly. */}
         <Button grow variant="secondary" label={confirmation.cancel} onPress={onCancel} />
-        <Button grow variant="destructive" label={confirmation.confirm} onPress={onConfirm} />
+        <Button
+          grow
+          variant={confirmation.reversible === true ? "primary" : "destructive"}
+          label={confirmation.confirm}
+          onPress={onConfirm}
+        />
       </View>
     </Animated.View>
   );
