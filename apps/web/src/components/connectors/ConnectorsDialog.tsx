@@ -29,6 +29,12 @@ import {
 interface ConnectorsDialogProps {
   /** Null while it is closed. */
   readonly opening: ConnectorsOpening | null;
+  /**
+   * Put aside for another dialog, as Settings when the operator goes to unlock
+   * the vault: closed, with its pages and what they hold kept, to come back as
+   * they were.
+   */
+  readonly aside: boolean;
   /** Null until they load. */
   readonly connectors: ReadonlyArray<Connector> | null;
   readonly bots: ReadonlyArray<Bot>;
@@ -45,12 +51,12 @@ interface ConnectorsDialogProps {
  * returns to it. On a phone it takes the screen; from the tablet layout up it
  * is a panel.
  */
-export function ConnectorsDialog({ opening, onClose, ...rest }: ConnectorsDialogProps) {
+export function ConnectorsDialog({ opening, aside, onClose, ...rest }: ConnectorsDialogProps) {
   const shown = useHeldWhileClosing(opening);
   const titleId = useId();
   return (
     <Dialog.Root
-      open={opening !== null}
+      open={opening !== null && !aside}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
@@ -58,7 +64,7 @@ export function ConnectorsDialog({ opening, onClose, ...rest }: ConnectorsDialog
         if (!open) shown.closed();
       }}
     >
-      <Dialog.Portal>
+      <Dialog.Portal keepMounted={opening !== null && aside}>
         <Dialog.Backdrop className={dialogBackdrop} />
         <Dialog.Popup
           aria-labelledby={titleId}
@@ -79,7 +85,7 @@ export function ConnectorsDialog({ opening, onClose, ...rest }: ConnectorsDialog
   );
 }
 
-export type ConnectorsScreenProps = Omit<ConnectorsDialogProps, "opening"> & {
+export type ConnectorsScreenProps = Omit<ConnectorsDialogProps, "opening" | "aside"> & {
   /** The id its title takes, which names the dialog that holds it. */
   readonly titleId: string;
   readonly opening: ConnectorsOpening;

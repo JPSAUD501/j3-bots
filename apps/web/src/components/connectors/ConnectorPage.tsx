@@ -62,14 +62,18 @@ export function ConnectorPage({
   });
   const [replacing, setReplacing] = useState(false);
 
-  // A card's Sign in, or a connector just added that signs in, starts it as the page opens.
+  // A card's Sign in, or a connector just added that signs in, starts it as the page opens:
+  // the browser's sign-in for one that signs in there, its form again for one that takes a key.
   const startedOnOpen = useRef(false);
   const connectorId = connector?.id ?? null;
-  const startOnOpen = useEffectEvent(signIn.start);
+  const startOnOpen = useEffectEvent(() => {
+    if (connector?.signIn === "oauth") signIn.start(connector.id);
+    else if (connector?.signIn === "fields") setReplacing(true);
+  });
   useEffect(() => {
     if (!signInOnOpen || startedOnOpen.current || connectorId === null) return;
     startedOnOpen.current = true;
-    startOnOpen(connectorId);
+    startOnOpen();
   }, [signInOnOpen, connectorId]);
 
   if (connector === null) {

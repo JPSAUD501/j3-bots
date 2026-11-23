@@ -106,7 +106,7 @@ const token = FieldKey.make("token");
 const tokenField: ConnectorField = {
   key: token,
   label: "Auth token",
-  description: "Made under Settings → Auth tokens, with read access to issues and releases.",
+  description: null,
   secret: true,
   required: true,
   placeholder: null,
@@ -160,7 +160,15 @@ function sampleDetails(ref: ListingRef): ConnectorListingDetails | undefined {
             ],
             url: SetupPageUrl.make("https://console.example.com/credentials"),
           }
-        : null,
+        : listing.connect === "token"
+          ? {
+              steps: [
+                "Open your organization's settings, then Auth tokens.",
+                "Make a token with read access to issues and releases, and copy it here.",
+              ],
+              url: SetupPageUrl.make("https://errors.example.com/settings/auth-tokens"),
+            }
+          : null,
     command:
       listing.connect === "command"
         ? { command: "npx", args: ["-y", "@example/files-server", "~/Shared"], env: [] }

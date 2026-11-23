@@ -180,8 +180,8 @@ function ConnectForm({
         else add();
       }}
     >
-      {ownApp && listing.setup !== null && (
-        <PageSection title={t("connect.setup")}>
+      {listing.setup !== null && (
+        <PageSection title={ownApp ? t("connect.setup") : t("connect.getOne")}>
           <ol className="flex list-decimal flex-col gap-1 ps-5 text-sm">
             {listing.setup.steps.map((step) => (
               <li key={step}>{step}</li>

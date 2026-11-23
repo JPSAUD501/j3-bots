@@ -1044,11 +1044,8 @@ function LiveShell({
     openPage: (url) => {
       window.open(url, "_blank", "noopener");
     },
-    // The vault is unlocked and set up in Settings.
-    openVault: () => {
-      setConnectorsOpening(null);
-      setSettingsOpen(true);
-    },
+    // The vault is unlocked and set up in Settings, over the connectors, which wait as they were.
+    openVault: () => setSettingsOpen(true),
   };
 
   const data: ShellData = {
@@ -1563,6 +1560,7 @@ function LiveShell({
       />
       <ConnectorsDialog
         opening={connectorsOpening}
+        aside={settingsOpen}
         connectors={connectors}
         bots={bots}
         connected={data.connected}

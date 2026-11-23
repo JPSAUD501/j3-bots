@@ -775,8 +775,8 @@ export function useSampleSource({
   const vaultView = useSyncExternalStore(vault.view.subscribe, vault.view.get);
   const intents = useMemo(() => sampleIntents(store, vault), [store, vault]);
   const connectorsIntents = useMemo(
-    () =>
-      sampleConnectorsIntents({
+    () => ({
+      ...sampleConnectorsIntents({
         get: () => store.get().connectors,
         change: (upsert, remove) =>
           store.update((s) => ({
@@ -784,6 +784,9 @@ export function useSampleSource({
             connectors: applyConnectorChange(s.connectors, upsert, remove),
           })),
       }),
+      // As the live source: Settings opens over the connectors, which wait as they were.
+      openVault: () => store.update((s) => ({ ...s, settingsOpen: true })),
+    }),
     [store],
   );
   return {
@@ -792,6 +795,7 @@ export function useSampleSource({
     overlays: (
       <ConnectorsDialog
         opening={state.connectorsOpening}
+        aside={state.settingsOpen}
         connectors={state.connectors}
         bots={botsOf(state)}
         connected
