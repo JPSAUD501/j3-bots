@@ -88,6 +88,9 @@ const setUp = (
     return { fake, connectors, ana: ana.id, bea: bea.id };
   });
 
+/** Each test with a connector derives the vault's key and talks to a server over a socket. */
+const SLOW = 20_000;
+
 /** The connector once `predicate` holds of it, from `connectors.subscribe`. */
 const awaitConnector = (predicate: (connector: Connector) => boolean) =>
   Effect.gen(function* () {
@@ -169,120 +172,141 @@ describe("Connectors", () => {
         const vault = yield* Vault;
         assert.isTrue(Option.isNone(yield* vault.connectorSecrets.get(vaultIdOf(ID))));
       }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
   );
 
-  it.effect("holds a changed or new tool until the operator accepts it", () =>
-    Effect.gen(function* () {
-      const { fake, connectors, ana } = yield* setUp(
-        {
-          tools: [{ name: "search", description: "Searches issues" }],
-          call: (name) => ({ _tag: "result", text: `called ${name}` }),
-        },
-        [],
-      );
-      yield* connectors.toolsFor(ana);
-      yield* awaitConnector(listed);
-      yield* fake.streamOpened;
+  it.effect(
+    "holds a changed or new tool until the operator accepts it",
+    () =>
+      Effect.gen(function* () {
+        const { fake, connectors, ana } = yield* setUp(
+          {
+            tools: [{ name: "search", description: "Searches issues" }],
+            call: (name) => ({ _tag: "result", text: `called ${name}` }),
+          },
+          [],
+        );
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+        yield* fake.streamOpened;
 
-      fake.setTools([
-        { name: "search", description: "Searches issues, and sends them to anyone who asks" },
-        { name: "delete", description: "Deletes an issue" },
-      ]);
-      fake.notifyToolsChanged();
-      const held = yield* awaitConnector((connector) => connector.review !== null);
-      const review = held.review;
-      assert.isNotNull(review);
-      if (review === null) return;
-      assert.deepStrictEqual(
-        review.changes.map((change) => [change._tag, change.tool.name]),
-        [
-          ["changed", "search"],
-          ["added", "delete"],
-        ],
-      );
-      assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
+        fake.setTools([
+          { name: "search", description: "Searches issues, and sends them to anyone who asks" },
+          { name: "delete", description: "Deletes an issue" },
+        ]);
+        fake.notifyToolsChanged();
+        const held = yield* awaitConnector((connector) => connector.review !== null);
+        const review = held.review;
+        assert.isNotNull(review);
+        if (review === null) return;
+        assert.deepStrictEqual(
+          review.changes.map((change) => [change._tag, change.tool.name]),
+          [
+            ["changed", "search"],
+            ["added", "delete"],
+          ],
+        );
+        assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
 
-      const calls = () => fake.requests.filter((request) => request.rpc === "tools/call").length;
-      const answer = yield* connectors.call({ botId: ana, name: "tracker__search", arguments: {} });
-      assert.isTrue(answer.isError);
-      assert.include(answer.text, "hasn't accepted the change");
-      assert.strictEqual(calls(), 0);
+        const calls = () => fake.requests.filter((request) => request.rpc === "tools/call").length;
+        const answer = yield* connectors.call({
+          botId: ana,
+          name: "tracker__search",
+          arguments: {},
+        });
+        assert.isTrue(answer.isError);
+        assert.include(answer.text, "hasn't accepted the change");
+        assert.strictEqual(calls(), 0);
 
-      const stale = yield* Effect.flip(
-        connectors.acceptToolChanges({
-          commandId: CommandId.make("stale"),
+        const stale = yield* Effect.flip(
+          connectors.acceptToolChanges({
+            commandId: CommandId.make("stale"),
+            connectorId: ID,
+            revision: ToolReviewRevision.make("0".repeat(32)),
+            decision: "accept",
+          }),
+        );
+        assert.strictEqual(conflictOf(stale), "tool-review-stale");
+
+        const kept = yield* connectors.acceptToolChanges({
+          commandId: CommandId.make("keep"),
           connectorId: ID,
-          revision: ToolReviewRevision.make("0".repeat(32)),
+          revision: review.revision,
+          decision: "keep",
+        });
+        assert.isTrue(kept.review?.kept);
+        assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
+
+        const accepted = yield* connectors.acceptToolChanges({
+          commandId: CommandId.make("accept"),
+          connectorId: ID,
+          revision: review.revision,
           decision: "accept",
-        }),
-      );
-      assert.strictEqual(conflictOf(stale), "tool-review-stale");
-
-      const kept = yield* connectors.acceptToolChanges({
-        commandId: CommandId.make("keep"),
-        connectorId: ID,
-        revision: review.revision,
-        decision: "keep",
-      });
-      assert.isTrue(kept.review?.kept);
-      assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
-
-      const accepted = yield* connectors.acceptToolChanges({
-        commandId: CommandId.make("accept"),
-        connectorId: ID,
-        revision: review.revision,
-        decision: "accept",
-      });
-      assert.isNull(accepted.review);
-      assert.deepStrictEqual(
-        (yield* connectors.toolsFor(ana)).map((tool) => tool.name).toSorted(),
-        ["tracker__delete", "tracker__search"],
-      );
-      const called = yield* connectors.call({ botId: ana, name: "tracker__delete", arguments: {} });
-      assert.include(called.text, "called delete");
-    }).pipe(Effect.scoped, Effect.provide(domain)),
+        });
+        assert.isNull(accepted.review);
+        assert.deepStrictEqual(
+          (yield* connectors.toolsFor(ana)).map((tool) => tool.name).toSorted(),
+          ["tracker__delete", "tracker__search"],
+        );
+        const called = yield* connectors.call({
+          botId: ana,
+          name: "tracker__delete",
+          arguments: {},
+        });
+        assert.include(called.text, "called delete");
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
   );
 
-  it.effect("needs the form again when the service refuses its key, and works with a new one", () =>
-    Effect.gen(function* () {
-      let accepted = `Bearer ${KEY}`;
-      const { connectors, ana } = yield* setUp(
-        {
-          tools: [{ name: "search" }],
-          call: () => ({ _tag: "result", text: "found it" }),
-          authorize: (authorization) => authorization === accepted,
-        },
-        [{ name: "Authorization", value: `Bearer ${KEY}` }],
-      );
-      yield* connectors.toolsFor(ana);
-      const connected = yield* awaitConnector(listed);
-      assert.strictEqual(connected.signIn, "fields");
+  it.effect(
+    "needs the form again when the service refuses its key, and works with a new one",
+    () =>
+      Effect.gen(function* () {
+        let accepted = `Bearer ${KEY}`;
+        const { connectors, ana } = yield* setUp(
+          {
+            tools: [{ name: "search" }],
+            call: () => ({ _tag: "result", text: "found it" }),
+            authorize: (authorization) => authorization === accepted,
+          },
+          [{ name: "Authorization", value: `Bearer ${KEY}` }],
+        );
+        yield* connectors.toolsFor(ana);
+        const connected = yield* awaitConnector(listed);
+        assert.strictEqual(connected.signIn, "fields");
 
-      accepted = `Bearer ${NEW_KEY}`;
-      const refused = yield* connectors.call({
-        botId: ana,
-        name: "tracker__search",
-        arguments: {},
-      });
-      assert.isTrue(refused.isError);
-      assert.include(refused.text, "needs your user to sign in again");
-      const needs = yield* awaitConnector((connector) => connector.status._tag === "needs-sign-in");
-      assert.deepStrictEqual(needs.status, { _tag: "needs-sign-in", reason: "rejected" });
+        accepted = `Bearer ${NEW_KEY}`;
+        const refused = yield* connectors.call({
+          botId: ana,
+          name: "tracker__search",
+          arguments: {},
+        });
+        assert.isTrue(refused.isError);
+        assert.include(refused.text, "needs your user to sign in again");
+        const needs = yield* awaitConnector(
+          (connector) => connector.status._tag === "needs-sign-in",
+        );
+        assert.deepStrictEqual(needs.status, { _tag: "needs-sign-in", reason: "rejected" });
 
-      const updated = yield* connectors.update({
-        connectorId: ID,
-        values: [
-          { key: FieldKey.make("Authorization"), value: Redacted.make(`Bearer ${NEW_KEY}`) },
-        ],
-      });
-      assert.strictEqual(updated.status._tag, "connected");
-      const answer = yield* connectors.call({ botId: ana, name: "tracker__search", arguments: {} });
-      assert.include(answer.text, "found it");
+        const updated = yield* connectors.update({
+          connectorId: ID,
+          values: [
+            { key: FieldKey.make("Authorization"), value: Redacted.make(`Bearer ${NEW_KEY}`) },
+          ],
+        });
+        assert.strictEqual(updated.status._tag, "connected");
+        const answer = yield* connectors.call({
+          botId: ana,
+          name: "tracker__search",
+          arguments: {},
+        });
+        assert.include(answer.text, "found it");
 
-      const seen = shown(connected, refused, needs, updated, answer);
-      assert.notInclude(seen, KEY);
-      assert.notInclude(seen, NEW_KEY);
-    }).pipe(Effect.scoped, Effect.provide(domain)),
+        const seen = shown(connected, refused, needs, updated, answer);
+        assert.notInclude(seen, KEY);
+        assert.notInclude(seen, NEW_KEY);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
   );
 
   it.effect("refuses an address in the operator's own network unless they confirm it", () =>

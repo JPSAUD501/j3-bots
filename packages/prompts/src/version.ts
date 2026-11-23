@@ -138,6 +138,7 @@ const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
       "timed-out",
       "too-large",
       "failed",
+      "busy",
     ] as const
   ).map((reason): ConnectorResult => ({ type: "unavailable", connector: "Connector", reason })),
 ];

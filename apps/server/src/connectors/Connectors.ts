@@ -46,6 +46,7 @@ import {
   type ConnectorUnavailable,
   renderConnectorResult,
 } from "@j3-bots/prompts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -172,6 +173,9 @@ interface Stumble {
 /** A session closes after this long unused. */
 const IDLE_CLOSE = Duration.minutes(10);
 
+/** The most sessions open at once, idle ones included, across every connector and bot. */
+const MAX_SESSIONS = 32;
+
 const CLIENT = { name: "j3-bots", version: packageJson.version };
 
 const SEPARATOR = "/";
@@ -275,7 +279,8 @@ export const layer = Layer.effect(
     const changes = yield* PubSub.unbounded<Change>();
     const toolChanges = yield* PubSub.unbounded<BotId>();
     const scope = yield* Effect.scope;
-    const listing = yield* Ref.make<ReadonlySet<ConnectorId>>(new Set());
+    /** The connectors being listed in the background, each with whether it was asked for again meanwhile. */
+    const listing = yield* Ref.make<ReadonlyMap<ConnectorId, boolean>>(new Map());
 
     const seenOf = (id: ConnectorId) =>
       Effect.map(Ref.get(seenRef), (seen) => seen.get(id) ?? NOTHING_SEEN);
@@ -405,6 +410,7 @@ export const layer = Layer.effect(
         return session;
       }),
       idleTimeToLive: IDLE_CLOSE,
+      capacity: MAX_SESSIONS,
     });
 
     const closeSessions = Effect.fn("Connectors.closeSessions")(function* (id: ConnectorId) {
@@ -417,26 +423,32 @@ export const layer = Layer.effect(
     const relist = (id: ConnectorId) =>
       Effect.scoped(RcMap.get(sessions, sessionKey(id, "catalog"))).pipe(
         Effect.tapError((failure) =>
-          failure._tag === "ConnectorGone" ? Effect.void : record(id, observe(failure, "connect")),
+          failure._tag === "ConnectorGone" || failure._tag === "ExceededCapacityError"
+            ? Effect.void
+            : record(id, observe(failure, "connect")),
         ),
         Effect.ignore,
       );
 
     /**
      * Lists the tools of a connector this server has not seen listed since it
-     * started, in the background, once at a time: so its review shows, and a
-     * connector that did not answer when it was added gets its tools.
+     * started, in the background: so its review shows, and a connector that
+     * did not answer when it was added gets its tools. One listing runs at a
+     * time; a request while one runs makes it try once more if it fails, since
+     * what it was signed with may have changed since it began.
      */
     const ensureListed = Effect.fn("Connectors.ensureListed")(function* (id: ConnectorId) {
       if (Option.isSome((yield* seenOf(id)).listed)) return;
-      const started = yield* Ref.modify(listing, (ids): [boolean, ReadonlySet<ConnectorId>] =>
-        ids.has(id) ? [false, ids] : [true, new Set(ids).add(id)],
+      const started = yield* Ref.modify(
+        listing,
+        (ids): [boolean, ReadonlyMap<ConnectorId, boolean>] =>
+          ids.has(id) ? [false, new Map(ids).set(id, true)] : [true, new Map(ids).set(id, false)],
       );
       if (!started) return;
-      yield* relist(id).pipe(
+      yield* listUntilAsked(id).pipe(
         Effect.ensuring(
           Ref.update(listing, (ids) => {
-            const next = new Set(ids);
+            const next = new Map(ids);
             next.delete(id);
             return next;
           }),
@@ -444,6 +456,18 @@ export const layer = Layer.effect(
         Effect.forkIn(scope),
       );
     });
+
+    const listUntilAsked = (id: ConnectorId): Effect.Effect<void> =>
+      Effect.gen(function* () {
+        yield* relist(id);
+        const listed = Option.isSome((yield* seenOf(id)).listed);
+        const again = yield* Ref.modify(
+          listing,
+          (ids): [boolean, ReadonlyMap<ConnectorId, boolean>] =>
+            ids.get(id) === true && !listed ? [true, new Map(ids).set(id, false)] : [false, ids],
+        );
+        if (again) yield* listUntilAsked(id);
+      });
 
     // The vault's state: a connector that keeps secrets there is "vault locked" while it is, and is listed once it opens.
     yield* Stream.runForEach(vault.status, (status) =>
@@ -553,7 +577,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const session = yield* RcMap.get(sessions, key).pipe(
             Effect.mapError((failure) =>
-              failure._tag === "ConnectorGone"
+              failure._tag === "ConnectorGone" || failure._tag === "ExceededCapacityError"
                 ? failure
                 : ({ activity: "connect", failure } satisfies Stumble),
             ),
@@ -574,6 +598,8 @@ export const layer = Layer.effect(
       if (Result.isFailure(outcome)) {
         const stumble = outcome.failure;
         if (isGone(stumble)) return yield* new ToolNotOffered();
+        // Every session this server keeps open is in use: no fault of the connector's.
+        if (Cause.isExceededCapacityError(stumble)) return yield* unavailable(connector, "busy");
         yield* record(connector.id, observe(stumble.failure, stumble.activity));
         if (breaksSession(stumble.failure)) yield* RcMap.invalidate(sessions, key);
         if (stumble.failure._tag === "NeedsSignIn") {

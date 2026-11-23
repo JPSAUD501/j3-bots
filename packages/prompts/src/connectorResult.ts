@@ -39,7 +39,9 @@ export type ConnectorUnavailable =
   | "unreachable"
   | "timed-out"
   | "too-large"
-  | "failed";
+  | "failed"
+  /** J3 Bots has as many connector sessions open as it keeps. */
+  | "busy";
 
 const UNAVAILABLE: { readonly [K in ConnectorUnavailable]: (connector: string) => string } = {
   "needs-sign-in": (c) =>
@@ -54,6 +56,8 @@ const UNAVAILABLE: { readonly [K in ConnectorUnavailable]: (connector: string) =
   "too-large": (c) =>
     `${c}'s server answered with more than J3 Bots reads. Ask for less, for example with a narrower query.`,
   failed: (c) => `${c}'s server answered in a way J3 Bots could not read.`,
+  busy: (c) =>
+    `J3 Bots has as many connections to connectors open as it allows, so ${c} was not called. Try again in a few minutes.`,
 };
 
 const write = (result: ConnectorResult, nonce: string) => {
