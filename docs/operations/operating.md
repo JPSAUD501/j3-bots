@@ -74,11 +74,11 @@ When the desktop app runs the bots on this computer, it runs the server itself, 
 | Path | What |
 | --- | --- |
 | `<userData>/server/home` | Its data home (`J3_HOME`), with its own `config.json`, database and keys. Only this user may open it. |
-| `<userData>/server/server.log` | Everything it writes, both streams, appended at each start. Moved to `server.log.1` past 10 MB. |
+| `<userData>/server/server.log` | Everything it writes, both streams, appended at each start. Moved to `server.log.1` past 10 MB. The server writes it directly, so it is complete even when the app died first. |
 | `<userData>/server/server.pid` | Windows only: the last server started, for the next run to end if it was left behind. |
 | `<userData>/server-runtime/<version>` | The Node and server bundle it runs, copied out of the app: the version that runs and the one before it. On Windows it runs from `current`, a copy of that version. |
 
-- **Logs.** Read why it stopped with `tail -n 100 "$HOME/.config/J3 Bots/server/server.log"`. The server's own lines are JSON, one per line, as in the journal; a refused start ends with its message in plain text. The tray and the app show the last lines of its error output when it stops or is refused.
+- **Logs.** Read why it stopped with `tail -n 100 "$HOME/.config/J3 Bots/server/server.log"`. The server's own lines are JSON, one per line, as in the journal; a refused start ends with its message in plain text. The app shows the last lines it wrote when it stops or is refused.
 - **Restarts.** A server that stops on its own is started again after 1 s, doubled each time up to 30 s, and counted as a first stop again after a minute of running. A start the server refuses (exit status 78) is not: the app shows the message, which says how to repair it, and **Try again** starts it once the cause is fixed.
 - **Stop.** Quitting the app stops the server: it is asked on its admin pipe, sent SIGTERM where that fails, and killed after 30 seconds. Closing the window does not: in this mode the app stays in the tray. If the app is killed, the server sees its stdin end and stops by itself.
 - **Its ports.** The first start chooses three free ports from 3747 up and writes them to the home's `config.json`, listening on loopback only. The file is not written again, so a port taken later by another program makes the start fail rather than move the server. Free the port, or change `port` in that file, then choose this computer again in the app's settings, which signs it in at the new address.

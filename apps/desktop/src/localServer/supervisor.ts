@@ -32,7 +32,7 @@ export interface RunningServer {
   readonly admin: AdminChannel;
   /** Succeeds once the process has exited. */
   readonly exited: Effect.Effect<ServerExit>;
-  /** The last lines it wrote to its error output, as far as the app saw them. */
+  /** The last lines this start of it wrote to its log. */
   readonly logTail: Effect.Effect<string>;
   /** Asks the system to end it gracefully, where it can (SIGTERM on Unix). */
   readonly terminate: Effect.Effect<void>;

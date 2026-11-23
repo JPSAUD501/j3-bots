@@ -71,7 +71,7 @@ export const LocalServerState = Schema.Struct({
   reason: Schema.optionalKey(Message),
   /** What repairs it, when that is known apart from `reason`. */
   fix: Schema.optionalKey(Message),
-  /** The last lines the server wrote to its error output, for "Ver detalhes". */
+  /** The last lines the server wrote to its log, for the page to show on request. */
   logTail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8192))),
 });
 export type LocalServerState = typeof LocalServerState.Type;

@@ -17,8 +17,13 @@ import { LaunchFailed, type RunningServer, type ServerExit } from "./supervisor.
 // never closes: when the app's process ends, however it ends, the system
 // closes it, and the server, seeing the end of its input, stops as on
 // SIGTERM. So a server never outlives the app that started it.
+//
+// Its output goes straight to its log file, which it inherits as stdout and
+// stderr: never through the app, whose death would leave the server writing
+// to a pipe no one reads, and failing as it stops, before it stops its
+// engine. What the page and the tray show of it is read back from the file.
 
-/** How many bytes of the server's error output the app keeps, to show and to read a refusal from. */
+/** How many bytes of the server's last output the app keeps, to show and to read a refusal from. */
 const TAIL_BYTES = 8192;
 /** A log file larger than this is moved aside, once, before a start appends to it. */
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024;
@@ -33,22 +38,42 @@ export interface LaunchSpec {
   readonly platform: NodeJS.Platform;
 }
 
-/** The last `TAIL_BYTES` of what was written, cut at a line. */
-const tailOf = (text: string): string => {
-  if (text.length <= TAIL_BYTES) return text;
-  const cut = text.slice(-TAIL_BYTES);
-  const newline = cut.indexOf("\n");
-  return newline === -1 ? cut : cut.slice(newline + 1);
-};
+/** The log, opened for this start to append to, and where this start's output begins in it. */
+interface OpenLog {
+  readonly fd: number;
+  readonly start: number;
+}
 
 /** Opens the log for appending, moving a large one aside first. */
-const openLog = (file: string): number | null => {
+const openLog = (file: string): OpenLog | null => {
   try {
     const size = NodeFS.statSync(file, { throwIfNoEntry: false })?.size ?? 0;
     if (size > LOG_ROTATE_BYTES) NodeFS.renameSync(file, `${file}.1`);
-    return NodeFS.openSync(file, "a", 0o600);
+    const fd = NodeFS.openSync(file, "a", 0o600);
+    return { fd, start: NodeFS.fstatSync(fd).size };
   } catch {
     return null;
+  }
+};
+
+/** The last `TAIL_BYTES` this start wrote to `file` from `start` on, cut at a line. */
+const tailOf = (file: string, start: number): string => {
+  try {
+    const fd = NodeFS.openSync(file, "r");
+    try {
+      const size = NodeFS.fstatSync(fd).size;
+      const from = Math.max(start, size - TAIL_BYTES);
+      const buffer = Buffer.alloc(Math.max(0, size - from));
+      const read = NodeFS.readSync(fd, buffer, 0, buffer.length, from);
+      const text = buffer.subarray(0, read).toString("utf8");
+      if (from === start) return text;
+      const newline = text.indexOf("\n");
+      return newline === -1 ? text : text.slice(newline + 1);
+    } finally {
+      NodeFS.closeSync(fd);
+    }
+  } catch {
+    return "";
   }
 };
 
@@ -80,8 +105,8 @@ export const killTree = (pid: number, platform: NodeJS.Platform) =>
 export const launch = (spec: LaunchSpec): Effect.Effect<RunningServer, LaunchFailed> =>
   Effect.gen(function* () {
     const exited = yield* Deferred.make<ServerExit>();
-    let tail = "";
     const log = openLog(spec.logFile);
+    const output = log === null ? "ignore" : log.fd;
     const child = yield* Effect.callback<NodeChildProcess.ChildProcess, LaunchFailed>((resume) => {
       const spawned = NodeChildProcess.spawn(
         spec.node,
@@ -91,7 +116,7 @@ export const launch = (spec: LaunchSpec): Effect.Effect<RunningServer, LaunchFai
           // Windows gives a child a synchronous handle for a plain pipe, whose
           // reads and writes wait on each other; an overlapped one does not.
           // Elsewhere the two are the same.
-          stdio: ["pipe", "pipe", "pipe", "overlapped"],
+          stdio: ["pipe", output, output, "overlapped"],
           windowsHide: true,
         },
       );
@@ -106,7 +131,14 @@ export const launch = (spec: LaunchSpec): Effect.Effect<RunningServer, LaunchFai
           ),
         ),
       );
-    });
+    }).pipe(
+      // The child holds its own copy of the log; the app's is no longer needed.
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (log !== null) NodeFS.closeSync(log.fd);
+        }),
+      ),
+    );
     const pipe = child.stdio[3];
     if (child.pid === undefined || !(pipe instanceof NodeNet.Socket)) {
       child.kill("SIGKILL");
@@ -115,27 +147,18 @@ export const launch = (spec: LaunchSpec): Effect.Effect<RunningServer, LaunchFai
         retry: true,
       });
     }
-    const write = (chunk: Buffer) => {
-      if (log !== null) NodeFS.write(log, chunk, () => undefined);
-    };
-    child.stdout?.on("data", write);
-    child.stderr?.on("data", (chunk: Buffer) => {
-      write(chunk);
-      tail = tailOf(tail + chunk.toString("utf8"));
-    });
     // The lifeline: held open, never written to, closed by the system with this process.
     child.stdin?.on("error", () => undefined);
     pipe.on("error", () => undefined);
-    child.once("exit", (code, signal) => {
-      if (log !== null) NodeFS.close(log, () => undefined);
-      Deferred.doneUnsafe(exited, Effect.succeed({ code, signal }));
-    });
+    child.once("exit", (code, signal) =>
+      Deferred.doneUnsafe(exited, Effect.succeed({ code, signal })),
+    );
     const pid = child.pid;
     return {
       pid,
       admin: adminChannel.overInheritedPipe(pipe),
       exited: Deferred.await(exited),
-      logTail: Effect.sync(() => tail),
+      logTail: Effect.sync(() => (log === null ? "" : tailOf(spec.logFile, log.start))),
       terminate: Effect.sync(() => {
         // Windows has no signal a process can handle: there, the admin
         // channel's `/shutdown` is the only graceful stop.
