@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readVisualHeight, visualDocument } from "@j3-bots/client-runtime/presentation";
+import {
+  readVisualHeight,
+  visualDocument,
+  visualShell,
+} from "@j3-bots/client-runtime/presentation";
 import { requireNativeView, requireOptionalNativeModule } from "expo";
 import { useEffect, useEffectEvent, useMemo } from "react";
 import {
@@ -40,9 +44,10 @@ export const canShowVisuals = NativeVisualView !== null;
 
 /**
  * A bot's page, wrapped by `visualDocument` in the app's current theme and
- * drawn in the isolated view: rebuilt when the theme changes. Of what the
- * page sends, only its height comes out (`readVisualHeight`), clamped. A page
- * that embeds another document is never drawn: it fails, as its page's doing.
+ * drawn in the isolated view, inside `visualShell`'s sandboxed frame: rebuilt
+ * when the theme changes. Of what the page sends, only its height comes out
+ * (`readVisualHeight`), clamped. A page the document's guard could not watch
+ * is never drawn: it fails, as its page's doing.
  */
 export function VisualFrame({
   html,
@@ -60,16 +65,19 @@ export function VisualFrame({
   readonly style?: StyleProp<ViewStyle>;
 }) {
   const appearance = useColorScheme() === "dark" ? "dark" : "light";
-  const document = useMemo(() => visualDocument(html, appearance), [html, appearance]);
-  const refused = document === null;
+  const page = useMemo(() => {
+    const document = visualDocument(html, appearance);
+    return document === null ? null : visualShell(document);
+  }, [html, appearance]);
+  const refused = page === null;
   const refuse = useEffectEvent(() => onFailed("page"));
   useEffect(() => {
     if (refused) refuse();
   }, [refused]);
-  if (NativeVisualView === null || document === null) return null;
+  if (NativeVisualView === null || page === null) return null;
   return (
     <NativeVisualView
-      document={document}
+      document={page}
       interactive={interactive}
       onPageMessage={({ nativeEvent }) => {
         const height = readVisualHeight(nativeEvent.data);

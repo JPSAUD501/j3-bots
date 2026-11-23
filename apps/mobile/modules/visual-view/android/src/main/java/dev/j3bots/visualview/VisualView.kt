@@ -33,10 +33,10 @@ import kotlin.math.roundToInt
 private const val MAX_MESSAGE_LENGTH = 256
 
 /**
- * The name the height reporter of `visualDocument` looks for on `window`:
+ * The name `visualShell` passes the visual's height to on `window`:
  * `VISUAL_BRIDGE` in `@j3-bots/client-runtime/presentation`, which this must
  * match. It is the only thing of the app a page can reach, and it takes one
- * string.
+ * string. The WebView puts it in every frame, the visual's own included.
  */
 private const val BRIDGE_NAME = "J3Visual"
 
@@ -44,8 +44,10 @@ private const val BRIDGE_NAME = "J3Visual"
  * A bot's visual, in a WebView of its own that keeps it away from everything
  * else (docs/architecture/security.md, "Visuals"):
  *
- * - The page is loaded as a `data:` URL, so it has an opaque origin of its
- *   own: no cookie, no storage, nothing of another page.
+ * - The page is `visualShell`'s, loaded as a `data:` URL, so it has an opaque
+ *   origin of its own: no cookie, no storage, nothing of another page. The
+ *   visual runs in its frame, sandboxed with scripts only, so a frame the
+ *   visual adds has an origin of its own too, and lends it nothing.
  * - No network at all (`blockNetworkLoads`), under the page's own policy,
  *   which already allows none. A navigation the policy cannot stop (a link,
  *   `location`, `window.open`, a refresh) is refused here, on the WebView's
@@ -76,7 +78,7 @@ class VisualView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   override val shouldUseAndroidLayout = true
 
-  /** The page, as `visualDocument` built it. */
+  /** The page, as `visualShell` built it around `visualDocument`'s. */
   var document: String? = null
 
   /** Whether the operator can touch, scroll and zoom it; inline, it is only drawn. */

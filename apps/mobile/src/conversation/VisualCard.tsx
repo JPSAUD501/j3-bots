@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type EntryId, type Visual, visualEmbedsDocument } from "@j3-bots/contracts";
+import { type EntryId, type Visual, visualEscapesGuard } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { Maximize2, X } from "lucide-react-native";
 import { use, useEffect, useState, useSyncExternalStore } from "react";
@@ -60,7 +60,7 @@ export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visu
     () => visuals?.heights.get(id) ?? visual.height ?? UNMEASURED_HEIGHT,
   );
   const [shown, setShown] = useState<Shown>(() =>
-    canShowVisuals && !visualEmbedsDocument(visual.html) && visuals?.failed.has(id) !== true
+    canShowVisuals && !visualEscapesGuard(visual.html) && visuals?.failed.has(id) !== true
       ? "loading"
       : "failed",
   );
