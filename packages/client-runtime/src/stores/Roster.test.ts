@@ -49,7 +49,10 @@ it("lists pinned rows first, then the ones waiting on the operator, then the mos
   const rows = rosterRows([
     bot("Recent", { minutesAgo: 1 }),
     bot("Old", { minutesAgo: 60 }),
-    bot("Asking", { minutesAgo: 30, state: { _tag: "waiting", entryId: EntryId.make("card") } }),
+    bot("Asking", {
+      minutesAgo: 30,
+      state: { _tag: "waiting", entryId: EntryId.make("card"), since: null },
+    }),
     bot("Unread", { minutesAgo: 50, unread: true }),
     bot("Pinned", { minutesAgo: 90, pinned: true }),
     bot("Hidden", { minutesAgo: 0, hidden: true, unread: true }),

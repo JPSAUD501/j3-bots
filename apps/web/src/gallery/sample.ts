@@ -142,7 +142,7 @@ export function sampleTeam(now: DateTime.Utc) {
       "tangerine",
       {
         _tag: "working",
-        since: ago(3),
+        since: ago(9),
         stalled: false,
         activity: "Checking which of the three the shop has in stock",
         tool: null,
@@ -152,10 +152,14 @@ export function sampleTeam(now: DateTime.Utc) {
     juniper: bot(ids.juniper, "Juniper", "Inbox", "ears", "cobalt", {
       _tag: "waiting",
       entryId: EntryId.make("juniper-q1"),
+      // An ask card, answered between turns.
+      since: null,
     }),
     atlas: bot(ids.atlas, "Atlas", "Deploys", "drop", "mint", {
       _tag: "waiting",
       entryId: EntryId.make("atlas-a1"),
+      // An approval, which holds its turn.
+      since: ago(4),
     }),
     // Idle with a reply not yet read: the roster shows Wren as done.
     wren: bot(ids.wren, "Wren", "Writing", "horns", "orchid", { _tag: "idle" }),
@@ -175,6 +179,7 @@ export function sampleTeam(now: DateTime.Utc) {
     iris: bot(ids.iris, "Iris", "Travel", "bean", "sky", {
       _tag: "waiting",
       entryId: EntryId.make("iris-s1"),
+      since: ago(3),
     }),
     pip: bot(ids.pip, "Pip", "Home", "pear", "lime", { _tag: "idle" }, { hidden: true }),
     moss: bot(ids.moss, "Moss", "", "hex", "rose", { _tag: "idle" }),
@@ -242,6 +247,7 @@ export function sampleTeam(now: DateTime.Utc) {
   } satisfies Record<string, Attachment>;
 
   const foldId = EntryId.make("scout-fold");
+  const liveFoldId = EntryId.make("scout-live-fold");
 
   const scoutEntries: DraftEntry[] = [
     message(
@@ -255,6 +261,7 @@ export function sampleTeam(now: DateTime.Utc) {
       id: foldId,
       author: by(ids.scout),
       createdAt: ago(60 * 26 - 1),
+      turnStartedAt: ago(60 * 26),
       stepCount: 6,
       status: {
         _tag: "finished",
@@ -297,6 +304,16 @@ export function sampleTeam(now: DateTime.Utc) {
       ago(8),
       "Done, Wren has it. Meanwhile I’m checking which of the three the shop has in stock.",
     ),
+    // The work Scout's turn does after saying so: its turn is still under way.
+    {
+      _tag: "work-fold",
+      id: liveFoldId,
+      author: by(ids.scout),
+      createdAt: ago(7),
+      turnStartedAt: ago(9),
+      stepCount: 2,
+      status: { _tag: "running" },
+    },
     message(operator, ago(1), "Also check whether any of them fold", {
       delivery: { _tag: "pending" },
     }),
@@ -310,6 +327,26 @@ export function sampleTeam(now: DateTime.Utc) {
     ...rest,
   });
   const workSteps: Record<string, ReadonlyArray<WorkStep>> = {
+    [liveFoldId]: [
+      {
+        id: WorkStepId.make(`${liveFoldId}-0`),
+        kind: "web",
+        tool: null,
+        label: "Read the bike shop’s stock page",
+        status: "completed",
+        startedAt: ago(7),
+        finishedAt: ago(6),
+      },
+      {
+        id: WorkStepId.make(`${liveFoldId}-1`),
+        kind: "other",
+        tool: null,
+        label: "Checking which of the three the shop has in stock",
+        status: "running",
+        startedAt: ago(6),
+        finishedAt: null,
+      },
+    ],
     [foldId]: [
       step(0, {
         kind: "search",

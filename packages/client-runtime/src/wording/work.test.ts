@@ -12,6 +12,7 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
   order: EntryOrder.make(1),
   author: { _tag: "system" },
   createdAt: at("2026-11-20T14:00:00Z"),
+  turnStartedAt: null,
   status,
   stepCount: 3,
 });
@@ -44,5 +45,25 @@ describe("workFoldTitle", () => {
     expect(plain(workFoldTitle(finished("2026-11-20T14:05:00Z", 3 * 60_000), ctx))).toBe(
       "Worked for 2m",
     );
+  });
+
+  it("counts from the turn's start, as the turn's clock did, when the server says it", () => {
+    const fromTurn: WorkFoldEntry = {
+      ...finished("2026-11-20T14:01:12Z", 0),
+      // The first step came 20 s into the turn; the clock had counted from its start.
+      createdAt: at("2026-11-20T14:00:20Z"),
+      turnStartedAt: at("2026-11-20T14:00:00Z"),
+    };
+    expect(plain(workFoldTitle(fromTurn, ctx))).toBe("Worked for 1m 12s");
+    const ptBR = context("2026-11-20T15:00:00Z", "pt-BR", {});
+    expect(plain(workFoldTitle(fromTurn, ptBR))).toBe("Trabalhou por 1 min 12 s");
+  });
+
+  it("says how every turn ended", () => {
+    const ended = (ending: "completed" | "interrupted" | "failed") =>
+      plain(workFoldTitle(finished("2026-11-20T14:01:12Z", 0, false, ending), ctx));
+    expect(ended("completed")).toBe("Worked for 1m 12s");
+    expect(ended("interrupted")).toBe("Stopped after 1m 12s");
+    expect(ended("failed")).toBe("Failed after 1m 12s");
   });
 });

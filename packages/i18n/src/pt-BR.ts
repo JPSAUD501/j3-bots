@@ -207,6 +207,9 @@ const sentences = {
   "work.stepRunning": "Em andamento",
   "work.stepDone": "Concluído",
   "work.stepFailed": "Falhou",
+  "work.live": "{status}, {duration} até agora",
+  "work.offline": "Estava trabalhando quando a conexão caiu",
+  "work.showSteps": "Passos até agora",
 
   "tool.backgroundTask.did": "Iniciou uma tarefa em segundo plano",
   "tool.backgroundTask.doing": "Iniciando uma tarefa em segundo plano",

@@ -5,6 +5,7 @@ import {
   addresseeOf,
   arrivalCounts,
   buildTimeline,
+  liveTurn,
   mentionedNames,
   mentionedWhoLeft,
   openingHeld,
@@ -16,6 +17,7 @@ import {
   rosterTarget,
   rowOrder,
   type TimelineItem,
+  withLiveTurn,
 } from "@j3-bots/client-runtime/presentation";
 import {
   useArrivals,
@@ -86,7 +88,7 @@ import { AnimatedView } from "./animated.ts";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { ToLatest } from "./ToLatest.tsx";
 import { EntryWidths } from "./widths.ts";
-import { WorkFold } from "./WorkFold.tsx";
+import { type TurnBot, WorkFold } from "./WorkFold.tsx";
 
 /** Whether the app is in the foreground. */
 function useAppActive(): boolean {
@@ -220,7 +222,18 @@ export function ConversationView({
     }
   };
   const { state, loadOlder, markRead } = useConversation(target);
-  const rows = useMemo(() => buildTimeline(state?.items ?? []), [state?.items]);
+  // In a bot's conversation, its turn under way shows in the timeline, once.
+  const bot = item._tag === "bot" ? item.bot : null;
+  const turn = useMemo(() => (bot === null ? null : liveTurn(bot)), [bot]);
+  const rows = useMemo(
+    () => withLiveTurn(buildTimeline(state?.items ?? []), turn),
+    [state?.items, turn],
+  );
+  const folds = useMemo(
+    () => (state?.items ?? []).flatMap((entry) => (entry._tag === "work-fold" ? [entry] : [])),
+    [state?.items],
+  );
+  const turnBot = item._tag === "bot" ? { bot: item.bot, lastEntry: item.lastEntry } : null;
   const inView = useInView();
   const pairs = useReadMark(target, rows, markRead, inView);
   // What arrives at the end settles in, and is counted while the operator reads above it.
@@ -313,6 +326,7 @@ export function ConversationView({
           onOpenDetails={onOpenDetails}
           onGoToWaiting={goTo}
           onStop={stop}
+          folds={folds}
         />
       </View>
       {state?.phase === "not-found" ? (
@@ -342,6 +356,7 @@ export function ConversationView({
                     <Row
                       row={row}
                       room={room}
+                      turnBot={turnBot}
                       arriving={arrived.has(row.key)}
                       openingHold={openingHold}
                       onOpenBot={onOpenBot}
@@ -349,7 +364,7 @@ export function ConversationView({
                     />
                   </View>
                 )}
-                extraData={{ room, widths, arrived, openingHold }}
+                extraData={{ room, widths, arrived, openingHold, turnBot }}
                 onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) =>
                   end.follow(
                     contentSize.height - layoutMeasurement.height - contentOffset.y,
@@ -498,6 +513,7 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
 function Row({
   row,
   room,
+  turnBot,
   arriving,
   openingHold,
   onOpenBot,
@@ -506,6 +522,8 @@ function Row({
   readonly row: TimelineItem;
   /** In a room, its members and host now; null in a bot's conversation. */
   readonly room: Pick<Room, "members" | "hostId"> | null;
+  /** In a bot's conversation, the bot: the row of its turn under way says what it is doing. */
+  readonly turnBot: TurnBot | null;
   /** It just arrived at the end: it settles into place as it mounts. */
   readonly arriving: boolean;
   /** What holds the bot's hello back, which the operator's messages behind it wait for (`openingHeld`). */
@@ -541,13 +559,18 @@ function Row({
         />
       );
     }
+    case "work":
+      // A turn's row comes in on `pop` as the turn starts.
+      return (
+        <AnimatedView {...enteringWhen(settles, settleIn(springs.pop))}>
+          <WorkFold fold={row.fold} live={row.live ? turnBot : null} />
+        </AnimatedView>
+      );
     case "card": {
       const { entry } = row;
       return (
         <AnimatedView {...entering}>
-          {entry._tag === "work-fold" ? (
-            <WorkFold entry={entry} />
-          ) : entry._tag === "notice" ? (
+          {entry._tag === "notice" ? (
             <NoticeLine
               entry={entry}
               onRetry={() => void client.retryNotice(entry.id)}

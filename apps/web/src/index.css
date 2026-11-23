@@ -194,9 +194,9 @@
 
 /*
  * Motion inside a conversation. Each plays once, on a spring: an opening
- * conversation settles in, and what arrives in it settles into place. The
- * one loop, the live mark of a running step, stops under reduced motion,
- * which keeps every still form.
+ * conversation settles in, and what arrives in it settles into place. A line
+ * of status swaps on the `out` ease. The one loop, the live mark of a running
+ * step, stops under reduced motion, which keeps every still form.
  */
 @layer components {
   .conversation-open {
@@ -207,8 +207,22 @@
     animation: arrive var(--duration-soft) var(--ease-soft) backwards;
   }
 
+  /* A turn's row: in as the turn starts, and again as it folds into its line, on `pop`. */
+  .arrive-pop {
+    animation: arrive var(--duration-pop) var(--ease-pop) backwards;
+  }
+
   .pop-in {
     animation: pop-in var(--duration-pop) var(--ease-pop) backwards;
+  }
+
+  /* A line of status giving way to the next: the old leaves upward, the new rises in. */
+  .swap-in {
+    animation: swap-in var(--duration-swap) var(--ease-out) backwards;
+  }
+
+  .swap-out {
+    animation: swap-out var(--duration-swap) var(--ease-out) forwards;
   }
 
   /* Stepped, 8 changes in 1.4 s, like the avatars: it never repaints every frame. */
@@ -259,6 +273,20 @@
   from {
     opacity: 0;
     transform: scale(0.4);
+  }
+}
+
+@keyframes swap-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.6em);
+  }
+}
+
+@keyframes swap-out {
+  to {
+    opacity: 0;
+    transform: translateY(-0.6em);
   }
 }
 

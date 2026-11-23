@@ -146,9 +146,15 @@ export const layer = Layer.effect(
 
     const of = Effect.fn("BotStates.of")(function* (botId: BotId) {
       const card = yield* engineCard(botId);
-      if (Option.isSome(card)) return { _tag: "waiting", entryId: card.value.entry_id } as const;
-
       const turn = yield* runningTurn(botId);
+      if (Option.isSome(card)) {
+        return {
+          _tag: "waiting",
+          entryId: card.value.entry_id,
+          since: Option.isSome(turn) ? turn.value.started_at : null,
+        } as const;
+      }
+
       if (Option.isSome(turn)) {
         const now = yield* DateTime.now;
         const stalled = Duration.isGreaterThan(
@@ -193,7 +199,10 @@ export const layer = Layer.effect(
       }
 
       const asked = yield* askCard(botId);
-      if (Option.isSome(asked)) return { _tag: "waiting", entryId: asked.value.entry_id } as const;
+      // No turn runs: the bot waits between turns, on a card it asked.
+      if (Option.isSome(asked)) {
+        return { _tag: "waiting", entryId: asked.value.entry_id, since: null } as const;
+      }
       return { _tag: "idle" } as const;
     }, Effect.orDie);
 

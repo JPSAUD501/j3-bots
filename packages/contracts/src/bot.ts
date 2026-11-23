@@ -110,7 +110,17 @@ export const BotState = Schema.Union([
     tool: StepTool,
   }),
   /** The bot asked a question or needs an approval: the card awaiting the operator. */
-  Schema.TaggedStruct("waiting", { entryId: EntryId }),
+  Schema.TaggedStruct("waiting", {
+    entryId: EntryId,
+    /**
+     * When the turn that waits started, while a turn waits on the card (an
+     * approval the engine holds it on); null while the bot waits between
+     * turns, on a card it asked, and from a server that predates it.
+     */
+    since: Schema.NullOr(Schema.DateTimeUtc).pipe(
+      Schema.withDecodingDefaultKey(Effect.succeed(null)),
+    ),
+  }),
   /** The turn cannot continue. */
   Schema.TaggedStruct("blocked", {
     /** Open: the server builds a bot's state and never reads one back. */

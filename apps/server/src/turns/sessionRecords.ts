@@ -89,7 +89,7 @@ export const sessionRecords = (
     const waits = yield* waitRows(entryId);
     const waitedMs = waitedWithin(
       waits.map((row) => ({ from: row.opened_at, until: row.closed_at })),
-      fold.createdAt,
+      fold.turnStartedAt ?? fold.createdAt,
       at,
     );
     yield* entries.update({

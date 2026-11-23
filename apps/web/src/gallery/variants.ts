@@ -376,6 +376,7 @@ export function galleryVariants(now: DateTime.Utc) {
   ): WorkFoldEntry => ({
     _tag: "work-fold",
     ...base(name),
+    turnStartedAt: ago(6),
     stepCount,
     status,
   });

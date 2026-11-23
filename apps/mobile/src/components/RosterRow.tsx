@@ -5,6 +5,7 @@ import type { RosterItem } from "@j3-bots/contracts";
 import { type Ref, useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
+import { SwapText } from "./SwapText.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
@@ -93,9 +94,9 @@ export function RosterRow({
           {time !== null && <Text className="text-2xs text-muted-foreground">{time}</Text>}
         </View>
         <View className="flex-row items-center gap-2">
-          <Text numberOfLines={1} className={`flex-1 text-sm ${toneClass[line.tone]}`}>
-            {line.text}
-          </Text>
+          <View className="min-w-0 flex-1">
+            <SwapText text={line.text} className={`text-sm ${toneClass[line.tone]}`} />
+          </View>
           {unreadDot && <View className="size-2 rounded-pill bg-accent" />}
         </View>
       </View>

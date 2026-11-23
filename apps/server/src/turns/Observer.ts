@@ -79,6 +79,7 @@ const TurnRow = Schema.Struct({
   engine_turn_id: TurnId,
   audience: AudienceColumn,
   audience_room_id: Schema.NullOr(RoomId),
+  started_at: Time,
   finished_at: Schema.NullOr(Time),
   outcome_json: Schema.NullOr(json(TurnOutcome)),
   work_fold_entry_id: Schema.NullOr(EntryId),
@@ -328,7 +329,7 @@ export const layer = Layer.effect(
       Request: TurnKey,
       Result: TurnRow,
       execute: ({ sessionId, turnId }) => sql`
-        SELECT engine_turn_id, audience, audience_room_id, finished_at, outcome_json,
+        SELECT engine_turn_id, audience, audience_room_id, started_at, finished_at, outcome_json,
           work_fold_entry_id, background_pending
         FROM turns WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
       `,
@@ -340,7 +341,7 @@ export const layer = Layer.effect(
       Request: SessionRowId,
       Result: TurnRow,
       execute: (sessionId) => sql`
-        SELECT engine_turn_id, audience, audience_room_id, finished_at, outcome_json,
+        SELECT engine_turn_id, audience, audience_room_id, started_at, finished_at, outcome_json,
           work_fold_entry_id, background_pending
         FROM turns WHERE session_id = ${sessionId} AND finished_at IS NULL
       `,
@@ -499,6 +500,7 @@ export const layer = Layer.effect(
         entry: {
           _tag: "work-fold",
           author: { _tag: "bot", botId: session.bot_id },
+          turnStartedAt: turn.started_at,
           stepCount: 0,
           status: foldStatus(turn),
         },

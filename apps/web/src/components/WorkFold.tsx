@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Collapsible } from "@base-ui/react/collapsible";
-import type { WorkFoldEntry, WorkStep } from "@j3-bots/contracts";
+import type { Bot, EntryPreview, WorkFoldEntry, WorkStep } from "@j3-bots/contracts";
 import {
   BotIcon,
   CheckIcon,
@@ -15,12 +15,22 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
-import { millisBetween, shortDuration } from "@j3-bots/client-runtime/presentation";
+import {
+  liveTurn,
+  millisBetween,
+  shortDuration,
+  turnClock,
+  turnElapsed,
+} from "@j3-bots/client-runtime/presentation";
+import { useSeconds } from "../app/clock";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
-import { stepText, workFoldTitle } from "@j3-bots/client-runtime/wording";
+import { stepText, turnLabel, turnLine, workFoldTitle } from "@j3-bots/client-runtime/wording";
+import { LiveBotAvatar, useOffline } from "./avatar/mood";
 import { CodeLines } from "./CodeLines";
+import { toneClass } from "./RosterRow";
+import { SwapText } from "./SwapText";
 
 const stepIcon: Record<WorkStep["kind"], typeof TerminalIcon> = {
   command: TerminalIcon,
@@ -33,8 +43,18 @@ const stepIcon: Record<WorkStep["kind"], typeof TerminalIcon> = {
   other: EllipsisIcon,
 };
 
+/** The bot of a turn under way, as its row shows it. */
+export interface TurnBot {
+  readonly bot: Bot;
+  /** The bot's latest entry, so its avatar speaks while a message of its own arrives. */
+  readonly lastEntry: EntryPreview | null;
+}
+
 interface WorkFoldProps {
-  readonly entry: WorkFoldEntry;
+  /** The turn's fold; null for a turn under way that has done no work yet. */
+  readonly fold: WorkFoldEntry | null;
+  /** While the turn runs, its bot: the row says what it is doing, and for how long. */
+  readonly live: TurnBot | null;
   /** The turn's steps once loaded; null while they load. */
   readonly steps: ReadonlyArray<WorkStep> | null;
   /**
@@ -46,14 +66,14 @@ interface WorkFoldProps {
 }
 
 /**
- * A turn's work in one line, "Worked for 2m" once it ends, that opens to
- * every step. Never opens by itself.
+ * A turn's work in one row. While the turn runs: a small copy of the bot, one
+ * line saying what it is doing now and the turn's clock. When it ends, the
+ * row folds into one quiet line, "Worked for 2m", that opens to every step,
+ * as the running row does once there are steps. Never opens by itself.
  */
-export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: WorkFoldProps) {
+export function WorkFold({ fold, live, steps, onOpenChange, defaultOpen = false }: WorkFoldProps) {
   const ctx = usePresentation();
   const { t, plural } = ctx.i18n;
-  const { status } = entry;
-  const title = workFoldTitle(entry, ctx);
   const [open, setOpen] = useState(defaultOpen);
   const report = useEffectEvent(onOpenChange);
   useEffect(() => {
@@ -61,64 +81,126 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
     report(true);
     return () => report(false);
   }, [open]);
+  // The row folds into its line once the turn it showed ends; one that was over when it mounted is just there.
+  const [wasLive, setWasLive] = useState(live !== null);
+  if (live !== null && !wasLive) setWasLive(true);
+  const folding = live === null && wasLive;
+  const hasSteps = fold !== null && fold.stepCount > 0;
   return (
     <Collapsible.Root
-      open={open}
+      open={open && fold !== null}
       onOpenChange={setOpen}
-      className="mt-3 max-w-(--layout-card-width) self-start"
+      className="mt-3 max-w-(--layout-card-width) self-start data-live:w-full"
+      {...(live === null ? {} : { "data-live": "" })}
     >
-      <Collapsible.Trigger
-        className={cn(
-          "pressable group -ms-2 flex items-center gap-1.5 rounded-md px-2 text-xs hover:bg-muted hover:text-foreground",
-          touchTarget,
-          status._tag === "finished" && status.ending === "failed"
-            ? "text-blocked"
-            : "text-muted-foreground",
-        )}
-      >
-        <ChevronRightIcon
-          aria-hidden
-          className="size-3.5 transition-transform duration-(--duration-pop) ease-pop group-data-panel-open:rotate-90"
-        />
-        {/* Running, the line carries a quiet live mark: the bot is still at it. */}
-        {status._tag === "running" && <LiveMark />}
-        <span>{title}</span>
-        {entry.stepCount > 0 && (
-          // The dot is its own item, so the line's gap stands on both sides of it.
-          <>
-            <span className="text-muted-foreground">·</span>
-            <span className="text-muted-foreground">{plural("work.steps", entry.stepCount)}</span>
-          </>
-        )}
-      </Collapsible.Trigger>
-      <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-(--duration-slide) ease-slide data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
-        {steps === null ? (
-          <p className="py-2 ps-5 text-xs text-muted-foreground">{t("work.loading")}</p>
-        ) : (
-          <ol className="mt-1.5 flex flex-col border-s border-border ps-3 ms-1.5">
-            {steps.map((step) => {
-              const Icon = stepIcon[step.kind];
-              return (
-                <li key={step.id} className="flex min-h-7 items-start gap-2 py-1 text-xs">
-                  <Icon aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
-                  {/* Long commands and paths wrap: every step reads in full without a pointer. */}
-                  {step.kind === "command" ? (
-                    <span className="min-w-0 flex-1 font-mono text-2xs whitespace-pre-wrap wrap-anywhere">
-                      <CodeLines text={step.label} />
-                    </span>
-                  ) : (
-                    <span className="min-w-0 flex-1 wrap-break-word">
-                      {stepText(step, ctx.i18n)}
-                    </span>
-                  )}
-                  <StepStatus step={step} />
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </Collapsible.Panel>
+      {live !== null ? (
+        <LiveLine turn={live} hasSteps={hasSteps} />
+      ) : fold !== null ? (
+        <Collapsible.Trigger
+          className={cn(
+            "pressable group -ms-2 flex items-center gap-1.5 rounded-md px-2 text-xs hover:bg-muted hover:text-foreground",
+            touchTarget,
+            folding && "arrive-pop origin-left",
+            fold.status._tag === "finished" && fold.status.ending === "failed"
+              ? "text-blocked"
+              : "text-muted-foreground",
+          )}
+        >
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 transition-transform duration-(--duration-pop) ease-pop group-data-panel-open:rotate-90"
+          />
+          {/* A fold whose turn this client no longer sees running carries the quiet live mark. */}
+          {fold.status._tag === "running" && <LiveMark />}
+          <span>{workFoldTitle(fold, ctx)}</span>
+          {fold.stepCount > 0 && (
+            // The dot is its own item, so the line's gap stands on both sides of it.
+            <>
+              <span className="text-muted-foreground">·</span>
+              <span className="text-muted-foreground">{plural("work.steps", fold.stepCount)}</span>
+            </>
+          )}
+        </Collapsible.Trigger>
+      ) : null}
+      {fold !== null && (
+        <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-(--duration-slide) ease-slide data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
+          {steps === null ? (
+            <p className="py-2 ps-5 text-xs text-muted-foreground">{t("work.loading")}</p>
+          ) : (
+            <ol className="mt-1.5 flex flex-col border-s border-border ps-3 ms-1.5">
+              {steps.map((step) => {
+                const Icon = stepIcon[step.kind];
+                return (
+                  <li key={step.id} className="flex min-h-7 items-start gap-2 py-1 text-xs">
+                    <Icon aria-hidden className="mt-px size-3.5 shrink-0 text-muted-foreground" />
+                    {/* Long commands and paths wrap: every step reads in full without a pointer. */}
+                    {step.kind === "command" ? (
+                      <span className="min-w-0 flex-1 font-mono text-2xs whitespace-pre-wrap wrap-anywhere">
+                        <CodeLines text={step.label} />
+                      </span>
+                    ) : (
+                      <span className="min-w-0 flex-1 wrap-break-word">
+                        {stepText(step, ctx.i18n)}
+                      </span>
+                    )}
+                    <StepStatus step={step} />
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </Collapsible.Panel>
+      )}
     </Collapsible.Root>
+  );
+}
+
+/**
+ * The running row: the bot at list size in its state, what it is doing now,
+ * swapping as it moves to a new step, and the turn's clock, counted from the
+ * turn's start on the server. Once there are steps, a chevron opens them.
+ * Assistive technology reads the line and the time so far, not each tick;
+ * the conversation's header says each new line aloud.
+ */
+function LiveLine({ turn, hasSteps }: { readonly turn: TurnBot; readonly hasSteps: boolean }) {
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const offline = useOffline();
+  const started = liveTurn(turn.bot);
+  // Out of touch, the client cannot say how long the turn has run: the clock stops showing.
+  const now = useSeconds(started !== null && !offline);
+  const line = turnLine(turn.bot, offline, ctx);
+  const elapsed = started === null ? null : turnElapsed(started, now);
+  return (
+    <div className="flex min-h-8 items-center gap-2.5 text-xs">
+      <LiveBotAvatar bot={turn.bot} lastEntry={turn.lastEntry} size={24} />
+      <span className="min-w-0 flex-1">
+        <SwapText text={line.text} className={toneClass[line.tone]} />
+        {elapsed !== null && <span className="sr-only">{turnLabel(line, elapsed, ctx)}</span>}
+      </span>
+      {elapsed !== null && !offline && (
+        <span
+          aria-hidden
+          className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums"
+        >
+          {turnClock(elapsed)}
+        </span>
+      )}
+      {hasSteps && (
+        <Collapsible.Trigger
+          aria-label={t("work.showSteps")}
+          className={cn(
+            "pressable pressable-round group -me-1.5 flex size-7 shrink-0 items-center justify-center rounded-pill text-muted-foreground hover:bg-muted hover:text-foreground",
+            touchTarget,
+          )}
+        >
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 transition-transform duration-(--duration-pop) ease-pop group-data-panel-open:rotate-90"
+          />
+        </Collapsible.Trigger>
+      )}
+    </div>
   );
 }
 

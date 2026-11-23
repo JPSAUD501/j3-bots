@@ -83,16 +83,17 @@ export function workDoneText(step: StepSummary | null, i18n: I18n): string {
  * A work fold's title. While the turn runs it says so, with no duration: the
  * time is not known until it ends. Once the turn has completed with work it
  * handed off still running, it says that. Otherwise it says how the turn
- * ended and how long it worked, less the time it waited on the operator; a
- * turn stopped or failed says so even while work it handed off still runs,
- * and then says that too.
+ * ended and how long it worked, from the turn's start, as its clock counted,
+ * less the time it waited on the operator; a turn stopped or failed says so
+ * even while work it handed off still runs, and then says that too.
  */
 export function workFoldTitle(entry: WorkFoldEntry, ctx: PresentationContext): string {
   const { t } = ctx.i18n;
   const { status } = entry;
   if (status._tag === "running") return t("presence.working");
   if (status.background && status.ending === "completed") return t("work.inBackground");
-  const worked = Math.max(0, millisBetween(entry.createdAt, status.finishedAt) - status.waitedMs);
+  const from = entry.turnStartedAt ?? entry.createdAt;
+  const worked = Math.max(0, millisBetween(from, status.finishedAt) - status.waitedMs);
   const duration = shortDuration(worked, ctx.i18n);
   switch (status.ending) {
     case "completed":

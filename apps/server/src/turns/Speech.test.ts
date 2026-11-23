@@ -343,7 +343,11 @@ it.effect("closes delivery with an ask card, whose answer wakes the bot", () =>
     yield* flushed(bot.id);
     // The card delivered the turn: the bot waits on it, with no follow-up.
     assert.strictEqual((yield* received(session)).length, 1);
-    assert.deepStrictEqual(yield* states.of(bot.id), { _tag: "waiting", entryId: card.id });
+    assert.deepStrictEqual(yield* states.of(bot.id), {
+      _tag: "waiting",
+      entryId: card.id,
+      since: null,
+    });
 
     const question = card.questions[0].id;
     yield* cards.answer({

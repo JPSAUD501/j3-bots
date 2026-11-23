@@ -297,11 +297,20 @@ export type TurnEnding = typeof TurnEnding.Type;
 
 /**
  * One turn's work, folded into a line. Its steps are read with
- * `entries.workSteps`. The line says how long the bot worked: from the fold's
- * first step to the end of its turn, less `waitedMs`.
+ * `entries.workSteps`. The line says how long the bot worked: from the start
+ * of its turn (`turnStartedAt`, else the fold's first step) to its end, less
+ * `waitedMs`.
  */
 export const WorkFoldEntry = Schema.TaggedStruct("work-fold", {
   ...entry,
+  /**
+   * When the fold's turn started, the time a working bot's state counts from
+   * (`BotState` `since`), so the fold and the turn's clock agree. Null from a
+   * server, or a fold, that predates it.
+   */
+  turnStartedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   stepCount: NonNegativeInt,
   status: Schema.Union([
     Schema.TaggedStruct("running", {}),

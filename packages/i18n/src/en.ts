@@ -209,6 +209,9 @@ export const en = {
   "work.stepRunning": "Running",
   "work.stepDone": "Done",
   "work.stepFailed": "Failed",
+  "work.live": "{status}, {duration} so far",
+  "work.offline": "Was working when the connection dropped",
+  "work.showSteps": "Steps so far",
 
   "tool.backgroundTask.did": "Started a background task",
   "tool.backgroundTask.doing": "Starting a background task",

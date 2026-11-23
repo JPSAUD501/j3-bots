@@ -8,6 +8,7 @@ import type {
   MessageEntry,
   ReceivedEntry,
   RoutineChangeEntry,
+  WorkFoldEntry,
 } from "@j3-bots/contracts";
 import type { ConversationItem, OutgoingMessage } from "../stores/Conversations.ts";
 import * as DateTime from "effect/DateTime";
@@ -25,7 +26,23 @@ export type TimelineItem =
       readonly message: TimelineMessage;
       readonly position: GroupPosition;
     }
-  | { readonly kind: "card"; readonly key: string; readonly entry: Exclude<Entry, MessageEntry> }
+  | {
+      readonly kind: "card";
+      readonly key: string;
+      readonly entry: Exclude<Entry, MessageEntry | WorkFoldEntry>;
+    }
+  /**
+   * A turn's work: its fold once it has one, and while the turn runs, the
+   * line that says what the bot is doing (`live`), which becomes the fold's
+   * line when the turn ends (`withLiveTurn`).
+   */
+  | {
+      readonly kind: "work";
+      readonly key: string;
+      /** Null for a turn under way that has done no work yet. */
+      readonly fold: WorkFoldEntry | null;
+      readonly live: boolean;
+    }
   /**
    * An entry, or a notice, of a kind added after this build: one line saying
    * it needs a newer version of the app, in the entry's place.
@@ -51,7 +68,16 @@ const keyOf = (item: ConversationItem): string =>
     ? item.commandId
     : item._tag === "message" && item.commandId !== null
       ? item.commandId
-      : item.id;
+      : item._tag === "work-fold" && item.turnStartedAt !== null
+        ? turnKey(item.turnStartedAt)
+        : item.id;
+
+/**
+ * A turn's row, by when it started: the same before its first step, once it
+ * has a fold, and after it ends, so the row keeps its element throughout.
+ */
+export const turnKey = (startedAt: DateTime.Utc): string =>
+  `turn-${DateTime.toEpochMillis(startedAt)}`;
 
 const authorOf = (message: TimelineMessage) =>
   message._tag === "outgoing" ? ({ _tag: "operator" } as const) : message.author;
@@ -109,6 +135,8 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
       const card = known(entry);
       if (card === null) items.push({ kind: "unknown", key, id: entry.id, order: entry.order });
       else if (card._tag === "routine-change") placeRoutineChange(items, key, card);
+      else if (card._tag === "work-fold")
+        items.push({ kind: "work", key, fold: card, live: false });
       else items.push({ kind: "card", key, entry: card });
     }
     previous = entry;
@@ -153,6 +181,8 @@ export function rowOrder(row: TimelineItem): EntryOrder | null {
       return row.message._tag === "message" ? row.message.order : null;
     case "card":
       return row.entry.order;
+    case "work":
+      return row.fold?.order ?? null;
     case "unknown":
       return row.order;
   }

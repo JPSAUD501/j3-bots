@@ -41,9 +41,9 @@ describe("avatarMood", () => {
     const speaking = { ...quiet, speaking: true };
     expect(avatarMood(working, speaking).state).toBe("speaking");
     expect(avatarMood({ _tag: "idle" }, { ...speaking, unread: true }).state).toBe("speaking");
-    expect(avatarMood({ _tag: "waiting", entryId: EntryId.make("q") }, speaking).state).toBe(
-      "waiting",
-    );
+    expect(
+      avatarMood({ _tag: "waiting", entryId: EntryId.make("q"), since: null }, speaking).state,
+    ).toBe("waiting");
     expect(
       avatarMood({ _tag: "blocked", failure: "usage-limit", retryAt: null }, speaking).state,
     ).toBe("blocked");
@@ -51,7 +51,10 @@ describe("avatarMood", () => {
 
   it("shows every bot asleep while the client cannot see the server", () => {
     expect(
-      avatarMood({ _tag: "waiting", entryId: EntryId.make("q") }, { ...quiet, offline: true }),
+      avatarMood(
+        { _tag: "waiting", entryId: EntryId.make("q"), since: null },
+        { ...quiet, offline: true },
+      ),
     ).toEqual({ state: "offline", stalled: false });
   });
 
@@ -84,7 +87,10 @@ describe("notificationState", () => {
     const blocked: BotState = { _tag: "blocked", failure: "usage-limit", retryAt: null };
     expect(notificationState({ kind: "message" }, blocked)).toBe("blocked");
     expect(
-      notificationState({ kind: "message" }, { _tag: "waiting", entryId: EntryId.make("q") }),
+      notificationState(
+        { kind: "message" },
+        { _tag: "waiting", entryId: EntryId.make("q"), since: null },
+      ),
     ).toBe("waiting");
   });
 });

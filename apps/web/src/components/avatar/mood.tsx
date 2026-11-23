@@ -4,6 +4,9 @@ import { useAsleep, useAvatarMood } from "@j3-bots/client-runtime/react";
 import { type ReactNode, type Ref, use } from "react";
 import { type AvatarHandle, AvatarsAsleep, BotAvatar } from "./BotAvatar";
 
+/** Whether this client has lost sight of the server long enough that what it shows may be out of date. */
+export const useOffline = (): boolean => use(AvatarsAsleep);
+
 /** Tells the avatars below it whether this client can see the server (`useAsleep`). */
 export function AvatarConnection({
   connected,

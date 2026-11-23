@@ -38,7 +38,7 @@ describe("rosterLine", () => {
       _tag: "bot",
       botId: bot("Scout").id,
     });
-    const waiting = bot("Scout", { _tag: "waiting", entryId: question.entryId });
+    const waiting = bot("Scout", { _tag: "waiting", entryId: question.entryId, since: null });
     expect(rosterLine(row(waiting, question), ctx)).toEqual({
       text: "Asks: Which day?",
       tone: "waiting",
@@ -71,7 +71,11 @@ describe("rosterLine", () => {
   });
 
   it("says a waiting bot needs the operator when its last entry is not what it waits on", () => {
-    const waiting = bot("Scout", { _tag: "waiting", entryId: EntryId.make("elsewhere") });
+    const waiting = bot("Scout", {
+      _tag: "waiting",
+      entryId: EntryId.make("elsewhere"),
+      since: null,
+    });
     expect(rosterLine(row(waiting, preview("2026-11-20T14:50:00Z")), ctx)).toEqual({
       text: "Needs you",
       tone: "waiting",

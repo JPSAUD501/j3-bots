@@ -83,6 +83,7 @@ ${lines([
   ["duration-fast", `${motion.fast}ms`],
   ["duration-state", `${motion.state}ms`],
   ["duration-slow", `${motion.slow}ms`],
+  ["duration-swap", `${motion.swap}ms`],
   ...springEntries(),
   ["duration-press", `${press.duration}ms`],
   ["press-scale", String(press.scale)],

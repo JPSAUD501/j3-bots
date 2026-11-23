@@ -113,6 +113,7 @@ it.effect("notifies every socket of what a bot adds where no socket looks, and n
     yield* add(quill.id, {
       _tag: "work-fold",
       author: { _tag: "bot", botId: quill.id },
+      turnStartedAt: null,
       stepCount: 0,
       status: { _tag: "running" },
     });
