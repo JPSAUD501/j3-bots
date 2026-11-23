@@ -76,6 +76,13 @@ export const AdminStatus = Schema.Struct({
    * so that a command reads the status of a server from before the setting.
    */
   publicOrigin: Schema.optionalKey(ServerOrigin),
+  /**
+   * The origins another device reaches the server at, best first, as
+   * `j3-bots pair` lists them: read from the interfaces as the status is
+   * asked, since addresses come and go. Optional so that a command reads the
+   * status of a server from before it.
+   */
+  origins: Schema.optionalKey(Schema.Array(ServerOrigin)),
 });
 export type AdminStatus = typeof AdminStatus.Type;
 

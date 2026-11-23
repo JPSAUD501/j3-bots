@@ -36,7 +36,7 @@ const server = (
       Effect.succeed({
         version: "0.3.0",
         pid: options.statusPid ?? PID,
-        listener: { port: options.listensOn ?? 3747 },
+        listener: { address: "127.0.0.1", port: options.listensOn ?? 3747 },
         engine: { state: { _tag: "ready" } },
       }),
     localDevice: (request) =>
@@ -47,6 +47,8 @@ const server = (
           : Effect.succeed({ deviceId: NEW_DEVICE, token: TOKEN });
       }),
     shutdown: Effect.void,
+    runningWork: Effect.die("not used here"),
+    pairing: () => Effect.die("not used here"),
   };
   const running: Supervisor.RunningServer = {
     pid: PID,

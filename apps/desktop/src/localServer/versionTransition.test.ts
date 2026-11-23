@@ -100,11 +100,13 @@ const computer = Effect.fn(function* (ran: string = OLD) {
             return {
               version,
               pid,
-              listener: { port: 3747 },
+              listener: { address: "127.0.0.1", port: 3747 },
               engine: { state: { _tag: "ready" } },
             };
           }),
         localDevice: () => Effect.die("not used here"),
+        runningWork: Effect.die("not used here"),
+        pairing: () => Effect.die("not used here"),
         shutdown: end({ code: 0, signal: null }),
       };
       return {

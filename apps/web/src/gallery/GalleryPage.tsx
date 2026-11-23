@@ -30,6 +30,7 @@ import {
   type RosterItem,
   type RosterItemKey,
   type RoutineRun,
+  ServerOrigin,
   TEMPLATE_FORMAT,
   TEMPLATE_VERSION,
   TemplateTooLarge,
@@ -38,7 +39,12 @@ import {
   type SignInHarness,
   type UsageWindow,
 } from "@j3-bots/contracts";
-import type { LocalServerState, ServerUpdate } from "@j3-bots/desktop-bridge";
+import type {
+  LocalPairingLink,
+  LocalServerState,
+  PhoneAccess,
+  ServerUpdate,
+} from "@j3-bots/desktop-bridge";
 import {
   avatarCast,
   avatarShapeNames,
@@ -98,7 +104,13 @@ import {
   WhereBotsLive,
 } from "../components/LocalMode";
 import { ServerAddress } from "../components/ServerAddress";
+import type { DesktopPhone, DesktopSystem } from "../shell/data";
 import { WhereSection } from "../components/SettingsDialog";
+import {
+  type Pairing as PhonePairing,
+  PairPhone,
+  PhoneAccessSetting,
+} from "../components/PhoneAccess";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
 import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
@@ -219,6 +231,7 @@ export default function GalleryPage() {
                 <EmptyStatesSection />
                 <ConnectionSection />
                 <WhereBotsLiveSection />
+                <PhoneAccessSection />
                 <ShellSection />
               </div>
             </div>
@@ -2585,6 +2598,41 @@ function WhereFlow({ notice = null }: { notice?: string | null }) {
   );
 }
 
+const PHONE_OFF: PhoneAccess = { on: false, origins: [] };
+const LAN_ORIGIN = ServerOrigin.make("http://192.168.1.20:3747");
+const WIRED_ORIGIN = ServerOrigin.make("http://10.0.0.8:3747");
+const PHONE_ON: PhoneAccess = { on: true, origins: [LAN_ORIGIN] };
+
+/**
+ * Phone access as the gallery fakes it: it starts at `access`; turning it on
+ * or off asks first, as `bots` bots have work running (`null`: the server
+ * could not say), then holds at once.
+ */
+const galleryPhone = (
+  access: PhoneAccess,
+  system: DesktopSystem,
+  pairingLink: DesktopPhone["pairingLink"] = () => Promise.resolve({ _tag: "unavailable" }),
+  bots: number | null = 2,
+): DesktopPhone => ({
+  access,
+  follow: () => () => {},
+  system,
+  set: (on, stopWork) =>
+    Promise.resolve(
+      stopWork
+        ? { _tag: "changed", access: on ? PHONE_ON : PHONE_OFF }
+        : { _tag: "work-running", bots },
+    ),
+  pairingLink,
+});
+
+const grantedLink: Extract<LocalPairingLink, { readonly _tag: "granted" }> = {
+  _tag: "granted",
+  code: PairingCode.make("7KQ2M9XH4D"),
+  expiresAt: DateTime.add(SAMPLE_NOW, { minutes: 4, seconds: 32 }),
+  origins: [LAN_ORIGIN, WIRED_ORIGIN],
+};
+
 /** Settings' section for where the bots live, alone: the rest of Settings is in the shell's. */
 function WhereSettings({ local }: { local: boolean }) {
   const [startWithSystem, setStartWithSystem] = useState(false);
@@ -2609,6 +2657,7 @@ function WhereSettings({ local }: { local: boolean }) {
                   setStartWithSystem(on);
                   return Promise.resolve(on);
                 },
+                phone: galleryPhone(PHONE_OFF, "linux"),
               }
             : undefined
         }
@@ -2760,6 +2809,112 @@ function WhereBotsLiveSection() {
           height={220}
         >
           <WhereSettings local={false} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
+/** "Use from your phone" alone, starting at `access`, as Settings shows it on this computer. */
+function PhoneSetting({
+  access,
+  system = "linux",
+  pairingLink,
+  bots,
+}: {
+  access: PhoneAccess;
+  system?: DesktopSystem;
+  pairingLink?: DesktopPhone["pairingLink"];
+  bots?: number | null;
+}) {
+  return (
+    <div className="p-4">
+      <PhoneAccessSetting phone={galleryPhone(access, system, pairingLink, bots)} />
+    </div>
+  );
+}
+
+function PhoneAccessSection() {
+  const pairing = (initial: PhonePairing) => (
+    <div className="p-4">
+      <PairPhone initial={initial} pairingLink={() => Promise.resolve(grantedLink)} />
+    </div>
+  );
+  return (
+    <Section title="Use from your phone (desktop app, on this computer)">
+      <div className="flex flex-wrap gap-4">
+        <Frame
+          label="Off: turning it on asks first here, as two bots are working, then holds"
+          width={420}
+          height={300}
+        >
+          <PhoneSetting access={PHONE_OFF} />
+        </Frame>
+        <Frame
+          label="Off: turning it on asks first here, as the server could not say whether bots are working"
+          width={420}
+          height={300}
+        >
+          <PhoneSetting access={PHONE_OFF} bots={null} />
+        </Frame>
+        <Frame label="Turning on: the bots restart on the network" width={420} height={300}>
+          <PhoneSetting access={{ on: true, origins: [] }} />
+        </Frame>
+        <Frame
+          label="On, on Linux: the address, Pair a phone (which shows a code), and ufw"
+          width={420}
+          height={460}
+        >
+          <PhoneSetting access={PHONE_ON} pairingLink={() => Promise.resolve(grantedLink)} />
+        </Frame>
+        <Frame label="On, on Windows: the firewall may ask" width={420} height={380}>
+          <PhoneSetting access={PHONE_ON} system="windows" />
+        </Frame>
+        <Frame label="On, on macOS" width={420} height={380}>
+          <PhoneSetting access={PHONE_ON} system="mac" />
+        </Frame>
+        <Frame
+          label="Refused: this network gives the computer a public address"
+          width={420}
+          height={360}
+        >
+          <PhoneSetting access={{ on: true, origins: [], refusedReason: "public-address" }} />
+        </Frame>
+        <Frame
+          label="Unavailable: the bots did not start on the network, and run on this computer only"
+          width={420}
+          height={380}
+        >
+          <PhoneSetting
+            access={{
+              on: true,
+              origins: [],
+              refusedReason: "unavailable",
+              detail: "Port 3747 is in use on 0.0.0.0.",
+            }}
+          />
+        </Frame>
+        <Frame label="On, with no local network" width={420} height={340}>
+          <PhoneSetting access={{ on: true, origins: [], refusedReason: "no-network" }} />
+        </Frame>
+        <Frame
+          label="A code for a phone: QR, address and code typed out, the time left; two addresses to pick from"
+          width={420}
+          height={340}
+        >
+          {pairing({ _tag: "answered", link: grantedLink })}
+        </Frame>
+        <Frame label="A code that expired" width={420} height={140}>
+          {pairing({
+            _tag: "answered",
+            link: { ...grantedLink, expiresAt: DateTime.subtract(SAMPLE_NOW, { seconds: 1 }) },
+          })}
+        </Frame>
+        <Frame label="Pairing locked by wrong codes: unlock from here" width={420} height={180}>
+          {pairing({
+            _tag: "answered",
+            link: { _tag: "locked", until: DateTime.add(SAMPLE_NOW, { minutes: 12 }) },
+          })}
         </Frame>
       </div>
     </Section>

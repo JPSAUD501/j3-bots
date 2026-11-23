@@ -4,6 +4,8 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { PairingCode } from "@j3-bots/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -12,7 +14,7 @@ import * as AdminChannel from "./adminChannel.ts";
 const STATUS = JSON.stringify({
   version: "0.3.0",
   pid: 4242,
-  listener: { port: 3747 },
+  listener: { address: "127.0.0.1", port: 3747 },
   engine: { state: { _tag: "ready" } },
   webClient: "not-built",
 });
@@ -68,7 +70,7 @@ describe("the admin channel", () => {
       assert.deepStrictEqual(status, {
         version: "0.3.0",
         pid: 4242,
-        listener: { port: 3747 },
+        listener: { address: "127.0.0.1", port: 3747 },
         engine: { state: { _tag: "ready" } },
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -90,6 +92,29 @@ describe("the admin channel", () => {
       );
       assert.instanceOf(refused, AdminChannel.AdminRefused);
       assert.strictEqual(refused.status, 400);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("reads a pairing code, or the lock, as the server writes them", () =>
+    Effect.gen(function* () {
+      const { socketPath } = yield* listener((route) =>
+        route === AdminChannel.ADMIN_ROUTES.pairing
+          ? {
+              status: 200,
+              body: '{"_tag":"granted","code":"7KQ2M9XH4D","expiresAt":"2026-11-23T20:05:00.000Z"}',
+            }
+          : { status: 200, body: '{"_tag":"locked","until":"2026-11-23T20:20:00.000Z"}' },
+      );
+      const channel = AdminChannel.overSocket(socketPath);
+      assert.deepStrictEqual(yield* channel.pairing(false), {
+        _tag: "granted",
+        code: PairingCode.make("7KQ2M9XH4D"),
+        expiresAt: DateTime.makeUnsafe("2026-11-23T20:05:00Z"),
+      });
+      assert.deepStrictEqual(yield* channel.pairing(true), {
+        _tag: "locked",
+        until: DateTime.makeUnsafe("2026-11-23T20:20:00Z"),
+      });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

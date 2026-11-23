@@ -2,7 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- HTTP over the pipe the server inherited, which needs Node's own HTTP client and an agent that owns that one socket.
 import * as NodeHttp from "node:http";
 import type * as NodeStream from "node:stream";
-import { DeviceId, DeviceToken, Label } from "@j3-bots/contracts";
+import { DeviceId, DeviceToken, Label, PairingCode, ServerOrigin } from "@j3-bots/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -19,6 +19,9 @@ export const ADMIN_ROUTES = {
   status: "/status",
   localDevice: "/local-device",
   shutdown: "/shutdown",
+  runningWork: "/running-work",
+  pairing: "/pairing",
+  unlockPairing: "/pairing/unlock",
 } as const;
 
 /** What the app reads of the server's status. */
@@ -28,8 +31,17 @@ export const StatusReply = Schema.Struct({
   /** Its process, which tells it from another on the same channel. */
   pid: Schema.Int.check(Schema.isGreaterThan(0)),
   listener: Schema.Struct({
+    /** The address bound: `127.0.0.1`, or `0.0.0.0` on every IPv4 interface (`lan`). */
+    address: Schema.String,
     port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
   }),
+  /**
+   * The origins another device reaches it at, read from its interfaces as
+   * the status is asked; absent from a release from before them.
+   */
+  origins: Schema.optionalKey(Schema.Array(ServerOrigin)),
+  /** The `publicOrigin` it runs with, which `origins` lists first; absent when none is set. */
+  publicOrigin: Schema.optionalKey(ServerOrigin),
   /** Its engine's state, by name only, so a newer release's states read too. */
   engine: Schema.Struct({ state: Schema.Struct({ _tag: Schema.String }) }),
 });
@@ -40,6 +52,18 @@ export type LocalDeviceRequest = typeof LocalDeviceRequest.Type;
 
 const LocalDeviceReply = Schema.Struct({ deviceId: DeviceId, token: DeviceToken });
 type LocalDeviceReply = typeof LocalDeviceReply.Type;
+
+/** How many bots have work running, which a stop of the server stops. */
+const RunningWorkReply = Schema.Struct({
+  bots: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+
+/** A code for a new device, or, while wrong codes lock pairing, until when. */
+export const PairingOffer = Schema.Union([
+  Schema.TaggedStruct("granted", { code: PairingCode, expiresAt: Schema.DateTimeUtc }),
+  Schema.TaggedStruct("locked", { until: Schema.DateTimeUtc }),
+]);
+export type PairingOffer = typeof PairingOffer.Type;
 
 /**
  * Nothing answered on the channel: the server is not there, or the channel
@@ -76,6 +100,10 @@ export interface AdminChannel {
   ) => Effect.Effect<LocalDeviceReply, AdminError>;
   /** Asks the server to stop as it does on SIGTERM. It answers before it stops. */
   readonly shutdown: Effect.Effect<void, AdminError>;
+  /** How many bots have work running, which a stop of the server would stop. */
+  readonly runningWork: Effect.Effect<number, AdminError>;
+  /** A pairing code for a new device; with `unlock`, after lifting the lock wrong codes set. */
+  readonly pairing: (unlock: boolean) => Effect.Effect<PairingOffer, AdminError>;
 }
 
 interface Reply {
@@ -161,6 +189,11 @@ const send = (
 
 const decodeStatus = Schema.decodeUnknownEffect(Schema.fromJsonString(StatusReply));
 const decodeLocalDevice = Schema.decodeUnknownEffect(Schema.fromJsonString(LocalDeviceReply));
+const decodeRunningWork = Schema.decodeUnknownEffect(Schema.fromJsonString(RunningWorkReply));
+// The server writes its time as JSON does, an ISO string.
+const decodePairing = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(PairingOffer)),
+);
 const encodeLocalDevice = Schema.encodeSync(Schema.fromJsonString(LocalDeviceRequest));
 
 const channelOver = (target: Target): AdminChannel => {
@@ -186,6 +219,16 @@ const channelOver = (target: Target): AdminChannel => {
     shutdown: send(target, "POST", ADMIN_ROUTES.shutdown, null).pipe(
       Effect.flatMap((reply) => answer(ADMIN_ROUTES.shutdown, reply, () => Effect.void)),
     ),
+    runningWork: send(target, "GET", ADMIN_ROUTES.runningWork, null).pipe(
+      Effect.flatMap((reply) => answer(ADMIN_ROUTES.runningWork, reply, decodeRunningWork)),
+      Effect.map(({ bots }) => bots),
+    ),
+    pairing: (unlock) => {
+      const route = unlock ? ADMIN_ROUTES.unlockPairing : ADMIN_ROUTES.pairing;
+      return send(target, "POST", route, null).pipe(
+        Effect.flatMap((reply) => answer(route, reply, decodePairing)),
+      );
+    },
   };
 };
 

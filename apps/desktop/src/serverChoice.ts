@@ -7,6 +7,7 @@ import type {
   ServerOrigin,
 } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -158,10 +159,10 @@ export const make = Effect.fn("ServerChoice.make")(function* (
   });
 
   /**
-   * Stops running the bots on this computer, their data kept, and opens the
-   * server address screen. The page signs its device out first, while the
-   * server still runs; a device it could not is revoked by the next sign-in
-   * on this computer, which replaces it.
+   * Stops running the bots on this computer, their data kept, turns phone
+   * access off, and opens the server address screen. The page signs its
+   * device out first, while the server still runs; a device it could not is
+   * revoked by the next sign-in on this computer, which replaces it.
    */
   const connectToServerInstead = Effect.fn("ServerChoice.connectToServerInstead")(function* (
     page: Page,
@@ -176,6 +177,9 @@ export const make = Effect.fn("ServerChoice.make")(function* (
             server: null,
             localDevice:
               current.localDevice === null ? null : { ...current.localDevice, current: false },
+            // Coming back to this computer later starts its server on this
+            // computer alone, not on whatever network it is on by then.
+            phoneAccess: false,
           }))
           .pipe(
             Effect.as(true),
@@ -199,12 +203,17 @@ export const make = Effect.fn("ServerChoice.make")(function* (
   /**
    * Runs `effect` while the bots run on this computer, one at a time with the
    * changes above: a change of where they run never comes between its steps.
+   * Nothing, without running it, while they run elsewhere.
    */
-  const whileLocal = <E, R>(effect: Effect.Effect<void, E, R>) =>
+  const whileLocal = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<Option.Option<A>, E, R> =>
     oneAtATime.withPermits(1)(
-      Effect.gen(function* () {
-        if ((yield* settings.get).mode === "local") yield* effect;
-      }),
+      settings.get.pipe(
+        Effect.flatMap(({ mode }) =>
+          mode === "local" ? Effect.asSome(effect) : Effect.succeedNone,
+        ),
+      ),
     );
 
   return { connect, forget, useThisComputer, connectToServerInstead, whileLocal } as const;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type LocalServerState, ServerOrigin, type ServerUpdate } from "@j3-bots/desktop-bridge";
+import * as Network from "@j3-bots/server/network";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -13,6 +14,7 @@ import * as AdminChannel from "./adminChannel.ts";
 import * as Credential from "./credential.ts";
 import * as Home from "./home.ts";
 import * as Orphans from "./orphans.ts";
+import * as PhoneAccess from "./phoneAccess.ts";
 import * as Runtime from "./runtime.ts";
 import * as ServerProcess from "./serverProcess.ts";
 import * as ShellPath from "./shellPath.ts";
@@ -43,6 +45,11 @@ export interface LocalHostOptions {
   /** `app.getAppPath()`: `apps/desktop` in development. */
   readonly appPath: string;
   readonly userData: string;
+  /**
+   * The app's own build of the web client, which the server serves too: a
+   * phone that opens the pairing link reaches it there.
+   */
+  readonly webClient: string;
   readonly platform: NodeJS.Platform;
   readonly arch: string;
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -70,17 +77,28 @@ const isAppOnly = (name: string) =>
  * AppImage, Node (but the certificates it trusts) or a J3 Bots setting in
  * the operator's shell (the server's
  * settings come from its home's `config.json`), with the operator's PATH,
- * its home and the address it listens on.
+ * its home, the address it listens on and the web client it serves.
  */
 export const serverEnvironment = (
   env: Readonly<Record<string, string | undefined>>,
-  options: { readonly path: string; readonly home: string; readonly host: string },
+  options: {
+    readonly path: string;
+    readonly home: string;
+    readonly host: string;
+    readonly webClient: string;
+  },
 ): Record<string, string> => {
   const kept: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
     if (value !== undefined && !isAppOnly(name)) kept[name] = value;
   }
-  return { ...kept, PATH: options.path, J3_HOME: options.home, J3_HOST: options.host };
+  return {
+    ...kept,
+    PATH: options.path,
+    J3_HOME: options.home,
+    J3_HOST: options.host,
+    J3_WEB_CLIENT: options.webClient,
+  };
 };
 
 const decodeOrigin = Schema.decodeUnknownEffect(ServerOrigin);
@@ -138,6 +156,13 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
 
   const checkHome = Home.checkHome(home, options.platform, options.windowsPrivacy);
 
+  // Where each start listens: on this computer alone, or, while the operator
+  // lets phones reach it, on the network.
+  const network = yield* Network.Network.pipe(Effect.provide(Network.layer));
+  const phone = yield* PhoneAccess.listening({
+    publicAddress: network.ipv4Addresses.pipe(Effect.map(Network.publicAddressOf)),
+  });
+
   /** Starts the server from `runtime`. */
   const run = Effect.fn("LocalHost.run")(function* (runtime: Runtime.Runtime) {
     yield* fs.makeDirectory(serverFolder, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
@@ -147,7 +172,8 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
       env: serverEnvironment(options.env, {
         path: yield* shellPath,
         home,
-        host: "127.0.0.1",
+        host: yield* phone.hostForLaunch,
+        webClient: options.webClient,
       }),
       logFile,
       platform: options.platform,
@@ -267,5 +293,15 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     name: Credential.deviceName(options.hostname),
   });
 
-  return { available, local, supervisor, state, changes, retryUpdate, signIn, logFile } as const;
+  return {
+    available,
+    local,
+    supervisor,
+    phone,
+    state,
+    changes,
+    retryUpdate,
+    signIn,
+    logFile,
+  } as const;
 });

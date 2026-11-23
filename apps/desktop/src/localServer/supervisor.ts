@@ -305,7 +305,13 @@ export const make = Effect.fn("Supervisor.make")(function* (options: SupervisorO
   const start = oneAtATime.withPermits(1)(
     Effect.gen(function* () {
       const fiber = yield* Ref.get(running);
-      if (Option.isSome(fiber) && fiber.value.pollUnsafe() === undefined) return;
+      if (Option.isSome(fiber)) {
+        // A supervision that failed ends as it says so: one asked to start
+        // as soon as it said so waits for it to end, rather than taking it
+        // for one that runs.
+        if ((yield* SubscriptionRef.get(phase))._tag === "failed") yield* Fiber.await(fiber.value);
+        else if (fiber.value.pollUnsafe() === undefined) return;
+      }
       // Set before the fork, so a sign-in that waits on `ready` right after
       // `start` sees a start under way rather than the server stopped.
       yield* set({ _tag: "starting", attempt: 1 });

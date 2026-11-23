@@ -39,8 +39,10 @@ const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
  * computer), the device this computer was signed in as on its own server,
  * the window's place, the global shortcut the operator chose (`null` for the
  * default), the appearance the page last reported, which the window takes
- * before the page paints, and whether the app starts with the system, off
- * until the operator turns it on. None is a secret.
+ * before the page paints, whether the app starts with the system, off
+ * until the operator turns it on, and whether phones on the network may reach
+ * the server on this computer (`phoneAccess`), off until the operator turns
+ * it on. None is a secret.
  */
 export const Settings = Schema.Struct({
   mode: Schema.NullOr(DesktopMode),
@@ -50,6 +52,7 @@ export const Settings = Schema.Struct({
   shortcut: Schema.NullOr(Accelerator),
   appearance: Appearance,
   startWithSystem: Schema.Boolean,
+  phoneAccess: Schema.Boolean,
 });
 export type Settings = typeof Settings.Type;
 
@@ -61,6 +64,7 @@ const EMPTY: Settings = {
   shortcut: null,
   appearance: "system",
   startWithSystem: false,
+  phoneAccess: false,
 };
 
 const decodeStored = Schema.decodeUnknownOption(
@@ -88,7 +92,8 @@ export const decodeSettings = (
 ): { readonly settings: Settings; readonly dropped: ReadonlyArray<keyof Settings> } => {
   const stored = decodeStored(text);
   if (Option.isNone(stored)) return { settings: EMPTY, dropped: [] };
-  const { mode, server, localDevice, window, shortcut, appearance, startWithSystem } = stored.value;
+  const { mode, server, localDevice, window, shortcut, appearance, startWithSystem, phoneAccess } =
+    stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
     return Result.isSuccess(checked) && checked.success === origin
@@ -101,6 +106,7 @@ export const decodeSettings = (
   const keptShortcut = decodeShortcut(shortcut);
   const keptAppearance = decodeAppearance(appearance);
   const keptStartWithSystem = decodeFlag(startWithSystem);
+  const keptPhoneAccess = decodeFlag(phoneAccess);
   const dropped: Array<keyof Settings> = [];
   if (mode !== undefined && mode !== null && Option.isNone(keptMode)) dropped.push("mode");
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
@@ -115,6 +121,7 @@ export const decodeSettings = (
   if (startWithSystem !== undefined && Option.isNone(keptStartWithSystem)) {
     dropped.push("startWithSystem");
   }
+  if (phoneAccess !== undefined && Option.isNone(keptPhoneAccess)) dropped.push("phoneAccess");
   return {
     settings: {
       mode: Option.getOrElse(keptMode, () =>
@@ -126,6 +133,7 @@ export const decodeSettings = (
       shortcut: Option.getOrNull(keptShortcut),
       appearance: Option.getOrElse(keptAppearance, () => EMPTY.appearance),
       startWithSystem: Option.getOrElse(keptStartWithSystem, () => EMPTY.startWithSystem),
+      phoneAccess: Option.getOrElse(keptPhoneAccess, () => EMPTY.phoneAccess),
     },
     dropped,
   };
