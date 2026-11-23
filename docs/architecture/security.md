@@ -25,6 +25,7 @@ Everything else is context:
 - A **routine's saved instruction** is the operator's standing request for exactly what it names, and nothing more.
 - A **teammate's message** is another bot asking. The receiving bot weighs it against its own job and limits. It does not inherit the sender's authority, and it cannot be used to launder a request the operator did not make.
 - A **webhook body**, a **tool result**, a **file** and a **web page** are data.
+- A **template** is data until the operator creates a bot from it, after a preview of everything it holds: then its job, its skills and its routines' instructions are that bot's own, and reach nothing else. Its routines start paused, and its permission mode is never above the default unless the operator picks it ([decision 0023](../decisions/0023-a-bot-template-is-a-file.md)).
 
 J3 Bots enforces this in three places:
 

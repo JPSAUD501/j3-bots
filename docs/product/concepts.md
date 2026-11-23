@@ -73,6 +73,8 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 **Skill.** A reusable procedure a bot can read when a task calls for it: steps, decision rules, what to verify, what needs approval. Skills are files. A skill has no trigger.
 
+**Template.** A bot as a file to share (`<name>.j3bot`): what makes it do its job and nothing it learned. It holds the profile, the job, the model and permission mode as suggestions, the skills and the routines (their schedules without a time zone, webhooks without their address). It never holds memory, the conversation, files, a webhook's secret, one-time routines, accounts, devices or paths. A bot made from one starts with its routines paused and its permission mode no higher than the default unless the operator picks it ([0023](../decisions/0023-a-bot-template-is-a-file.md)).
+
 **Routine.** A saved instruction plus a trigger. The trigger is a schedule or an inbound webhook. A routine belongs to one bot and runs even when no client is open. A routine's instruction says who receives the result and what to do when there is nothing to report.
 
 ## Controls

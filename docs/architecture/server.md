@@ -454,6 +454,19 @@ A webhook routine's address is `/hooks/<routine id>/<secret>` on the server's HT
 - A paused routine answers `409` and records nothing.
 - An accepted call answers `202` with the run's id and status, `running` or `skipped`.
 
+## Templates
+
+A template is a bot as a file to share, what makes it do its job and nothing it learned ([decision 0023](../decisions/0023-a-bot-template-is-a-file.md)); its schema is `BotTemplate` in `packages/contracts`.
+
+**`bot.template`** builds one from named fields, never from a copy of anything larger: the profile, the model and the permission mode from the bot's row; each routine's name, instruction and trigger, a schedule as its cron alone and a webhook as the fact that it is one, with no one-time routine; and the skills from the bot's workspace as it was first provisioned. A skill is a folder of `skills/` whose name is a skill's name (one lowercase segment), that is a real folder holding a `SKILL.md` that is a regular file within the limit; a link is never followed, and a folder that breaks any of this is passed over. Folders are taken in name order, and skills and routines past the limits (16 each) stay out. Memory, the conversation, files, the routines' time zones and webhook addresses never reach it.
+
+**`bot.createFromTemplate`** makes a bot from one, as `bot.create` does, in the same transaction and under the same command receipt, then, before the transaction commits:
+
+- each routine, paused, with no next run, authored by the operator, who approved it in the preview; a schedule takes the operator's time zone, and one that cannot run refuses the whole command with `Invalid("schedule")`;
+- each skill's `SKILL.md` under the new workspace's `skills/<name>/`, written through the workspace layout, which refuses a location that would expose a private one (`Conflict("private-location")`); a write that fails removes the workspace and the transaction rolls back, so no bot is left half made.
+
+The model is the command's, else the template's when the engine offers it, else the server's default. The permission mode is the command's, else the less permissive of the template's and the default for the model (supervised for a mode this build does not know). The avatar is the template's when the server has its tokens, else one no other bot wears, as for any new bot. The bot is never made primary, and its opening wake is any new bot's.
+
 ## Budgets
 
 Three limits keep bots from spending the operator's allowance on each other. All three have conservative defaults and are part of the operator's settings (`settings.get`, `settings.update`), with the time zone and the notification preferences. Only the operator changes them; nothing a bot or a message says raises one.

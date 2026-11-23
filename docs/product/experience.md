@@ -70,6 +70,17 @@ The operator creates a room, adds two to six bots, and writes.
 - **Fresh start**: stops any work the bot has running and resets its working context, with nothing of the recent conversation carried over, and drops the notes that would have told it what its routines reported. The conversation history, memory, routines and files stay. Each routine keeps what its recent runs said, which is the routine's own state: a run reads it to tell what is new and not report the same thing again. Moving a bot to another provider stops its work the same way, and its new working context does carry a digest of the recent conversation.
 - **Delete**: removes the bot, its conversation, memory and routines after an explicit confirmation. Files in its workspace are kept unless the operator chooses otherwise.
 
+### Sharing a bot, and starting from one
+
+The operator has a bot that does its job well and wants someone else to have it, or a copy to start from.
+
+- **Share as template…** in the bot's details shows everything the file will hold, in full: the profile, the job, each skill's text, each routine's instruction and schedule, the model and the permission mode, and one line on what stays behind (memory, the conversation, files, accounts, anything else on this machine). On Android it ends in the system's share sheet with a `.j3bot` file; on the web and the desktop the file is downloaded, or its text copied.
+- **New bot from a template** in the roster's new menu picks a `.j3bot` file. A file dropped anywhere on the web or desktop window, shared to J3 Bots on Android, or tapped where it kept its media type, leads to the same place.
+- That place is a preview of everything the bot will be and do, with a note that the file came from outside J3 Bots and reaches only the new bot. It says which model the bot will run on here, and whether that replaces the template's because this server does not offer it. The permission mode starts at the template's or the default, whichever lets the bot do less, and says so when it lowered the template's; the operator can pick any mode. Its routines arrive paused, to be turned on in its details.
+- Nothing is created until the operator presses Create. Then the new bot's conversation opens. A file that is too large, damaged, or from a newer J3 Bots is refused with a sentence saying which.
+
+What a template holds and leaves out is in [Concepts](concepts.md) and [decision 0023](../decisions/0023-a-bot-template-is-a-file.md).
+
 ### Knowing what it costs
 
 - A usage view shows each provider's limit windows as the engine reports them, and which bots and routines used turns recently.
@@ -91,7 +102,7 @@ Answers: who do I have, who needs me, what is each of them doing.
 - Hidden bots keep running. They are left out of the list and reachable through search and through a "Hidden conversations" row at its end, which says how many there are and whether one has something unread, and lists them, each with Unhide.
 - Each bot and room has a menu (right-click, the "…" or a long press) to mark it read or unread, pin it, move it to a section, make it the primary bot, hide it, and reach its details. The primary bot's avatar carries a small star wherever it appears.
 - Search finds bots, rooms and messages.
-- New bot and new room are one action each.
+- New bot and new room are one action each, and a new bot can start from a template file.
 
 ### Conversation
 
@@ -106,7 +117,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 
 Answers: what is this bot, and what runs without me.
 
-- Profile: name, title, avatar, job.
+- Profile: name, title, avatar, job, with Share as template.
 - Routines with their schedule, next run, last result, and a pause switch.
 - Files the bot produced.
 - Memory, readable and editable.
