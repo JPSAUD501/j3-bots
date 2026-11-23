@@ -499,10 +499,12 @@ export function RoomDetails({
       headingId={headingId}
     >
       <Profile
-        picture={<RoomAvatar
+        picture={
+          <RoomAvatar
             members={members.map((bot) => ({ id: bot.id, avatar: bot.profile.avatar }))}
             size={96}
-          />}
+          />
+        }
         name={name}
         badge={archived ? <Badge>{t("room.archivedBadge")}</Badge> : undefined}
         lines={

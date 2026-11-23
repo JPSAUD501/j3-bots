@@ -7,6 +7,8 @@
  * Colors are `#rrggbb` or `oklch(L C H)`, optionally with `/ alpha`. The
  * reasoning behind the values is in docs/design/design-language.md.
  */
+import { mixOklab } from "./color.ts";
+
 export interface Themed {
   readonly light: string;
   readonly dark: string;

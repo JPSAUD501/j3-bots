@@ -285,7 +285,7 @@ Every surface is built from the same few parts, each owning its look in the `ui`
 | Skeleton | Rows of `muted` blocks in the shape of what is loading, a mark and two lines each, the same on both platforms and wherever something loads: a bot's routines and memory, a memory file, a routine's runs, usage and settings. Read to screen readers as "Loading…" |
 | Dialog | A `surface` panel with the 20 px radius and `overlay` elevation over the `scrim`; on a phone, the whole screen. Its title is in the display face |
 | Roster row | Rounded, tinted toward `muted` on hover and filled with it when selected, taking the row's press |
-| Profile | The head of a bot's or a room's details: the picture at 84 px, centered, the name in the display face with its badge ("Primary", "Archived"), quiet lines under it (a bot's job, a room's member count) and the edit button. Below it the sections are set apart by space, not rules, and a destructive action stands alone below a hairline |
+| Profile | The head of a bot's or a room's details: the picture at 96 px, centered: a bot's live avatar, which moves with its state as in the roster, or a room's two members, still, the name in the display face with its badge ("Primary", "Archived"), quiet lines under it (a bot's job, a room's member count) and the edit button. Below it the sections are set apart by space, not rules, and a destructive action stands alone below a hairline |
 
 ### Behavior
 
