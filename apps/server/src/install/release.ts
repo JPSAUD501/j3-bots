@@ -226,17 +226,19 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(opti
     Effect.mapError(() => failed("checksums-unreadable")),
   );
   // A release with no signature is answered 404; anything else that fails is not knowing.
-  const signature = yield* client.execute(HttpClientRequest.get(`${download}/${SIGNATURE_FILE}`)).pipe(
-    Effect.flatMap((response) =>
-      response.status === 404
-        ? Effect.succeed(null)
-        : HttpClientResponse.filterStatusOk(response).pipe(
-            Effect.flatMap((ok) => ok.arrayBuffer),
-            Effect.map((buffer) => new Uint8Array(buffer)),
-          ),
-    ),
-    Effect.mapError(() => failed("checksums-unreadable")),
-  );
+  const signature = yield* client
+    .execute(HttpClientRequest.get(`${download}/${SIGNATURE_FILE}`))
+    .pipe(
+      Effect.flatMap((response) =>
+        response.status === 404
+          ? Effect.succeed(null)
+          : HttpClientResponse.filterStatusOk(response).pipe(
+              Effect.flatMap((ok) => ok.arrayBuffer),
+              Effect.map((buffer) => new Uint8Array(buffer)),
+            ),
+      ),
+      Effect.mapError(() => failed("checksums-unreadable")),
+    );
   const verified = verifySums({ version, sums, signature, check: options.check });
   if (Result.isFailure(verified)) return yield* unsigned(verified.failure);
   if (Result.isFailure(expectedDigest(verified.success, archive))) {

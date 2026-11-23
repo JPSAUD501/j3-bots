@@ -41,7 +41,7 @@ export const RunStage = Schema.Union([
 export type RunStage = typeof RunStage.Type;
 
 /** How an update ended: `UpdateOutcome`, with why when it did not end on the new release. */
-export const RunOutcome = Schema.Union([
+const RunOutcome = Schema.Union([
   /** The new release runs. */
   Schema.TaggedStruct("done", { at: Schema.DateTimeUtc }),
   /**
@@ -60,7 +60,6 @@ export const RunOutcome = Schema.Union([
     detail: Schema.String,
   }),
 ]);
-export type RunOutcome = typeof RunOutcome.Type;
 
 export const UpdateRun = Schema.Struct({
   schema: Schema.Literal(RUN_SCHEMA),

@@ -30,6 +30,7 @@ const SERVICE: UpdateHost = {
   command: COMMAND,
   home: "/unused",
   searchPath: "/usr/bin",
+  release: {},
 };
 
 /** A machine as the runs see it: how the server is run, its units, and the bots' work. */
@@ -60,12 +61,7 @@ const withRuns = <A, E, R>(
 ) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    return yield* Effect.flatMap(
-      Effect.gen(function* () {
-        return yield* UpdateRuns.UpdateRuns;
-      }),
-      use,
-    ).pipe(
+    return yield* Effect.flatMap(Effect.service(UpdateRuns.UpdateRuns), use).pipe(
       Effect.provide(
         UpdateRuns.layer.pipe(
           Layer.provide(
@@ -84,7 +80,10 @@ const withRuns = <A, E, R>(
                   ended: () => Effect.sync(() => machine.ended),
                 }),
               ),
-              Layer.succeed(RunningWork, RunningWork.of({ bots: Effect.sync(() => machine.working) })),
+              Layer.succeed(
+                RunningWork,
+                RunningWork.of({ bots: Effect.sync(() => machine.working) }),
+              ),
               Ids.layer,
             ),
           ),
@@ -107,7 +106,9 @@ const ask = (more: Partial<UpdateRuns.StartRequest> = {}): UpdateRuns.StartReque
 });
 
 /** Why `start` refused, or none when it started. */
-const refusal = (exit: Exit.Exit<void, { readonly reason: string; readonly runningBots: number | null }>) =>
+const refusal = (
+  exit: Exit.Exit<void, { readonly reason: string; readonly runningBots: number | null }>,
+) =>
   Exit.isFailure(exit)
     ? Option.map(Exit.findErrorOption(exit), ({ reason, runningBots }) => ({ reason, runningBots }))
     : Option.none();
@@ -189,8 +190,14 @@ it.layer(NodeServices.layer)("updates a client asks for", (it) => {
         const none = yield* withRuns(home, machine, (runs) =>
           runs.start(ask({ available: Option.none() })).pipe(Effect.exit),
         );
-        assert.deepStrictEqual(refusal(other), Option.some({ reason: "not-available", runningBots: null }));
-        assert.deepStrictEqual(refusal(none), Option.some({ reason: "not-available", runningBots: null }));
+        assert.deepStrictEqual(
+          refusal(other),
+          Option.some({ reason: "not-available", runningBots: null }),
+        );
+        assert.deepStrictEqual(
+          refusal(none),
+          Option.some({ reason: "not-available", runningBots: null }),
+        );
         assert.deepStrictEqual(machine.launched, []);
       }),
     );
@@ -238,7 +245,10 @@ it.layer(NodeServices.layer)("updates a client asks for", (it) => {
         const home = yield* tempHome;
         const machine = machineOf({ working: [BotId.make("bot_a"), BotId.make("bot_b")] });
         const asked = yield* withRuns(home, machine, (runs) => runs.start(ask()).pipe(Effect.exit));
-        assert.deepStrictEqual(refusal(asked), Option.some({ reason: "work-running", runningBots: 2 }));
+        assert.deepStrictEqual(
+          refusal(asked),
+          Option.some({ reason: "work-running", runningBots: 2 }),
+        );
         assert.deepStrictEqual(machine.launched, []);
         yield* withRuns(home, machine, (runs) => runs.start(ask({ stopWork: true })));
         assert.strictEqual(machine.launched.length, 1);

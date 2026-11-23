@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
@@ -9,7 +10,13 @@ import { ServerConfig } from "../config.ts";
 import type { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";
 import { type UpdateHost, updateHost } from "./host.ts";
-import { launch, type LaunchFailed, updateUnit, type UpdateUnitPlan } from "./launch.ts";
+import {
+  launch,
+  type LaunchFailed,
+  RELEASE_VARIABLES,
+  updateUnit,
+  type UpdateUnitPlan,
+} from "./launch.ts";
 
 /** A unit that has ended, as `systemctl is-active` says: a collected one is `inactive`. */
 const ENDED: ReadonlySet<string> = new Set(["inactive", "failed"]);
@@ -37,14 +44,23 @@ export const layer = (started: "desktop" | "cli") =>
     Effect.gen(function* () {
       const { home } = yield* ServerConfig;
       const systemd = yield* Systemd;
+      const release: Record<string, string> = {};
+      for (const name of RELEASE_VARIABLES) {
+        const value = yield* Config.option(Config.String(name));
+        if (value._tag === "Some") release[name] = value.value;
+      }
       const context = yield* Effect.context<
         FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner | Host | Systemd
       >();
       return UpdateLauncher.of({
-        host: updateHost({ home, started }).pipe(Effect.provideContext(context)),
-        launch: (plan) => launch(plan).pipe(Effect.provideContext(context)),
-        ended: (id) =>
+        host: updateHost({ home, started, release }).pipe(Effect.provideContext(context)),
+        launch: Effect.fn("UpdateLauncher.launch")(
+          (plan: UpdateUnitPlan) => launch(plan),
+          Effect.provideContext(context),
+        ),
+        ended: Effect.fn("UpdateLauncher.ended")((id: string) =>
           systemd.unitState(updateUnit(id)).pipe(Effect.map(({ active }) => ENDED.has(active))),
+        ),
       });
     }),
   );

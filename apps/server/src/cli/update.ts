@@ -243,7 +243,9 @@ const reportOf = (result: UpdateResult): Report => {
           }),
           `Rolling it back to J3 Bots ${from} failed: ${failure(outcome.rollback)}`,
           `The databases as they were before it are in ${outcome.snapshot.folder}.`,
-          ...(unfinished.length > 0 ? unfinished : [`\`j3-bots update --version ${to}\` tries again.`]),
+          ...(unfinished.length > 0
+            ? unfinished
+            : [`\`j3-bots update --version ${to}\` tries again.`]),
           LOG,
         ].join("\n"),
       };
@@ -331,12 +333,15 @@ const clientRun = Effect.fn("update.clientRun")(function* (
   const home = yield* ServerConfig.resolveHome;
   const recorded = yield* readRun(home);
   if (recorded._tag !== "recorded" || recorded.run.id !== id || !isUnderway(recorded.run)) {
-    return yield* refuse(
-      `${home} records no update underway as ${id}, so nothing was changed.`,
-    );
+    return yield* refuse(`${home} records no update underway as ${id}, so nothing was changed.`);
   }
   const { run } = recorded;
-  if (!Option.contains(Option.map(version, (wanted) => wanted.replace(/^v/, "")), run.to)) {
+  if (
+    !Option.contains(
+      Option.map(version, (wanted) => wanted.replace(/^v/, "")),
+      run.to,
+    )
+  ) {
     return yield* refuse(
       `The update ${id} installs J3 Bots ${run.to}; --version must name it. Nothing was changed.`,
     );
@@ -355,7 +360,9 @@ const runUpdate = Effect.fn("update.run")(function* (
   yes: boolean,
   run: Option.Option<string>,
 ) {
-  const tracked = Option.isSome(run) ? Option.some(yield* clientRun(run.value, version)) : Option.none();
+  const tracked = Option.isSome(run)
+    ? Option.some(yield* clientRun(run.value, version))
+    : Option.none();
   const end = (ending: Ending) =>
     Option.match(tracked, {
       onNone: () => Effect.void,

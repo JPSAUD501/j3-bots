@@ -195,6 +195,7 @@ export const layer = Layer.effect(
               command: host.command,
               home: host.home,
               searchPath: host.searchPath,
+              release: host.release,
             })
             .pipe(
               Effect.catchTag("LaunchFailed", (error) =>

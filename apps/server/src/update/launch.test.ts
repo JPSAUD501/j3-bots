@@ -9,6 +9,7 @@ const plan = {
   command: "/home/op/.local/share/j3-bots/versions/0.3.1/bin/j3-bots",
   home: "/home/op/.j3-bots",
   searchPath: "/home/op/.local/bin:/usr/bin:/bin",
+  release: { J3_RELEASE_BASE_URL: "http://127.0.0.1:8080/releases" },
 };
 
 /** The value of `--name=value` among `args`. */
@@ -40,9 +41,11 @@ describe("the update's transient unit", () => {
 
   it("gets the service's environment and nothing that would override its configuration", () => {
     const args = systemdRunArgs(plan);
+    // The update downloads from where the server found the release.
     assert.deepStrictEqual(option(args, "setenv"), [
       `J3_HOME=${plan.home}`,
       `PATH=${plan.searchPath}`,
+      "J3_RELEASE_BASE_URL=http://127.0.0.1:8080/releases",
     ]);
     assert.include(args, `--property=UnsetEnvironment=${SHELL_OVERRIDES.join(" ")}`);
     assert.deepStrictEqual(option(args, "working-directory"), [plan.home]);

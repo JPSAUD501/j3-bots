@@ -69,26 +69,25 @@ type Body<A> =
   | { readonly _tag: "refused"; readonly response: HttpServerResponse.HttpServerResponse };
 
 /** The request's JSON body with `schema`: 415 when it is not JSON, 413 past the limit, 400 when it does not decode. */
-const jsonBody = <A>(schema: Schema.Codec<A, unknown>) =>
-  Effect.gen(function* () {
-    const refused = (response: HttpServerResponse.HttpServerResponse): Body<A> => ({
-      _tag: "refused",
-      response,
-    });
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    if (!isJson(request.headers["content-type"])) return refused(unsupportedMediaType);
-    const text = yield* readText(request, BODY_LIMIT).pipe(Effect.result);
-    if (text._tag === "Failure") {
-      return refused(text.failure._tag === "BodyTooLarge" ? tooLarge : badRequest);
-    }
-    const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(
-      text.success,
-    ).pipe(Effect.option);
-    return Option.match(decoded, {
-      onNone: () => refused(badRequest),
-      onSome: (value): Body<A> => ({ _tag: "body", value }),
-    });
+const jsonBody = Effect.fn("update.jsonBody")(function* <A>(schema: Schema.Codec<A, unknown>) {
+  const refused = (response: HttpServerResponse.HttpServerResponse): Body<A> => ({
+    _tag: "refused",
+    response,
   });
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  if (!isJson(request.headers["content-type"])) return refused(unsupportedMediaType);
+  const text = yield* readText(request, BODY_LIMIT).pipe(Effect.result);
+  if (text._tag === "Failure") {
+    return refused(text.failure._tag === "BodyTooLarge" ? tooLarge : badRequest);
+  }
+  const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(schema))(text.success).pipe(
+    Effect.option,
+  );
+  return Option.match(decoded, {
+    onNone: () => refused(badRequest),
+    onSome: (value): Body<A> => ({ _tag: "body", value }),
+  });
+});
 
 /** The status: the feed's view of the releases and the runs' of updating, as one. */
 const status = Effect.gen(function* () {
@@ -104,13 +103,12 @@ const status = Effect.gen(function* () {
 });
 
 /** Runs `handle` for a paired device, or answers 401. */
-const authenticated = <E, R>(
+const authenticated = Effect.fn("update.authenticated")(function* <E, R>(
   handle: (device: DeviceId) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-) =>
-  Effect.gen(function* () {
-    const device = yield* requestDevice;
-    return Option.isNone(device) ? unauthorized : yield* handle(device.value);
-  });
+) {
+  const device = yield* requestDevice;
+  return Option.isNone(device) ? unauthorized : yield* handle(device.value);
+});
 
 const statusRoute = HttpRouter.add(
   "GET",

@@ -18,9 +18,6 @@ import { SHELL_OVERRIDES } from "../config.ts";
 /** The prefix of every update's transient unit: `j3-bots-update-<run>`. */
 const UNIT_PREFIX = "j3-bots-";
 
-/** A run id, as `Ids.make("update")` makes one: what the unit is named after. */
-export const RUN_ID = /^update_[0-9a-z]+$/;
-
 /** The transient unit of run `id`. */
 export const updateUnit = (id: string) => `${UNIT_PREFIX}${id.replace("_", "-")}.service`;
 
@@ -36,14 +33,23 @@ export interface UpdateUnitPlan {
   readonly home: string;
   /** The service's `PATH`. */
   readonly searchPath: string;
+  /**
+   * Where the service takes releases from and which key it trusts beside the
+   * project's (`RELEASE_VARIABLES`), as its environment sets them: the update
+   * downloads and verifies what the server offered, from the same place.
+   */
+  readonly release: Readonly<Record<string, string>>;
 }
+
+/** The variables that say where releases come from and which key signs them (`docs/operations/install.md`). */
+export const RELEASE_VARIABLES = ["J3_RELEASE_BASE_URL", "J3_RELEASE_PUBLIC_KEY"] as const;
 
 /**
  * `systemd-run`'s arguments for `plan`. The unit is collected once it ends,
  * failed or not, so a second run never finds its name taken; what it printed
  * stays in the journal (`journalctl --user -u j3-bots-update-…`).
  *
- * The environment is the service's: its home and `PATH`, and none of the
+ * The environment is the service's: its home, `PATH` and release variables, and none of the
  * variables a shell may set to override the configuration file, which the
  * user manager could otherwise pass on (as the service's unit unsets them).
  * `NoNewPrivileges` keeps anything it runs from gaining a privilege through a
@@ -64,6 +70,7 @@ export const systemdRunArgs = (plan: UpdateUnitPlan): ReadonlyArray<string> => [
   `--property=UnsetEnvironment=${SHELL_OVERRIDES.join(" ")}`,
   `--setenv=J3_HOME=${plan.home}`,
   `--setenv=PATH=${plan.searchPath}`,
+  ...Object.entries(plan.release).map(([name, value]) => `--setenv=${name}=${value}`),
   `--working-directory=${plan.home}`,
   `--description=J3 Bots update to ${plan.version}`,
   "--",
@@ -96,8 +103,6 @@ export const launch = Effect.fn("update.launch")(function* (plan: UpdateUnitPlan
       );
       return { output, exitCode: Number(exitCode) };
     }),
-  ).pipe(
-    Effect.mapError((cause) => new LaunchFailed({ output: cause.message })),
-  );
+  ).pipe(Effect.mapError((cause) => new LaunchFailed({ output: cause.message })));
   if (result.exitCode !== 0) return yield* new LaunchFailed({ output: result.output });
 });

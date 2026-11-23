@@ -18,7 +18,7 @@ import { ENABLE_LINGER, Systemd } from "../system/Systemd.ts";
 // by updating the app, which brings its server with it.
 
 /** Why a server cannot update itself, and the command to run on its machine instead, if one. */
-export interface CannotUpdate {
+interface CannotUpdate {
   readonly reason: UpdateInability;
   readonly command: string | null;
 }
@@ -31,6 +31,7 @@ export type UpdateHost =
       readonly command: string;
       readonly home: string;
       readonly searchPath: string;
+      readonly release: Readonly<Record<string, string>>;
     }
   | ({ readonly _tag: "cannot" } & CannotUpdate);
 
@@ -48,6 +49,8 @@ const INSTALL =
 export const updateHost = Effect.fn("update.updateHost")(function* (options: {
   readonly home: string;
   readonly started: "desktop" | "cli";
+  /** The service's `RELEASE_VARIABLES` that are set. */
+  readonly release: Readonly<Record<string, string>>;
 }) {
   const cannot = (reason: UpdateInability, command: string | null): UpdateHost => ({
     _tag: "cannot",
@@ -55,7 +58,10 @@ export const updateHost = Effect.fn("update.updateHost")(function* (options: {
     command,
   });
   if (options.started === "desktop") return cannot("desktop-managed", null);
-  const installation = yield* Installation.installation;
+  const read = yield* Effect.result(Installation.installation);
+  // A manifest it cannot read is a release to unpack again.
+  if (read._tag === "Failure") return cannot("unpacked", INSTALL);
+  const installation = read.success;
   const { layout } = installation;
   if (layout._tag === "checkout") {
     return cannot(
@@ -84,5 +90,6 @@ export const updateHost = Effect.fn("update.updateHost")(function* (options: {
     command,
     home: options.home,
     searchPath: host.searchPath,
+    release: options.release,
   } satisfies UpdateHost;
 });
