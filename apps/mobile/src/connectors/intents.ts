@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConnectorsClient } from "@j3-bots/client-runtime";
 import type { ConnectorsOpening } from "@j3-bots/client-runtime/presentation";
-import { type SignInRoute, useJ3Client } from "@j3-bots/client-runtime/react";
+import { type SignInRoute, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { useNavigation } from "@react-navigation/native";
 import { Linking } from "react-native";
 import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
+import { session } from "../platform/platform.ts";
 import { openSignInPage, phoneSignInRoute } from "../platform/signInRelay.ts";
 
 /**
@@ -25,9 +26,11 @@ export function useConnectorsIntents(): ConnectorsIntents {
   const { locale } = useI18n();
   const navigation = useNavigation<Navigation>();
   const { state: _state, ...connectors } = useJ3Client().connectors;
+  const server = useReadable(session.state);
+  const viaHttps = server._tag === "open" && server.origin.protocol === "https:";
   return {
     ...connectors,
-    signInRoute: phoneSignInRoute(locale),
+    signInRoute: phoneSignInRoute(locale, viaHttps),
     openSignIn: openSignInPage,
     openPage: (url) => {
       void Linking.openURL(url).catch(() => undefined);

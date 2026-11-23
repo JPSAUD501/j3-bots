@@ -32,7 +32,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * the app what to answer (`onRequest`, answered with `answer`): which request
  * is the sign-in's own return is the app's to say, with the code every client
  * shares. A request the app does not answer in time, or one too long to be a
- * return, is turned away. Nothing it reads is logged or kept.
+ * return, is turned away. Nothing it reads is logged or kept. While it
+ * listens, a short foreground service (`SignInWaitService`) keeps the app
+ * awake behind the browser, with a notification in the words `listen` is
+ * given.
  *
  * `open` shows an https: page in a Custom Tab, over the app, and
  * `bringForward` brings the app back over it once the return is caught.
@@ -48,7 +51,7 @@ class SignInRelayModule : Module() {
 
     Events("onRequest")
 
-    AsyncFunction("listen") {
+    AsyncFunction("listen") { title: String, channelName: String ->
       val opened =
         try {
           Listener(::serve)
@@ -59,6 +62,7 @@ class SignInRelayModule : Module() {
         listener?.close()
         listener = opened
       }
+      appContext.reactContext?.let { SignInWaitService.start(it, title, channelName) }
       opened.port
     }
 
@@ -68,6 +72,7 @@ class SignInRelayModule : Module() {
         if (current != null && current.port == port) {
           current.close()
           listener = null
+          appContext.reactContext?.let { SignInWaitService.stop(it) }
         }
       }
     }
@@ -89,9 +94,9 @@ class SignInRelayModule : Module() {
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("bringForward") {
-      val context = appContext.reactContext ?: return@AsyncFunction
+      val context = appContext.reactContext ?: return@AsyncFunction null
       val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
-      val component = launch?.component ?: return@AsyncFunction
+      val component = launch?.component ?: return@AsyncFunction null
       // The app's own activity, with no action: it comes back over the Custom Tab, which closes,
       // and nothing that reads the app's intents takes it for a link or a notification.
       val intent =
@@ -114,6 +119,7 @@ class SignInRelayModule : Module() {
         listener?.close()
         listener = null
       }
+      appContext.reactContext?.let { SignInWaitService.stop(it) }
       replies.values.forEach { it.complete(REFUSED) }
       replies.clear()
     }

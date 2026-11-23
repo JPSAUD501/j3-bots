@@ -158,6 +158,7 @@ export const en = {
   "notification.channel.secret": "Credential requests",
   "notification.channel.handoff": "Urgent messages to teammates",
   "notification.channel.connector": "Connectors",
+  "notification.channel.signIn": "Sign-ins",
 
   "time.yesterday": "Yesterday",
   "time.yesterdayAt": "Yesterday at {time}",
@@ -1466,6 +1467,7 @@ export const en = {
   "signIn.paste.apps":
     "The desktop and phone apps take the browser back on their own, with nothing to paste.",
   "signIn.failed.start": "The sign-in didn't start. Try again.",
+  "signIn.waitingNotice": "Waiting for your sign-in in the browser",
   "signIn.failed.noRelay": "This app couldn't wait for the browser to come back. Try again.",
   "signIn.failed.unsupported": "This service doesn't sign in the way J3 Bots needs.",
   "signIn.failed.registration": "The service didn't let J3 Bots register to sign in.",

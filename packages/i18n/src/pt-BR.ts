@@ -156,6 +156,7 @@ const sentences = {
   "notification.channel.secret": "Pedidos de credencial",
   "notification.channel.handoff": "Mensagens urgentes a colegas",
   "notification.channel.connector": "Conectores",
+  "notification.channel.signIn": "Entradas",
 
   "time.yesterday": "Ontem",
   "time.yesterdayAt": "Ontem às {time}",
@@ -1489,6 +1490,7 @@ const sentences = {
   "signIn.paste.apps":
     "Os apps de computador e de celular trazem o navegador de volta sozinhos, sem nada para colar.",
   "signIn.failed.start": "A entrada não começou. Tente de novo.",
+  "signIn.waitingNotice": "Esperando sua entrada no navegador",
   "signIn.failed.noRelay": "Este app não conseguiu esperar a volta do navegador. Tente de novo.",
   "signIn.failed.unsupported": "Este serviço não faz a entrada do jeito que o J3 Bots precisa.",
   "signIn.failed.registration": "O serviço não deixou o J3 Bots se registrar para entrar.",

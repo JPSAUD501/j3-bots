@@ -16,14 +16,15 @@ import * as Schema from "effect/Schema";
 import { Linking } from "react-native";
 
 // A connector's sign-in from this phone: its page in a Custom Tab, and the
-// browser's return caught on the phone's loopback (`modules/sign-in-relay`),
-// then relayed to the server, as the desktop app does. The server may be a
-// computer at home on plain HTTP, which no browser could come back to; the
-// code that comes back is worth nothing without the verifier only the server
-// holds. The native listener reads each request and asks here what to answer,
-// so the phone takes a return by the same rules as the desktop app
-// (`signInCatch`): only the sign-in's own, with the state the server put in
-// it, once.
+// browser's return. A server reached over https takes it at its own callback,
+// so nothing of the sign-in passes through the phone. A computer at home on
+// plain HTTP is no address a browser may come back to: then the return is
+// caught on the phone's loopback (`modules/sign-in-relay`) and relayed to the
+// server, as the desktop app does; the code that comes back is worth nothing
+// without the verifier only the server holds. The native listener reads each
+// request and asks here what to answer, so the phone takes a return by the
+// same rules as the desktop app (`signInCatch`): only the sign-in's own, with
+// the state the server put in it, once.
 
 /** A request the native listener read, as it reports it. */
 const Request = Schema.Struct({
@@ -38,8 +39,12 @@ type Request = typeof Request.Type;
 const decodeRequest = Schema.decodeUnknownOption(Request);
 
 declare class SignInRelayModule extends NativeModule<{ onRequest: (request: unknown) => void }> {
-  /** Listens in place of any listener before; the port, or null when it could not. */
-  listen(): Promise<number | null>;
+  /**
+   * Listens in place of any listener before, keeping the app awake behind the
+   * browser under a notification titled `title`, in the channel `channelName`;
+   * the port, or null when it could not.
+   */
+  listen(title: string, channelName: string): Promise<number | null>;
   stop(port: number): void;
   answer(id: number, status: number, headers: Record<string, string>, body: string): void;
   /** Shows an https: page in a Custom Tab; false when nothing could show it. */
@@ -88,20 +93,23 @@ relay?.addListener("onRequest", (event) => {
 });
 
 /**
- * How a sign-in started on this phone comes back: to the phone's loopback,
- * where the app listens, with the landing page in `language`. Without the
- * app's listener (a build for another system), to the server's own address,
- * which a server that has none answers by asking for the address to paste.
+ * How a sign-in started on this phone comes back: to the server's own
+ * address when the phone reaches it over https (`viaHttps`), else to the
+ * phone's loopback, where the app listens, with its words in `language`.
+ * Without the app's listener (a build for another system), to the server's
+ * own address too.
  */
-export const phoneSignInRoute = (language: Language): SignInRoute => {
-  if (relay === null) return { _tag: "server" };
+export const phoneSignInRoute = (language: Language, viaHttps: boolean): SignInRoute => {
+  if (viaHttps || relay === null) return { _tag: "server" };
   return {
     _tag: "relay",
     listen: async () => {
-      const port = await relay.listen().catch(() => null);
+      const { t } = createI18n(language);
+      const port = await relay
+        .listen(t("signIn.waitingNotice"), t("notification.channel.signIn"))
+        .catch(() => null);
       catches.clear();
       if (port === null) return null;
-      const { t } = createI18n(language);
       catches.set(port, {
         caught: signInCatch(port, {
           relay: (url) => {

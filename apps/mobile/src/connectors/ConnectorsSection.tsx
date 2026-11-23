@@ -18,8 +18,11 @@ export function ConnectorsSection() {
   const navigation = useNavigation<Navigation>();
   const state = useConnectors();
   const connectors = state._tag === "ready" ? state.value : null;
-  const working = connectors?.filter((connector) => connectorTone(connector) === "connected");
+  const working =
+    connectors?.filter((connector) => connectorTone(connector) === "connected").length ?? 0;
   const needYou = connectors?.filter(connectorNeedsYou).length ?? 0;
+  // "0 connected" says nothing beside what needs the operator.
+  const showWorking = working > 0 || needYou === 0;
   return (
     <Section title={t("settings.connectors")}>
       <Quiet>{t("settings.connectors.hint")}</Quiet>
@@ -29,10 +32,10 @@ export function ConnectorsSection() {
         <Text className="text-base text-foreground">{t("settings.connectors.none")}</Text>
       ) : (
         <Text className="text-base text-foreground">
-          {plural("settings.connectors.connected", working?.length ?? 0)}
+          {showWorking && plural("settings.connectors.connected", working)}
           {needYou > 0 && (
             <Text className="text-waiting">
-              {" · "}
+              {showWorking && " · "}
               {plural("settings.connectors.needsYou", needYou)}
             </Text>
           )}
