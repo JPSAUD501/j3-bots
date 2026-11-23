@@ -124,6 +124,17 @@ interface Entry {
   grace: Fiber.Fiber<unknown, unknown> | null;
 }
 
+/** The sockets of one device on one tab, waiting their turn to attach. */
+interface Gate {
+  readonly lock: Semaphore.Semaphore;
+  users: number;
+}
+
+const keyOf = (deviceId: DeviceId, tab: EngineTabId) => `${deviceId}\u0000${tab}`;
+
+/** How many times a socket opens the device's viewer again when it ends as the socket attaches. */
+const REOPENS = 1;
+
 const CONTROLLERS: Record<ViewerController, BrowserController> = {
   bot: "bot",
   "this-viewer": "you",
@@ -172,6 +183,7 @@ export const layer = Layer.effect(
     const auth = yield* DeviceAuth;
     const serverScope = yield* Effect.scope;
     const entries = new Map<string, Entry>();
+    const gates = new Map<string, Gate>();
 
     const background = <A, E>(effect: Effect.Effect<A, E>) => Effect.forkIn(effect, serverScope);
 
@@ -314,7 +326,7 @@ export const layer = Layer.effect(
         Effect.onError(() => Scope.close(scope, Exit.void)),
       );
       const entry: Entry = {
-        key: `${deviceId}\u0000${tab}`,
+        key: keyOf(deviceId, tab),
         deviceId,
         tab,
         viewer,
@@ -419,35 +431,50 @@ export const layer = Layer.effect(
       }
     };
 
-    const connect = Effect.fn("BrowserViewers.connect")(function* (input: {
-      readonly deviceId: DeviceId;
-      readonly ref: BrowserTabRef;
-      readonly size: ViewSize;
-      readonly link: ClientLink;
-    }) {
-      const { deviceId, link } = input;
-      const tab = yield* tabs.resolve(input.ref);
-      if (Option.isNone(tab)) {
-        yield* link.send({ type: "gone" }).pipe(Effect.ignore);
-        return yield* link.close(1000, "gone");
-      }
-      // An entry that ends while this socket attaches is opened again.
-      let attached = Option.none<Attached>();
-      let entry: Entry | undefined;
-      while (Option.isNone(attached)) {
-        entry = entries.get(`${deviceId}\u0000${tab.value}`);
-        if (entry === undefined) {
-          const opened = yield* open(deviceId, tab.value, input.size).pipe(Effect.option);
-          if (Option.isNone(opened)) {
-            return yield* link.close(BROWSER_CLOSE_CODES.unavailable, "unavailable");
-          }
-          entry = opened.value;
-        }
-        attached = yield* attach(entry, link);
-      }
-      if (entry === undefined) return;
-      const current = entry;
-      const socket = attached.value;
+    /**
+     * Runs `effect` for one socket of a device on a tab while no other socket
+     * of that device on that tab runs it, in the order the sockets came. So the
+     * device gets one viewer of the tab, and the socket that came last is the
+     * one left attached.
+     */
+    const inTurn = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const gate = gates.get(key) ?? { lock: Semaphore.makeUnsafe(1), users: 0 };
+          gate.users++;
+          gates.set(key, gate);
+          return gate;
+        }),
+        (gate) => gate.lock.withPermits(1)(effect),
+        (gate) =>
+          Effect.sync(() => {
+            gate.users--;
+            if (gate.users === 0) gates.delete(key);
+          }),
+      );
+
+    /** The device's viewer of `tab`, opened if it has none, with `link` attached to it. */
+    const join = (deviceId: DeviceId, tab: EngineTabId, size: ViewSize, link: ClientLink) =>
+      inTurn(
+        keyOf(deviceId, tab),
+        Effect.gen(function* () {
+          const entry =
+            entries.get(keyOf(deviceId, tab)) ??
+            (yield* open(deviceId, tab, size).pipe(
+              Effect.option,
+              Effect.map(Option.getOrUndefined),
+            ));
+          if (entry === undefined) return { _tag: "unavailable" } as const;
+          const attached = yield* attach(entry, link);
+          return Option.isSome(attached)
+            ? ({ _tag: "attached", entry, attached: attached.value } as const)
+            : ({ _tag: "ended" } as const);
+        }),
+      );
+
+    /** Serves one attached socket until it closes, goes silent or is detached. */
+    const serve = Effect.fnUntraced(function* (current: Entry, socket: Attached) {
+      const link = socket.link;
 
       let heardAt = yield* Clock.currentTimeMillis;
       const listen = link.incoming.pipe(
@@ -472,6 +499,28 @@ export const layer = Layer.effect(
       });
       yield* Effect.raceAll([listen, keepAlive, Deferred.await(socket.detached)]);
       yield* detach(current, socket);
+    });
+
+    const connect = Effect.fn("BrowserViewers.connect")(function* (input: {
+      readonly deviceId: DeviceId;
+      readonly ref: BrowserTabRef;
+      readonly size: ViewSize;
+      readonly link: ClientLink;
+    }) {
+      const { deviceId, link } = input;
+      // A viewer that ends as this socket attaches is opened again, once, if the tab is still there.
+      for (let attempt = 0; ; attempt++) {
+        const tab = yield* tabs.resolve(input.ref);
+        if (Option.isNone(tab)) {
+          yield* link.send({ type: "gone" }).pipe(Effect.ignore);
+          return yield* link.close(1000, "gone");
+        }
+        const joined = yield* join(deviceId, tab.value, input.size, link);
+        if (joined._tag === "attached") return yield* serve(joined.entry, joined.attached);
+        if (joined._tag === "unavailable" || attempt === REOPENS) {
+          return yield* link.close(BROWSER_CLOSE_CODES.unavailable, "unavailable");
+        }
+      }
     });
 
     return BrowserViewers.of({ connect });

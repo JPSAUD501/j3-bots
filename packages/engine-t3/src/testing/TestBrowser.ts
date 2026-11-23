@@ -3,6 +3,7 @@ import type { BrowserInput } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -48,6 +49,13 @@ export class TestBrowserControl extends Context.Service<
     readonly nextViewer: Effect.Effect<FakeViewer>;
     /** Whether a viewer can be opened: the engine is ready. */
     readonly setAvailable: (available: boolean) => Effect.Effect<void>;
+    /**
+     * Whether an open is held once the engine's end of the viewer exists, before
+     * the server gets its viewer: the time a real engine takes to answer.
+     */
+    readonly holdOpens: (held: boolean) => Effect.Effect<void>;
+    /** How many viewers the server opened so far, held ones included. */
+    readonly opens: Effect.Effect<number>;
   }
 >()("@j3-bots/engine-t3/testing/TestBrowser/TestBrowserControl") {}
 
@@ -61,6 +69,8 @@ export const layer = Layer.effectContext(
     const tabs = yield* SubscriptionRef.make<ReadonlyArray<EngineBrowserTab>>([]);
     const opened = yield* Queue.unbounded<FakeViewer>();
     const available = yield* Ref.make(true);
+    const answering = yield* Latch.make(true);
+    const opens = yield* Ref.make(0);
 
     const openViewer = Effect.fn("TestBrowser.openViewer")(function* (input: {
       readonly tab: EngineTabId;
@@ -69,6 +79,7 @@ export const layer = Layer.effectContext(
       readonly quality: number;
     }) {
       if (!(yield* Ref.get(available))) return yield* new EngineUnavailable();
+      yield* Ref.update(opens, (count) => count + 1);
       const output = yield* Queue.unbounded<ViewerOutput, ViewerClosed>();
       const acks = yield* Ref.make(0);
       const inputs = yield* Ref.make<ReadonlyArray<BrowserInput>>([]);
@@ -85,6 +96,7 @@ export const layer = Layer.effectContext(
         released: Deferred.await(released),
         isReleased: Deferred.isDone(released),
       });
+      yield* answering.await;
       return {
         output: Stream.fromQueue(output),
         ack: Ref.update(acks, (count) => count + 1),
@@ -102,6 +114,8 @@ export const layer = Layer.effectContext(
           setTabs: (next) => SubscriptionRef.set(tabs, next),
           nextViewer: Queue.take(opened),
           setAvailable: (next) => Ref.set(available, next),
+          holdOpens: (held) => (held ? answering.close : answering.open).pipe(Effect.asVoid),
+          opens: Ref.get(opens),
         }),
       ),
     );

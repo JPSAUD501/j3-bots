@@ -267,6 +267,50 @@ it.effect("hands a tab to the device's newest socket, and closes the one before"
   }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "opens one viewer for a device's sockets that come while it opens, and the newest keeps it",
+  () =>
+    Effect.gen(function* () {
+      const { bot, browser, device, refOf } = yield* scene("one");
+      yield* browser.holdOpens(true);
+      const first = yield* fakeLink;
+      const { viewer } = yield* connect(device, refOf("one"), first.link, browser.nextViewer);
+      if (viewer === null) return;
+      // The device takes the tab while the engine has not answered the open yet.
+      yield* viewer.emit(controlBy("this-viewer"));
+      const second = yield* fakeLink;
+      yield* connect(device, refOf("one"), second.link, null);
+      // The second socket reaches the open before the engine answers the first.
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* browser.holdOpens(false);
+
+      assert.deepStrictEqual(yield* first.closed, { code: 4409, reason: "replaced" });
+      assert.deepStrictEqual(yield* second.next, {
+        type: "control",
+        controller: "you",
+        generation: 1,
+        dialog: null,
+      });
+      assert.strictEqual(yield* browser.opens, 1);
+      const [held] = yield* tabsWhen(bot.id, device, ([tab]) => tab?.controller === "you");
+      assert.strictEqual(held?.controller, "you");
+
+      // The tab stays the device's through the grace, for a socket that comes back.
+      yield* second.hangUp;
+      const back = yield* fakeLink;
+      yield* connect(device, refOf("one"), back.link, null);
+      assert.deepStrictEqual(yield* back.next, {
+        type: "control",
+        controller: "you",
+        generation: 1,
+        dialog: null,
+      });
+      assert.strictEqual(yield* browser.opens, 1);
+      assert.isFalse(yield* viewer.isReleased);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
 it.effect("closes every viewer of a revoked device at once, a held tab's included", () =>
   Effect.gen(function* () {
     const { browser, device, refOf } = yield* scene("one", "two");

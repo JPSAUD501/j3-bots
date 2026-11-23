@@ -526,6 +526,8 @@ A bot that browses does it in the engine's browser ([Engine: the bot's browser](
 A query that does not decode becomes a socket that closes at once with 1008. A ref the server does not know gets `gone` and a normal close. The contract's `BrowserServerFrame` and `BrowserClientFrame` are what it carries, besides the pictures. A client frame that does not decode is dropped unread.
 
 **One viewer per device and tab.** `BrowserViewers` opens one engine viewer for a device's first socket on a tab. The device's next socket on the same tab takes that viewer over, control included, and the socket before it closes with 4409. Two devices on one tab have a viewer each, so each can tell who holds it.
+- A device's sockets on one tab take their turns, in the order they came: each finds the device's viewer, or opens it when there is none, and attaches to it before the next socket does. So a socket that comes while the viewer is still opening waits for it, and the device never has two engine viewers of one tab. The last socket to come is the one left attached.
+- A viewer that ends while a socket attaches, its tab closing or its device revoked, is opened again once, if the tab is still listed. Otherwise the socket closes with 1013.
 
 **Pacing.** One picture is in flight to a client at a time.
 - A picture that arrives while one is in flight waits. A newer one takes its place, and the engine is acknowledged for the one dropped unsent.
