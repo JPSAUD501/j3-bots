@@ -8,7 +8,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { app } from "electron";
 import { renderLinkHandlerEntry } from "./desktopEntry.ts";
-import { runningAppImage } from "./restart.ts";
+import { launchCommand, runningAppImage } from "./restart.ts";
 
 // Makes this app the system's handler of its links (`<scheme>://…`), as it
 // starts. On macOS and Windows Electron does it. On Linux the deb's own
@@ -37,21 +37,7 @@ const run = Effect.fn("LinkHandler.run")(
   Effect.map(Option.flatten),
 );
 
-/**
- * What a link starts: the AppImage itself, whose launcher adds what it needs,
- * or, in development, Electron with the app's folder, without Chromium's
- * sandbox when this run has none (`scripts/launch.ts`).
- */
-const linkCommand = (appImage: string | null): ReadonlyArray<string> => {
-  if (appImage !== null) return [appImage];
-  const unsandboxed = app.commandLine.hasSwitch("no-sandbox") ? ["--no-sandbox"] : [];
-  return [process.execPath, app.getAppPath(), ...unsandboxed];
-};
-
-const registerOnLinux = Effect.fn("LinkHandler.registerOnLinux")(function* (
-  scheme: string,
-  appImage: string | null,
-) {
+const registerOnLinux = Effect.fn("LinkHandler.registerOnLinux")(function* (scheme: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dataHome = yield* Config.option(Config.NonEmptyString("XDG_DATA_HOME"));
@@ -62,7 +48,7 @@ const registerOnLinux = Effect.fn("LinkHandler.registerOnLinux")(function* (
   const entryName = `${scheme}-links.desktop`;
   const entry = renderLinkHandlerEntry({
     name: app.isPackaged ? "J3 Bots" : "J3 Bots Development",
-    command: linkCommand(appImage),
+    command: launchCommand(),
     scheme,
   });
   const entryPath = path.join(applications, entryName);
@@ -90,7 +76,7 @@ export const register = Effect.fn("LinkHandler.register")(function* (scheme: str
   if (process.platform === "linux") {
     // The deb's entry is the package's: removing it leaves nothing behind.
     if (app.isPackaged && runningAppImage === null) return;
-    return yield* registerOnLinux(scheme, runningAppImage).pipe(
+    return yield* registerOnLinux(scheme).pipe(
       Effect.catch((error) => Effect.logWarning("Registering the app's links failed", error)),
     );
   }

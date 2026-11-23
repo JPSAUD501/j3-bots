@@ -80,6 +80,7 @@ const bridge: DesktopBridge = {
   retryLocalServer: () => ipcRenderer.send(IPC_CHANNELS.retryLocalServer),
   setPhoneAccess: (on) => ipcRenderer.invoke(IPC_CHANNELS.setPhoneAccess, { on }),
   localPairingLink: () => ipcRenderer.invoke(IPC_CHANNELS.localPairingLink),
+  setStartWithSystem: (on) => ipcRenderer.invoke(IPC_CHANNELS.setStartWithSystem, { on }),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

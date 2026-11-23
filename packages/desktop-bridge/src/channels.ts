@@ -77,6 +77,8 @@ export const IPC_CHANNELS = {
   setPhoneAccess: "j3bots:set-phone-access",
   /** Answers `LocalPairingLink`. */
   localPairingLink: "j3bots:local-pairing-link",
+  /** `StartWithSystemRequest`, answered with `StartWithSystemChange`. */
+  setStartWithSystem: "j3bots:set-start-with-system",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -133,4 +135,5 @@ export interface DesktopBridge {
   readonly retryLocalServer: () => void;
   readonly setPhoneAccess: (on: boolean) => Promise<unknown>;
   readonly localPairingLink: () => Promise<unknown>;
+  readonly setStartWithSystem: (on: boolean) => Promise<unknown>;
 }
