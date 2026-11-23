@@ -4,6 +4,7 @@ import type {
   ConversationItem,
   Draft,
   DraftMention,
+  IntentResult,
   PairingOffer,
   RecentTurnsState,
   SettingsChange,
@@ -151,8 +152,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly stopRoom: (roomId: RoomId) => void;
   /** Absent where there is no dictation. */
   readonly dictate?: (target: EntryTarget) => void;
-  /** Resolves with the new bot's id once the server has created it. */
-  readonly createBot: (draft: NewBot) => Promise<BotId>;
+  /** Resolves with the new bot's id once the server has created it, or with why it did not. */
+  readonly createBot: (draft: NewBot) => Promise<IntentResult<BotId>>;
   readonly newBot: () => void;
   readonly newRoom: () => void;
   /** Opens the form that changes a room's name, members, host and hop limit. */

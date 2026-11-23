@@ -5,7 +5,7 @@ import {
   type BotId,
   BotId as BotIdSchema,
   type CommandError,
-  type CommandId,
+  CommandId,
   Conflict,
   Invalid,
   type ModelChoice,
@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
@@ -35,7 +36,7 @@ import { Stops } from "../turns/Stops.ts";
 import { conversation } from "../turns/model.ts";
 import { Wakes } from "../turns/Wakes.ts";
 import { freeAvatar } from "./avatars.ts";
-import { type BotChanges, BotStore } from "./BotStore.ts";
+import { type BotChanges, BotStore, type ModelChooser } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
 import { Workspaces } from "./Workspaces.ts";
 
@@ -80,6 +81,16 @@ export class Bots extends Context.Service<
       readonly botId: BotId;
       readonly changes: BotChanges;
     }) => Effect.Effect<Bot, CommandError>;
+    /**
+     * Moves each bot still waiting for its hello to go out (not yet with the
+     * engine), whose model the server chose and whose provider is not ready,
+     * to the server's default model once that model's provider is ready, the
+     * way the operator's change of provider moves it, its hello and the
+     * operator's messages held behind it kept. A model the operator chose is
+     * never moved. Run whenever a provider's state changes and after a bot is
+     * created; one pass at a time.
+     */
+    readonly adoptDefaults: Effect.Effect<void>;
     /**
      * Stops the bot's work in progress, then replaces its main session with
      * a fresh one, which gets no digest of the conversation. Its memory files
@@ -175,6 +186,133 @@ export const layer = Layer.effect(
         ),
       );
 
+    /**
+     * The bots whose hello the engine does not have yet (its `first-run`
+     * wake waits, or is in a dispatch never sent) and whose model the server
+     * chose.
+     */
+    const waitingOnServerModelSql = sql`
+      b.model_by_server = 1 AND EXISTS (
+        SELECT 1 FROM wakes w LEFT JOIN dispatches d ON d.id = w.dispatch_id
+        WHERE w.bot_id = b.id AND json_extract(w.payload_json, '$._tag') = 'first-run'
+          AND (
+            w.status = 'pending'
+            OR (w.status = 'dispatched' AND d.status = 'intended' AND d.attempts = 0)
+          )
+      )
+    `;
+
+    const waitingOnServerModel = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: BotIdSchema, provider_id: ProviderId }),
+      execute: () => sql`SELECT b.id, b.provider_id FROM bots b WHERE ${waitingOnServerModelSql}`,
+    });
+
+    const waitsOnServerModel = (botId: BotId) =>
+      sql`SELECT 1 FROM bots b WHERE b.id = ${botId} AND ${waitingOnServerModelSql}`.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
+
+    /**
+     * Saves a change, the server's own only while the bot still waits on the
+     * model it chose (`waitsOnServerModel`): one that finds it otherwise, the
+     * operator having chosen a model or the hello gone out meanwhile, changes
+     * nothing.
+     */
+    const applyChange = Effect.fn("Bots.change")(function* (
+      input: {
+        readonly commandId: CommandId;
+        readonly botId: BotId;
+        readonly changes: BotChanges;
+      },
+      chooser: ModelChooser,
+    ) {
+      const { changes: change } = input;
+      /** Saves the change; `settingsChanged` records a new model or permission mode. */
+      const save = <E>(settingsChanged: Effect.Effect<void, E>) =>
+        receipts.once({
+          commandId: input.commandId,
+          method: "bot.update",
+          payload: input,
+          result: Bot,
+          apply: Effect.gen(function* () {
+            const before = yield* require(input.botId);
+            if (chooser === "server" && !(yield* waitsOnServerModel(input.botId))) {
+              return before.bot;
+            }
+            if (change.model !== undefined) yield* checkModel(change.model);
+            const at = yield* DateTime.now;
+            if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
+            yield* store.update(input.botId, change, at, chooser);
+            yield* settingsChanged;
+            // Compared with the provider the bot's live main session runs on, in
+            // this transaction: an earlier change may not have reached it yet.
+            // Moving to another provider stops the work in progress before the
+            // session is replaced, but leaves a hello the bot has not sent yet,
+            // and the operator's messages waiting behind it, to run on the new
+            // one. Moving back before that keeps the session.
+            if (change.model !== undefined) {
+              const live = yield* liveMainProvider(input.botId);
+              if (Option.isSome(live) && live.value !== change.model.providerId) {
+                yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
+                yield* requestBotRotation(input.botId, "provider-changed");
+              } else if (Option.isSome(live)) {
+                yield* providerRestored(input.botId);
+              }
+            }
+            yield* changes.touch({ _tag: "bot", botId: input.botId });
+            return (yield* require(input.botId).pipe(Effect.orDie)).bot;
+          }),
+        });
+      // A new model or permission mode is saved in the gate of the bot's main
+      // session, so no send claimed before it reaches the engine after it.
+      const bot =
+        change.model !== undefined || change.permissionMode !== undefined
+          ? yield* sessions.inMainSessionGate(input.botId, (held) =>
+              save(sessions.settingsChanged(held)),
+            )
+          : yield* save(Effect.void);
+      if (change.profile !== undefined || change.model !== undefined) {
+        yield* workspaces.render(bot.id);
+      }
+      return bot;
+    });
+
+    const update = (input: {
+      readonly commandId: CommandId;
+      readonly botId: BotId;
+      readonly changes: BotChanges;
+    }) => applyChange(input, "operator");
+
+    const adoptPermit = yield* Semaphore.make(1);
+
+    const adoptDefaults = adoptPermit.withPermits(1)(
+      Effect.gen(function* () {
+        const fallback = yield* engineState.defaultModel;
+        if (Option.isNone(fallback)) return;
+        const { providers } = yield* engineState.current;
+        const ready = (providerId: string) =>
+          providers.some((p) => p.id === providerId && p.status._tag === "ready");
+        if (!ready(fallback.value.providerId)) return;
+        for (const bot of yield* waitingOnServerModel(undefined).pipe(Effect.orDie)) {
+          if (bot.provider_id === fallback.value.providerId || ready(bot.provider_id)) continue;
+          const commandId = CommandId.make(yield* ids.make("default-model"));
+          yield* applyChange(
+            { commandId, botId: bot.id, changes: { model: fallback.value } },
+            "server",
+          ).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("A new bot could not move to the default model", {
+                botId: bot.id,
+                error: error._tag,
+              }),
+            ),
+          );
+        }
+      }).pipe(Effect.withSpan("Bots.adoptDefaults")),
+    );
+
     const create = Effect.fn("Bots.create")(function* (input: {
       readonly commandId: CommandId;
       readonly draft: BotDraft;
@@ -201,6 +339,7 @@ export const layer = Layer.effect(
               job: draft.job ?? "",
             },
             model,
+            modelChooser: draft.model === undefined ? "server" : "operator",
             permissionMode:
               draft.permissionMode ?? (yield* engineState.defaultPermissionMode(model)),
             primary: draft.primary === true,
@@ -230,59 +369,9 @@ export const layer = Layer.effect(
       });
       // Also after a retry: a creation that crashed before this point finishes now.
       yield* provision(bot.id);
-      return bot;
-    });
-
-    const update = Effect.fn("Bots.update")(function* (input: {
-      readonly commandId: CommandId;
-      readonly botId: BotId;
-      readonly changes: BotChanges;
-    }) {
-      const { changes: change } = input;
-      /** Saves the change; `settingsChanged` records a new model or permission mode. */
-      const save = <E>(settingsChanged: Effect.Effect<void, E>) =>
-        receipts.once({
-          commandId: input.commandId,
-          method: "bot.update",
-          payload: input,
-          result: Bot,
-          apply: Effect.gen(function* () {
-            const before = yield* require(input.botId);
-            if (change.model !== undefined) yield* checkModel(change.model);
-            const at = yield* DateTime.now;
-            if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
-            yield* store.update(input.botId, change, at);
-            yield* settingsChanged;
-            // Compared with the provider the bot's live main session runs on, in
-            // this transaction: an earlier change may not have reached it yet.
-            // Moving to another provider is the operator's own action, so it
-            // stops the work in progress before the session is replaced, but
-            // leaves a hello the bot has not sent yet to run on the new one.
-            // Moving back before that keeps the session.
-            if (change.model !== undefined) {
-              const live = yield* liveMainProvider(input.botId);
-              if (Option.isSome(live) && live.value !== change.model.providerId) {
-                yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
-                yield* requestBotRotation(input.botId, "provider-changed");
-              } else if (Option.isSome(live)) {
-                yield* providerRestored(input.botId);
-              }
-            }
-            yield* changes.touch({ _tag: "bot", botId: input.botId });
-            return (yield* require(input.botId).pipe(Effect.orDie)).bot;
-          }),
-        });
-      // A new model or permission mode is saved in the gate of the bot's main
-      // session, so no send claimed before it reaches the engine after it.
-      const bot =
-        change.model !== undefined || change.permissionMode !== undefined
-          ? yield* sessions.inMainSessionGate(input.botId, (held) =>
-              save(sessions.settingsChanged(held)),
-            )
-          : yield* save(Effect.void);
-      if (change.profile !== undefined || change.model !== undefined) {
-        yield* workspaces.render(bot.id);
-      }
+      // A provider may have become ready while the bot was saved, after the
+      // default was read.
+      yield* adoptDefaults;
       return bot;
     });
 
@@ -350,6 +439,6 @@ export const layer = Layer.effect(
       });
     });
 
-    return Bots.of({ create, update, freshStart, remove });
+    return Bots.of({ create, update, adoptDefaults, freshStart, remove });
   }),
 );

@@ -11,6 +11,7 @@ import {
   showsConnect,
   springs,
 } from "@j3-bots/client-runtime/presentation";
+import { type IntentResult, refusedWith } from "@j3-bots/client-runtime";
 import { connectStepText, providerLine } from "@j3-bots/client-runtime/wording";
 import type { AvatarChoice, BotId, EngineStatus } from "@j3-bots/contracts";
 import { ChevronLeftIcon } from "lucide-react";
@@ -47,11 +48,11 @@ const SLIDE = 48;
 interface OnboardingProps {
   /** Null until the server has reported it. */
   readonly engine: EngineStatus | null;
-  /** Creates the first bot, resolving with its id once it exists. */
+  /** Creates the first bot, resolving with its id once it exists, or with why it does not. */
   readonly onCreate: (bot: {
     readonly name: string;
     readonly avatar: AvatarChoice;
-  }) => Promise<BotId>;
+  }) => Promise<IntentResult<BotId>>;
   /** Opens the new bot's conversation, which ends the first run. */
   readonly onArrived: (botId: BotId) => void;
   /** Where it starts: the welcome, or another step for the gallery. */
@@ -63,6 +64,9 @@ interface OnboardingProps {
 }
 
 type Direction = "forward" | "back";
+
+/** Why the bot was not created: the server has no model for it, or anything else. */
+type Failure = "no-model" | "other";
 
 /**
  * The first run, from the welcome to the first bot's arrival, one thing per
@@ -97,14 +101,19 @@ export function Onboarding({
     /** Counts moves, so each one's layers are new. */
     readonly move: number;
   }>({ step: initialStep, direction: "forward", leaving: null, move: 0 });
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  // Whether the connect step was shown: from then on it stays in the flow (`showsConnect`).
+  const [connectShown, setConnectShown] = useState(initialStep === "connect");
+  // Whether the bot exists: the arrival names it only then.
+  const [created, setCreated] = useState(initialStep === "arrival");
   // Counts what the operator does to the bot, so it answers each with a hop.
   const [pokes, setPokes] = useState(0);
   const { step } = view;
   const botName = name.trim() === "" ? fallbackName : name.trim();
-  const connect = showsConnect(engine, step);
+  const connect = showsConnect(engine, connectShown);
 
   const go = (to: OnboardingStep, direction: Direction) => {
+    if (to === "connect") setConnectShown(true);
     setView((now) => ({
       step: to,
       direction,
@@ -147,16 +156,24 @@ export function Onboarding({
   };
 
   const create = () => {
-    setFailed(false);
+    setFailure(null);
     const from = step;
     go("arrival", "forward");
-    const shown = after(reduced ? 0 : ARRIVAL_MS);
+    const failed = (why: Failure) => {
+      setFailure(why);
+      go(from, "back");
+    };
     onCreate({ name: botName, avatar: look }).then(
-      (botId) => shown.then(() => onArrived(botId)),
-      () => {
-        setFailed(true);
-        go(from, "back");
+      (result) => {
+        if (result._tag === "failed") {
+          failed(refusedWith(result, "model") ? "no-model" : "other");
+          return;
+        }
+        // The bot exists: it is seen arriving before its conversation opens.
+        setCreated(true);
+        void after(reduced ? 0 : ARRIVAL_MS).then(() => onArrived(result.value));
       },
+      () => failed("other"),
     );
   };
 
@@ -194,14 +211,16 @@ export function Onboarding({
               setPokes((count) => count + 1);
             }}
             ready={!connect}
-            failed={failed}
+            failure={failure}
             onContinue={forward}
           />
         );
       case "connect":
-        return <ConnectStep engine={engine} name={botName} failed={failed} onCreate={create} />;
+        return (
+          <ConnectStep engine={engine} name={botName} failure={failure} onCreate={create} />
+        );
       case "arrival":
-        return <Arrival engine={engine} name={botName} />;
+        return <Arrival engine={engine} name={botName} created={created} />;
     }
   };
 
@@ -229,7 +248,9 @@ export function Onboarding({
           </span>
           <span className="w-10" />
         </header>
-        {step !== "welcome" && <Hero look={look} pokes={pokes} arrived={step === "arrival"} />}
+        {step !== "welcome" && (
+          <Hero look={look} pokes={pokes} arrived={step === "arrival" && created} />
+        )}
         <div className="relative min-h-0 flex-1">
           {view.leaving !== null && (
             <Layer key={`out:${view.move}`} motion={`out-${view.direction}`}>
@@ -483,7 +504,7 @@ function LookStep({
   look,
   onLook,
   ready,
-  failed,
+  failure,
   onContinue,
 }: {
   readonly name: string;
@@ -491,7 +512,7 @@ function LookStep({
   readonly onLook: (look: AvatarChoice) => void;
   /** Whether the next step is the arrival, so Continue creates the bot. */
   readonly ready: boolean;
-  readonly failed: boolean;
+  readonly failure: Failure | null;
   readonly onContinue: () => void;
 }) {
   const { t } = useI18n();
@@ -499,7 +520,7 @@ function LookStep({
     <StepFrame
       actions={
         <>
-          {ready && <Failure failed={failed} name={name} />}
+          {ready && <FailureLine failure={failure} name={name} />}
           <BigButton onClick={onContinue}>
             {ready ? t("onboarding.create", { name }) : t("onboarding.continue")}
           </BigButton>
@@ -515,11 +536,20 @@ function LookStep({
   );
 }
 
-function Failure({ failed, name }: { readonly failed: boolean; readonly name: string }) {
+/** Why the bot was not created, in a space held for it: empty, it takes none. */
+function FailureLine({
+  failure,
+  name,
+}: {
+  readonly failure: Failure | null;
+  readonly name: string;
+}) {
   const { t } = useI18n();
   return (
     <p role="alert" className="text-center text-sm text-blocked empty:hidden">
-      {failed ? t("onboarding.failed", { name }) : null}
+      {failure === null
+        ? null
+        : t(failure === "no-model" ? "onboarding.failedNoModel" : "onboarding.failed", { name })}
     </p>
   );
 }
@@ -533,12 +563,12 @@ const toneClass = {
 function ConnectStep({
   engine,
   name,
-  failed,
+  failure,
   onCreate,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
-  readonly failed: boolean;
+  readonly failure: Failure | null;
   readonly onCreate: () => void;
 }) {
   const i18n = useI18n();
@@ -551,7 +581,7 @@ function ConnectStep({
     <StepFrame
       actions={
         <>
-          <Failure failed={failed} name={name} />
+          <FailureLine failure={failure} name={name} />
           <BigButton onClick={onCreate}>{t("onboarding.create", { name })}</BigButton>
           {text.later !== null && (
             <p className="text-center text-sm text-pretty text-muted-foreground">{text.later}</p>
@@ -565,6 +595,19 @@ function ConnectStep({
         <div className="mt-1 w-full text-start">
           <CommandLine command={text.command} copyLabel={t("firstRun.connect.copy")} large />
         </div>
+      )}
+      {text.login !== null && (
+        <p className="text-sm text-pretty text-muted-foreground">
+          {text.login.text}{" "}
+          <a
+            href={text.login.url}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-foreground underline underline-offset-2"
+          >
+            {text.login.link}
+          </a>
+        </p>
       )}
       {unavailable && engine !== null && (
         <ul className="flex w-full flex-col gap-1 text-sm">
@@ -597,12 +640,19 @@ function ConnectStep({
   );
 }
 
+/**
+ * The bot arriving. Until the server has created it, only the bot above says
+ * something is happening; then it grows, its name pops in, and a line says
+ * whether it is saying hello or waits for a model.
+ */
 function Arrival({
   engine,
   name,
+  created,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
+  readonly created: boolean;
 }) {
   const { t } = useI18n();
   const ready =
@@ -610,18 +660,24 @@ function Arrival({
   return (
     <StepFrame actions={null}>
       <div className="mt-24 flex flex-col items-center gap-2">
-        <h1
-          className="text-(length:--onboarding-display) leading-tight font-bold tracking-tight"
-          style={{ animation: springAnimation("onboarding-pop", springs.pop, 260) }}
-        >
-          {t("onboarding.arrival.title", { name })}
-        </h1>
-        <p
-          role="status"
-          className="text-lg text-muted-foreground"
-          style={{ animation: springAnimation("onboarding-rise", springs.soft, 420) }}
-        >
-          {ready ? t("onboarding.arrival.hello") : t("onboarding.arrival.waiting", { name })}
+        {created && (
+          <h1
+            className="text-(length:--onboarding-display) leading-tight font-bold tracking-tight"
+            style={{ animation: springAnimation("onboarding-pop", springs.pop, 260) }}
+          >
+            {t("onboarding.arrival.title", { name })}
+          </h1>
+        )}
+        {/* Present from the start, so what it says once the bot exists is announced. */}
+        <p role="status" className="text-lg text-muted-foreground">
+          {created && (
+            <span
+              className="block"
+              style={{ animation: springAnimation("onboarding-rise", springs.soft, 420) }}
+            >
+              {ready ? t("onboarding.arrival.hello") : t("onboarding.arrival.waiting", { name })}
+            </span>
+          )}
         </p>
       </div>
     </StepFrame>

@@ -9,6 +9,7 @@ import {
   providerGate,
   showsConnect,
 } from "@j3-bots/client-runtime/presentation";
+import { refusedWith } from "@j3-bots/client-runtime";
 import { useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
 import { connectStepText } from "@j3-bots/client-runtime/wording";
 import {
@@ -20,10 +21,12 @@ import {
 import type { BotColor } from "@j3-bots/design-tokens";
 import * as ExpoCrypto from "expo-crypto";
 import { ChevronLeft } from "lucide-react-native";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 import {
+  BackHandler,
   I18nManager,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -83,6 +86,9 @@ const botColor = {
 
 type Direction = "forward" | "back";
 
+/** Why the bot was not created: the server has no model for it, or anything else. */
+type Failure = "no-model" | "other";
+
 const enterFrom = (direction: Direction) => {
   const fromEnd = (direction === "forward") !== I18nManager.isRTL;
   return (fromEnd ? FadeInRight : FadeInLeft)
@@ -128,31 +134,37 @@ export function Onboarding({
     readonly direction: Direction;
     readonly move: number;
   }>({ step: "welcome", direction: "forward", move: 0 });
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<Failure | null>(null);
+  // Whether the connect step was shown: from then on it stays in the flow (`showsConnect`).
+  const [connectShown, setConnectShown] = useState(false);
+  // Whether the bot exists: the arrival names it only then.
+  const [created, setCreated] = useState(false);
   const [pokes, setPokes] = useState(0);
   const { step } = view;
   const botName = name.trim() === "" ? fallbackName : name.trim();
-  const connect = showsConnect(engine, step);
+  const connect = showsConnect(engine, connectShown);
 
   const go = (to: OnboardingStep, direction: Direction) => {
+    if (to === "connect") setConnectShown(true);
     setView((now) => ({ step: to, direction, move: now.move + 1 }));
     if (to !== "welcome") setPokes((count) => count + 1);
   };
 
   const create = () => {
-    setFailed(false);
+    setFailure(null);
     const from = step;
     go("arrival", "forward");
     onCreating(true);
-    const shown = after(reduced ? 0 : ARRIVAL_MS);
     void client.createBot({ name: botName, primary: true, avatar: look }).then((result) => {
       if (result._tag !== "done") {
         onCreating(false);
-        setFailed(true);
+        setFailure(refusedWith(result, "model") ? "no-model" : "other");
         go(from, "back");
         return;
       }
-      void shown.then(() => onArrived(result.value.id));
+      // The bot exists: it is seen arriving before its conversation opens.
+      setCreated(true);
+      void after(reduced ? 0 : ARRIVAL_MS).then(() => onArrived(result.value.id));
     });
   };
 
@@ -168,6 +180,19 @@ export function Onboarding({
   };
   const canGoBack = previousStep(step, connect) !== null;
   const progress = makingProgress(step, connect);
+
+  // The system's Back goes to the step before, as the one on screen does, and
+  // does nothing while the bot arrives; from the welcome it leaves the app.
+  const onSystemBack = useEffectEvent((): boolean => {
+    if (step === "arrival") return true;
+    if (previousStep(step, connect) === null) return false;
+    back();
+    return true;
+  });
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => onSystemBack());
+    return () => subscription.remove();
+  }, []);
 
   let screen: ReactNode;
   switch (step) {
@@ -197,16 +222,18 @@ export function Onboarding({
             setPokes((count) => count + 1);
           }}
           ready={!connect}
-          failed={failed}
+          failure={failure}
           onContinue={forward}
         />
       );
       break;
     case "connect":
-      screen = <ConnectStep engine={engine} name={botName} failed={failed} onCreate={create} />;
+      screen = (
+        <ConnectStep engine={engine} name={botName} failure={failure} onCreate={create} />
+      );
       break;
     case "arrival":
-      screen = <Arrival engine={engine} name={botName} />;
+      screen = <Arrival engine={engine} name={botName} created={created} />;
       break;
   }
 
@@ -238,7 +265,7 @@ export function Onboarding({
         <View className="w-11">{step === "welcome" && <SettingsEntry />}</View>
       </View>
       {step !== "welcome" && (
-        <Hero look={look} pokes={pokes} arrived={step === "arrival"} reduced={reduced} />
+        <Hero look={look} pokes={pokes} arrived={step === "arrival" && created} reduced={reduced} />
       )}
       <View className="flex-1 overflow-hidden">
         <Animated.View
@@ -436,7 +463,7 @@ function LookStep({
   look,
   onLook,
   ready,
-  failed,
+  failure,
   onContinue,
 }: {
   readonly name: string;
@@ -444,7 +471,7 @@ function LookStep({
   readonly onLook: (look: AvatarChoice) => void;
   /** Whether the next step is the arrival, so Continue creates the bot. */
   readonly ready: boolean;
-  readonly failed: boolean;
+  readonly failure: Failure | null;
   readonly onContinue: () => void;
 }) {
   const { t } = useI18n();
@@ -452,7 +479,7 @@ function LookStep({
     <StepFrame
       actions={
         <>
-          {ready && <Failure failed={failed} name={name} />}
+          {ready && <FailureLine failure={failure} name={name} />}
           <BigButton
             label={ready ? t("onboarding.create", { name }) : t("onboarding.continue")}
             onPress={onContinue}
@@ -472,7 +499,8 @@ function LookStep({
 /**
  * Where the first run lets the operator choose the first bot's look. It
  * offers today's avatars until the avatar picker takes its place, which takes
- * the same `look` and `onLook`.
+ * the same `look` and `onLook`. Until then each option is named by its place
+ * ("Look 3 of 8"); the picker brings a name for each look.
  */
 function BotLookSlot({
   look,
@@ -510,16 +538,23 @@ function BotLookSlot({
   );
 }
 
-function Failure({ failed, name }: { readonly failed: boolean; readonly name: string }) {
+/** Why the bot was not created. */
+function FailureLine({
+  failure,
+  name,
+}: {
+  readonly failure: Failure | null;
+  readonly name: string;
+}) {
   const { t } = useI18n();
-  if (!failed) return null;
+  if (failure === null) return null;
   return (
     <Text
       accessibilityLiveRegion="polite"
       role="alert"
       className="text-center text-sm text-blocked"
     >
-      {t("onboarding.failed", { name })}
+      {t(failure === "no-model" ? "onboarding.failedNoModel" : "onboarding.failed", { name })}
     </Text>
   );
 }
@@ -539,24 +574,25 @@ const dotClass = {
 function ConnectStep({
   engine,
   name,
-  failed,
+  failure,
   onCreate,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
-  readonly failed: boolean;
+  readonly failure: Failure | null;
   readonly onCreate: () => void;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
   const text = connectStepText(engine, name, i18n);
+  const { login } = text;
   const unavailable =
     engine !== null && engine.state._tag === "ready" && providerGate(engine)._tag === "unavailable";
   return (
     <StepFrame
       actions={
         <>
-          <Failure failed={failed} name={name} />
+          <FailureLine failure={failure} name={name} />
           <BigButton label={t("onboarding.create", { name })} onPress={onCreate} />
           {text.later !== null && (
             <Text className="text-center text-sm text-muted-foreground">{text.later}</Text>
@@ -570,6 +606,18 @@ function ConnectStep({
         <View className="mt-1 w-full">
           <CommandLine command={text.command} />
         </View>
+      )}
+      {login !== null && (
+        <Text className="text-center text-sm text-muted-foreground">
+          {login.text}{" "}
+          <Text
+            accessibilityRole="link"
+            onPress={() => void Linking.openURL(login.url)}
+            className="font-medium text-foreground underline"
+          >
+            {login.link}
+          </Text>
+        </Text>
       )}
       {unavailable && (
         <View className="w-full gap-1.5">
@@ -603,16 +651,24 @@ function Pulse({ tone }: { readonly tone: "waiting" | "ready" | "muted" }) {
   return <Animated.View className={`size-2 rounded-full ${dotClass[tone]}`} style={style} />;
 }
 
+/**
+ * The bot arriving. Until the server has created it, only the bot above says
+ * something is happening; then it grows, its name pops in, and a line says
+ * whether it is saying hello or waits for a model.
+ */
 function Arrival({
   engine,
   name,
+  created,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
+  readonly created: boolean;
 }) {
   const { t } = useI18n();
   const ready =
     engine !== null && engine.state._tag === "ready" && providerGate(engine)._tag === "ready";
+  if (!created) return <StepFrame actions={null}>{null}</StepFrame>;
   return (
     <StepFrame actions={null}>
       <View className="mt-24 items-center gap-2">

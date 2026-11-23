@@ -5,11 +5,12 @@
  * in development only; nothing here reaches a server.
  */
 import type { Draft, DraftFile, SettingsSaves } from "@j3-bots/client-runtime";
-import { providerGate } from "@j3-bots/client-runtime/presentation";
+import { hasDefaultModel, providerGate } from "@j3-bots/client-runtime/presentation";
 import {
   AttachmentId,
   BotId,
   EntryId,
+  Invalid,
   ModelId,
   PairingCode,
   ProviderId,
@@ -359,6 +360,13 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         ),
       })),
     createBot: ({ name, primary, avatar }) => {
+      // As on a server: with no model to give the bot, it is refused.
+      if (!hasDefaultModel(get().engine)) {
+        return Promise.resolve({
+          _tag: "failed",
+          failure: { _tag: "refused", error: new Invalid({ reason: "model" }) },
+        });
+      }
       const botId = BotId.make(`local-bot-${++created}`);
       const key = `bot:${botId}`;
       // As on a server: the bot opens its conversation once a provider can run it.
@@ -424,7 +432,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           });
         }, OPENING_DELAY);
       }
-      return Promise.resolve(botId);
+      return Promise.resolve({ _tag: "done", value: botId });
     },
     deleteBot: (botId) =>
       update((s) => ({

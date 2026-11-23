@@ -83,11 +83,19 @@ const toStored = (
   engineProjectId: Option.fromNullishOr(row.engine_project_id),
 });
 
+/**
+ * Who chose a bot's model: the operator, or the server, for a bot created
+ * without one. Until its hello is sent, a bot on the server's choice follows
+ * the server's default model (`Bots.adoptDefaults`).
+ */
+export type ModelChooser = "operator" | "server";
+
 /** Everything a new bot is created with. */
 export interface NewBot {
   readonly id: BotId;
   readonly profile: Profile;
   readonly model: ModelChoice;
+  readonly modelChooser: ModelChooser;
   readonly permissionMode: PermissionMode;
   readonly primary: boolean;
   readonly workspacePath: string;
@@ -125,7 +133,13 @@ export class BotStore extends Context.Service<
     readonly avatars: Effect.Effect<ReadonlyArray<Avatar>>;
     /** The bot and its conversation. */
     readonly insert: (bot: NewBot) => Effect.Effect<void>;
-    readonly update: (id: BotId, changes: BotChanges, at: DateTime.Utc) => Effect.Effect<void>;
+    /** A new model is recorded as `chooser`'s choice. */
+    readonly update: (
+      id: BotId,
+      changes: BotChanges,
+      at: DateTime.Utc,
+      chooser: ModelChooser,
+    ) => Effect.Effect<void>;
     /** Makes no bot primary; the caller then makes one primary, in the same transaction. */
     readonly clearPrimary: (at: DateTime.Utc) => Effect.Effect<ReadonlyArray<BotId>>;
     readonly setEngineProject: (id: BotId, projectId: EngineProjectId) => Effect.Effect<void>;
@@ -171,12 +185,12 @@ export const layer = Layer.effect(
       yield* sql`
         INSERT INTO bots (
           id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
-          permission_mode, is_primary, workspace_path, created_at, updated_at
+          model_by_server, permission_mode, is_primary, workspace_path, created_at, updated_at
         ) VALUES (
           ${bot.id}, ${bot.profile.name}, ${bot.profile.title}, ${bot.profile.avatar.shape},
           ${bot.profile.avatar.color}, ${bot.profile.job}, ${bot.model.providerId},
-          ${bot.model.modelId}, ${bot.permissionMode}, ${bot.primary ? 1 : 0},
-          ${bot.workspacePath}, ${at}, ${at}
+          ${bot.model.modelId}, ${bot.modelChooser === "server" ? 1 : 0}, ${bot.permissionMode},
+          ${bot.primary ? 1 : 0}, ${bot.workspacePath}, ${at}, ${at}
         )
       `;
       yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES (${bot.id}, ${at})`;
@@ -186,6 +200,7 @@ export const layer = Layer.effect(
       id: BotId,
       changes: BotChanges,
       at: DateTime.Utc,
+      chooser: ModelChooser,
     ) {
       const columns: Record<string, string | number> = { updated_at: timeText(at) };
       const { profile } = changes;
@@ -199,6 +214,7 @@ export const layer = Layer.effect(
       if (changes.model !== undefined) {
         columns["provider_id"] = changes.model.providerId;
         columns["model_id"] = changes.model.modelId;
+        columns["model_by_server"] = chooser === "server" ? 1 : 0;
       }
       if (changes.permissionMode !== undefined) columns["permission_mode"] = changes.permissionMode;
       if (changes.primary !== undefined) columns["is_primary"] = changes.primary ? 1 : 0;

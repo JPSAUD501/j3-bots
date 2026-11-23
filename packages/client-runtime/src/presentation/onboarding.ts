@@ -15,12 +15,13 @@ export type OnboardingStep = "welcome" | "name" | "look" | "connect" | "arrival"
 
 /**
  * Whether the first run shows `connect`: while no provider can run a bot, or
- * the engine is not running, and once shown, until the first run ends, so a
- * provider that connects while the operator reads it does not pull the
- * screen from under them.
+ * the engine is not running, and, once it was `shown`, until the first run
+ * ends. So a provider that connects while the operator reads the step, or
+ * after they go Back from it, does not take it out of the flow: the progress
+ * keeps its dots, and the look's button stays Continue.
  */
-export const showsConnect = (engine: EngineStatus | null, at: OnboardingStep): boolean =>
-  at === "connect" ||
+export const showsConnect = (engine: EngineStatus | null, shown: boolean): boolean =>
+  shown ||
   engine === null ||
   engine.state._tag !== "ready" ||
   providerGate(engine)._tag !== "ready";
@@ -54,6 +55,10 @@ export const makingProgress = (
   const index = making.indexOf(at);
   return index === -1 ? null : { index, count: making.length };
 };
+
+/** Where the install guide says how to sign a harness in with its own account (`provider login`). */
+export const providerLoginGuide =
+  "https://github.com/JPSAUD501/j3-bots/blob/main/docs/operations/install.md#connect-the-providers";
 
 /** Short names that read well in English and Portuguese: one is the first bot's default. */
 const firstNames = ["Nova", "Juno", "Milo", "Iris", "Otto", "Luma", "Pip", "Theo"] as const;

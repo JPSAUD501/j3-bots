@@ -76,6 +76,8 @@ interface TimelineProps {
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Whether the operator's answer to a card is still on its way. */
   readonly submitting: (entryId: EntryId) => boolean;
+  /** The bot's hello waits for a model: the operator's messages wait behind it (`openingHeld`). */
+  readonly waitingForModel?: boolean;
   readonly intents: TimelineIntents;
   /** The rows that just arrived at the end, by key: they settle into place as they mount. */
   readonly arrived?: ReadonlySet<string>;
@@ -92,6 +94,7 @@ export function Timeline({
   room,
   workSteps,
   submitting,
+  waitingForModel = false,
   intents,
   arrived,
   flyFrom,
@@ -153,6 +156,7 @@ export function Timeline({
                       : intents.resendMessage(message.commandId, left.without)
                   }
                   onDiscard={() => intents.discardMessage(message.commandId)}
+                  waitingForModel={waitingForModel}
                   {...(left === null || room === null
                     ? {}
                     : {
@@ -181,6 +185,7 @@ export function Timeline({
                 onOpenAttachment={intents.openAttachment}
                 onRetry={() => intents.retryMessage(message.id)}
                 submitting={submitting(message.id)}
+                waitingForModel={waitingForModel}
               />
             </div>
           );

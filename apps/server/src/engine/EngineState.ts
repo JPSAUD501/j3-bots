@@ -21,14 +21,24 @@ const HARNESS_LABELS = { "claude-code": "Claude Code", codex: "Codex" } as const
 /**
  * Which provider a new bot lands on when none is named, lowest first: one
  * that runs it now, one that will once its limit resets, one a command
- * connects, and last one the engine cannot run yet, such as while it checks.
+ * connects, and last one the engine is still checking. One the engine checked
+ * and cannot run, such as a harness that is not installed, never: the engine
+ * lists Claude Code's catalog even then (**Read** at `59651c1`,
+ * `checkClaudeProviderStatus` in `ClaudeProvider.ts`), and a bot put on it
+ * would wait for a provider that never comes.
  */
-const defaultRank = {
-  ready: 0,
-  limited: 1,
-  "sign-in-required": 2,
-  unavailable: 3,
-} as const satisfies Record<EngineStatus["providers"][number]["status"]["_tag"], number>;
+const defaultRank = (status: EngineStatus["providers"][number]["status"]): number | null => {
+  switch (status._tag) {
+    case "ready":
+      return 0;
+    case "limited":
+      return 1;
+    case "sign-in-required":
+      return 2;
+    case "unavailable":
+      return status.checking ? 3 : null;
+  }
+};
 
 /**
  * The engine's latest status, kept current, for the decisions that read it
@@ -43,9 +53,11 @@ export class EngineState extends Context.Service<
     readonly changes: Stream.Stream<EngineStatus>;
     /**
      * The model of a bot created without one: the first model of the first
-     * ready provider; with none ready, of the first that lists a model,
-     * preferring one that only needs connecting. A first bot is never
-     * refused for want of a connected provider: its hello waits for one.
+     * ready provider; with none ready, of the first that lists a model and
+     * may still run it, as `defaultRank` orders them. A first bot is not
+     * refused for want of a connected provider: its hello waits for one, and
+     * it moves to the default model once that model's provider is ready
+     * (`Bots.adoptDefaults`).
      */
     readonly defaultModel: Effect.Effect<Option.Option<ModelChoice>>;
     /**
@@ -114,7 +126,8 @@ export const layer = Layer.effect(
           for (const provider of now.providers) {
             const model = provider.models[0];
             if (model === undefined) continue;
-            const rank = defaultRank[provider.status._tag];
+            const rank = defaultRank(provider.status);
+            if (rank === null) continue;
             if (best === null || rank < best.rank) {
               best = { rank, model: { providerId: provider.id, modelId: model.id } };
             }

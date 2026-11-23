@@ -1702,7 +1702,7 @@ function FirstRunAt({
       engine={engine}
       initialStep={step}
       initialName="Nova"
-      onCreate={() => Promise.resolve(ids.scout)}
+      onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
     />
   );

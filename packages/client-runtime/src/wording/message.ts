@@ -25,7 +25,11 @@ const notSentKeys = {
   unexpected: "message.notSent.unexpected",
 } as const satisfies Record<IntentFailure["_tag"], KeyWith>;
 
-const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null => {
+const statusKey = (
+  status: MessageStatus,
+  submitting: boolean,
+  waitingForModel: boolean,
+): KeyWith | null => {
   switch (status._tag) {
     case "sending":
       return "message.sending";
@@ -37,7 +41,7 @@ const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null =
     case "unrecorded":
       return "message.unrecorded";
     case "queued":
-      return "message.queued";
+      return waitingForModel ? "message.waitingForModel" : "message.queued";
     case "delivered":
       return null;
     case "cancelled":
@@ -52,14 +56,20 @@ const statusKey = (status: MessageStatus, submitting: boolean): KeyWith | null =
  * What the operator reads under their message, or null when there is nothing
  * to say. `submitting`: a retry is on its way. `leftRoom`: the members the
  * message mentions who have left the room, for which the server refused it,
- * said in place of the refusal.
+ * said in place of the refusal. `waitingForModel`: the bot's hello waits for
+ * a provider (`openingHeld`), and the message waits behind it.
  */
 export function deliveryLine(
   status: MessageStatus,
   {
     submitting,
     leftRoom,
-  }: { readonly submitting: boolean; readonly leftRoom: ReadonlyArray<string> },
+    waitingForModel,
+  }: {
+    readonly submitting: boolean;
+    readonly leftRoom: ReadonlyArray<string>;
+    readonly waitingForModel: boolean;
+  },
   i18n: I18n,
 ): string | null {
   if (status._tag === "not-sent" && leftRoom.length > 0) {
@@ -67,7 +77,7 @@ export function deliveryLine(
       names: new Intl.ListFormat(i18n.locale, { type: "conjunction" }).format(leftRoom),
     });
   }
-  const key = statusKey(status, submitting);
+  const key = statusKey(status, submitting, waitingForModel);
   return key === null ? null : i18n.t(key);
 }
 

@@ -11,7 +11,9 @@ const idle = { _tag: "idle" } as const;
  * Where the first run lets the operator choose the first bot's look. The
  * large preview above it is the first run's own; this is the choice. It
  * offers today's avatars until the avatar picker takes its place, which takes
- * the same `look` and `onLook`.
+ * the same `look` and `onLook`. Until then each option is named by its place
+ * ("Look 3 of 8") and reached with Tab: the picker brings names for each look
+ * and arrow keys between them, as a radio group has.
  */
 export function BotLookSlot({
   look,

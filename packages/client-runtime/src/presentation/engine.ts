@@ -5,6 +5,19 @@ import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 const canRunBots = (provider: ProviderStatus): boolean =>
   provider.status._tag === "ready" && provider.models.length > 0;
 
+/**
+ * Whether the server has a model for a bot created without one: a provider
+ * that lists one and may still run it, as the server picks a default (one the
+ * engine checked and cannot run is never it). False before the engine reports.
+ */
+export const hasDefaultModel = (engine: EngineStatus | null): boolean =>
+  engine !== null &&
+  engine.providers.some(
+    (provider) =>
+      provider.models.length > 0 &&
+      !(provider.status._tag === "unavailable" && !provider.status.checking),
+  );
+
 /** The one command that connects every provider that needs it; null when none does. */
 export const connectCommand = (engine: EngineStatus): string | null =>
   engine.providers.flatMap((provider) =>

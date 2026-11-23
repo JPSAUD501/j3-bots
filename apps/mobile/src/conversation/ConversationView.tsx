@@ -254,6 +254,10 @@ export function ConversationView({
 
   const room = item._tag === "room" ? item.room : null;
   const nameOf = (botId: BotId) => bots.get(botId)?.profile.name;
+  const engine = useEngineStatus();
+  const waitingForModel =
+    item._tag === "bot" &&
+    openingHeld(item.bot, engine._tag === "ready" ? engine.value : null) !== null;
 
   const draft = useDraft(target);
   // Who the message wakes as the draft stands: only mentions picked, and still standing, count.
@@ -333,12 +337,13 @@ export function ConversationView({
                       row={row}
                       room={room}
                       arriving={arrived.has(row.key)}
+                      waitingForModel={waitingForModel}
                       onOpenBot={onOpenBot}
                       onOpenRoutine={openRoutine}
                     />
                   </View>
                 )}
-                extraData={{ room, widths, arrived }}
+                extraData={{ room, widths, arrived, waitingForModel }}
                 onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) =>
                   end.follow(
                     contentSize.height - layoutMeasurement.height - contentOffset.y,
@@ -491,6 +496,7 @@ function Row({
   row,
   room,
   arriving,
+  waitingForModel,
   onOpenBot,
   onOpenRoutine,
 }: {
@@ -499,6 +505,8 @@ function Row({
   readonly room: Pick<Room, "members" | "hostId"> | null;
   /** It just arrived at the end: it settles into place as it mounts. */
   readonly arriving: boolean;
+  /** The bot's hello waits for a model: the operator's messages wait behind it (`openingHeld`). */
+  readonly waitingForModel: boolean;
   readonly onOpenBot: (botId: BotId) => void;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
 }) {
@@ -519,9 +527,21 @@ function Row({
     case "message": {
       const { message } = row;
       return message._tag === "outgoing" ? (
-        <OutgoingMessage row={row} message={message} room={room} arriving={arriving} />
+        <OutgoingMessage
+          row={row}
+          message={message}
+          room={room}
+          arriving={arriving}
+          waitingForModel={waitingForModel}
+        />
       ) : (
-        <ServerMessage row={row} message={message} room={room} arriving={arriving} />
+        <ServerMessage
+          row={row}
+          message={message}
+          room={room}
+          arriving={arriving}
+          waitingForModel={waitingForModel}
+        />
       );
     }
     case "card": {
@@ -572,11 +592,13 @@ function OutgoingMessage({
   message,
   room,
   arriving,
+  waitingForModel,
 }: {
   readonly row: MessageRow;
   readonly message: Extract<MessageRow["message"], { readonly _tag: "outgoing" }>;
   readonly room: Pick<Room, "members" | "hostId"> | null;
   readonly arriving: boolean;
+  readonly waitingForModel: boolean;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -610,6 +632,7 @@ function OutgoingMessage({
           if (!discarded) say(t("message.changeNotKept"));
         })
       }
+      waitingForModel={waitingForModel}
       {...(left === null || room === null
         ? {}
         : {
@@ -629,11 +652,13 @@ function ServerMessage({
   message,
   room,
   arriving,
+  waitingForModel,
 }: {
   readonly row: MessageRow;
   readonly message: MessageEntry;
   readonly room: Pick<Room, "members" | "hostId"> | null;
   readonly arriving: boolean;
+  readonly waitingForModel: boolean;
 }) {
   const client = useJ3Client();
   const bots = useBots();
@@ -655,6 +680,7 @@ function ServerMessage({
       mentionable={highlighted(message.mentions, [])}
       onRetry={() => void client.retryMessage(message.id)}
       submitting={submitting}
+      waitingForModel={waitingForModel}
     />
   );
 }

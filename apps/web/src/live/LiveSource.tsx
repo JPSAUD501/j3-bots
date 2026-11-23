@@ -947,10 +947,9 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       });
     },
     createBot: (draft) =>
-      j3.createBot(draft).then((result) => {
-        if (result._tag === "failed") throw new Error("The bot was not created");
-        return result.value.id;
-      }),
+      j3.createBot(draft).then((result) =>
+        result._tag === "done" ? { _tag: "done", value: result.value.id } : result,
+      ),
     newBot: () => setNewBot(true),
     newRoom: () => setRoomForm({ _tag: "create" }),
     editRoom: (roomId) => setRoomForm({ _tag: "edit", roomId }),
@@ -1034,9 +1033,10 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         onOpenChange={setNewBot}
         onUnsavedChange={setNewBotUnsaved}
         onCreate={(name, primary) =>
-          intents.createBot({ name, primary }).then((botId) => {
+          intents.createBot({ name, primary }).then((result) => {
+            if (result._tag === "failed") throw new Error("The bot was not created");
             setNewBot(false);
-            void goToBot(botId);
+            void goToBot(result.value);
           })
         }
       />

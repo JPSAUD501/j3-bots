@@ -88,6 +88,7 @@ const sentences = {
   "conversation.stopping": "Parando",
 
   "message.queued": "Na fila",
+  "message.waitingForModel": "Enviada assim que um modelo conectar",
   "message.cancelled": "Não enviada: você parou o bot antes",
   "message.failed.rejected": "Não entregue: o motor recusou",
   "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
@@ -456,6 +457,7 @@ const sentences = {
   "firstRun.create.failed": "O bot não foi criado. Tente de novo.",
 
   "commandLine.copy": "Copiar",
+  "commandLine.copyFailed": "Não deu para copiar. Toque e segure o comando para selecioná-lo.",
   "onboarding.welcome.body":
     "Colegas de equipe que moram na sua própria máquina. Eles lembram das coisas, seguem trabalhando quando você sai e perguntam quando precisam de você.",
   "onboarding.welcome.start": "Conhecer meu primeiro bot",
@@ -472,7 +474,9 @@ const sentences = {
   "onboarding.create": "Criar {name}",
   "onboarding.connect.title": "{name} precisa de um modelo para pensar",
   "onboarding.connect.body":
-    "Os bots pensam com modelos de IA que você já usa, como o Claude ou o ChatGPT, e nenhum está conectado ainda. Rode este comando na máquina onde o J3 Bots está instalado. Ele pergunta onde seus modelos estão e qual chave usar.",
+    "Os bots pensam com modelos de IA como o Claude ou o GPT, e nenhum está conectado ao seu servidor ainda. Rode isto na máquina onde o J3 Bots está instalado: ele pede o endereço do serviço que acessa seus modelos e a chave dele.",
+  "onboarding.connect.login": "Prefere entrar com sua própria conta do Claude ou do ChatGPT?",
+  "onboarding.connect.loginLink": "Veja o provider login no guia de instalação",
   "onboarding.connect.later":
     "Sem pressa: crie {name} agora. O bot dá oi assim que um modelo for conectado.",
   "onboarding.connect.ready.title": "Um modelo está conectado",
@@ -495,6 +499,8 @@ const sentences = {
   "onboarding.arrival.waiting": "{name} dá oi assim que um modelo for conectado.",
   "onboarding.failed":
     "Não deu para criar {name}. Veja se este aparelho ainda alcança seu servidor e tente de novo.",
+  "onboarding.failedNoModel":
+    "Não deu para criar {name}: seu servidor ainda não tem um modelo para usar. Conecte um e tente de novo.",
 
   "empty.noSelection.title": "Escolha com quem falar",
   "empty.noSelection.body": "Escolha um bot ou uma sala na lista.",

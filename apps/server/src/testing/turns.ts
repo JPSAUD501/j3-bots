@@ -59,6 +59,10 @@ export const createNewBot = (name: string, model?: ModelChoice) =>
     });
   });
 
+const sameStatus = (a: ProviderStatus["status"], b: ProviderStatus["status"]) =>
+  a._tag === b._tag &&
+  (a._tag !== "unavailable" || b._tag !== "unavailable" || a.checking === b.checking);
+
 /** The engine reports the provider in `status` from now on, and the server has taken it in. */
 export const providerIs = (providerId: ProviderId, status: ProviderStatus["status"]) =>
   Effect.gen(function* () {
@@ -68,7 +72,7 @@ export const providerIs = (providerId: ProviderId, status: ProviderStatus["statu
       engineState.current.pipe(
         Effect.map((now) =>
           now.providers.some(
-            (provider) => provider.id === providerId && provider.status._tag === status._tag,
+            (provider) => provider.id === providerId && sameStatus(provider.status, status),
           ),
         ),
       ),

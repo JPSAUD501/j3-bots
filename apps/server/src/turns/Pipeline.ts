@@ -385,6 +385,39 @@ export const layer = Layer.effect(
     });
 
     /**
+     * The hello waits for a provider that can run it rather than fail before
+     * it starts: nobody asked for it, so nobody waits on it either. It is held
+     * while the engine reports the bot's provider as anything but ready (one
+     * the engine does not report holds nothing). Written or not, it is sent
+     * once the provider is ready, which wakes the dispatcher. The operator's
+     * messages written meanwhile wait behind it (`planFor`).
+     */
+    const openingHeld = Effect.fn("Pipeline.openingHeld")(function* (botId: BotId) {
+      const bot = yield* bots.find(botId);
+      if (Option.isNone(bot)) return false;
+      const status = yield* engineState.current;
+      const provider = status.providers.find((p) => p.id === bot.value.bot.model.providerId);
+      return provider !== undefined && provider.status._tag !== "ready";
+    });
+
+    /**
+     * Whether the bot's opening waits for its provider, not yet with the
+     * engine: its `first-run` wake pending, or in a dispatch never sent.
+     */
+    const openingWaits = Effect.fn("Pipeline.openingWaits")(function* (botId: BotId) {
+      const rows = yield* sql`
+        SELECT 1 FROM wakes w LEFT JOIN dispatches d ON d.id = w.dispatch_id
+        WHERE w.bot_id = ${botId} AND json_extract(w.payload_json, '$._tag') = 'first-run'
+          AND (
+            w.status = 'pending'
+            OR (w.status = 'dispatched' AND d.status = 'intended' AND d.attempts = 0)
+          )
+        LIMIT 1
+      `.pipe(Effect.orDie);
+      return rows.length > 0 && (yield* openingHeld(botId));
+    });
+
+    /**
      * The operator wrote in the bot's conversation: a hello the bot has not
      * sent yet would open a conversation already open, under an envelope
      * saying they have not written. Its `first-run` wake is cancelled while
@@ -508,8 +541,12 @@ export const layer = Layer.effect(
                 cause: { _tag: "operator" },
               },
             ]);
-            // The operator spoke first: there is no conversation left to open.
-            yield* withdrawOpening(input.target.botId);
+            // The operator spoke first: there is no conversation left to
+            // open. While the opening waits for its provider, though, their
+            // message waits behind it instead, and the hello goes first.
+            if (!(yield* openingWaits(input.target.botId))) {
+              yield* withdrawOpening(input.target.botId);
+            }
           } else if (room !== undefined) {
             yield* routing.operatorMessage({ room, message: entry });
           }
@@ -836,21 +873,6 @@ export const layer = Layer.effect(
       return true;
     });
 
-    /**
-     * The hello waits for a provider that can run it rather than fail before
-     * it starts: nobody asked for it, so nobody waits on it either. It is held
-     * while the engine reports the bot's provider as anything but ready (one
-     * the engine does not report holds nothing). Written or not, it is sent
-     * once the provider is ready, which wakes the dispatcher.
-     */
-    const openingHeld = Effect.fn("Pipeline.openingHeld")(function* (botId: BotId) {
-      const bot = yield* bots.find(botId);
-      if (Option.isNone(bot)) return false;
-      const status = yield* engineState.current;
-      const provider = status.providers.find((p) => p.id === bot.value.bot.model.providerId);
-      return provider !== undefined && provider.status._tag !== "ready";
-    });
-
     /** The files a wake's message carries, as the engine's limits count them. */
     const filesOfWake = Effect.fn("Pipeline.filesOfWake")(function* (wake: WakeRow) {
       if (wake.payload_json._tag !== "message") return [];
@@ -1012,17 +1034,25 @@ export const layer = Layer.effect(
           delivery,
         } satisfies Plan;
       }
+      // The opening goes before anything else. While it waits for its
+      // provider, so do the operator's messages, written behind it: the
+      // hello goes first, then they do, in order (`sendMessage`).
+      const opening = pending.find((wake) => wake.payload_json._tag === "first-run");
+      const held = opening !== undefined && (yield* openingHeld(botId));
+      const candidates = held
+        ? pending.filter((wake) => wake !== opening && wake.kind !== "user")
+        : opening === undefined
+          ? pending
+          : [opening, ...pending.filter((wake) => wake !== opening)];
       let head: WakeRow | undefined;
-      for (const wake of pending) {
+      for (const wake of candidates) {
         if (yield* mayStart(botId, wake, session.value.id)) {
           head = wake;
           break;
         }
       }
       if (head === undefined) return null;
-      if (head.payload_json._tag === "first-run") {
-        if (yield* openingHeld(botId)) return null;
-      } else if (head.priority !== PRIORITY.user) {
+      if (head.payload_json._tag !== "first-run" && head.priority !== PRIORITY.user) {
         // Every automated wake waits for the reset, a bot's room message too.
         if (yield* providerLimited(botId, outcome)) return null;
       }

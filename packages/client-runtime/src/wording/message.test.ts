@@ -6,7 +6,7 @@ import { deliveryLine, fileSize } from "./message.ts";
 
 describe("delivery line", () => {
   const en = createI18n("en");
-  const settled = { submitting: false, leftRoom: [] };
+  const settled = { submitting: false, leftRoom: [], waitingForModel: false };
 
   it("says a message the engine found too long apart from any other refusal", () => {
     const refused = (reason: "message-length" | "mentions") =>
@@ -26,7 +26,7 @@ describe("delivery line", () => {
       _tag: "not-sent",
       failure: { _tag: "refused", error: new Invalid({ reason: "mentions" }) },
     } as const;
-    expect(deliveryLine(status, { submitting: false, leftRoom: ["Ana", "Scout"] }, en)).toBe(
+    expect(deliveryLine(status, { ...settled, leftRoom: ["Ana", "Scout"] }, en)).toBe(
       "Not sent: Ana and Scout are no longer in this room",
     );
   });
@@ -34,7 +34,13 @@ describe("delivery line", () => {
   it("reads a failed message as queued again while its retry is on its way", () => {
     const failed = { _tag: "failed", reason: "stopped" } as const;
     expect(deliveryLine(failed, settled, en)).toBe("Not delivered: the work was stopped");
-    expect(deliveryLine(failed, { submitting: true, leftRoom: [] }, en)).toBe("Queued");
+    expect(deliveryLine(failed, { ...settled, submitting: true }, en)).toBe("Queued");
+  });
+
+  it("says a message waiting behind a hello that waits for a model is sent once one connects", () => {
+    const waiting = { ...settled, waitingForModel: true };
+    expect(deliveryLine({ _tag: "queued" }, waiting, en)).toBe("Sent once a model is connected");
+    expect(deliveryLine({ _tag: "delivered" }, waiting, en)).toBeNull();
   });
 
   it("says nothing once every recipient has the message", () => {

@@ -90,6 +90,7 @@ export const en = {
   "conversation.stopping": "Stopping",
 
   "message.queued": "Queued",
+  "message.waitingForModel": "Sent once a model is connected",
   "message.cancelled": "Not sent: you stopped the bot first",
   "message.failed.rejected": "Not delivered: the engine refused it",
   "message.failed.unresolved": "May have been delivered. Sending again may repeat the work.",
@@ -453,6 +454,7 @@ export const en = {
   "firstRun.create.failed": "The bot wasn’t created. Try again.",
 
   "commandLine.copy": "Copy",
+  "commandLine.copyFailed": "Couldn’t copy. Press and hold the command to select it.",
   "onboarding.welcome.body":
     "Teammates that live on your own machine. They remember, keep working while you’re away, and ask when they need you.",
   "onboarding.welcome.start": "Meet your first bot",
@@ -469,7 +471,9 @@ export const en = {
   "onboarding.create": "Create {name}",
   "onboarding.connect.title": "{name} needs a model to think with",
   "onboarding.connect.body":
-    "Bots think with AI models you already use, like Claude or ChatGPT, and none is connected yet. Run this command on the machine where J3 Bots is installed. It asks where your models are and the key to use them.",
+    "Bots think with AI models such as Claude or GPT, and none is connected to your server yet. Run this on the machine where J3 Bots is installed: it asks for the address of the service that reaches your models, and its key.",
+  "onboarding.connect.login": "Signing in with your own Claude or ChatGPT account instead?",
+  "onboarding.connect.loginLink": "See provider login in the install guide",
   "onboarding.connect.later":
     "No rush: create {name} now, and it says hello as soon as a model is connected.",
   "onboarding.connect.ready.title": "A model is connected",
@@ -492,6 +496,8 @@ export const en = {
   "onboarding.arrival.waiting": "{name} says hello as soon as a model is connected.",
   "onboarding.failed":
     "Couldn’t create {name}. Check that this device still reaches your server, then try again.",
+  "onboarding.failedNoModel":
+    "Couldn’t create {name}: your server has no model it can use yet. Connect one, then try again.",
 
   "empty.noSelection.title": "Pick someone to talk to",
   "empty.noSelection.body": "Choose a bot or a room from the list.",

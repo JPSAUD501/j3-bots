@@ -16,6 +16,7 @@ import {
   buildTimeline,
   canStop,
   filterRoster,
+  openingHeld,
   orderRoster,
   readThrough,
   rosterKeyOf,
@@ -315,9 +316,9 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             onCreate={({ name, avatar }) => {
               setOpeningFirstBot(true);
               // The first bot is the primary one: there is no other to choose.
-              return intents.createBot({ name, primary: true, avatar }).catch((error: unknown) => {
-                setOpeningFirstBot(false);
-                throw error;
+              return intents.createBot({ name, primary: true, avatar }).then((result) => {
+                if (result._tag === "failed") setOpeningFirstBot(false);
+                return result;
               });
             }}
             onArrived={(botId) => navigation.select({ _tag: "bot", botId })}
@@ -439,6 +440,9 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
                   room={item._tag === "room" ? item.room : null}
                   workSteps={data.workSteps}
                   submitting={data.submitting}
+                  waitingForModel={
+                    item._tag === "bot" && openingHeld(item.bot, data.engine) !== null
+                  }
                   intents={intents}
                   arrived={arrived}
                   flyFrom={composerRef}

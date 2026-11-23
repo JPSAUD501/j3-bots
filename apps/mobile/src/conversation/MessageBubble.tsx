@@ -131,6 +131,7 @@ export function MessageBubble({
   retryLabel,
   tint = null,
   arriving = false,
+  waitingForModel = false,
 }: {
   readonly message: TimelineMessage;
   readonly position: GroupPosition;
@@ -150,6 +151,8 @@ export function MessageBubble({
   readonly tint?: Avatar | null;
   /** It just arrived at the end of the conversation, and settles into place. */
   readonly arriving?: boolean;
+  /** The bot's hello waits for a model, and a message not delivered yet waits behind it. */
+  readonly waitingForModel?: boolean;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -159,7 +162,9 @@ export function MessageBubble({
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
   const troubled = failed || status._tag === "unrecorded";
-  const delivery = fromOperator ? deliveryLine(status, { submitting, leftRoom }, i18n) : null;
+  const delivery = fromOperator
+    ? deliveryLine(status, { submitting, leftRoom, waitingForModel }, i18n)
+    : null;
   useAnnounced(delivery);
   const bubble = useTint(tint).bubble;
   const motion = useArrival(arriving, fromOperator, message.text);

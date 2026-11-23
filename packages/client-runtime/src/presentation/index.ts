@@ -18,7 +18,7 @@ export {
 } from "./botEdit.ts";
 export { firstSeen, see } from "./changes.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
-export { connectCommand, openingHeld, providerGate } from "./engine.ts";
+export { connectCommand, hasDefaultModel, openingHeld, providerGate } from "./engine.ts";
 export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";
 export { type FileIcon, fileIcon, fileKind } from "./files.ts";
 export { webAddress } from "./links.ts";

@@ -77,6 +77,8 @@ interface MessageBubbleProps {
    */
   readonly arriving?: boolean;
   readonly flyFrom?: RefObject<HTMLElement | null>;
+  /** The bot's hello waits for a model, and a message not delivered yet waits behind it. */
+  readonly waitingForModel?: boolean;
 }
 
 /** One message: the operator's on the right and dark, a bot's on the left in a tint of its color. */
@@ -94,6 +96,7 @@ export function MessageBubble({
   tint = null,
   arriving = false,
   flyFrom,
+  waitingForModel = false,
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -104,7 +107,11 @@ export function MessageBubble({
   const failed = status._tag === "failed" || status._tag === "not-sent";
   // The device could not record what the server answered: a problem, though nothing to retry.
   const troubled = failed || status._tag === "unrecorded";
-  const deliveryText = deliveryLine(status, { submitting, leftRoom: leftRoom ?? [] }, ctx.i18n);
+  const deliveryText = deliveryLine(
+    status,
+    { submitting, leftRoom: leftRoom ?? [], waitingForModel },
+    ctx.i18n,
+  );
   // Sent again, Send again goes; focus that was on it moves to the message, which stays whatever
   // its delivery line then says, even nothing.
   const { target, actions } = useFocusAfterActions<HTMLDivElement>(failed);

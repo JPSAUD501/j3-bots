@@ -50,8 +50,10 @@ export type StopScope =
 
 /**
  * `keepOpening`: the bot's `first-run` wake, while the engine has not got it,
- * waits on instead of being cancelled. A change of provider stops the work in
- * progress but not the hello a new bot has yet to send.
+ * waits on instead of being cancelled, and so do the operator's messages in
+ * its conversation that wait behind it (`Pipeline`, `planFor`). A change of
+ * provider stops the work in progress but not the hello a new bot has yet to
+ * send, nor what the operator wrote while it waited.
  */
 interface StopOptions {
   readonly keepOpening: boolean;
@@ -327,7 +329,17 @@ export const layer = Layer.effect(
       const pending = yield* sql<{ readonly id: string; readonly kind: string }>`
         SELECT id, kind FROM wakes
         WHERE bot_id = ${botId} AND status = 'pending' AND ${inScope(scope)}
-          ${options.keepOpening ? sql`AND NOT (${opening})` : sql``}
+          ${
+            options.keepOpening
+              ? sql`AND NOT (${opening}) AND NOT (
+                  kind = 'user' AND audience = 'conversation' AND EXISTS (
+                    SELECT 1 FROM wakes o
+                    WHERE o.bot_id = ${botId} AND o.status = 'pending'
+                      AND json_extract(o.payload_json, '$._tag') = 'first-run'
+                  )
+                )`
+              : sql``
+          }
       `;
       yield* ledger.cancelWakes(pending.map((wake) => wake.id));
       yield* sql.afterCommit(signals.stops.fire);
