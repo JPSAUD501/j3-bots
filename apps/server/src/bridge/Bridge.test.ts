@@ -30,7 +30,7 @@ import { TestConnectors } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createBot, engineSession, nextTurn, sendToBot } from "../testing/turns.ts";
 import * as ToolEndpoint from "../tools/ToolEndpoint.ts";
-import { CONNECTOR_CALL_DEADLINE } from "../tools/protocol.ts";
+import { CONNECTOR_CALL_DEADLINE, TOOL_CHANGES_PATH } from "../tools/protocol.ts";
 import { serve } from "./Bridge.ts";
 
 /** The endpoint over the whole domain, and Node's own HTTP client, which the bridge runs with. */
@@ -289,6 +289,37 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
       assert.deepStrictEqual(notifications, ["notifications/tools/list_changed"]);
       assert.notInclude(replies.get(2)?.tools?.map((tool) => tool.name) ?? [], "notion__search");
       assert.include(replies.get(3)?.tools?.map((tool) => tool.name) ?? [], "notion__search");
+    }),
+  );
+
+  it.effect("stops waiting for changes at the first wait the server does not answer", () =>
+    Effect.gen(function* () {
+      const waits = yield* Ref.make(0);
+      const waited = yield* Deferred.make<void>();
+      const counting = (yield* HttpClient.HttpClient).pipe(
+        HttpClient.tapRequest((request) =>
+          request.url.endsWith(TOOL_CHANGES_PATH)
+            ? Ref.update(waits, (n) => n + 1).pipe(
+                Effect.andThen(Deferred.succeed(waited, undefined)),
+              )
+            : Effect.void,
+        ),
+      );
+
+      // A session the server does not know, as after it let its port go.
+      yield* runBridgeWith(Option.some(SessionId.make("thread-of-no-bot")), (output) =>
+        Stream.concat(
+          Stream.make({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+          Stream.fromEffect(
+            answered(output, 1).pipe(
+              Effect.andThen(Deferred.await(waited)),
+              Effect.andThen(TestClock.adjust("10 minutes")),
+            ),
+          ).pipe(Stream.drain),
+        ),
+      ).pipe(Effect.provideService(HttpClient.HttpClient, counting));
+
+      assert.strictEqual(yield* Ref.get(waits), 1);
     }),
   );
 

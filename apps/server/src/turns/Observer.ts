@@ -1157,6 +1157,9 @@ export const layer = Layer.effect(
         for (const work of turn.steps) yield* step(session, turn.turnId, work, event.at);
         for (const call of turn.toolCalls)
           yield* toolCall(session, turn.turnId, call, true, event.at);
+        // Recorded closed, also when this is the first sight of them.
+        for (const call of turn.closedToolCalls)
+          yield* toolCall(session, turn.turnId, call, false, event.at);
         const listed = turn.toolCalls.map((call) => call.callId);
         yield* sql`
           UPDATE engine_tool_calls SET open = 0

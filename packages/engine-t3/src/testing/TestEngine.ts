@@ -1087,6 +1087,9 @@ const make = Effect.gen(function* () {
           toolCalls: [...turn.toolCalls.values()].flatMap((record) =>
             record.state === "open" ? [record.call] : [],
           ),
+          closedToolCalls: [...turn.toolCalls.values()].flatMap((record) =>
+            record.state === "closed" ? [record.call] : [],
+          ),
         });
         listed.push(turn);
       } else if (after !== null) {

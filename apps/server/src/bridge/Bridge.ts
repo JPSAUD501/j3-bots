@@ -45,9 +45,6 @@ const LIST_DEADLINE = Duration.seconds(10);
 /** Past the server's own wait for a change, which answers first. */
 const CHANGES_DEADLINE = Duration.minutes(5);
 
-/** How long the bridge waits before asking for changes again when the server could not be reached. */
-const CHANGES_RETRY = Duration.seconds(5);
-
 /**
  * The version of a list the bridge made without the server: no server gives
  * it, so the first change the server reports makes the harness list again.
@@ -115,8 +112,8 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
 }) {
   const stdio = yield* Stdio.Stdio;
   const random = yield* SecureRandom.SecureRandom;
-  const client = (yield* HttpClient.HttpClient).pipe(
-    HttpClient.filterStatusOk,
+  const once = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const client = once.pipe(
     HttpClient.retryTransient({
       // Until the request's deadline, which ends the retries.
       schedule: Schedule.spaced("250 millis"),
@@ -127,6 +124,7 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
     path: string,
     request: S,
     response: T,
+    client: HttpClient.HttpClient,
   ) =>
     Effect.fn("Bridge.post")(function* (body: S["Type"]) {
       const outgoing = yield* HttpClientRequest.post(`${options.server}${path}`).pipe(
@@ -134,9 +132,11 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
       );
       return yield* HttpClientResponse.schemaBodyJson(response)(yield* client.execute(outgoing));
     });
-  const forward = post(TOOL_CALL_PATH, ToolCallRequest, ToolCallResponse);
-  const fetchList = post(TOOL_LIST_PATH, ToolListRequest, ToolListResponse);
-  const fetchChange = post(TOOL_CHANGES_PATH, ToolChangesRequest, ToolChangesResponse);
+  const forward = post(TOOL_CALL_PATH, ToolCallRequest, ToolCallResponse, client);
+  const fetchList = post(TOOL_LIST_PATH, ToolListRequest, ToolListResponse, client);
+  // Sent once: a wait the server does not answer means it is gone, or does
+  // not know the session.
+  const fetchChange = post(TOOL_CHANGES_PATH, ToolChangesRequest, ToolChangesResponse, once);
 
   const output = yield* Queue.unbounded<string, Cause.Done>();
   const send = (message: Schema.Json) => Queue.offer(output, `${encodeLine(message)}\n`);
@@ -164,7 +164,9 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
   /**
    * Waits on the server for the session's list to change, and tells the
    * harness to list again when it has. Starts once the harness has listed
-   * the tools; runs until the bridge ends.
+   * the tools, and stops at the first wait the server does not answer: it is
+   * stopping, and its harnesses with it, or the session is no bot's. So an
+   * idle bridge never sends its session's id to a port the server has let go.
    */
   const watchChanges = Effect.fn("Bridge.watchChanges")(function* (sessionId: SessionId) {
     yield* Deferred.await(firstListed);
@@ -174,10 +176,7 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
         Effect.timeout(CHANGES_DEADLINE),
         Effect.option,
       );
-      if (Option.isNone(change)) {
-        yield* Effect.sleep(CHANGES_RETRY);
-        continue;
-      }
+      if (Option.isNone(change)) return;
       // The harness may have listed this version meanwhile.
       if (change.value.version === (yield* Ref.get(listed))) continue;
       yield* Ref.set(listed, change.value.version);

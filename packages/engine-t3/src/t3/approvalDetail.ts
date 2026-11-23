@@ -3,6 +3,7 @@ import { APPROVAL_TEXT_LENGTH, type ApprovalChange, type SessionGrant } from "@j
 import type { OrchestrationV2RuntimeRequest, OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import type { EngineRequest } from "../events.ts";
+import { toolStep } from "./toolNames.ts";
 
 // What an approval card shows, from the engine's records. The approval item
 // itself carries only the provider's prompt and reason, which are text the
@@ -163,6 +164,60 @@ const gatedItem = (
   return undefined;
 };
 
+/**
+ * The `j3` connector call `approval` holds back, by the same native id, with
+ * its step label and its input as the engine recorded them. Claude Code's
+ * prompt for an MCP tool is the tool's `command` argument when it has one,
+ * so a connector tool's card could show that alone, as a shell command; the
+ * card names the connector's tool instead. **Read** at `59651c1`: the
+ * approval and the call share the tool use's id as a strong native id
+ * (`ClaudeAdapterV2.ts`, `buildApprovalRequestArtifacts` and
+ * `buildToolCallArtifacts`), and the prompt prefers `command` (`canUseTool`).
+ */
+const heldConnectorCall = (
+  approval: ApprovalItem,
+  request: RuntimeRequest | undefined,
+  items: Iterable<Item>,
+): { readonly label: string; readonly input: unknown } | undefined => {
+  const ref = approval.nativeItemRef;
+  if (ref === null || ref.nativeId === null || ref.strength !== "strong") return undefined;
+  const asked = request?.nativeRequestRef;
+  if (asked?.driver !== ref.driver || asked.nativeId !== ref.nativeId) return undefined;
+  for (const item of items) {
+    if (
+      item.type === "dynamic_tool" &&
+      item.runId === approval.runId &&
+      item.nativeItemRef?.strength === "strong" &&
+      item.nativeItemRef.driver === ref.driver &&
+      item.nativeItemRef.nativeId === ref.nativeId
+    ) {
+      const step = toolStep({ name: item.toolName, title: null, input: null, viewsImage: false });
+      return step.tool === "connector" && step.label !== null
+        ? { label: step.label, input: item.input }
+        : undefined;
+    }
+  }
+  return undefined;
+};
+
+/**
+ * A connector call's card: the tool, named as its step is, then its input as
+ * the engine recorded it, which is what the connector will be sent.
+ */
+const connectorApproval = (call: { readonly label: string; readonly input: unknown }): Approval => {
+  const action = `${call.label} ${JSON.stringify(call.input ?? {})}`;
+  const shown = action.slice(0, APPROVAL_TEXT_LENGTH);
+  return {
+    _tag: "approval",
+    kind: "tool",
+    action: shown,
+    detail: null,
+    exact: shown === action && !UNSHOWABLE.test(action),
+    reason: null,
+    sessionGrant: null,
+  };
+};
+
 /** Held file changes fetched whole from the engine, by item id. */
 export type FetchedChanges = ReadonlyMap<string, FileChangeItem>;
 
@@ -319,8 +374,12 @@ export function approvalOf(
   items: Iterable<Item>,
   fetched: FetchedChanges,
 ): Approval {
+  // Read twice: once for a connector call, once for a command or file change.
+  const thread = [...items];
+  const connector = heldConnectorCall(approval, request, thread);
+  if (connector !== undefined) return connectorApproval(connector);
   const kind = KINDS[approval.requestKind];
-  const gated = gatedItem(approval, request, items);
+  const gated = gatedItem(approval, request, thread);
   const exact =
     gated === undefined ? undefined : exactOf(kind, approval, wholeItem(gated, fetched));
   const prompt = verbatim(approval.prompt);

@@ -123,7 +123,7 @@ export const routes = Layer.mergeAll(
     (request) =>
       Effect.gen(function* () {
         const change = yield* (yield* ToolLists).changes(request);
-        // No bot's session: the bridge waits a while before it asks again.
+        // No bot's session: the bridge stops waiting for changes.
         return Option.getOrElse(change, () => HttpServerResponse.empty({ status: 404 }));
       }),
   ),

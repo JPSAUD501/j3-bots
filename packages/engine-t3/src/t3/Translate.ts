@@ -1982,6 +1982,10 @@ export const replacement = (
           const call = toolCallOf(mirror, item);
           return call !== undefined && LIVE_ITEM.has(item.status) ? [call] : [];
         }),
+        closedToolCalls: itemsOf(mirror, run).flatMap((item) => {
+          const call = toolCallOf(mirror, item);
+          return call !== undefined && !LIVE_ITEM.has(item.status) ? [call] : [];
+        }),
       });
     } else {
       endedTurns.push({

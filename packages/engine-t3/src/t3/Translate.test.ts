@@ -1184,6 +1184,33 @@ describe("a connector's `j3` call", () => {
       }),
   );
 
+  it.effect("closed before anyone was told of it, is still listed with its running turn", () =>
+    Effect.gen(function* () {
+      // Codex's record of a call closes while the call waits on its approval.
+      const args = { query: "roadmap" };
+      const mirror = emptyMirror();
+      applyEvent(mirror, run("running", 1));
+      applyEvent(
+        mirror,
+        item({
+          id: "item-search",
+          type: "dynamic_tool",
+          toolName: "j3.notion__search",
+          input: args,
+          status: "completed",
+        }),
+      );
+      yield* digestToolCalls(mirror);
+
+      const [turn] = replacement(mirror, false, at).event.openTurns;
+      assert.deepStrictEqual(turn?.toolCalls, []);
+      assert.deepStrictEqual(
+        turn?.closedToolCalls.map(({ tool, inputDigest }) => ({ tool, inputDigest })),
+        [{ tool: "notion__search", inputDigest: yield* toolInputDigest(args) }],
+      );
+    }),
+  );
+
   it.effect("named `send_to_user` is a connector's step, never the bot speaking", () =>
     Effect.gen(function* () {
       const mirror = emptyMirror();

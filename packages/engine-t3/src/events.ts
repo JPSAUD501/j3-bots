@@ -218,6 +218,11 @@ export const OpenTurn = Schema.Struct({
   steps: Schema.Array(WorkStep),
   /** Its `j3` tool calls still in progress. */
   toolCalls: Schema.Array(ToolCall),
+  /**
+   * Its `j3` tool calls the engine closed. A connector's call can still be
+   * claimed then: Codex's record of one closes while it waits on its approval.
+   */
+  closedToolCalls: Schema.Array(ToolCall),
 });
 export type OpenTurn = typeof OpenTurn.Type;
 
