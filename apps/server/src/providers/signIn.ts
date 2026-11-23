@@ -88,6 +88,8 @@ export const signInCommand = (
     readonly deviceAuth: boolean;
     readonly terminal: boolean;
     readonly browser: string | null;
+    /** The system the harness runs on, whose variables the engine passes on. */
+    readonly platform: string;
   },
 ): {
   readonly command: string;
@@ -106,7 +108,7 @@ export const signInCommand = (
       ...(options.deviceAuth && facts.deviceAuth !== undefined ? [facts.deviceAuth] : []),
     ],
     env: {
-      ...EngineLive.engineEnvironment(environment),
+      ...EngineLive.engineEnvironment(environment, options.platform),
       ...Object.fromEntries(kept),
       ...(!options.terminal && options.browser !== null ? { BROWSER: options.browser } : {}),
       [facts.homeVariable]: home,
@@ -343,6 +345,7 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
     deviceAuth: run.deviceAuth,
     terminal,
     browser,
+    platform: run.platform,
   });
   const how = invocation(command.command, command.args, run.platform);
   if (Result.isFailure(how)) return yield* failed("unexpected", how.failure);

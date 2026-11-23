@@ -24,6 +24,7 @@ import { boundedCommand, engineEnvironment } from "./Command.ts";
 import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./PrivateFiles.ts";
+import { makeProcesses, servesHome, stopPlan } from "./Processes.ts";
 
 // Runs the engine as a child process and says, at every moment, whether it can
 // take commands. Being down is a state, not a failure: the supervisor restarts
@@ -32,7 +33,8 @@ import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./Private
 // The engine is ready only when it answers as the pinned version and accepts
 // J3 Bots' credential. An engine J3 Bots started and then lost track of (the
 // server crashed and left it running) is found by the environment id recorded
-// when it started, and stopped before a new one starts. Any other program on
+// when it started, and stopped before a new one starts, as `Processes.ts`
+// stops a process on each system. Any other program on
 // the port, whether or not it answers HTTP, is left alone: the engine waits
 // for the port, as `port-in-use`, instead of being started to fail there.
 //
@@ -77,7 +79,7 @@ const STABLE_RUN = Duration.minutes(1);
 const BACKOFF_MAX_MS = 30_000;
 /** How long the engine gets to stop on SIGTERM before SIGKILL, when the server stops. */
 const ENGINE_STOP = "10 seconds";
-/** How long a lost engine gets to stop on SIGTERM, and then on SIGKILL. */
+/** How long a lost engine gets to stop on SIGTERM, and then to be gone once killed. */
 const ORPHAN_TERM_GRACE = Duration.seconds(10);
 const ORPHAN_KILL_GRACE = Duration.seconds(5);
 
@@ -158,6 +160,8 @@ export interface Supervision {
 export const supervise = Effect.fn("engine.supervise")(function* <E>(input: SupervisorInput<E>) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const http = yield* HttpClient.HttpClient;
+  const parentEnvironment = yield* Effect.sync(() => process.env);
+  const processes = yield* makeProcesses(process.platform, parentEnvironment);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { state } = input;
@@ -171,7 +175,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   // harness a bot runs in its shell.
   const defaults = harnessDefaultHomes(path, input.home);
   const environment = {
-    ...engineEnvironment(yield* Effect.sync(() => process.env)),
+    ...engineEnvironment(parentEnvironment, process.platform),
     CLAUDE_CONFIG_DIR: defaults.claudeCode,
     CODEX_HOME: defaults.codex,
   };
@@ -192,35 +196,15 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
     ENGINE_STOP,
   );
 
-  /** Runs a short system command; its exit code, or -1 if it could not run. */
-  const system = (executable: string, args: ReadonlyArray<string>) =>
-    spawner.exitCode(boundedCommand(executable, args, { stdin: "ignore", stderr: "ignore" })).pipe(
-      Effect.map(Number),
-      Effect.orElseSucceed(() => -1),
-    );
-
-  const isAlive = (pid: number) =>
-    system("ps", ["-p", String(pid), "-o", "pid="]).pipe(Effect.map((code) => code === 0));
-
   /** Whether `pid` is an engine serving this data directory, by its command line. */
-  const servesHome = (pid: number) =>
-    spawner.string(boundedCommand("ps", ["-p", String(pid), "-o", "args="])).pipe(
-      Effect.map((args) => {
-        const words = args.trim().split(/\s+/);
-        return words.includes("serve") && args.includes(` ${input.home} `);
-      }),
-      Effect.orElseSucceed(() => false),
-    );
-
-  const waitUntilGone = (pid: number, grace: Duration.Duration) =>
-    isAlive(pid).pipe(
-      Effect.repeat({
-        schedule: Schedule.spaced(Duration.millis(250)),
-        until: (alive) => !alive,
-      }),
-      Effect.timeoutOption(grace),
-      Effect.map(Option.isSome),
-    );
+  const servesThisHome = (pid: number) =>
+    processes
+      .commandLine(pid)
+      .pipe(
+        Effect.map((line) =>
+          Option.exists(line, (found) => servesHome(process.platform, found, input.home)),
+        ),
+      );
 
   const recorded = fs.readFileString(recordFile).pipe(
     Effect.map(decodeEngineProcess),
@@ -237,22 +221,19 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
    * Stops an engine this data directory's supervisor started and lost: the
    * port answers with the environment id recorded at its start, and the
    * recorded process still serves this data directory. SIGTERM, then SIGKILL
-   * after a grace period. Returns whether the port is free afterwards; any
-   * other program on the port is never signalled.
+   * after a grace period; on Windows, a tree kill (`Processes.ts`). Returns
+   * whether the port is free afterwards; any other program on the port is
+   * never signalled.
    */
   const stopLostEngine = Effect.fnUntraced(function* (environmentId: string) {
     const lost = yield* recorded;
     if (Option.isNone(lost) || lost.value.environmentId !== environmentId) return false;
     const { pid } = lost.value;
-    if (!(yield* servesHome(pid))) return false;
+    if (!(yield* servesThisHome(pid))) return false;
     yield* Effect.logWarning(
       `Stopping the engine a previous J3 Bots process left running (${pid}).`,
     );
-    yield* system("kill", ["-TERM", String(pid)]);
-    if (!(yield* waitUntilGone(pid, ORPHAN_TERM_GRACE))) {
-      yield* system("kill", ["-KILL", String(pid)]);
-      yield* waitUntilGone(pid, ORPHAN_KILL_GRACE);
-    }
+    yield* processes.stop(pid, stopPlan(process.platform, ORPHAN_TERM_GRACE), ORPHAN_KILL_GRACE);
     return yield* check.pipe(
       Effect.repeat({
         schedule: Schedule.spaced(Duration.millis(250)),

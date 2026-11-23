@@ -32,6 +32,12 @@ export const boundedCommand = (
  * configures T3 Code or a harness (`ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CONFIG_DIR`,
  * `CODEX_HOME`, `OPENAI_API_KEY`, `T3CODE_HOME`) would give bots the
  * operator's own credentials, folders or service.
+ *
+ * Windows names the same needs differently, and a program there cannot start
+ * without some of them: `SystemRoot` (Windows' own folder, which its network
+ * and crypto libraries load from), `ComSpec` and `PATHEXT` (how a `.cmd`
+ * harness is started), the profile and its application data folders, the
+ * temporary folders, the program folders, and the machine's and user's names.
  */
 const PASSED = new Set([
   "PATH",
@@ -55,18 +61,63 @@ const PASSED = new Set([
   "SSL_CERT_DIR",
 ]);
 
-const passes = (name: string) => PASSED.has(name) || name.startsWith("LC_");
+/** Windows' names, compared without case as Windows compares them. */
+const PASSED_ON_WINDOWS = new Set(
+  [
+    "PATH",
+    "PATHEXT",
+    "SystemRoot",
+    "SystemDrive",
+    "windir",
+    "ComSpec",
+    "OS",
+    "PROCESSOR_ARCHITECTURE",
+    "NUMBER_OF_PROCESSORS",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "CommonProgramFiles",
+    "CommonProgramFiles(x86)",
+    "CommonProgramW6432",
+    "PUBLIC",
+    "ALLUSERSPROFILE",
+    "TEMP",
+    "TMP",
+    "USERNAME",
+    "USERDOMAIN",
+    "COMPUTERNAME",
+    "TZ",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+  ].map((name) => name.toUpperCase()),
+);
+
+const passes = (name: string, platform: string) =>
+  platform === "win32"
+    ? PASSED_ON_WINDOWS.has(name.toUpperCase())
+    : PASSED.has(name) || name.startsWith("LC_");
 
 /**
- * The environment the engine starts with: the allowed part of the server's.
- * The engine passes its environment on to every harness it starts, so a bot's
- * harness is configured only by what J3 Bots provisions.
+ * The environment the engine starts with on `platform`: the allowed part of
+ * the server's. The engine passes its environment on to every harness it
+ * starts, so a bot's harness is configured only by what J3 Bots provisions.
  */
 export const engineEnvironment = (
   parent: Readonly<Record<string, string | undefined>>,
+  platform: string,
 ): Record<string, string> =>
   Object.fromEntries(
     Object.entries(parent).flatMap(([name, value]) =>
-      value === undefined || !passes(name) ? [] : [[name, value]],
+      value === undefined || !passes(name, platform) ? [] : [[name, value]],
     ),
   );

@@ -4,6 +4,7 @@
   "sha256": {
     "darwin-arm64": "4bc22e16a2e48d868ad8c4b9d6c8e031be1c566ce31c28267955c2986a70e95f",
     "linux-arm64": "7d90a5af032fe0988a616403e0f51a6cb68eff7ed7a84bc40999cc3997dffd71",
-    "linux-x64": "2b691c07f5bcb5adea4a863d5324aae7db21bd6d82280cec7787836dcaa013e1"
+    "linux-x64": "2b691c07f5bcb5adea4a863d5324aae7db21bd6d82280cec7787836dcaa013e1",
+    "win32-x64": "02c92be05c4007339119c39cfc7db06335ee17563dd17c4ada72bcc43cba9d34"
   }
 }
