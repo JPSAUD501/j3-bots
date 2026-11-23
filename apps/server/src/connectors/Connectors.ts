@@ -989,7 +989,7 @@ export const layer = Layer.effect(
         ),
       ).pipe(Effect.result);
 
-    const add = Effect.fn("Connectors.add")(function* (input: {
+    const addOnce = Effect.fn("Connectors.add")(function* (input: {
       readonly id: ConnectorId;
       readonly source: ConnectorSource;
       readonly grant?: ConnectorGrant;
@@ -1085,6 +1085,13 @@ export const layer = Layer.effect(
       yield* touch(input.id);
       return yield* render(connector);
     });
+
+    /**
+     * Adds a connector: one add or change of an id at a time, so two adds
+     * with one id leave the row and the vault record of the same one.
+     */
+    const add = (input: Parameters<typeof addOnce>[0]) =>
+      perConnector.run(input.id)(addOnce(input));
 
     /**
      * Adds a connector started by command, the command line as the operator
