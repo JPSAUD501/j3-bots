@@ -9,7 +9,7 @@ type Step = StepFailed["step"];
 /**
  * A host as the switch changes it: the release the unit names, whether the
  * unit is enabled (a reboot starts it), the release that runs, the release
- * the command runs, and the databases. A release that starts migrates them,
+ * the host adopted, and the databases. A release that starts migrates them,
  * as a newer one would; a failing start does so too before it fails, the
  * worst case. A failing restore leaves them half put back. `marked`: a
  * rollback has not finished, so a server refuses the home unless it is the
@@ -22,7 +22,7 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
     unit: running,
     enabled: service,
     running: service ? Option.some<Side>(running) : Option.none<Side>(),
-    command: running,
+    adopted: running,
     data: (running === "old" ? "as-before" : "migrated") as "as-before" | "migrated" | "half",
     marked: false,
     log: [] as Array<Step>,
@@ -57,7 +57,7 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
     return attempt(step, () => {});
   };
   const steps: SwitchSteps<"snapshot", never> = {
-    service,
+    supervised: service,
     stop: attempt("stop", () => {
       host.running = Option.none();
     }),
@@ -69,6 +69,7 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
       });
     }),
     snapshot: attempt("snapshot", () => {}).pipe(Effect.as("snapshot" as const)),
+    resumed: Option.none(),
     mark: () =>
       attempt("mark", () => {
         host.marked = true;
@@ -97,33 +98,33 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
           host.data = "as-before";
         });
       }),
-    pointCommand: (side) =>
-      attempt("command", () => {
-        host.command = side;
+    adopt: (side) =>
+      attempt("adopt", () => {
+        host.adopted = side;
       }),
   };
   return { host, steps };
 };
 
-/** The old release runs again from the unit and the command, on the databases as they were. */
+/** The old release runs again from the unit, adopted, on the databases as they were. */
 const assertBackToOld = (host: ReturnType<typeof hostWith>["host"]) => {
   assert.isFalse(host.marked);
   assert.strictEqual(host.unit, "old");
   assert.isTrue(host.enabled);
   assert.isTrue(Option.contains(host.running, "old"));
-  assert.strictEqual(host.command, "old");
+  assert.strictEqual(host.adopted, "old");
   assert.strictEqual(host.data, "as-before");
 };
 
 describe("an update's switch", () => {
-  it.effect("ends with the new release in the unit and the command", () =>
+  it.effect("ends with the new release in the unit, adopted", () =>
     Effect.gen(function* () {
       const { host, steps } = hostWith([]);
       const outcome = yield* switchOver(steps);
       assert.strictEqual(outcome._tag, "updated");
-      assert.deepStrictEqual(host.log, ["stop", "snapshot", "start-new", "await-new", "command"]);
+      assert.deepStrictEqual(host.log, ["stop", "snapshot", "start-new", "await-new", "adopt"]);
       assert.deepStrictEqual(
-        [host.unit, host.running, host.command],
+        [host.unit, host.running, host.adopted],
         ["new", Option.some("new"), "new"],
       );
     }),
@@ -170,14 +171,14 @@ describe("an update's switch", () => {
     );
   }
 
-  it.effect("keeps the new release once it was ready, when only the command fails", () =>
+  it.effect("keeps the new release once it was ready, when only adopting it fails", () =>
     Effect.gen(function* () {
-      const { host, steps } = hostWith(["command"]);
+      const { host, steps } = hostWith(["adopt"]);
       const outcome = yield* switchOver(steps);
       // A turn may have run on the new databases: putting the old ones back would lose it.
       assert.strictEqual(outcome._tag, "updated");
       if (outcome._tag !== "updated") return;
-      assert.strictEqual(Option.getOrThrow(outcome.command).step, "command");
+      assert.strictEqual(Option.getOrThrow(outcome.adopt).step, "adopt");
       assert.deepStrictEqual([host.unit, host.running], ["new", Option.some("new")]);
       assert.strictEqual(host.data, "migrated");
       assert.notInclude(host.log, "restore");
@@ -196,7 +197,7 @@ describe("an update's switch", () => {
       );
       assert.isTrue(Option.contains(outcome.snapshot, "snapshot"));
       assert.deepStrictEqual(host.log.slice(-3), ["mark", "stop", "restore"]);
-      assert.strictEqual(host.command, "old");
+      assert.strictEqual(host.adopted, "old");
       // Half put back, and nothing starts the service until the rollback finishes.
       assert.strictEqual(host.data, "half");
       assert.isTrue(host.marked);
@@ -218,29 +219,62 @@ describe("an update's switch", () => {
         if (outcome._tag !== "rollback-failed") return;
         assert.strictEqual(outcome.failed.step, failing[0]?.replace(/@\d+$/, ""));
         assert.strictEqual(outcome.rollback.step, failing[1]?.replace(/@\d+$/, ""));
-        // The command is pointed at the new release only once it is ready.
-        assert.strictEqual(host.command, "old");
+        // The new release is adopted only once it is ready.
+        assert.strictEqual(host.adopted, "old");
       }),
     );
   }
 
-  describe("without a service", () => {
-    it.effect("copies the databases, then points the command at the new release", () =>
+  describe("carrying on a switch cut off after its snapshot", () => {
+    it.effect("takes no other snapshot", () =>
       Effect.gen(function* () {
-        const { host, steps } = hostWith([], false);
-        assert.strictEqual((yield* switchOver(steps))._tag, "updated");
-        assert.deepStrictEqual(host.log, ["snapshot", "command"]);
-        assert.strictEqual(host.command, "new");
+        const { host, steps } = hostWith([]);
+        const outcome = yield* switchOver({ ...steps, resumed: Option.some("snapshot" as const) });
+        assert.strictEqual(outcome._tag, "updated");
+        assert.deepStrictEqual(host.log, ["stop", "start-new", "await-new", "adopt"]);
       }),
     );
 
-    for (const step of ["snapshot", "command"] as const) {
+    it.effect("rolls back to that snapshot even when stopping fails", () =>
+      Effect.gen(function* () {
+        // The data may be the new release's already: the old one starts only on the snapshot.
+        const { host, steps } = hostWith(["stop@1"]);
+        host.data = "migrated";
+        const outcome = yield* switchOver({ ...steps, resumed: Option.some("snapshot" as const) });
+        assert.strictEqual(outcome._tag, "rolled-back");
+        if (outcome._tag !== "rolled-back") return;
+        assert.isTrue(Option.contains(outcome.restored, "snapshot"));
+        assert.deepStrictEqual(host.log, [
+          "stop",
+          "mark",
+          "stop",
+          "restore",
+          "start-old",
+          "await-old",
+          "unmark",
+        ]);
+        assertBackToOld(host);
+      }),
+    );
+  });
+
+  describe("without a service", () => {
+    it.effect("copies the databases, then adopts the new release", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith([], false);
+        assert.strictEqual((yield* switchOver(steps))._tag, "updated");
+        assert.deepStrictEqual(host.log, ["snapshot", "adopt"]);
+        assert.strictEqual(host.adopted, "new");
+      }),
+    );
+
+    for (const step of ["snapshot", "adopt"] as const) {
       it.effect(`leaves the old release in place when ${step} fails`, () =>
         Effect.gen(function* () {
           const { host, steps } = hostWith([step], false);
           const outcome = yield* switchOver(steps);
           assert.strictEqual(outcome._tag, "rolled-back");
-          assert.strictEqual(host.command, "old");
+          assert.strictEqual(host.adopted, "old");
           assert.strictEqual(host.data, "as-before");
           assert.isTrue(Option.isNone(host.running));
         }),
@@ -249,24 +283,22 @@ describe("an update's switch", () => {
   });
 
   describe("a rollback the operator asks for", () => {
-    it.effect(
-      "puts the databases back, starts the old release, unmarks, then points the command",
-      () =>
-        Effect.gen(function* () {
-          const { host, steps } = hostWith([], true, "new");
-          const failed = yield* rollBackOver(steps, "snapshot");
-          assert.isTrue(Option.isNone(failed));
-          assert.deepStrictEqual(host.log, [
-            "mark",
-            "stop",
-            "restore",
-            "start-old",
-            "await-old",
-            "unmark",
-            "command",
-          ]);
-          assertBackToOld(host);
-        }),
+    it.effect("puts the databases back, starts the old release, unmarks, then adopts it", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith([], true, "new");
+        const failed = yield* rollBackOver(steps, "snapshot");
+        assert.isTrue(Option.isNone(failed));
+        assert.deepStrictEqual(host.log, [
+          "mark",
+          "stop",
+          "restore",
+          "start-old",
+          "await-old",
+          "unmark",
+          "adopt",
+        ]);
+        assertBackToOld(host);
+      }),
     );
 
     it.effect("leaves the service disabled and stopped when the restore fails", () =>
@@ -278,15 +310,15 @@ describe("an update's switch", () => {
         assert.isTrue(host.marked);
         assert.isFalse(host.enabled);
         assert.isTrue(Option.isNone(host.running));
-        assert.strictEqual(host.command, "new");
+        assert.strictEqual(host.adopted, "new");
       }),
     );
 
-    it.effect("is finished once the old release runs, when only the command fails", () =>
+    it.effect("is finished once the old release runs, when only adopting it fails", () =>
       Effect.gen(function* () {
-        const { host, steps } = hostWith(["command"], true, "new");
+        const { host, steps } = hostWith(["adopt"], true, "new");
         const failed = yield* rollBackOver(steps, "snapshot");
-        assert.strictEqual(Option.getOrThrow(failed).step, "command");
+        assert.strictEqual(Option.getOrThrow(failed).step, "adopt");
         assert.isFalse(host.marked);
         assert.isTrue(Option.contains(host.running, "old"));
         assert.strictEqual(host.data, "as-before");

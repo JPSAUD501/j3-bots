@@ -50,6 +50,31 @@ export const replaceFile = Effect.fn("files.replaceFile")(function* (
   yield* writeBeside(file, data, mode, (temporary) => fs.rename(temporary, file));
 });
 
+/** Flushes `location`, a file or a folder, to the disk: what was written or renamed there survives a power cut. */
+export const flush = (fs: FileSystem.FileSystem, location: string) =>
+  Effect.scoped(Effect.flatMap(fs.open(location, { flag: "r" }), (file) => file.sync));
+
+/**
+ * Replaces `file` with `data`, whole, as `replaceFile` does, and durably: the
+ * new contents are flushed to the disk before they take the name, and the
+ * folder after, so a power cut leaves the file before or this one, never an
+ * empty one.
+ */
+export const replaceFileDurably = Effect.fn("files.replaceFileDurably")(function* (
+  file: string,
+  data: string | Uint8Array,
+  mode: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  yield* writeBeside(file, data, mode, (temporary) =>
+    flush(fs, temporary).pipe(
+      Effect.andThen(fs.rename(temporary, file)),
+      Effect.andThen(flush(fs, path.dirname(file))),
+    ),
+  );
+});
+
 /**
  * Publishes `data` at `file`, whole, unless something is already there,
  * which is never replaced: a link, unlike a rename, fails rather than replace

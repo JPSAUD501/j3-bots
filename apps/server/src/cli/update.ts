@@ -6,7 +6,7 @@ import * as Stdio from "effect/Stdio";
 import { Command, Flag, Prompt } from "effect/cli";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { takenAt } from "../install/snapshot.ts";
-import type { StepFailed } from "../install/switch.ts";
+import type { StepFailed } from "../transition/switch.ts";
 import { rollBack, update } from "../install/update.ts";
 import { refuse, userFacing } from "./errors.ts";
 
@@ -54,15 +54,25 @@ const carryingOnAfterHangup = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 /**
  * What a rollback that stopped at `step` leaves: from its mark until the old
- * release runs, the rollback is unfinished until `--rollback` carries it on.
- * Pointing the command comes after.
+ * release runs and is recorded, the rollback is unfinished until
+ * `--rollback` carries it on. Pointing the command comes after.
  */
-const unfinishedRollback = (step: StepFailed) =>
-  step.step === "mark" || step.step === "command"
-    ? []
-    : [
+const unfinishedRollback = (step: StepFailed) => {
+  switch (step.step) {
+    case "mark":
+    case "adopt":
+      return [];
+    case "record":
+    case "unmark":
+      return [
+        "The service runs the release before again, but the rollback has not finished, so no other release may run on the data directory: `j3-bots update --rollback` finishes it, without copying the databases again.",
+      ];
+    default:
+      return [
         "The rollback has not finished, so the service stays disabled and no other release may run on the data directory: `j3-bots update --rollback` finishes it.",
       ];
+  }
+};
 
 /** Asks `question` on a terminal, or answers no without one. */
 const ask = Effect.fn("update.ask")(function* (question: string) {
@@ -76,6 +86,19 @@ const bots = (count: Option.Option<number>) =>
   Option.match(count, {
     onNone: () => "Bots may have work running (the server could not say)",
     onSome: (n) => (n === 1 ? "1 bot has work running" : `${n} bots have work running`),
+  });
+
+/**
+ * What to say when the home's record could not say that `to` runs: the update
+ * stays pending in it, and the next update to `to` carries it on, with the
+ * snapshot it took.
+ */
+const unrecorded = (recording: Option.Option<string>, to: string) =>
+  Option.match(recording, {
+    onNone: () => [],
+    onSome: (reason) => [
+      `Writing the data directory's record of the release that runs, state/runtime.json, failed: ${reason} Until it is written, the update counts as unfinished: \`j3-bots update --version ${to}\` carries it on and writes it.`,
+    ],
   });
 
 /** Why a step failed, as a sentence for the operator: a reason that already ends one keeps its stop. */
@@ -105,28 +128,65 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
     case "switched":
       break;
   }
-  const { outcome, from, to } = result;
+  const { outcome, to } = result;
+  const from = result.from.version;
+  // An update cut off before it was recorded, to another release, is rolled back first.
+  const cutOff = Option.match(result.interrupted, {
+    onNone: () => [],
+    onSome: (release) => [
+      `An update from J3 Bots ${from} to ${release.version} was cut off before ${release.version} was recorded, so it was rolled back first: the databases are as they were before it.`,
+    ],
+  });
   switch (outcome._tag) {
+    case "cut-off-rolled-back":
+      return yield* Console.log(
+        [
+          ...cutOff,
+          result.service
+            ? `J3 Bots ${from} runs again, and its engine is ready.`
+            : `J3 Bots ${from} is installed again. Start the server with \`j3-bots serve\`.`,
+        ].join("\n"),
+      );
+    case "cut-off-rollback-failed":
+      return yield* refuse(
+        [
+          ...Option.match(result.interrupted, {
+            onNone: () => [],
+            onSome: (release) => [
+              `An update from J3 Bots ${from} to ${release.version} was cut off before ${release.version} was recorded, so it is rolled back before J3 Bots ${to} starts.`,
+            ],
+          }),
+          `Rolling it back to J3 Bots ${from} failed: ${failure(outcome.rollback)}`,
+          `The databases as they were before it are in ${outcome.snapshot.folder}.`,
+          ...(outcome.rollback.step === "mark" || outcome.rollback.step === "adopt"
+            ? [`\`j3-bots update --version ${to}\` tries again.`]
+            : unfinishedRollback(outcome.rollback)),
+          LOG,
+        ].join("\n"),
+      );
     case "updated": {
       const lines = [
+        ...cutOff,
         result.service
           ? `J3 Bots ${to} runs, and its engine is ready. ${from} and the databases as they were are kept: \`j3-bots update --rollback\` puts them back.`
           : `J3 Bots ${to} is installed. ${from} and the databases as they were are kept: \`j3-bots update --rollback\` puts them back. Start the server with \`j3-bots serve\`.`,
         `Snapshot: ${outcome.snapshot.folder}. The two newest snapshots are kept; an older one is removed with what its rollbacks replaced, in its replaced-* folders.`,
       ];
-      if (Option.isSome(outcome.command)) {
+      if (Option.isSome(outcome.adopt)) {
         lines.push(
-          `${failure(outcome.command.value)} The service runs ${to} all the same; \`j3-bots update --version ${to}\` points the command at it.`,
+          `${failure(outcome.adopt.value)} The service runs ${to} all the same; \`j3-bots update --version ${to}\` points the command at it.`,
         );
       }
       if (Option.isSome(result.pruning)) {
         lines.push(`Removing older releases and snapshots failed: ${result.pruning.value}`);
       }
+      lines.push(...unrecorded(result.recording, to));
       return yield* Console.log(lines.join("\n"));
     }
     case "rolled-back":
       return yield* refuse(
         [
+          ...cutOff,
           `The update to J3 Bots ${to} did not finish: ${failure(outcome.failed)}`,
           ...Option.match(outcome.restored, {
             onSome: (snapshot) => [
@@ -145,6 +205,7 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
     case "rollback-failed":
       return yield* refuse(
         [
+          ...cutOff,
           `The update to J3 Bots ${to} did not finish: ${failure(outcome.failed)}`,
           `Bringing J3 Bots ${from} back failed too: ${failure(outcome.rollback)}`,
           ...Option.match(outcome.snapshot, {
@@ -180,7 +241,7 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
     );
   }
   const { from } = result.snapshot.manifest;
-  if (Option.isSome(result.failed) && result.failed.value.step === "command") {
+  if (Option.isSome(result.failed) && result.failed.value.step === "adopt") {
     return yield* refuse(
       `The rollback to J3 Bots ${from.version} finished, but ${failure(result.failed.value)} \`j3-bots update --version ${from.version}\` points the command at it.`,
     );

@@ -8,6 +8,10 @@
   },
   "type": "module",
   "exports": {
+    "./transition": {
+      "types": "./src/transition/index.ts",
+      "import": "./src/transition/index.ts"
+    },
     "./testing": {
       "types": "./src/testing/index.ts",
       "import": "./src/testing/index.ts"
