@@ -111,7 +111,13 @@ export {
   type SignInView,
 } from "./stores/ProviderSetup.ts";
 export type { Loaded } from "./stores/reads.ts";
-export { needsOperator, Roster, rosterRows } from "./stores/Roster.ts";
+export {
+  type BotPlacement,
+  needsOperator,
+  Roster,
+  rosterRows,
+  type SectionChanges,
+} from "./stores/Roster.ts";
 export {
   Settings,
   type ProfileChanges,

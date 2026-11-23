@@ -5,6 +5,7 @@ import {
   EntryId,
   NotFound,
   RoomId,
+  SectionId,
   type Bot,
   type EntryPreview,
   type Room,
@@ -13,7 +14,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, preview } from "../../test/fixtures.ts";
 import type { IntentResult } from "../intents/Actions.ts";
-import { filterRoster, orderRoster, roomStop, roomStopFailed } from "./roster.ts";
+import { arrangeRoster, filterRoster, orderRoster, roomStop, roomStopFailed } from "./roster.ts";
 
 const row = (b: Bot, lastEntry: EntryPreview | null = null, unread = false): RosterItem => ({
   _tag: "bot",
@@ -62,6 +63,35 @@ describe("orderRoster", () => {
       "Older",
       "Quiet",
     ]);
+  });
+});
+
+describe("arrangeRoster", () => {
+  const work = { id: SectionId.make("work"), name: "Work" };
+  const home = { id: SectionId.make("home"), name: "Home" };
+  const gone = SectionId.make("gone");
+
+  it("draws pinned bots apart, sections in their order, and hidden bots only as hidden", () => {
+    const arranged = arrangeRoster(
+      [
+        row(bot("Pinned", { _tag: "idle" }, { pinned: true, sectionId: work.id })),
+        row(bot("Ana", { _tag: "idle" }, { sectionId: work.id })),
+        room(null),
+        row(bot("Loose")),
+        row(bot("Orphan", { _tag: "idle" }, { sectionId: gone })),
+        row(bot("Away", { _tag: "idle" }, { hidden: true, pinned: true, sectionId: work.id })),
+        row(bot("Bia", { _tag: "idle" }, { sectionId: work.id })),
+      ],
+      [home, work],
+    );
+
+    expect(names(arranged.pinned)).toEqual(["Pinned"]);
+    expect(names(arranged.main)).toEqual(["Launch", "Loose", "Orphan"]);
+    expect(arranged.sections.map(({ section, items }) => [section.name, names(items)])).toEqual([
+      ["Home", []],
+      ["Work", ["Ana", "Bia"]],
+    ]);
+    expect(names(arranged.hidden)).toEqual(["Away"]);
   });
 });
 

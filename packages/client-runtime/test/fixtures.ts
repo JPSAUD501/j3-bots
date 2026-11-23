@@ -51,6 +51,7 @@ export function preview(
 ): EntryPreview {
   return {
     entryId: EntryId.make(`p${++next}`),
+    order: null,
     kind,
     author,
     text,
