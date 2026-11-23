@@ -86,6 +86,8 @@ export interface BotChanges {
   readonly profile?: ProfileChanges;
   readonly model?: ModelChoice;
   readonly permissionMode?: PermissionMode;
+  /** Whether the bot may use the engine's browser, from its next turn. */
+  readonly browser?: boolean;
 }
 
 /** What creating a room takes. A hop limit left out takes the server's default. */
@@ -202,7 +204,7 @@ export class Details extends Context.Service<
     /** The bot as a template, read from the server when asked: it is never kept. */
     readonly botTemplate: (botId: BotId) => Effect.Effect<BotTemplateResult>;
     readonly createBotFromTemplate: (draft: TemplateDraft) => Effect.Effect<IntentResult<Bot>>;
-    /** Changes a bot's profile, model or permission mode. The roster shows the result. */
+    /** Changes a bot's profile, model, permission mode or browser access. The roster shows the result. */
     readonly updateBot: (botId: BotId, changes: BotChanges) => Effect.Effect<SaveResult<Bot>>;
     /**
      * The latest update of each bot, while under way or once failed. It

@@ -88,6 +88,8 @@ export const signInCommand = (
     readonly deviceAuth: boolean;
     readonly terminal: boolean;
     readonly browser: string | null;
+    /** The system the harness runs on, whose variables the engine passes on. */
+    readonly platform: string;
   },
 ): {
   readonly command: string;
@@ -106,7 +108,7 @@ export const signInCommand = (
       ...(options.deviceAuth && facts.deviceAuth !== undefined ? [facts.deviceAuth] : []),
     ],
     env: {
-      ...EngineLive.engineEnvironment(environment),
+      ...EngineLive.engineEnvironment(environment, options.platform),
       ...Object.fromEntries(kept),
       ...(!options.terminal && options.browser !== null ? { BROWSER: options.browser } : {}),
       [facts.homeVariable]: home,
@@ -127,7 +129,8 @@ const cmdReadsInQuotes = (word: string): boolean =>
  * of it rather than as a command of its own. What quotes cannot keep from
  * `cmd.exe` is refused rather than run as something else: `%` and `!`, which
  * it would expand, a `"`, which would end the quoting, and a control
- * character. **Assumed**: not yet run on Windows.
+ * character. **Verified** on Windows 11: a `.cmd` in a folder named
+ * `R&D^(Co)` ran through `cmd.exe` with its arguments.
  */
 export const invocation = (
   executable: string,
@@ -166,7 +169,10 @@ const isLink = Effect.fn("signIn.isLink")(function* (target: string) {
  * stays private, and never through a symbolic link, which could make the
  * sign-in act on what it points to, such as the operator's own. A sign-in in
  * a new folder (`signIn`) does not open the credential file in the home, so
- * only one signing in in place checks it.
+ * only one signing in in place checks it. The harness's home must be private
+ * too, as the data directory is: one opened to others since, by its mode or
+ * its access list, gets no sign-in written in it. On Windows an inheritable
+ * grant on a folder it is in reaches it, so its own list shows that too.
  */
 export const prepareHome = Effect.fn("signIn.prepareHome")(function* (
   harness: Harness,
@@ -197,6 +203,16 @@ export const prepareHome = Effect.fn("signIn.prepareHome")(function* (
   yield* fs
     .makeDirectory(home, { recursive: true, mode: 0o700 })
     .pipe(Effect.mapError((error) => failed("home-refused", error.message)));
+  yield* Home.checkPrivate(home).pipe(
+    Effect.mapError((error) =>
+      failed(
+        "home-refused",
+        error.reason === "open-to-others"
+          ? `Other users on this machine can open ${error.home}, where ${facts.name}'s sign-in is kept. ${error.fix}`
+          : error.message,
+      ),
+    ),
+  );
   return home;
 });
 
@@ -343,6 +359,7 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
     deviceAuth: run.deviceAuth,
     terminal,
     browser,
+    platform: run.platform,
   });
   const how = invocation(command.command, command.args, run.platform);
   if (Result.isFailure(how)) return yield* failed("unexpected", how.failure);

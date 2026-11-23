@@ -19,13 +19,14 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { boundedCommand } from "./Command.ts";
 import { holdExclusive } from "./Lock.ts";
-import { archiveName, pin, releaseUrl } from "./Pin.ts";
+import { type ArchiveFormat, archiveFormat, archiveName, pin, releaseUrl } from "./Pin.ts";
 import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
 import type { ProcessState } from "./Supervisor.ts";
+import { extractZip } from "./Unzip.ts";
 
 // Installs the pinned engine release into the J3-owned engine home:
 //
-//   <home>/j3/runtime/<version>/t3       the standalone server
+//   <home>/j3/runtime/<version>/t3       the standalone server (`t3.exe` on Windows)
 //   <home>/j3/runtime/<version>.partial  an interrupted download, resumed next time
 //   <home>/j3/runtime/<version>.staging  where it is unpacked
 //   <home>/j3/runtime/<version>.lock     held by the one install of that version running
@@ -69,7 +70,11 @@ export class EngineInstallFailed extends Schema.TaggedError<EngineInstallFailed>
 const RELEASE_PLATFORMS: Record<string, Record<string, string>> = {
   linux: { x64: "linux-x64", arm64: "linux-arm64" },
   darwin: { arm64: "darwin-arm64" },
+  win32: { x64: "win32-x64" },
 };
+
+/** The standalone server's file name in the release for a Node `process.platform`. */
+const executableName = (platform: string) => (platform === "win32" ? "t3.exe" : "t3");
 
 /**
  * The release's archive for a Node `process.platform` and `process.arch`, and
@@ -79,11 +84,16 @@ const pinnedArchive = (
   sha256: Readonly<Record<string, string>>,
   platform: string,
   arch: string,
-): Option.Option<{ readonly name: string; readonly digest: string }> =>
+): Option.Option<{
+  readonly name: string;
+  readonly format: ArchiveFormat;
+  readonly digest: string;
+}> =>
   Option.fromNullishOr(RELEASE_PLATFORMS[platform]?.[arch]).pipe(
     Option.flatMap((releasePlatform) =>
       Option.map(Option.fromNullishOr(sha256[releasePlatform]), (digest) => ({
         name: archiveName(releasePlatform),
+        format: archiveFormat(releasePlatform),
         digest,
       })),
     ),
@@ -241,7 +251,7 @@ export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (inpu
     return {
       _tag: "installed",
       version: pin.version,
-      executable: path.join(target, "t3"),
+      executable: path.join(target, executableName(input.platform)),
     } satisfies EngineInstall;
   }
   return Option.match(pinnedArchive(pin.sha256, input.platform, input.arch), {
@@ -287,7 +297,8 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   const remove = (location: string) => input.files.remove(location).pipe(Effect.mapError(storage));
 
   const target = runtimeDirectory(path, input.home);
-  const executable = path.join(target, "t3");
+  const binary = executableName(input.platform);
+  const executable = path.join(target, binary);
   const partial = `${target}.partial`;
   const staging = `${target}.staging`;
   const lock = `${target}.lock`;
@@ -314,7 +325,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
 
   const pinned = pinnedArchive(input.sha256, input.platform, input.arch);
   if (Option.isNone(pinned)) return yield* fail("unsupported-platform");
-  const { name: archive, digest: expected } = pinned.value;
+  const { name: archive, format, digest: expected } = pinned.value;
 
   // Checked as the download is: a link or a folder there fails at once.
   yield* input.files.writable(lock).pipe(Effect.mapError(storage));
@@ -387,32 +398,15 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     yield* input.files.folder(path.dirname(staging)).pipe(Effect.mapError(storage));
     yield* remove(staging);
     yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.mapError(storage));
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    // tar says why it failed, such as a full disk, on the server's stderr,
-    // which the journal keeps; a tar that could not run is logged here.
-    const exit = yield* spawner
-      .exitCode(
-        boundedCommand("tar", ["-xzf", partial, "-C", staging], {
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "inherit",
-        }),
-      )
-      .pipe(
-        Effect.tapError((cause) =>
-          Effect.logWarning("Running tar to unpack the engine failed", cause),
-        ),
-        Effect.orElseSucceed(() => -1),
-      );
-    if (exit !== 0) return yield* fail("extract");
+    if (!(yield* unpack(format, partial, staging))) return yield* fail("extract");
 
     // The archive holds the server either at its root or in one top-level folder.
     const entries = yield* fs.readDirectory(staging).pipe(Effect.mapError(storage));
     const root =
-      entries.includes("t3") || entries.length !== 1 || entries[0] === undefined
+      entries.includes(binary) || entries.length !== 1 || entries[0] === undefined
         ? staging
         : path.join(staging, entries[0]);
-    if (!(yield* fs.exists(path.join(root, "t3")).pipe(Effect.orElseSucceed(() => false)))) {
+    if (!(yield* fs.exists(path.join(root, binary)).pipe(Effect.orElseSucceed(() => false)))) {
       return yield* fail("extract");
     }
     yield* fs
@@ -424,6 +418,43 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     yield* remove(partial);
     return executable;
   }).pipe(Effect.scoped);
+});
+
+/**
+ * Unpacks `archive` into the empty folder `into`; whether it succeeded. A
+ * gzipped tar goes through the system's `tar`, which every system with such
+ * a release ships; a zip, Windows', is read in this process (`Unzip.ts`).
+ */
+const unpack = Effect.fnUntraced(function* (format: ArchiveFormat, archive: string, into: string) {
+  switch (format) {
+    case "zip":
+      return yield* extractZip(archive, into).pipe(
+        Effect.as(true),
+        Effect.catch((cause) =>
+          Effect.as(Effect.logWarning("Unpacking the engine failed", cause), false),
+        ),
+      );
+    case "tar.gz": {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // tar says why it failed, such as a full disk, on the server's stderr,
+      // which the journal keeps; a tar that could not run is logged here.
+      const exit = yield* spawner
+        .exitCode(
+          boundedCommand("tar", ["-xzf", archive, "-C", into], {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "inherit",
+          }),
+        )
+        .pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("Running tar to unpack the engine failed", cause),
+          ),
+          Effect.orElseSucceed(() => -1),
+        );
+      return exit === 0;
+    }
+  }
 });
 
 /**

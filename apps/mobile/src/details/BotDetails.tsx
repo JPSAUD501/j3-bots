@@ -24,6 +24,7 @@ import {
   CirclePause,
   Cpu,
   FileText,
+  Globe,
   NotebookText,
   ShieldCheck,
   Webhook,
@@ -78,6 +79,8 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const { name, title, job } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, ctx.i18n);
   const modelName = botModelName(engine._tag === "ready" ? engine.value : null, bot);
+  const browserNeedsSetup =
+    engine._tag === "ready" && engine.value.browser?._tag === "setup-required";
   const skeleton = (count: number) => <SkeletonRows count={count} />;
   return (
     <ScrollView
@@ -179,6 +182,10 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
             <Text className="text-sm text-muted-foreground">{mode.description}</Text>
           </View>
         </View>
+      </Section>
+
+      <Section open title={t("details.browser")}>
+        <BrowserRow bot={bot} needsSetup={browserNeedsSetup} />
       </Section>
 
       <Section open title={t("details.workingContext")}>
@@ -287,6 +294,44 @@ function RoutineRow({
                 t(enabled ? "routine.resumeFailed" : "routine.pauseFailed", { name: routine.name }),
               );
             }
+          })
+        }
+      />
+    </View>
+  );
+}
+
+/**
+ * Whether the bot may use the browser on the server's computer, with the
+ * operator's sign-ins there, from its next turn; and, while it may, whether
+ * that computer still needs setting up for it.
+ */
+function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetup: boolean }) {
+  const { t } = usePresentation().i18n;
+  const client = useJ3Client();
+  const say = useSay();
+  const { name } = bot.profile;
+  return (
+    <View className="flex-row items-start gap-3">
+      <View className="pt-0.5">
+        <Icon icon={Globe} color="accent-muted-foreground" />
+      </View>
+      <View className="min-w-0 flex-1 gap-0.5">
+        <Text className="text-base text-foreground">{t("details.browser.use")}</Text>
+        <Text className="text-sm text-muted-foreground">{t("details.browser.hint", { name })}</Text>
+        {bot.browser && needsSetup && (
+          <Text className="text-sm text-blocked">{t("details.browser.setup")}</Text>
+        )}
+      </View>
+      <Switch
+        accessibilityLabel={t("details.browser.use")}
+        value={bot.browser}
+        onChange={(enabled) =>
+          void client.updateBot(bot.id, { browser: enabled }).then((result) => {
+            if (result._tag !== "failed") return;
+            // The switch shows the bot as the server has it, so a failure leaves nothing to keep.
+            client.dismissBotSave(bot.id);
+            say(t("details.browser.failed", { name }));
           })
         }
       />

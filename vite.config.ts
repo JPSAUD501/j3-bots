@@ -24,11 +24,36 @@ const ONLY_THE_ENGINE_ADAPTER_KNOWS_T3 = {
     "Only packages/engine-t3 may import T3 Code. Use the Engine interface or @j3-bots/contracts.",
 };
 
+// On Windows the server runs only as the desktop's child (`j3-bots serve`):
+// the rest of the `j3-bots` command line, the systemd service, the installer,
+// its uninstall and its updates, and the admin socket they reach the server
+// through are not there, so neither are their tests
+// (docs/operations/install.md). The snapshot an update takes is, since the
+// desktop's version transition takes one there too.
+// Absolute, since each package's tests are found from its own folder.
+const SERVER = `${import.meta.dirname.replaceAll("\\", "/")}/apps/server/src`;
+const NOT_ON_WINDOWS = [
+  `${SERVER}/doctor/**`,
+  `${SERVER}/install/uninstall.test.ts`,
+  `${SERVER}/service/**`,
+  `${SERVER}/admin/AdminSocket.test.ts`,
+  `${SERVER}/system/sshKeys.test.ts`,
+];
+
 export default defineConfig({
   test: {
     environment: "node",
-    exclude: ["**/node_modules/**", "**/dist/**", "**/vendor/**"],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/vendor/**",
+      ...(process.platform === "win32" ? NOT_ON_WINDOWS : []),
+    ],
     allowOnly: !process.env.CI,
+    // Tests that write the database run about three times as long on
+    // Windows' runners in all (the room-routing file: 19 seconds on Linux,
+    // 55 there), and the slowest of them pass five seconds there.
+    ...(process.platform === "win32" ? { testTimeout: 20_000 } : {}),
     // Flaky tests are fixed, not retried.
     retry: 0,
   },

@@ -1417,6 +1417,8 @@ function ComposerSection() {
   );
 }
 
+const READY_BROWSER = { _tag: "ready" } as const;
+
 const detailsIntents = {
   setRoutineEnabled: nothing,
   openRoutine: nothing,
@@ -1427,6 +1429,7 @@ const detailsIntents = {
   freshStart: nothing,
   deleteBot: nothing,
   shareTemplate: nothing,
+  setBrowser: nothing,
 };
 
 const roomIntents = {
@@ -1508,6 +1511,7 @@ function DetailsSection() {
             memory={team.memory[scout.id] ?? []}
             files={team.files[scout.id] ?? []}
             modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={READY_BROWSER}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}
@@ -1520,6 +1524,7 @@ function DetailsSection() {
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
             modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={READY_BROWSER}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}
@@ -1532,6 +1537,7 @@ function DetailsSection() {
             memory={[]}
             files={[]}
             modelName={null}
+            browserHost={READY_BROWSER}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}
@@ -1554,6 +1560,7 @@ function DetailsSection() {
             memory={null}
             files={null}
             modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={READY_BROWSER}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}

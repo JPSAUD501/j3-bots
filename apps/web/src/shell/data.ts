@@ -16,6 +16,7 @@ import type {
 } from "@j3-bots/client-runtime";
 import type {
   AvatarChoice,
+  Bot,
   BotFile,
   BotId,
   Device,
@@ -212,6 +213,8 @@ export interface ShellIntents extends TimelineIntents {
   /** Opens the form that edits a bot's profile, model and permission mode. Absent where there is none. */
   readonly editProfile?: (botId: BotId) => void;
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
+  /** Gives the bot the browser, or takes it away; the shell says so if it was not saved. */
+  readonly setBrowser: (bot: Bot, enabled: boolean) => void;
   /** `name` is the bot's as the operator asked, for what the shell says once it is done. */
   readonly freshStart: (botId: BotId, name: string) => void;
   readonly deleteBot: (botId: BotId) => void;
@@ -229,6 +232,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly refreshSettings: () => void;
   /** Sets up, unlocks, locks and changes the vault and its logins. */
   readonly vault: VaultIntents;
+  /** Signs the bots' browser out of every site; resolves with whether it did. */
+  readonly signOutBrowser: () => Promise<boolean>;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
   /** Reads more of the recent turns, when `recentTurns` can take more. */

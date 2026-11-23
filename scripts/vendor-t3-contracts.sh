@@ -47,7 +47,8 @@ fi
 node - "$root/engine.json" "$version" <<'NODE'
 const fs = require("node:fs");
 const [file, version] = process.argv.slice(2);
-const platforms = ["darwin-arm64", "linux-arm64", "linux-x64"];
+// Windows ships a .zip; every other platform a .tar.gz.
+const platforms = { "darwin-arm64": "tar.gz", "linux-arm64": "tar.gz", "linux-x64": "tar.gz", "win32-x64": "zip" };
 const url = `https://github.com/pingdotgg/t3code/releases/download/v${version}/SHA256SUMS`;
 (async () => {
   const response = await fetch(url);
@@ -58,8 +59,8 @@ const url = `https://github.com/pingdotgg/t3code/releases/download/v${version}/S
     if (match) listed.set(match[2], match[1]);
   }
   const sha256 = {};
-  for (const platform of platforms) {
-    const digest = listed.get(`t3-${version}-${platform}.tar.gz`);
+  for (const [platform, extension] of Object.entries(platforms)) {
+    const digest = listed.get(`t3-${version}-${platform}.${extension}`);
     if (digest === undefined) throw new Error(`SHA256SUMS of v${version} lists no ${platform} archive`);
     sha256[platform] = digest;
   }

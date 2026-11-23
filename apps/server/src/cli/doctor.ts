@@ -13,14 +13,18 @@ const MARKS: Record<CheckStatus, string> = {
   skipped: "-",
 };
 
-/** The report, one check per line and its fix under it. */
+/** The report, one check per line and its fix under it, a fix of several lines aligned. */
 const formatReport = (checks: ReadonlyArray<Check>) => {
   const width = Math.max(...checks.map((check) => check.name.length));
+  const indent = `  ${" ".repeat(width)}  `;
   const lines = checks.flatMap((check) => [
     `${MARKS[check.status]} ${check.name.padEnd(width)}  ${check.summary}`,
     ...Option.match(check.fix, {
       onNone: () => [],
-      onSome: (fix) => [`  ${" ".repeat(width)}  Fix: ${fix}`],
+      onSome: (fix) =>
+        fix
+          .split("\n")
+          .map((fixLine, index) => `${indent}${index === 0 ? "Fix: " : "     "}${fixLine}`),
     }),
   ]);
   const problems = checks.filter((check) => check.status === "problem").length;

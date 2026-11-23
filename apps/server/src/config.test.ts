@@ -10,8 +10,11 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { hasAdminSocket } from "./admin/socket.ts";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { DEFAULTS, load } from "./config.ts";
 import { initialize } from "./home/Home.ts";
+import { isPrivate, openToOthers, runInCommandPrompt } from "./home/testPrivacy.ts";
 import { markRestoring, takeSnapshot } from "./install/snapshot.ts";
 import { type InterfaceAddress, Network } from "./system/Network.ts";
 import { TEST_TLS } from "./testing/tls.ts";
@@ -39,7 +42,9 @@ const withEnvironment = <A, E, R>(
 /** A home outside any Git checkout, in the system's temporary folder. */
 const freshHome = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  return yield* fs.makeTempDirectoryScoped();
+  const path = yield* Path.Path;
+  // Resolved, as the server resolves the home: on Windows the folder comes back with a `/` in it.
+  return path.resolve(yield* fs.makeTempDirectoryScoped());
 });
 
 const writeConfigFile = Effect.fn("writeConfigFile")(function* (home: string, text: string) {
@@ -187,7 +192,6 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
 
   it.effect("writes every default on first run, and never rewrites the operator's file", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const parent = yield* freshHome;
       const home = path.join(parent, "j3");
@@ -196,7 +200,7 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       yield* withEnvironment(initialize, env);
       const first = yield* withEnvironment(load, env);
       assert.strictEqual(first.port, DEFAULTS.port);
-      assert.strictEqual((yield* fs.stat(home)).mode & 0o777, 0o700);
+      assert.isTrue(yield* isPrivate(home));
 
       yield* writeConfigFile(home, JSON.stringify({ port: 4000 }));
       // On a full disk, a start that finds the file has nothing to write.
@@ -223,20 +227,26 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
 
       // A home other users can open.
       const open = yield* freshHome;
-      yield* fs.chmod(open, 0o755);
+      yield* openToOthers(open);
       const shared = yield* withEnvironment(initialize, { J3_HOME: open }).pipe(Effect.exit);
       assert.deepInclude(failure(shared), { reason: "open-to-others" });
       assert.isFalse(yield* fs.exists(path.join(open, "config.json")));
 
-      // A home this user cannot write to, though it holds a readable file.
-      const locked = yield* freshHome;
-      yield* writeConfigFile(locked, "{}");
-      yield* fs.chmod(locked, 0o500);
-      const closed = yield* withEnvironment(initialize, { J3_HOME: locked }).pipe(
-        Effect.exit,
-        Effect.ensuring(fs.chmod(locked, 0o700).pipe(Effect.orDie)),
-      );
-      assert.deepInclude(failure(closed), { _tag: "HomeNotPrivate", reason: "closed-to-owner" });
+      // A home this user cannot write to, though it holds a readable file:
+      // by its mode, which means nothing on Windows (see windowsAcl.test.ts).
+      if (process.platform !== "win32") {
+        const locked = yield* freshHome;
+        yield* writeConfigFile(locked, "{}");
+        yield* fs.chmod(locked, 0o500);
+        const closed = yield* withEnvironment(initialize, { J3_HOME: locked }).pipe(
+          Effect.exit,
+          Effect.ensuring(fs.chmod(locked, 0o700).pipe(Effect.orDie)),
+        );
+        assert.deepInclude(failure(closed), {
+          _tag: "HomeNotPrivate",
+          reason: "closed-to-owner",
+        });
+      }
 
       // A home a rollback left with its config.json moved aside, the snapshot's not yet in.
       const halfRestored = yield* freshHome;
@@ -255,6 +265,44 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       assert.deepInclude(failure(unfinished), { _tag: "RollbackUnfinished" });
       assert.isFalse(yield* fs.exists(path.join(halfRestored, "config.json")));
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(process.platform !== "win32")(
+    "on Windows, takes a home named by its short 8.3 name, and still refuses a junction out of it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* freshHome;
+        const long = path.join(root, "a folder with a long name");
+        yield* fs.makeDirectory(long);
+        // `%TEMP%` under a profile whose name is long or has a space is such a
+        // name (`C:\Users\LONGNA~1\...`); its real path is the long one.
+        const short = (yield* spawner.string(
+          ChildProcess.make(`for %I in ("${long}") do @echo %~sI`, { shell: true }),
+        )).trim();
+        assert.notStrictEqual(
+          short.toLowerCase(),
+          long.toLowerCase(),
+          "this volume makes no 8.3 names, which this test needs",
+        );
+        const home = path.join(short, "j3");
+        yield* withEnvironment(initialize, { J3_HOME: home });
+        const config = yield* withEnvironment(load, { J3_HOME: home });
+        assert.strictEqual(config.home, home);
+
+        // A junction needs no privilege, so it is the link anyone can make.
+        const linked = path.join(home, "engine", "j3");
+        const elsewhere = path.join(root, "elsewhere");
+        yield* fs.makeDirectory(path.dirname(linked), { recursive: true });
+        yield* fs.makeDirectory(elsewhere);
+        yield* runInCommandPrompt(`mklink /J "${linked}" "${elsewhere}"`);
+        assert.deepInclude(
+          failure(yield* withEnvironment(load, { J3_HOME: home }).pipe(Effect.exit)),
+          { reason: "state-outside-home", subject: linked },
+        );
+      }).pipe(Effect.scoped),
   );
 
   it.effect("refuses a home in a Git checkout, even before it exists or through a link", () =>

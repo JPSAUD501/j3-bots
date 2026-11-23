@@ -26,6 +26,18 @@ export const realLocation = Effect.fn("realLocation")(function* (location: strin
   return Option.map(real, (resolved) => path.join(resolved, ...missing));
 });
 
-/** Whether `inner` is `outer` or inside it. Both absolute and normalized. */
-export const isWithin = (outer: string, inner: string) =>
-  inner === outer || inner.startsWith(outer.endsWith("/") ? outer : `${outer}/`);
+/**
+ * Whether `inner` is `outer` or inside it. Both absolute and normalized, as
+ * `platform` writes paths: Windows separates segments with `\\` and, on its
+ * file systems as they come, compares names without case, so a path that
+ * differs from another only in case names the same place there.
+ */
+export const isWithin = (outer: string, inner: string, platform: string = process.platform) => {
+  const windows = platform === "win32";
+  const separator = windows ? "\\" : "/";
+  const [within, without] = windows ? [inner.toLowerCase(), outer.toLowerCase()] : [inner, outer];
+  return (
+    within === without ||
+    within.startsWith(without.endsWith(separator) ? without : `${without}${separator}`)
+  );
+};

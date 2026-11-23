@@ -151,6 +151,12 @@ export const Bot = Schema.Struct({
   /** Kept out of the roster; still running and reachable through search. */
   hidden: Schema.Boolean,
   /**
+   * The bot may use a web browser on the server's computer, signed in to
+   * every site the operator signed in to there. Off unless the operator
+   * turns it on. False from a server that predates it.
+   */
+  browser: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+  /**
    * The roster section the bot is in, or null for none. Null from a server
    * that predates sections, whose roster sends no `sections`.
    */

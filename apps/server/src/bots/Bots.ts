@@ -311,7 +311,7 @@ export const layer = Layer.effect(
       readonly botId: BotId;
       /** What the command's receipt records it was asked. */
       readonly payload: unknown;
-      /** Whether it may change the model or the permission mode. */
+      /** Whether it may change the model, the permission mode or the browser. */
       readonly settings: boolean;
       /** Whether it may change what the bot's instructions say: its profile or model. */
       readonly instructions: boolean;
@@ -321,7 +321,7 @@ export const layer = Layer.effect(
         status: EngineStatus,
       ) => Effect.Effect<Option.Option<BotChanges>>;
     }) {
-      /** Saves the change; `settingsChanged` records a new model or permission mode. */
+      /** Saves the change; `settingsChanged` records a new model, permission mode or browser. */
       const save = <F>(settingsChanged: Effect.Effect<void, F>) =>
         receipts.once({
           commandId: input.commandId,
@@ -348,21 +348,31 @@ export const layer = Layer.effect(
             // session is replaced, but leaves a hello the bot has not sent yet,
             // and the operator's messages waiting behind it, to run on the new
             // one. Moving back before that keeps the session.
+            let stopped = false;
             if (change.model !== undefined) {
               const live = yield* liveMainProvider(input.botId);
               if (Option.isSome(live) && live.value !== change.model.providerId) {
                 yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
+                stopped = true;
                 yield* requestBotRotation(input.botId, "provider-changed");
               } else if (Option.isSome(live)) {
                 yield* providerRestored(input.botId);
               }
             }
+            // Taking the browser away stops the work in progress the same way,
+            // so no turn goes on with it, nor one the engine would start
+            // behind it on the same credential; the alignment then withdraws
+            // it from every thread of the bot's project.
+            if (change.browser === false && before.bot.browser && !stopped) {
+              yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
+            }
             yield* changes.touch({ _tag: "bot", botId: input.botId });
             return (yield* require(input.botId).pipe(Effect.orDie)).bot;
           }),
         });
-      // A new model or permission mode is saved in the gate of the bot's main
-      // session, so no send claimed before it reaches the engine after it.
+      // A new model, permission mode or browser is saved in the gate of the
+      // bot's main session, so no send claimed before it reaches the engine
+      // after it.
       const bot = input.settings
         ? yield* sessions.inMainSessionGate(input.botId, (held) =>
             save(sessions.settingsChanged(held)),
@@ -381,7 +391,10 @@ export const layer = Layer.effect(
         commandId: input.commandId,
         botId: input.botId,
         payload: input,
-        settings: input.changes.model !== undefined || input.changes.permissionMode !== undefined,
+        settings:
+          input.changes.model !== undefined ||
+          input.changes.permissionMode !== undefined ||
+          input.changes.browser !== undefined,
         instructions: input.changes.profile !== undefined || input.changes.model !== undefined,
         chooser: "operator",
         decide: () => Effect.succeedSome(input.changes),

@@ -223,7 +223,7 @@ describe("provision with a provider connection", () => {
 
   it.effect("keeps one connection's URL and key together when a change is cut short", () =>
     Effect.gen(function* () {
-      const { home, files, input, claudeConnection, codexConnection } = yield* setUp;
+      const { path, home, files, input, claudeConnection, codexConnection } = yield* setUp;
       yield* storeConnection({
         home,
         files,
@@ -253,7 +253,7 @@ describe("provision with a provider connection", () => {
         connection: { baseUrl: "https://new.example.com", key: Redacted.make("new-key") },
       });
       const cut = yield* Effect.exit(
-        provision({ ...input, files: failingWrite(files, "userdata/settings.json") }),
+        provision({ ...input, files: failingWrite(files, path.join("userdata", "settings.json")) }),
       );
       assert.isTrue(cut._tag === "Failure");
       yield* provision(input);
@@ -432,27 +432,65 @@ it.effect("lets the Claude Code and Codex homes list the shared skills", () =>
   }).pipe(Effect.scoped, Effect.provide(machine)),
 );
 
-it.effect("provisions a home whose skill folder cannot be written, and keeps its skills", () =>
-  Effect.gen(function* () {
-    const { fs, path, home, input } = yield* setUp;
-    yield* fs.makeDirectory(path.join(input.sharedSkills, "j3-routines"), { recursive: true });
-    yield* fs.writeFileString(path.join(input.sharedSkills, "j3-routines", "SKILL.md"), "shared");
-    const claudeHome = path.join(home, "claude-code");
-    const skills = path.join(claudeHome, "skills");
-    const own = path.join(skills, "expenses", "SKILL.md");
-    yield* fs.makeDirectory(path.dirname(own), { recursive: true });
-    yield* fs.writeFileString(own, "the operator's");
-    yield* fs.chmod(skills, 0o500);
-    yield* Effect.addFinalizer(() => fs.chmod(skills, 0o700).pipe(Effect.ignore));
-    logged.length = 0;
+// A mode cannot keep writes out of a folder on Windows.
+it.effect.skipIf(process.platform === "win32")(
+  "provisions a home whose skill folder cannot be written, and keeps its skills",
+  () =>
+    Effect.gen(function* () {
+      const { fs, path, home, input } = yield* setUp;
+      yield* fs.makeDirectory(path.join(input.sharedSkills, "j3-routines"), { recursive: true });
+      yield* fs.writeFileString(path.join(input.sharedSkills, "j3-routines", "SKILL.md"), "shared");
+      const claudeHome = path.join(home, "claude-code");
+      const skills = path.join(claudeHome, "skills");
+      const own = path.join(skills, "expenses", "SKILL.md");
+      yield* fs.makeDirectory(path.dirname(own), { recursive: true });
+      yield* fs.writeFileString(own, "the operator's");
+      yield* fs.chmod(skills, 0o500);
+      yield* Effect.addFinalizer(() => fs.chmod(skills, 0o700).pipe(Effect.ignore));
+      logged.length = 0;
 
-    yield* provision(input);
+      yield* provision(input);
 
-    assert.deepStrictEqual(yield* fs.readDirectory(skills), ["expenses"]);
-    assert.strictEqual(yield* fs.readFileString(own), "the operator's");
-    assert.isTrue(
-      logged.some((line) => line.includes(`could not be linked in ${claudeHome}`)),
-      "a warning names the home",
-    );
-  }).pipe(Effect.scoped, Effect.provide(machine)),
+      assert.deepStrictEqual(yield* fs.readDirectory(skills), ["expenses"]);
+      assert.strictEqual(yield* fs.readFileString(own), "the operator's");
+      assert.isTrue(
+        logged.some((line) => line.includes(`could not be linked in ${claudeHome}`)),
+        "a warning names the home",
+      );
+    }).pipe(Effect.scoped, Effect.provide(machine)),
 );
+
+describe("the engine's browser", () => {
+  it.effect("is off for every bot, and stays on for a bot the operator turned it on for", () =>
+    Effect.gen(function* () {
+      const { fs, path, input, userdata } = yield* setUp;
+      const settingsFile = path.join(userdata, "settings.json");
+      yield* fs.makeDirectory(userdata, { recursive: true });
+      yield* fs.writeFileString(
+        settingsFile,
+        JSON.stringify({
+          enableAgentBrowserAccess: true,
+          projectSettingsOverrides: { "bot-project": { enableAgentBrowserAccess: true } },
+        }),
+      );
+
+      yield* provision(input);
+
+      const written = yield* Schema.decodeEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            enableAgentBrowserAccess: Schema.Boolean,
+            projectSettingsOverrides: Schema.Record(
+              Schema.String,
+              Schema.Struct({ enableAgentBrowserAccess: Schema.Boolean }),
+            ),
+          }),
+        ),
+      )(yield* fs.readFileString(settingsFile));
+      assert.isFalse(written.enableAgentBrowserAccess);
+      assert.deepStrictEqual(written.projectSettingsOverrides, {
+        "bot-project": { enableAgentBrowserAccess: true },
+      });
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});

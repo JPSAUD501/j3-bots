@@ -28,6 +28,7 @@ import Migration0020 from "./migrations/0020_pips_avatars.ts";
 import Migration0021 from "./migrations/0021_missed_routines.ts";
 import Migration0022 from "./migrations/0022_roster_sections.ts";
 import Migration0023 from "./migrations/0023_credential_requests.ts";
+import Migration0024 from "./migrations/0024_bot_browser.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -57,6 +58,7 @@ const migrations = SqliteMigrator.fromRecord({
   "21_missed_routines": Migration0021,
   "22_roster_sections": Migration0022,
   "23_credential_requests": Migration0023,
+  "24_bot_browser": Migration0024,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

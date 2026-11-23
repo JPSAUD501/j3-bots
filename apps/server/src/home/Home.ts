@@ -15,6 +15,13 @@ import { DEFAULTS_TEXT, load, ServerConfig } from "../config.ts";
 import { publishFile } from "../files.ts";
 import { unfinishedRollback } from "../install/snapshot.ts";
 import { HOME_ENTRIES } from "./entries.ts";
+import {
+  type AclVerdict,
+  createPrivateFolder,
+  judgeAcl,
+  readFolderAcl,
+  repairCommand,
+} from "./windowsAcl.ts";
 
 // The home holds the database, the bots' files, the engine's credential and
 // the admin socket, which takes no token because only the operator's user can
@@ -28,7 +35,21 @@ export const shellWord = (value: string) =>
 /** The home is not a folder only this user can open. */
 export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivate", {
   home: Schema.String,
-  reason: Schema.Literals(["not-a-folder", "not-owned", "open-to-others", "closed-to-owner"]),
+  reason: Schema.Literals([
+    "not-a-folder",
+    "not-owned",
+    "open-to-others",
+    "closed-to-owner",
+    "unverifiable",
+  ]),
+  /**
+   * On Windows, the `icacls` command that makes the home private, which
+   * names the accounts to remove: a mode does not say who may open a folder
+   * there.
+   */
+  windowsRepair: Schema.optionalKey(Schema.String),
+  /** For `unverifiable`, what Windows said instead of who may open the home. */
+  detail: Schema.optionalKey(Schema.String),
 }) {
   override get message(): string {
     switch (this.reason) {
@@ -40,11 +61,27 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
         return `Other users on this machine can open ${this.home}, which holds the database, the engine's credential and the admin socket. ${this.fix}`;
       case "closed-to-owner":
         return `This user's own permissions on ${this.home} do not let it read, write and open the files there. ${this.fix}`;
+      case "unverifiable":
+        return `Windows did not say who may open ${this.home} (${this.detail ?? "no answer"}), so the server cannot tell that it is private. ${this.fix}`;
     }
   }
 
-  /** The command that repairs it, for the operator to run. */
+  /** The command that repairs it, for the operator to run on this system. */
   get fix(): string {
+    if (process.platform === "win32") {
+      const repair = this.windowsRepair ?? `icacls "${this.home}" /inheritance:r`;
+      switch (this.reason) {
+        case "not-a-folder":
+          return "Set J3_HOME to a folder.";
+        case "not-owned":
+          return `Take it as this user (\`takeown /F "${this.home}" /R\`), then run \`${repair}\`.`;
+        case "open-to-others":
+        case "closed-to-owner":
+          return `Run \`${repair}\`.`;
+        case "unverifiable":
+          return "Check that Windows PowerShell runs for this user.";
+      }
+    }
     switch (this.reason) {
       case "not-a-folder":
         return "Set J3_HOME to a folder.";
@@ -52,6 +89,7 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
         return `Give it to this user: \`sudo chown -R "$(id -un)": ${shellWord(this.home)} && chmod 700 ${shellWord(this.home)}\`.`;
       case "open-to-others":
       case "closed-to-owner":
+      case "unverifiable":
         return `Run \`chmod 700 ${shellWord(this.home)}\`.`;
     }
   }
@@ -60,7 +98,8 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
 /**
  * Whether `home` is a folder owned by this user, which this user may read,
  * write and search and no group and no other user can open. A home that does
- * not exist yet passes: the server creates it private.
+ * not exist yet passes: the server creates it private. On Windows, who may
+ * open it is its access list, which `windowsAcl.ts` reads and judges.
  */
 export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -77,6 +116,7 @@ const checkPrivateInfo = Effect.fn("Home.checkPrivateInfo")(function* (
   if (info.type !== "Directory") {
     return yield* new HomeNotPrivate({ home, reason: "not-a-folder" });
   }
+  if (process.platform === "win32") return yield* checkPrivateOnWindows(home);
   const user = process.getuid?.();
   if (user !== undefined && Option.isSome(info.uid) && info.uid.value !== user) {
     return yield* new HomeNotPrivate({ home, reason: "not-owned" });
@@ -120,6 +160,43 @@ export const checkUnchanged = Effect.fn("Home.checkUnchanged")(function* (
   if (now.dev !== before.dev || Option.getOrNull(now.ino) !== Option.getOrNull(before.ino)) {
     return yield* new HomeBlocked({ path: home, reason: "home-replaced" });
   }
+});
+
+const checkPrivateOnWindows = Effect.fnUntraced(function* (home: string) {
+  const acl = yield* readFolderAcl(home).pipe(
+    Effect.mapError(
+      (error) => new HomeNotPrivate({ home, reason: "unverifiable", detail: error.detail }),
+    ),
+  );
+  const verdict: AclVerdict = judgeAcl(acl);
+  if (verdict !== "private") {
+    return yield* new HomeNotPrivate({
+      home,
+      reason: verdict,
+      windowsRepair: repairCommand(home, acl),
+    });
+  }
+});
+
+/**
+ * Creates `home`, and the folders it is in, if missing: on Windows private
+ * from its first moment (`createPrivateFolder`), elsewhere mode 0700.
+ */
+const createHome = Effect.fnUntraced(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  if (process.platform !== "win32") {
+    return yield* fs.makeDirectory(home, { recursive: true, mode: 0o700 });
+  }
+  if (yield* fs.exists(home)) return;
+  yield* fs.makeDirectory(path.dirname(home), { recursive: true });
+  yield* createPrivateFolder(home).pipe(
+    Effect.mapError(
+      (error) => new HomeNotPrivate({ home, reason: "unverifiable", detail: error.detail }),
+    ),
+  );
+  // Another process may have made it first, as it pleased.
+  yield* checkPrivate(home);
 });
 
 /** The home exists, but this user cannot create files in it. */
@@ -233,7 +310,7 @@ export const initialize = Effect.gen(function* () {
   yield* checkPrivate(config.home);
   yield* checkWritable(config.home);
   yield* checkNoUnfinishedRollback(config.home);
-  yield* fs.makeDirectory(config.home, { recursive: true, mode: 0o700 });
+  yield* createHome(config.home);
   if (!(yield* fs.exists(config.configFile))) {
     // Two first starts may both get here: the publication keeps the first file.
     yield* publishFile(config.configFile, DEFAULTS_TEXT, 0o600);
@@ -340,7 +417,8 @@ export const holdHome = Effect.fn("Home.holdHome")(function* (home: string) {
  * Takes the home for this process, before anything else touches it: checks
  * that it is private, holds `<home>/server.lock` for as long as the scope
  * lives (`holdHome`), refuses it while a rollback has not finished, and then
- * removes an admin socket a stopped server left behind.
+ * removes an admin socket a stopped server left behind, on a system that has
+ * one (`hasAdminSocket`).
  *
  * Holding the lock, the server is the only one that may remove or create the
  * admin socket, and no update copies or puts back the databases under it.
@@ -352,6 +430,7 @@ export const reserve = Effect.gen(function* () {
   yield* holdHome(home);
   // Again under the lock: a rollback may have started since `initialize`.
   yield* checkNoUnfinishedRollback(home);
+  if (!Socket.hasAdminSocket(process.platform)) return;
 
   const socket = yield* Socket.probe(adminSocket);
   switch (socket) {

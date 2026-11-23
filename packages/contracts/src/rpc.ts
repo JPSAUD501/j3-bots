@@ -32,7 +32,7 @@ import {
   ReceivedEntry,
   WorkStep,
 } from "./entry.ts";
-import { CommandError, NotFound, VaultError } from "./errors.ts";
+import { CommandError, Conflict, NotFound, VaultError } from "./errors.ts";
 import { ServerOrigin } from "./link.ts";
 import {
   MemoryDocument,
@@ -340,7 +340,8 @@ export const BotRpcs = RpcGroup.make(
    * is unavailable. A turn already running keeps the settings it started with,
    * and background work still running holds the change, which a
    * `settings-held` notice says and the bot's `settingsHeld` shows; a Stop
-   * ends both.
+   * ends both. Turning the browser on or off reaches it the same way: from
+   * its next turn.
    */
   Rpc.make("bot.update", {
     payload: {
@@ -356,6 +357,8 @@ export const BotRpcs = RpcGroup.make(
       primary: Schema.optionalKey(Schema.Boolean),
       pinned: Schema.optionalKey(Schema.Boolean),
       hidden: Schema.optionalKey(Schema.Boolean),
+      /** Lets the bot use the browser (`Bot.browser`), or stops it. */
+      browser: Schema.optionalKey(Schema.Boolean),
       /** Moves the bot into a section, or out of its section with null. */
       sectionId: Schema.optionalKey(Schema.NullOr(SectionId)),
     },
@@ -635,6 +638,14 @@ export const SettingsRpcs = RpcGroup.make(
    * defect, which a client passes over too: it relies on nothing here.
    */
   Rpc.make("settings.deviceTimeZone", { payload: { timeZone: TimeZone } }),
+  /**
+   * Signs the bots' browser out of every site: deletes the cookies and site
+   * data of the one browser profile they all use, on the server's computer.
+   * Pages open in it close. `Conflict("engine-unavailable")` when the engine
+   * cannot take it now. A server older than this RPC answers it with a
+   * defect.
+   */
+  Rpc.make("browser.signOut", { error: Conflict }),
 );
 
 /**

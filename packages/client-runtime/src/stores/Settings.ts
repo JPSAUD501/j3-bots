@@ -72,6 +72,8 @@ export class Settings extends Context.Service<
     readonly update: (change: SettingsChange) => Effect.Effect<IntentResult<SettingsValue>>;
     /** Reads them again, as when Settings opens, for a change another device made meanwhile. */
     readonly refresh: Effect.Effect<void, NotPaired>;
+    /** Signs the bots' browser out of every site; refused while the engine is not running. */
+    readonly signOutBrowser: Effect.Effect<IntentResult<void>>;
   }
 >()("@j3-bots/client-runtime/stores/Settings") {}
 
@@ -179,6 +181,10 @@ export const layer = Layer.effect(
         : save(saves.notifications, change.changes, { notifications: change.changes });
     });
 
-    return Settings.of({ state, saves, update, refresh });
+    const signOutBrowser = connection
+      .call((client) => client["browser.signOut"]())
+      .pipe(Effect.exit, Effect.map(intentResult));
+
+    return Settings.of({ state, saves, update, refresh, signOutBrowser });
   }),
 );

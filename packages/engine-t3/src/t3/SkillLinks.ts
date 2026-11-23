@@ -206,11 +206,7 @@ const linkInHome = Effect.fnUntraced(function* (input: {
   const stale: Array<string> = [];
   for (const [name, target] of Object.entries(recorded.value)) {
     if (!isSkillName(path, name)) continue;
-    const isOurs = yield* fs.readLink(path.join(folder, name)).pipe(
-      Effect.map((held) => held === target),
-      Effect.orElseSucceed(() => false),
-    );
-    if (!isOurs) continue;
+    if (!(yield* input.files.holdsLink(path.join(folder, name), target))) continue;
     if (wanted[name] === target) kept[name] = target;
     else stale.push(name);
   }
