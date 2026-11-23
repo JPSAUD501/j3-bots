@@ -73,6 +73,32 @@ jobs:
       - name: Every commit is signed off
         run: scripts/check-signoff.sh HEAD^1 HEAD^2
 
+  # The workflows, checked with actionlint, which runs the runner image's
+  # shellcheck on their scripts. actionlint is a pinned release, checked
+  # against its digest before it runs.
+  workflows:
+    name: Workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        env:
+          VERSION: 1.7.7
+          SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v$VERSION/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "$SHA256  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+
+      - name: Check the workflows
+        run: '"$RUNNER_TEMP/actionlint" -no-color'
+
   desktop:
     name: Desktop smoke
     runs-on: ubuntu-24.04
@@ -178,7 +204,9 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           CSC_FOR_PULL_REQUEST: "true"
           TARGETS: ${{ matrix.targets }}
-        run: vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
+        run: |
+          # shellcheck disable=SC2086 # TARGETS is several flags, split on purpose.
+          vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
 
       - name: Check the packaged server runtime
         env:

@@ -98,6 +98,12 @@ jobs:
             echo "::error::$version is outside what the Android app can number: a major version up to 20, a minor and a patch up to 99, a release candidate up to rc.98."
             exit 1
           fi
+          # Versions up to 0.3.0 keep the code they shipped with, which has no
+          # room for a nightly.
+          if [[ -n "$NIGHTLY_VERSION" ]] && ((major == 0 && (minor < 3 || (minor == 3 && patch == 0)))); then
+            echo "::error::$version is a nightly of 0.3.0 or before; nightlies start at 0.3.1."
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
@@ -220,7 +226,9 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           VERSION: ${{ needs.draft.outputs.version }}
           TARGETS: ${{ matrix.targets }}
-        run: vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
+        run: |
+          # shellcheck disable=SC2086 # TARGETS is several flags, split on purpose.
+          vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
 
       # The runtime as packaged (and, on macOS, signed) runs on this runner:
       # its release.json and files are right for the tag, its Node is the
@@ -612,7 +620,7 @@ jobs:
           fi
           openssl base64 -d -A -in signature/SHA256SUMS.sig -out "$RUNNER_TEMP/signature"
           for key in release-keys/*.pem; do
-            if openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in checksums/SHA256SUMS -sigfile "$RUNNER_TEMP/signature"; then
+            if openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in checksums/SHA256SUMS -sigfile "$RUNNER_TEMP/signature" > /dev/null 2>&1; then
               echo "SHA256SUMS is signed by $key."
               exit 0
             fi
