@@ -392,9 +392,7 @@ const program = Effect.gen(function* () {
         }
       });
       ipcMain.on(IPC_CHANNELS.retryServerUpdate, (event) => {
-        if (fromApp(event) && runSync(settings.get).mode === "local") {
-          void runPromise(localHost.retryUpdate);
-        }
+        if (fromApp(event)) void runPromise(choice.whileLocal(localHost.retryUpdate));
       });
       ipcMain.handle(IPC_CHANNELS.setPhoneAccess, (event, request: unknown) => {
         const decoded = decodePhoneAccessRequest(request);

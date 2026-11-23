@@ -19,6 +19,7 @@
 // may start on its home: `decideStart` lets only its release start, and
 // `rollBack` with its snapshot finishes it from where it got.
 
+export { freeSpaceAt } from "../system/freeSpace.ts";
 export { type ServerProbe, READY_WITHIN } from "./readiness.ts";
 export {
   compareVersions,
