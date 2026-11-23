@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, MemoryPath, RoomId, RosterItemKey, RoutineId } from "@j3-bots/contracts";
+import type {
+  BotId,
+  CredentialId,
+  MemoryPath,
+  RoomId,
+  RosterItemKey,
+  RoutineId,
+} from "@j3-bots/contracts";
 import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { fontFamilies } from "@j3-bots/design-tokens";
 import {
@@ -35,6 +42,9 @@ import { RosterScreen } from "./screens/Roster.tsx";
 import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
 import { useColor } from "./theme.ts";
+import { CredentialFormScreen } from "./vault/CredentialFormScreen.tsx";
+import { CredentialScreen } from "./vault/CredentialScreen.tsx";
+import { VaultScreen } from "./vault/VaultScreen.tsx";
 import { Toasts } from "./toast.tsx";
 import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
 
@@ -49,6 +59,7 @@ import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
  * `share` picks where something another app shared goes, over the rest.
  * `shareTemplate` shows a bot as a template before it is shared, and
  * `newFromTemplate` the template file opened, before a bot is made from it.
+ * The vault's saved logins open from Settings, then one login, then its form.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
@@ -64,6 +75,10 @@ export type Screens = {
   newBot: undefined;
   settings: undefined;
   hidden: undefined;
+  vault: undefined;
+  credential: { readonly id: CredentialId };
+  /** A new login with `id` null; otherwise the one to change. */
+  credentialForm: { readonly id: CredentialId | null };
 };
 
 /**
@@ -216,6 +231,14 @@ export function Main() {
                   name="settings"
                   component={SettingsScreen}
                   options={{ ...sheet, title: t("settings.title") }}
+                />
+                {/* The vault's screens set their own titles. */}
+                <Stack.Screen name="vault" component={VaultScreen} />
+                <Stack.Screen name="credential" component={CredentialScreen} />
+                <Stack.Screen
+                  name="credentialForm"
+                  options={sheet}
+                  component={CredentialFormScreen}
                 />
               </Stack.Navigator>
             </NavigationContainer>

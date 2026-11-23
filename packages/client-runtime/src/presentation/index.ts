@@ -195,3 +195,4 @@ export {
   type WindowState,
   windowState,
 } from "./usage.ts";
+export { typedOrigins } from "./vault.ts";

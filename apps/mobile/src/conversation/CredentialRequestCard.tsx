@@ -20,7 +20,7 @@ import { useI18n } from "../i18n.ts";
 import { useBots } from "../presentation.tsx";
 import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
-import { SecretField, useVaultFailureText, VaultGate } from "../vault/VaultForms.tsx";
+import { SecretField, TotpField, useVaultFailureText, VaultGate } from "../vault/VaultForms.tsx";
 import { CardFrame, useOutcomeFocus, useSubmitting } from "./CardFrame.tsx";
 
 const decodeDraft = Schema.decodeUnknownOption(CredentialDraftSchema);
@@ -178,16 +178,14 @@ function LoginForm({
         invalid={tried && password === ""}
         editable={!busy}
       />
-      <View className="gap-1">
-        <SecretField
-          label={t("login.totp")}
-          value={totp}
-          onChange={setTotp}
-          editable={!busy}
-          onSubmit={save}
-        />
-        <Text className="text-xs text-muted-foreground">{t("login.totpHint")}</Text>
-      </View>
+      <TotpField
+        label={t("login.totp")}
+        hint={t("login.totpHint")}
+        value={totp}
+        onChange={setTotp}
+        editable={!busy}
+        onSubmit={save}
+      />
       {botId !== null && (
         <SwitchRow
           label={t("login.allow", { name: botName })}

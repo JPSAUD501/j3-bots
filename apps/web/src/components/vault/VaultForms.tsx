@@ -255,9 +255,11 @@ function UnlockVaultForm({
 export function ChangePasswordForm({
   intents,
   onDone,
+  onCancel,
 }: {
   readonly intents: VaultIntents;
   readonly onDone: () => void;
+  readonly onCancel: () => void;
 }) {
   const { t } = useI18n();
   const failureText = useVaultFailureText();
@@ -316,7 +318,7 @@ export function ChangePasswordForm({
         {problem ?? (failure === null ? null : failureText(failure))}
       </Problem>
       <div className="flex justify-end gap-2">
-        <Button size="sm" onClick={onDone}>
+        <Button size="sm" onClick={onCancel}>
           {t("vault.cancel")}
         </Button>
         <Button type="submit" variant="primary" size="sm" aria-disabled={busy}>
