@@ -14,7 +14,7 @@ const px = (value: number) => `${value}px`;
  * The mobile app's theme for Uniwind (Tailwind v4 for React Native): each
  * theme's colors in a `@variant light` and a `@variant dark` block of the
  * theme layer, which Uniwind switches with the system or a stored choice, and
- * the type scale, radii, spacing, breakpoints and touch sizes.
+ * the type scale's touch steps, radii, spacing, breakpoints and touch sizes.
  *
  * Utilities are named as on the web (`bg-background`, `text-sm`,
  * `rounded-bubble`), with the same values. Lengths are in px: React Native has
@@ -63,7 +63,7 @@ ${declarations(
     ["spacing", px(spacingUnit)],
     ["breakpoint-tablet", px(layout.breakpoints.tablet)],
     ["breakpoint-wide", px(layout.breakpoints.wide)],
-    ...typeEntries(px),
+    ...typeEntries("touch", px),
     ...radiusEntries(px),
   ],
   "  ",

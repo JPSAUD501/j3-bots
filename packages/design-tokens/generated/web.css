@@ -204,16 +204,14 @@
   --breakpoint-wide: 75rem;
   --container-tablet: 48rem;
   --container-wide: 75rem;
-  --text-2xs: 0.6875rem;
+  --text-2xs: 0.75rem;
   --text-2xs--line-height: 1rem;
-  --text-xs: 0.75rem;
-  --text-xs--line-height: 1rem;
-  --text-sm: 0.8125rem;
-  --text-sm--line-height: 1.125rem;
-  --text-base: 0.875rem;
-  --text-base--line-height: 1.25rem;
-  --text-md: 0.9375rem;
-  --text-md--line-height: 1.25rem;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.125rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.375rem;
   --text-lg: 1rem;
   --text-lg--line-height: 1.5rem;
   --text-xl: 1.25rem;
@@ -232,6 +230,19 @@
   --radius-bubble: 1.25rem;
   --radius-composer: 1.375rem;
   --radius-pill: 9999px;
+}
+
+@media (pointer: coarse) {
+  :root {
+    --text-2xs: 0.8125rem;
+    --text-2xs--line-height: 1.125rem;
+    --text-xs: 0.875rem;
+    --text-xs--line-height: 1.25rem;
+    --text-sm: 1rem;
+    --text-sm--line-height: 1.375rem;
+    --text-base: 1.0625rem;
+    --text-lg: 1.0625rem;
+  }
 }
 
 @theme inline {

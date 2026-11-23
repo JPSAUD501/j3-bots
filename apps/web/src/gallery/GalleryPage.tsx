@@ -49,6 +49,7 @@ import {
   typeScale,
   type Spring,
   type Themed,
+  type TypeInput,
 } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { PlusIcon, SettingsIcon } from "lucide-react";
@@ -133,6 +134,8 @@ const restingRoom: Room = {
 /** The sample room while the server ends its work. */
 const stoppingRoom: Room = { ...team.room, work: "stopping" };
 const shortcuts = shellShortcuts();
+/** The type scale's two sets: the one a page shows depends on its pointer, so both are drawn. */
+const typeInputs: ReadonlyArray<TypeInput> = ["pointer", "touch"];
 
 export default function GalleryPage() {
   const [locale, setLocale] = useState<Language>("en");
@@ -289,22 +292,27 @@ function TokensSection() {
           <p className="font-mono text-sm">{fontFamilies.mono}: pnpm test --filter web != 0</p>
         </div>
       </Labeled>
-      <Labeled label="Type scale">
-        <div className="flex flex-col gap-1">
-          {Object.entries(typeScale).map(([name, { size, lineHeight }]) => (
-            <p
-              key={name}
-              className={size >= typeScale["2xl"].size ? "display-type" : undefined}
-              style={{ fontSize: `${size / 16}rem`, lineHeight: `${lineHeight / 16}rem` }}
-            >
-              <span className="me-3 inline-block w-10 font-sans font-normal tracking-normal text-2xs text-muted-foreground">
-                {name}
-              </span>
-              Scout finished the report
-            </p>
-          ))}
-        </div>
-      </Labeled>
+      {typeInputs.map((input) => (
+        <Labeled key={input} label={`Type scale, ${input}`}>
+          <div className="flex flex-col gap-1">
+            {Object.entries(typeScale).map(([name, step]) => {
+              const { size, lineHeight } = step[input];
+              return (
+                <p
+                  key={name}
+                  className={size >= typeScale["2xl"][input].size ? "display-type" : undefined}
+                  style={{ fontSize: `${size / 16}rem`, lineHeight: `${lineHeight / 16}rem` }}
+                >
+                  <span className="me-3 inline-block w-16 font-sans font-normal tracking-normal text-2xs text-muted-foreground">
+                    {name} {size}/{lineHeight}
+                  </span>
+                  Scout finished the report
+                </p>
+              );
+            })}
+          </div>
+        </Labeled>
+      ))}
       <Labeled label="Elevation">
         <div className="flex flex-wrap gap-4">
           {Object.keys(shadows).map((name) => (

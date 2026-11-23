@@ -15,7 +15,7 @@ import {
 import { avatarEye, botBubble, botPalette } from "./botPalette.ts";
 import { renderFontManifest } from "./fontManifest.ts";
 import { botColors } from "./names.ts";
-import { colors, type ColorRole } from "./tokens.ts";
+import { colors, type ColorRole, typeScale, type TypeInput } from "./tokens.ts";
 import { renderUniwindCss } from "./uniwind.ts";
 import { renderWebCss } from "./web.ts";
 
@@ -206,6 +206,43 @@ describe("avatar shapes", () => {
     for (const n of numbers) {
       expect(n).toBeGreaterThanOrEqual(0);
       expect(n).toBeLessThanOrEqual(100);
+    }
+  });
+});
+
+describe.each<[TypeInput, number]>([
+  ["touch", 13],
+  ["pointer", 12],
+])("the %s type scale", (input, floor) => {
+  const steps = Object.entries(typeScale).map(([name, step]) => ({ name, ...step[input] }));
+  // The steps below `xl` set text that is read; from `xl` up they are headings.
+  const text = steps.slice(
+    0,
+    steps.findIndex(({ name }) => name === "xl"),
+  );
+
+  it(`sets nothing smaller than ${floor}`, () => {
+    for (const { size } of steps) expect(size).toBeGreaterThanOrEqual(floor);
+  });
+
+  it("never shrinks from one step to the next", () => {
+    for (const [i, { size, lineHeight }] of steps.entries()) {
+      const next = steps[i + 1];
+      if (next === undefined) continue;
+      expect(next.size).toBeGreaterThanOrEqual(size);
+      expect(next.lineHeight).toBeGreaterThanOrEqual(lineHeight);
+    }
+  });
+
+  it("gives text lines room for its ascenders and descenders", () => {
+    for (const { size, lineHeight } of text) expect(lineHeight).toBeGreaterThanOrEqual(size * 1.25);
+  });
+});
+
+describe("the type scale on touch", () => {
+  it("is never smaller than on a pointer screen", () => {
+    for (const step of Object.values(typeScale)) {
+      expect(step.touch.size).toBeGreaterThanOrEqual(step.pointer.size);
     }
   });
 });

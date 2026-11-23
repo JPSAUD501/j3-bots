@@ -271,7 +271,7 @@ export const en = {
   "notice.openConversation": "Open",
 
   "handoff.to": "To {name}",
-  "handoff.from": "From {name}",
+  "handoff.messageFrom": "Message from {name}",
   "handoff.urgent": "Urgent",
   "handoff.notDelivered": "Not delivered",
   "handoff.stopped": "Stopped",

@@ -3,7 +3,7 @@
 // web and the mobile theme cannot drift apart.
 import { botBubble, botPalette } from "./botPalette.ts";
 import { botColors } from "./names.ts";
-import { colors, radii, typeScale, type Themed } from "./tokens.ts";
+import { colors, radii, typeScale, type Themed, type TypeInput } from "./tokens.ts";
 
 export type Entry = readonly [name: string, value: string];
 
@@ -20,11 +20,14 @@ export const colorEntries = (mode: keyof Themed, prefix: string): ReadonlyArray<
   ...botColors.map((color): Entry => [`${prefix}bot-bubble-${color}`, botBubble(color)[mode]]),
 ];
 
-/** The type scale's sizes and line heights, as Tailwind's `--text-*` names them. */
-export const typeEntries = (length: (px: number) => string): ReadonlyArray<Entry> =>
-  Object.entries(typeScale).flatMap(([name, { size, lineHeight }]): ReadonlyArray<Entry> => [
-    [`text-${name}`, length(size)],
-    [`text-${name}--line-height`, length(lineHeight)],
+/** The type scale's sizes and line heights for `input`, as Tailwind's `--text-*` names them. */
+export const typeEntries = (
+  input: TypeInput,
+  length: (px: number) => string,
+): ReadonlyArray<Entry> =>
+  Object.entries(typeScale).flatMap(([name, step]): ReadonlyArray<Entry> => [
+    [`text-${name}`, length(step[input].size)],
+    [`text-${name}--line-height`, length(step[input].lineHeight)],
   ]);
 
 /** The radii; the pill radius stays 9999px, a length meant only to exceed any box. */
