@@ -107,6 +107,31 @@ export const judgeAcl = (acl: FolderAcl): AclVerdict => {
   return (granted & ~denied & OWNER_NEEDS) === OWNER_NEEDS ? "private" : "closed-to-owner";
 };
 
+/** `FileSystemRights` that change what a folder holds or who may: write and append data and attributes, delete, delete what is inside, change permissions, take ownership. */
+const CHANGES = 0xd0156;
+
+/** Whether a folder's contents are this user's to change, in the terms `InstallFolderExposed` uses. */
+export type WriteVerdict = "own" | "not-owned" | "writable-by-others";
+
+/**
+ * Whether `acl` keeps what is in a folder this user's to change, as an
+ * install's folders must be, since what is in them runs as this user: owned
+ * by this user, SYSTEM or the Administrators group, and no rule lets another
+ * account write, delete or change permissions, whether on the folder or only
+ * on what is made inside it. Others may read and run what is there.
+ */
+export const judgeWriteAcl = (acl: FolderAcl): WriteVerdict => {
+  const trusted = new Set([acl.user, SYSTEM, ADMINISTRATORS]);
+  if (!trusted.has(acl.owner)) return "not-owned";
+  const mayWrite = new Set([...trusted, CREATOR_OWNER, OWNER_RIGHTS]);
+  return acl.rules.some(
+    (rule) =>
+      rule.allow && !mayWrite.has(rule.sid) && (effectiveRights(rule.rights) & CHANGES) !== 0,
+  )
+    ? "writable-by-others"
+    : "own";
+};
+
 const decodeAcl = Schema.decodeUnknownEffect(Schema.fromJsonString(FolderAcl));
 
 /** The folder's path reaches the scripts as this variable, never in their text. */
