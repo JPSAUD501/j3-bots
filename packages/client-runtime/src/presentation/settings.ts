@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ProfileChanges } from "../stores/Settings.ts";
-import { Label, type Settings, TimeZone } from "@j3-bots/contracts";
+import { OperatorName, type Settings, TimeZone } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { knownTimeZone } from "./time.ts";
@@ -13,15 +13,15 @@ export interface SettingsEdits {
 
 export const noEdits: SettingsEdits = { name: null, zone: null };
 
-const decodeName = Schema.decodeUnknownOption(Label);
+const decodeName = Schema.decodeUnknownOption(OperatorName);
 const decodeTimeZone = Schema.decodeUnknownOption(TimeZone);
 
 /** What saving the form would send. */
 export type SettingsPatch =
   | { readonly _tag: "unchanged" }
   /**
-   * An edit the server would refuse: a name over the length of a label, or a
-   * zone this device does not know.
+   * An edit the server would refuse: a name over the length of a label or on
+   * more than one line, or a zone this device does not know.
    */
   | { readonly _tag: "invalid"; readonly field: "name" | "zone" }
   | { readonly _tag: "changes"; readonly changes: ProfileChanges };

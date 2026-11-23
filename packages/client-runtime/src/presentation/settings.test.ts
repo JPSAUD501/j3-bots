@@ -25,11 +25,15 @@ describe("settingsPatch", () => {
     ).toEqual({ _tag: "changes", changes: { operatorName: "Ana" } });
   });
 
-  it("sends nothing for an edit back to the saved value, and refuses a name too long", () => {
+  it("sends nothing for an edit back to the saved value, and refuses a name too long or on two lines", () => {
     expect(settingsPatch(saved, { name: "  ", zone: "America/Sao_Paulo" })).toEqual({
       _tag: "unchanged",
     });
     expect(settingsPatch(saved, { name: "n".repeat(201), zone: null })).toEqual({
+      _tag: "invalid",
+      field: "name",
+    });
+    expect(settingsPatch(saved, { name: "Ana\nClara", zone: null })).toEqual({
       _tag: "invalid",
       field: "name",
     });

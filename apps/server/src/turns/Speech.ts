@@ -995,6 +995,10 @@ export const layer = Layer.effect(
       found: Pin,
       input: ToolInput<"set_operator_name">,
     ) {
+      // Checked before `once`, outside the transaction that saves: matching the
+      // call already applied every engine event up to it, the turn's start
+      // included, so the dispatches this reads are settled; and a refusal must
+      // record no result, so a retried request is checked again.
       if (!(yield* operatorSpokeIn(found))) {
         return yield* new TurnToolRefused({
           reason:

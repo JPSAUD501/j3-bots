@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AvatarChoice, MAX_LABEL_LENGTH, Profile, RoutineInstruction } from "@j3-bots/contracts";
+import { AvatarChoice, OperatorName, Profile, RoutineInstruction } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -263,9 +263,9 @@ const UpdateProfileInput = toolInput({
 
 const SetOperatorNameInput = toolInput({
   name: described(
-    // Trimmed, then held to what Settings takes (`Label`).
-    Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_LABEL_LENGTH)),
-    "The name they asked to be called, written as they wrote it.",
+    // What Settings takes: trimmed, one line.
+    OperatorName,
+    "The name they asked to be called, written as they wrote it, on one line.",
   ),
 });
 

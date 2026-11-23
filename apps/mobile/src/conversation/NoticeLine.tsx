@@ -16,8 +16,9 @@ import { usePresentation } from "../presentation.tsx";
 
 /**
  * A quiet line where something stopped, or where a bot changed something the
- * operator should know about, with Try again when the server still takes one. It is part of the conversation, not an announcement: the
- * header says a change of state.
+ * operator should know about, with Try again when the server still takes one.
+ * It is part of the conversation, not an announcement: the header says a
+ * change of state.
  */
 export function NoticeLine({
   entry,

@@ -49,7 +49,7 @@ import {
   ProviderSignInStatus,
   SignInHarness,
 } from "./provider.ts";
-import { Budgets, NotificationSettingsChange, Settings, TimeZone } from "./settings.ts";
+import { Settings, SettingsChange, TimeZone } from "./settings.ts";
 
 // ---------------------------------------------------------------------------
 // Conventions
@@ -495,13 +495,7 @@ export const SettingsRpcs = RpcGroup.make(
   Rpc.make("settings.subscribe", { success: Settings, stream: true }),
   /** Fields left out keep their value. Returns the settings as saved. */
   Rpc.make("settings.update", {
-    payload: {
-      ...command,
-      operatorName: Schema.optionalKey(Settings.fields.operatorName),
-      timeZone: Schema.optionalKey(TimeZone),
-      budgets: Schema.optionalKey(Budgets),
-      notifications: Schema.optionalKey(NotificationSettingsChange),
-    },
+    payload: { ...command, ...SettingsChange.fields },
     success: Settings,
     error: CommandError,
   }),
