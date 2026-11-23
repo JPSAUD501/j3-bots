@@ -49,6 +49,13 @@ const wording: Record<
     en: { bare: "Needs a credential", preview: "Needs a credential: Ship it?" },
     "pt-BR": { bare: "Precisa de uma credencial", preview: "Precisa de uma credencial: Ship it?" },
   },
+  connector: {
+    en: { bare: "Needs you to connect a service", preview: "Asks you to connect Ship it?" },
+    "pt-BR": {
+      bare: "Precisa que você conecte um serviço",
+      preview: "Pede que você conecte Ship it?",
+    },
+  },
   handoff: {
     en: { bare: "Sent a teammate an urgent message", preview: "To a teammate: Ship it?" },
     "pt-BR": {

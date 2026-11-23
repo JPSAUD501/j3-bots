@@ -75,6 +75,7 @@ const CHANNEL_NAMES = {
   approval: "notification.channel.approval",
   "secret-request": "notification.channel.secret",
   handoff: "notification.channel.handoff",
+  connector: "notification.channel.connector",
 } as const satisfies Record<NotificationKind, KeyWith>;
 
 /**

@@ -13,6 +13,8 @@ import { OpenLiterals } from "./base.ts";
  * - `background-task`, `task-status`, `task-stop`: starts work that goes on
  *   after the turn, looks in on it, stops it.
  * - `secret`: asks the operator for a credential.
+ * - `connector`: a tool of a service the operator connected (decision 0027);
+ *   the step's label names the connector and its tool.
  * - `browser`: drives a web page in a browser.
  * - `pull-request`, `issue`: works on a code host's pull request or issue.
  * - `schedule`: the engine's own scheduled tasks.
@@ -27,6 +29,7 @@ export const WorkTool = Schema.Literals([
   "task-status",
   "task-stop",
   "secret",
+  "connector",
   "browser",
   "pull-request",
   "issue",

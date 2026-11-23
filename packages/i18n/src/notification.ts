@@ -44,6 +44,10 @@ export function notificationText(
         return preview === null
           ? t("notification.secret")
           : t("summary.needsSecret", { label: preview });
+      case "connector":
+        return preview === null
+          ? t("notification.connector")
+          : t("summary.connectorAsk", { name: preview });
       case "handoff":
         return preview === null
           ? t("notification.handoff")

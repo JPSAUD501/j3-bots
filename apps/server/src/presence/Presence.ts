@@ -53,6 +53,9 @@ const kindOf = (
     case "approval":
     case "secret-request":
       return { kind: entry._tag, botId };
+    case "connector-suggestion":
+    case "connector-auth":
+      return { kind: "connector", botId };
     case "handoff":
       // One notification for an urgent message: the sender's card.
       return entry.urgent && entry.direction === "sent" ? { kind: entry._tag, botId } : null;

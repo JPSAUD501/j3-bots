@@ -17,6 +17,7 @@ import {
   WorkStepId,
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
+import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
 import { RoutineTrigger } from "./routine.ts";
 import { StepTool } from "./work.ts";
 
@@ -291,6 +292,53 @@ export const SecretRequestEntry = Schema.TaggedStruct("secret-request", {
 });
 export type SecretRequestEntry = typeof SecretRequestEntry.Type;
 
+/**
+ * A bot suggests a connector it would use for the task at hand: a gallery
+ * entry, or a connector the operator added that this bot may not use yet.
+ * Bots cannot add a connector or grant themselves one, so the card is all a
+ * bot can do. Its Connect adds the connector (`connector.add`, naming this
+ * card) or lets this bot use it (`connector.setBots`); either way, the server
+ * closes the card as `connected` once the bot can use it. Not now dismisses
+ * it (`card.answer` with `dismiss`), which the server takes as final for that
+ * connector in this conversation. Neither wakes the bot.
+ */
+export const ConnectorSuggestionEntry = Schema.TaggedStruct("connector-suggestion", {
+  ...entry,
+  author: BotAuthor,
+  subject: Schema.Union([
+    Schema.TaggedStruct("listing", { ref: ListingRef }),
+    Schema.TaggedStruct("connector", { connectorId: ConnectorId }),
+  ]),
+  /** The connector's name and glyph when the card was written, which it keeps. */
+  name: Label,
+  glyph: Schema.NullOr(ConnectorGlyph),
+  /** Why the bot needs it, in its own words: one line. */
+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    Schema.TaggedStruct("connected", { connectorId: ConnectorId }),
+    Schema.TaggedStruct("dismissed", {}),
+  ]),
+});
+export type ConnectorSuggestionEntry = typeof ConnectorSuggestionEntry.Type;
+
+/**
+ * A connector a bot called needs the operator to sign in again, in that bot's
+ * conversation: written once each time the connector's sign-in ends, by the
+ * first call that finds it so, and authored by that bot. Its button opens the
+ * sign-in. It closes as `signed-in` once the connector works again, and as
+ * `removed` when the operator removes it.
+ */
+export const ConnectorAuthEntry = Schema.TaggedStruct("connector-auth", {
+  ...entry,
+  author: BotAuthor,
+  connectorId: ConnectorId,
+  name: Label,
+  glyph: Schema.NullOr(ConnectorGlyph),
+  status: Schema.Literals(["pending", "signed-in", "removed"]),
+});
+export type ConnectorAuthEntry = typeof ConnectorAuthEntry.Type;
+
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
 export type TurnEnding = typeof TurnEnding.Type;
@@ -556,6 +604,8 @@ export const Entry = Schema.Union([
   QuestionEntry,
   ApprovalEntry,
   SecretRequestEntry,
+  ConnectorSuggestionEntry,
+  ConnectorAuthEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -604,6 +654,8 @@ export const ReceivedEntry = Schema.Union([
   QuestionEntry,
   ApprovalEntry,
   SecretRequestEntry,
+  ConnectorSuggestionEntry,
+  ConnectorAuthEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -617,7 +669,8 @@ export const PREVIEW_LENGTH = 200;
 
 /**
  * The text an entry leads with, which its preview carries: the message, the
- * first question, the action, what is asked for, the routine's name; empty
+ * first question, the action, what is asked for, the connector a card is
+ * about, the routine's name; empty
  * for an entry with no text of its own.
  */
 export const entryText = (entry: Entry): string => {
@@ -631,6 +684,9 @@ export const entryText = (entry: Entry): string => {
       return entry.action;
     case "secret-request":
       return entry.label;
+    case "connector-suggestion":
+    case "connector-auth":
+      return entry.name;
     case "routine-change":
       return entry.name;
     case "work-fold":

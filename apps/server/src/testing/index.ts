@@ -3,6 +3,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { J3Rpcs } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
 import type * as Rpc from "effect/rpc/Rpc";
@@ -26,6 +27,24 @@ export type UnservedRpcs = Exclude<
   RpcGroup.Rpcs<typeof J3Rpcs>,
   RpcGroup.Rpcs<typeof Handlers.ServedRpcs>
 >;
+
+/**
+ * The connector requests, which the server does not serve yet, answered as it
+ * answers them: with a defect. For a client test that does not fake them.
+ */
+export const connectorsUnserved = Layer.mergeAll(
+  J3Rpcs.toLayerHandler("connectors.list", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connectors.search", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connectors.get", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connectors.subscribe", () => Stream.die("Not served")),
+  J3Rpcs.toLayerHandler("connector.add", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connector.update", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connector.remove", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connector.setBots", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connector.beginSignIn", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connector.completeSignIn", () => Effect.die("Not served")),
+  J3Rpcs.toLayerHandler("connector.acceptToolChanges", () => Effect.die("Not served")),
+);
 
 /** What the domain offers the handlers of the RPCs it does not serve yet. */
 type DomainServices = Layer.Success<typeof TestDomain.layer> | CurrentDevice;

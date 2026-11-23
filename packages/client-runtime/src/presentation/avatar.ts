@@ -93,6 +93,7 @@ export function notificationState(
     case "question":
     case "approval":
     case "secret-request":
+    case "connector":
       return "waiting";
     case "message":
     case "handoff":

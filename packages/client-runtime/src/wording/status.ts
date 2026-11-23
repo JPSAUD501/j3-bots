@@ -118,6 +118,10 @@ function previewSummary(
       return t(current ? "summary.needsApproval" : "summary.askedApproval", { action: text });
     case "secret-request":
       return t(current ? "summary.needsSecret" : "summary.askedSecret", { label: text });
+    case "connector-suggestion":
+      return t("summary.suggestedConnector", { name: text });
+    case "connector-auth":
+      return t("summary.connectorSignIn", { name: text });
     case "work-fold":
       return workDoneText(preview.step, preview.ending, ctx.i18n);
     case "notice":

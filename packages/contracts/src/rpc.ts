@@ -18,7 +18,21 @@ import {
   Sequence,
 } from "./base.ts";
 import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
-import { Device, PairingCode, PushRegistration } from "./device.ts";
+import {
+  Connector,
+  ConnectorFieldValues,
+  ConnectorGrant,
+  ConnectorId,
+  ConnectorListing,
+  ConnectorListingDetails,
+  ConnectorSource,
+  ListingRef,
+  SignInCallback,
+  SignInRedirect,
+  SignInStarted,
+  ToolReviewRevision,
+} from "./connector.ts";
+import { Device, Language, PairingCode, PushRegistration } from "./device.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
   ApprovalDecision,
@@ -72,8 +86,9 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 //
 // Commands carry a client-generated `commandId`. Sending the same command again
 // with the same id has no further effect and returns the first result, so a
-// client retries freely after a dropped connection. `secret.provide` is the one
-// exception: its value must never be stored, so it has no receipt (see there).
+// client retries freely after a dropped connection. `secret.provide` and the
+// connector requests that carry a value or a sign-in are the exceptions: what
+// they carry must never be stored, so they have no receipt (see there).
 //
 // A roster snapshot that carries `sections` comes from a server that organizes
 // the roster: sections, a bot's `sectionId` and `entries.markUnread`. A client
@@ -228,7 +243,9 @@ export const EntryRpcs = RpcGroup.make(
    * the card open. When the engine refuses an answer it was sent, the card
    * closes as `refused`, and the turn waits for a Stop. Fails with `Invalid("answer-length")`, leaving the card open, when
    * the answer to an `ask` question as the bot would read it is too long for
-   * the engine that runs the bot to take in one message.
+   * the engine that runs the bot to take in one message. A connector
+   * suggestion takes only a dismissal, its Not now, which closes it without
+   * waking the bot; its Connect is `connector.add` or `connector.setBots`.
    */
   Rpc.make("card.answer", {
     payload: {
@@ -626,6 +643,8 @@ export const NotificationKind = Schema.Literals([
   "question",
   "approval",
   "secret-request",
+  /** A connector card: a bot suggests one, or one it called needs a sign-in again. */
+  "connector",
 ]);
 export type NotificationKind = typeof NotificationKind.Type;
 
@@ -737,6 +756,167 @@ export const ProviderRpcs = RpcGroup.make(
   }),
 );
 
+/**
+ * Connectors (docs/architecture/server.md, "Connectors"): the gallery to find
+ * them in, and the operator's own, which every paired client may add, sign in
+ * to, share among bots and remove. New in 0.4.0, at protocol 8.
+ *
+ * Nothing a connector holds leaves the server: a token, a key, a header's
+ * value, a sign-in's code or `state`. What a client sends of them travels
+ * redacted, and the requests that carry one (`connector.add`,
+ * `connector.update`, `connector.beginSignIn`, `connector.completeSignIn`)
+ * have no command id, since a receipt would keep it; each is safe to send
+ * again instead. A request that needs a connector's secrets fails with
+ * `Conflict("vault-locked")` while the vault is locked, and one that would
+ * keep a secret, with `Conflict("vault-not-set-up")` before the vault has a
+ * master password (decision 0028).
+ */
+export const ConnectorRpcs = RpcGroup.make(
+  /** The curated list, in the client's language: what the gallery features. */
+  Rpc.make("connectors.list", {
+    payload: { language: Language },
+    success: Schema.Array(ConnectorListing),
+  }),
+  /**
+   * The curated entries that match, then the MCP Registry's, best first.
+   * Without `all`, only those J3 Bots can connect from any client: no
+   * `unsupported` and no `command` listing. When the registry does not answer
+   * in time, `registry` says so and the curated matches come alone.
+   */
+  Rpc.make("connectors.search", {
+    payload: {
+      query: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+      language: Language,
+      all: Schema.Boolean,
+    },
+    success: Schema.Struct({
+      listings: Schema.Array(ConnectorListing),
+      registry: Schema.Literals(["answered", "unavailable"]),
+    }),
+  }),
+  /**
+   * One gallery entry's page: what it does, what Connect asks for and, when
+   * its server lists them openly, its tools. `NotFound("connector-listing")`
+   * when there is no such entry; `Conflict("registry-unavailable")` when the
+   * registry does not answer for one of its own.
+   */
+  Rpc.make("connectors.get", {
+    payload: { ref: ListingRef, language: Language },
+    success: ConnectorListingDetails,
+    error: CommandError,
+  }),
+  /**
+   * The operator's connectors, then each one again on every change: a status,
+   * a grant, a tool list or a review. Small, and always starts afresh.
+   */
+  Rpc.make("connectors.subscribe", {
+    success: Schema.Union([
+      Schema.TaggedStruct("snapshot", { connectors: Schema.Array(Connector) }),
+      Schema.TaggedStruct("changed", {
+        upsert: Schema.Array(Connector),
+        remove: Schema.Array(ConnectorId),
+      }),
+    ]),
+    stream: true,
+  }),
+  /**
+   * Adds the connector as `id`, its secrets to the vault, and lists its tools
+   * when it needs no sign-in; one that does is added as `needs-sign-in`, and
+   * `connector.beginSignIn` follows. When `id` is added already, nothing
+   * changes and the connector is returned as it is, so a retry adds nothing.
+   * `grant` left out gives it to the bot whose card `suggestion` is, else the
+   * primary bot, else no bot. With `suggestion`, that bot's card closes once
+   * the bot can use it. Fails with `Conflict("private-network")` for an
+   * address in the operator's own network without `privateNetwork`,
+   * `Invalid("connector-fields")` for a form's values that do not fit it, and
+   * `Invalid("connector-unsupported")` for an entry J3 Bots cannot connect.
+   */
+  Rpc.make("connector.add", {
+    payload: {
+      id: ConnectorId,
+      source: ConnectorSource,
+      grant: Schema.optionalKey(ConnectorGrant),
+      suggestion: Schema.NullOr(EntryId),
+    },
+    success: Connector,
+    error: CommandError,
+  }),
+  /**
+   * Renames the connector, or replaces the values its form took, such as a
+   * token the service refused: fields left out keep their value, and so does
+   * each value `values` does not name.
+   */
+  Rpc.make("connector.update", {
+    payload: {
+      connectorId: ConnectorId,
+      name: Schema.optionalKey(Connector.fields.name),
+      values: Schema.optionalKey(ConnectorFieldValues),
+    },
+    success: Connector,
+    error: CommandError,
+  }),
+  /**
+   * Removes the connector: bots lose its tools at once, its sign-in is
+   * revoked at the service when the service offers that, and its secrets
+   * leave the vault. The operator's account at the service is not changed.
+   * Removing one already gone succeeds.
+   */
+  Rpc.make("connector.remove", {
+    payload: { ...command, connectorId: ConnectorId },
+    error: CommandError,
+  }),
+  /** Replaces which bots may use the connector. A bot that gains it gets its tools from its next model call. */
+  Rpc.make("connector.setBots", {
+    payload: { ...command, connectorId: ConnectorId, grant: ConnectorGrant },
+    success: Connector,
+    error: CommandError,
+  }),
+  /**
+   * Starts a sign-in for the connector, which this device opens in the system
+   * browser; it returns to the server or to this device as `redirect` says.
+   * The sign-in is this device's alone and lasts ten minutes; another starts
+   * a new one. Fails with `Conflict("no-server-redirect")` for `server` where
+   * the server cannot be returned to, `Conflict("sign-in-unsupported")` or
+   * `Conflict("registration-refused")` when the service does not sign in as
+   * J3 Bots requires, and `Invalid` for a connector that signs in no other way
+   * than its form.
+   */
+  Rpc.make("connector.beginSignIn", {
+    payload: { connectorId: ConnectorId, redirect: SignInRedirect },
+    success: SignInStarted,
+    error: CommandError,
+  }),
+  /**
+   * Finishes a `relay` or `paste` sign-in with the address the browser
+   * returned to, which only the device that began it may send. Success means
+   * the connector is signed in; its status follows on `connectors.subscribe`.
+   * Fails with `Invalid("sign-in-url")` for an address this sign-in does not
+   * expect, `NotFound("sign-in")` for one that ended or expired, and
+   * `Conflict("sign-in-refused")` when the service refused it.
+   */
+  Rpc.make("connector.completeSignIn", {
+    payload: { url: SignInCallback },
+    error: CommandError,
+  }),
+  /**
+   * Answers the connector's held tool changes, as the review at `revision`
+   * showed them: `accept` gives bots those tools as they now are; `keep`
+   * leaves bots the tools they had, and the review closes until the tools
+   * change again. Fails with `Conflict("tool-review-stale")`, changing
+   * nothing, when they changed after that review or none wait.
+   */
+  Rpc.make("connector.acceptToolChanges", {
+    payload: {
+      ...command,
+      connectorId: ConnectorId,
+      revision: ToolReviewRevision,
+      decision: Schema.Literals(["accept", "keep"]),
+    },
+    success: Connector,
+    error: CommandError,
+  }),
+);
+
 /** Every RPC a paired client can make, on the socket at `HTTP_PATHS.rpc`. */
 export const J3Rpcs = RosterRpcs.merge(
   EntryRpcs,
@@ -749,4 +929,5 @@ export const J3Rpcs = RosterRpcs.merge(
   SettingsRpcs,
   ClientRpcs,
   ProviderRpcs,
+  ConnectorRpcs,
 );

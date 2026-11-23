@@ -116,7 +116,7 @@ const redirectingTo = (target: string) =>
     }),
   );
 
-it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
+it.layer(Layer.mergeAll(Server.layer(Server.connectorsUnserved), NodeServices.layer), {
   excludeTestServices: true,
 })("desktop app", (it) => {
   it.effect(
