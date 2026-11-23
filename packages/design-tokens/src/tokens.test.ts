@@ -13,7 +13,8 @@ import {
   type Vision,
 } from "./color.ts";
 import { renderFontManifest } from "./fontManifest.ts";
-import { botPalette, colors, type ColorRole } from "./tokens.ts";
+import { botColors } from "./names.ts";
+import { botBubble, botPalette, colors, type ColorRole } from "./tokens.ts";
 import { renderUniwindCss } from "./uniwind.ts";
 import { renderWebCss } from "./web.ts";
 
@@ -112,6 +113,7 @@ describe.each(modes)("%s bot palette", (mode) => {
   );
 
   it.each(entries)(
+    // The surface is also under the composer, whose border takes the bot's color while focused.
     "%s is displayable and reaches 3:1 against the canvases and its ink",
     (_, fill) => {
       expect(inSrgbGamut(fill)).toBe(true);
@@ -133,6 +135,18 @@ describe.each(modes)("%s bot palette", (mode) => {
       expect(tooClose).toEqual([]);
     },
   );
+});
+
+describe.each(modes)("%s bot bubbles", (mode) => {
+  const text = parseColor(colors["bubble-bot-foreground"][mode]);
+  const code = parseColor(colors["code-background"][mode]);
+
+  it.each(botColors)("keep text and code readable in a %s bot's bubble", (color) => {
+    const bubble = parseColor(botBubble(color)[mode]);
+    expect(inSrgbGamut(bubble)).toBe(true);
+    expect(contrastRatio(text, bubble)).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(text, over(code, bubble))).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 describe("8-bit sRGB", () => {

@@ -54,7 +54,12 @@ import {
   type RecentTurns,
   type RecentTurnsState,
 } from "@j3-bots/client-runtime";
-import { addressed, addresseeOf, mentionOptions } from "@j3-bots/client-runtime/presentation";
+import {
+  addressed,
+  addresseeOf,
+  buildTimeline,
+  mentionOptions,
+} from "@j3-bots/client-runtime/presentation";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { BotsProvider, I18nProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -752,7 +757,7 @@ function BubblesSection() {
       <Labeled label="A conversation">
         <div className="max-w-(--layout-text-column)">
           <Timeline
-            entries={team.entries[`bot:${ids.scout}`] ?? []}
+            rows={buildTimeline(team.entries[`bot:${ids.scout}`] ?? [])}
             room={null}
             workSteps={workSteps}
             submitting={notSubmitting}
@@ -763,7 +768,7 @@ function BubblesSection() {
       <Labeled label="A room: each speaker named above their messages">
         <div className="max-w-(--layout-text-column)">
           <Timeline
-            entries={team.entries[`room:${ids.newsletter}`] ?? []}
+            rows={buildTimeline(team.entries[`room:${ids.newsletter}`] ?? [])}
             room={team.room}
             workSteps={workSteps}
             submitting={notSubmitting}

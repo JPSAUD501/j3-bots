@@ -1,9 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { EntryId, RosterItem, RosterItemKey } from "@j3-bots/contracts";
-import { useEffect, useEffectEvent, useId, useRef, useState, type ReactElement } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import {
   addressed,
   addresseeOf,
+  arrivalCounts,
+  buildTimeline,
   canStop,
   filterRoster,
   orderRoster,
@@ -12,6 +22,7 @@ import {
   rosterKeyText,
   rosterTarget,
 } from "@j3-bots/client-runtime/presentation";
+import { useArrivals, useConversationEnd } from "@j3-bots/client-runtime/react";
 import { BotsProvider, useI18n } from "../app/context";
 import { AppShell, type Region } from "../components/AppShell";
 import { Composer, type MentionCandidate } from "../components/Composer";
@@ -29,7 +40,10 @@ import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
 import { Timeline } from "../components/Timeline";
+import { scrollToEnd, ToLatest, useScrollFollow } from "../components/ToLatest";
+import { tintOf } from "../lib/botTint";
 import type { ShellData, ShellIntents } from "./data";
+import { cn } from "../lib/cn";
 import { isCovered, useCovered } from "../lib/covered";
 import { useSeenEntries } from "../lib/useSeenEntries";
 import { addresseeLine, botModelName } from "@j3-bots/client-runtime/wording";
@@ -248,7 +262,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   // What the operator can see of the open conversation, they have read.
   const shownTarget = item === null ? null : rosterTarget(rosterKeyOf(item));
-  const shownItems = shownTarget === null ? null : data.conversation(shownTarget).items;
+  const shownView = shownTarget === null ? null : data.conversation(shownTarget);
+  const shownItems = shownView?.items ?? null;
   useSeenEntries(timeline, (ids) => {
     if (shownTarget === null || shownItems === null) return;
     const order = readThrough(
@@ -256,6 +271,19 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     );
     if (order !== null) intents.markRead(shownTarget, order);
   });
+
+  // What arrives at the end of the open conversation settles in, and is counted while the
+  // operator reads above it.
+  const rows = useMemo(() => buildTimeline(shownItems ?? []), [shownItems]);
+  const arrived = useArrivals(
+    selectionKey,
+    rows.map((row) => row.key),
+    shownView?.phase === "ready",
+  );
+  const end = useConversationEnd(selectionKey, arrived, arrivalCounts(rows, arrived), () =>
+    scrollToEnd(timeline),
+  );
+  useScrollFollow(timeline, end.follow);
 
   if (data.roster === null || data.roster.length === 0 || openingFirstBot) {
     return (
@@ -380,38 +408,49 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           <QuietConversation bot={item.bot} />
         ) : (
           // Reversed, so the view stays pinned to the newest entry as entries arrive. One per
-          // conversation, so each opens at its own end rather than where the last one was left.
-          <div
-            key={`timeline:${rosterKeyText(key)}`}
-            ref={setTimeline}
-            className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
-          >
-            <div className="mx-auto w-full max-w-(--layout-text-column) px-3 py-4 @tablet:px-6">
-              {view.hasOlder && (
-                <div className="flex justify-center pb-2">
-                  <Button
-                    variant="ghost-muted"
-                    size="sm"
-                    aria-disabled={view.loadingOlder}
-                    onClick={() => {
-                      if (!view.loadingOlder) intents.loadOlder(target);
-                    }}
-                  >
-                    {view.loadingOlder ? t("timeline.loadingOlder") : t("timeline.loadOlder")}
-                  </Button>
-                </div>
-              )}
-              <Timeline
-                entries={view.items}
-                room={item._tag === "room" ? item.room : null}
-                workSteps={data.workSteps}
-                submitting={data.submitting}
-                intents={intents}
-              />
+          // conversation, so each opens at its own end rather than where the last one was left,
+          // and settles in as it opens.
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div
+              key={`timeline:${rosterKeyText(key)}`}
+              ref={setTimeline}
+              className="conversation-open flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
+            >
+              <div className="mx-auto w-full max-w-(--layout-text-column) px-3 py-4 @tablet:px-6">
+                {view.hasOlder && (
+                  <div className="flex justify-center pb-2">
+                    <Button
+                      variant="ghost-muted"
+                      size="sm"
+                      aria-disabled={view.loadingOlder}
+                      onClick={() => {
+                        if (!view.loadingOlder) intents.loadOlder(target);
+                      }}
+                    >
+                      {view.loadingOlder ? t("timeline.loadingOlder") : t("timeline.loadOlder")}
+                    </Button>
+                  </div>
+                )}
+                <Timeline
+                  rows={rows}
+                  room={item._tag === "room" ? item.room : null}
+                  workSteps={data.workSteps}
+                  submitting={data.submitting}
+                  intents={intents}
+                  arrived={arrived}
+                  flyFrom={composerRef}
+                />
+              </div>
             </div>
+            <ToLatest end={end} onPress={() => scrollToEnd(timeline)} />
           </div>
         )}
-        <div className="mx-auto w-full max-w-(--layout-text-column) px-3 pt-1 pb-[max(--spacing(3),env(safe-area-inset-bottom))] @tablet:px-6">
+        <div
+          className={cn(
+            "mx-auto w-full max-w-(--layout-text-column) px-3 pt-1 pb-[max(--spacing(3),env(safe-area-inset-bottom))] @tablet:px-6",
+            tintOf(item._tag === "bot" ? item.bot.profile.avatar : null),
+          )}
+        >
           {archivedRoom === null ? (
             <Composer
               draftKey={rosterKeyText(rosterKeyOf(item))}

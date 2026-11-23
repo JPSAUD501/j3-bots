@@ -4,10 +4,11 @@ import type { RoutineChangeEntry } from "@j3-bots/contracts";
 import type { KeyWith } from "@j3-bots/i18n";
 import { CalendarClock, CirclePause, Trash2, Webhook } from "lucide-react-native";
 import { use } from "react";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { usePresentation } from "../presentation.tsx";
+import { PressScale } from "../press.tsx";
 import { EntryWidths } from "./widths.ts";
 
 const changeText: Record<RoutineChangeEntry["change"], KeyWith> = {
@@ -42,14 +43,14 @@ export function RoutineChangeCard({
         ? Webhook
         : CalendarClock;
   return (
-    <View className="mt-2 px-4">
-      <Pressable
+    <View className="mt-3 px-4">
+      <PressScale
         accessibilityRole="button"
         accessibilityState={{ disabled: deleted }}
         disabled={deleted}
         onPress={onOpen}
-        style={{ width: widths.compactCard }}
-        className="min-h-11 flex-row items-center gap-3 self-start rounded-md border border-border bg-surface px-3 py-2.5"
+        frame={{ width: widths.compactCard, alignSelf: "flex-start" }}
+        className="min-h-11 flex-row items-center gap-3 rounded-bubble border border-border bg-surface p-3.5"
       >
         <View className="size-8 items-center justify-center rounded-md bg-muted">
           <Icon icon={icon} color="accent-muted-foreground" />
@@ -67,7 +68,7 @@ export function RoutineChangeCard({
             </Text>
           )}
         </View>
-      </Pressable>
+      </PressScale>
     </View>
   );
 }

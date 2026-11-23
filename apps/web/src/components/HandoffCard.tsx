@@ -33,15 +33,15 @@ export function HandoffCard({ entry, onOpen }: { entry: HandoffEntry; onOpen: ()
     </span>
   );
   return (
-    <div className="mt-2 flex w-full max-w-(--layout-compact-card-width) items-start gap-2.5 self-start rounded-md border border-border bg-surface px-3 py-2.5">
-      <span className="mt-0.5 [--avatar-cutout:var(--surface)]">
+    <div className="mt-3 flex w-full max-w-(--layout-compact-card-width) items-start gap-2.5 self-start rounded-bubble border border-border bg-surface p-3.5 shadow-raised">
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted [--avatar-cutout:var(--muted)]">
         {other && <AvatarShape avatar={other.profile.avatar} size={18} />}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+        <div className="flex min-h-7 flex-wrap items-center gap-1.5 text-sm">
           <span>{parts(entry.direction === "sent" ? "handoff.to" : "handoff.from", { name })}</span>
           {entry.urgent && (
-            <span className="rounded-sm bg-waiting-surface px-1 text-2xs font-medium text-waiting">
+            <span className="rounded-pill bg-waiting-surface px-2.5 py-0.5 text-2xs font-medium text-waiting">
               {t("handoff.urgent")}
             </span>
           )}

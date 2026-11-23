@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { reanimatedSpring, type Spring, springs } from "@j3-bots/design-tokens";
+import { type ComponentProps, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { AccessibilityInfo } from "react-native";
+import Animated, { FadeInDown, ZoomIn } from "react-native-reanimated";
 
 /** Whether the platform asks for reduced motion, following the setting as it changes. */
 export function useReducedMotion(): boolean {
@@ -68,3 +70,49 @@ export function useStep(period: number, steps: number, running: boolean): number
   );
   return useSyncExternalStore(subscribe, getCount) % steps;
 }
+
+/*
+ * Entrances on the springs of `@j3-bots/design-tokens`. Reanimated settles
+ * each at once where the system asks for reduced motion, as it does every
+ * animation that names no other policy.
+ */
+
+/**
+ * How something new settles into a conversation: up from a little below as
+ * it fades in, on the spring given.
+ */
+export const settleIn = (spring: Spring) => {
+  const { mass, stiffness, damping } = reanimatedSpring(spring);
+  return FadeInDown.springify()
+    .mass(mass)
+    .stiffness(stiffness)
+    .damping(damping)
+    .withInitialValues({ opacity: 0, transform: [{ translateY: 12 }] });
+};
+
+/** How a conversation opens: its entries fade up a few px into place, on the `soft` spring. */
+export const openIn = () => {
+  const { mass, stiffness, damping } = reanimatedSpring(springs.soft);
+  return FadeInDown.springify()
+    .mass(mass)
+    .stiffness(stiffness)
+    .damping(damping)
+    .withInitialValues({ opacity: 0, transform: [{ translateY: 6 }] });
+};
+
+/** A small mark, a check, that pops into place on the `pop` spring, after `delay` ms. */
+export const popIn = (delay = 0) => {
+  const { mass, stiffness, damping } = reanimatedSpring(springs.pop);
+  return ZoomIn.springify().mass(mass).stiffness(stiffness).damping(damping).delay(delay);
+};
+
+type Entering = NonNullable<ComponentProps<typeof Animated.View>["entering"]>;
+
+/**
+ * The `entering` prop of something that animates in only when it is `fresh`:
+ * what was already there when a conversation opened appears in place.
+ */
+export const enteringWhen = (
+  fresh: boolean,
+  animation: Entering,
+): { readonly entering?: Entering } => (fresh ? { entering: animation } : {});

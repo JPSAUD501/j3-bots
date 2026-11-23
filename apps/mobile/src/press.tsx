@@ -24,13 +24,15 @@ const popBack = reanimatedSpring(springs.pop);
 /**
  * A `Pressable` that goes down quickly while pressed and springs back with
  * `pop`, as every pressable control does on the web. Reduced motion keeps it
- * still. `frame` styles the box that scales, which is the one that takes part
+ * still, and so does a control that is disabled or only marked disabled, as a
+ * held one is. `frame` styles the box that scales, which is the one that takes part
  * in the layout (`flexGrow`, a width); `className` styles the pressable inside.
  */
 export function PressScale({
   depth = "control",
   frame,
   disabled,
+  accessibilityState,
   onPressIn,
   onPressOut,
   ...props
@@ -39,6 +41,7 @@ export function PressScale({
   readonly frame?: StyleProp<ViewStyle>;
 }) {
   const reduced = useReducedMotion();
+  const still = reduced || disabled === true || accessibilityState?.disabled === true;
   const scale = useSharedValue(1);
   const scaled = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
   return (
@@ -46,8 +49,9 @@ export function PressScale({
       <Pressable
         {...props}
         disabled={disabled}
+        accessibilityState={accessibilityState}
         onPressIn={(event) => {
-          if (!reduced && disabled !== true) {
+          if (!still) {
             scale.set(withTiming(depths[depth], { duration: press.duration }));
           }
           onPressIn?.(event);

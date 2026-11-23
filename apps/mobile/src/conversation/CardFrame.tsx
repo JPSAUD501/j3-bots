@@ -1,13 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useCardAction } from "@j3-bots/client-runtime/react";
 import type { EntryId } from "@j3-bots/contracts";
-import { layout } from "@j3-bots/design-tokens";
+import { layout, reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import type { LucideIcon } from "lucide-react-native";
-import { type ComponentRef, type ReactNode, use, useEffect, useRef } from "react";
+import { type ComponentRef, type ReactNode, use, useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, View } from "react-native";
+import {
+  LinearTransition,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { useI18n } from "../i18n.ts";
+import { AnimatedView } from "./animated.ts";
 import { EntryWidths } from "./widths.ts";
+
+/** How a card's size eases when its contents change: `slide`, with almost no overshoot. */
+const slide = reanimatedSpring(springs.slide);
 
 /** Whether an answer to the card is on its way: it then takes no second one. */
 export const useSubmitting = (entryId: EntryId): boolean =>
@@ -39,48 +52,83 @@ export function useOutcomeFocus(pending: boolean) {
 }
 
 /**
- * The frame of a card that asks the operator for something. `attention`
- * marks one still waiting, in the waiting color, and its title says so in
- * words as well. In a column narrower than a tablet the card takes the
- * whole column.
+ * Whether a card waited for the operator while it was on screen, and whether
+ * it has since closed there: a card closed before it showed plays nothing.
+ */
+export function useClosedHere(pending: boolean): {
+  readonly waitedHere: boolean;
+  readonly closedHere: boolean;
+} {
+  const [waitedHere] = useState(pending);
+  return { waitedHere, closedHere: waitedHere && !pending };
+}
+
+/**
+ * The frame of a card that asks the operator for something: an icon in a
+ * tile, what the card is about, and while it waits, "Waiting for you" in a
+ * calm tag, the frame drawn in the waiting color. In a column narrower than
+ * a tablet the card takes the whole column. When its height changes, as its
+ * actions fold away, it moves on a spring; `pulse`, once set, gives it one
+ * small pulse, as an approval does.
  */
 export function CardFrame({
   icon,
   title,
   attention,
+  pulse = false,
   children,
 }: {
   readonly icon: LucideIcon;
   readonly title: string;
   readonly attention: boolean;
+  readonly pulse?: boolean;
   readonly children: ReactNode;
 }) {
+  const { t } = useI18n();
   const widths = use(EntryWidths);
   const full = widths.column < layout.breakpoints.tablet;
+  const scale = useSharedValue(1);
+  const pulsing = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
+  useEffect(() => {
+    if (!pulse) return;
+    scale.set(
+      withSequence(
+        withTiming(1.035, { duration: 110 }),
+        withSpring(1, reanimatedSpring(springs.pop)),
+      ),
+    );
+  }, [pulse, scale]);
   return (
-    <View className="mt-2 px-4">
-      <View
-        style={full ? undefined : { maxWidth: widths.card }}
-        // The frame clips its header, so the header's fill follows the card's rounded border.
-        className={`overflow-hidden rounded-md border bg-surface ${full ? "self-stretch" : "self-start"} ${attention ? "border-waiting/45" : "border-border"}`}
+    <View className="mt-3 px-4">
+      <AnimatedView
+        layout={LinearTransition.springify()
+          .mass(slide.mass)
+          .stiffness(slide.stiffness)
+          .damping(slide.damping)}
+        style={[pulsing, full ? undefined : { maxWidth: widths.card }]}
+        className={`gap-3 rounded-bubble border bg-surface p-3.5 ${full ? "self-stretch" : "self-start"} ${attention ? "border-waiting/45" : "border-border"}`}
       >
-        <View
-          className={`flex-row items-center gap-2 border-b px-3 py-2 ${attention ? "border-waiting/25 bg-waiting-surface" : "border-border"}`}
-        >
-          <Icon
-            icon={icon}
-            size={14}
-            color={attention ? "accent-waiting" : "accent-muted-foreground"}
-          />
-          <Text
-            accessibilityRole="header"
-            className={`text-xs font-medium ${attention ? "text-waiting" : "text-muted-foreground"}`}
+        <View className="flex-row items-center gap-2.5">
+          <View
+            className={`size-7 items-center justify-center rounded-md ${attention ? "bg-waiting-surface" : "bg-muted"}`}
           >
+            <Icon
+              icon={icon}
+              size={16}
+              color={attention ? "accent-waiting" : "accent-muted-foreground"}
+            />
+          </View>
+          <Text accessibilityRole="header" className="flex-1 text-sm font-semibold text-foreground">
             {title}
           </Text>
+          {attention && (
+            <Text className="rounded-pill bg-waiting-surface px-2.5 py-0.5 text-2xs font-medium text-waiting">
+              {t("card.waiting")}
+            </Text>
+          )}
         </View>
-        <View className="gap-3 p-3">{children}</View>
-      </View>
+        {children}
+      </AnimatedView>
     </View>
   );
 }

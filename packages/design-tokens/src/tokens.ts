@@ -7,6 +7,7 @@
  * Colors are `#rrggbb` or `oklch(L C H)`, optionally with `/ alpha`. The
  * reasoning behind the values is in docs/design/design-language.md.
  */
+import { mixOklab } from "./color.ts";
 import type { BotColor } from "./names.ts";
 
 export interface Themed {
@@ -122,6 +123,24 @@ export const fontFamilies = {
   mono: "JetBrains Mono",
 } as const;
 
+/**
+ * How strongly a bot's color tints its bubbles over the canvas: more in the
+ * dark theme, where a light tint would vanish.
+ */
+export const botBubbleTint = { light: 0.11, dark: 0.28 } as const satisfies Record<
+  keyof Themed,
+  number
+>;
+
+/**
+ * A bot's bubbles: a tint of its color over the canvas. Derived from
+ * `botPalette`, so every color there has its bubble.
+ */
+export const botBubble = (color: BotColor): Themed => ({
+  light: mixOklab(botPalette[color].light, colors.background.light, botBubbleTint.light),
+  dark: mixOklab(botPalette[color].dark, colors.background.dark, botBubbleTint.dark),
+});
+
 export const fonts = {
   display: `"${fontFamilies.display}", "${fontFamilies.text}", system-ui, sans-serif`,
   sans: `"${fontFamilies.text}", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`,
@@ -175,7 +194,9 @@ export const radii = {
   /** The top corners of a sheet that rises from the bottom of a phone. */
   sheet: 28,
   bubble: 20,
-  /** Buttons, the composer, switches, chips. */
+  /** The composer: a rounded rectangle at any height, never a pill. */
+  composer: 22,
+  /** Buttons, switches, chips. */
   pill: 9999,
 } as const;
 

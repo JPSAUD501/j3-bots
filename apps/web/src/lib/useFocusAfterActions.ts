@@ -11,10 +11,10 @@ export interface FocusWatch {
  * Keeps keyboard focus when the parts of a card that only exist while it is
  * open go away: its actions, and anything else that unmounts with them. While
  * `open`, it follows whether focus is inside one of the elements given
- * `actions`; when they close and unmount with focus still there, focus moves to
- * `target`, a container with `tabIndex={-1}` that stays, so the keyboard goes
- * on from where it was instead of from the top of the page. An element that
- * stays mounted keeps its focus.
+ * `actions`; when they close, unmounted or folded away inert, with focus still
+ * there, focus moves to `target`, a container with `tabIndex={-1}` that stays,
+ * so the keyboard goes on from where it was instead of from the top of the
+ * page. An element that stays mounted and can still act keeps its focus.
  */
 export function useFocusAfterActions<T extends HTMLElement>(open: boolean) {
   const target = useRef<T>(null);
@@ -22,8 +22,11 @@ export function useFocusAfterActions<T extends HTMLElement>(open: boolean) {
   useEffect(() => {
     if (open || !within.current) return;
     within.current = false;
+    // Focus was lost, or stayed on an action that folded away: inert, it can no longer act.
     const active = document.activeElement;
-    if (active === null || active === document.body) target.current?.focus();
+    if (active === null || active === document.body || active.closest("[inert]") !== null) {
+      target.current?.focus();
+    }
   }, [open]);
   const actions: FocusWatch = {
     onFocus: () => {

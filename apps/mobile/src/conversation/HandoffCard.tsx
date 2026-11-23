@@ -31,7 +31,7 @@ export function HandoffCard({
   const marks = (
     <>
       {entry.urgent && (
-        <Text className="rounded-sm bg-waiting-surface px-1 text-2xs font-medium text-waiting">
+        <Text className="rounded-pill bg-waiting-surface px-2.5 py-0.5 text-2xs font-medium text-waiting">
           {t("handoff.urgent")}
         </Text>
       )}
@@ -49,14 +49,14 @@ export function HandoffCard({
     </>
   );
   return (
-    <View className="mt-2 px-4">
+    <View className="mt-3 px-4">
       <View
         style={{ maxWidth: widths.compactCard }}
-        className="flex-row items-start gap-2.5 self-start rounded-md border border-border bg-surface px-3 py-1"
+        className="flex-row items-start gap-2.5 self-start rounded-bubble border border-border bg-surface px-3.5 py-1.5"
       >
-        <View className="mt-3.5">
+        <View className="mt-2 size-7 items-center justify-center rounded-md bg-muted">
           {other !== undefined && (
-            <AvatarShape avatar={other.profile.avatar} size={18} ground="surface" />
+            <AvatarShape avatar={other.profile.avatar} size={18} ground="muted" />
           )}
         </View>
         <View className="min-w-0 flex-1">

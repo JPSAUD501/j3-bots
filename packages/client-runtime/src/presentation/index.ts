@@ -92,6 +92,9 @@ export {
   shortDuration,
 } from "./time.ts";
 export {
+  type ArrivalCounts,
+  arrivalCounts,
+  arrivedRows,
   buildTimeline,
   type GroupPosition,
   handoffPeer,

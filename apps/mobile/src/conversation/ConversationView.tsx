@@ -3,17 +3,26 @@ import { type MentionLabel, retryAction } from "@j3-bots/client-runtime";
 import {
   addressed,
   addresseeOf,
+  arrivalCounts,
   buildTimeline,
   mentionedNames,
   mentionedWhoLeft,
   readThrough,
   roomStopFailed,
   rosterKeyOf,
+  rosterKeyText,
   rosterTarget,
   rowOrder,
   type TimelineItem,
 } from "@j3-bots/client-runtime/presentation";
-import { useConversation, useDraft, useJ3Client, useSelected } from "@j3-bots/client-runtime/react";
+import {
+  useArrivals,
+  useConversation,
+  useConversationEnd,
+  useDraft,
+  useJ3Client,
+  useSelected,
+} from "@j3-bots/client-runtime/react";
 import {
   addresseeLine,
   dividerTime,
@@ -32,7 +41,7 @@ import type {
   RosterItem,
   RoutineId,
 } from "@j3-bots/contracts";
-import { layout } from "@j3-bots/design-tokens";
+import { layout, springs } from "@j3-bots/design-tokens";
 import { KeyboardAwareLegendList, useKeyboardChatComposerInset } from "@legendapp/list/keyboard";
 import type {
   LegendListRef,
@@ -40,7 +49,15 @@ import type {
   ViewabilityConfigCallbackPairs,
 } from "@legendapp/list/react-native";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
-import { type ComponentRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type ComponentRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AppState, View } from "react-native";
 import { Text } from "../text.tsx";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
@@ -49,6 +66,7 @@ import { BotAvatar } from "../components/Avatar.tsx";
 import { PendingButton } from "../components/form.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { useRoomActions } from "../details/actions.ts";
+import { enteringWhen, openIn, settleIn, useReducedMotion } from "../motion.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Body, Button, Centered, Title } from "../ui.tsx";
@@ -56,7 +74,9 @@ import { Card } from "./Card.tsx";
 import { Composer, type MentionCandidate } from "./Composer.tsx";
 import { ConversationHeader } from "./Header.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
+import { AnimatedView } from "./animated.ts";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
+import { ToLatest } from "./ToLatest.tsx";
 import { EntryWidths } from "./widths.ts";
 import { WorkFold } from "./WorkFold.tsx";
 
@@ -195,8 +215,21 @@ export function ConversationView({
   const rows = useMemo(() => buildTimeline(state?.items ?? []), [state?.items]);
   const inView = useInView();
   const pairs = useReadMark(target, rows, markRead, inView);
+  // What arrives at the end settles in, and is counted while the operator reads above it.
+  const [scope] = useState(() => rosterKeyText(rosterKeyOf(item)));
+  const arrived = useArrivals(
+    scope,
+    rows.map((row) => row.key),
+    state?.phase === "ready",
+  );
 
   const list = useRef<LegendListRef>(null);
+  const reduced = useReducedMotion();
+  const toEnd = useCallback(
+    () => void list.current?.scrollToEnd({ animated: !reduced }),
+    [reduced],
+  );
+  const end = useConversationEnd(scope, arrived, arrivalCounts(rows, arrived), toEnd);
   const composer = useRef<ComponentRef<typeof View>>(null);
   const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
     list,
@@ -270,7 +303,8 @@ export function ConversationView({
       {state?.phase === "not-found" ? (
         <Gone onBack={onGone} />
       ) : (
-        <View
+        <AnimatedView
+          entering={openIn()}
           className="flex-1"
           onLayout={(event) =>
             setColumn(Math.min(event.nativeEvent.layout.width, layout.textColumn))
@@ -290,10 +324,23 @@ export function ConversationView({
                 recycleItems={false}
                 renderItem={({ item: row }) => (
                   <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
-                    <Row row={row} room={room} onOpenBot={onOpenBot} onOpenRoutine={openRoutine} />
+                    <Row
+                      row={row}
+                      room={room}
+                      arriving={arrived.has(row.key)}
+                      onOpenBot={onOpenBot}
+                      onOpenRoutine={openRoutine}
+                    />
                   </View>
                 )}
-                extraData={{ room, widths }}
+                extraData={{ room, widths, arrived }}
+                onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) =>
+                  end.follow(
+                    contentSize.height - layoutMeasurement.height - contentOffset.y,
+                    layoutMeasurement.height,
+                  )
+                }
+                scrollEventThrottle={64}
                 alignItemsAtEnd
                 initialScrollAtEnd
                 maintainScrollAtEnd
@@ -317,6 +364,16 @@ export function ConversationView({
               />
             )}
           </EntryWidths>
+          {/* Over the composer, riding on the keyboard with it. */}
+          {!quiet && (
+            <KeyboardStickyView
+              offset={{ closed: 0, opened: insets.bottom }}
+              style={{ position: "absolute", start: 0, end: 0, bottom: composerHeight + 8 }}
+              pointerEvents="box-none"
+            >
+              <ToLatest end={end} onPress={toEnd} />
+            </KeyboardStickyView>
+          )}
           {/* Over the conversation's end, riding on the keyboard: the list keeps its last entry above it. */}
           <KeyboardStickyView
             offset={{ closed: 0, opened: insets.bottom }}
@@ -342,12 +399,13 @@ export function ConversationView({
                     {...(addressee === null ? {} : { addressee })}
                     onSend={send}
                     inView={inView}
+                    tint={item._tag === "bot" ? item.bot.profile.avatar : null}
                   />
                 )}
               </View>
             </View>
           </KeyboardStickyView>
-        </View>
+        </AnimatedView>
       )}
     </View>
   );
@@ -404,39 +462,47 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
 function Row({
   row,
   room,
+  arriving,
   onOpenBot,
   onOpenRoutine,
 }: {
   readonly row: TimelineItem;
   /** In a room, its members and host now; null in a bot's conversation. */
   readonly room: Pick<Room, "members" | "hostId"> | null;
+  /** It just arrived at the end: it settles into place as it mounts. */
+  readonly arriving: boolean;
   readonly onOpenBot: (botId: BotId) => void;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
 }) {
   const ctx = usePresentation();
   const client = useJ3Client();
+  // A message moves itself as it arrives; anything else settles in.
+  const [settles] = useState(arriving);
+  const entering = enteringWhen(settles, settleIn(springs.soft));
   switch (row.kind) {
     case "divider":
       return (
-        <Text className="py-3 text-center text-2xs text-muted-foreground">
-          {dividerTime(row.at, ctx)}
-        </Text>
+        <AnimatedView {...entering}>
+          <Text className="py-3 text-center text-2xs text-muted-foreground">
+            {dividerTime(row.at, ctx)}
+          </Text>
+        </AnimatedView>
       );
     case "message": {
       const { message } = row;
       return message._tag === "outgoing" ? (
-        <OutgoingMessage row={row} message={message} room={room} />
+        <OutgoingMessage row={row} message={message} room={room} arriving={arriving} />
       ) : (
-        <ServerMessage row={row} message={message} room={room} />
+        <ServerMessage row={row} message={message} room={room} arriving={arriving} />
       );
     }
     case "card": {
       const { entry } = row;
-      switch (entry._tag) {
-        case "work-fold":
-          return <WorkFold entry={entry} />;
-        case "notice":
-          return (
+      return (
+        <AnimatedView {...entering}>
+          {entry._tag === "work-fold" ? (
+            <WorkFold entry={entry} />
+          ) : entry._tag === "notice" ? (
             <NoticeLine
               entry={entry}
               onRetry={() => void client.retryNotice(entry.id)}
@@ -444,13 +510,18 @@ function Row({
                 if (entry.notice._tag === "waiting-in-conversation") onOpenBot(entry.notice.botId);
               }}
             />
-          );
-        default:
-          return <Card entry={entry} onOpenBot={onOpenBot} onOpenRoutine={onOpenRoutine} />;
-      }
+          ) : (
+            <Card entry={entry} onOpenBot={onOpenBot} onOpenRoutine={onOpenRoutine} />
+          )}
+        </AnimatedView>
+      );
     }
     case "unknown":
-      return <NeedsUpdateLine />;
+      return (
+        <AnimatedView {...entering}>
+          <NeedsUpdateLine />
+        </AnimatedView>
+      );
   }
 }
 
@@ -472,10 +543,12 @@ function OutgoingMessage({
   row,
   message,
   room,
+  arriving,
 }: {
   readonly row: MessageRow;
   readonly message: Extract<MessageRow["message"], { readonly _tag: "outgoing" }>;
   readonly room: Pick<Room, "members" | "hostId"> | null;
+  readonly arriving: boolean;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -497,6 +570,7 @@ function OutgoingMessage({
     <MessageBubble
       message={message}
       position={row.position}
+      arriving={arriving}
       mentionable={highlighted(message.mentions, message.labels)}
       onRetry={() =>
         void client.resend(message.commandId, left?.without).then((result) => {
@@ -526,10 +600,12 @@ function ServerMessage({
   row,
   message,
   room,
+  arriving,
 }: {
   readonly row: MessageRow;
   readonly message: MessageEntry;
   readonly room: Pick<Room, "members" | "hostId"> | null;
+  readonly arriving: boolean;
 }) {
   const client = useJ3Client();
   const bots = useBots();
@@ -539,11 +615,14 @@ function ServerMessage({
     (actions) => actions.get(retryAction(message.id))?._tag === "submitting",
   );
   const { author } = message;
+  const speaker = author._tag === "bot" ? (bots.get(author.botId) ?? null) : null;
   return (
     <MessageBubble
       message={message}
       position={row.position}
-      speaker={room !== null && author._tag === "bot" ? (bots.get(author.botId) ?? null) : null}
+      arriving={arriving}
+      tint={speaker?.profile.avatar ?? null}
+      speaker={room === null ? null : speaker}
       // The server's entry keeps no names picked: its members go by their names now.
       mentionable={highlighted(message.mentions, [])}
       onRetry={() => void client.retryMessage(message.id)}

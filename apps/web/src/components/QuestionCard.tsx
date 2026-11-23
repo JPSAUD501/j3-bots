@@ -14,7 +14,7 @@ import {
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { type FocusWatch, useFocusAfterActions } from "../lib/useFocusAfterActions";
-import { CardFrame } from "./CardFrame";
+import { CardFrame, useClosedHere } from "./CardFrame";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 
@@ -65,23 +65,29 @@ export function QuestionCard({
       : null;
   const answersOnTap =
     pending && entry.questions.length === 1 && !first.multiple && !first.acceptsText;
+  // The option tapped confirms while its answer is on its way: it takes a check, and the others
+  // step back. Refused, the card waits again with every option as it was.
+  const [tapped, setTapped] = useState<string | null>(null);
+  const chosen = submitting ? tapped : null;
+  const { closedHere } = useClosedHere(pending);
 
   return (
     <CardFrame
       ref={target}
       icon={<MessageCircleQuestionIcon />}
-      title={pending ? t("question.pending") : t("question.title")}
+      title={t("question.title")}
       attention={pending}
       entryId={entry.id}
       describedBy={pending ? undefined : outcomeId}
     >
       {!pending ? (
-        <>
+        <div className={cn("flex flex-col gap-3", closedHere && "arrive")}>
           {entry.questions.map((q) => (
             <Resolved
               key={q.id}
               question={q}
               answer={status._tag === "answered" ? (status.answers[q.id] ?? null) : null}
+              drawn={closedHere}
             />
           ))}
           <p id={outcomeId} className="text-xs text-muted-foreground">
@@ -93,7 +99,7 @@ export function QuestionCard({
                   ? t("question.refused")
                   : t("question.expired")}
           </p>
-        </>
+        </div>
       ) : answersOnTap ? (
         <div className="flex flex-col gap-3" {...actions}>
           <fieldset className="flex flex-col gap-2">
@@ -104,10 +110,22 @@ export function QuestionCard({
                   key={option.id}
                   type="button"
                   aria-disabled={submitting}
-                  onClick={() => answer({ [first.id]: { optionIds: [option.id], text: null } })}
-                  className={cn(choiceRow, "hover:bg-muted aria-disabled:hover:bg-transparent")}
+                  onClick={() => {
+                    if (submitting) return;
+                    setTapped(option.id);
+                    answer({ [first.id]: { optionIds: [option.id], text: null } });
+                  }}
+                  className={cn(
+                    choiceRow,
+                    "hover:bg-muted aria-disabled:hover:bg-transparent",
+                    chosen === option.id && "border-foreground/60 bg-muted",
+                    chosen !== null && chosen !== option.id && "opacity-50",
+                  )}
                 >
                   <OptionText option={option} />
+                  {chosen === option.id && (
+                    <CheckIcon aria-hidden className="pop-in ms-auto mt-0.5 size-4 shrink-0" />
+                  )}
                 </button>
               ))}
             </div>
@@ -311,7 +329,7 @@ function Actions({
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
       {onDismiss !== null && (
-        <Button variant="ghost-muted" size="sm" onClick={onDismiss} aria-disabled={submitting}>
+        <Button size="sm" onClick={onDismiss} aria-disabled={submitting}>
           {t("question.dismiss")}
         </Button>
       )}
@@ -328,9 +346,12 @@ function Actions({
 function Resolved({
   question,
   answer,
+  drawn,
 }: {
   question: Question;
   answer: QuestionAnswers[string] | null;
+  /** Answered while on screen: each chosen option's check draws itself. */
+  drawn: boolean;
 }) {
   const chosen = question.options.filter((o) => answer?.optionIds.includes(o.id));
   return (
@@ -339,6 +360,10 @@ function Resolved({
       {chosen.map((option) => (
         <div key={option.id} className={cn(choiceRow, "border-foreground/60 bg-muted")}>
           <OptionText option={option} />
+          <CheckIcon
+            aria-hidden
+            className={cn("ms-auto mt-0.5 size-4 shrink-0", drawn && "draw-check")}
+          />
         </div>
       ))}
       {answer?.text && <p className="text-sm whitespace-pre-wrap">{answer.text}</p>}

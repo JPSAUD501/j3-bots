@@ -9,7 +9,7 @@ import type { KeyWith } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { type FocusWatch, useFocusAfterActions } from "../lib/useFocusAfterActions";
-import { CardFrame } from "./CardFrame";
+import { CardFrame, useClosedHere } from "./CardFrame";
 import { Button } from "./ui/button";
 
 const closedText: Record<Exclude<SecretRequestEntry["status"], "pending">, KeyWith> = {
@@ -45,12 +45,13 @@ export function SecretRequestCard({
   const pending = entry.status === "pending";
   // Answered, the field and its actions go; focus that was in them moves to the card.
   const { target, actions } = useFocusAfterActions<HTMLElement>(pending);
+  const { closedHere } = useClosedHere(pending);
 
   return (
     <CardFrame
       ref={target}
       icon={<KeyRoundIcon />}
-      title={pending ? t("secret.pending") : t("secret.title")}
+      title={t("secret.title")}
       attention={pending}
       entryId={entry.id}
       describedBy={pending ? undefined : outcomeId}
@@ -75,7 +76,7 @@ export function SecretRequestCard({
           focusWatch={actions}
         />
       ) : (
-        <p id={outcomeId} className="text-xs text-muted-foreground">
+        <p id={outcomeId} className={cn("text-xs text-muted-foreground", closedHere && "arrive")}>
           {t(closedText[entry.status])}
         </p>
       )}
@@ -143,7 +144,6 @@ function SecretForm({
         <span className="ms-auto flex gap-2">
           <Button
             type="button"
-            variant="ghost-muted"
             size="sm"
             aria-disabled={submitting}
             onClick={() => {

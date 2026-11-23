@@ -11,24 +11,35 @@ import {
   mentionQuery,
   type MentionOption,
 } from "@j3-bots/client-runtime/presentation";
-import { useDraft, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
+import { useDraft, useJ3Client, useReadable, useRestored } from "@j3-bots/client-runtime/react";
 import {
   draftFileDetail,
   fileProblemText,
   messageProblemText,
 } from "@j3-bots/client-runtime/wording";
 import type { Avatar, EntryTarget } from "@j3-bots/contracts";
-import { layout } from "@j3-bots/design-tokens";
+import { layout, reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { ArrowUp, File, Plus, Users, X } from "lucide-react-native";
 import { type ComponentRef, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AccessibilityInfo, Alert, Pressable, ScrollView, View } from "react-native";
+import { AccessibilityInfo, Alert, ScrollView, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { AvatarShape } from "../components/Avatar.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { type PickedFile, pickDocuments, pickPhotos } from "../platform/pick.ts";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
+import { enteringWhen, settleIn } from "../motion.ts";
 import { useColor } from "../theme.ts";
 import { DictationButton, DictationLine, useDictation } from "./Dictation.tsx";
+import { AnimatedView } from "./animated.ts";
+import { PressScale } from "../press.tsx";
+import { useTint } from "./tint.ts";
 
 /** A room member the composer offers after `@`, drawn by its shape. */
 export interface MentionCandidate extends Mentionable {
@@ -36,15 +47,16 @@ export interface MentionCandidate extends Mentionable {
 }
 
 /**
- * The pill at the bottom of a conversation, bound to the conversation's
- * draft: what anything else writes to the draft, text or files, shows here.
+ * The composer at the bottom of a conversation, a rounded rectangle that
+ * grows with its text, bound to the conversation's draft: what anything else writes to the draft, text or files, shows here.
  * Files picked upload at once and show above the pill; the message goes once
  * they all have. A message over a limit of `message.send` is kept, and says
  * why instead of sending. While Send hands the draft over, or the drafts load
  * or could not be read, the field takes no change, and attaching and removing
  * files are unavailable. In a room, `@` offers its members and `@everyone`
- * above the pill; only a pick mentions one, and a quiet line under the pill
- * says who the message wakes. While there is nothing to send, the trailing
+ * above the composer; only a pick mentions one, and a quiet line under it
+ * says who the message wakes. While the field has focus the composer's border
+ * takes the conversation's tint (`tint`, the bot's avatar; none in a room). While there is nothing to send, the trailing
  * button dictates where the platform has a speech recognizer: what is heard
  * becomes the draft's text as it is heard, and waits there for Send. Typing
  * stops it, and so does the conversation leaving the operator's view. Mount
@@ -57,6 +69,7 @@ export function Composer({
   addressee,
   onSend,
   inView,
+  tint: tintOf = null,
 }: {
   readonly target: EntryTarget;
   /** Who the message goes to: a bot's or a room's name. */
@@ -68,6 +81,8 @@ export function Composer({
   readonly onSend: () => void;
   /** The operator can see the conversation: its screen has the focus, and the app is in front. */
   readonly inView: boolean;
+  /** The bot whose color tints the composer; none in a room. */
+  readonly tint?: Avatar | null;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -84,6 +99,12 @@ export function Composer({
   const { empty, uploading, sendable, problem } = draftReadiness(text, files);
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = draft.sending || switching || readFailed;
+  // Files the draft already held when shown appear in place; only those attached since arrive.
+  const restored = useRestored(
+    targetKey(target),
+    files.map((file) => file.key),
+    switching || readFailed,
+  );
   // Dictation starts only on an empty draft, so what is heard is the whole text.
   const dictation = useDictation({
     onHeard: (heard) => client.setDraftText(target, heard),
@@ -92,6 +113,20 @@ export function Composer({
   });
   const listening = dictation?.state._tag === "listening";
   const ready = !frozen && sendable;
+  const tint = useTint(tintOf);
+  const [focused, setFocused] = useState(false);
+  // Once the draft is handed over and the field is clear, the composer settles back with a pop.
+  const settle = useSharedValue(1);
+  const settled = useAnimatedStyle(() => ({ transform: [{ scale: settle.get() }] }));
+  const wasSending = useRef(draft.sending);
+  useEffect(() => {
+    const handedOver = wasSending.current && !draft.sending;
+    wasSending.current = draft.sending;
+    if (handedOver) {
+      settle.set(0.97);
+      settle.set(withSpring(1, reanimatedSpring(springs.pop)));
+    }
+  }, [draft.sending, settle]);
   // Files picked while the draft took no change, which it did not take.
   const [notTaken, setNotTaken] = useState(false);
 
@@ -208,6 +243,7 @@ export function Composer({
             <FileChip
               key={file.key}
               file={file}
+              arriving={!restored.has(file.key)}
               onRemove={() => {
                 if (!frozen) client.detachFile(target, file.key);
               }}
@@ -220,20 +256,25 @@ export function Composer({
       {readFailed && !switching && (
         <View className="flex-row items-center justify-between gap-2 ps-3">
           <Text className="flex-1 text-xs text-muted-foreground">{t("composer.unread")}</Text>
-          <Pressable
+          <PressScale
             accessibilityRole="button"
             onPress={retryRead}
             className="min-h-11 justify-center px-3"
           >
             <Text className="text-sm text-accent">{t("composer.unread.retry")}</Text>
-          </Pressable>
+          </PressScale>
         </View>
       )}
       {query !== null && options.length > 0 && (
         <MentionList options={options} members={mentionable ?? []} onPick={pick} />
       )}
-      <View className="flex-row items-end gap-1 rounded-pill border border-input bg-surface p-1">
-        <Pressable
+      <AnimatedView
+        // Focused, the border takes the bot's color, which reaches 3:1 on the surface.
+        style={[settled, focused ? { borderColor: tint.color } : undefined]}
+        className="flex-row items-end gap-1 rounded-composer border border-input bg-surface p-1"
+      >
+        <PressScale
+          depth="round"
           accessibilityRole="button"
           accessibilityLabel={t("composer.attach")}
           accessibilityState={{ disabled: frozen }}
@@ -241,7 +282,7 @@ export function Composer({
           className="size-11 items-center justify-center rounded-full active:bg-muted"
         >
           <Icon icon={Plus} size={20} color="accent-muted-foreground" />
-        </Pressable>
+        </PressScale>
         <TextInput
           ref={field}
           multiline
@@ -255,8 +296,12 @@ export function Composer({
           onFocus={() => {
             const [start, end] = selection.current;
             setCaret(start === end ? end : null);
+            setFocused(true);
           }}
-          onBlur={() => setCaret(null)}
+          onBlur={() => {
+            setCaret(null);
+            setFocused(false);
+          }}
           placeholder={label}
           placeholderTextColor={placeholderColor}
           accessibilityLabel={label}
@@ -264,25 +309,17 @@ export function Composer({
           style={{ maxHeight: layout.composerMaxHeight }}
           className="min-h-11 flex-1 px-1 py-2.5 text-lg text-foreground"
         />
-        {dictation !== null && (empty || listening) ? (
+        {dictation !== null && (empty || listening) && !draft.sending ? (
           <DictationButton dictation={dictation} unavailable={frozen} />
         ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("composer.send")}
-            accessibilityHint={uploading ? t("composer.stillUploading") : undefined}
-            accessibilityState={{ disabled: !ready }}
-            onPress={ready ? onSend : undefined}
-            className={`size-11 items-center justify-center rounded-full ${ready ? "bg-foreground" : "bg-muted"}`}
-          >
-            <Icon
-              icon={ArrowUp}
-              size={20}
-              color={ready ? "accent-background" : "accent-muted-foreground"}
-            />
-          </Pressable>
+          <SendButton
+            state={draft.sending ? "sending" : ready ? "ready" : "disabled"}
+            tint={tint.color}
+            hint={uploading ? t("composer.stillUploading") : undefined}
+            onSend={onSend}
+          />
         )}
-      </View>
+      </AnimatedView>
       {dictation !== null && <DictationLine dictation={dictation} />}
       {addressee !== undefined && (
         <Text numberOfLines={1} className="px-3 text-xs text-muted-foreground">
@@ -302,13 +339,74 @@ export function Composer({
   );
 }
 
+/**
+ * Send, in three looks: nothing to send yet, a message ready to go, whose
+ * arrow pops in on the bot's color, and one on its way, whose arrow leaves
+ * upward with it.
+ */
+function SendButton({
+  state,
+  tint,
+  hint,
+  onSend,
+}: {
+  readonly state: "disabled" | "ready" | "sending";
+  readonly tint: string;
+  readonly hint: string | undefined;
+  readonly onSend: () => void;
+}) {
+  const { t } = useI18n();
+  const scale = useSharedValue(1);
+  const lift = useSharedValue(0);
+  const arrow = useAnimatedStyle(() => ({
+    opacity: 1 - lift.get(),
+    transform: [{ translateY: -14 * lift.get() }, { scale: scale.get() }],
+  }));
+  useEffect(() => {
+    if (state === "ready") {
+      lift.set(0);
+      scale.set(0.4);
+      scale.set(withSpring(1, reanimatedSpring(springs.pop)));
+    } else if (state === "sending") {
+      lift.set(withTiming(1, { duration: 220, easing: Easing.bezier(0.2, 0.8, 0.2, 1) }));
+    } else {
+      lift.set(0);
+      scale.set(1);
+    }
+  }, [state, scale, lift]);
+  const filled = state !== "disabled";
+  return (
+    <PressScale
+      depth="round"
+      accessibilityRole="button"
+      accessibilityLabel={t("composer.send")}
+      accessibilityHint={hint}
+      accessibilityState={{ disabled: state !== "ready", busy: state === "sending" }}
+      onPress={state === "ready" ? onSend : undefined}
+      style={filled ? { backgroundColor: tint } : undefined}
+      className={`size-11 items-center justify-center rounded-full ${filled ? "" : "bg-muted"}`}
+    >
+      <Animated.View style={arrow}>
+        <Icon
+          icon={ArrowUp}
+          size={20}
+          color={filled ? "accent-avatar-ink" : "accent-muted-foreground"}
+        />
+      </Animated.View>
+    </PressScale>
+  );
+}
+
 /** A file in the draft: its name, how its upload goes or why it cannot go, and a way out. */
 function FileChip({
   file,
+  arriving,
   onRemove,
   unavailable,
 }: {
   readonly file: DraftFile;
+  /** Attached since the draft was shown: it settles in. */
+  readonly arriving: boolean;
   readonly onRemove: () => void;
   /** The draft takes no change: the file cannot be removed meanwhile. */
   readonly unavailable: boolean;
@@ -317,7 +415,8 @@ function FileChip({
   const name = draftFileName(file);
   const failed = file._tag === "failed";
   return (
-    <View
+    <AnimatedView
+      {...enteringWhen(arriving, settleIn(springs.soft))}
       className={`max-w-full flex-row items-center gap-2 rounded-md border ps-2 ${
         failed ? "border-blocked/40 bg-blocked-surface" : "border-border bg-surface"
       }`}
@@ -332,7 +431,7 @@ function FileChip({
           {draftFileDetail(file, i18n, { progress: false })}
         </Text>
       </View>
-      <Pressable
+      <PressScale
         accessibilityRole="button"
         accessibilityLabel={i18n.t("composer.file.remove", { name })}
         accessibilityState={{ disabled: unavailable }}
@@ -340,12 +439,12 @@ function FileChip({
         className="size-11 items-center justify-center"
       >
         <Icon icon={X} size={16} color="accent-muted-foreground" />
-      </Pressable>
-    </View>
+      </PressScale>
+    </AnimatedView>
   );
 }
 
-/** The members and `@everyone` the operator can mention, above the pill. A tap picks. */
+/** The members and `@everyone` the operator can mention, above the composer. A tap picks. */
 function MentionList({
   options,
   members,
@@ -368,8 +467,9 @@ function MentionList({
       {options.map((option) => {
         const avatar = option._tag === "bot" ? avatars.get(option.id) : undefined;
         return (
-          <Pressable
+          <PressScale
             key={option._tag === "bot" ? option.id : EVERYONE}
+            depth="row"
             accessibilityRole="button"
             onPress={() => onPick(option)}
             className="min-h-11 flex-row items-center gap-2 rounded-md px-2 active:bg-muted"
@@ -390,7 +490,7 @@ function MentionList({
                 </Text>
               </>
             )}
-          </Pressable>
+          </PressScale>
         );
       })}
     </ScrollView>
