@@ -6,8 +6,10 @@
 //
 // - `start`: starts V as it is, and `recordReady` once it answers ready;
 // - `snapshot-then-start`: holds the home's `TransitionLock` and runs
-//   `transition` from the release that ran to V with its own `HostSteps`,
-//   which carries on a transition that was cut off, with its snapshot;
+//   `transition` from the release that ran to V with its own `HostSteps`.
+//   A transition to V that was cut off is carried on, with its snapshot; one
+//   to another release is rolled back first, which the result names
+//   (`interrupted`);
 // - `refuse-rolled-back`: starts the recorded release, and tries V again
 //   only when the person asks, with `transition`;
 // - `refuse-*`: starts nothing, and says why; for an unreadable record, the
@@ -39,6 +41,7 @@ export {
   transition,
   TransitionLock,
   TransitionLockUnusable,
+  type TransitionOutcome,
   type TransitionResult,
 } from "./transition.ts";
 export {

@@ -62,7 +62,7 @@ providers/
     skills/          the same
 state/
   shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
-  runtime.json       the last release whose server became ready on this home, and whether by a rollback
+  runtime.json       the release this home's data was last handed to, whether by a rollback, and a transition under way
 backups/
   <snapshot>/        the databases and settings a version transition copied before it changed release
   update.lock        held by the one version transition or rollback running

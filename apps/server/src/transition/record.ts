@@ -14,19 +14,21 @@ import { SnapshotRelease } from "../install/snapshot.ts";
 //
 //   <home>/state/runtime.json     RuntimeRecord
 //
-// It names the last release whose server became ready on this home, and
-// whether that was a rollback, from which release: a transition writes it
-// once the server it started became ready, and a host once a server it
-// started as it is became ready (`recordReady`). From the snapshot until
-// then, it also names the transition under way (`pending`), so one cut off
-// is carried on with the snapshot it took, never with a new one of data the
-// new release may have migrated. Every write replaces the file whole and
-// flushes it. A host about to start a release asks `decideStart` first.
+// It names the release the home's data was last handed to, and whether that
+// was a rollback, from which release: a transition writes it once it ends
+// (with a server to start, once that server is ready), a rollback once the
+// snapshot is back and the old release's server, if one, is ready, and a
+// host once a server it started as it is became ready (`recordReady`). From
+// the snapshot until a transition ends, it also names the transition under
+// way (`pending`), so one cut off is carried on with the snapshot it took, or
+// rolled back to it, never followed by a new one of data the new release may
+// have migrated. Every write replaces the file whole and flushes it. A host
+// about to start a release asks `decideStart` first.
 
 /** The record's own format: a release that changes it incompatibly writes another. */
 const RECORD_SCHEMA = 1;
 
-/** A transition from the snapshot until a server became ready: the releases, and the snapshot's folder name. */
+/** A transition from its snapshot until it ends: the releases, and the snapshot's folder name. */
 const PendingTransition = Schema.Struct({
   from: SnapshotRelease,
   to: SnapshotRelease,
@@ -36,12 +38,12 @@ export type PendingTransition = typeof PendingTransition.Type;
 
 const RuntimeRecord = Schema.Struct({
   schema: Schema.Literal(RECORD_SCHEMA),
-  /** The last release whose server became ready on the home. */
+  /** The release the home's data was last handed to. */
   version: Schema.String,
   readyAt: Schema.DateTimeUtc,
-  /** Present when it became ready by a rollback: the release rolled back from. */
+  /** Present when that was a rollback: the release that failed, rolled back from. */
   rollback: Schema.optionalKey(Schema.Struct({ from: Schema.String })),
-  /** A transition from `version` that has not seen a server become ready yet. */
+  /** A transition from `version` that has not ended yet. */
   pending: Schema.optionalKey(PendingTransition),
 });
 export type RuntimeRecord = typeof RuntimeRecord.Type;
@@ -50,7 +52,7 @@ const RuntimeRecordJson = Schema.fromJsonString(Schema.toCodecJson(RuntimeRecord
 
 /** What a home's record says, as `readRuntimeRecord` finds it. */
 export type RecordedRuntime =
-  /** No record: no release that records one became ready on the home yet. */
+  /** No record: no release that records one ran on the home yet. */
   | { readonly _tag: "none" }
   /** A record this release cannot read: a newer release's format, or a damaged file. */
   | { readonly _tag: "unreadable" }
@@ -120,9 +122,9 @@ export const recordPending = Effect.fn("transition.recordPending")(function* (
 });
 
 /**
- * Records that the server of `version` became ready on `home` at the end of
- * a transition, by a rollback from `rollbackFrom` if one: the transition is
- * no longer pending.
+ * Records that `home`'s data is handed to `version` at the end of a
+ * transition, by a rollback from `rollbackFrom` if one: the transition is no
+ * longer pending.
  */
 export const recordTransitioned = Effect.fn("transition.recordTransitioned")(function* (
   home: string,
@@ -226,9 +228,10 @@ export const compareVersions = (a: string, b: string): Option.Option<number> => 
  *   not finished ends on, `rollBack` is what starts it, since it also
  *   finishes the rollback.
  * - `snapshot-then-start`: a newer release than the one recorded; start it
- *   through a transition, which takes a snapshot first, or carries on with
- *   the one a transition cut off took, and rolls back if it never becomes
- *   ready.
+ *   through a transition, which takes a snapshot first and rolls back if it
+ *   never becomes ready. When a transition was cut off, it carries that one
+ *   on with its snapshot if it is to the same release, and otherwise rolls
+ *   it back first.
  * - `refuse-rolled-back`: the release a rollback was made from, the last
  *   time; start the recorded one instead. A host starts it again only when
  *   the person asks, through a transition, or once a newer one arrives.
@@ -287,7 +290,10 @@ export const decideStart = (facts: StartFacts): StartDecision => {
   }
   const { version, rollback, pending } = recorded.record;
   if (pending !== undefined) {
-    // The data is the one `pending.from` ran on, or what `pending.to` migrated it to.
+    // The data is the one `pending.from` ran on, or what `pending.to` migrated
+    // it to. A transition to `pending.to` carries the cut-off one on; one to
+    // another release rolls it back to `pending.from` first, so a release
+    // newer than that starts on that release's data.
     return Option.getOrElse(isNewer(starting, pending.from.version), () => false)
       ? "snapshot-then-start"
       : "refuse-unknown-schema";

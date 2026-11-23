@@ -45,9 +45,11 @@ import {
 // rolled back from V → unmark. The record is written before the mark goes,
 // so a cut anywhere leaves either the mark, which the next rollback carries
 // on from, or the record. A transition cut off after its snapshot leaves it
-// pending in the record; the next one carries on from U with that snapshot
-// and never takes another. Two releases, two snapshots and two engine
-// runtimes are kept.
+// pending in the record. The next one to V carries it on from U with that
+// snapshot and never takes another; one to any other release first rolls the
+// cut-off one back to U, with that snapshot, then moves from U as any
+// transition does. Two releases, two snapshots and two engine runtimes are
+// kept.
 
 /** How many releases, snapshots and engine runtimes a transition keeps. */
 const KEEP = 2;
@@ -119,7 +121,7 @@ export class TransitionLock {
 
 /** What a host gives a transition: how its server is stopped, started, watched and adopted. */
 export interface HostSteps<R> {
-  /** Whether the host runs a server on the home. Without one, nothing is stopped, started or recorded. */
+  /** Whether the host runs a server on the home. Without one, nothing is stopped or started. */
   readonly supervised: boolean;
   /** Stops the server, and clears its failed state. It stays enabled. */
   readonly stop: Effect.Effect<void, StepFailed, R>;
@@ -191,21 +193,18 @@ const switchSteps = <R>(
       side === "new" ? "await-new" : "await-old",
     ),
   resumed,
-  // Pending once the snapshot is whole, before the new release can migrate
-  // anything. Without a server to start, nothing migrates in the transition.
+  // Pending once the snapshot is whole, before the new release can migrate anything.
   snapshot: withHome(
     home,
     "snapshot",
     Effect.tap(takeSnapshot({ home, from: releases.old, to: releases.new }), (snapshot) =>
-      host.supervised
-        ? Effect.flatMap(Path.Path, (path) =>
-            recordPending(home, {
-              from: releases.old,
-              to: releases.new,
-              snapshot: path.basename(snapshot.folder),
-            }),
-          )
-        : Effect.void,
+      Effect.flatMap(Path.Path, (path) =>
+        recordPending(home, {
+          from: releases.old,
+          to: releases.new,
+          snapshot: path.basename(snapshot.folder),
+        }),
+      ),
     ),
   ),
   mark: (snapshot) =>
@@ -213,17 +212,11 @@ const switchSteps = <R>(
       Effect.mapError((cause) => new StepFailed({ step: "mark", reason: cause.message })),
     ),
   restore: (snapshot) => withHome(home, "restore", restoreSnapshot(home, snapshot)),
-  // The record says the old release runs, rolled back, before the mark that
-  // keeps every other release off the home goes.
+  // The record says the old release's data is back, rolled back from the
+  // release that failed, before the mark that keeps every other release off
+  // the home goes.
   unmark: (snapshot) =>
-    (host.supervised
-      ? recordTransitioned(
-          home,
-          snapshot.manifest.from.version,
-          Option.some(snapshot.manifest.to.version),
-        )
-      : Effect.void
-    ).pipe(
+    recordTransitioned(home, releases.old.version, Option.some(releases.new.version)).pipe(
       Effect.mapError(
         (cause) =>
           new StepFailed({
@@ -265,10 +258,26 @@ const prune = Effect.fn("transition.prune")(function* <R>(
   }
 });
 
+/**
+ * How a transition ended: the switch's outcome, or, when it found one cut
+ * off on its way to another release and rolling that one back was all there
+ * was to do, how that went: it failed, or `to` is the release it rolls back to.
+ */
+export type TransitionOutcome =
+  | SwitchOutcome<Snapshot>
+  | { readonly _tag: "cut-off-rolled-back"; readonly snapshot: Snapshot }
+  | {
+      readonly _tag: "cut-off-rollback-failed";
+      readonly rollback: StepFailed;
+      readonly snapshot: Snapshot;
+    };
+
 export interface TransitionResult {
   /** The release the transition moved from: what ran on the data its snapshot holds. */
   readonly from: SnapshotRelease;
-  readonly outcome: SwitchOutcome<Snapshot>;
+  /** The release a transition cut off was moving to, when this one rolled it back first. */
+  readonly interrupted: Option.Option<SnapshotRelease>;
+  readonly outcome: TransitionOutcome;
   /** Why the new release could not be recorded once it ran: the next start carries the transition on. */
   readonly recording: Option.Option<string>;
   /** Why keeping two of everything failed, which leaves only more on disk. */
@@ -280,10 +289,13 @@ export interface TransitionResult {
  * ran on it, with the host's steps for the two, to its end: never
  * interrupted, it always leaves one release in place.
  *
- * When the record names a transition that was cut off, this carries it on
- * instead: from the release that transition started from, with the snapshot
- * it took, so no snapshot is ever taken of data a new release may have
- * migrated. Only once `to` runs is it recorded, and anything pruned.
+ * When the record names a transition that was cut off, the home's data may
+ * be the data of the release it was moving to already, so no snapshot is
+ * taken of it. A transition to that release carries the cut-off one on, from
+ * the release it started from and with its snapshot. One to any other
+ * release first rolls the cut-off one back to the release it started from,
+ * with that snapshot, then moves from there with a snapshot of its own. Only
+ * once `to` runs is it recorded, and anything pruned.
  */
 export const transition = Effect.fn("transition.transition")(function* <R>(options: {
   readonly lock: TransitionLock;
@@ -293,44 +305,70 @@ export const transition = Effect.fn("transition.transition")(function* <R>(optio
 }) {
   const { lock, to } = options;
   const { home } = lock;
+  /** The switch from `from` to `to`, carrying on with `resumed` if one. */
+  const switchFrom = Effect.fnUntraced(function* (
+    from: SnapshotRelease,
+    resumed: Option.Option<Snapshot>,
+    interrupted: Option.Option<SnapshotRelease>,
+  ) {
+    const steps = options.steps({ old: from, new: to });
+    const outcome = yield* switchOver(switchSteps(home, { old: from, new: to }, steps, resumed));
+    const recording =
+      outcome._tag === "updated"
+        ? yield* recordTransitioned(home, to.version, Option.none()).pipe(
+            Effect.as(Option.none<string>()),
+            Effect.catch((cause) => Effect.succeedSome(cause.message)),
+          )
+        : Option.none<string>();
+    const pruning =
+      outcome._tag === "updated"
+        ? yield* prune(home, from, to, steps).pipe(
+            Effect.as(Option.none<string>()),
+            Effect.catch((cause) => Effect.succeedSome(cause.message)),
+          )
+        : Option.none<string>();
+    return { from, interrupted, outcome, recording, pruning } satisfies TransitionResult;
+  });
   return yield* lock.use(
     Effect.gen(function* () {
       const recorded = yield* readRuntimeRecord(home);
-      const pending =
-        recorded._tag === "recorded" && recorded.record.pending !== undefined
-          ? Option.some(recorded.record.pending)
-          : Option.none();
-      const from = Option.match(pending, { onNone: () => options.from, onSome: (p) => p.from });
+      if (recorded._tag !== "recorded" || recorded.record.pending === undefined) {
+        return yield* switchFrom(options.from, Option.none(), Option.none());
+      }
+      const pending = recorded.record.pending;
       const path = yield* Path.Path;
-      const resumed = yield* Option.match(pending, {
-        onNone: () => Effect.succeedNone,
-        onSome: (p) =>
-          Effect.flatMap(listSnapshots(home), (snapshots) => {
-            const found = snapshots.find(({ folder }) => path.basename(folder) === p.snapshot);
-            return found === undefined
-              ? Effect.fail(
-                  new PendingSnapshotGone({ home, snapshot: p.snapshot, from: p.from.version }),
-                )
-              : Effect.succeedSome(found);
-          }),
+      const snapshot = (yield* listSnapshots(home)).find(
+        ({ folder }) => path.basename(folder) === pending.snapshot,
+      );
+      if (snapshot === undefined) {
+        return yield* new PendingSnapshotGone({
+          home,
+          snapshot: pending.snapshot,
+          from: pending.from.version,
+        });
+      }
+      if (pending.to.version === to.version) {
+        return yield* switchFrom(pending.from, Option.some(snapshot), Option.none());
+      }
+      const cutOff = { old: pending.from, new: pending.to };
+      const failed = yield* rollBackOver(
+        switchSteps(home, cutOff, options.steps(cutOff), Option.some(snapshot)),
+        snapshot,
+      );
+      const rolledBack = (outcome: TransitionOutcome): TransitionResult => ({
+        from: pending.from,
+        interrupted: Option.some(pending.to),
+        outcome,
+        recording: Option.none(),
+        pruning: Option.none(),
       });
-      const steps = options.steps({ old: from, new: to });
-      const outcome = yield* switchOver(switchSteps(home, { old: from, new: to }, steps, resumed));
-      const recording =
-        steps.supervised && outcome._tag === "updated"
-          ? yield* recordTransitioned(home, to.version, Option.none()).pipe(
-              Effect.as(Option.none<string>()),
-              Effect.catch((cause) => Effect.succeedSome(cause.message)),
-            )
-          : Option.none<string>();
-      const pruning =
-        outcome._tag === "updated"
-          ? yield* prune(home, from, to, steps).pipe(
-              Effect.as(Option.none<string>()),
-              Effect.catch((cause) => Effect.succeedSome(cause.message)),
-            )
-          : Option.none<string>();
-      return { from, outcome, recording, pruning } satisfies TransitionResult;
+      if (Option.isSome(failed)) {
+        return rolledBack({ _tag: "cut-off-rollback-failed", rollback: failed.value, snapshot });
+      }
+      if (pending.from.version === to.version) {
+        return rolledBack({ _tag: "cut-off-rolled-back", snapshot });
+      }
+      return yield* switchFrom(pending.from, Option.none(), Option.some(pending.to));
     }),
   );
 });

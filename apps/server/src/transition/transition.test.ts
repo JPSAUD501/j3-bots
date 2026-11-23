@@ -11,7 +11,7 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { listSnapshots, takeSnapshot, unfinishedRollback } from "../install/snapshot.ts";
 import { type ServerProbe } from "./readiness.ts";
-import { decideStart, readRuntimeRecord } from "./record.ts";
+import { decideStart, readRuntimeRecord, recordReady } from "./record.ts";
 import { type Side, StepFailed } from "./switch.ts";
 import { type HostSteps, rollBack, transition, TransitionLock } from "./transition.ts";
 
@@ -24,17 +24,19 @@ const NEW = { version: "0.3.1" };
  * the database as it starts, which the old one cannot read back. A release
  * in `failing` starts, migrates, then exits before it is ready; `crashAt`
  * names a step that never returns, as when the app is killed there, and
- * `beforeStart` runs as a release starts.
+ * `beforeStart` runs as a release starts. `startedOn` says, for each start,
+ * the data the release found.
  */
-const hostOn = Effect.fn(function* () {
+const hostOn = Effect.fn(function* (ran: string = OLD.version) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* fs.makeTempDirectoryScoped();
   const database = path.join(home, "j3.sqlite");
-  yield* fs.writeFileString(database, `data of ${OLD.version}`);
+  yield* fs.writeFileString(database, `data of ${ran}`);
   const host = {
     running: Option.some<Side>("old"),
     log: [] as Array<string>,
+    startedOn: [] as Array<string>,
     pruned: [] as Array<readonly [string, string]>,
     failing: new Set<string>(),
     crashAt: Option.none<"adopt">(),
@@ -56,6 +58,7 @@ const hostOn = Effect.fn(function* () {
       Effect.gen(function* () {
         const { version } = releases[side];
         host.log.push(`start ${version}`);
+        host.startedOn.push(`${version} on ${yield* fs.readFileString(database)}`);
         yield* host.beforeStart(version);
         if (side === "new") yield* fs.writeFileString(database, `data of ${version}`);
         host.running = Option.some(side);
@@ -91,6 +94,32 @@ const hostOn = Effect.fn(function* () {
   });
   const lock = yield* TransitionLock.hold(home, () => "busy" as const);
   return { home, database, host, steps, lock };
+});
+
+/** Runs a transition that is cut off, as the app is killed, once `to` ran and migrated the data. */
+const cutOff = Effect.fn(function* (
+  { host, steps, lock }: Effect.Success<ReturnType<typeof hostOn>>,
+  from: string,
+  to: string,
+) {
+  host.crashAt = Option.some("adopt");
+  const cut = yield* Effect.exit(
+    transition({ lock, from: { version: from }, to: { version: to }, steps }),
+  );
+  assert.isTrue(Exit.isFailure(cut), "the transition was cut off");
+  host.crashAt = Option.none();
+  host.log.length = 0;
+  host.startedOn.length = 0;
+});
+
+/** What `decideStart` answers for `starting` on the home. */
+const decisionFor = Effect.fn(function* (home: string, starting: string, kept: Array<string>) {
+  return decideStart({
+    recorded: yield* readRuntimeRecord(home),
+    starting,
+    kept,
+    rollingBackTo: Option.none(),
+  });
 });
 
 /** The home's record, which the test expects there. */
@@ -238,6 +267,166 @@ it.layer(NodeServices.layer)("a version transition", (it) => {
         assert.deepStrictEqual([record.version, record.rollback], ["0.3.0", { from: "0.3.1" }]);
         assert.isUndefined(record.pending);
       }),
+  );
+
+  it.effect("finishes a cut-off transition when the release it was moving to becomes ready", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* hostOn();
+      yield* cutOff(home, OLD.version, NEW.version);
+      const original = (yield* listSnapshots(home.home))[0];
+
+      const { outcome, from, interrupted } = yield* transition({
+        lock: home.lock,
+        from: NEW,
+        to: NEW,
+        steps: home.steps,
+      });
+
+      assert.strictEqual(outcome._tag, "updated");
+      if (outcome._tag !== "updated") return;
+      assert.strictEqual(from.version, OLD.version, "from the release that ran before the cut");
+      assert.isTrue(Option.isNone(interrupted));
+      assert.strictEqual(outcome.snapshot.folder, original?.folder);
+      assert.lengthOf(yield* listSnapshots(home.home), 1, "no snapshot of the migrated data");
+      assert.deepStrictEqual(home.host.log, ["stop", "start 0.3.1", "adopt 0.3.1"]);
+      assert.strictEqual(yield* fs.readFileString(home.database), "data of 0.3.1");
+      const record = Option.getOrThrow(yield* recordOf(home.home));
+      assert.deepStrictEqual([record.version, record.pending], ["0.3.1", undefined]);
+    }),
+  );
+
+  it.effect(
+    "rolls a cut-off transition back before another release starts, never on the data it migrated",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* hostOn("0.2.0");
+        yield* cutOff(home, "0.2.0", "0.4.0");
+        assert.strictEqual(yield* fs.readFileString(home.database), "data of 0.4.0");
+        assert.strictEqual(
+          yield* decisionFor(home.home, "0.3.0", ["0.2.0", "0.3.0"]),
+          "snapshot-then-start",
+        );
+
+        const { outcome, from, interrupted } = yield* transition({
+          lock: home.lock,
+          from: { version: "0.4.0" },
+          to: { version: "0.3.0" },
+          steps: home.steps,
+        });
+
+        assert.deepStrictEqual(
+          home.host.startedOn,
+          ["0.2.0 on data of 0.2.0", "0.3.0 on data of 0.2.0"],
+          "0.2.0 is back on its own data before 0.3.0 starts",
+        );
+        assert.deepStrictEqual(home.host.log, [
+          "disable",
+          "start 0.2.0",
+          "adopt 0.2.0",
+          "stop",
+          "start 0.3.0",
+          "adopt 0.3.0",
+        ]);
+        assert.strictEqual(from.version, "0.2.0");
+        assert.deepStrictEqual(
+          Option.map(interrupted, ({ version }) => version),
+          Option.some("0.4.0"),
+        );
+        assert.strictEqual(outcome._tag, "updated");
+        if (outcome._tag !== "updated") return;
+        assert.deepStrictEqual(
+          [outcome.snapshot.manifest.from.version, outcome.snapshot.manifest.to.version],
+          ["0.2.0", "0.3.0"],
+        );
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(outcome.snapshot.folder, "j3.sqlite")),
+          "data of 0.2.0",
+          "its own snapshot is of the data put back",
+        );
+        const record = Option.getOrThrow(yield* recordOf(home.home));
+        assert.deepStrictEqual([record.version, record.pending], ["0.3.0", undefined]);
+      }),
+  );
+
+  it.effect(
+    "records the release that failed after a cut-off transition, so it is not retried by itself",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* hostOn();
+        yield* cutOff(home, OLD.version, NEW.version);
+        home.host.failing.add("0.3.2");
+
+        const { outcome, interrupted } = yield* transition({
+          lock: home.lock,
+          from: NEW,
+          to: { version: "0.3.2" },
+          steps: home.steps,
+        });
+
+        assert.strictEqual(outcome._tag, "rolled-back");
+        assert.deepStrictEqual(
+          Option.map(interrupted, ({ version }) => version),
+          Option.some("0.3.1"),
+        );
+        assert.deepStrictEqual(home.host.startedOn, [
+          "0.3.0 on data of 0.3.0",
+          "0.3.2 on data of 0.3.0",
+          "0.3.0 on data of 0.3.0",
+        ]);
+        assert.strictEqual(yield* fs.readFileString(home.database), "data of 0.3.0");
+        const record = Option.getOrThrow(yield* recordOf(home.home));
+        assert.deepStrictEqual(
+          [record.version, record.rollback, record.pending],
+          ["0.3.0", { from: "0.3.2" }, undefined],
+        );
+        const kept = ["0.3.0", "0.3.1", "0.3.2"];
+        for (let launch = 0; launch < 2; launch++) {
+          assert.strictEqual(yield* decisionFor(home.home, "0.3.2", kept), "refuse-rolled-back");
+          // The host starts the recorded release instead, as it is.
+          yield* recordReady(home.home, "0.3.0");
+        }
+
+        // The person asks to try again, and this time it starts.
+        home.host.failing.delete("0.3.2");
+        yield* TestClock.adjust("1 minute");
+        const retried = yield* transition({
+          lock: home.lock,
+          from: OLD,
+          to: { version: "0.3.2" },
+          steps: home.steps,
+        });
+        assert.strictEqual(retried.outcome._tag, "updated");
+        assert.strictEqual(yield* decisionFor(home.home, "0.3.2", kept), "start");
+      }),
+  );
+
+  it.effect("only rolls a cut-off transition back when asked for the release it started from", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* hostOn();
+      yield* cutOff(home, OLD.version, NEW.version);
+
+      const { outcome } = yield* transition({
+        lock: home.lock,
+        from: NEW,
+        to: OLD,
+        steps: home.steps,
+      });
+
+      assert.strictEqual(outcome._tag, "cut-off-rolled-back");
+      assert.deepStrictEqual(home.host.log, ["disable", "start 0.3.0", "adopt 0.3.0"]);
+      assert.strictEqual(yield* fs.readFileString(home.database), "data of 0.3.0");
+      assert.lengthOf(yield* listSnapshots(home.home), 1);
+      const record = Option.getOrThrow(yield* recordOf(home.home));
+      assert.deepStrictEqual(
+        [record.version, record.rollback, record.pending],
+        ["0.3.0", { from: "0.3.1" }, undefined],
+      );
+    }),
   );
 
   it.effect("keeps the rollback marked until the record says the old release runs", () =>
