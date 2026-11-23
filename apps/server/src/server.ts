@@ -9,10 +9,8 @@ import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
 import * as AdminSocket from "./admin/AdminSocket.ts";
 import * as ServerConfig from "./config.ts";
-import { Connectors, ToolNotOffered } from "./connectors/Connectors.ts";
 import * as Domain from "./domain.ts";
 import { engineProviders } from "./engine/providers.ts";
 import * as Home from "./home/Home.ts";
@@ -30,19 +28,6 @@ import * as Network from "./system/Network.ts";
 import { CONNECTOR_CALL_DEADLINE } from "./tools/protocol.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 import * as WebClient from "./web/WebClient.ts";
-
-/**
- * The connectors until the connector client is built in: none, so a bot is
- * offered only J3 Bots' own tools.
- */
-const noConnectors = Layer.succeed(
-  Connectors,
-  Connectors.of({
-    toolsFor: Effect.fn("Connectors.toolsFor")(() => Effect.succeed([])),
-    toolsChanged: Stream.never,
-    call: Effect.fn("Connectors.call")(() => Effect.fail(new ToolNotOffered())),
-  }),
-);
 
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
 
@@ -109,7 +94,7 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     // One decision for the client routes and the admin socket's report.
     Layer.provide(WebClient.statusLayer),
     Layer.provide(Domain.layer),
-    Layer.provide(Layer.mergeAll(engine, ExpoPushSender.layer, noConnectors)),
+    Layer.provide(Layer.merge(engine, ExpoPushSender.layer)),
     // One base prompt for the engine and the settings that change it.
     Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),
     Layer.provide(Sqlite.layer),

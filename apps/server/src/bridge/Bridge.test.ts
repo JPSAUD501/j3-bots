@@ -2,7 +2,7 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, it } from "@effect/vitest";
-import { CommandId, ConnectorId } from "@j3-bots/contracts";
+import { CommandId } from "@j3-bots/contracts";
 import { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Deferred from "effect/Deferred";
@@ -24,20 +24,19 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
-import type { OfferedTool } from "../connectors/Connectors.ts";
 import * as Ports from "../system/Ports.ts";
-import { TestConnectors } from "../testing/connectors.ts";
+import { fakeConnector, reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createBot, engineSession, nextTurn, sendToBot } from "../testing/turns.ts";
 import * as ToolEndpoint from "../tools/ToolEndpoint.ts";
-import { CONNECTOR_CALL_DEADLINE, TOOL_CHANGES_PATH } from "../tools/protocol.ts";
+import { CONNECTOR_CALL_DEADLINE, TOOL_CALL_PATH, TOOL_CHANGES_PATH } from "../tools/protocol.ts";
 import { serve } from "./Bridge.ts";
 
 /** The endpoint over the whole domain, and Node's own HTTP client, which the bridge runs with. */
 const endpoint = Layer.merge(
   Ports.serve(ToolEndpoint.routes, NodeHttpServer.layerTest, {
     logAddress: false,
-  }).pipe(Layer.provideMerge(TestDomain.layer)),
+  }).pipe(Layer.provideMerge(TestDomain.layer.pipe(Layer.provide(reachFakes)))),
   NodeHttpClient.layerNodeHttp,
 );
 
@@ -150,13 +149,19 @@ const call = (id: number, name: string, args: object) => ({
   params: { name, arguments: args },
 });
 
-const search: OfferedTool = {
-  name: "notion__search",
-  connectorId: ConnectorId.make("conn_0123456789abcdef"),
-  upstreamName: "search",
-  description: "Search the workspace's pages.",
-  inputSchema: { type: "object", properties: { query: { type: "string" } } },
-};
+/** A connector named `name` whose server lists `search`, as `<name>__search` to bots. */
+const searchable = (name: string, answer?: Parameters<typeof fakeConnector>[0]["answer"]) =>
+  fakeConnector({
+    name,
+    tools: [
+      {
+        name: "search",
+        description: "Search the workspace's pages.",
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      },
+    ],
+    ...(answer === undefined ? {} : { answer }),
+  });
 
 const sessionOf = (botId: string) =>
   Effect.gen(function* () {
@@ -232,31 +237,34 @@ it.layer(endpoint, { excludeTestServices: true })("j3 bridge", (it) => {
   );
 });
 
-/** A bot in a turn whose `notion__search` call, once forwarded, runs until interrupted. */
-const callThatRuns = Effect.fn(function* (name: string) {
+/**
+ * A bot in a turn whose call to its connector `connector`'s `search`, once
+ * forwarded, the connector's server holds until the call is closed.
+ */
+const callThatRuns = Effect.fn(function* (name: string, connector: string) {
   const bot = yield* createBot(name);
   const session = yield* engineSession(bot.id);
-  const connectors = yield* TestConnectors;
-  yield* connectors.offer(bot.id, [search]);
+  const { fake, grant } = yield* searchable(connector, () => ({ _tag: "hang" }));
+  yield* grant([bot.id]);
   yield* sendToBot(bot.id, "Find the roadmap.");
   const turnId = yield* nextTurn(bot.id);
+  const tool = `${connector.toLowerCase()}__search`;
   const args = { query: "roadmap" };
   yield* (yield* TestEngineControl).toolCall({
     sessionId: session,
     turnId,
-    tool: "notion__search",
+    tool,
     input: args,
     recorded: "now",
   });
-  const started = yield* Deferred.make<void>();
-  const abandoned = yield* Deferred.make<void>();
-  yield* connectors.answerWith(() =>
-    Deferred.succeed(started, undefined).pipe(
-      Effect.andThen(Effect.never),
-      Effect.onInterrupt(() => Deferred.succeed(abandoned, undefined)),
-    ),
-  );
-  return { session, request: call(1, "notion__search", args), started, abandoned };
+  return {
+    session,
+    request: call(1, tool, args),
+    /** The call reached the connector's server. */
+    started: fake.held(1),
+    /** The connector's server saw the call closed. */
+    abandoned: fake.released,
+  };
 });
 
 // The test clock: what the bridge waits on, it waits for in the test.
@@ -265,7 +273,7 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
     Effect.gen(function* () {
       const bot = yield* createBot("Cleo");
       const session = yield* engineSession(bot.id);
-      const connectors = yield* TestConnectors;
+      const notion = yield* searchable("Notion");
 
       const { replies, notifications } = yield* runBridgeWith(Option.some(session), (output) =>
         Stream.concat(
@@ -278,7 +286,7 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
             output
               .shows('"id":2')
               .pipe(
-                Effect.andThen(connectors.offer(bot.id, [search])),
+                Effect.andThen(notion.grant([bot.id])),
                 Effect.andThen(output.shows("notifications/tools/list_changed")),
                 Effect.as({ jsonrpc: "2.0", id: 3, method: "tools/list" }),
               ),
@@ -286,10 +294,13 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
         ).pipe(Stream.concat(Stream.fromEffect(answered(output, 3)).pipe(Stream.drain))),
       );
 
-      assert.deepStrictEqual(notifications, ["notifications/tools/list_changed"]);
+      // Granting the connector and listing its tools may each tell it.
+      assert.isNotEmpty(notifications);
+      for (const sent of notifications)
+        assert.strictEqual(sent, "notifications/tools/list_changed");
       assert.notInclude(replies.get(2)?.tools?.map((tool) => tool.name) ?? [], "notion__search");
       assert.include(replies.get(3)?.tools?.map((tool) => tool.name) ?? [], "notion__search");
-    }),
+    }).pipe(Effect.scoped),
   );
 
   it.effect("stops waiting for changes at the first wait the server does not answer", () =>
@@ -325,13 +336,13 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
 
   it.effect("abandons a connector's call the harness cancels, and does not answer it", () =>
     Effect.gen(function* () {
-      const { session, request, started, abandoned } = yield* callThatRuns("Dov");
+      const { session, request, started, abandoned } = yield* callThatRuns("Dov", "Drive");
 
       const { replies } = yield* runBridgeWith(Option.some(session), () =>
         Stream.concat(
           Stream.make(request),
           Stream.fromEffect(
-            Deferred.await(started).pipe(
+            started.pipe(
               Effect.as({
                 jsonrpc: "2.0",
                 method: "notifications/cancelled",
@@ -340,27 +351,24 @@ it.layer(endpoint)("j3 bridge with connectors", (it) => {
             ),
           ),
           // The input stays open until the call is abandoned: the cancel did it.
-        ).pipe(Stream.concat(Stream.fromEffect(Deferred.await(abandoned)).pipe(Stream.drain))),
+        ).pipe(Stream.concat(Stream.fromEffect(abandoned).pipe(Stream.drain))),
       );
 
       assert.strictEqual(replies.size, 0);
-    }),
+    }).pipe(Effect.scoped),
   );
 
   it.effect("abandons a connector's call still running when the harness closes the input", () =>
     Effect.gen(function* () {
-      const { session, request, started, abandoned } = yield* callThatRuns("Eli");
+      const { session, request, started, abandoned } = yield* callThatRuns("Eli", "Email");
 
       const { replies } = yield* runBridgeWith(Option.some(session), () =>
-        Stream.concat(
-          Stream.make(request),
-          Stream.fromEffect(Deferred.await(started)).pipe(Stream.drain),
-        ),
+        Stream.concat(Stream.make(request), Stream.fromEffect(started).pipe(Stream.drain)),
       );
 
-      yield* Deferred.await(abandoned);
+      yield* abandoned;
       assert.strictEqual(replies.size, 0);
-    }),
+    }).pipe(Effect.scoped),
   );
 });
 
@@ -370,19 +378,31 @@ it.layer(endpoint)("j3 bridge with a connector call that gets no answer", (it) =
     "tells the bot to check before it calls again when a connector's call got no answer",
     () =>
       Effect.gen(function* () {
-        const { session, request, started, abandoned } = yield* callThatRuns("Fay");
-
-        const { replies } = yield* runBridgeWith(Option.some(session), (output) =>
-          Stream.concat(
-            Stream.make(request),
-            Stream.fromEffect(
-              Deferred.await(started).pipe(
-                Effect.andThen(TestClock.adjust(CONNECTOR_CALL_DEADLINE)),
-                Effect.andThen(answered(output, 1)),
-              ),
-            ).pipe(Stream.drain),
-          ),
+        const forwarded = yield* Deferred.make<void>();
+        const abandoned = yield* Deferred.make<void>();
+        // A server that takes the call and never answers it.
+        const silent = HttpClient.transform(yield* HttpClient.HttpClient, (response, request) =>
+          request.url.endsWith(TOOL_CALL_PATH)
+            ? Deferred.succeed(forwarded, undefined).pipe(
+                Effect.andThen(Effect.never),
+                Effect.onInterrupt(() => Deferred.succeed(abandoned, undefined)),
+              )
+            : response,
         );
+
+        const { replies } = yield* runBridgeWith(
+          Option.some(SessionId.make("thread-1")),
+          (output) =>
+            Stream.concat(
+              Stream.make(call(1, "notion__search", { query: "roadmap" })),
+              Stream.fromEffect(
+                Deferred.await(forwarded).pipe(
+                  Effect.andThen(TestClock.adjust(CONNECTOR_CALL_DEADLINE)),
+                  Effect.andThen(answered(output, 1)),
+                ),
+              ).pipe(Stream.drain),
+            ),
+        ).pipe(Effect.provideService(HttpClient.HttpClient, silent));
 
         yield* Deferred.await(abandoned);
         assert.isTrue(replies.get(1)?.isError);

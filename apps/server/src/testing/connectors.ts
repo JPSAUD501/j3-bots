@@ -1,79 +1,124 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId } from "@j3-bots/contracts";
-import * as Context from "effect/Context";
+import { DEFAULT_SESSION_LIMITS, type SessionLimits } from "@j3-bots/connectors";
+import { type FakeMcpServer, type FakeOptions, fakeMcpServer } from "@j3-bots/connectors/testing";
+import { type BotId, CommandId, ConnectorId, type Connector } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
-import * as Ref from "effect/Ref";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import {
-  Connectors,
-  type OfferedTool,
-  type ToolCallAnswer,
-  ToolNotOffered,
-} from "../connectors/Connectors.ts";
+import { ConnectorReach, Connectors } from "../connectors/Connectors.ts";
+import { vaultIdOf } from "../connectors/credentials.ts";
+import { Vault } from "../vault/Vault.ts";
 
-/** A call that reached a connector: for which bot, to which tool, with what. */
-export interface ConnectorCall {
-  readonly botId: BotId;
+/**
+ * Connectors through the server's own connectors service, each to a fake MCP
+ * server on loopback.
+ *
+ * The fake answers over plain HTTP on loopback, which no address an operator
+ * adds can name. So the service may reach loopback here and resolves no name,
+ * so a connector's first listing, at its address, fails; its sealed address
+ * is then pointed at the fake, which the next listing reaches.
+ */
+export const reachFakes = Layer.succeed(ConnectorReach, {
+  limits: {
+    ...DEFAULT_SESSION_LIMITS,
+    guard: {
+      ...DEFAULT_SESSION_LIMITS.guard,
+      resolve: () => Promise.reject(new Error("no such host")),
+    },
+  } satisfies SessionLimits,
+  loopback: "allow-http",
+});
+
+const PASSWORD = Redacted.make("correct horse battery");
+
+/** A call that reached a fake connector's server. */
+interface FakeCall {
   readonly name: string;
-  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly arguments: unknown;
+}
+
+interface FakeConnector {
+  readonly fake: FakeMcpServer;
+  /** The connector is the tool of these bots alone, once its tools are listed for each. */
+  readonly grant: (bots: ReadonlyArray<BotId>) => Effect.Effect<void>;
+  /** Every call that reached its server, in order. */
+  readonly calls: Effect.Effect<ReadonlyArray<FakeCall>>;
 }
 
 /**
- * How the connectors answer a call to a tool the bot is offered. The default
- * answers with the tool's name.
+ * A connector named `name` to a fake server listing `tools`, granted to no
+ * bot. Each call answers with the tool's name, unless `answer` says otherwise.
+ * Its id comes from its name, so a test's connectors have names of their own.
  */
-export type ConnectorAnswerer = (call: ConnectorCall) => Effect.Effect<ToolCallAnswer>;
-
-/** In-memory connectors, whose offered tools and answers a test sets. */
-export class TestConnectors extends Context.Service<
-  TestConnectors,
-  {
-    /** `botId` is offered these tools from now on, and its list changes. */
-    readonly offer: (botId: BotId, tools: ReadonlyArray<OfferedTool>) => Effect.Effect<void>;
-    readonly answerWith: (answerer: ConnectorAnswerer) => Effect.Effect<void>;
-    /** Every call that reached a connector, in order. */
-    readonly calls: Effect.Effect<ReadonlyArray<ConnectorCall>>;
+export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function* (input: {
+  readonly name: string;
+  readonly tools: FakeOptions["tools"];
+  readonly answer?: FakeOptions["call"];
+}) {
+  const calls: Array<FakeCall> = [];
+  const fake = yield* fakeMcpServer({
+    tools: input.tools,
+    call: (name, args, headers) => {
+      calls.push({ name, arguments: args });
+      return input.answer?.(name, args, headers) ?? { _tag: "result", text: `${name} answered` };
+    },
+  });
+  const vault = yield* Vault;
+  const status = yield* Stream.runHead(vault.status);
+  // The first connector of a domain sets its vault up.
+  if (Option.isSome(status) && status.value.state === "uninitialized") {
+    yield* vault.setup(PASSWORD);
   }
->()("@j3-bots/server/testing/connectors/TestConnectors") {}
+  const service = yield* Connectors;
+  const id = ConnectorId.make(`conn_${input.name.toLowerCase().padEnd(16, "0")}`);
+  yield* service.add({
+    id,
+    source: {
+      _tag: "remote",
+      name: input.name,
+      url: Redacted.make(`https://${input.name.toLowerCase()}.example/mcp`),
+      headers: [],
+      oauthClient: null,
+      privateNetwork: false,
+    },
+    grant: { _tag: "bots", ids: [] },
+    suggestion: null,
+  });
+  const secret = yield* vault.connectorSecrets.get(vaultIdOf(id));
+  if (Option.isNone(secret)) return yield* Effect.die("The connector's secret was not sealed");
+  yield* vault.connectorSecrets.put({ ...secret.value, address: Redacted.make(fake.url) });
 
-export const layer = Layer.effectContext(
-  Effect.gen(function* () {
-    const offered = yield* Ref.make<ReadonlyMap<BotId, ReadonlyArray<OfferedTool>>>(new Map());
-    const answerer = yield* Ref.make<ConnectorAnswerer>((call) =>
-      Effect.succeed({ text: `${call.name} answered`, isError: false }),
-    );
-    const calls = yield* Ref.make<ReadonlyArray<ConnectorCall>>([]);
-    const changes = yield* PubSub.unbounded<BotId>();
-
-    const toolsFor = (botId: BotId) =>
-      Ref.get(offered).pipe(Effect.map((tools) => tools.get(botId) ?? []));
-
-    const connectors = Connectors.of({
-      toolsFor,
-      toolsChanged: Stream.fromPubSub(changes),
-      call: (input) =>
-        Effect.gen(function* () {
-          const tools = yield* toolsFor(input.botId);
-          if (!tools.some((tool) => tool.name === input.name)) {
-            return yield* new ToolNotOffered();
-          }
-          yield* Ref.update(calls, (made) => [...made, input]);
-          return yield* (yield* Ref.get(answerer))(input);
-        }),
-    });
-
-    const control = TestConnectors.of({
-      offer: (botId, tools) =>
-        Ref.update(offered, (current) => new Map(current).set(botId, tools)).pipe(
-          Effect.andThen(PubSub.publish(changes, botId)),
-          Effect.asVoid,
+  const listedFor = (bot: BotId) =>
+    Effect.gen(function* () {
+      // Asking for a bot's tools lists a connector its server has not listed yet.
+      yield* service.toolsFor(bot);
+      yield* service.subscribe.pipe(
+        Stream.flatMap((event) =>
+          Stream.fromIterable(event._tag === "snapshot" ? event.connectors : event.upsert),
         ),
-      answerWith: (next) => Ref.set(answerer, next),
-      calls: Ref.get(calls),
+        Stream.filter(
+          (connector: Connector) =>
+            connector.id === id &&
+            connector.status._tag === "connected" &&
+            connector.tools.length > 0,
+        ),
+        Stream.runHead,
+      );
     });
 
-    return Context.make(Connectors, connectors).pipe(Context.add(TestConnectors, control));
-  }),
-);
+  return {
+    fake,
+    grant: (bots) =>
+      Effect.gen(function* () {
+        yield* service.setBots({
+          commandId: CommandId.make(`grant-${id}-${bots.join(",")}`),
+          connectorId: id,
+          grant: { _tag: "bots", ids: bots },
+        });
+        yield* Effect.forEach(bots, listedFor, { discard: true });
+      }).pipe(Effect.orDie),
+    calls: Effect.sync(() => [...calls]),
+  } satisfies FakeConnector;
+}, Effect.orDie);

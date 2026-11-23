@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, ConnectorId } from "@j3-bots/contracts";
 import { SessionId, type TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL, toolList } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import type { OfferedTool } from "../connectors/Connectors.ts";
-import { TestConnectors } from "../testing/connectors.ts";
+import { fakeConnector, reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
   awaitEntry,
@@ -22,19 +21,27 @@ import { Cards } from "../turns/Cards.ts";
 import { BotTools } from "./BotTools.ts";
 import { ToolLists } from "./ToolLists.ts";
 
-const search: OfferedTool = {
-  name: "notion__search",
-  connectorId: ConnectorId.make("conn_0123456789abcdef"),
-  upstreamName: "search",
-  description: "Search the workspace's pages.",
-  inputSchema: { type: "object", properties: { query: { type: "string" } } },
-};
+const domain = TestDomain.layer.pipe(Layer.provide(reachFakes));
 
-/** A bot working on a message from the operator, offered `offered`. */
-const working = (name: string, offered: ReadonlyArray<OfferedTool>) =>
+/** Each test sets up a vault, whose key takes a while to derive, and talks to a server over a socket. */
+const SLOW = 20_000;
+
+/** A connector whose server lists `search`, as `notion__search` to bots. */
+const notion = fakeConnector({
+  name: "Notion",
+  tools: [
+    {
+      name: "search",
+      description: "Search the workspace's pages.",
+      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+    },
+  ],
+});
+
+/** A bot working on a message from the operator. */
+const working = (name: string) =>
   Effect.gen(function* () {
     const bot = yield* createBot(name);
-    yield* (yield* TestConnectors).offer(bot.id, offered);
     const session = yield* engineSession(bot.id);
     yield* sendToBot(bot.id, "Find the roadmap.");
     const turnId = yield* nextTurn(bot.id);
@@ -70,74 +77,82 @@ const listed = (session: SessionId) =>
     return list.tools.map((tool) => tool.name);
   });
 
-const callsBy = (botId: BotId) =>
-  Effect.gen(function* () {
-    const calls = yield* (yield* TestConnectors).calls;
-    return calls.filter((call) => call.botId === botId).map((call) => call.name);
-  });
+it.effect(
+  "lists a bot's own tools and the connector tools it is offered, and no other bot's",
+  () =>
+    Effect.gen(function* () {
+      const connector = yield* notion;
+      const ana = yield* working("Ana");
+      const ben = yield* working("Ben");
+      yield* connector.grant([ana.bot.id]);
+      const own = toolList.map((tool) => tool.name);
 
-it.effect("lists a bot's own tools and the connector tools it is offered, and no other bot's", () =>
-  Effect.gen(function* () {
-    const ana = yield* working("Ana", [search]);
-    const ben = yield* working("Ben", []);
-    const own = toolList.map((tool) => tool.name);
-
-    assert.deepStrictEqual(yield* listed(ana.session), [...own, "notion__search"]);
-    assert.deepStrictEqual(yield* listed(ben.session), own);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.deepStrictEqual(yield* listed(ana.session), [...own, "notion__search"]);
+      assert.deepStrictEqual(yield* listed(ben.session), own);
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
 );
 
-it.effect("tells a bridge waiting on its list when the bot's offered tools change", () =>
-  Effect.gen(function* () {
-    const ana = yield* working("Ana", []);
-    const lists = yield* ToolLists;
-    const before = yield* lists.list(ana.session);
+it.effect(
+  "tells a bridge waiting on its list when the bot's offered tools change",
+  () =>
+    Effect.gen(function* () {
+      const connector = yield* notion;
+      const ana = yield* working("Ana");
+      const lists = yield* ToolLists;
+      const before = yield* lists.list(ana.session);
 
-    const waiting = yield* Effect.forkChild(
-      lists.changes({ sessionId: ana.session, since: before.version }),
-    );
-    yield* (yield* TestConnectors).offer(ana.bot.id, [search]);
-    const changed = yield* Fiber.join(waiting);
+      const waiting = yield* Effect.forkChild(
+        lists.changes({ sessionId: ana.session, since: before.version }),
+      );
+      yield* connector.grant([ana.bot.id]);
+      const changed = yield* Fiber.join(waiting);
 
-    const after = yield* lists.list(ana.session);
-    assert.notStrictEqual(after.version, before.version);
-    assert.deepStrictEqual(changed, Option.some({ version: after.version }));
-    assert.include(
-      after.tools.map((tool) => tool.name),
-      "notion__search",
-    );
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.isTrue(Option.isSome(changed));
+      assert.notStrictEqual(Option.getOrThrow(changed).version, before.version);
+      assert.include(yield* listed(ana.session), "notion__search");
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
 );
 
-it.effect("makes a connector call the bot's turn made at the connector once", () =>
-  Effect.gen(function* () {
-    const ana = yield* working("Ana", [search]);
+it.effect(
+  "makes a connector call the bot's turn made at the connector once",
+  () =>
+    Effect.gen(function* () {
+      const connector = yield* notion;
+      const ana = yield* working("Ana");
+      yield* connector.grant([ana.bot.id]);
 
-    const reply = yield* callInTurn(ana, "notion__search", { query: "roadmap" }, "call-1");
-    assert.deepStrictEqual(reply, {
-      _tag: "text",
-      text: "notion__search answered",
-      isError: false,
-    });
+      const reply = yield* callInTurn(ana, "notion__search", { query: "roadmap" }, "call-1");
+      assert.strictEqual(reply._tag, "text");
+      if (reply._tag === "text") {
+        assert.isFalse(reply.isError);
+        assert.include(reply.text, "search answered");
+      }
 
-    // The bridge forwarding the request again: the answer was not kept, so it
-    // says the call may have happened, and the connector is not called again.
-    const repeated = yield* (yield* BotTools).call({
-      requestId: "call-1",
-      sessionId: ana.session,
-      tool: "notion__search",
-      arguments: { query: "roadmap" },
-    });
-    assert.strictEqual(repeated._tag, "refused");
-    assert.deepStrictEqual(yield* callsBy(ana.bot.id), ["notion__search"]);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      // The bridge forwarding the request again: the answer was not kept, so it
+      // says the call may have happened, and the connector is not called again.
+      const repeated = yield* (yield* BotTools).call({
+        requestId: "call-1",
+        sessionId: ana.session,
+        tool: "notion__search",
+        arguments: { query: "roadmap" },
+      });
+      assert.strictEqual(repeated._tag, "refused");
+      assert.deepStrictEqual(yield* connector.calls, [
+        { name: "search", arguments: { query: "roadmap" } },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
 );
 
 it.effect(
   "makes a connector call whose record the engine closed while it waited on its approval",
   () =>
     Effect.gen(function* () {
-      const ana = yield* working("Ana", [search]);
+      const connector = yield* notion;
+      const ana = yield* working("Ana");
+      yield* connector.grant([ana.bot.id]);
       const engine = yield* TestEngineControl;
       const args = { query: "roadmap" };
       // Codex closes its record of the call while the operator is still deciding.
@@ -157,115 +172,136 @@ it.effect(
 
       assert.strictEqual(reply._tag, "text");
       assert.deepStrictEqual(another, { _tag: "refused", message: NO_TURN_REFUSAL });
-      assert.deepStrictEqual(yield* callsBy(ana.bot.id), ["notion__search"]);
-    }).pipe(Effect.provide(TestDomain.layer)),
+      assert.strictEqual((yield* connector.calls).length, 1);
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
 );
 
-it.effect("never makes a connector call whose approval the operator declined", () =>
-  Effect.gen(function* () {
-    const ana = yield* working("Ana", [search]);
-    const engine = yield* TestEngineControl;
-    const args = { query: "roadmap" };
-    const callId = yield* engine.toolCall({
-      sessionId: ana.session,
-      turnId: ana.turnId,
-      tool: "notion__search",
-      input: args,
-      recorded: "now",
-    });
-    // Codex's record closes while the call waits, which alone leaves it claimable.
-    yield* engine.closeToolCall({ sessionId: ana.session, turnId: ana.turnId, callId });
-    yield* engine.openRequest({
-      sessionId: ana.session,
-      turnId: ana.turnId,
-      request: {
-        _tag: "approval",
-        kind: "tool",
-        action: 'Notion: search {"query":"roadmap"}',
-        detail: null,
-        reason: null,
-        exact: true,
-        sessionGrant: null,
-      },
-      heldCall: callId,
-    });
-    const card = yield* awaitEntry(ana.bot.id, "approval");
+it.effect(
+  "never makes a connector call whose approval the operator declined",
+  () =>
+    Effect.gen(function* () {
+      const connector = yield* notion;
+      const ana = yield* working("Ana");
+      yield* connector.grant([ana.bot.id]);
+      const engine = yield* TestEngineControl;
+      const args = { query: "roadmap" };
+      const callId = yield* engine.toolCall({
+        sessionId: ana.session,
+        turnId: ana.turnId,
+        tool: "notion__search",
+        input: args,
+        recorded: "now",
+      });
+      // Codex's record closes while the call waits, which alone leaves it claimable.
+      yield* engine.closeToolCall({ sessionId: ana.session, turnId: ana.turnId, callId });
+      yield* engine.openRequest({
+        sessionId: ana.session,
+        turnId: ana.turnId,
+        request: {
+          _tag: "approval",
+          kind: "tool",
+          action: 'Notion: search {"query":"roadmap"}',
+          detail: null,
+          reason: null,
+          exact: true,
+          sessionGrant: null,
+        },
+        heldCall: callId,
+      });
+      const card = yield* awaitEntry(ana.bot.id, "approval");
 
-    yield* (yield* Cards).answer({
-      commandId: command(),
-      entryId: card.id,
-      answer: { _tag: "approval", decision: "deny" },
-    });
-    // Whoever has the session and the call's input, before the engine hears the answer.
-    const reply = yield* (yield* BotTools).call({
-      requestId: "call-1",
-      sessionId: ana.session,
-      tool: "notion__search",
-      arguments: args,
-    });
+      yield* (yield* Cards).answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: { _tag: "approval", decision: "deny" },
+      });
+      // Whoever has the session and the call's input, before the engine hears the answer.
+      const reply = yield* (yield* BotTools).call({
+        requestId: "call-1",
+        sessionId: ana.session,
+        tool: "notion__search",
+        arguments: args,
+      });
 
-    assert.deepStrictEqual(reply, { _tag: "refused", message: NO_TURN_REFUSAL });
-    assert.deepStrictEqual(yield* callsBy(ana.bot.id), []);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.deepStrictEqual(reply, { _tag: "refused", message: NO_TURN_REFUSAL });
+      assert.deepStrictEqual(yield* connector.calls, []);
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
 );
 
-it.effect("refuses a connector tool the bot is not offered, though another bot is", () =>
-  Effect.gen(function* () {
-    yield* working("Ana", [search]);
-    const ben = yield* working("Ben", []);
+it.effect(
+  "refuses a connector tool the bot is not offered, though another bot is",
+  () =>
+    Effect.gen(function* () {
+      const connector = yield* notion;
+      const ana = yield* working("Ana");
+      const ben = yield* working("Ben");
+      yield* connector.grant([ana.bot.id]);
 
-    const reply = yield* callInTurn(ben, "notion__search", { query: "roadmap" }, "call-1");
+      const reply = yield* callInTurn(ben, "notion__search", { query: "roadmap" }, "call-1");
 
-    assert.deepStrictEqual(reply, {
-      _tag: "refused",
-      message: "No connector tool by that name is offered to this bot.",
-    });
-    assert.deepStrictEqual(yield* (yield* TestConnectors).calls, []);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.deepStrictEqual(reply, {
+        _tag: "refused",
+        message: "No connector tool by that name is offered to this bot.",
+      });
+      assert.deepStrictEqual(yield* connector.calls, []);
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
 );
 
-it.effect("refuses a connector call that is not its bot's running turn's", () =>
-  Effect.gen(function* () {
-    const ana = yield* working("Ana", [search]);
+it.effect(
+  "refuses a connector call that is not its bot's running turn's",
+  () =>
+    Effect.gen(function* () {
+      const connector = yield* notion;
+      const ana = yield* working("Ana");
+      yield* connector.grant([ana.bot.id]);
 
-    // A call the engine has no record of, as a subagent's or a forged one.
-    const reply = yield* (yield* BotTools).call({
-      requestId: "call-1",
-      sessionId: ana.session,
-      tool: "notion__search",
-      arguments: { query: "roadmap" },
-    });
+      // A call the engine has no record of, as a subagent's or a forged one.
+      const reply = yield* (yield* BotTools).call({
+        requestId: "call-1",
+        sessionId: ana.session,
+        tool: "notion__search",
+        arguments: { query: "roadmap" },
+      });
 
-    assert.deepStrictEqual(reply, { _tag: "refused", message: NO_TURN_REFUSAL });
-    assert.deepStrictEqual(yield* (yield* TestConnectors).calls, []);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.deepStrictEqual(reply, { _tag: "refused", message: NO_TURN_REFUSAL });
+      assert.deepStrictEqual(yield* connector.calls, []);
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
 );
 
-it.effect("refuses a connector call from a session that is no bot's", () =>
-  Effect.gen(function* () {
-    const ana = yield* working("Ana", [search]);
+it.effect(
+  "refuses a connector call from a session that is no bot's",
+  () =>
+    Effect.gen(function* () {
+      const connector = yield* notion;
+      const ana = yield* working("Ana");
+      yield* connector.grant([ana.bot.id]);
 
-    const reply = yield* (yield* BotTools).call({
-      requestId: "call-1",
-      sessionId: SessionId.make("thread-of-no-bot"),
-      tool: "notion__search",
-      arguments: { query: "roadmap" },
-    });
+      const reply = yield* (yield* BotTools).call({
+        requestId: "call-1",
+        sessionId: SessionId.make("thread-of-no-bot"),
+        tool: "notion__search",
+        arguments: { query: "roadmap" },
+      });
 
-    assert.strictEqual(reply._tag, "refused");
-    assert.deepStrictEqual(yield* callsBy(ana.bot.id), []);
-    // Its bridge lists only J3 Bots' own tools, and cannot hold a wait for a change open.
-    assert.deepStrictEqual(
-      yield* listed(SessionId.make("thread-of-no-bot")),
-      toolList.map((tool) => tool.name),
-    );
-    assert.isTrue(
-      Option.isNone(
-        yield* (yield* ToolLists).changes({
-          sessionId: SessionId.make("thread-of-no-bot"),
-          since: "any",
-        }),
-      ),
-    );
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.strictEqual(reply._tag, "refused");
+      assert.deepStrictEqual(yield* connector.calls, []);
+      // Its bridge lists only J3 Bots' own tools, and cannot hold a wait for a change open.
+      assert.deepStrictEqual(
+        yield* listed(SessionId.make("thread-of-no-bot")),
+        toolList.map((tool) => tool.name),
+      );
+      assert.isTrue(
+        Option.isNone(
+          yield* (yield* ToolLists).changes({
+            sessionId: SessionId.make("thread-of-no-bot"),
+            since: "any",
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(domain)),
+  SLOW,
 );
