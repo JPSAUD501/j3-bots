@@ -60,9 +60,10 @@ interface OnboardingProps {
   readonly footer?: ReactNode;
   /**
    * Signing the providers in from this app, while its server runs on this
-   * computer; without it, the connect step gives the command to run there.
+   * computer; `undefined` elsewhere, where the connect step gives the command
+   * to run on the server. Every first run says which it is.
    */
-  readonly providerSetup?: LocalProviderSetup;
+  readonly providerSetup: LocalProviderSetup | undefined;
   /**
    * What the bot's arrival waits for before the server has it, said under the
    * bot, as while the server on this computer starts; `null` for nothing.
