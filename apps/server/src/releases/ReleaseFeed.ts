@@ -9,7 +9,6 @@ import {
   VerificationFailure,
 } from "@j3-bots/contracts";
 import {
-  type Candidate,
   channelOf,
   GitHubRelease,
   GitHubReleases,
@@ -84,6 +83,8 @@ const FIRST_BACKOFF = Duration.minutes(15);
 /** Releases the nightly channel reads, newest first: a week of nightlies and the stable releases between. */
 const NIGHTLY_PAGE = 30;
 const REQUEST_TIMEOUT = Duration.seconds(30);
+/** A whole check, the downloads of a release's two small files included. */
+const CHECK_TIMEOUT = Duration.minutes(2);
 /** No `SHA256SUMS` or signature is near this; a bigger answer is not one. */
 const MAX_LIST_BYTES = 1024 * 1024;
 
@@ -105,7 +106,7 @@ const FeedRecord = Schema.Struct({
   schema: Schema.Literal(1),
   stable: Schema.NullOr(ChannelRecord),
   nightly: Schema.NullOr(ChannelRecord),
-  /** Whether each channel's newest release verified: null `failure` when it did. */
+  /** Whether each channel's newest release verified when it was last checked: null `failure` when it did. */
   verdicts: Schema.Array(
     Schema.Struct({ version: ReleaseVersion, failure: Schema.NullOr(VerificationFailure) }),
   ),
@@ -343,28 +344,47 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
         yield* publish;
         const outcome = yield* Effect.gen(function* () {
           const found = yield* fetchNewest(channel, saved[channel]);
-          const newer = found.newest !== null && isNewer(found.newest.version, running);
-          const known =
-            found.newest === null
-              ? undefined
-              : saved.verdicts.find((each) => each.version === found.newest?.version);
-          const verdicts =
-            !newer || found.newest === null || known !== undefined
-              ? saved.verdicts
-              : [
-                  ...saved.verdicts,
-                  { version: found.newest.version, failure: yield* verify(found.newest.version) },
-                ];
-          return { found, verdicts };
-        }).pipe(Effect.result);
+          const offered = found.newest !== null && isNewer(found.newest.version, running);
+          const verified = saved.verdicts.some(
+            (each) => each.version === found.newest?.version && each.failure === null,
+          );
+          // A release that verified once is not downloaded again; one that
+          // was refused is, since a release's files can be fixed in place.
+          if (found.newest === null || !offered || verified) {
+            return { found, verdicts: saved.verdicts };
+          }
+          const { version } = found.newest;
+          const failure = yield* verify(version);
+          return {
+            found,
+            verdicts: [
+              ...saved.verdicts.filter((each) => each.version !== version),
+              { version, failure },
+            ],
+          };
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: CHECK_TIMEOUT,
+            orElse: () => Effect.fail(unreachable()),
+          }),
+          Effect.result,
+        );
         const now = yield* DateTime.now;
-        const next: FeedRecord = Result.match(outcome, {
+        const jitter = Duration.millis(yield* Random.nextIntBetween(0, Duration.toMillis(JITTER)));
+        const scheduled: FeedRecord = Result.match(outcome, {
           onSuccess: ({ found, verdicts }) => {
             const channels = { ...saved, [channel]: found };
             return {
               ...channels,
               verdicts: verdictsFor(channels, verdicts),
-              lastCheck: { at: now, channel, failure: null, nextAt: now },
+              // Next due in `CHECK_EVERY`, spread so that servers started
+              // together do not ask together.
+              lastCheck: {
+                at: now,
+                channel,
+                failure: null,
+                nextAt: DateTime.addDuration(now, Duration.sum(CHECK_EVERY, jitter)),
+              },
               backoffMinutes: 0,
             };
           },
@@ -374,7 +394,12 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
                 ? Duration.toMinutes(FIRST_BACKOFF)
                 : Math.min(saved.backoffMinutes * 2, Duration.toMinutes(CHECK_EVERY));
             const after = DateTime.add(now, { minutes: backoff });
-            const nextAt = failed.retryAt === null ? after : DateTime.max(after, failed.retryAt);
+            // Never later than a regular check would be, whatever a reset says.
+            const latest = DateTime.addDuration(now, CHECK_EVERY);
+            const nextAt =
+              failed.retryAt === null
+                ? after
+                : DateTime.min(DateTime.max(after, failed.retryAt), latest);
             return {
               ...saved,
               lastCheck: { at: now, channel, failure: failed.failure, nextAt },
@@ -382,24 +407,6 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
             };
           },
         });
-        // A check that finished is next due in `CHECK_EVERY`, spread so that
-        // servers started together do not ask together.
-        const scheduled: FeedRecord =
-          next.lastCheck !== null && next.lastCheck.failure === null
-            ? {
-                ...next,
-                lastCheck: {
-                  ...next.lastCheck,
-                  nextAt: DateTime.addDuration(
-                    now,
-                    Duration.sum(
-                      CHECK_EVERY,
-                      Duration.millis(yield* Random.nextIntBetween(0, Duration.toMillis(JITTER))),
-                    ),
-                  ),
-                },
-              }
-            : next;
         yield* Ref.set(record, scheduled);
         yield* save(scheduled);
         if (outcome._tag === "Failure") {

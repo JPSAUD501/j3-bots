@@ -207,6 +207,27 @@ describe("the release feed", () => {
   );
 
   it.effect(
+    "verifies a refused release again at the next check, and offers it once its signature is fixed",
+    () =>
+      Effect.gen(function* () {
+        const github = yield* FakeGitHub;
+        github.latest = release("0.3.1", false);
+        github.files.set("0.3.1", { sums: signed("0.3.1").sums, signature: null });
+        const feed = yield* make({ running: "0.3.0" });
+        assert.deepStrictEqual((yield* feed.check).refused, {
+          version: "0.3.1",
+          reason: "signature-missing",
+        });
+
+        github.files.set("0.3.1", signed("0.3.1"));
+        yield* TestClock.adjust("2 minutes");
+        const fixed = yield* feed.check;
+        assert.strictEqual(fixed.available?.version, "0.3.1");
+        assert.isNull(fixed.refused);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
     "never offers the release that runs or an older one, and downloads nothing for it",
     () =>
       Effect.gen(function* () {
