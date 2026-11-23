@@ -1257,7 +1257,7 @@ const sentences = {
   "settings.notifications.phone.default": "Este celular não mostra nenhuma até você permitir.",
   "settings.notifications.phone.granted": "Este celular mostra notificações.",
   "settings.notifications.phone.denied":
-    "Este celular bloqueia as notificações do J3 Bots. Permita nos ajustes do celular.",
+    "Este celular bloqueia as notificações do J3 Bots. Permita em Configurações.",
   "settings.notifications.browser.default": "Este navegador não mostra nenhuma até você permitir.",
   "settings.notifications.browser.granted": "Este navegador mostra notificações.",
   "settings.notifications.browser.denied":
