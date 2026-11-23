@@ -1,6 +1,6 @@
-# NNNN: Phone access restarts the local server on the network
+# 0036: Phone access restarts the local server on the network
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
