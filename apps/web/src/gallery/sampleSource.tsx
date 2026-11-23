@@ -13,6 +13,7 @@ import type {
 } from "@j3-bots/client-runtime";
 import {
   applyConnectorChange,
+  type ConnectorsOpening,
   hasDefaultModel,
   providerGate,
   withBot,
@@ -44,7 +45,6 @@ import * as DateTime from "effect/DateTime";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ClockProvider } from "../app/clock";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
-import type { ConnectorsOpening } from "../components/connectors/screen";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";

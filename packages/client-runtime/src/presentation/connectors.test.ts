@@ -1,8 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type Connector, ConnectorId, ConnectorOrigin } from "@j3-bots/contracts";
+import {
+  BotId,
+  type Connector,
+  ConnectorId,
+  ConnectorOrigin,
+  type ConnectorSuggestionEntry,
+  EntryId,
+  EntryOrder,
+} from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../../test/fixtures.ts";
-import { applyConnectorChange, initialGrant, sameGrant, withBot } from "./connectors.ts";
+import {
+  applyConnectorChange,
+  initialGrant,
+  sameGrant,
+  suggestionConnect,
+  withBot,
+} from "./connectors.ts";
 
 const scout = bot("Scout");
 const hal = bot("Hal", { _tag: "idle" }, { primary: true });
@@ -78,6 +92,73 @@ describe("which bots a connector is for", () => {
     );
     expect(sameGrant({ _tag: "bots", ids: [scout.id] }, { _tag: "bots", ids: [hal.id] })).toBe(
       false,
+    );
+  });
+});
+
+describe("a bot's suggestion of a connector", () => {
+  const suggesting = (subject: ConnectorSuggestionEntry["subject"]): ConnectorSuggestionEntry => ({
+    _tag: "connector-suggestion",
+    id: EntryId.make("e1"),
+    order: EntryOrder.make(1),
+    createdAt: at("2026-11-01T00:00:00Z"),
+    author: { _tag: "bot", botId: scout.id },
+    subject,
+    name: "Tracker",
+    glyph: null,
+    reason: "To read the open issues.",
+    status: { _tag: "pending" },
+  });
+
+  it("opens a gallery entry's page for the bot that asked, and lets no one in yet", () => {
+    const ref = { _tag: "registry", name: "com.example/tracker" } as const;
+    expect(suggestionConnect(suggesting({ _tag: "listing", ref }), [], bots)).toEqual({
+      letIn: null,
+      open: {
+        at: { _tag: "listing", ref, name: "Tracker", glyph: null },
+        forBot: scout.id,
+        suggestion: EntryId.make("e1"),
+      },
+    });
+  });
+
+  it("lets the bot use a connector that works, and opens nothing", () => {
+    const tracker = { ...connector("t"), grant: { _tag: "bots", ids: [hal.id] } } as const;
+    expect(
+      suggestionConnect(suggesting({ _tag: "connector", connectorId: tracker.id }), [tracker], bots),
+    ).toEqual({
+      letIn: { connectorId: tracker.id, grant: { _tag: "bots", ids: [hal.id, scout.id] } },
+      open: null,
+    });
+  });
+
+  it("lets the bot in, and opens the page of a connector that waits on the operator", () => {
+    const tracker: Connector = {
+      ...connector("t"),
+      grant: { _tag: "bots", ids: [] },
+      status: { _tag: "needs-sign-in", reason: "expired" },
+    };
+    const { letIn, open } = suggestionConnect(
+      suggesting({ _tag: "connector", connectorId: tracker.id }),
+      [tracker],
+      bots,
+    );
+    expect(letIn?.grant).toEqual({ _tag: "bots", ids: [scout.id] });
+    expect(open?.at).toEqual({
+      _tag: "connector",
+      connectorId: tracker.id,
+      signIn: false,
+      added: false,
+    });
+  });
+
+  it("opens the screen's first page for a connector this device does not hold", () => {
+    const gone = ConnectorId.make("conn_gone000000000000");
+    expect(suggestionConnect(suggesting({ _tag: "connector", connectorId: gone }), [], bots)).toEqual(
+      {
+        letIn: null,
+        open: { at: { _tag: "home" }, forBot: scout.id, suggestion: EntryId.make("e1") },
+      },
     );
   });
 });

@@ -564,5 +564,8 @@ export const SignInStarted = Schema.Struct({
 });
 export type SignInStarted = typeof SignInStarted.Type;
 
+/** The longest address a browser's return from a sign-in may be. */
+export const SIGN_IN_RETURN_MAX = 8_000;
+
 /** The address the browser returned to, which carries the sign-in's code. */
-export const SignInCallback = secretValue(1, 8_000);
+export const SignInCallback = secretValue(1, SIGN_IN_RETURN_MAX);
