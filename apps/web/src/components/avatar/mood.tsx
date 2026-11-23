@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EntryPreview } from "@j3-bots/contracts";
 import { useAsleep, useAvatarMood } from "@j3-bots/client-runtime/react";
-import { createContext, type ReactNode, type Ref, useContext } from "react";
-import { type AvatarHandle, BotAvatar } from "./BotAvatar";
-
-const Offline = createContext(false);
+import { type ReactNode, type Ref, use } from "react";
+import { type AvatarHandle, AvatarsAsleep, BotAvatar } from "./BotAvatar";
 
 /** Tells the avatars below it whether this client can see the server (`useAsleep`). */
 export function AvatarConnection({
@@ -14,7 +12,7 @@ export function AvatarConnection({
   readonly connected: boolean;
   readonly children: ReactNode;
 }) {
-  return <Offline value={useAsleep(connected)}>{children}</Offline>;
+  return <AvatarsAsleep value={useAsleep(connected)}>{children}</AvatarsAsleep>;
 }
 
 /** A bot's avatar as it is now: its state, what is unread and what is arriving, live. */
@@ -33,7 +31,7 @@ export function LiveBotAvatar({
   readonly label?: string;
   readonly ref?: Ref<AvatarHandle>;
 }) {
-  const offline = useContext(Offline);
+  const offline = use(AvatarsAsleep);
   const mood = useAvatarMood(bot, { unread, lastEntry, offline });
   return (
     <BotAvatar

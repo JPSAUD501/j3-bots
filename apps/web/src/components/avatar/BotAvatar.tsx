@@ -24,9 +24,20 @@ import {
   type AvatarFace,
   type AvatarShapeName,
 } from "@j3-bots/design-tokens";
-import { useEffect, useImperativeHandle, useRef, type CSSProperties, type Ref } from "react";
+import {
+  createContext,
+  use,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  type CSSProperties,
+  type Ref,
+} from "react";
 import { cn } from "../../lib/cn";
 import { animate, nudge, reducedMotion } from "./ticker";
+
+/** Whether this client has gone without the server long enough for the bots to sleep (`AvatarConnection`). */
+export const AvatarsAsleep = createContext(false);
 
 /** What the avatar's owner can do to it. */
 export interface AvatarHandle {
@@ -391,7 +402,7 @@ export function BotAvatar({
   );
 }
 
-/** Two members overlapping, idle and still: a room. */
+/** Two members overlapping and still: a room, idle, or asleep with the bots while offline. */
 export function RoomAvatar({
   members,
   size,
@@ -401,6 +412,7 @@ export function RoomAvatar({
 }) {
   const [back, front] = members;
   const part = Math.round(size * roomAvatarShare);
+  const state = use(AvatarsAsleep) ? "offline" : "idle";
   return (
     <span
       className="relative inline-block shrink-0"
@@ -409,12 +421,12 @@ export function RoomAvatar({
     >
       {back && (
         <span className="absolute top-0 left-0">
-          <BotAvatar avatar={back.avatar} seed={back.id} state="idle" size={part} still />
+          <BotAvatar avatar={back.avatar} seed={back.id} state={state} size={part} still />
         </span>
       )}
       {front && (
         <span className="absolute right-0 bottom-0">
-          <BotAvatar avatar={front.avatar} seed={front.id} state="idle" size={part} still cutout />
+          <BotAvatar avatar={front.avatar} seed={front.id} state={state} size={part} still cutout />
         </span>
       )}
     </span>

@@ -79,7 +79,7 @@ export function ConnectionBanner({
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          <div className="flex min-h-8 flex-wrap items-center justify-center gap-x-2 bg-muted px-3 pt-(--inset-top) text-xs text-muted-foreground">
+          <div className="flex min-h-8 flex-wrap items-center justify-center gap-x-2 bg-muted px-3 pt-[calc(var(--inset-top)+--spacing(1))] pb-1 text-center text-xs text-muted-foreground">
             <span role="status" className="sr-only">
               {text}
             </span>

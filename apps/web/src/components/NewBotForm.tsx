@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AvatarChoice } from "@j3-bots/contracts";
+import type { AvatarChoice, Bot } from "@j3-bots/contracts";
 import { freeAvatar } from "@j3-bots/design-tokens";
 import { useEffect, useId, useState } from "react";
-import { useBots, useI18n } from "../app/context";
+import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { AvatarPicker } from "./avatar/AvatarPicker";
 import { Button } from "./ui/button";
@@ -17,6 +17,8 @@ export interface NewBot {
 }
 
 interface NewBotFormProps {
+  /** Every bot there is, hidden ones included, so the look offered first is the one they use least. */
+  readonly bots: ReadonlyArray<Bot>;
   /** Whether "primary" starts checked: the first bot is the primary one unless the operator says otherwise. */
   readonly primaryAtFirst: boolean;
   /** Resolves once the bot exists. */
@@ -41,6 +43,7 @@ type FormState =
  * does nothing, as in pairing and the composer.
  */
 export function NewBotForm({
+  bots,
   primaryAtFirst,
   onCreate,
   onCancel,
@@ -51,7 +54,6 @@ export function NewBotForm({
   const nameId = useId();
   const [name, setName] = useState("");
   const [primary, setPrimary] = useState(primaryAtFirst);
-  const bots = useBots();
   const [picked, setPicked] = useState<AvatarChoice | null>(null);
   const [state, setState] = useState<FormState>({ _tag: "editing" });
   // While the bot is created it joins the list, so the look it was created with stays on show.
@@ -60,7 +62,7 @@ export function NewBotForm({
   const avatar =
     state._tag === "creating"
       ? state.avatar
-      : (picked ?? freeAvatar([...bots.values()].map((bot) => bot.profile.avatar)));
+      : (picked ?? freeAvatar(bots.map((bot) => bot.profile.avatar)));
   const trimmed = name.trim();
   const ready = trimmed !== "" && state._tag !== "creating";
   const unsaved = trimmed !== "";

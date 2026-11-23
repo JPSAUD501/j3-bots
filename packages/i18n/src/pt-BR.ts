@@ -545,6 +545,8 @@ const sentences = {
   "empty.quiet.waitingForModel": "{name} dá oi assim que um modelo for conectado.",
   "empty.quiet.waitingForReset": "{name} dá oi quando o limite de uso renovar.",
   "empty.quiet.waitingForResetAt": "{name} dá oi quando o limite de uso renovar {when}.",
+  "empty.quiet.room":
+    "Nenhuma mensagem ainda. O anfitrião responde o que você escrever aqui, e @ chama qualquer membro.",
   "empty.quiet.connectHint":
     "Para conectar um, rode isto na máquina onde o J3 Bots está instalado.",
 
