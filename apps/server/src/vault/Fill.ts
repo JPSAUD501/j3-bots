@@ -143,7 +143,7 @@ const isLoopback = (url: URL) =>
  * one included, whose origin is the address inside it; so is plain `http:` on
  * another computer.
  */
-export const pageOrigin = (url: string): Effect.Effect<SiteOrigin, Refused> => {
+const pageOrigin = (url: string): Effect.Effect<SiteOrigin, Refused> => {
   if (!URL.canParse(url)) return Effect.fail(refused("origin"));
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {

@@ -33,7 +33,7 @@ export interface FixturePage {
   readonly elements: ReadonlyArray<PageElement>;
 }
 
-export interface FixtureLogin {
+interface FixtureLogin {
   readonly name: string;
   readonly origins: ReadonlyArray<string>;
 }
@@ -65,7 +65,7 @@ export interface Typed {
   readonly text: string;
 }
 
-export const BROWSER_TOOLS = {
+const BROWSER_TOOLS = {
   snapshot: "mcp__t3-code__preview_snapshot",
   act: "mcp__t3-code__preview_act",
   navigate: "mcp__t3-code__preview_navigate",
