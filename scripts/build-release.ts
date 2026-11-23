@@ -31,7 +31,6 @@ import { BUNDLE_INPUTS_FOLDER } from "./bundle-inputs.ts";
 import {
   PLATFORMS,
   type Platform,
-  type UnpackedNode,
   downloadNode,
   field,
   hostPlatform,
@@ -347,28 +346,21 @@ try {
   run("vp", ["pack"], SERVER, withInputs);
   const packages = thirdParties([...recordedInputs(inputs, parts), ...compiledIn(parts)]);
   const pin = nodePin(platform, readJson(NodePath.join(ROOT, "package.json")));
-  const nodeRelease = await downloadNode(pin);
-  /** Node, unpacked afresh for each folder, since staging moves its executable. */
-  const node = (into: string): UnpackedNode => {
-    NodeFS.mkdirSync(into);
-    return unpackNode(platform, pin, nodeRelease, into);
-  };
-  const stageInto = (stage: string, holder: "archive" | "folder", nodeWork: string) => {
-    const unpacked = node(nodeWork);
+  const node = unpackNode(platform, pin, await downloadNode(pin), work);
+  const stageInto = (stage: string, holder: "archive" | "folder") =>
     stageServer({
       stage,
-      manifest: { version, platform, node: unpacked.version, engine },
-      node: unpacked,
+      manifest: { version, platform, node: node.version, engine },
+      node,
       serverBundle: NodePath.join(SERVER, "dist"),
       root: ROOT,
       notices: notices(
         { version, platform },
-        unpacked,
+        node,
         within(packages, holder === "archive" ? ["server", "web"] : ["server"]),
         holder,
       ),
     });
-  };
   NodeFS.mkdirSync(out, { recursive: true });
   const report: Array<string> = [];
 
@@ -376,7 +368,7 @@ try {
     const name = `j3-bots-${version}-${platform}`;
     const stage = NodePath.join(work, "stage", name);
     NodeFS.mkdirSync(NodePath.dirname(stage));
-    stageInto(stage, "archive", NodePath.join(work, "node-archive"));
+    stageInto(stage, "archive");
     NodeFS.mkdirSync(NodePath.join(stage, "bin"));
     NodeFS.writeFileSync(NodePath.join(stage, "bin", "j3-bots"), LAUNCHER, { mode: 0o755 });
     NodeFS.cpSync(NodePath.join(WEB, "dist"), NodePath.join(stage, "web"), {
@@ -411,7 +403,7 @@ try {
     const stage = NodeFS.mkdtempSync(NodePath.join(runtimes, `.${platform}-`));
     NodeFS.rmdirSync(stage);
     try {
-      stageInto(stage, "folder", NodePath.join(work, "node-runtime"));
+      stageInto(stage, "folder");
       NodeFS.rmSync(folder, { recursive: true, force: true });
       NodeFS.renameSync(stage, folder);
     } finally {

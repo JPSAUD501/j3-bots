@@ -242,7 +242,7 @@ const NOTICES = "THIRD_PARTY_NOTICES";
 
 /**
  * Writes the folder the server runs from into `stage`, which must not exist:
- * Node, moved from where it was unpacked, the server bundle without its
+ * Node, copied from where it was unpacked, the server bundle without its
  * source maps, `release.json`, J3 Bots' license files from `root`, and
  * `notices`. The archive adds its launcher and the web client to it.
  */
@@ -258,7 +258,8 @@ export const stageServer = (options: {
   NodeFS.mkdirSync(stage, { recursive: false });
   const executable = nodeExecutable(stage, manifest.platform);
   NodeFS.mkdirSync(NodePath.dirname(executable), { recursive: true });
-  NodeFS.renameSync(options.node.executable, executable);
+  NodeFS.copyFileSync(options.node.executable, executable);
+  NodeFS.chmodSync(executable, 0o755);
   NodeFS.cpSync(options.serverBundle, NodePath.join(stage, "server"), {
     recursive: true,
     filter: (source) => !source.endsWith(".map"),
