@@ -4,7 +4,7 @@ import {
   DEFAULT_SHORTCUT,
   IPC_CHANNELS,
   LanguageReport,
-  LocalServerState,
+  type LocalServerState,
   ShellCommand,
   type ShortcutChange,
   ShortcutRequest,
@@ -33,7 +33,7 @@ import {
 } from "electron";
 import type { Appearance } from "./appearance.ts";
 import { DesktopSettings } from "./settings.ts";
-import { trayModel } from "./trayModel.ts";
+import { makeTrayState, type TrayView } from "./trayState.ts";
 
 // The ways to the app from outside its page: the application menu, which
 // names every action with its shortcut; the tray, which lists the bots and
@@ -45,8 +45,6 @@ const decodeLanguage = Schema.decodeUnknownOption(LanguageReport);
 const decodeTray = Schema.decodeUnknownOption(TrayReport);
 const decodeShortcut = Schema.decodeUnknownOption(ShortcutRequest);
 const encodeCommand = Schema.encodeSync(ShellCommand);
-const sameTray = Schema.toEquivalence(TrayReport);
-const sameLocalServer = Schema.toEquivalence(Schema.NullOr(LocalServerState));
 
 const MAC = process.platform === "darwin";
 
@@ -119,8 +117,6 @@ export const serve = Effect.fn("desktop.menus")(function* ({
   const { followLocalServer } = yield* Effect.acquireRelease(
     Effect.sync(() => {
       let i18n: I18n = createI18n(resolveLocale(app.getPreferredSystemLanguages()));
-      let tray: TrayReport = { pairing: null, count: 0, waiting: [] };
-      let local: LocalServerState | null = null;
       const icon = new Tray(trayIcon(false, appearance.systemTheme()));
 
       const send = (command: ShellCommand) => {
@@ -262,9 +258,7 @@ export const serve = Effect.fn("desktop.menus")(function* ({
         Menu.setApplicationMenu(Menu.buildFromTemplate(template));
       };
 
-      const trayMenu = () => {
-        const model = trayModel(tray, null, i18n);
-        const { pairing } = tray;
+      const drawTray = ({ model, pairing }: TrayView) => {
         const entries: MenuItemConstructorOptions[] =
           pairing === null
             ? []
@@ -291,18 +285,15 @@ export const serve = Effect.fn("desktop.menus")(function* ({
       };
 
       applicationMenu();
-      trayMenu();
+      const tray = makeTrayState({ i18n, draw: drawTray });
       // On Windows a click on the tray's icon shows the window; elsewhere it opens its menu.
       icon.on("click", show);
 
       // A page that loads in the window's main frame replaces the one that
       // reported: what it listed goes with it, until the new page reports.
-      const pageReplaced = () => {
-        tray = { pairing: null, count: 0, waiting: [] };
-        trayMenu();
-      };
+      const pageReplaced = () => tray.pageReplaced();
       window.webContents.on("did-navigate", pageReplaced);
-      const stopFollowingTheme = appearance.onSystemTheme(() => trayMenu());
+      const stopFollowingTheme = appearance.onSystemTheme(() => tray.redraw());
 
       ipcMain.on(IPC_CHANNELS.language, (event, report: unknown) => {
         const decoded = decodeLanguage(report);
@@ -310,15 +301,12 @@ export const serve = Effect.fn("desktop.menus")(function* ({
         if (decoded.value.language === i18n.locale) return;
         i18n = createI18n(decoded.value.language);
         applicationMenu();
-        trayMenu();
+        tray.language(i18n);
       });
       ipcMain.on(IPC_CHANNELS.tray, (event, report: unknown) => {
         const decoded = decodeTray(report);
-        // The page reports as its roster changes; the menu is rebuilt only
-        // when what it lists does, so one open on screen stays open.
-        if (!fromApp(event) || Option.isNone(decoded) || sameTray(tray, decoded.value)) return;
-        tray = decoded.value;
-        trayMenu();
+        if (!fromApp(event) || Option.isNone(decoded)) return;
+        tray.report(decoded.value);
       });
       ipcMain.handle(IPC_CHANNELS.shortcut, (event) => (fromApp(event) ? shortcut : null));
       const change = (accelerator: Accelerator): Effect.Effect<ShortcutChange> =>
@@ -359,13 +347,12 @@ export const serve = Effect.fn("desktop.menus")(function* ({
           return runPromise(changing.withPermits(1)(change(decoded.value.accelerator)));
         },
       );
-      /** Shows `next`, the state of the server this computer runs, when it changed. */
-      const followLocalServer = (next: LocalServerState | null) => {
-        if (sameLocalServer(next, local)) return;
-        local = next;
-        trayMenu();
+      return {
+        icon,
+        pageReplaced,
+        stopFollowingTheme,
+        followLocalServer: tray.followLocalServer,
       };
-      return { icon, pageReplaced, stopFollowingTheme, followLocalServer };
     }),
     ({ icon, pageReplaced, stopFollowingTheme }) =>
       Effect.sync(() => {
