@@ -10,6 +10,7 @@ import {
   UpdateChannelRequest,
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
+import type { Candidate } from "@j3-bots/release";
 import { sha256File, signatureCheck } from "@j3-bots/release/node";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -25,7 +26,13 @@ import {
 import { AppImageUpdater, autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 import { type DownloadCheckPorts, verifyDownload } from "./downloadCheck.ts";
 import { electronFetch, electronFetchUpTo } from "./electronFetch.ts";
-import { feedOf, newestRelease, type ReleaseChoicePorts } from "./releaseChoice.ts";
+import {
+  feedKeeps,
+  feedOf,
+  newestRelease,
+  type ReleaseChoicePorts,
+  type ReleasesUnreadable,
+} from "./releaseChoice.ts";
 import { restartApp, runningAppImage } from "./restart.ts";
 import { DesktopSettings } from "./settings.ts";
 import {
@@ -92,21 +99,27 @@ const downloadCheck: DownloadCheckPorts = {
   platform: process.platform,
 };
 
+/** What a check reads: the release `channel` offers, none, or a development build's own feed. */
+type Target =
+  | { readonly _tag: "release"; readonly release: Candidate }
+  | { readonly _tag: "none" }
+  | { readonly _tag: "development" };
+
 /**
  * Points electron-updater at the newest release `channel` offers, and says
- * whether there is one. A development build keeps the `dev-app-update.yml`
- * it was given. The feed is set before each check and never through
- * electron-updater's `channel`, whose setter would let it install an older
- * version (`AppUpdater.js`, `set channel`); the app never does.
+ * which. A development build keeps the `dev-app-update.yml` it was given.
+ * The feed is set before each check and never through electron-updater's
+ * `channel`, whose setter would let it install an older version
+ * (`AppUpdater.js`, `set channel`); the app never does.
  */
-const pointAtNewest = (channel: UpdateChannel) =>
+const pointAtNewest = (channel: UpdateChannel): Effect.Effect<Target, ReleasesUnreadable> =>
   app.isPackaged
     ? Effect.map(newestRelease(channel, releaseChoice), (newest) => {
-        if (Option.isNone(newest)) return false;
+        if (Option.isNone(newest)) return { _tag: "none" };
         autoUpdater.setFeedURL(feedOf(newest.value));
-        return true;
+        return { _tag: "release", release: newest.value };
       })
-    : Effect.succeed(true);
+    : Effect.succeed({ _tag: "development" });
 
 /**
  * How this build updates. An NSIS install and an AppImage install a newer
@@ -153,9 +166,10 @@ export const serve = Effect.fn("desktop.updates")(function* (
     Effect.sync(() => {
       let state: Updates = initial(updateMode(), updateChannel);
       autoUpdater.allowDowngrade = false;
-      // Where the build installs, downloaded in the background and installed
-      // only when the operator asks, never as the app quits.
-      autoUpdater.autoDownload = state.installs;
+      // Where the build installs, downloaded in the background once its feed
+      // is shown to be the release's own, and installed only when the
+      // operator asks, never as the app quits.
+      autoUpdater.autoDownload = false;
       autoUpdater.autoInstallOnAppQuit = false;
       // The AppImage an update was installed to, when not the one the app runs from.
       let installedTo: string | null = null;
@@ -230,22 +244,31 @@ export const serve = Effect.fn("desktop.updates")(function* (
       const check = () => {
         if (!mayCheck(state)) return;
         dispatch({ _tag: "check-started" });
-        // The release to read, then electron-updater's check of it and the
-        // download it starts. A failure of those also arrives as an `error` event.
+        // The release to read, electron-updater's read of its feed file, and,
+        // once that file is shown to be the release's own, the download. No
+        // newer version arrives as `update-not-available`; a failure of
+        // electron-updater's also arrives as an `error` event.
         void runPromise(pointAtNewest(state.channel))
-          .then(async (found) => {
-            if (!found) return dispatch({ _tag: "not-available" });
-            await (
-              await autoUpdater.checkForUpdates()
-            )?.downloadPromise;
+          .then(async (target) => {
+            if (target._tag === "none") return dispatch({ _tag: "not-available" });
+            const result = await autoUpdater.checkForUpdates();
+            if (result === null || !result.isUpdateAvailable) return;
+            if (target._tag === "release" && !feedKeeps(target.release, result.updateInfo)) {
+              throw new Error(
+                `The feed file of ${target.release.version} is not that release's own.`,
+              );
+            }
+            dispatch({ _tag: "available", version: result.updateInfo.version });
+            if (state.installs) await autoUpdater.downloadUpdate();
           })
-          .catch(() => dispatch({ _tag: "failed" }));
+          .catch((cause: unknown) => {
+            void runPromise(Effect.logWarning("Checking for the app's update failed", cause));
+            dispatch({ _tag: "failed" });
+          });
       };
 
       const updater = {
         "update-not-available": () => dispatch({ _tag: "not-available" }),
-        "update-available": (info: { readonly version: string }) =>
-          dispatch({ _tag: "available", version: info.version }),
         "download-progress": (info: { readonly percent: number }) =>
           dispatch({ _tag: "progress", percent: info.percent }),
         "update-downloaded": (info: UpdateDownloadedEvent) => {
@@ -259,7 +282,6 @@ export const serve = Effect.fn("desktop.updates")(function* (
         },
       } as const;
       autoUpdater.on("update-not-available", updater["update-not-available"]);
-      autoUpdater.on("update-available", updater["update-available"]);
       autoUpdater.on("download-progress", updater["download-progress"]);
       autoUpdater.on("update-downloaded", updater["update-downloaded"]);
       autoUpdater.on("update-cancelled", updater["update-cancelled"]);
@@ -313,7 +335,6 @@ export const serve = Effect.fn("desktop.updates")(function* (
     ({ updater, pageGone }) =>
       Effect.sync(() => {
         autoUpdater.off("update-not-available", updater["update-not-available"]);
-        autoUpdater.off("update-available", updater["update-available"]);
         autoUpdater.off("download-progress", updater["download-progress"]);
         autoUpdater.off("update-downloaded", updater["update-downloaded"]);
         autoUpdater.off("update-cancelled", updater["update-cancelled"]);

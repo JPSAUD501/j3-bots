@@ -27,7 +27,7 @@ const NIGHTLY_PAGE = 30;
 const RELEASES_WITHIN = Duration.seconds(30);
 
 /** The releases could not be read: no answer in time, another status than 200 or 404, or JSON the API does not send. */
-class ReleasesUnreadable extends Schema.TaggedError<ReleasesUnreadable>()(
+export class ReleasesUnreadable extends Schema.TaggedError<ReleasesUnreadable>()(
   "ReleasesUnreadable",
   {},
 ) {}
@@ -80,3 +80,47 @@ export const feedOf = (release: Candidate) => ({
   url: releaseFolder(release.version),
   channel: release.channel === "nightly" ? "nightly" : "latest",
 });
+
+/**
+ * What electron-updater read from a release's feed file, as far as where it
+ * downloads from and what version it says it is: the files, and the older
+ * `path` and Windows `packages` it also downloads from when present.
+ */
+const FeedInfo = Schema.Struct({
+  version: Schema.String,
+  files: Schema.Array(Schema.Struct({ url: Schema.String })),
+  path: Schema.optional(Schema.String),
+  packages: Schema.optional(
+    Schema.NullOr(Schema.Record(Schema.String, Schema.Struct({ path: Schema.String }))),
+  ),
+});
+const decodeFeedInfo = Schema.decodeUnknownOption(FeedInfo);
+
+/**
+ * Whether `info`, the feed file electron-updater read for `release`, is that
+ * release's own: it names the same version, and every file it would download
+ * is a file directly in the release's folder, resolved as electron-updater
+ * resolves it (`new URL(url, folder)`). Anyone who can change a release's
+ * files can change its feed file; without this, it could send the download to
+ * another release, another path or another host, or name another version.
+ * The app reads the feed without downloading and downloads only once this
+ * holds, so nothing is asked of another place first.
+ */
+export const feedKeeps = (release: Candidate, info: unknown): boolean => {
+  const folder = releaseFolder(release.version);
+  const inFolder = (url: string): boolean => {
+    if (!URL.canParse(url, folder)) return false;
+    const resolved = new URL(url, folder);
+    const name = resolved.href.startsWith(folder) ? resolved.href.slice(folder.length) : "";
+    return name.length > 0 && !name.includes("/") && resolved.search === "" && resolved.hash === "";
+  };
+  return Option.match(decodeFeedInfo(info), {
+    onNone: () => false,
+    onSome: (feed) =>
+      feed.version === release.version &&
+      feed.files.length > 0 &&
+      feed.files.every((file) => inFolder(file.url)) &&
+      (feed.path === undefined || inFolder(feed.path)) &&
+      Object.values(feed.packages ?? {}).every((entry) => inFolder(entry.path)),
+  });
+};

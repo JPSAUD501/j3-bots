@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import type { GitHubRelease } from "@j3-bots/release";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { feedOf, newestRelease, type ReleaseChoicePorts } from "./releaseChoice.ts";
+import { feedKeeps, feedOf, newestRelease, type ReleaseChoicePorts } from "./releaseChoice.ts";
 
 const RELEASES = "https://github.com/JPSAUD501/j3-bots/releases";
 
@@ -98,6 +98,41 @@ describe("the feed electron-updater reads", () => {
           channel: "nightly",
         }),
       ]);
+    }),
+  );
+});
+
+describe("a release's feed file", () => {
+  it.effect("is taken only when it names the release's version and files in its own folder", () =>
+    Effect.gen(function* () {
+      const chosen = yield* newestRelease(
+        "stable",
+        github({ latest: published("0.3.2"), page: [] }),
+      );
+      if (Option.isNone(chosen)) return assert.fail("no release was chosen");
+      const appImage = "J3-Bots-x86_64.AppImage";
+      const feed = (version: string, url: string) => ({
+        version,
+        files: [{ url, sha512: "unchecked here" }],
+        path: url,
+      });
+      const taken = (info: unknown) => feedKeeps(chosen.value, info);
+      assert.deepStrictEqual(
+        [
+          taken(feed("0.3.2", appImage)),
+          taken(feed("0.3.2", `${RELEASES}/download/v0.3.2/${appImage}`)),
+          taken(feed("0.3.3-nightly.20261124.1", appImage)),
+          taken(feed("0.3.2", `../0.3.3-nightly.20261124.1/${appImage}`)),
+          taken(feed("0.3.2", `https://example.test/${appImage}`)),
+          taken(feed("0.3.2", `${appImage}?from=elsewhere`)),
+          taken({
+            ...feed("0.3.2", appImage),
+            packages: { x64: { path: "https://example.test/app.7z" } },
+          }),
+          taken({ version: "0.3.2", files: [] }),
+        ],
+        [true, true, false, false, false, false, false, false],
+      );
     }),
   );
 });
