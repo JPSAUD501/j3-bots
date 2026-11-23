@@ -8,6 +8,7 @@ import { cn } from "../lib/cn";
 import {
   providerLine,
   type ProviderTone,
+  heldHelloText,
   quietConversationText,
 } from "@j3-bots/client-runtime/wording";
 import { BotAvatar } from "./BotAvatar";
@@ -147,11 +148,7 @@ export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineSta
       </span>
       <Heading
         title={name}
-        body={
-          held === null
-            ? quietConversationText(bot, ctx)
-            : t("empty.quiet.waitingForModel", { name })
-        }
+        body={held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}
       />
       {held?._tag === "connect" && (
         <div className="flex w-full max-w-sm flex-col gap-2 text-start">

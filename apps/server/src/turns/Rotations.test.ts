@@ -45,6 +45,7 @@ import {
 import { MAX_INDETERMINATE_ANSWERS, type SessionRowId } from "./model.ts";
 import { Observer } from "./Observer.ts";
 import { Pipeline } from "./Pipeline.ts";
+import { Readiness } from "./Readiness.ts";
 import { RETRY_TICK } from "./reconciler.ts";
 import { Rotations, ROTATE_AFTER_RUNS } from "./Rotations.ts";
 import { Stops } from "./Stops.ts";
@@ -159,13 +160,20 @@ const modeNotices = (botId: BotId) =>
     ),
   );
 
-/** The engine stops and starts again, under a policy allowing up to `ceiling`. */
+/**
+ * The engine stops and starts again, under a policy allowing up to `ceiling`,
+ * and the server has taken it in: its turn machinery was released again, so
+ * what is sent next goes to the engine as it runs now.
+ */
 const engineRestarts = (ceiling: PermissionMode) =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
+    const readiness = yield* Readiness;
+    const before = yield* readiness.generation;
     yield* control.setReachable(false);
     yield* control.limitPermissionModes(ceiling);
     yield* control.setReachable(true);
+    yield* until(Effect.map(readiness.generation, (now) => now > before));
   });
 
 /** Waits for the engine to have refused `count` permission modes in all. */

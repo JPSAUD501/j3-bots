@@ -440,9 +440,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
                   room={item._tag === "room" ? item.room : null}
                   workSteps={data.workSteps}
                   submitting={data.submitting}
-                  waitingForModel={
-                    item._tag === "bot" && openingHeld(item.bot, data.engine) !== null
-                  }
+                  openingHold={item._tag === "bot" ? openingHeld(item.bot, data.engine) : null}
                   intents={intents}
                   arrived={arrived}
                   flyFrom={composerRef}

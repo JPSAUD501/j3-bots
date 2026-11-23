@@ -26,6 +26,7 @@ export {
 } from "./message.ts";
 export {
   entrySummary,
+  heldHelloText,
   type LineTone,
   memberList,
   noticeText,

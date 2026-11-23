@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import type * as DateTime from "effect/DateTime";
 
 /** A provider a bot can be created on: ready, with a model to pick. */
 const canRunBots = (provider: ProviderStatus): boolean =>
@@ -49,21 +50,41 @@ export const providerGate = (engine: EngineStatus): ProviderGate => {
 };
 
 /**
- * What holds a bot's hello back, as the server holds it: the engine reports
- * the bot's provider, and not as ready. `connect` when a command connects it.
- * Null while nothing does: the hello is on its way, or already said.
+ * What holds a bot's hello back, as the server holds it: the engine does not
+ * report the bot's provider as ready.
+ * - `connect`: a command connects a provider: the bot's own, signed out, or
+ *   another when the bot's own cannot run at all (unavailable, and no longer
+ *   being checked), which a bot on the server's default model moves to;
+ * - `limit`: the bot's provider is at its usage limit, which resets at
+ *   `resetsAt` when that is known;
+ * - `provider`: anything else, such as a provider still being checked, or one
+ *   the engine does not report.
  */
-export const openingHeld = (
-  bot: Bot,
-  engine: EngineStatus | null,
-):
+export type OpeningHold =
   | { readonly _tag: "connect"; readonly command: string }
-  | { readonly _tag: "provider" }
-  | null => {
+  | { readonly _tag: "limit"; readonly resetsAt: DateTime.Utc | null }
+  | { readonly _tag: "provider" };
+
+/**
+ * What holds the bot's hello back now (`OpeningHold`). Null while nothing
+ * does: the hello is on its way or already said, or the engine's status is
+ * not known yet.
+ */
+export const openingHeld = (bot: Bot, engine: EngineStatus | null): OpeningHold | null => {
   if (!bot.opening || engine === null) return null;
   const provider = engine.providers.find((p) => p.id === bot.model.providerId);
-  if (provider === undefined || provider.status._tag === "ready") return null;
-  return provider.status._tag === "sign-in-required"
-    ? { _tag: "connect", command: provider.status.command }
-    : { _tag: "provider" };
+  if (provider === undefined) return { _tag: "provider" };
+  switch (provider.status._tag) {
+    case "ready":
+      return null;
+    case "sign-in-required":
+      return { _tag: "connect", command: provider.status.command };
+    case "limited":
+      return { _tag: "limit", resetsAt: provider.status.resetsAt };
+    case "unavailable": {
+      if (provider.status.checking) return { _tag: "provider" };
+      const command = connectCommand(engine);
+      return command === null ? { _tag: "provider" } : { _tag: "connect", command };
+    }
+  }
 };

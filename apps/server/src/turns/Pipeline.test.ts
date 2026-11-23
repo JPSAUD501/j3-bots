@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
 import { type BotId, Conflict, type EntryId, type EntryTarget, Invalid } from "@j3-bots/contracts";
-import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
-import { BotStore } from "../bots/BotStore.ts";
 import * as Domain from "../domain.ts";
 import { Entries } from "../entries/Entries.ts";
 import { timeText } from "../persistence/columns.ts";
@@ -29,6 +26,7 @@ import {
   createNewBot,
   deliveryIs,
   engineSession,
+  finishRunning,
   flushed,
   gateSettled,
   holdGate,
@@ -174,29 +172,6 @@ it.effect("keeps a new bot's hello waiting while its provider is not ready", () 
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("creates a bot before any provider is connected, and it speaks once one is", () =>
-  Effect.gen(function* () {
-    yield* providerIs(TestDomain.DEFAULT_MODEL.providerId, {
-      _tag: "unavailable",
-      checking: false,
-    });
-    yield* providerIs(TestDomain.OTHER_PROVIDER_MODEL.providerId, {
-      _tag: "sign-in-required",
-      command: "connect",
-    });
-    // No model named: the one a command connects, not the one the engine cannot run.
-    const bot = yield* createNewBot("Ana");
-    assert.deepStrictEqual(bot.model, TestDomain.OTHER_PROVIDER_MODEL);
-    const session = yield* engineSession(bot.id);
-    yield* flushed(bot.id);
-    assert.strictEqual(yield* timesSent(session, FIRST_RUN), 0);
-
-    yield* providerIs(TestDomain.OTHER_PROVIDER_MODEL.providerId, { _tag: "ready" });
-    yield* nextTurn(bot.id);
-    assert.strictEqual(yield* timesSent(session, FIRST_RUN), 1);
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
 it.effect("keeps a new bot's hello through a change of provider, for the new one", () =>
   Effect.gen(function* () {
     const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
@@ -217,142 +192,6 @@ it.effect("keeps a new bot's hello through a change of provider, for the new one
       [yield* timesSent(first, FIRST_RUN), yield* timesSent(moved, FIRST_RUN)],
       [0, 1],
     );
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-/** Claude Code and Codex, as the engine reports them before its first check of each. */
-const bothChecking = Effect.gen(function* () {
-  for (const { providerId } of [TestDomain.DEFAULT_MODEL, TestDomain.OTHER_PROVIDER_MODEL]) {
-    yield* providerIs(providerId, { _tag: "unavailable", checking: true });
-  }
-});
-
-/** Codex turns out ready, and Claude Code not installed. */
-const onlyCodexConnects = Effect.gen(function* () {
-  yield* providerIs(TestDomain.OTHER_PROVIDER_MODEL.providerId, { _tag: "ready" });
-  yield* providerIs(TestDomain.DEFAULT_MODEL.providerId, { _tag: "unavailable", checking: false });
-});
-
-const modelOf = (botId: BotId) =>
-  Effect.gen(function* () {
-    const found = yield* (yield* BotStore).find(botId);
-    if (Option.isNone(found)) return assert.fail("The bot is gone");
-    return found.value.bot.model;
-  });
-
-it.effect("moves a first bot from a provider that never connects to the one that does", () =>
-  Effect.gen(function* () {
-    yield* bothChecking;
-    const bot = yield* createNewBot("Ana");
-    assert.deepStrictEqual(bot.model, TestDomain.DEFAULT_MODEL);
-    const first = yield* engineSession(bot.id);
-    yield* flushed(bot.id);
-
-    yield* onlyCodexConnects;
-    const moved = yield* sessionAfter(bot.id, first);
-    yield* nextTurn(bot.id);
-    yield* flushed(bot.id);
-    assert.deepStrictEqual(yield* modelOf(bot.id), TestDomain.OTHER_PROVIDER_MODEL);
-    assert.deepStrictEqual(
-      [yield* timesSent(first, FIRST_RUN), yield* timesSent(moved, FIRST_RUN)],
-      [0, 1],
-    );
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("moves every first bot created before a provider connects, each saying hello once", () =>
-  Effect.gen(function* () {
-    yield* bothChecking;
-    const ana = yield* createNewBot("Ana");
-    const bia = yield* createNewBot("Bia");
-    const firsts = [yield* engineSession(ana.id), yield* engineSession(bia.id)];
-
-    yield* onlyCodexConnects;
-    const sent = [];
-    for (const [index, bot] of [ana, bia].entries()) {
-      const first = firsts[index];
-      assert.isDefined(first);
-      const moved = yield* sessionAfter(bot.id, first);
-      yield* nextTurn(bot.id);
-      yield* flushed(bot.id);
-      assert.deepStrictEqual(yield* modelOf(bot.id), TestDomain.OTHER_PROVIDER_MODEL);
-      sent.push([yield* timesSent(first, FIRST_RUN), yield* timesSent(moved, FIRST_RUN)]);
-    }
-    assert.deepStrictEqual(sent, [
-      [0, 1],
-      [0, 1],
-    ]);
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("leaves a model the operator chose where it is, its hello waiting", () =>
-  Effect.gen(function* () {
-    yield* bothChecking;
-    const bot = yield* createNewBot("Ana", TestDomain.DEFAULT_MODEL);
-    const session = yield* engineSession(bot.id);
-    yield* flushed(bot.id);
-
-    yield* onlyCodexConnects;
-    yield* (yield* Bots).adoptDefaults;
-    yield* flushed(bot.id);
-    assert.deepStrictEqual(yield* modelOf(bot.id), TestDomain.DEFAULT_MODEL);
-    assert.strictEqual(yield* engineSession(bot.id), session);
-    assert.strictEqual(yield* timesSent(session, FIRST_RUN), 0);
-  }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-/** The texts the engine received in the session, in the order it received them. */
-const sentInOrder = (sessionId: SessionId, texts: ReadonlyArray<string>) =>
-  Effect.gen(function* () {
-    const received = yield* (yield* TestEngineControl).dispatches(sessionId);
-    return received.flatMap((dispatch) => texts.filter((text) => dispatch.text.includes(text)));
-  });
-
-it.effect(
-  "holds what the operator writes while the hello waits, and sends it after the hello",
-  () =>
-    Effect.gen(function* () {
-      const { providerId } = TestDomain.OTHER_PROVIDER_MODEL;
-      yield* providerIs(providerId, { _tag: "sign-in-required", command: "connect" });
-      const bot = yield* createNewBot("Ana", TestDomain.OTHER_PROVIDER_MODEL);
-      const session = yield* engineSession(bot.id);
-      const first = yield* sendToBot(bot.id, "Book the venue.");
-      const second = yield* sendToBot(bot.id, "And the caterer.");
-      yield* flushed(bot.id);
-      assert.deepStrictEqual(yield* sentInOrder(session, [FIRST_RUN, "Book the venue."]), []);
-      yield* deliveryIs(first, "pending");
-
-      // Connected: the hello goes first, and the messages reach its turn, in order.
-      yield* providerIs(providerId, { _tag: "ready" });
-      yield* until(Effect.map(timesSent(session, "And the caterer."), (times) => times === 1));
-      yield* finishRunning(bot.id);
-      yield* deliveryIs(first, "delivered");
-      yield* deliveryIs(second, "delivered");
-      assert.deepStrictEqual(
-        yield* sentInOrder(session, [FIRST_RUN, "Book the venue.", "And the caterer."]),
-        [FIRST_RUN, "Book the venue.", "And the caterer."],
-      );
-    }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect("keeps a message held behind the hello through the move to a ready provider", () =>
-  Effect.gen(function* () {
-    yield* bothChecking;
-    const bot = yield* createNewBot("Ana");
-    const first = yield* engineSession(bot.id);
-    const message = yield* sendToBot(bot.id, "Book the venue.");
-    yield* flushed(bot.id);
-
-    yield* onlyCodexConnects;
-    const moved = yield* sessionAfter(bot.id, first);
-    yield* until(Effect.map(timesSent(moved, "Book the venue."), (times) => times === 1));
-    yield* finishRunning(bot.id);
-    yield* deliveryIs(message, "delivered");
-    assert.deepStrictEqual(yield* sentInOrder(first, [FIRST_RUN, "Book the venue."]), []);
-    assert.deepStrictEqual(yield* sentInOrder(moved, [FIRST_RUN, "Book the venue."]), [
-      FIRST_RUN,
-      "Book the venue.",
-    ]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -552,33 +391,6 @@ const writeMessage = (target: EntryTarget, text: string) =>
       },
     });
     return entry.id;
-  });
-
-/**
- * The bot's next turn says it is done and ends, so no `undelivered` wake
- * follows it.
- */
-const finishRunning = (botId: BotId, previous: Parameters<typeof nextTurn>[1] = null) =>
-  Effect.gen(function* () {
-    const control = yield* TestEngineControl;
-    const session = yield* engineSession(botId);
-    const turnId = yield* nextTurn(botId, previous);
-    const args = { text: "Done.", done: true };
-    yield* control.toolCall({
-      sessionId: session,
-      turnId,
-      tool: "say",
-      input: args,
-      recorded: "now",
-    });
-    yield* (yield* BotTools).call({
-      requestId: `say-${turnId}`,
-      sessionId: session,
-      tool: "say",
-      arguments: args,
-    });
-    yield* control.finishTurn({ sessionId: session, turnId, outcome: { _tag: "completed" } });
-    return turnId;
   });
 
 it.effect("coalesces waiting wakes only with wakes of the same kind and audience", () =>

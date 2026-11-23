@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ModelChoice, PermissionMode } from "@j3-bots/contracts";
+import type { EngineStatus, ModelChoice, PermissionMode, ProviderId } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -41,9 +41,53 @@ const defaultRank = (status: EngineStatus["providers"][number]["status"]): numbe
 };
 
 /**
+ * Whether `status` reports the provider ready. One it does not report, as
+ * while the engine is down or right after it started, is not: nothing says it
+ * can run a turn.
+ */
+export const providerReady = (status: EngineStatus, providerId: ProviderId): boolean =>
+  status.providers.some(
+    (provider) => provider.id === providerId && provider.status._tag === "ready",
+  );
+
+/**
+ * The model of a bot created without one, in `status`: the first model of the
+ * first ready provider; with none ready, of the first that lists a model and
+ * may still run it, as `defaultRank` orders them. A first bot is not refused
+ * for want of a connected provider: its hello waits for one, and it moves to
+ * the default model once that model's provider is ready (`Bots.adoptDefaults`).
+ */
+export const defaultModelIn = (status: EngineStatus): Option.Option<ModelChoice> => {
+  let best: { readonly rank: number; readonly model: ModelChoice } | null = null;
+  for (const provider of status.providers) {
+    const model = provider.models[0];
+    if (model === undefined) continue;
+    const rank = defaultRank(provider.status);
+    if (rank === null) continue;
+    if (best === null || rank < best.rank) {
+      best = { rank, model: { providerId: provider.id, modelId: model.id } };
+    }
+  }
+  return Option.fromNullishOr(best?.model);
+};
+
+/**
+ * The permission mode of a bot created without one, in `status`: supervised
+ * unless the provider is known to take Auto. The engine's reviewer exists on
+ * Claude Code and Codex; **Assumed** for any other harness.
+ */
+export const defaultPermissionModeIn = (
+  status: EngineStatus,
+  model: ModelChoice,
+): PermissionMode => {
+  const provider = status.providers.find((candidate) => candidate.id === model.providerId);
+  return provider !== undefined && provider.harness !== "other" ? "auto" : "supervised";
+};
+
+/**
  * The engine's latest status, kept current, for the decisions that read it
- * once rather than follow it: the default model of a new bot and the labels in
- * a bot's instructions.
+ * once rather than follow it: the default model of a new bot (`defaultModelIn`)
+ * and the labels in a bot's instructions.
  */
 export class EngineState extends Context.Service<
   EngineState,
@@ -51,20 +95,6 @@ export class EngineState extends Context.Service<
     readonly current: Effect.Effect<EngineStatus>;
     /** Each status as `current` takes it, starting with the one now. */
     readonly changes: Stream.Stream<EngineStatus>;
-    /**
-     * The model of a bot created without one: the first model of the first
-     * ready provider; with none ready, of the first that lists a model and
-     * may still run it, as `defaultRank` orders them. A first bot is not
-     * refused for want of a connected provider: its hello waits for one, and
-     * it moves to the default model once that model's provider is ready
-     * (`Bots.adoptDefaults`).
-     */
-    readonly defaultModel: Effect.Effect<Option.Option<ModelChoice>>;
-    /**
-     * Supervised unless the provider is known to take Auto. The engine's
-     * reviewer exists on Claude Code and Codex; **Assumed** for any other harness.
-     */
-    readonly defaultPermissionMode: (model: ModelChoice) => Effect.Effect<PermissionMode>;
     readonly labels: (model: ModelChoice) => Effect.Effect<RuntimeLabels>;
   }
 >()("@j3-bots/server/engine/EngineState") {}
@@ -95,15 +125,6 @@ export const layer = Layer.effect(
       );
     });
 
-    const defaultPermissionMode = Effect.fn("EngineState.defaultPermissionMode")(function* (
-      model: ModelChoice,
-    ) {
-      const provider = yield* providerOf(model);
-      return Option.isSome(provider) && provider.value.harness !== "other"
-        ? ("auto" as const)
-        : ("supervised" as const);
-    });
-
     const labels = Effect.fn("EngineState.labels")(function* (model: ModelChoice) {
       const provider = yield* providerOf(model);
       if (Option.isNone(provider)) return { model: model.modelId, harness: model.providerId };
@@ -120,22 +141,6 @@ export const layer = Layer.effect(
     return EngineState.of({
       current,
       changes: SubscriptionRef.changes(status),
-      defaultModel: current.pipe(
-        Effect.map((now) => {
-          let best: { readonly rank: number; readonly model: ModelChoice } | null = null;
-          for (const provider of now.providers) {
-            const model = provider.models[0];
-            if (model === undefined) continue;
-            const rank = defaultRank(provider.status);
-            if (rank === null) continue;
-            if (best === null || rank < best.rank) {
-              best = { rank, model: { providerId: provider.id, modelId: model.id } };
-            }
-          }
-          return Option.fromNullishOr(best?.model);
-        }),
-      ),
-      defaultPermissionMode,
       labels,
     });
   }),

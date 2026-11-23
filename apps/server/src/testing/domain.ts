@@ -59,47 +59,69 @@ export class TestProviders extends Context.Service<
       providerId: ProviderId,
       status: ProviderStatus["status"],
     ) => Effect.Effect<void>;
+    /** The engine lists these models of the provider from now on. */
+    readonly setModels: (
+      providerId: ProviderId,
+      models: ProviderStatus["models"],
+    ) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/testing/domain/TestProviders") {}
 
-const testProviders = Layer.effect(
-  TestProviders,
-  Effect.gen(function* () {
-    const ref = yield* SubscriptionRef.make(providers);
-    return TestProviders.of({
-      current: SubscriptionRef.changes(ref),
-      setStatus: (providerId, status) =>
+/** Which state a provider is reported in as the engine starts, by id; ready when not named. */
+type StartingStatuses = ReadonlyMap<ProviderId, ProviderStatus["status"]>;
+
+const testProviders = (starting: StartingStatuses) =>
+  Layer.effect(
+    TestProviders,
+    Effect.gen(function* () {
+      const ref = yield* SubscriptionRef.make(
+        providers.map((provider) => ({
+          ...provider,
+          status: starting.get(provider.id) ?? provider.status,
+        })),
+      );
+      const change = (providerId: ProviderId, changed: Partial<ProviderStatus>) =>
         SubscriptionRef.update(ref, (all) =>
-          all.map((provider) => (provider.id === providerId ? { ...provider, status } : provider)),
-        ),
-    });
-  }),
-);
+          all.map((provider) =>
+            provider.id === providerId ? { ...provider, ...changed } : provider,
+          ),
+        );
+      return TestProviders.of({
+        current: SubscriptionRef.changes(ref),
+        setStatus: (providerId, status) => change(providerId, { status }),
+        setModels: (providerId, models) => change(providerId, { models }),
+      });
+    }),
+  );
 
 /**
  * The in-memory engine, offering a Claude Code and a Codex provider, both
  * ready until a test says otherwise. The test engine reports no providers of
  * its own, and a bot needs a model to exist.
  */
-const engine = Layer.effect(
-  Engine,
-  Effect.gen(function* () {
-    const inner = yield* Engine;
-    const reported = yield* TestProviders;
-    return Engine.of({
-      ...inner,
-      status: inner.status.pipe(
-        Stream.zipLatestWith(reported.current, (status, now) => ({ ...status, providers: now })),
-      ),
-    });
-  }),
-).pipe(Layer.provideMerge(Layer.merge(TestEngine.layer, testProviders)));
+const engineWith = (starting: StartingStatuses) =>
+  Layer.effect(
+    Engine,
+    Effect.gen(function* () {
+      const inner = yield* Engine;
+      const reported = yield* TestProviders;
+      return Engine.of({
+        ...inner,
+        status: inner.status.pipe(
+          Stream.zipLatestWith(reported.current, (status, now) => ({ ...status, providers: now })),
+        ),
+      });
+    }),
+  ).pipe(Layer.provideMerge(Layer.merge(TestEngine.layer, testProviders(starting))));
 
-/** The database, the home and the engine. */
-const stores = Layer.mergeAll(
-  engine,
-  BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
-).pipe(Layer.provideMerge(TestDatabase.layer));
+/** The database `database` gives, the home and the engine, its providers as `starting` says. */
+const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
+  Layer.mergeAll(
+    engineWith(starting),
+    BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
+  ).pipe(Layer.provideMerge(database));
+
+const stores = storesOver(TestDatabase.layer, new Map());
 
 /**
  * The client listener as a server of the default configuration reports it,
@@ -129,6 +151,16 @@ export const machine = machineWith(TestPush.layer);
  * engine and the in-memory push service.
  */
 export const layer = Domain.layer.pipe(Layer.provideMerge(machine));
+
+/**
+ * The whole domain over the database `database` gives, as one an earlier
+ * release left (`TestDatabase.layerAfter`), with the in-memory engine, whose
+ * providers start as `starting` says, and push service.
+ */
+export const layerOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
+  Domain.layer.pipe(
+    Layer.provideMerge(Layer.mergeAll(storesOver(database, starting), listener, TestPush.layer)),
+  );
 
 /**
  * The whole domain, for a test that serves it on the client listener

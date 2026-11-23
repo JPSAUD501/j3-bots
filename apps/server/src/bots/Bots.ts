@@ -6,6 +6,7 @@ import {
   BotId as BotIdSchema,
   type CommandError,
   CommandId,
+  type EngineStatus,
   Conflict,
   Invalid,
   type ModelChoice,
@@ -13,6 +14,7 @@ import {
   type PermissionMode,
   ProviderId,
 } from "@j3-bots/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,7 +26,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
-import { EngineState } from "../engine/EngineState.ts";
+import {
+  defaultModelIn,
+  defaultPermissionModeIn,
+  EngineState,
+  providerReady,
+} from "../engine/EngineState.ts";
 import { Ids } from "../Ids.ts";
 import { Layout } from "../Layout.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
@@ -34,9 +41,10 @@ import { rotationRequests } from "../turns/rotationRequests.ts";
 import { Signals } from "../turns/Signals.ts";
 import { Stops } from "../turns/Stops.ts";
 import { conversation } from "../turns/model.ts";
+import { openingUnsentSql } from "../turns/openings.ts";
 import { Wakes } from "../turns/Wakes.ts";
 import { freeAvatar } from "./avatars.ts";
-import { type BotChanges, BotStore, type ModelChooser } from "./BotStore.ts";
+import { type BotChanges, BotStore, type Chooser, type StoredBot } from "./BotStore.ts";
 import { EngineSessions } from "./EngineSessions.ts";
 import { Workspaces } from "./Workspaces.ts";
 
@@ -87,10 +95,12 @@ export class Bots extends Context.Service<
      * to the server's default model once that model's provider is ready, the
      * way the operator's change of provider moves it, its hello and the
      * operator's messages held behind it kept. A model the operator chose is
-     * never moved. Run whenever a provider's state changes and after a bot is
-     * created; one pass at a time.
+     * never moved. Each move is decided again in the transaction that saves
+     * it, from the engine's status then. Run whenever a provider's state or
+     * whether it lists models changes, and after a bot is created, for it
+     * alone (`only`); one pass at a time.
      */
-    readonly adoptDefaults: Effect.Effect<void>;
+    readonly adoptDefaults: (only?: BotId) => Effect.Effect<void>;
     /**
      * Stops the bot's work in progress, then replaces its main session with
      * a fresh one, which gets no digest of the conversation. Its memory files
@@ -155,9 +165,11 @@ export const layer = Layer.effect(
     });
 
     /** A model the engine offers now. */
-    const checkModel = Effect.fn("Bots.checkModel")(function* (model: ModelChoice) {
-      const { providers } = yield* engineState.current;
-      const offered = providers.some(
+    const checkModel = Effect.fn("Bots.checkModel")(function* (
+      status: EngineStatus,
+      model: ModelChoice,
+    ) {
+      const offered = status.providers.some(
         (provider) =>
           provider.id === model.providerId &&
           provider.models.some((candidate) => candidate.id === model.modelId),
@@ -187,64 +199,105 @@ export const layer = Layer.effect(
       );
 
     /**
-     * The bots whose hello the engine does not have yet (its `first-run`
-     * wake waits, or is in a dispatch never sent) and whose model the server
-     * chose.
+     * The bots whose hello the engine does not have yet (`openingUnsentSql`)
+     * and whose model the server chose, read where `b` is the bot's row.
      */
     const waitingOnServerModelSql = sql`
-      b.model_by_server = 1 AND EXISTS (
-        SELECT 1 FROM wakes w LEFT JOIN dispatches d ON d.id = w.dispatch_id
-        WHERE w.bot_id = b.id AND json_extract(w.payload_json, '$._tag') = 'first-run'
-          AND (
-            w.status = 'pending'
-            OR (w.status = 'dispatched' AND d.status = 'intended' AND d.attempts = 0)
-          )
-      )
+      b.model_by_server = 1 AND ${openingUnsentSql(sql, { botId: sql.literal("b.id") })}
     `;
 
+    /** Those bots, or that one alone, the ones created first first. */
     const waitingOnServerModel = SqlSchema.findAll({
-      Request: Schema.Void,
-      Result: Schema.Struct({ id: BotIdSchema, provider_id: ProviderId }),
-      execute: () => sql`SELECT b.id, b.provider_id FROM bots b WHERE ${waitingOnServerModelSql}`,
+      Request: Schema.NullOr(BotIdSchema),
+      Result: Schema.Struct({ id: BotIdSchema }),
+      execute: (only) => sql`
+        SELECT b.id FROM bots b
+        WHERE ${waitingOnServerModelSql} ${only === null ? sql`` : sql`AND b.id = ${only}`}
+        ORDER BY b.rowid
+      `,
     });
 
-    const waitsOnServerModel = (botId: BotId) =>
-      sql`SELECT 1 FROM bots b WHERE b.id = ${botId} AND ${waitingOnServerModelSql}`.pipe(
-        Effect.orDie,
-        Effect.map((rows) => rows.length > 0),
-      );
+    const serverChoices = SqlSchema.findOneOption({
+      Request: BotIdSchema,
+      Result: Schema.Struct({
+        waiting: Schema.BooleanFromBit,
+        permission_mode_by_server: Schema.BooleanFromBit,
+      }),
+      execute: (botId) => sql`
+        SELECT ${waitingOnServerModelSql} AS waiting, b.permission_mode_by_server
+        FROM bots b WHERE b.id = ${botId}
+      `,
+    });
 
     /**
-     * Saves a change, the server's own only while the bot still waits on the
-     * model it chose (`waitsOnServerModel`): one that finds it otherwise, the
-     * operator having chosen a model or the hello gone out meanwhile, changes
-     * nothing.
+     * Where the server moves a bot that waits on the model it chose, decided
+     * from one engine status: nowhere while the bot's own provider is ready,
+     * or while no other provider's default model is ready to take it.
+     * Otherwise to that model, and to its default permission mode when the
+     * server chose the bot's permission mode too.
      */
-    const applyChange = Effect.fn("Bots.change")(function* (
-      input: {
-        readonly commandId: CommandId;
-        readonly botId: BotId;
-        readonly changes: BotChanges;
-      },
-      chooser: ModelChooser,
-    ) {
-      const { changes: change } = input;
+    const moveIn = (
+      status: EngineStatus,
+      bot: Bot,
+      permissionModeByServer: boolean,
+    ): Option.Option<BotChanges> => {
+      if (providerReady(status, bot.model.providerId)) return Option.none();
+      const fallback = defaultModelIn(status);
+      if (
+        Option.isNone(fallback) ||
+        fallback.value.providerId === bot.model.providerId ||
+        !providerReady(status, fallback.value.providerId)
+      ) {
+        return Option.none();
+      }
+      return Option.some(
+        permissionModeByServer
+          ? {
+              model: fallback.value,
+              permissionMode: defaultPermissionModeIn(status, fallback.value),
+            }
+          : { model: fallback.value },
+      );
+    };
+
+    /**
+     * Saves a change, decided in its transaction (`decide`) from the bot as it
+     * is then and one engine status read there: a change that no longer
+     * applies saves nothing. A new model or permission mode is recorded as
+     * `chooser`'s choice.
+     */
+    const applyChange = Effect.fn("Bots.change")(function* (input: {
+      readonly commandId: CommandId;
+      readonly botId: BotId;
+      /** What the command's receipt records it was asked. */
+      readonly payload: unknown;
+      /** Whether it may change the model or the permission mode. */
+      readonly settings: boolean;
+      /** Whether it may change what the bot's instructions say: its profile or model. */
+      readonly instructions: boolean;
+      readonly chooser: Chooser;
+      readonly decide: (
+        before: StoredBot,
+        status: EngineStatus,
+      ) => Effect.Effect<Option.Option<BotChanges>>;
+    }) {
       /** Saves the change; `settingsChanged` records a new model or permission mode. */
-      const save = <E>(settingsChanged: Effect.Effect<void, E>) =>
+      const save = <F>(settingsChanged: Effect.Effect<void, F>) =>
         receipts.once({
           commandId: input.commandId,
           method: "bot.update",
-          payload: input,
+          payload: input.payload,
           result: Bot,
           apply: Effect.gen(function* () {
             const before = yield* require(input.botId);
-            if (chooser === "server" && !(yield* waitsOnServerModel(input.botId))) {
-              return before.bot;
-            }
-            if (change.model !== undefined) yield* checkModel(change.model);
+            const status = yield* engineState.current;
+            const decided = yield* input.decide(before, status);
+            if (Option.isNone(decided)) return before.bot;
+            const change = decided.value;
+            if (change.model !== undefined) yield* checkModel(status, change.model);
             const at = yield* DateTime.now;
             if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
-            yield* store.update(input.botId, change, at, chooser);
+            yield* store.update(input.botId, change, at, input.chooser);
             yield* settingsChanged;
             // Compared with the provider the bot's live main session runs on, in
             // this transaction: an earlier change may not have reached it yet.
@@ -267,15 +320,12 @@ export const layer = Layer.effect(
         });
       // A new model or permission mode is saved in the gate of the bot's main
       // session, so no send claimed before it reaches the engine after it.
-      const bot =
-        change.model !== undefined || change.permissionMode !== undefined
-          ? yield* sessions.inMainSessionGate(input.botId, (held) =>
-              save(sessions.settingsChanged(held)),
-            )
-          : yield* save(Effect.void);
-      if (change.profile !== undefined || change.model !== undefined) {
-        yield* workspaces.render(bot.id);
-      }
+      const bot = input.settings
+        ? yield* sessions.inMainSessionGate(input.botId, (held) =>
+            save(sessions.settingsChanged(held)),
+          )
+        : yield* save(Effect.void);
+      if (input.instructions) yield* workspaces.render(bot.id);
       return bot;
     });
 
@@ -283,35 +333,75 @@ export const layer = Layer.effect(
       readonly commandId: CommandId;
       readonly botId: BotId;
       readonly changes: BotChanges;
-    }) => applyChange(input, "operator");
+    }) =>
+      applyChange({
+        commandId: input.commandId,
+        botId: input.botId,
+        payload: input,
+        settings: input.changes.model !== undefined || input.changes.permissionMode !== undefined,
+        instructions: input.changes.profile !== undefined || input.changes.model !== undefined,
+        chooser: "operator",
+        decide: () => Effect.succeedSome(input.changes),
+      });
+
+    /**
+     * The server's move of one bot, decided in the transaction that saves it
+     * (`moveIn`): only while the bot still waits on the model the server
+     * chose, so the operator's own choice, saved first, wins, and from the
+     * engine's status then, whatever it was when the pass began.
+     */
+    const moveToDefault = Effect.fn("Bots.moveToDefault")(function* (botId: BotId) {
+      const commandId = CommandId.make(yield* ids.make("default-model"));
+      yield* applyChange({
+        commandId,
+        botId,
+        payload: { commandId, botId },
+        settings: true,
+        instructions: true,
+        chooser: "server",
+        decide: (before, status) =>
+          serverChoices(botId).pipe(
+            Effect.orDie,
+            Effect.map((choices) =>
+              Option.isSome(choices) && choices.value.waiting
+                ? moveIn(status, before.bot, choices.value.permission_mode_by_server)
+                : Option.none(),
+            ),
+          ),
+      });
+    });
 
     const adoptPermit = yield* Semaphore.make(1);
 
-    const adoptDefaults = adoptPermit.withPermits(1)(
-      Effect.gen(function* () {
-        const fallback = yield* engineState.defaultModel;
-        if (Option.isNone(fallback)) return;
-        const { providers } = yield* engineState.current;
-        const ready = (providerId: string) =>
-          providers.some((p) => p.id === providerId && p.status._tag === "ready");
-        if (!ready(fallback.value.providerId)) return;
-        for (const bot of yield* waitingOnServerModel(undefined).pipe(Effect.orDie)) {
-          if (bot.provider_id === fallback.value.providerId || ready(bot.provider_id)) continue;
-          const commandId = CommandId.make(yield* ids.make("default-model"));
-          yield* applyChange(
-            { commandId, botId: bot.id, changes: { model: fallback.value } },
-            "server",
-          ).pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("A new bot could not move to the default model", {
-                botId: bot.id,
-                error: error._tag,
-              }),
-            ),
-          );
-        }
-      }).pipe(Effect.withSpan("Bots.adoptDefaults")),
-    );
+    const adoptDefaults = (only?: BotId) =>
+      adoptPermit.withPermits(1)(
+        Effect.gen(function* () {
+          // A first look, so a pass with nothing to move takes no gate. Each
+          // move decides again for itself.
+          const status = yield* engineState.current;
+          for (const bot of yield* waitingOnServerModel(only ?? null).pipe(Effect.orDie)) {
+            const found = yield* store.find(bot.id);
+            if (Option.isNone(found) || Option.isNone(moveIn(status, found.value.bot, false))) {
+              continue;
+            }
+            yield* moveToDefault(bot.id).pipe(
+              // Deleted, or its new model no longer offered, since the first look.
+              Effect.catch((error) =>
+                Effect.logInfo("A bot stays on its model").pipe(
+                  Effect.annotateLogs({ botId: bot.id, reason: error._tag }),
+                ),
+              ),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("A new bot could not move to the default model", cause).pipe(
+                    Effect.annotateLogs({ botId: bot.id }),
+                  ),
+              ),
+            );
+          }
+        }).pipe(Effect.withSpan("Bots.adoptDefaults")),
+      );
 
     const create = Effect.fn("Bots.create")(function* (input: {
       readonly commandId: CommandId;
@@ -324,9 +414,10 @@ export const layer = Layer.effect(
         payload: input.draft,
         result: Bot,
         apply: Effect.gen(function* () {
-          const model = draft.model ?? Option.getOrNull(yield* engineState.defaultModel);
+          const status = yield* engineState.current;
+          const model = draft.model ?? Option.getOrNull(defaultModelIn(status));
           if (model === null) return yield* new Invalid({ reason: "model" });
-          yield* checkModel(model);
+          yield* checkModel(status, model);
           const at = yield* DateTime.now;
           const id = BotIdSchema.make(yield* ids.make("bot"));
           if (draft.primary === true) yield* makePrimary(at);
@@ -340,8 +431,8 @@ export const layer = Layer.effect(
             },
             model,
             modelChooser: draft.model === undefined ? "server" : "operator",
-            permissionMode:
-              draft.permissionMode ?? (yield* engineState.defaultPermissionMode(model)),
+            permissionMode: draft.permissionMode ?? defaultPermissionModeIn(status, model),
+            permissionModeChooser: draft.permissionMode === undefined ? "server" : "operator",
             primary: draft.primary === true,
             workspacePath: layout.workspace(id),
             at,
@@ -370,8 +461,14 @@ export const layer = Layer.effect(
       // Also after a retry: a creation that crashed before this point finishes now.
       yield* provision(bot.id);
       // A provider may have become ready while the bot was saved, after the
-      // default was read.
-      yield* adoptDefaults;
+      // default was read. Only this bot: the others' moves are not this
+      // command's, and nothing of one fails it.
+      yield* adoptDefaults(bot.id).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) => Effect.logWarning("A new bot could not move to the default model", cause),
+        ),
+      );
       return bot;
     });
 

@@ -67,7 +67,10 @@ const entry = {
 
 /**
  * - `pending`: recorded, and not every recipient has received it yet (one is
- *   busy, or the message waits on a budget).
+ *   busy, or the message waits on a budget). `behindOpening`: it waits behind
+ *   the bot's hello, which waits for the bot's provider to be ready. Once the
+ *   hello has gone to the engine, the field is left out and the message waits
+ *   like any other.
  * - `delivered`: it reached every recipient.
  * - `cancelled`: the operator stopped a recipient before it received the
  *   message, so it never will. A recipient the operator deleted, or removed
@@ -82,7 +85,7 @@ const entry = {
  *   the engine had taken it after all.
  */
 export const MessageDelivery = Schema.Union([
-  Schema.TaggedStruct("pending", {}),
+  Schema.TaggedStruct("pending", { behindOpening: Schema.optionalKey(Schema.Literal(true)) }),
   Schema.TaggedStruct("delivered", {}),
   Schema.TaggedStruct("cancelled", {}),
   Schema.TaggedStruct("failed", {
@@ -156,7 +159,7 @@ export const QuestionEntry = Schema.TaggedStruct("question", {
   origin: Schema.Literals(["ask", "engine"]),
   questions: Schema.NonEmptyArray(Question).check(Schema.isMaxLength(MAX_CARD_QUESTIONS)),
   status: Schema.Union([
-    Schema.TaggedStruct("pending", {}),
+    Schema.TaggedStruct("pending", { behindOpening: Schema.optionalKey(Schema.Literal(true)) }),
     Schema.TaggedStruct("answered", { answers: QuestionAnswers }),
     /** The operator dismissed an `ask` question, which the bot reads as "no". */
     Schema.TaggedStruct("dismissed", {}),
@@ -258,7 +261,7 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
    */
   sessionGrant: Schema.NullOr(SessionGrant),
   status: Schema.Union([
-    Schema.TaggedStruct("pending", {}),
+    Schema.TaggedStruct("pending", { behindOpening: Schema.optionalKey(Schema.Literal(true)) }),
     Schema.TaggedStruct("decided", { decision: ApprovalDecision }),
     Schema.TaggedStruct("expired", {}),
     /**

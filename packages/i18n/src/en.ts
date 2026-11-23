@@ -91,6 +91,8 @@ export const en = {
 
   "message.queued": "Queued",
   "message.waitingForModel": "Sent once a model is connected",
+  "message.waitingForReset": "Sent when the usage limit resets",
+  "message.waitingForResetAt": "Sent when the usage limit resets {when}",
   "message.cancelled": "Not sent: you stopped the bot first",
   "message.failed.rejected": "Not delivered: the engine refused it",
   "message.failed.unresolved": "May have been delivered. Sending again may repeat the work.",
@@ -505,6 +507,8 @@ export const en = {
   "empty.quiet.speaksFirst": "{name} speaks first. It is getting ready.",
   "empty.quiet.body": "No messages yet. Tell {name} what you need.",
   "empty.quiet.waitingForModel": "{name} says hello as soon as a model is connected.",
+  "empty.quiet.waitingForReset": "{name} says hello when the usage limit resets.",
+  "empty.quiet.waitingForResetAt": "{name} says hello when the usage limit resets {when}.",
   "empty.quiet.connectHint": "To connect one, run this on the machine where J3 Bots is installed.",
 
   "message.sending": "Sending…",

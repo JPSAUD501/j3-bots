@@ -89,6 +89,8 @@ const sentences = {
 
   "message.queued": "Na fila",
   "message.waitingForModel": "Enviada assim que um modelo conectar",
+  "message.waitingForReset": "Enviada quando o limite de uso renovar",
+  "message.waitingForResetAt": "Enviada quando o limite de uso renovar {when}",
   "message.cancelled": "Não enviada: você parou o bot antes",
   "message.failed.rejected": "Não entregue: o motor recusou",
   "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
@@ -508,6 +510,8 @@ const sentences = {
   "empty.quiet.speaksFirst": "{name} fala primeiro. Está se preparando.",
   "empty.quiet.body": "Nenhuma mensagem ainda. Diga a {name} do que você precisa.",
   "empty.quiet.waitingForModel": "{name} dá oi assim que um modelo for conectado.",
+  "empty.quiet.waitingForReset": "{name} dá oi quando o limite de uso renovar.",
+  "empty.quiet.waitingForResetAt": "{name} dá oi quando o limite de uso renovar {when}.",
   "empty.quiet.connectHint":
     "Para conectar um, rode isto na máquina onde o J3 Bots está instalado.",
 

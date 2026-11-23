@@ -16,7 +16,7 @@ The operator installs J3 Bots on a machine that stays on, pairs a device with it
 6. The conversation opens and **the bot speaks first**: a short hello, then, if its job already says what to do, the work, with the same approvals as any other work; otherwise one question about what the operator needs, in the same message. It saves what matters in the answers as its first memories. There is no settings form to fill in. If the provider is not signed in yet, the hello waits for it, and so does anything the operator writes meanwhile, marked as sent once a model is connected: the hello goes first, and the bot answers the messages in it. If the opening fails, the conversation says so and offers a retry, until the operator writes. If the operator writes before the hello has gone to an engine that can run it, the hello is dropped and the bot answers the message; if the hello is already on its way, the bot reads the message in the same turn and answers it instead of greeting.
 7. The moment the operator hands it something real, the bot drops the questions and does the work.
 
-Until its hello can run, the conversation says the bot speaks once a model is connected, with the same command and copy button.
+Until its hello can run, the conversation says what it waits for: the usage limit's reset, at the time it resets when the provider gives one, or otherwise a connected model, with the same command and copy button when one connects it. What the operator writes meanwhile waits for the hello and goes right after it, and each message says so in the same words ("Sent when the usage limit resets", "Sent once a model is connected"); once the hello has gone, it shows as queued like any message.
 
 ### Talking to a bot
 

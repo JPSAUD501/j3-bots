@@ -11,6 +11,7 @@ import {
   type RosterItem,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
+import type { OpeningHold } from "../presentation/engine.ts";
 import { firstLine } from "../presentation/roster.ts";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { permissionModeText } from "./details.ts";
@@ -289,6 +290,15 @@ export function quietConversationText(bot: Bot, ctx: PresentationContext): strin
   return speaksFirst(bot)
     ? ctx.i18n.t("empty.quiet.speaksFirst", { name })
     : ctx.i18n.t("empty.quiet.body", { name });
+}
+
+/** A quiet conversation's line while the bot's hello waits (`openingHeld`). */
+export function heldHelloText(name: string, hold: OpeningHold, ctx: TimeContext): string {
+  const { t } = ctx.i18n;
+  if (hold._tag !== "limit") return t("empty.quiet.waitingForModel", { name });
+  return hold.resetsAt === null
+    ? t("empty.quiet.waitingForReset", { name })
+    : t("empty.quiet.waitingForResetAt", { name, when: timeInSentence(hold.resetsAt, ctx) });
 }
 
 /** The line under a bot's name in its conversation: what it is doing now. */

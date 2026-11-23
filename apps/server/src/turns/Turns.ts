@@ -108,16 +108,21 @@ export const layer = Layer.effectDiscard(
         // A provider's state holds some wakes (`Pipeline`): the dispatcher
         // looks again as soon as it changes, once the state it reads has it,
         // and after a bot still waiting for its hello on a provider the server
-        // chose has moved to one that is ready (`Bots.adoptDefaults`).
+        // chose has moved to one that is ready (`Bots.adoptDefaults`). Which
+        // provider is the default depends also on which list a model, so a
+        // ready provider whose models arrive later counts as a change too.
         supervised(
           "Following the providers",
           engineState.changes.pipe(
             Stream.map((status) =>
-              status.providers.map((provider) => `${provider.id}:${provider.status._tag}`),
+              status.providers.map(
+                (provider) =>
+                  `${provider.id}:${provider.status._tag}:${provider.models.length > 0}`,
+              ),
             ),
             Stream.changesWith(Equivalence.Array(Equivalence.String)),
             Stream.runForEach(() =>
-              step("New bots could not move to the default model", bots.adoptDefaults).pipe(
+              step("New bots could not move to the default model", bots.adoptDefaults()).pipe(
                 Effect.andThen(signals.dispatch.fire),
               ),
             ),
