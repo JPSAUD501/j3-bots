@@ -25,6 +25,7 @@ import { PresentationProvider } from "./presentation.tsx";
 import { ConversationScreen } from "./screens/Conversation.tsx";
 import { DetailsScreen } from "./screens/Details.tsx";
 import { EditBotScreen } from "./screens/EditBot.tsx";
+import { HiddenScreen } from "./screens/Hidden.tsx";
 import { MemoryFileScreen } from "./screens/MemoryFile.tsx";
 import { NewBotScreen } from "./screens/NewBot.tsx";
 import { RoomFormScreen } from "./screens/RoomForm.tsx";
@@ -40,7 +41,7 @@ import { Toasts } from "./toast.tsx";
  * One route per screen. On a phone they stack: the roster, a bot's or room's
  * conversation, its details, and over those the forms, a memory file and a
  * routine's runs;
- * Settings opens from the roster. From the tablet width up the roster's route
+ * Settings and the hidden bots open from the roster. From the tablet width up the roster's route
  * shows the conversation `item` names beside the roster, and the
  * conversation's route is not used. Each route after the roster names the
  * bot or room by its roster key, so it shows the roster's current name.
@@ -61,6 +62,7 @@ export type Screens = {
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
   settings: undefined;
+  hidden: undefined;
 };
 
 /**
@@ -181,6 +183,8 @@ export function Main() {
                 options={{ headerShown: false }}
               />
               <Stack.Screen name="details" component={DetailsScreen} />
+              {/* Sets its own title. */}
+              <Stack.Screen name="hidden" component={HiddenScreen} />
               <Stack.Screen
                 name="share"
                 component={ShareScreen}

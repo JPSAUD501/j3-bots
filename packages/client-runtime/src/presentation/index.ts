@@ -125,6 +125,7 @@ export {
   rosterMotion,
   type RosterView,
   type RowMove,
+  rowTops,
 } from "./rosterMotion.ts";
 export { shownSaveProblem } from "./saves.ts";
 export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { keptPlaces, moveDelay, rosterMotion, rosterMoves } from "./rosterMotion.ts";
+import { keptPlaces, moveDelay, rosterMotion, rosterMoves, rowTops } from "./rosterMotion.ts";
 
 const moves = (before: string, after: string) =>
   Object.fromEntries(rosterMoves([...before], [...after]));
@@ -75,6 +75,16 @@ describe("keptPlaces", () => {
   it("never keeps the place of a row that lifts away, nor of one that left", () => {
     expect(keptPlaces([..."ABC"], [..."BC"], new Map())).toEqual([-1, -1, -1]);
     expect(kept("ABC", "CAB")).toEqual([1, 1, 0]);
+  });
+
+  it("measures the move in the rows' own heights where they differ", () => {
+    // P is a band 100 tall that grows to 200 as B joins it; A and C are 64 tall.
+    const before = [..."PABC"];
+    const after = [..."PAC"];
+    const tops = { before: rowTops([100, 64, 64, 64]), after: rowTops([200, 64, 64]) };
+    // The band stays where it starts as it grows; A moved down by as much as the band grew; from
+    // B on, the first row in view is C, which moved down by the band and up by B.
+    expect(keptPlaces(before, after, rosterMoves(before, after), tops)).toEqual([0, 100, 36, 36]);
   });
 });
 
