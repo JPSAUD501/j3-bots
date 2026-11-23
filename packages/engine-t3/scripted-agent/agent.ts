@@ -255,6 +255,9 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  *   `delegate_task` tool, then ends; the engine wakes the session when the
  *   child's task ends. The child runs `plain`, or with `child=slow`, `slow`
  *   for two minutes.
+ * - `browser`: calls the engine's `t3_preview_list`, which only a session
+ *   given the browser may call, then speaks, as `speak` does, `allowed` or
+ *   `refused`.
  *
  * No script starts work on its own after its turn: the engine offers a
  * continuation only to agents it recognizes by name (**Read**, `db51b67`,
@@ -381,6 +384,14 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   speak: async (turn) => {
     await callHostTool(turn, "send_to_user", {
       message: turn.args.get("text") ?? "A message from the scripted agent.",
+    });
+    reportUsage(turn);
+    return turn.signal.aborted ? "cancelled" : "end_turn";
+  },
+  browser: async (turn) => {
+    const listed = await callHostTool(turn, "t3_preview_list", {});
+    await callHostTool(turn, "send_to_user", {
+      message: Option.isSome(listed) ? "allowed" : "refused",
     });
     reportUsage(turn);
     return turn.signal.aborted ? "cancelled" : "end_turn";

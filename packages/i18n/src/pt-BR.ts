@@ -425,6 +425,13 @@ const sentences = {
   "details.freshStart.cancel": "Agora não",
   "details.freshStart.done": "{name} recomeçou do zero.",
   "details.freshStart.failed": "Não foi possível recomeçar. Tente de novo.",
+  "details.browser": "Navegador",
+  "details.browser.use": "Usar o navegador deste computador",
+  "details.browser.hint":
+    "{name} age nos sites com as sessões em que você entrou nesse navegador. Vale a partir do próximo turno de {name}.",
+  "details.browser.setup":
+    "Este computador precisa de uma configuração para o navegador funcionar. Rode `j3-bots doctor` nele para ver como.",
+  "details.browser.failed": "A configuração do navegador de {name} não foi salva. Tente de novo.",
   "details.delete": "Excluir {name}",
   "details.delete.title": "Excluir {name}?",
   "details.delete.body":
@@ -1044,6 +1051,17 @@ const sentences = {
   "memory.failedClosed": "Sua edição em {file} não foi salva. Abra o arquivo para ver o motivo.",
 
   "settings.close": "Fechar configurações",
+  "settings.botBrowser": "Navegador dos bots",
+  "settings.botBrowser.hint":
+    "O navegador que os bots usam guarda as sessões em que você entrou. Sair encerra todas, para todos os bots.",
+  "settings.botBrowser.signOut": "Sair de todos os sites",
+  "settings.botBrowser.signOut.title": "Sair de todos os sites?",
+  "settings.botBrowser.signOut.body":
+    "O navegador esquece todos os sites em que você entrou, e as abas abertas fecham. Os bots só voltam a usar esses sites depois que você entrar de novo.",
+  "settings.botBrowser.signOut.cancel": "Agora não",
+  "settings.botBrowser.signOut.confirm": "Sair",
+  "settings.botBrowser.signOut.done": "Você saiu de todos os sites.",
+  "settings.botBrowser.signOut.failed": "O navegador não saiu dos sites. Tente de novo.",
   "settings.engine": "Motor",
   "settings.engine.ready": "Rodando, versão {version}",
   "settings.engine.lastKnown":

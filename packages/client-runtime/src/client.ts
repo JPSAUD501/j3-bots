@@ -366,6 +366,8 @@ export interface J3Client {
   ) => Promise<Actions.IntentResult<SettingsValue>>;
   /** Reads the settings again, as when Settings opens. */
   readonly refreshSettings: () => void;
+  /** Signs the bots' browser out of every site, for every bot. */
+  readonly signOutBrowser: () => Promise<Actions.IntentResult>;
   readonly refreshDevices: () => void;
   /** Waits ten seconds at most; see `Devices.revoke`. */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
@@ -624,6 +626,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
     updateSettings: (change) => run.promise(services.settings.update(change)),
     refreshSettings: () => fire(services.settings.refresh),
+    signOutBrowser: () => run.promise(services.settings.signOutBrowser),
     refreshDevices: () => fire(services.devices.refresh),
     revokeDevice: (deviceId) => run.promise(services.devices.revoke(deviceId)),
     startPairing: () =>

@@ -67,6 +67,23 @@ export const EngineInstallProgress = Schema.Struct({
 });
 export type EngineInstallProgress = typeof EngineInstallProgress.Type;
 
+/**
+ * Whether the engine's browser can run on the machine that hosts J3 Bots, as
+ * far as the server could tell: what a bot given the browser needs first.
+ * `setup-required` says what is missing: a sandbox the system allows, the
+ * libraries the browser loads, fonts. `j3-bots doctor` on that machine gives
+ * the one command, run once by an administrator, that sets them up.
+ * Libraries are known only once the engine has downloaded the browser, the
+ * first time a bot uses it.
+ */
+export const BrowserHostStatus = Schema.Union([
+  Schema.TaggedStruct("ready", {}),
+  Schema.TaggedStruct("setup-required", {
+    needs: Schema.Array(Schema.Literals(["sandbox", "libraries", "fonts"])),
+  }),
+]);
+export type BrowserHostStatus = typeof BrowserHostStatus.Type;
+
 export const EngineStatus = Schema.Struct({
   state: Schema.Union([
     /**
@@ -95,6 +112,12 @@ export const EngineStatus = Schema.Struct({
   /** The engine version this release is pinned to. */
   pinnedVersion: Label,
   providers: Schema.Array(ProviderStatus),
+  /**
+   * Whether the browser can run here, once the engine is ready and has
+   * checked; absent before that. A server older than `browser` never sends
+   * it, at the same protocol version, and an older client ignores it.
+   */
+  browser: Schema.optionalKey(BrowserHostStatus),
 });
 export type EngineStatus = typeof EngineStatus.Type;
 

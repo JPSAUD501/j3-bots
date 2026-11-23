@@ -364,6 +364,26 @@ export class Engine extends Context.Service<
     readonly removeProject: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
 
     /**
+     * Whether the sessions of the project may use the engine's browser, which
+     * acts with the operator's signed-in sites. The engine allows it to no
+     * project unless this allowed it. A session takes the change when its
+     * provider session next starts: a session opened after this call, or one
+     * that `configureSession` reloaded the tools of. Sends nothing when the
+     * project already has it.
+     */
+    readonly setBrowserAccess: (input: {
+      readonly projectId: EngineProjectId;
+      readonly enabled: boolean;
+    }) => Effect.Effect<void, EngineDown>;
+
+    /**
+     * Signs the engine's browser out of every site: deletes the cookies and
+     * site data of the one browser profile every session uses. Tabs open in
+     * it close.
+     */
+    readonly clearBrowserProfile: Effect.Effect<void, EngineDown>;
+
+    /**
      * A new, idle session in the project. `key` is written by the server
      * before this call, so a retry returns the same session: with the model
      * and permission mode it was first opened with, which a retry with other
@@ -410,6 +430,13 @@ export class Engine extends Context.Service<
       readonly sessionId: SessionId;
       readonly model?: ModelChoice;
       readonly permissionMode?: PermissionMode;
+      /**
+       * Starts the session's provider again before its next turn, so it
+       * takes the tools its project allows now (`setBrowserAccess`). The
+       * conversation resumes where it was. Refused as a change is: while a
+       * turn runs, and while background work it would end runs.
+       */
+      readonly reloadTools?: boolean;
     }) => Effect.Effect<
       void,
       | EngineDown

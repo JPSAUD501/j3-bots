@@ -130,6 +130,8 @@ j3-bots update --rollback
 
 It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
 
+The browser bots use keeps its profile, with the sites you signed in to, outside the snapshot, so a rollback leaves it as it is. The release you go back to may run an older version of that browser, which may not open a profile a newer version wrote; it then starts with an empty one, signed out of every site, and you sign in again.
+
 **Keep `~/.j3-bots/backups/` on the data directory's filesystem**, not as a link to another disk, such as a USB drive on a Raspberry Pi. A rollback moves the data directory's files into it by renaming them, which cannot cross filesystems. An update and `--rollback` check this before they stop anything, refuse when it is elsewhere, and give the commands that put it back.
 
 **A rollback cut off** by a power cut or `kill -9` stays marked until it finishes: no server starts on the data directory, since the server refuses to while the mark is there, and `j3-bots update` refuses to run. `j3-bots doctor` then reports it as a problem, with one fix, while Server, Service and Command wait for it. After a rollback killed on a test machine:
@@ -163,18 +165,33 @@ j3-bots doctor
 
 The server migrates its database when it starts, and downloads the engine its code pins on its first start when that changed.
 
+## The browser
+
+A bot uses the engine's browser only once you turn on **Browser: use this computer's browser** in its details. It applies from the bot's next turn: a turn already running keeps the access it started with, and background work the bot left running, such as a delegated task, holds the change until it ends or you stop it. The engine downloads the browser, about 130 MB, the first time a bot uses it.
+
+On Linux the browser needs three things from the system: a sandbox the system allows (on Ubuntu 23.10 and later, AppArmor blocks it until a profile allows it), the shared libraries it loads, and fonts. `j3-bots doctor` checks them once the engine is installed, under Browser, and the bot's details say when this computer still needs setting up. The fix is one command, which `doctor` prints with the paths of your install, run once by someone who can use `sudo`:
+
+```sh
+sudo ~/.j3-bots/engine/j3/runtime/<version>/t3 browser setup --base-dir ~/.j3-bots/engine
+```
+
+It writes and loads the AppArmor profile and installs the missing libraries and fonts with `apt-get`. J3 Bots never runs `sudo` itself. The libraries are known only once the browser is downloaded, so run `doctor` again after a bot first used it. Chrome refuses its sandbox to root: run J3 Bots as a [user of its own](install.md#choose-the-user-it-runs-as), not as root.
+
+**Sign out of all sites**, in Settings under Bots' browser, deletes the browser's profile: you are signed out everywhere, for every bot, and its open tabs close.
+
 ## Back up
 
 Everything J3 Bots keeps is in the data directory: the configuration, the database, the bots' memory and workspaces, attachments and the engine's own data. Stop the service while you copy it, so the database and the files match:
 
 ```sh
 systemctl --user stop j3-bots
-(umask 077 && tar -C ~/.j3-bots --exclude=./engine/j3/runtime --exclude=./admin.sock \
+(umask 077 && tar -C ~/.j3-bots --exclude=./engine/j3/runtime --exclude=./engine/tools \
+  --exclude=./engine/userdata/server-browser --exclude=./admin.sock \
   -czf ~/j3-bots-$(date +%F).tar.gz .)
 systemctl --user start j3-bots
 ```
 
-`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, which the server downloads again. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
+`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, and `engine/tools` the browser it downloaded, which it downloads again. `engine/userdata/server-browser` is that browser's profile: it holds live session cookies for every site you signed in to there, which let whoever has them act on those sites as you, so the command above leaves it out, and after a restore you sign in again. Moving bots to another server with `j3-bots export` and `import` ([#154](https://github.com/JPSAUD501/j3-bots/issues/154), planned) leaves out the engine's directory, and the profile with it. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
 
 ## Restore
 

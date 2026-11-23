@@ -282,7 +282,7 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
     .events({ sessionId, after: null })
     .pipe(Stream.orDie, Stream.toQueue({ capacity: "unbounded" }));
   const first = yield* until(queue, "replaced");
-  return { sessionId, queue, start: first.cursor };
+  return { sessionId, projectId, queue, start: first.cursor };
 });
 
 describe("Engine conformance, real engine only", () => {
@@ -314,6 +314,48 @@ describe("Engine conformance, real engine only", () => {
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),
     { timeout: 120_000 },
+  );
+
+  it.live(
+    "lets a session use the browser from its next turn once its project allows it, and stops it again",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const { sessionId, projectId, queue } = yield* openWatched("browser");
+        /** Whether the engine took the session's call to one of its browser tools. */
+        const browser = Effect.fnUntraced(function* (name: string) {
+          const probe = yield* engine.dispatch({
+            key: bench.key(`browser-${name}`),
+            sessionId,
+            text: "[[script:browser]]",
+            attachments: [],
+            delivery: { _tag: "start", freshContext: false },
+          });
+          const speech = yield* until(
+            queue,
+            "host-speech",
+            (event) => event.turnId === turnOf(probe),
+          );
+          yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(probe));
+          return speech.text;
+        });
+        const allow = (enabled: boolean) =>
+          engine
+            .setBrowserAccess({ projectId, enabled })
+            .pipe(Effect.andThen(engine.configureSession({ sessionId, reloadTools: true })));
+
+        const before = yield* browser("off");
+        yield* allow(true);
+        const allowed = yield* browser("on");
+        yield* allow(false);
+        const after = yield* browser("off-again");
+
+        assert.deepStrictEqual([before, allowed, after], ["refused", "allowed", "refused"]);
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 180_000 },
   );
 
   it.live(

@@ -36,6 +36,7 @@ const BotRow = Schema.Struct({
   is_primary: Flag,
   pinned: Flag,
   hidden: Flag,
+  browser: Flag,
   section_id: Schema.NullOr(SectionId),
   workspace_path: Schema.String,
   workspace_root: Schema.NullOr(Schema.String),
@@ -75,6 +76,7 @@ const toStored = (
     primary: row.is_primary,
     pinned: row.pinned,
     hidden: row.hidden,
+    browser: row.browser,
     sectionId: row.section_id,
     state,
     settingsHeld,
@@ -116,13 +118,14 @@ export interface BotChanges {
   readonly primary?: boolean;
   readonly pinned?: boolean;
   readonly hidden?: boolean;
+  readonly browser?: boolean;
   /** The section the bot moves into, or null for none. It must exist. */
   readonly sectionId?: SectionId | null;
 }
 
 const SELECT = `
   SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
-    permission_mode, is_primary, pinned, hidden, section_id, workspace_path, workspace_root,
+    permission_mode, is_primary, pinned, hidden, browser, section_id, workspace_path, workspace_root,
     engine_project_id, created_at
   FROM bots
 `;
@@ -233,6 +236,7 @@ export const layer = Layer.effect(
       if (changes.primary !== undefined) columns["is_primary"] = changes.primary ? 1 : 0;
       if (changes.pinned !== undefined) columns["pinned"] = changes.pinned ? 1 : 0;
       if (changes.hidden !== undefined) columns["hidden"] = changes.hidden ? 1 : 0;
+      if (changes.browser !== undefined) columns["browser"] = changes.browser ? 1 : 0;
       if (changes.sectionId !== undefined) columns["section_id"] = changes.sectionId;
       yield* sql`UPDATE bots SET ${sql.update(columns)} WHERE id = ${id}`.pipe(Effect.orDie);
     });

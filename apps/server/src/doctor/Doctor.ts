@@ -398,6 +398,59 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
   }
 });
 
+/**
+ * What the engine's headless browser needs from this Linux host, once the
+ * engine is installed: a sandbox AppArmor allows, the libraries it loads, and
+ * fonts. A warning, not a problem: only a bot the operator gives the browser
+ * uses it (docs/operations/operating.md#the-browser). `None` off Linux, where
+ * it needs nothing, and before the engine is installed, since the fix runs it.
+ */
+const browserCheck = Effect.fn("doctor.browser")(function* (
+  config: ServerConfig.ServerConfigShape,
+) {
+  const host = yield* Host;
+  if (host.platform !== "linux") return Option.none<Check>();
+  const executable = Option.isSome(config.engineBinary)
+    ? config.engineBinary
+    : yield* EngineLive.inspectInstall({
+        home: config.engineHome,
+        platform: host.platform,
+        arch: host.arch,
+      }).pipe(
+        Effect.map((install) =>
+          install._tag === "installed" ? Option.some(install.executable) : Option.none(),
+        ),
+      );
+  if (Option.isNone(executable)) return Option.none<Check>();
+  const needs = yield* host.browserNeeds({ home: config.engineHome, executable: executable.value });
+  const missing = [
+    ...(needs.sandboxBlocked ? ["AppArmor blocks the sandbox it runs in"] : []),
+    ...(needs.missingLibraries.length > 0
+      ? [`it cannot load ${needs.missingLibraries.join(", ")}`]
+      : []),
+    ...(needs.noFonts ? ["no font is installed, so pages would show no text"] : []),
+  ];
+  if (missing.length === 0) {
+    return Option.some(
+      needs.downloaded
+        ? check("Browser", "ok", "The browser a bot can be given has what it needs here.")
+        : check(
+            "Browser",
+            "ok",
+            "The browser a bot can be given may run its sandbox here, and fonts are installed. The engine downloads it, about 130 MB, the first time a bot uses it; run this again then to check its libraries.",
+          ),
+    );
+  }
+  return Option.some(
+    check(
+      "Browser",
+      "warning",
+      `A bot given the browser cannot use it: ${missing.join("; ")}.`,
+      `Have an administrator run \`sudo ${needs.setup.map(Home.shellWord).join(" ")}\` once. It allows the sandbox and installs the missing libraries and fonts.`,
+    ),
+  );
+});
+
 /** A scripted agent set: it answers bots' turns instead of a model. */
 const scriptedAgentCheck = (config: ServerConfig.ServerConfigShape) =>
   Option.map(config.scriptedAgent, (agent) =>
@@ -870,6 +923,8 @@ export const diagnose = Effect.gen(function* () {
   }
   const engine = yield* engineCheck(config, status, live._tag === "none");
   checks.push(engine);
+  const browser = yield* browserCheck(config);
+  if (Option.isSome(browser)) checks.push(browser.value);
   const scripted = scriptedAgentCheck(config);
   if (Option.isSome(scripted)) checks.push(scripted.value);
   const servicePath = Unit.servicePathOf(unitText);

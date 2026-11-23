@@ -22,6 +22,7 @@ const bot = (name: string): BotItem => ({
     state: { _tag: "idle" },
     settingsHeld: false,
     opening: false,
+    browser: false,
     createdAt: DateTime.makeUnsafe(0),
   },
   lastEntry: null,

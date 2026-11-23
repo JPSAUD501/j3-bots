@@ -93,6 +93,8 @@ The machine J3 Bots runs on is never called a "host": a host is a room's bot.
 
 **Approval.** A request from a bot to do one specific thing that its permission mode does not allow outright. Only the operator can grant one.
 
+**Browser.** The engine's headless browser on the host, which a bot may use to read and act on web pages. Each bot has a switch for it in its details, off by default; a change applies from the bot's next turn. Every bot whose switch is on uses the same browser profile, so it is signed in wherever the operator signed in there, and acts on those sites as the operator. Settings signs that profile out of every site at once.
+
 **Question.** A bot asking the operator to choose. It arrives as a card with options, not as prose.
 
 **Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, or one bot's room message may mention, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.

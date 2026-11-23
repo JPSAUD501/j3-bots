@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AuthSessionState } from "@t3tools/contracts";
+import { AuthSessionState, sessionGrantsScope } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,8 +20,17 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 // engine's own CLI against the engine's data directory, so no pairing step and
 // no person is involved, and it is kept next to that data with mode 0600.
 
-/** The scopes the adapter needs: read threads and projects, and operate them. */
-const CREDENTIAL_SCOPES = ["orchestration:read", "orchestration:operate"] as const;
+/**
+ * The scopes the adapter needs: read threads and projects, and operate them;
+ * and write the engine's settings, for each bot's browser access
+ * (`BrowserAccess.ts`). A stored token without one of them is refused by
+ * `checkAccess`, and the supervisor mints a new one with all of them.
+ */
+const CREDENTIAL_SCOPES = [
+  "orchestration:read",
+  "orchestration:operate",
+  "settings:write",
+] as const;
 
 /** Renew this long before the token expires, so a running engine never sees an expired one. */
 const RENEW_BEFORE = Duration.days(2);
@@ -150,11 +159,15 @@ export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (
 export type Access = "granted" | "refused" | "unreachable";
 
 /**
- * Whether the engine accepts `token` with both scopes the adapter needs. It
+ * Whether the engine accepts `token` with every scope the adapter needs. It
  * answers `GET /api/auth/session` for any caller, with `authenticated: false`
  * for a token it does not accept, so a refusal is definitive and a failed
  * request only says the engine was not reached. **Read** at `db51b67`,
  * `packages/contracts/src/environmentHttp.ts` (`session`, `OptionalBearerHeaders`).
+ * Its `scopes` lists only the scopes older clients know; what the token is
+ * granted is its `permissions`, which the engine's own `sessionGrantsScope`
+ * reads (**Read** at `59651c1`, `contracts/src/auth.ts`, `authScopeResponse`;
+ * **Verified**: a token issued with `settings:write` reports it only there).
  */
 export const checkAccess = Effect.fn("engine.checkAccess")(function* (input: {
   readonly baseUrl: string;
@@ -172,13 +185,11 @@ export const checkAccess = Effect.fn("engine.checkAccess")(function* (input: {
         if (response.status === 401 || response.status === 403) return Effect.succeed("refused");
         return HttpClientResponse.filterStatusOk(response).pipe(
           Effect.flatMap(decodeSession),
-          Effect.map((session): Access => {
-            const scopes = session.scopes ?? [];
-            return session.authenticated &&
-              CREDENTIAL_SCOPES.every((scope) => scopes.includes(scope))
+          Effect.map((session): Access =>
+            CREDENTIAL_SCOPES.every((scope) => sessionGrantsScope(session, scope))
               ? "granted"
-              : "refused";
-          }),
+              : "refused",
+          ),
         );
       }),
       Effect.timeout(Duration.seconds(5)),

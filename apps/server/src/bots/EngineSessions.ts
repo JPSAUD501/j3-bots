@@ -22,7 +22,7 @@ import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
-import { timeText } from "../persistence/columns.ts";
+import { Flag, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { modeRefusals } from "../turns/modeRefusals.ts";
 import { conversation, SessionRowId } from "../turns/model.ts";
@@ -57,6 +57,7 @@ const Alignment = Schema.Struct({
   engine_session_id: Schema.NullOr(SessionId),
   provider_id: ProviderId,
   settings_pending: Schema.Int,
+  browser: Flag,
 });
 
 /**
@@ -82,6 +83,9 @@ interface Pending {
   readonly sessionId: SessionId;
   readonly model: ModelChoice;
   readonly permissionMode: PermissionMode;
+  readonly browser: boolean;
+  /** The session's tools were brought to the other browser setting: they are reloaded. */
+  readonly reloadTools: boolean;
   readonly changes: number;
   readonly revision: number;
 }
@@ -231,6 +235,12 @@ export class EngineSessions extends Context.Service<
     ) => Effect.Effect<A, E, R>;
     /** The session an engine session id belongs to, if it is a live one of a bot. */
     readonly ofEngineSession: (sessionId: SessionId) => Effect.Effect<Option.Option<BotSession>>;
+    /**
+     * Gives the bot's project the bot's browser setting as it stands, for a
+     * side session about to open there: its first turn starts its tools with
+     * what the project allows then.
+     */
+    readonly syncBrowserAccess: (botId: BotId) => Effect.Effect<void, EngineDown>;
   }
 >()("@j3-bots/server/bots/EngineSessions") {}
 
@@ -254,6 +264,9 @@ export const layer = Layer.effect(
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
     const provisioning = yield* Semaphore.make(1);
+    // One write of a project's browser access at a time, each with the bot's
+    // setting read just before it.
+    const accessWrites = yield* Semaphore.make(1);
 
     const mainSession = SqlSchema.findOneOption({
       Request: BotId,
@@ -376,7 +389,7 @@ export const layer = Layer.effect(
       Request: Schema.String,
       Result: Alignment,
       execute: (id) => sql`
-        SELECT engine_session_id, provider_id, settings_pending FROM sessions
+        SELECT engine_session_id, provider_id, settings_pending, browser FROM sessions
         WHERE id = ${id} AND retired_at IS NULL AND lost_at IS NULL
       `,
     });
@@ -392,13 +405,15 @@ export const layer = Layer.effect(
         const found = yield* bots.find(botId);
         const row = yield* alignment(rowId);
         if (Option.isNone(found) || Option.isNone(row)) return null;
-        const { bot } = found.value;
+        const { bot, engineProjectId } = found.value;
         const session = row.value;
         const { revision, modeRefused } = revisionState(yield* revisionOf(botId));
         if (
           session.settings_pending === 0 ||
           session.engine_session_id === null ||
-          session.provider_id !== bot.model.providerId
+          session.provider_id !== bot.model.providerId ||
+          // Opened sessions are in their bot's project.
+          Option.isNone(engineProjectId)
         ) {
           return null;
         }
@@ -407,6 +422,8 @@ export const layer = Layer.effect(
           sessionId: session.engine_session_id,
           model: bot.model,
           permissionMode: bot.permissionMode,
+          browser: bot.browser,
+          reloadTools: session.browser !== bot.browser,
           changes: session.settings_pending,
           revision,
         } satisfies Pending;
@@ -440,17 +457,21 @@ export const layer = Layer.effect(
     `.pipe(Effect.orDie, Effect.asVoid, Effect.withSpan("EngineSessions.engineStarted"));
 
     /**
-     * Marks the session aligned, unless a change committed since `pending`
-     * were read. A hold by background work ends with it.
+     * Marks the session aligned, with the browser setting its tools have now,
+     * unless a change committed since `pending` were read. A hold by
+     * background work ends with it.
      */
     const aligned = Effect.fn("EngineSessions.aligned")(
-      function* (botId: BotId, rowId: string, pending: number) {
+      function* (botId: BotId, rowId: string, pending: number, browser: boolean) {
         const [row] = yield* sql<{ readonly held: number }>`
           SELECT settings_held AS held FROM sessions
           WHERE id = ${rowId} AND settings_pending = ${pending}
         `;
         if (row === undefined) return false;
-        yield* sql`UPDATE sessions SET settings_pending = 0, settings_held = 0 WHERE id = ${rowId}`;
+        yield* sql`
+          UPDATE sessions SET settings_pending = 0, settings_held = 0, browser = ${browser ? 1 : 0}
+          WHERE id = ${rowId}
+        `;
         if (row.held === 1) yield* changes.touch({ _tag: "bot", botId });
         // Ready: a later run of failures is told again, and so is a later
         // refusal of its permission mode.
@@ -461,6 +482,24 @@ export const layer = Layer.effect(
       transaction,
       Effect.orDie,
     );
+
+    /**
+     * Gives the bot's project the bot's browser setting as it stands. Every
+     * write reads the setting afresh, one at a time, so the last one written
+     * has the latest: a caller that read an older one meanwhile has a change
+     * pending, which the next alignment brings its session to. It waits on no
+     * session's gate, so a session held by a turn never holds it up.
+     */
+    const writeBrowserAccess = Effect.fn("EngineSessions.writeBrowserAccess")(function* (
+      botId: BotId,
+    ) {
+      const found = yield* bots.find(botId);
+      if (Option.isNone(found) || Option.isNone(found.value.engineProjectId)) return;
+      yield* engine.setBrowserAccess({
+        projectId: found.value.engineProjectId.value,
+        enabled: found.value.bot.browser,
+      });
+    }, accessWrites.withPermits(1));
 
     /**
      * Brings the bot's opened main session to the bot's settings, if it has
@@ -486,6 +525,12 @@ export const layer = Layer.effect(
             // Asked again only once the bot's settings change, or the engine
             // becomes ready again.
             if (due === "mode-refused") return due;
+            // The project first, also while a turn runs, whose tools stay as
+            // they started: a side session opened from now on starts with
+            // what the bot has, and the session's own, reloaded or not, too.
+            // Sent with every alignment, so a project that lost it gets it
+            // back.
+            yield* writeBrowserAccess(botId);
             const work = yield* workOf(rowId);
             if (work.admitted !== null || work.runningTurns > 0) {
               return "turn-running" as const;
@@ -496,6 +541,7 @@ export const layer = Layer.effect(
                 sessionId: due.sessionId,
                 model: due.model,
                 permissionMode: due.permissionMode,
+                reloadTools: due.reloadTools,
               })
               .pipe(
                 Effect.as(null),
@@ -515,7 +561,7 @@ export const layer = Layer.effect(
               yield* refusals.refused(botId, due.revision, refused, generation);
               return "mode-refused" as const;
             }
-            if (yield* aligned(botId, rowId, due.changes)) {
+            if (yield* aligned(botId, rowId, due.changes, due.browser)) {
               // A wake waiting for the session is dispatched now, and a
               // held queue resumed.
               yield* signals.dispatch.fire;
@@ -557,6 +603,8 @@ export const layer = Layer.effect(
       if (selected.modeRefused) return "mode-refused" as const;
       if (session.engine_session_id === null) {
         const generation = yield* readiness.generation;
+        // Its first turn starts its tools with what the project allows then.
+        yield* writeBrowserAccess(botId);
         const opened = yield* engine
           .openSession({
             key: openingKey(session),
@@ -580,9 +628,10 @@ export const layer = Layer.effect(
           return "mode-refused" as const;
         }
         // Recorded before it is aligned, which it takes no work until.
-        yield* sql`UPDATE sessions SET engine_session_id = ${opened.sessionId} WHERE id = ${session.id}`.pipe(
-          Effect.orDie,
-        );
+        yield* sql`
+          UPDATE sessions SET engine_session_id = ${opened.sessionId}, browser = ${settings.browser ? 1 : 0}
+          WHERE id = ${session.id}
+        `.pipe(Effect.orDie);
       }
       return yield* align(botId);
     }, provisioning.withPermits(1));
@@ -629,6 +678,7 @@ export const layer = Layer.effect(
       removeProject,
       withoutProvisioning: provisioning.withPermits(1),
       ofEngineSession,
+      syncBrowserAccess: writeBrowserAccess,
     });
   }),
 );

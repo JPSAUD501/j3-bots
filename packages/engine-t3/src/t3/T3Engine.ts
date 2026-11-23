@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type BrowserHostStatus,
   EngineStatus,
   type ModelChoice,
   PermissionMode,
@@ -14,7 +15,9 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ProjectId,
   ProjectSnapshot,
+  DEFAULT_BROWSER_PROFILE_ID,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -75,7 +78,7 @@ import {
   SessionNotFound,
   StopRejected,
 } from "../errors.ts";
-import type { BackgroundWork, SessionEvent } from "../events.ts";
+import { type BackgroundWork, isBackgroundWorkPending, type SessionEvent } from "../events.ts";
 import {
   EngineAttachmentId,
   EngineProjectId,
@@ -85,6 +88,8 @@ import {
   SessionId,
   type SyncToken,
 } from "../ids.ts";
+import { type ProjectOverrides, withBrowserAccess } from "./BrowserAccess.ts";
+import { type BrowserHostNeeds, inspectBrowserHost } from "./BrowserHost.ts";
 import { boundedCommand } from "./Command.ts";
 import { makeEngineRpc } from "./Connection.ts";
 import {
@@ -137,6 +142,7 @@ import {
   dispositionOf,
   emptyMirror,
   engineAnswersOf,
+  liveProviderSessions,
   findRequest,
   isDeleted,
   isEnded,
@@ -304,6 +310,16 @@ interface SyncTarget {
   /** Completed when the stream closes: no marker is owed to it any more. */
   readonly closed: Deferred.Deferred<void>;
 }
+
+/** What the engine's browser needs from this host, as the engine status says it. */
+const browserHostStatus = (needs: BrowserHostNeeds): BrowserHostStatus => {
+  const missing = [
+    ...(needs.sandboxBlocked ? (["sandbox"] as const) : []),
+    ...(needs.missingLibraries.length > 0 ? (["libraries"] as const) : []),
+    ...(needs.noFonts ? (["fonts"] as const) : []),
+  ];
+  return missing.length === 0 ? { _tag: "ready" } : { _tag: "setup-required", needs: missing };
+};
 
 const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -838,7 +854,127 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         ProjectMutationError: () => Effect.void,
       }),
     );
+    yield* afterSending(forgetOverrides(projectId));
   });
+
+  // ---------------------------------------------------------------------------
+  // Browser access
+
+  /**
+   * Reads and writes of the projects' overrides take turns: each writes back
+   * a project's whole set, as it read it, with one key changed.
+   */
+  const overridesLock = yield* Semaphore.make(1);
+
+  /** The projects' overrides in the engine's settings. Nothing was sent, so any failure is unavailability. */
+  const projectOverrides = ready.pipe(
+    Effect.andThen(
+      rpc["server.getSettings"]({}).pipe(
+        Effect.timeoutOrElse({
+          duration: COMMAND_TIMEOUT,
+          orElse: () => Effect.fail(new EngineUnavailable()),
+        }),
+        Effect.map((settings) => settings.projectSettingsOverrides),
+        Effect.catchTags({
+          RpcClientError: () => Effect.fail(new EngineUnavailable()),
+          EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+          ServerSettingsError: () => Effect.fail(new EngineUnavailable()),
+        }),
+      ),
+    ),
+  );
+
+  /**
+   * Replaces the project's set of overrides, or removes it with `null`. The
+   * engine refuses a settings file it cannot write (`ServerSettingsError`);
+   * that and a lost reply are indeterminate, and writing the same set again
+   * is harmless.
+   */
+  const writeOverrides = (projectId: EngineProjectId, overrides: ProjectOverrides | null) =>
+    ready.pipe(
+      Effect.andThen(
+        rpc["server.updateSettings"]({
+          patch: { projectSettingsOverrides: { [projectId]: overrides } },
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: COMMAND_TIMEOUT,
+            orElse: () => Effect.fail(new EngineIndeterminate()),
+          }),
+          Effect.catchTags({
+            RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+            EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+            ServerSettingsError: () => Effect.fail(new EngineIndeterminate()),
+          }),
+          Effect.asVoid,
+        ),
+      ),
+    );
+
+  /**
+   * Whether the engine's browser can run on this host, checked each time the
+   * engine becomes ready and each time a bot is given the browser: an
+   * administrator may have set the host up, or the engine downloaded the
+   * browser, since. Nothing to check off Linux, where it needs no setup.
+   */
+  const browserHost = yield* SubscriptionRef.make(Option.none<BrowserHostStatus>());
+  const browserHostChecks = yield* Queue.sliding<void>(1);
+  const checkBrowserHost = Effect.gen(function* () {
+    if (process.platform !== "linux") {
+      return yield* SubscriptionRef.set(browserHost, Option.some({ _tag: "ready" }));
+    }
+    const executable = yield* Deferred.await(installed);
+    const needs = yield* platformServices(inspectBrowserHost({ home: options.home, executable }));
+    yield* SubscriptionRef.set(browserHost, Option.some(browserHostStatus(needs)));
+  });
+  yield* Stream.merge(
+    stateChanges(state).pipe(Stream.filter((current) => current._tag === "ready")),
+    Stream.fromQueue(browserHostChecks),
+  ).pipe(
+    Stream.runForEach(() => checkBrowserHost),
+    Effect.forkScoped,
+  );
+
+  const setBrowserAccess = Effect.fn("Engine.setBrowserAccess")(function* (input: {
+    readonly projectId: EngineProjectId;
+    readonly enabled: boolean;
+  }) {
+    const current = (yield* projectOverrides)[input.projectId];
+    const next = withBrowserAccess(current, input.enabled);
+    if (next !== null) yield* writeOverrides(input.projectId, next);
+    if (input.enabled) yield* Queue.offer(browserHostChecks, undefined);
+  }, overridesLock.withPermits(1));
+
+  /** The project's overrides go with it, so the settings keep none of a project that is gone. */
+  const forgetOverrides = Effect.fn("Engine.forgetOverrides")(function* (
+    projectId: EngineProjectId,
+  ) {
+    if ((yield* projectOverrides)[projectId] !== undefined) {
+      yield* writeOverrides(projectId, null);
+    }
+  }, overridesLock.withPermits(1));
+
+  /**
+   * The engine closes the profile's browser context, which closes its tabs,
+   * and deletes its folder (**Read** at `59651c1`, `ServerBrowserContexts.ts`,
+   * `clearProfile`). A deletion that failed may have deleted part of it:
+   * indeterminate, and clearing again finishes it.
+   */
+  const clearBrowserProfile = ready.pipe(
+    Effect.andThen(
+      rpc["preview.clearProfile"]({ profileId: DEFAULT_BROWSER_PROFILE_ID }).pipe(
+        Effect.timeoutOrElse({
+          duration: COMMAND_TIMEOUT,
+          orElse: () => Effect.fail(new EngineIndeterminate()),
+        }),
+        Effect.catchTags({
+          RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+          EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+          PreviewClearProfileError: () => Effect.fail(new EngineIndeterminate()),
+        }),
+      ),
+    ),
+    Effect.withSpan("Engine.clearBrowserProfile"),
+  );
 
   const openSession = Effect.fn("Engine.openSession")(function* (input: {
     readonly key: IdempotencyKey;
@@ -915,6 +1051,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     readonly sessionId: SessionId;
     readonly model?: ModelChoice;
     readonly permissionMode?: PermissionMode;
+    readonly reloadTools?: boolean;
   }) {
     // Only what differs from what the thread runs is sent: a session opened
     // again under its key is the one the engine opened first, as it was
@@ -935,12 +1072,25 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       (thread === undefined || thread.runtimeMode !== RUNTIME_MODES[input.permissionMode])
         ? input.permissionMode
         : undefined;
-    if (selection === undefined && mode === undefined) return;
+    // The tools are reloaded by replacing the provider sessions that still
+    // run, as the engine does itself on a change of runtime mode: the next
+    // turn starts a new one, whose tool credential the engine issues with
+    // what the project allows then, and resumes the conversation natively
+    // (**Read** at `59651c1`, `prepareMcpSession`; `provider-session.detach`
+    // is **Verified**, below). One that has stopped starts again anyway.
+    const reload = input.reloadTools === true && liveProviderSessions(mirror).length > 0;
+    if (selection === undefined && mode === undefined && !reload) return;
     // A change may replace the provider session, which ends a turn running in
     // it: none is sent while one runs.
     const running = startedTurn(mirror);
     if (Option.isSome(running)) {
       return yield* new SessionBusy({ sessionId: input.sessionId, turnId: running.value });
+    }
+    // The engine checks this for a change of model or runtime mode, and not
+    // for a detach, which would end the work: checked here first, so nothing
+    // is sent.
+    if (reload && isBackgroundWorkPending(yield* reportedWork(input.sessionId, mirror))) {
+      return yield* new BackgroundWorkRunning({ sessionId: input.sessionId });
     }
     if (selection !== undefined) {
       yield* sendSettingsCommand(
@@ -966,6 +1116,25 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         mode,
       );
       yield* selection === undefined ? send : afterSending(send);
+    }
+    if (reload) {
+      const sent = selection !== undefined || mode !== undefined;
+      // A change of model or mode may have replaced them already.
+      const current = sent ? yield* afterSending(liveProjection(input.sessionId)) : mirror;
+      for (const [index, providerSessionId] of liveProviderSessions(current).entries()) {
+        const detach = sendSettingsCommand(
+          input.sessionId,
+          {
+            type: "provider-session.detach",
+            commandId: commandId("tools", `${input.sessionId}:${yield* uniqueKey}`),
+            threadId,
+            providerSessionId: ProviderSessionId.make(providerSessionId),
+            reason: "Browser access changed.",
+          },
+          undefined,
+        );
+        yield* sent || index > 0 ? afterSending(detach) : detach;
+      }
     }
   });
 
@@ -1742,7 +1911,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.forkScoped,
   );
 
-  const status = Stream.zipLatestWith(
+  const engineStatus = Stream.zipLatestWith(
     withFirstCheckBudget(stateChanges(state)),
     SubscriptionRef.changes(reported),
     ({ state: current, firstCheck }, engineProviders): EngineStatus => {
@@ -1776,6 +1945,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           };
       }
     },
+  );
+  const status = Stream.zipLatestWith(
+    engineStatus,
+    SubscriptionRef.changes(browserHost),
+    (current, browser): EngineStatus =>
+      current.state._tag === "ready" && Option.isSome(browser)
+        ? { ...current, browser: browser.value }
+        : current,
   ).pipe(Stream.changesWith(sameStatus));
 
   /**
@@ -1836,6 +2013,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     consoleLink,
     ensureProject,
     removeProject,
+    setBrowserAccess,
+    clearBrowserProfile,
     openSession,
     configureSession,
     retireSession,

@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import type { BrowserHostNeeds } from "@j3-bots/engine-t3/live";
 import { AdminClient, AdminRequestFailed } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
 import { markRestoring, takeSnapshot } from "../install/snapshot.ts";
@@ -97,6 +98,13 @@ interface World {
   readonly socketBlocked: boolean;
   /** A rollback to a snapshot in the home that has not finished. */
   readonly rollbackUnfinished: boolean;
+  /**
+   * An engine executable J3_ENGINE_BINARY names in this shell, so the engine
+   * counts as installed; a server started from this shell, not the service, uses it.
+   */
+  readonly engineBinary: boolean;
+  /** What the engine's browser needs from this host. */
+  readonly browser: Omit<BrowserHostNeeds, "setup">;
 }
 
 const HEALTHY: World = {
@@ -125,6 +133,8 @@ const HEALTHY: World = {
   homeUnreadable: false,
   socketBlocked: false,
   rollbackUnfinished: false,
+  engineBinary: false,
+  browser: { sandboxBlocked: false, downloaded: true, missingLibraries: [], noFonts: false },
 };
 
 const diagnoseIn = (changes: Partial<World> = {}) =>
@@ -146,6 +156,8 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
       path.join(home, "config.json"),
       Option.getOrElse(world.configFile, () => JSON.stringify({ webClient: web })),
     );
+    const engineBinary = path.join(root, "t3");
+    if (world.engineBinary) yield* fs.writeFileString(engineBinary, "");
     if (world.socketBlocked) yield* fs.writeFileString(path.join(home, "admin.sock"), "");
     if (world.rollbackUnfinished) {
       yield* markRestoring(
@@ -166,6 +178,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           HOME: root,
           J3_HOME: home,
           XDG_CONFIG_HOME: configHome,
+          ...(world.engineBinary ? { J3_ENGINE_BINARY: engineBinary } : {}),
           ...world.environment,
         }),
       ),
@@ -195,6 +208,11 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
             Effect.sync(() => {
               requests.push(url);
               return world.reachable;
+            }),
+          browserNeeds: ({ home, executable }) =>
+            Effect.succeed({
+              ...world.browser,
+              setup: [executable, "browser", "setup", "--base-dir", home],
             }),
           findExecutable: (name, searchPath) =>
             Effect.succeed(
@@ -425,6 +443,42 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         ),
       });
       assertFlagged(named(failed.checks, "Engine"), "problem");
+    }),
+  );
+
+  it.effect("checks what the browser needs once the engine is installed, and how to fix it", () =>
+    Effect.gen(function* () {
+      // A server started from this shell, with an engine of its own.
+      const installed = { engineBinary: true, unitInstalled: false } as const;
+      const ready = yield* diagnoseIn(installed);
+      assert.strictEqual(named(ready.checks, "Browser").status, "ok");
+      const blocked = yield* diagnoseIn({
+        ...installed,
+        browser: {
+          sandboxBlocked: true,
+          downloaded: true,
+          missingLibraries: ["libnss3.so", "libgbm.so.1"],
+          noFonts: true,
+        },
+      });
+      const browser = named(blocked.checks, "Browser");
+      assertFlagged(browser, "warning", "AppArmor blocks the sandbox");
+      assert.include(browser.summary, "libnss3.so, libgbm.so.1");
+      assert.include(browser.summary, "no font");
+      assert.match(
+        Option.getOrElse(browser.fix, () => ""),
+        /`sudo \S+\/t3 browser setup --base-dir \S+\/engine`/,
+      );
+
+      // Before the engine is installed, its setup cannot run, and off Linux the browser needs nothing.
+      const needsSetup = { ...HEALTHY.browser, sandboxBlocked: true };
+      for (const changes of [
+        { browser: needsSetup },
+        { ...installed, browser: needsSetup, platform: "darwin" },
+      ]) {
+        const { checks } = yield* diagnoseIn(changes);
+        assert.isUndefined(checks.find((check) => check.name === "Browser"));
+      }
     }),
   );
 

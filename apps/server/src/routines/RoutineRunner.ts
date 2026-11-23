@@ -29,6 +29,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { BotStore, type StoredBot } from "../bots/BotStore.ts";
+import { EngineSessions } from "../bots/EngineSessions.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
@@ -167,6 +168,7 @@ export const layer = Layer.effect(
     const engineState = yield* EngineState;
     const observer = yield* Observer;
     const bots = yield* BotStore;
+    const sessions = yield* EngineSessions;
     const entries = yield* Entries;
     const ledger = yield* Ledger;
     const runs = yield* RoutineRuns;
@@ -417,6 +419,10 @@ export const layer = Layer.effect(
       sessionId: SessionRowId,
     ): Effect.fn.Return<Step> {
       if (Option.isNone(found.engineProjectId)) return "deferred";
+      const synced = yield* sessions.syncBrowserAccess(found.bot.id).pipe(Effect.result);
+      if (synced._tag === "Failure") {
+        return synced.failure._tag === "EngineUnavailable" ? "unavailable" : "deferred";
+      }
       const opened = yield* engine
         .openSession({
           key: IdempotencyKey.make(sessionId),

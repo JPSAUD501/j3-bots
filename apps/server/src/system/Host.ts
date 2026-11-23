@@ -3,6 +3,7 @@
 import * as NodeNet from "node:net";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
+import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -12,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { freeSpaceAt } from "./freeSpace.ts";
 import { type PortState, portStateOf } from "./Ports.ts";
 import { privateKeysIn } from "./sshKeys.ts";
@@ -64,6 +66,16 @@ export class Host extends Context.Service<
      * redirects, within fifteen seconds. Nothing is downloaded.
      */
     readonly reachable: (url: string) => Effect.Effect<boolean>;
+    /**
+     * What the engine's headless browser needs from this Linux host, for the
+     * engine executable `executable` and its data directory `home`: it reads
+     * the AppArmor settings, and runs the downloaded browser, `ldd` and
+     * `fc-match` to ask about libraries and fonts.
+     */
+    readonly browserNeeds: (input: {
+      readonly home: string;
+      readonly executable: string;
+    }) => Effect.Effect<EngineLive.BrowserHostNeeds>;
   }
 >()("@j3-bots/server/system/Host") {}
 
@@ -135,6 +147,7 @@ export const layer = Layer.effect(
     const candidates = executableNames(process.platform, pathExtensions);
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
     const user = NodeOs.userInfo();
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
     return Host.of({
       nodeVersion: process.versions.node,
@@ -200,6 +213,13 @@ export const layer = Layer.effect(
           Effect.timeout(REACHABLE_WITHIN),
           Effect.orElseSucceed(() => false),
         ),
+      ),
+      browserNeeds: Effect.fn("Host.browserNeeds")(
+        (input: { readonly home: string; readonly executable: string }) =>
+          EngineLive.inspectBrowserHost(input),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
     });
   }),

@@ -763,6 +763,16 @@ const workBy = (
 const RELEASED_SESSION: ReadonlySet<ProviderSession["status"]> = new Set(["stopped", "error"]);
 
 /**
+ * The provider sessions bound to the thread whose process may still run: a
+ * stopped or failed one starts again, with what its project allows then, at
+ * the thread's next turn.
+ */
+export const liveProviderSessions = (mirror: Mirror): ReadonlyArray<string> =>
+  [...mirror.providerSessions]
+    .filter(([, status]) => !RELEASED_SESSION.has(status))
+    .map(([id]) => id);
+
+/**
  * Whether a provider thread other than the one the engine's stop interrupts
  * still runs its tasks: one from before a fresh-context start.
  *

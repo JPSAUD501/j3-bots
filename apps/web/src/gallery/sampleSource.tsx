@@ -399,6 +399,8 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         e._tag === "message" ? { ...e, delivery: { _tag: "pending" } } : e,
       ),
     stopBot: (botId) => update((s) => updateBot(s, botId, setState({ _tag: "idle" }))),
+    setBrowser: (bot, enabled) =>
+      update((s) => updateBot(s, bot.id, (current) => ({ ...current, browser: enabled }))),
     // The sample's members work only for the room, so its Stop ends whatever they run.
     stopRoom: (roomId) =>
       update((s) => {
@@ -458,6 +460,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           },
           permissionMode: "supervised",
           primary,
+          browser: false,
           pinned: false,
           hidden: false,
           sectionId: null,
@@ -649,6 +652,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     editProfile: nothing,
     freshStart: nothing,
     refreshSettings: nothing,
+    signOutBrowser: () => Promise.resolve(true),
     refreshDevices: nothing,
     loadMoreTurns: nothing,
     retryTurns: nothing,
