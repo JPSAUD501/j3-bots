@@ -154,7 +154,7 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         SELECT entry_id FROM attachments WHERE id = 'file-1'
       `;
       assert.deepStrictEqual(files, [{ entry_id: "entry-1" }]);
-      // The entry kept its kind when the kind's check widened (migration 23),
+      // The entry kept its kind when the kind's check widened (the browser help migration),
       // and an entry still cannot change it.
       const kinds = yield* sql<{ readonly kind: string }>`SELECT kind FROM entries`;
       assert.deepStrictEqual(kinds, [{ kind: "message" }]);
