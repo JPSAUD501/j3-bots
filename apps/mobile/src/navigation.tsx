@@ -1,5 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, MemoryPath, RoomId, RosterItemKey, RoutineId } from "@j3-bots/contracts";
+import type {
+  BotId,
+  ConnectorGlyph,
+  ConnectorId,
+  EntryId,
+  ListingRef,
+  MemoryPath,
+  RoomId,
+  RosterItemKey,
+  RoutineId,
+} from "@j3-bots/contracts";
 import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { fontFamilies } from "@j3-bots/design-tokens";
 import {
@@ -19,6 +29,10 @@ import {
 import { useState } from "react";
 import { useColorScheme } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { AddConnectorScreen } from "./connectors/AddConnectorScreen.tsx";
+import { ConnectorScreen } from "./connectors/ConnectorScreen.tsx";
+import { ConnectorsScreen } from "./connectors/ConnectorsScreen.tsx";
+import { ListingScreen } from "./connectors/ListingScreen.tsx";
 import { useI18n } from "./i18n.ts";
 import { useSideBySide } from "./layout.ts";
 import { PresentationProvider } from "./presentation.tsx";
@@ -48,6 +62,10 @@ import { Toasts } from "./toast.tsx";
  * `share` picks where something another app shared goes, over the rest.
  * `shareTemplate` shows a bot as a template before it is shared, and
  * `newFromTemplate` the template file opened, before a bot is made from it.
+ * The connectors' screens open from Settings, a bot's details and a card:
+ * their list and the gallery, a gallery entry, one connector, and adding one
+ * of the operator's own. `forBot` is the bot a new connector is for at first,
+ * and `suggestion` the card that suggested it.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
@@ -63,6 +81,22 @@ export type Screens = {
   newBot: undefined;
   settings: undefined;
   hidden: undefined;
+  connectors: { readonly forBot: BotId | null; readonly suggestion: EntryId | null } | undefined;
+  connectorListing: {
+    readonly ref: ListingRef;
+    readonly name: string;
+    readonly glyph: ConnectorGlyph | null;
+    readonly forBot: BotId | null;
+    readonly suggestion: EntryId | null;
+  };
+  connector: {
+    readonly connectorId: ConnectorId;
+    /** Start its sign-in as the screen opens, as a card's Sign in asks. */
+    readonly signIn: boolean;
+    /** It was just added: the screen says who can use it from now. */
+    readonly added: boolean;
+  };
+  addConnector: { readonly forBot: BotId | null };
 };
 
 /**
@@ -211,6 +245,11 @@ export function Main() {
                 component={SettingsScreen}
                 options={{ ...sheet, title: t("settings.title") }}
               />
+              {/* The connectors' screens set their own titles. */}
+              <Stack.Screen name="connectors" component={ConnectorsScreen} />
+              <Stack.Screen name="connectorListing" component={ListingScreen} />
+              <Stack.Screen name="connector" component={ConnectorScreen} />
+              <Stack.Screen name="addConnector" options={sheet} component={AddConnectorScreen} />
             </Stack.Navigator>
           </NavigationContainer>
           <ShareOpener navigation={navigation} ready={ready} />

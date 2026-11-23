@@ -1336,6 +1336,7 @@ export const en = {
   "connectors.retry": "Try again",
   "connectors.addOwn": "Add your own",
   "connectors.addOwn.hint": "Another service, by its address or by a command.",
+  "connectors.addOwn.hintPhone": "Another service, by its address.",
   "connectors.offline": "Connecting a service takes the server, which is offline now.",
   "connectors.bots.all": "All bots",
   "connectors.bots.none": "No bots",
@@ -1380,6 +1381,11 @@ export const en = {
   "connector.connect": "Connect",
   "connector.setUp": "Set up",
   "connector.unsupported": "J3 Bots can't connect this one yet.",
+  "connector.onComputer":
+    "This one runs a command on your server. Change it or remove it from J3 Bots on your computer.",
+  "connect.commandOnComputer":
+    "This one runs a command on your server. Connect it from J3 Bots on your computer.",
+  "addOwn.commandOnComputer": "To add one that runs a command, use J3 Bots on your computer.",
   "connector.bots": "Bots that can use it",
   "connector.bots.all": "All bots, and any you add later",
   "connector.bots.saving": "Saving…",
@@ -1460,7 +1466,7 @@ export const en = {
   "signIn.paste.apps":
     "The desktop and phone apps take the browser back on their own, with nothing to paste.",
   "signIn.failed.start": "The sign-in didn't start. Try again.",
-  "signIn.failed.noRelay": "This app couldn't wait for the browser on this computer. Try again.",
+  "signIn.failed.noRelay": "This app couldn't wait for the browser to come back. Try again.",
   "signIn.failed.unsupported": "This service doesn't sign in the way J3 Bots needs.",
   "signIn.failed.registration": "The service didn't let J3 Bots register to sign in.",
   "signIn.failed.unreachable": "The service didn't answer. Try again in a moment.",

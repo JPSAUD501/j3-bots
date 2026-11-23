@@ -125,7 +125,11 @@ describe("a bot's suggestion of a connector", () => {
   it("lets the bot use a connector that works, and opens nothing", () => {
     const tracker = { ...connector("t"), grant: { _tag: "bots", ids: [hal.id] } } as const;
     expect(
-      suggestionConnect(suggesting({ _tag: "connector", connectorId: tracker.id }), [tracker], bots),
+      suggestionConnect(
+        suggesting({ _tag: "connector", connectorId: tracker.id }),
+        [tracker],
+        bots,
+      ),
     ).toEqual({
       letIn: { connectorId: tracker.id, grant: { _tag: "bots", ids: [hal.id, scout.id] } },
       open: null,
@@ -154,11 +158,11 @@ describe("a bot's suggestion of a connector", () => {
 
   it("opens the screen's first page for a connector this device does not hold", () => {
     const gone = ConnectorId.make("conn_gone000000000000");
-    expect(suggestionConnect(suggesting({ _tag: "connector", connectorId: gone }), [], bots)).toEqual(
-      {
-        letIn: null,
-        open: { at: { _tag: "home" }, forBot: scout.id, suggestion: EntryId.make("e1") },
-      },
-    );
+    expect(
+      suggestionConnect(suggesting({ _tag: "connector", connectorId: gone }), [], bots),
+    ).toEqual({
+      letIn: null,
+      open: { at: { _tag: "home" }, forBot: scout.id, suggestion: EntryId.make("e1") },
+    });
   });
 });
