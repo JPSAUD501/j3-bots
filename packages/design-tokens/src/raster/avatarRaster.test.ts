@@ -91,6 +91,38 @@ describe("a still avatar at 96 px", () => {
     expect(near(at(draw(idle), tip.x, tip.y), rgb(botPalette.teal.light))).toBe(true);
   });
 
+  it("clears a band of whatever lies under a blocked bot's light, so it stands apart", () => {
+    // The blocked pose: the eye shut and the antenna slumped, its lit tip on the body.
+    const blocked = {
+      ...idle,
+      shut: 1,
+      roll: 10,
+      antennaAngle: 78,
+      antennaLength: 15,
+      tilt: 3,
+      squash: 0.07,
+      light: "blocked" as const,
+    };
+    const unlit = { ...blocked, light: "body" as const };
+    const frame = avatarFrame("dome", blocked, 96);
+    const [a, b, c, d, e, f] = frame.body;
+    const { x, y, r } = frame.light;
+    // Points halfway across the band between the light and the edge of its cutout.
+    const band = (r + frame.lightCut) / 2;
+    const ring = Array.from({ length: 24 }, (_, i) => {
+      const px = x + band * Math.cos((i * Math.PI) / 12);
+      const py = y + band * Math.sin((i * Math.PI) / 12);
+      return toPx({ x: a * px + c * py + e, y: b * px + d * py + f });
+    });
+    const opaque = (canvas: Canvas) =>
+      ring.filter((p) => (at(canvas, p.x, p.y)[3] ?? 0) === 255).length;
+    // Without the cutout the body and the antenna fill much of the band; with it, none does.
+    expect(opaque(draw(unlit))).toBeGreaterThan(8);
+    expect(ring.every((p) => at(draw(blocked), p.x, p.y)[3] === 0)).toBe(true);
+    const tip = toPx({ x: a * x + c * y + e, y: b * x + d * y + f });
+    expect(near(at(draw(blocked), tip.x, tip.y), rgb(colors.blocked.light))).toBe(true);
+  });
+
   it("hides the lens behind its lids when the eye is shut", () => {
     const shut = draw({ ...idle, shut: 1, curve: -5 });
     const open = draw(idle);

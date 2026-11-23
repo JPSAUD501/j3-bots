@@ -3,7 +3,7 @@ import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
 import type { Bot, EntryId, RosterItem } from "@j3-bots/contracts";
 import { ChevronLeft, ChevronRight, CornerDownRight, Square } from "lucide-react-native";
-import { useEffect, useEffectEvent, useRef } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { AccessibilityInfo, Alert, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
 import { RoomAvatar } from "../components/avatar/BotAvatar.tsx";
@@ -54,6 +54,10 @@ export function ConversationHeader({
   const botStop = item._tag === "bot" && canStop(item.bot);
   const roomStopping = item._tag === "room" ? roomStop(item.room) : "hidden";
 
+  // The block with the name turns muted while pressed: the avatar's light keeps its ring in that color.
+  const [pressed, setPressed] = useState(false);
+  const ground = pressed ? "muted" : "background";
+
   const state = item._tag === "bot" ? stateOf(item.bot) : null;
   const announced = useRef(state);
   const text = line?.text ?? "";
@@ -87,13 +91,16 @@ export function ConversationHeader({
         accessibilityLabel={t("conversation.openDetails", { name })}
         accessibilityHint={line?.text}
         onPress={onOpenDetails}
+        onPressIn={() => setPressed(true)}
+        onPressOut={() => setPressed(false)}
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2.5 rounded-md px-1.5 active:bg-muted"
       >
         {item._tag === "bot" ? (
-          <LiveBotAvatar bot={item.bot} lastEntry={item.lastEntry} size={32} />
+          <LiveBotAvatar bot={item.bot} lastEntry={item.lastEntry} size={32} ground={ground} />
         ) : (
           <RoomAvatar
             size={32}
+            ground={ground}
             members={item.room.members.flatMap((id) => {
               const bot = bots.get(id);
               return bot === undefined ? [] : [{ id, avatar: bot.profile.avatar }];

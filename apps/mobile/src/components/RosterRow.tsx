@@ -2,6 +2,7 @@
 import { needsOperator } from "@j3-bots/client-runtime";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import type { RosterItem } from "@j3-bots/contracts";
+import { useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
 import { useI18n } from "../i18n.ts";
@@ -43,7 +44,9 @@ export function RosterRow({
   const name = itemName(item);
   const time = item.lastActivityAt === null ? null : activityTime(item.lastActivityAt, ctx);
   const unreadDot = item.unread && (item._tag === "room" || item.bot.state._tag !== "idle");
-  const ground = selected ? "muted" : "background";
+  // The row turns muted while pressed or selected: the avatar's light keeps its ring in that color.
+  const [pressed, setPressed] = useState(false);
+  const ground = selected || pressed ? "muted" : "background";
   return (
     <PressScale
       depth="row"
@@ -53,6 +56,8 @@ export function RosterRow({
         .filter((part) => part !== null)
         .join(", ")}
       onPress={onOpen}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
       className={`mx-2 h-(--layout-row-touch) flex-row items-center gap-3 rounded-lg px-2 active:bg-muted ${selected ? "bg-muted" : ""}`}
     >
       {item._tag === "bot" ? (

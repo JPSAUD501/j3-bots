@@ -25,6 +25,12 @@ interface NewBotFormProps {
   readonly className?: string;
 }
 
+/** Creating holds the look the bot is created with. */
+type FormState =
+  | { readonly _tag: "editing" }
+  | { readonly _tag: "creating"; readonly avatar: AvatarChoice }
+  | { readonly _tag: "failed" };
+
 /**
  * A name, a look, and whether the bot becomes the primary one; the bot asks
  * the rest itself. The look starts as the one the server would give it, which
@@ -43,12 +49,17 @@ export function NewBotForm({
   const [name, setName] = useState("");
   const [primary, setPrimary] = useState(primaryAtFirst);
   const bots = useBots();
-  // Until the operator picks one, the look follows the bots there are, which may arrive after the form.
   const [picked, setPicked] = useState<AvatarChoice | null>(null);
-  const avatar = picked ?? freeAvatar([...bots.values()].map((bot) => bot.profile.avatar));
-  const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
+  const [state, setState] = useState<FormState>({ _tag: "editing" });
+  // While the bot is created it joins the list, so the look it was created with stays on show.
+  // Otherwise, until the operator picks one, the look follows the bots there are, which may
+  // arrive after the form.
+  const avatar =
+    state._tag === "creating"
+      ? state.avatar
+      : (picked ?? freeAvatar([...bots.values()].map((bot) => bot.profile.avatar)));
   const trimmed = name.trim();
-  const ready = trimmed !== "" && state !== "creating";
+  const ready = trimmed !== "" && state._tag !== "creating";
   const unsaved = trimmed !== "";
   useEffect(() => {
     if (!unsaved || onUnsavedChange === undefined) return;
@@ -66,12 +77,10 @@ export function NewBotForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (!ready) return;
-        setState("creating");
-        // The bot created joins the list: the look it was created with stays on show.
-        setPicked(avatar);
+        setState({ _tag: "creating", avatar });
         // A created bot opens, which takes the form off the screen: until then it stays
         // creating, so Create cannot make a second bot.
-        onCreate({ name: trimmed, primary, avatar }).catch(() => setState("failed"));
+        onCreate({ name: trimmed, primary, avatar }).catch(() => setState({ _tag: "failed" }));
       }}
     >
       <label htmlFor={nameId} className="sr-only">
@@ -90,7 +99,7 @@ export function NewBotForm({
         onChange={setPicked}
         name={name}
         seed="new-bot"
-        readOnly={state === "creating"}
+        readOnly={state._tag === "creating"}
       />
       <label className="flex items-start gap-2 text-xs text-muted-foreground">
         <span className="mt-px">
@@ -99,7 +108,7 @@ export function NewBotForm({
         <span>{t("firstRun.create.primary")}</span>
       </label>
       <p role="alert" className="text-xs text-blocked empty:hidden">
-        {state === "failed" ? t("firstRun.create.failed") : null}
+        {state._tag === "failed" ? t("firstRun.create.failed") : null}
       </p>
       {onCancel === undefined ? (
         submit
