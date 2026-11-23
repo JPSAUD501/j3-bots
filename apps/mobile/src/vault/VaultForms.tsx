@@ -158,13 +158,18 @@ export function SetupVaultForm({
   );
 }
 
-/** Unlocks the vault with its master password, saying while too many wrong ones make it wait. */
+/**
+ * Unlocks the vault with its master password, saying while too many wrong
+ * ones make it wait. `actions` go beside the button.
+ */
 function UnlockVaultForm({
   status,
   vault,
+  actions,
 }: {
   readonly status: VaultStatus;
   readonly vault: VaultHandle;
+  readonly actions?: ReactNode;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -196,7 +201,8 @@ function UnlockVaultForm({
             ? null
             : failureText(failure)}
       </Problem>
-      <View className="flex-row justify-end">
+      <View className="flex-row flex-wrap items-center justify-end gap-2">
+        {actions}
         <Button
           variant="primary"
           label={t("vault.unlock")}
@@ -209,41 +215,64 @@ function UnlockVaultForm({
   );
 }
 
+/** A sentence on why the vault cannot take a login, with the screen's actions under it. */
+function GateNote({
+  text,
+  actions,
+}: {
+  readonly text: string | null;
+  readonly actions?: ReactNode;
+}) {
+  if (text === null && actions === undefined) return null;
+  return (
+    <View className="gap-3">
+      {text !== null && <Text className="text-sm text-muted-foreground">{text}</Text>}
+      {actions !== undefined && (
+        <View className="flex-row flex-wrap items-center justify-end gap-2">{actions}</View>
+      )}
+    </View>
+  );
+}
+
 /**
  * What a screen shows while the vault cannot take a login: its setup or its
- * unlock, in place, or why there is none. Null once it is unlocked.
+ * unlock, in place, or why there is none. `actions`, such as a card's
+ * Dismiss, go beside the form's own button, or under the sentence. Null once
+ * the vault is unlocked.
  */
 export function VaultGate({
   view,
   vault,
+  actions,
 }: {
   readonly view: VaultView;
   readonly vault: VaultHandle;
+  readonly actions?: ReactNode;
 }) {
   const { t } = useI18n();
   switch (view._tag) {
     case "loading":
-      return null;
+      return <GateNote text={null} actions={actions} />;
     case "unsupported":
-      return <Text className="text-sm text-muted-foreground">{t("vault.unsupported")}</Text>;
+      return <GateNote text={t("vault.unsupported")} actions={actions} />;
     case "ready":
       switch (view.status.state) {
         case "unlocked":
           return null;
         case "newer":
-          return <Text className="text-sm text-muted-foreground">{t("vault.newer")}</Text>;
+          return <GateNote text={t("vault.newer")} actions={actions} />;
         case "uninitialized":
           return (
             <View className="gap-2">
               <Text className="text-sm text-muted-foreground">{t("vault.notSetUp")}</Text>
-              <SetupVaultForm vault={vault} />
+              <SetupVaultForm vault={vault} actions={actions} />
             </View>
           );
         case "locked":
           return (
             <View className="gap-2">
               <Text className="text-sm text-muted-foreground">{t("vault.lockedBody")}</Text>
-              <UnlockVaultForm status={view.status} vault={vault} />
+              <UnlockVaultForm status={view.status} vault={vault} actions={actions} />
             </View>
           );
       }
