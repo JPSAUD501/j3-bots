@@ -168,6 +168,7 @@ The app updates itself from the release's APK ([decision 0035](../decisions/0035
 - An APK listed in a correctly signed `SHA256SUMS` but signed with another keystore passed the app's checks. Android refused it at the install, and the app said it is not signed like the installed app.
 - Two nightlies of one day with the same version code: the second installed over the first.
 - After an install ended the app's process, the next start emptied the update folder.
+- Cancelling Android's install dialog: the app said the install was cancelled and the checked release ready, kept the file, and installed it from there at the next tap.
 - The server's update from the phone, against a server that `install.sh` installed as a systemd user service: the roster's notice opened Settings at the server's offer, one tap took it, the roster said the bots were restarting on the new version, and the app reconnected to it. A release that never became ready rolled back, and the roster said so, with the reason, until it was closed.
 
 Mobile uses its own components. Web and mobile share logic, tokens and vocabulary, not React components. See [decision 0007](../decisions/0007-client-and-server-stack.md) for why, and for the alternative of a single universal codebase.
