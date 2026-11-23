@@ -270,7 +270,12 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     });
 
   const openConnectors = (opening: ConnectorsOpening) =>
-    update((s) => ({ ...s, settingsOpen: false, connectorsOpening: opening }));
+    // A screen put aside under Settings comes back as it was, with what opened it.
+    update((s) => ({
+      ...s,
+      settingsOpen: false,
+      connectorsOpening: s.connectorsOpening ?? opening,
+    }));
 
   return {
     openConnectors,

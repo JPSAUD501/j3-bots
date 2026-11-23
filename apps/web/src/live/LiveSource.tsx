@@ -798,7 +798,8 @@ function LiveShell({
   const [connectorsOpening, setConnectorsOpening] = useState<ConnectorsOpening | null>(null);
   const openConnectors = (opening: ConnectorsOpening) => {
     setSettingsOpen(false);
-    setConnectorsOpening(opening);
+    // A screen put aside under Settings comes back as it was, with what opened it.
+    if (connectorsOpening === null) setConnectorsOpening(opening);
   };
   const connectorsState = useConnectors();
   const connectors = connectorsState._tag === "ready" ? connectorsState.value : null;
