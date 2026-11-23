@@ -31,6 +31,11 @@
       --color-avatar-ink: #ffffff;
       --color-scrollbar: oklch(0 0 0 / 0.22);
       --color-scrim: oklch(0 0 0 / 0.3);
+      --color-viewer: #000000;
+      --color-viewer-bar: oklch(0 0 0 / 0.6);
+      --color-viewer-foreground: #ffffff;
+      --color-viewer-muted-foreground: oklch(1 0 0 / 0.75);
+      --color-viewer-pressed: oklch(1 0 0 / 0.15);
       --color-bot-tomato: oklch(0.615 0.2 24);
       --color-bot-tangerine: oklch(0.635 0.162 50);
       --color-bot-honey: oklch(0.62 0.126 84);
@@ -86,6 +91,11 @@
       --color-avatar-ink: #0b0b0c;
       --color-scrollbar: oklch(1 0 0 / 0.22);
       --color-scrim: oklch(0 0 0 / 0.62);
+      --color-viewer: #000000;
+      --color-viewer-bar: oklch(0 0 0 / 0.6);
+      --color-viewer-foreground: #ffffff;
+      --color-viewer-muted-foreground: oklch(1 0 0 / 0.75);
+      --color-viewer-pressed: oklch(1 0 0 / 0.15);
       --color-bot-tomato: oklch(0.665 0.21 28);
       --color-bot-tangerine: oklch(0.745 0.172 52);
       --color-bot-honey: oklch(0.825 0.16 86);
@@ -147,6 +157,11 @@
   --color-avatar-ink: unset;
   --color-scrollbar: unset;
   --color-scrim: unset;
+  --color-viewer: unset;
+  --color-viewer-bar: unset;
+  --color-viewer-foreground: unset;
+  --color-viewer-muted-foreground: unset;
+  --color-viewer-pressed: unset;
   --color-bot-tomato: unset;
   --color-bot-tangerine: unset;
   --color-bot-honey: unset;

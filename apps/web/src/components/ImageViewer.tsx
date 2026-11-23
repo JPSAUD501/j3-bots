@@ -34,9 +34,8 @@ export function ImageViewer({
       }}
     >
       <Dialog.Portal>
-        {/* Dark in both themes, as an image is seen best against it. */}
-        <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/90 transition-opacity duration-(--duration-state) ease-out data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <Dialog.Popup className="fixed inset-0 z-40 flex flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-white outline-none transition-opacity duration-(--duration-state) ease-out data-ending-style:opacity-0 data-starting-style:opacity-0">
+        <Dialog.Backdrop className="fixed inset-0 z-40 bg-viewer transition-opacity duration-(--duration-state) ease-out data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Popup className="fixed inset-0 z-40 flex flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-viewer-foreground outline-none transition-opacity duration-(--duration-state) ease-out data-ending-style:opacity-0 data-starting-style:opacity-0">
           {held !== null && (
             <Shown key={held.opening} attachment={held.value} onClose={onClose} onSave={onSave} />
           )}
@@ -66,7 +65,7 @@ function Shown({
         <Button
           variant="ghost"
           size="icon"
-          className="text-white hover:bg-white/15"
+          className="text-viewer-foreground hover:bg-viewer-pressed"
           onClick={() => onSave(attachment)}
           aria-label={t("file.save", { name: attachment.name })}
         >
@@ -77,7 +76,7 @@ function Shown({
             <Button
               variant="ghost"
               size="icon"
-              className="text-white hover:bg-white/15"
+              className="text-viewer-foreground hover:bg-viewer-pressed"
               aria-label={t("file.viewer.close")}
             />
           }
@@ -99,7 +98,7 @@ function Shown({
             className="max-h-full max-w-full rounded-md object-contain shadow-overlay"
           />
         ) : (
-          <p role="status" className="text-sm text-white/75">
+          <p role="status" className="text-sm text-viewer-muted-foreground">
             {image?._tag === "failed"
               ? t("file.unreachable", { name: attachment.name })
               : t("file.opening")}
