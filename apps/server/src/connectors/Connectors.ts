@@ -1071,6 +1071,13 @@ export const layer = Layer.effect(
         result: Schema.Void,
         apply: Effect.gen(function* () {
           yield* store.update(input.connectorId, { grant: input.grant }, yield* DateTime.now);
+          // With the grant, so a server that stops after it leaves no card open.
+          const granted = yield* require(input.connectorId);
+          const now = yield* botsOf(granted);
+          yield* suggestionsMet(
+            granted,
+            now.filter((id) => !before.includes(id)),
+          );
         }),
       });
       const connector = yield* require(input.connectorId);
@@ -1078,9 +1085,10 @@ export const layer = Layer.effect(
       for (const lost of before.filter((id) => !after.includes(id))) {
         yield* closeSessions(input.connectorId, lost);
       }
-      const gained = after.filter((id) => !before.includes(id));
-      const changed = [...before.filter((id) => !after.includes(id)), ...gained];
-      yield* suggestionsMet(connector, gained);
+      const changed = [
+        ...before.filter((id) => !after.includes(id)),
+        ...after.filter((id) => !before.includes(id)),
+      ];
       yield* grantsChanged(changed);
       yield* toolsTouched(changed);
       yield* touch(input.connectorId);

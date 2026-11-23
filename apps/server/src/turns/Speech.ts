@@ -1186,7 +1186,12 @@ export const layer = Layer.effect(
                   subject: { _tag: "connector", connectorId: own.id },
                   name: own.name,
                   glyph: own.glyph,
-                  listings: own.listing === null ? [] : gallery.variants(own.listing),
+                  // The entries it came from, and those the bot named it by:
+                  // one added by its address has none of its own.
+                  listings: [
+                    ...(own.listing === null ? [] : gallery.variants(own.listing)),
+                    ...variants,
+                  ],
                 }
               : Option.match(listing, {
                   onNone: () => null,

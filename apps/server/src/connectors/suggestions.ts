@@ -27,19 +27,21 @@ export interface OfferedService {
 }
 
 /**
- * Whether a card offers `service`: the same connector, a gallery entry that
- * connects the same service, or the same name. A card that named one of the operator's
- * connectors keeps only that connector and its name, so a suggestion of the
- * entry it was added from matches it only by name.
+ * Whether a card offers `service`. Two of the operator's connectors are the
+ * same only by id, since two can share a name and reach different accounts.
+ * Otherwise: a gallery entry that connects the same service, or the same
+ * name. A card that named one of the operator's connectors keeps only that
+ * connector and its name, so it meets a gallery entry only by name.
  */
-export const offers = (card: ConnectorSuggestionEntry, service: OfferedService) => {
-  if (fold(card.name) === fold(service.name)) return true;
-  if (card.subject._tag === "connector") {
-    return (
-      service.subject._tag === "connector" &&
-      card.subject.connectorId === service.subject.connectorId
-    );
+export const offers = (
+  card: Pick<ConnectorSuggestionEntry, "name" | "subject">,
+  service: OfferedService,
+) => {
+  if (card.subject._tag === "connector" && service.subject._tag === "connector") {
+    return card.subject.connectorId === service.subject.connectorId;
   }
+  if (fold(card.name) === fold(service.name)) return true;
+  if (card.subject._tag === "connector") return false;
   const { ref } = card.subject;
   return service.listings.some((listing) => sameListing(ref, listing));
 };
