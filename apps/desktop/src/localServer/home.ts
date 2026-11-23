@@ -120,21 +120,23 @@ export class NoFreePorts extends Schema.TaggedError<NoFreePorts>()("NoFreePorts"
 }
 
 /**
- * Three ports free on loopback, the lowest from `FIRST_PORT` up, for the
- * server's clients, its tool endpoint and its engine.
+ * Ports for the server's clients, its tool endpoint and its engine: `port`
+ * for its clients when one is given, and otherwise free on loopback, the
+ * lowest from `FIRST_PORT` up.
  */
 export const choosePorts = Effect.fn("LocalHome.choosePorts")(function* (
   free: (port: number) => Effect.Effect<boolean> = isFree,
+  port?: number,
 ) {
-  const chosen: Array<number> = [];
-  for (let port = FIRST_PORT; port <= LAST_PORT && chosen.length < 3; port += 1) {
-    if (yield* free(port)) chosen.push(port);
+  const chosen: Array<number> = port === undefined ? [] : [port];
+  for (let next = FIRST_PORT; next <= LAST_PORT && chosen.length < 3; next += 1) {
+    if (next !== port && (yield* free(next))) chosen.push(next);
   }
-  const [port, toolPort, enginePort] = chosen;
-  if (port === undefined || toolPort === undefined || enginePort === undefined) {
+  const [clientPort, toolPort, enginePort] = chosen;
+  if (clientPort === undefined || toolPort === undefined || enginePort === undefined) {
     return yield* new NoFreePorts();
   }
-  return { port, toolPort, enginePort };
+  return { port: clientPort, toolPort, enginePort };
 });
 
 // ---------------------------------------------------------------------------
@@ -230,4 +232,42 @@ export const prepareHome = Effect.fn("LocalHome.prepareHome")(function* (
   yield* fs.writeFileString(temporary, `${written}\n`, { mode: 0o600 });
   yield* fs.rename(temporary, file);
   return chosen.port;
+});
+
+/**
+ * The home's `config.json` sets another client port than the one the app
+ * reaches the server at, where the page and its sign-in are kept.
+ */
+class HomePortMoved extends Schema.TaggedError<HomePortMoved>()("HomePortMoved", {
+  file: Schema.String,
+  port: Schema.Int,
+  kept: Schema.Int,
+}) {
+  override get message(): string {
+    return `${this.file} sets this computer's server on port ${this.port}, but the app reaches it on port ${this.kept}.`;
+  }
+
+  /** What repairs it, for the operator to do. */
+  get fix(): string {
+    return `Set "port" back to ${this.kept} in it, or stop using this computer in Settings and choose it again, which signs it in on port ${this.port}.`;
+  }
+}
+
+/**
+ * The client port of the server at `home`, as the app keeps reaching it on
+ * `kept`: a `config.json` that went missing is written again with that port,
+ * so the page's origin stays, and one that sets another is refused, since
+ * the page would not find the server there.
+ */
+export const prepareKeptHome = Effect.fn("LocalHome.prepareKeptHome")(function* (
+  home: string,
+  kept: number,
+  free: (port: number) => Effect.Effect<boolean> = isFree,
+) {
+  const path = yield* Path.Path;
+  const port = yield* prepareHome(home, choosePorts(free, kept));
+  if (port !== kept) {
+    return yield* new HomePortMoved({ file: path.join(home, "config.json"), port, kept });
+  }
+  return port;
 });

@@ -186,3 +186,36 @@ describe("preparing the server's config.json", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("starting on the port the app keeps", () => {
+  it.effect("writes a config.json that went missing again, on that port", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = path.join(yield* freshFolder, "home");
+      const taken = new Set([3747]);
+      const port = yield* Home.prepareKeptHome(home, 3790, (port) =>
+        Effect.succeed(!taken.has(port)),
+      );
+      assert.strictEqual(port, 3790);
+      const written = yield* fs.readFileString(path.join(home, "config.json"));
+      assert.include(written, '"port": 3790');
+      assert.include(written, '"toolPort": 3748');
+      assert.include(written, '"enginePort": 3749');
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses a config.json that sets another port, and says how to repair it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* freshFolder;
+      yield* fs.writeFileString(`${home}/config.json`, '{"port": 3800}');
+      const error = yield* Effect.flip(
+        Home.prepareKeptHome(home, 3790, () => Effect.die("not chosen")),
+      );
+      assert.strictEqual(error._tag, "HomePortMoved");
+      if (error._tag === "HomePortMoved") assert.include(error.fix, '"port" back to 3790');
+      assert.strictEqual(yield* fs.readFileString(`${home}/config.json`), '{"port": 3800}');
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
