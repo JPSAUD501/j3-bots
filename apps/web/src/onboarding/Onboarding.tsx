@@ -386,11 +386,12 @@ function StepFrame({
   readonly actions: ReactNode;
 }) {
   return (
-    <div className="flex h-full min-h-0 flex-col px-6 pb-[max(--spacing(6),env(safe-area-inset-bottom))]">
-      <div className="flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto text-center">
+    <div className="flex h-full min-h-0 flex-col pb-[max(--spacing(6),env(safe-area-inset-bottom))]">
+      {/* The side room is inside the scrolling column, so a focus ring at its edge is not cut off. */}
+      <div className="flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto px-6 text-center">
         {children}
       </div>
-      <div className="flex shrink-0 flex-col gap-3 pt-4">{actions}</div>
+      <div className="flex shrink-0 flex-col gap-3 px-6 pt-4">{actions}</div>
     </div>
   );
 }

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
+import type { Bot } from "@j3-bots/contracts";
 import { useId } from "react";
 import { useI18n } from "../app/context";
 import { type NewBot, NewBotForm } from "./NewBotForm";
 import { alertDialog, dialogBackdrop, dialogTitle } from "./ui/dialog";
 
 interface NewBotDialogProps {
+  /** Every bot there is: the form offers the look they use least. */
+  readonly bots: ReadonlyArray<Bot>;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   /** Resolves once the bot exists; the dialog then closes and its conversation opens. */
@@ -15,7 +18,13 @@ interface NewBotDialogProps {
 }
 
 /** A name, a look, and whether the bot becomes the primary one. The bot asks the rest itself. */
-export function NewBotDialog({ open, onOpenChange, onCreate, onUnsavedChange }: NewBotDialogProps) {
+export function NewBotDialog({
+  bots,
+  open,
+  onOpenChange,
+  onCreate,
+  onUnsavedChange,
+}: NewBotDialogProps) {
   const { t } = useI18n();
   const titleId = useId();
   return (
@@ -31,7 +40,7 @@ export function NewBotDialog({ open, onOpenChange, onCreate, onUnsavedChange }: 
           </Dialog.Description>
           {/* Mounted with the popup, so each opening starts empty. */}
           <NewBotForm
-            primaryAtFirst={false}
+            bots={bots}
             onCreate={onCreate}
             onCancel={() => onOpenChange(false)}
             onUnsavedChange={onUnsavedChange}

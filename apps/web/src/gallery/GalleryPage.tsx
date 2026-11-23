@@ -77,7 +77,7 @@ import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
-import { NoSelection, QuietConversation } from "../components/EmptyStates";
+import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
 import { HandoffCard } from "../components/HandoffCard";
 import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
@@ -1885,6 +1885,9 @@ function EmptyStatesSection() {
           height={420}
         >
           <QuietConversation bot={waitingFirst} engine={engines.connect} />
+        </Frame>
+        <Frame label="A quiet room" width={340} height={360}>
+          <QuietRoom room={team.room} />
         </Frame>
       </div>
     </Section>

@@ -36,6 +36,7 @@ import {
   ConversationGone,
   NoSelection,
   QuietConversation,
+  QuietRoom,
 } from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
 import { ChangeServer } from "../components/ServerAddress";
@@ -412,6 +413,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           <ConversationGone onBack={() => navigation.select(null)} />
         ) : view.phase === "ready" && view.items.length === 0 && item._tag === "bot" ? (
           <QuietConversation bot={item.bot} engine={data.engine} />
+        ) : view.phase === "ready" &&
+          view.items.length === 0 &&
+          item._tag === "room" &&
+          item.room.status === "active" ? (
+          <QuietRoom room={item.room} />
         ) : (
           // Reversed, so the view stays pinned to the newest entry as entries arrive. One per
           // conversation, so each opens at its own end rather than where the last one was left,
@@ -585,6 +591,8 @@ function WayOut({ children }: { children: ReactNode }) {
     const timer = window.setTimeout(() => setWaited(true), WAY_OUT_AFTER);
     return () => window.clearTimeout(timer);
   }, []);
-  if (!waited) return null;
-  return <div className="arrive shrink-0 px-4 pb-3">{children}</div>;
+  // Its room is kept from the start, hidden, so the wait above it does not move when it shows.
+  return (
+    <div className={cn("shrink-0 px-4 pb-3", waited ? "arrive" : "invisible")}>{children}</div>
+  );
 }

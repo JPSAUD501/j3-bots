@@ -132,7 +132,7 @@ export function Pairing({
       title={t("pairing.title")}
       body={parts<"pairing.body", ReactElement>("pairing.body", {
         command: (
-          <code key="command" className="font-mono text-foreground">
+          <code key="command" className="font-mono whitespace-nowrap text-foreground">
             j3-bots pair
           </code>
         ),

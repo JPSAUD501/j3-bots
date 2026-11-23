@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import type { Bot, EngineStatus, ProviderStatus, Room } from "@j3-bots/contracts";
 import { connectCommand, openingHeld } from "@j3-bots/client-runtime/presentation";
 import { avatarEnsemble } from "@j3-bots/design-tokens";
 import { type LucideIcon, SearchXIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useI18n, usePresentation } from "../app/context";
+import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import {
   providerLine,
@@ -12,7 +12,7 @@ import {
   heldHelloText,
   quietConversationText,
 } from "@j3-bots/client-runtime/wording";
-import { BotAvatar } from "./avatar/BotAvatar";
+import { BotAvatar, RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { CommandLine } from "./CommandLine";
 import { useConnectionLineShown } from "./ConnectionBanner";
@@ -189,6 +189,27 @@ export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineSta
           <CommandLine command={held.command} copyLabel={t("firstRun.connect.copy")} large />
         </div>
       )}
+    </Centered>
+  );
+}
+
+/** A room nothing has been said in yet: its members, and who answers what is written there. */
+export function QuietRoom({ room }: { room: Extract<Room, { readonly status: "active" }> }) {
+  const { t } = useI18n();
+  const bots = useBots();
+  const host = bots.get(room.hostId);
+  return (
+    <Centered>
+      <span className="pop-in">
+        <RoomAvatar size={96} members={roomAvatarMembers(room, bots)} />
+      </span>
+      <Heading
+        title={room.name}
+        body={
+          // The host bot may arrive after the room does.
+          host ? t("empty.quiet.room", { host: host.profile.name }) : t("empty.quiet.roomAnyHost")
+        }
+      />
     </Centered>
   );
 }

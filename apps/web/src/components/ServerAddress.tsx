@@ -36,7 +36,7 @@ export function ServerAddress({
   >({ _tag: "editing" });
   const ready = address.trim() !== "" && state._tag !== "checking";
   const command = (
-    <code key="command" className="font-mono text-foreground">
+    <code key="command" className="font-mono whitespace-nowrap text-foreground">
       j3-bots pair
     </code>
   );

@@ -423,6 +423,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   // of its list, and still shows one opened from a search or a notification.
   const listedRoster = useReadable(j3.roster);
   const roster = listedRoster._tag === "ready" ? listedRoster.value : null;
+  const bots = (roster ?? []).flatMap((row) => (row._tag === "bot" ? [row.bot] : []));
   const engine = useEngineStatus();
   const settings = useSettings();
   const profileSave = useReadable(j3.settingsSaves.profile);
@@ -1031,6 +1032,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         />
       ))}
       <NewBotDialog
+        bots={bots}
         open={newBot}
         onOpenChange={setNewBot}
         onUnsavedChange={setNewBotUnsaved}
@@ -1044,7 +1046,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       />
       <RoomDialog
         mode={roomFormMode}
-        bots={(roster ?? []).flatMap((row) => (row._tag === "bot" ? [row.bot] : []))}
+        bots={bots}
         defaultHopLimit={data.settings?.budgets.hops ?? null}
         connected={data.connected}
         unsaved={roomFormUnsaved}

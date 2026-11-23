@@ -84,7 +84,11 @@ export function WorkFold({ entry, steps, onOpenChange, defaultOpen = false }: Wo
         {status._tag === "running" && <LiveMark />}
         <span>{title}</span>
         {entry.stepCount > 0 && (
-          <span className="text-muted-foreground">· {plural("work.steps", entry.stepCount)}</span>
+          // The dot is its own item, so the line's gap stands on both sides of it.
+          <>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground">{plural("work.steps", entry.stepCount)}</span>
+          </>
         )}
       </Collapsible.Trigger>
       <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-(--duration-slide) ease-slide data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
