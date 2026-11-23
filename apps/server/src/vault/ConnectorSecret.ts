@@ -19,9 +19,19 @@ const Secret = Schema.Redacted(Schema.String);
 export const OAuthClient = Schema.Struct({
   /** The authorization server's issuer, as its metadata names it. */
   issuer: Schema.String,
+  /**
+   * `dynamic`: J3 Bots registered it (RFC 7591), and may register a new one
+   * in its place. `operator`: the operator gave it, as for their own app,
+   * and nothing replaces it.
+   */
+  registration: Schema.Literals(["dynamic", "operator"]),
   clientId: Schema.String,
   /** Only a confidential client has one. */
   clientSecret: Schema.NullOr(Secret),
+  /** How it authenticates at the token endpoint (RFC 7591 `token_endpoint_auth_method`). */
+  authMethod: Schema.Literals(["none", "client_secret_post", "client_secret_basic"]),
+  /** The redirect URIs it is registered with. */
+  redirectUris: Schema.Array(Schema.String),
 });
 export type OAuthClient = typeof OAuthClient.Type;
 

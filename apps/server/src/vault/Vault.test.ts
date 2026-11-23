@@ -257,7 +257,14 @@ it.effect("keeps a connector's secret sealed with the logins, and locked with th
     const secret: ConnectorSecret = {
       connectorId,
       oauth: {
-        client: { issuer: "https://auth.example", clientId: "client-1", clientSecret: null },
+        client: {
+          issuer: "https://auth.example",
+          registration: "dynamic",
+          clientId: "client-1",
+          clientSecret: null,
+          authMethod: "none",
+          redirectUris: ["http://127.0.0.1/oauth/callback"],
+        },
         tokens: {
           accessToken: Redacted.make("access-token-value"),
           refreshToken: Redacted.make("refresh-token-value"),
