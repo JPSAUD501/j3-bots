@@ -131,6 +131,7 @@ it.effect("notifies every socket of what a bot adds where no socket looks, and n
       botId: quill.id,
       kind: "question",
       preview: null,
+      connector: null,
     };
     for (const queue of queues) assert.deepStrictEqual(yield* Queue.take(queue), expected);
 

@@ -4,7 +4,16 @@ import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { EntryId, EntryOrder, UnknownLiteral } from "./base.ts";
-import { Connector, ConnectorSource, ConnectorStatus, ConnectorUrl } from "./connector.ts";
+import {
+  Connector,
+  ConnectorAddress,
+  ConnectorSource,
+  ConnectorStatus,
+  ConnectorTransport,
+  displayTransport,
+  SignInStarted,
+} from "./connector.ts";
+import { ConnectorsEvent } from "./rpc.ts";
 import {
   ApprovalEntry,
   ConnectorAuthEntry,
@@ -28,7 +37,7 @@ const connector = {
   glyph: "notion",
   publisher: { _tag: "domain", domain: "notion.com" },
   listing: { _tag: "curated", key: "notion" },
-  transport: { _tag: "remote", url: "https://mcp.notion.com/mcp" },
+  transport: { _tag: "remote", origin: "https://mcp.notion.com" },
   signIn: "oauth",
   fields: [],
   status: { _tag: "failing", reason: "timed-out", since: "2026-11-23T10:00:00.000Z" },
@@ -38,6 +47,7 @@ const connector = {
   tools: [{ name: "search", title: "Search", description: "Searches pages." }],
   review: {
     revision: "r2",
+    kept: false,
     changes: [
       {
         _tag: "changed",
@@ -58,7 +68,7 @@ describe("a connector", () => {
   });
 
   it("is reached only at an https: address with no user name or fragment", () => {
-    const accepts = (url: string) => Exit.isSuccess(Schema.decodeExit(json(ConnectorUrl))(url));
+    const accepts = (url: string) => Exit.isSuccess(Schema.decodeExit(json(ConnectorAddress))(url));
     assert.isTrue(accepts("https://mcp.example.com/mcp"));
     assert.isTrue(accepts("https://mcp.example.com:8443/v1/mcp?tenant=a"));
     assert.isFalse(accepts("http://mcp.example.com/mcp"));
@@ -66,6 +76,9 @@ describe("a connector", () => {
     assert.isFalse(accepts("https://token@mcp.example.com/mcp"));
     assert.isFalse(accepts("https://mcp.example.com/mcp#tools"));
     assert.isFalse(accepts("mcp.example.com/mcp"));
+    // What a URL parser would drop, so the address parsed and the one kept could differ.
+    assert.isFalse(accepts("https://mcp.example.com/m\tcp"));
+    assert.isFalse(accepts("https://mcp.example.com/mcp\r\nX: 1"));
   });
 
   it("with a reason a newer server added reads as one this build cannot name", () => {
@@ -117,6 +130,92 @@ describe("what a client sends to add a connector", () => {
       headers: [{ name: "Authorization: x", value: TOKEN }],
     });
     assert.isTrue(Exit.isFailure(badName));
+  });
+});
+
+describe("a key in a connector's address or command", () => {
+  const KEY = "sk_live_sentinel-never-shown";
+  const byAddress = {
+    _tag: "remote",
+    name: "Tracker",
+    url: `https://mcp.example.com/${KEY}/mcp?api_key=${KEY}`,
+    headers: [],
+    oauthClient: null,
+    privateNetwork: false,
+  };
+  const byCommand = {
+    _tag: "command",
+    name: "Files",
+    command: "npx",
+    args: ["-y", "files-mcp", `--api-key=${KEY}`],
+    env: [],
+  };
+  it("is never in the connector a client is sent back, nor in what a subscription sends", () => {
+    const shown = Schema.decodeSync(json(Connector))(connector);
+    const added = [byAddress, byCommand].map((sent) => {
+      const source = Schema.decodeSync(json(ConnectorSource))(sent);
+      assert.notInclude(String(source), KEY);
+      if (source._tag === "listing") throw new Error("a source by address or by command");
+      return { ...shown, transport: displayTransport(source) };
+    });
+    // `connector.add` answers with a `Connector`.
+    const response = Schema.encodeSync(json(Schema.Array(Connector)))(added);
+    assert.deepStrictEqual(
+      added.map((one) => Schema.encodeSync(ConnectorTransport)(one.transport)),
+      [
+        { _tag: "remote", origin: "https://mcp.example.com" },
+        { _tag: "command", program: "npx" },
+      ],
+    );
+    assert.notInclude(JSON.stringify(response), KEY);
+    const frame = Schema.encodeSync(json(ConnectorsEvent))({
+      _tag: "changed",
+      upsert: added,
+      remove: [],
+    });
+    assert.notInclude(JSON.stringify(frame), KEY);
+  });
+
+  it("is never printed by a refusal of the request that carries it", () => {
+    const refused = [
+      // A name too long, beside a key in the address.
+      { ...byAddress, name: "x".repeat(500) },
+      // An address with a space, which the key makes it carry.
+      { ...byAddress, url: `https://mcp.example.com/mcp?api_key=${KEY} x` },
+      // An argument with a NUL, which would end it early.
+      { ...byCommand, args: [`--api-key=${KEY}\0--other`] },
+    ];
+    for (const source of refused) {
+      const exit = Schema.decodeExit(json(ConnectorSource))(source);
+      assert.isTrue(Exit.isFailure(exit));
+      assert.notInclude(String(exit), KEY);
+    }
+  });
+});
+
+describe("a sign-in's address", () => {
+  const STATE = "state-sentinel-never-shown";
+  const started = (authorizationUrl: string) =>
+    Schema.decodeExit(json(SignInStarted))({
+      authorizationUrl,
+      expiresAt: "2026-11-23T10:10:00.000Z",
+    });
+
+  it("opens only at an https: address, and a refused one never prints its state", () => {
+    const opened = started(`https://auth.example.com/authorize?state=${STATE}&code_challenge=x`);
+    assert.isTrue(Exit.isSuccess(opened));
+    assert.notInclude(String(opened), STATE);
+    for (const refused of [
+      `http://auth.example.com/authorize?state=${STATE}`,
+      `javascript:alert(1)//?state=${STATE}`,
+      `file:///etc/passwd?state=${STATE}`,
+      `j3bots://sign-in?state=${STATE}`,
+      `https://auth.example.com/authorize?state=${STATE}&x=${"a".repeat(8_000)}`,
+    ]) {
+      const exit = started(refused);
+      assert.isTrue(Exit.isFailure(exit), refused.slice(0, 40));
+      assert.notInclude(String(exit), STATE);
+    }
   });
 });
 

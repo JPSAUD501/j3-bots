@@ -687,6 +687,7 @@ const sampleNotification = (
   botId,
   kind,
   preview: null,
+  connector: kind === "connector" ? "sign-in" : null,
 });
 
 /**

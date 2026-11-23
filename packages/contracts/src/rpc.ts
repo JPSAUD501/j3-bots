@@ -648,6 +648,14 @@ export const NotificationKind = Schema.Literals([
 ]);
 export type NotificationKind = typeof NotificationKind.Type;
 
+/**
+ * Which connector card a `connector` notification is about: a bot's
+ * suggestion, or a connector it called that needs a sign-in again. The two are
+ * worded apart.
+ */
+export const ConnectorNotice = Schema.Literals(["suggestion", "sign-in"]);
+export type ConnectorNotice = typeof ConnectorNotice.Type;
+
 /** An entry worth the operator's attention, added where no connected client has it in view. */
 export const Notification = Schema.Struct({
   target: EntryTarget,
@@ -661,6 +669,10 @@ export const Notification = Schema.Struct({
    * allow previews, or when the entry has no text of its own.
    */
   preview: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH))),
+  /** For a `connector` notification, which card made it; null for every other kind. */
+  connector: Schema.NullOr(ConnectorNotice).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
 });
 export type Notification = typeof Notification.Type;
 
@@ -756,6 +768,16 @@ export const ProviderRpcs = RpcGroup.make(
   }),
 );
 
+/** What `connectors.subscribe` sends: every connector, then each change. */
+export const ConnectorsEvent = Schema.Union([
+  Schema.TaggedStruct("snapshot", { connectors: Schema.Array(Connector) }),
+  Schema.TaggedStruct("changed", {
+    upsert: Schema.Array(Connector),
+    remove: Schema.Array(ConnectorId),
+  }),
+]);
+export type ConnectorsEvent = typeof ConnectorsEvent.Type;
+
 /**
  * Connectors (docs/architecture/server.md, "Connectors"): the gallery to find
  * them in, and the operator's own, which every paired client may add, sign in
@@ -807,16 +829,11 @@ export const ConnectorRpcs = RpcGroup.make(
   }),
   /**
    * The operator's connectors, then each one again on every change: a status,
-   * a grant, a tool list or a review. Small, and always starts afresh.
+   * a grant, a tool list or a review. Small, and always starts afresh. A
+   * connector shows how it is reached only as `displayTransport` words it.
    */
   Rpc.make("connectors.subscribe", {
-    success: Schema.Union([
-      Schema.TaggedStruct("snapshot", { connectors: Schema.Array(Connector) }),
-      Schema.TaggedStruct("changed", {
-        upsert: Schema.Array(Connector),
-        remove: Schema.Array(ConnectorId),
-      }),
-    ]),
+    success: ConnectorsEvent,
     stream: true,
   }),
   /**
@@ -830,6 +847,9 @@ export const ConnectorRpcs = RpcGroup.make(
    * address in the operator's own network without `privateNetwork`,
    * `Invalid("connector-fields")` for a form's values that do not fit it, and
    * `Invalid("connector-unsupported")` for an entry J3 Bots cannot connect.
+   * The connector returned, like every one after it, shows the address only
+   * as its origin and the command only as its program (`displayTransport`):
+   * the rest, which can carry a key, stays with the secrets.
    */
   Rpc.make("connector.add", {
     payload: {
@@ -902,10 +922,14 @@ export const ConnectorRpcs = RpcGroup.make(
   }),
   /**
    * Answers the connector's held tool changes, as the review at `revision`
-   * showed them: `accept` gives bots those tools as they now are; `keep`
-   * leaves bots the tools they had, and the review closes until the tools
-   * change again. Fails with `Conflict("tool-review-stale")`, changing
-   * nothing, when they changed after that review or none wait.
+   * showed them. `accept` gives bots those tools as they now are. `keep`
+   * leaves the changes held: bots keep every tool that did not change, and
+   * get none that the review holds, a changed one included, since its server
+   * answers only as it now is; a tool the connector removed is gone either
+   * way. The review then stays, `kept`, with no badge, and `accept` at the
+   * same revision still takes it, until the tools change again. Fails with
+   * `Conflict("tool-review-stale")`, changing nothing, when they changed
+   * after that review or none wait.
    */
   Rpc.make("connector.acceptToolChanges", {
     payload: {

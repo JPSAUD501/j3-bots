@@ -41,29 +41,67 @@ const parseUrl: (text: string) => Option.Option<URL> = Option.liftThrowable(
 /** The longest address a connector, or a page it links to, takes. */
 export const MAX_CONNECTOR_URL_LENGTH = 2_048;
 
-const httpsUrl = (url: URL) =>
-  url.protocol === "https:" && url.username === "" && url.password === "" && url.hash === "";
-
-const HttpsAddress = Schema.String.check(
-  Schema.isMaxLength(MAX_CONNECTOR_URL_LENGTH),
-  Schema.makeFilter(
-    (text: string) =>
-      Option.exists(parseUrl(text), httpsUrl) || "an https: address with no user name or fragment",
-  ),
-);
-
 /**
- * Where a remote connector answers: an `https:` address with no user name,
- * password or fragment. Whether its host may be reached at all (an address in
- * the operator's own network, after DNS) is the server's to check when it
- * connects, not the contract's.
+ * Whether `text` is an `https:` address of at most `max` characters, with no
+ * space or control character anywhere: the URL parser drops tabs and line
+ * breaks, and trims spaces, so text holding one would not be the address it
+ * parses as. With `bare`, also with no user name, password or fragment.
  */
-export const ConnectorUrl = HttpsAddress.pipe(Schema.brand("ConnectorUrl"));
-export type ConnectorUrl = typeof ConnectorUrl.Type;
+const isHttpsAddress = (text: string, max: number, bare: boolean): boolean =>
+  text.length <= max &&
+  !/[\x00-\x20\x7f]/.test(text) &&
+  Option.exists(
+    parseUrl(text),
+    (url) =>
+      url.protocol === "https:" &&
+      (!bare || (url.username === "" && url.password === "" && url.hash === "")),
+  );
+
+const BARE_HTTPS = "an https: address with no user name, fragment, space or control character";
 
 /** A page the operator opens to set a connector up, such as where to make a token. */
-export const SetupPageUrl = HttpsAddress.pipe(Schema.brand("SetupPageUrl"));
+export const SetupPageUrl = Schema.String.check(
+  Schema.makeFilter(
+    (text: string) => isHttpsAddress(text, MAX_CONNECTOR_URL_LENGTH, true) || BARE_HTTPS,
+  ),
+).pipe(Schema.brand("SetupPageUrl"));
 export type SetupPageUrl = typeof SetupPageUrl.Type;
+
+/**
+ * A text that may carry a secret, redacted as soon as it is decoded and checked
+ * only then, so neither a refused value nor a log of the request prints it.
+ */
+const redactedText = (isValid: (text: string) => boolean, expected: string) =>
+  Schema.Redacted(Schema.String).check(
+    Schema.makeFilter((value: Redacted.Redacted<string>) => isValid(Redacted.value(value)), {
+      expected,
+    }),
+  );
+
+/**
+ * Where a remote connector the operator adds by address answers: an `https:`
+ * address with no user name, password or fragment. Its path or query can
+ * carry a key, as some services hand out, so it travels redacted and the
+ * server keeps it with the connector's secrets; clients are shown only its
+ * origin (`ConnectorTransport`). Whether its host may be reached at all (an
+ * address in the operator's own network, after DNS) is the server's to check
+ * when it connects.
+ */
+export const ConnectorAddress = redactedText(
+  (text) => isHttpsAddress(text, MAX_CONNECTOR_URL_LENGTH, true),
+  BARE_HTTPS,
+);
+export type ConnectorAddress = typeof ConnectorAddress.Type;
+
+/** An `https:` origin: scheme, host and port, nothing more. What a client is shown of a remote connector's address. */
+export const ConnectorOrigin = Schema.String.check(
+  Schema.makeFilter(
+    (text: string) =>
+      Option.exists(parseUrl(text), (url) => url.protocol === "https:" && url.origin === text) ||
+      "an https: origin",
+  ),
+).pipe(Schema.brand("ConnectorOrigin"));
+export type ConnectorOrigin = typeof ConnectorOrigin.Type;
 
 /** An entry of J3 Bots' own curated list, by its key. */
 export const CuratedKey = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,63}$/)).pipe(
@@ -171,14 +209,25 @@ export const ConnectorSetup = Schema.Struct({
 });
 export type ConnectorSetup = typeof ConnectorSetup.Type;
 
+const noNul = Schema.makeFilter((text: string) => !text.includes("\0") || "no NUL character");
+
 /**
- * A server started by command on J3 Bots' machine, as its user: the whole
- * command line, which the operator confirms before it runs, and the names of
- * the environment variables it is given, never their values.
+ * The program a command connector runs, as the operator or the registry gave
+ * it: a name the system looks up, or a path. A command line cannot hold NUL.
+ */
+export const Program = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1_000), noNul);
+
+/**
+ * A gallery entry's server started by command on J3 Bots' machine, as its
+ * user: the command line its registry entry gives, which the operator confirms
+ * before it runs, and the names of the environment variables it takes, never
+ * their values.
  */
 export const ConnectorCommand = Schema.Struct({
-  command: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1_000)),
-  args: Schema.Array(Schema.String.check(Schema.isMaxLength(4_000))).check(Schema.isMaxLength(64)),
+  command: Program,
+  args: Schema.Array(Schema.String.check(Schema.isMaxLength(4_000), noNul)).check(
+    Schema.isMaxLength(64),
+  ),
   env: Schema.Array(FieldKey).check(Schema.isMaxLength(64)),
 });
 export type ConnectorCommand = typeof ConnectorCommand.Type;
@@ -279,7 +328,9 @@ export type ConnectorStatus = typeof ConnectorStatus.Type;
  * A change to a connector's tools the operator has not accepted, which no bot
  * gets until they do: a tool it added, or one whose description or input
  * changed (`inputChanged` when what it takes changed, whatever its words
- * say). A tool the connector took away goes at once, and is never held.
+ * say). A changed tool cannot be kept as it was, since its server answers only
+ * as it now is: while its change is held, no bot gets the tool at all. A tool
+ * the connector took away goes at once, and is never held.
  */
 export const HeldToolChange = Schema.Union([
   Schema.TaggedStruct("added", { tool: ConnectorTool }),
@@ -298,18 +349,36 @@ export const ToolReviewRevision = Schema.String.check(
 ).pipe(Schema.brand("ToolReviewRevision"));
 export type ToolReviewRevision = typeof ToolReviewRevision.Type;
 
+/**
+ * The held changes of a connector's tools, at a revision. `kept`: the operator
+ * answered `keep`, so the changes stay held, with no badge, until they accept
+ * them from the connector's page or the tools change again, which makes a new
+ * revision that waits on them as any does.
+ */
 export const ToolReview = Schema.Struct({
   revision: ToolReviewRevision,
   changes: Schema.NonEmptyArray(HeldToolChange),
+  kept: Schema.Boolean,
 });
 export type ToolReview = typeof ToolReview.Type;
 
-/** How bots reach a connector: at its address, or through the command the server starts. */
+/**
+ * What a client is shown of how bots reach a connector: the origin of its
+ * address, or the program the server starts. Never the whole address, nor the
+ * command's arguments, either of which can carry a key: the server keeps those
+ * with the connector's secrets (`displayTransport`).
+ */
 export const ConnectorTransport = Schema.Union([
-  Schema.TaggedStruct("remote", { url: ConnectorUrl }),
-  Schema.TaggedStruct("command", ConnectorCommand.fields),
+  Schema.TaggedStruct("remote", { origin: ConnectorOrigin }),
+  Schema.TaggedStruct("command", { program: Program }),
 ]);
 export type ConnectorTransport = typeof ConnectorTransport.Type;
+
+/** What a client is shown of a connector at `url`: its origin. */
+export const remoteTransport = (url: URL): ConnectorTransport => ({
+  _tag: "remote",
+  origin: ConnectorOrigin.make(url.origin),
+});
 
 /**
  * How the connector signs in, which says what "Sign in again" opens: the
@@ -346,21 +415,21 @@ export const Connector = Schema.Struct({
 export type Connector = typeof Connector.Type;
 
 /**
- * A value of `max` characters at most with no line break or NUL, redacted as
- * soon as it is decoded and checked only then, so neither a refused value nor
- * a log of the request prints it. A line break would let a header value
- * start another header.
+ * A secret of `min` to `max` characters with no line break or NUL, redacted
+ * (`redactedText`). A line break would let a header value start another
+ * header.
  */
 const secretValue = (min: number, max: number) =>
-  Schema.Redacted(Schema.String).check(
-    Schema.makeFilter(
-      (value: Redacted.Redacted<string>) => {
-        const text = Redacted.value(value);
-        return text.length >= min && text.length <= max && !/[\r\n\0]/.test(text);
-      },
-      { expected: `a value of ${min} to ${max} characters on one line` },
-    ),
+  redactedText(
+    (text) => text.length >= min && text.length <= max && !/[\r\n\0]/.test(text),
+    `a value of ${min} to ${max} characters on one line`,
   );
+
+/** An argument of a command the operator gives, redacted, as one can carry a key. */
+const CommandArgument = redactedText(
+  (text) => text.length <= 4_000 && !text.includes("\0"),
+  "an argument of at most 4000 characters with no NUL",
+);
 
 /** What the operator typed in one field of a connect form. Every value is redacted, the plain ones too. */
 export const ConnectorFieldValue = Schema.Struct({
@@ -406,6 +475,8 @@ export type OAuthClientInput = typeof OAuthClientInput.Type;
  *   address in their own network; without it the server refuses one;
  * - `command`: a command the operator confirmed, which runs on the server as
  *   its user, with its environment. Offered by the web and desktop apps only.
+ *   A secret goes in `env`, which is masked as it is typed; the arguments are
+ *   redacted and kept with the secrets all the same, in case one carries a key.
  */
 export const ConnectorSource = Schema.Union([
   Schema.TaggedStruct("listing", {
@@ -415,21 +486,33 @@ export const ConnectorSource = Schema.Union([
   }),
   Schema.TaggedStruct("remote", {
     name: Label,
-    url: ConnectorUrl,
+    url: ConnectorAddress,
     headers: Schema.Array(ConnectorHeader).check(Schema.isMaxLength(32)),
     oauthClient: Schema.NullOr(OAuthClientInput),
     privateNetwork: Schema.Boolean,
   }),
   Schema.TaggedStruct("command", {
     name: Label,
-    command: ConnectorCommand.fields.command,
-    args: ConnectorCommand.fields.args,
+    command: Program,
+    args: Schema.Array(CommandArgument).check(Schema.isMaxLength(64)),
     env: Schema.Array(Schema.Struct({ name: EnvName, value: secretValue(0, 10_000) })).check(
       Schema.isMaxLength(64),
     ),
   }),
 ]);
 export type ConnectorSource = typeof ConnectorSource.Type;
+
+/**
+ * What a client is shown of how a connector added by address or by command is
+ * reached: the address's origin, or the program alone. The server words every
+ * connector it sends with this, or `remoteTransport` for a gallery entry's.
+ */
+export const displayTransport = (
+  source: Extract<ConnectorSource, { readonly _tag: "remote" | "command" }>,
+): ConnectorTransport =>
+  source._tag === "command"
+    ? { _tag: "command", program: source.command }
+    : remoteTransport(new URL(Redacted.value(source.url)));
 
 /**
  * Where the browser returns to J3 Bots after the operator signs in:
@@ -453,10 +536,14 @@ export type SignInRedirect = typeof SignInRedirect.Type;
 /**
  * A sign-in under way, which the device that began it opens in the system
  * browser. Only that device can finish it, until `expiresAt`. The address
- * carries the sign-in's `state`, so it is redacted like the rest.
+ * carries the sign-in's `state`, so it is redacted like the rest, and checked
+ * only once redacted: a client opens nothing but an `https:` address.
  */
 export const SignInStarted = Schema.Struct({
-  authorizationUrl: Schema.Redacted(Schema.String.check(Schema.isMaxLength(8_000))),
+  authorizationUrl: redactedText(
+    (text) => isHttpsAddress(text, 8_000, false),
+    "an https: address of at most 8000 characters with no space or control character",
+  ),
   expiresAt: Schema.DateTimeUtc,
 });
 export type SignInStarted = typeof SignInStarted.Type;

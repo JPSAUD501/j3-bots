@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
+  ConnectorNotice,
   EntryId,
   LANGUAGES,
   NotificationKind,
@@ -25,14 +26,19 @@ const notification = (extra: Partial<Notification>): Notification => ({
   botId: scout,
   kind: "message",
   preview: null,
+  connector: null,
   ...extra,
 });
 
-/** What each kind says in each language, without a preview and with "Ship it?". */
-const wording: Record<
-  NotificationKind,
-  Record<Language, { readonly bare: string; readonly preview: string }>
-> = {
+type Said = Record<Language, { readonly bare: string; readonly preview: string }>;
+
+/**
+ * What each kind says in each language, without a preview and with "Ship it?";
+ * a connector card's, for each card.
+ */
+const wording: Record<Exclude<NotificationKind, "connector">, Said> & {
+  readonly connector: Record<ConnectorNotice, Said>;
+} = {
   message: {
     en: { bare: "Sent you a message", preview: "Ship it?" },
     "pt-BR": { bare: "Enviou uma mensagem", preview: "Ship it?" },
@@ -50,10 +56,19 @@ const wording: Record<
     "pt-BR": { bare: "Precisa de uma credencial", preview: "Precisa de uma credencial: Ship it?" },
   },
   connector: {
-    en: { bare: "Needs you to connect a service", preview: "Asks you to connect Ship it?" },
-    "pt-BR": {
-      bare: "Precisa que você conecte um serviço",
-      preview: "Pede que você conecte Ship it?",
+    suggestion: {
+      en: { bare: "Suggests connecting a service", preview: "Suggests connecting Ship it?" },
+      "pt-BR": { bare: "Sugere conectar um serviço", preview: "Sugere conectar Ship it?" },
+    },
+    "sign-in": {
+      en: {
+        bare: "A service needs you to sign in again",
+        preview: "Ship it? needs you to sign in again",
+      },
+      "pt-BR": {
+        bare: "Um serviço precisa que você entre de novo",
+        preview: "Ship it? precisa que você entre de novo",
+      },
     },
   },
   handoff: {
@@ -66,14 +81,23 @@ const wording: Record<
 };
 
 const cases = NotificationKind.literals.flatMap((kind) =>
-  LANGUAGES.map((language) => ({ kind, language, said: wording[kind][language] })),
+  (kind === "connector"
+    ? ConnectorNotice.literals.map((card) => ({
+        kind,
+        connector: card,
+        said: wording.connector[card],
+      }))
+    : [{ kind, connector: null, said: wording[kind] }]
+  ).flatMap((made) =>
+    LANGUAGES.map((language) => ({ ...made, language, said: made.said[language] })),
+  ),
 );
 
 describe("notificationText", () => {
-  it.each(cases)("words a $kind in $language", ({ kind, language, said }) => {
+  it.each(cases)("words a $kind $connector in $language", ({ kind, connector, language, said }) => {
     const i18n = createI18n(language);
     const of = (preview: string | null) =>
-      notificationText(notification({ kind, preview }), names, i18n);
+      notificationText(notification({ kind, connector, preview }), names, i18n);
     expect(of(null)).toEqual({ title: "Scout", body: said.bare });
     expect(of("Ship it?")).toEqual({ title: "Scout", body: said.preview });
   });

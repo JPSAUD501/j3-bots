@@ -616,6 +616,9 @@ export type Entry = typeof Entry.Type;
 /** Every kind of entry this build knows. */
 const entryKinds = Entry.members.map((member) => member.fields._tag.schema.literal);
 
+/** The kind of an entry this build knows, as the server stores it beside the entry. */
+export const EntryKind = Schema.Literals(entryKinds);
+
 /** What keeps an entry in its place in a conversation. */
 const placement = { id: EntryId, order: EntryOrder, createdAt: Schema.DateTimeUtc };
 
