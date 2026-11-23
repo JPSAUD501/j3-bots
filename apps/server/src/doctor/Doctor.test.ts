@@ -218,6 +218,8 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           connectProviders: () => Effect.die("doctor never connects providers"),
           readiness: () => Effect.die("doctor never waits for an update"),
           runningWork: () => Effect.die("doctor never asks for running work"),
+          localDevice: () => Effect.die("doctor never pairs a local device"),
+          shutdown: () => Effect.die("doctor never stops the server"),
         }),
       ),
       Layer.succeed(

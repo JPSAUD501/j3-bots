@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
@@ -68,25 +69,33 @@ const engine = Layer.unwrap(
  * opens the database), the migrated database, the shipped skills and the
  * engine that links them into each harness home, with the push sender (Expo's),
  * the domain, then the client listener, and then the tool endpoint and the
- * admin socket, which reports where the client listener bound. Where it bound
+ * admin channels, which report where the client listener bound: the admin
+ * socket where the system has one (`hasAdminSocket`), and with `adminFd` the
+ * pipe inherited there. Where it bound
  * (`Listener`) is made beneath them all, since the domain names it in a
  * webhook's address. Each listener binds only once its routes are built
- * (`Ports.serve`). Interrupting it (SIGINT, SIGTERM) releases everything in
- * reverse.
+ * (`Ports.serve`). Releasing it, on SIGINT or SIGTERM or once a stop is asked
+ * for (`ServerStop`), releases everything in reverse.
  */
-export const layer = Layer.mergeAll(ToolEndpoint.layer, AdminSocket.layer, logShutdown).pipe(
-  Layer.provide(Http.serve(Listener.layer, { logAddress: true })),
-  // One decision for the client routes and the admin socket's report.
-  Layer.provide(WebClient.statusLayer),
-  Layer.provide(Domain.layer),
-  Layer.provide(Layer.merge(engine, ExpoPushSender.layer)),
-  // One base prompt for the engine and the settings that change it.
-  Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),
-  Layer.provide(Sqlite.layer),
-  Layer.provide(Home.layer),
-  Layer.provide(Home.configLayer),
-  Layer.provide(
-    Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, Network.layer, Listener.unbound),
-  ),
-  Layer.provide(Logger.layer([Logger.consoleJson])),
-);
+export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
+  Layer.mergeAll(
+    ToolEndpoint.layer,
+    AdminSocket.layer,
+    Option.match(options.adminFd, { onNone: () => Layer.empty, onSome: AdminSocket.pipeLayer }),
+    logShutdown,
+  ).pipe(
+    Layer.provide(Http.serve(Listener.layer, { logAddress: true })),
+    // One decision for the client routes and the admin socket's report.
+    Layer.provide(WebClient.statusLayer),
+    Layer.provide(Domain.layer),
+    Layer.provide(Layer.merge(engine, ExpoPushSender.layer)),
+    // One base prompt for the engine and the settings that change it.
+    Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),
+    Layer.provide(Sqlite.layer),
+    Layer.provide(Home.layer),
+    Layer.provide(Home.configLayer),
+    Layer.provide(
+      Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, Network.layer, Listener.unbound),
+    ),
+    Layer.provide(Logger.layer([Logger.consoleJson])),
+  );

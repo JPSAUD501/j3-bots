@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EngineStatus, PairingCode, ServerOrigin } from "@j3-bots/contracts";
+import { DeviceId, EngineStatus, Label, PairingCode, ServerOrigin } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 
-// What `j3-bots` commands ask the running server over its admin socket
-// (`<J3_HOME>/admin.sock`). Only this package speaks it: the CLI and the
-// server are one program, so it is not a client contract.
+// What `j3-bots` commands, and the desktop app that runs its own server, ask
+// the running server over its admin channel: the socket in the home
+// (`<J3_HOME>/admin.sock`), or the pipe the server inherited from the process
+// that started it (`j3-bots serve --admin-fd`). Both serve the same routes.
+// Only J3 Bots' own programs speak it, and a server always ships with the CLI
+// and the desktop app that talk to it, so it is not a client contract.
 
 export const ADMIN_PATHS = {
   /** `GET`. Answers `AdminStatus`. */
@@ -23,6 +26,19 @@ export const ADMIN_PATHS = {
   providerConnection: "/provider-connection",
   /** `GET`. Answers `RunningWorkReply`: what `j3-bots update` would stop. */
   runningWork: "/running-work",
+  /**
+   * `POST`, a `LocalDeviceRequest`. Pairs a device without a code, as a
+   * successful pairing does, and answers its `PairResult`. In the same
+   * transaction it revokes the device the request replaces. 400 when the body
+   * does not decode. How the desktop app gets its own device; it never exists
+   * on the client listener.
+   */
+  localDevice: "/local-device",
+  /**
+   * `POST`, no body. Answers 202, then stops the server as SIGTERM does. How
+   * a parent stops it where there is no SIGTERM, on Windows.
+   */
+  shutdown: "/shutdown",
 } as const;
 
 const Port = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 }));
@@ -87,6 +103,18 @@ export const PairingOffer = Schema.Union([
   Schema.TaggedStruct("locked", { until: Schema.DateTimeUtc }),
 ]);
 export type PairingOffer = typeof PairingOffer.Type;
+
+export const LocalDeviceRequest = Schema.Struct({
+  /** What the device list shows, as a pairing device's name. */
+  name: Label,
+  /**
+   * The device this one takes the place of, such as the one the desktop app
+   * kept before, revoked with the new one's pairing. An id that is unknown or
+   * already revoked is left as it is.
+   */
+  replaces: Schema.NullOr(DeviceId),
+});
+export type LocalDeviceRequest = typeof LocalDeviceRequest.Type;
 
 /**
  * What `j3-bots provider connect` does beyond storing the connection, as the

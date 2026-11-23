@@ -58,6 +58,16 @@ export class DeviceAuth extends Context.Service<
      * the same transaction, and closes its sockets. Succeeds if already revoked.
      */
     readonly revoke: (deviceId: DeviceId) => Effect.Effect<void, NotFound>;
+    /**
+     * Runs `effect` and revokes the device, as `revoke` does, in one
+     * transaction: both happen or neither does. The device's tickets and
+     * sockets go once it has committed. A device that is unknown or already
+     * revoked is left as it is.
+     */
+    readonly revokeWith: <A, E, R>(
+      deviceId: DeviceId,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
     /** Completes once the device is revoked: at once if it already is. */
     readonly revoked: (deviceId: DeviceId) => Effect.Effect<void>;
   }
@@ -133,20 +143,29 @@ export const layer = Layer.effect(
       return { ticket, expiresAt: DateTime.makeUnsafe(expiresAt) };
     });
 
+    const revokeWith = <A, E, R>(
+      deviceId: DeviceId,
+      effect: Effect.Effect<A, E, R>,
+    ): Effect.Effect<A, E, R> =>
+      Effect.gen(function* () {
+        const at = DateTime.formatIso(yield* DateTime.now);
+        // A revoked device is never pushed to again: its registration goes with it.
+        const result = yield* Effect.gen(function* () {
+          yield* sql`UPDATE devices SET revoked_at = ${at} WHERE id = ${deviceId} AND revoked_at IS NULL`;
+          yield* sql`DELETE FROM push_registrations WHERE device_id = ${deviceId}`;
+          return yield* effect;
+        }).pipe(transaction);
+        for (const [value, ticket] of tickets)
+          if (ticket.deviceId === deviceId) tickets.delete(value);
+        const revocation = revocations.get(deviceId);
+        revocations.delete(deviceId);
+        if (revocation !== undefined) yield* Deferred.succeed(revocation.signal, undefined);
+        return result;
+      }).pipe(Effect.withSpan("DeviceAuth.revokeWith"));
+
     const revoke = Effect.fn("DeviceAuth.revoke")(function* (deviceId: DeviceId) {
-      const at = DateTime.formatIso(yield* DateTime.now);
-      // A revoked device is never pushed to again: its registration goes with it.
-      yield* Effect.gen(function* () {
-        yield* sql`UPDATE devices SET revoked_at = ${at} WHERE id = ${deviceId} AND revoked_at IS NULL`;
-        yield* sql`DELETE FROM push_registrations WHERE device_id = ${deviceId}`;
-      }).pipe(transaction);
-      const row = yield* findById(deviceId).pipe(Effect.orDie);
+      const row = yield* revokeWith(deviceId, findById(deviceId).pipe(Effect.orDie));
       if (Option.isNone(row)) return yield* new NotFound({ resource: "device" });
-      for (const [value, ticket] of tickets)
-        if (ticket.deviceId === deviceId) tickets.delete(value);
-      const revocation = revocations.get(deviceId);
-      revocations.delete(deviceId);
-      if (revocation !== undefined) yield* Deferred.succeed(revocation.signal, undefined);
     });
 
     const revoked = Effect.fn("DeviceAuth.revoked")(function* (deviceId: DeviceId) {
@@ -174,6 +193,6 @@ export const layer = Layer.effect(
       );
     });
 
-    return DeviceAuth.of({ authenticate, issueTicket, revoke, revoked });
+    return DeviceAuth.of({ authenticate, issueTicket, revoke, revokeWith, revoked });
   }),
 ).pipe(Layer.provide([Digest.layerWebCrypto, SecureRandom.layerWebCrypto]));

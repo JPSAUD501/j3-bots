@@ -40,8 +40,15 @@ jobs:
       - name: Format
         run: vp run fmt:check
 
+      # A second user of the machine, whom the admin socket test runs a
+      # connection as (`sudo -u`): it must be refused.
+      - name: Another user
+        run: sudo useradd --no-create-home --shell /usr/sbin/nologin j3-other
+
       - name: Test
         run: vp run test
+        env:
+          J3_TEST_OTHER_USER: j3-other
 
       - name: Unused code
         run: vp run knip

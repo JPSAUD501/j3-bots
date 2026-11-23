@@ -66,18 +66,59 @@ export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: stri
   const fs = yield* FileSystem.FileSystem;
   const info = yield* fs.stat(home).pipe(Effect.option);
   if (Option.isNone(info)) return;
-  if (info.value.type !== "Directory") {
+  yield* checkPrivateInfo(home, info.value);
+});
+
+/** `checkPrivate` of what a stat of `home` found. */
+const checkPrivateInfo = Effect.fn("Home.checkPrivateInfo")(function* (
+  home: string,
+  info: FileSystem.File.Info,
+) {
+  if (info.type !== "Directory") {
     return yield* new HomeNotPrivate({ home, reason: "not-a-folder" });
   }
   const user = process.getuid?.();
-  if (user !== undefined && Option.isSome(info.value.uid) && info.value.uid.value !== user) {
+  if (user !== undefined && Option.isSome(info.uid) && info.uid.value !== user) {
     return yield* new HomeNotPrivate({ home, reason: "not-owned" });
   }
-  if ((info.value.mode & 0o077) !== 0) {
+  if ((info.mode & 0o077) !== 0) {
     return yield* new HomeNotPrivate({ home, reason: "open-to-others" });
   }
-  if ((info.value.mode & 0o700) !== 0o700) {
+  if ((info.mode & 0o700) !== 0o700) {
     return yield* new HomeNotPrivate({ home, reason: "closed-to-owner" });
+  }
+});
+
+/** Which folder a path named when it was looked at: its device and inode. */
+export interface FolderIdentity {
+  readonly dev: bigint;
+  readonly ino: Option.Option<bigint>;
+}
+
+/**
+ * Checks that the existing `home` is private, as `checkPrivate` does, and says
+ * which folder that was, from the same look at it, so that `checkUnchanged`
+ * can tell later whether the path still names that folder.
+ */
+export const identifyPrivate = Effect.fn("Home.identifyPrivate")(function* (home: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs.stat(home);
+  yield* checkPrivateInfo(home, info);
+  return { dev: info.dev, ino: info.ino } satisfies FolderIdentity;
+});
+
+/**
+ * Fails unless `home` still names the folder `identifyPrivate` found, and it
+ * is still private: nothing moved, replaced or opened it since.
+ */
+export const checkUnchanged = Effect.fn("Home.checkUnchanged")(function* (
+  home: string,
+  before: FolderIdentity,
+) {
+  const now = yield* identifyPrivate(home);
+  // Bigints compare by value.
+  if (now.dev !== before.dev || Option.getOrNull(now.ino) !== Option.getOrNull(before.ino)) {
+    return yield* new HomeBlocked({ path: home, reason: "home-replaced" });
   }
 });
 
@@ -213,10 +254,10 @@ class ServerAlreadyRunning extends Schema.TaggedError<ServerAlreadyRunning>()(
   }
 }
 
-/** Something in the home is in the way of the reservation or the admin socket. */
+/** Something in the home is in the way of the reservation or the admin socket, or the home changed under it. */
 class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
   path: Schema.String,
-  reason: Schema.Literals(["lock-unusable", "not-a-socket"]),
+  reason: Schema.Literals(["lock-unusable", "not-a-socket", "home-replaced"]),
 }) {
   override get message(): string {
     return `${this.summary} ${this.fix}`;
@@ -229,6 +270,8 @@ class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
         return `${this.path}, which keeps a second server off this home, cannot be opened.`;
       case "not-a-socket":
         return `${this.path} is where the admin socket goes, but something else is there.`;
+      case "home-replaced":
+        return `${this.path} is no longer the folder the server checked before it created the admin socket there: something moved or replaced it in the meantime.`;
     }
   }
 
@@ -239,6 +282,8 @@ class HomeBlocked extends Schema.TaggedError<HomeBlocked>()("HomeBlocked", {
         return "Check that this user can write to the folder that holds it.";
       case "not-a-socket":
         return `Move it out of the way (\`mv ${shellWord(this.path)} ${shellWord(`${this.path}.old`)}\`), then try again.`;
+      case "home-replaced":
+        return "Find what moves or replaces the data directory and stop it, then start the server again.";
     }
   }
 }
