@@ -12,7 +12,9 @@ import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { ensureCredential } from "./Credential.ts";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import { checkAccess, ensureCredential } from "./Credential.ts";
 import { engineFolders, makePrivateFiles } from "./PrivateFiles.ts";
 
 /**
@@ -93,6 +95,43 @@ describe("ensureCredential", () => {
       });
       assert.strictEqual(Redacted.value(credential.token), "current");
       assert.strictEqual(cli.calls.length, 0);
+    }),
+  );
+});
+
+/** The engine's answer to `GET /api/auth/session`, as the pin gives it: older scopes apart. */
+const sessionAnswer = (permissions: ReadonlyArray<string>) =>
+  HttpClient.make((request) =>
+    Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        Response.json({
+          authenticated: true,
+          auth: {
+            policy: "loopback-browser",
+            bootstrapMethods: ["one-time-token"],
+            sessionMethods: ["bearer-access-token"],
+            sessionCookieName: "t3_session",
+          },
+          scopes: permissions.filter((scope) => scope.startsWith("orchestration:")),
+          permissions,
+          sessionMethod: "bearer-access-token",
+        }),
+      ),
+    ),
+  );
+
+const accessWith = (permissions: ReadonlyArray<string>) =>
+  checkAccess({ baseUrl: "http://127.0.0.1:1", token: Redacted.make("token") }).pipe(
+    Effect.provideService(HttpClient.HttpClient, sessionAnswer(permissions)),
+  );
+
+describe("checkAccess", () => {
+  it.effect("grants a token whose browser scope the engine lists among its permissions only", () =>
+    Effect.gen(function* () {
+      const all = ["orchestration:read", "orchestration:operate", "preview:operate"];
+      assert.strictEqual(yield* accessWith(all), "granted");
+      assert.strictEqual(yield* accessWith(all.slice(0, 2)), "refused");
     }),
   );
 });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AuthSessionState } from "@t3tools/contracts";
+import { AuthSessionState, sessionGrantsScope } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -172,6 +172,9 @@ export type Access = "granted" | "refused" | "unreachable";
  * for a token it does not accept, so a refusal is definitive and a failed
  * request only says the engine was not reached. **Read** at `db51b67`,
  * `packages/contracts/src/environmentHttp.ts` (`session`, `OptionalBearerHeaders`).
+ * The answer's `scopes` holds only the engine's older scopes, and `preview:operate`
+ * is in its `permissions` alone, so the engine's own `sessionGrantsScope` reads
+ * it (**Read** at `59651c1`, `packages/contracts/src/auth.ts`, `authScopeResponse`).
  */
 export const checkAccess = Effect.fn("engine.checkAccess")(function* (input: {
   readonly baseUrl: string;
@@ -189,13 +192,11 @@ export const checkAccess = Effect.fn("engine.checkAccess")(function* (input: {
         if (response.status === 401 || response.status === 403) return Effect.succeed("refused");
         return HttpClientResponse.filterStatusOk(response).pipe(
           Effect.flatMap(decodeSession),
-          Effect.map((session): Access => {
-            const scopes = session.scopes ?? [];
-            return session.authenticated &&
-              CREDENTIAL_SCOPES.every((scope) => scopes.includes(scope))
+          Effect.map((session): Access =>
+            CREDENTIAL_SCOPES.every((scope) => sessionGrantsScope(session, scope))
               ? "granted"
-              : "refused";
-          }),
+              : "refused",
+          ),
         );
       }),
       Effect.timeout(Duration.seconds(5)),
