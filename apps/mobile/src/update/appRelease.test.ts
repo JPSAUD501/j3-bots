@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { apkRefusal } from "./appRelease.ts";
+import type { GitHubRelease } from "@j3-bots/release";
+import { apkRefusal, appOffer } from "./appRelease.ts";
 import { updateRoute } from "./installSource.ts";
 import type { InstalledApp } from "./native.ts";
 
@@ -15,6 +16,36 @@ const apk = (versionName: string, versionCode: number, packageName = installed.p
   packageName,
   versionName,
   versionCode,
+});
+
+const release = (tag: string, prerelease: boolean): GitHubRelease => ({
+  tag_name: tag,
+  draft: false,
+  prerelease,
+  published_at: "2026-11-24T12:00:00Z",
+  html_url: `https://github.com/JPSAUD501/j3-bots/releases/tag/${tag}`,
+});
+
+/** A stable release and a later nightly, as the releases list has them, newest first. */
+const releases = [release("0.3.3-nightly.20261124.1", true), release("v0.3.2", false)];
+
+describe("which release the app is offered", () => {
+  it("offers a stable app only a newer stable release, and a nightly app the newest nightly", () => {
+    expect(appOffer({ releases, channel: "stable", running: "0.3.1" }).available?.version).toBe(
+      "0.3.2",
+    );
+    expect(appOffer({ releases, channel: "nightly", running: "0.3.1" }).available).toMatchObject({
+      version: "0.3.3-nightly.20261124.1",
+      tag: "0.3.3-nightly.20261124.1",
+    });
+  });
+
+  it("keeps a nightly app that moves to stable waiting for a newer stable release", () => {
+    expect(appOffer({ releases, channel: "stable", running: "0.3.3-nightly.20261124.1" })).toEqual({
+      available: null,
+      waitingForStable: true,
+    });
+  });
 });
 
 describe("whether a downloaded APK may replace the app", () => {
