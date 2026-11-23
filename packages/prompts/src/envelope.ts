@@ -230,7 +230,19 @@ export type SystemEvent =
       readonly name: "profile-changed";
       readonly changes: readonly [ProfileChange, ...Array<ProfileChange>];
     }
-  | { readonly name: "undelivered" };
+  | { readonly name: "undelivered" }
+  | {
+      readonly name: "browser-help";
+      /**
+       * How the step the bot asked for in its browser ended: the operator did
+       * it, could not, or the request expired with its tab or after waiting
+       * too long. `handed-back`: the operator took the browser while the bot
+       * worked, without being asked, and gave it back.
+       */
+      readonly outcome: "done" | "declined" | "tab-closed" | "timed-out" | "handed-back";
+      /** The host name of the page the request was about; null when none was known. */
+      readonly site: string | null;
+    };
 
 export interface SystemWake extends WakeBase {
   readonly kind: "system";
@@ -278,6 +290,26 @@ const PROFILE_CHANGED_LINE = "Your profile was changed. The new values:";
 const ASK_NAME_LINE =
   "None of their bots knows yet what they want to be called, so instead of what they need, your hello asks what to call them, in a few friendly words.";
 
+/**
+ * What a `browser-help` event says happened, and what to do now. The page
+ * changed under the bot, so it looks again before it acts; a step the
+ * operator did not do is never retried by the bot, and a request that
+ * expired is not raised again on its own.
+ */
+const BROWSER_HELP_LINES: {
+  readonly [O in Extract<SystemEvent, { readonly name: "browser-help" }>["outcome"]]: string;
+} = {
+  done: "Your user did the step you asked for in your browser and gave it back. Take a fresh snapshot before you act, since the page has changed, then carry on with the task.",
+  declined:
+    "Your user could not do the step you asked for in your browser, and gave it back. Do not try the step yourself. Finish what does not need it, then tell your user what it still blocks.",
+  "tab-closed":
+    "The tab you asked your user for help in closed before they did the step, so it was not done. Do not ask again on your own: tell your user in one short message that the task waits on that step, and that you will continue when they tell you to.",
+  "timed-out":
+    "Your user did not do the step you asked for in your browser in time, so the request closed. Do not ask again on your own: tell your user in one short message that the task waits on that step, and that you will continue when they tell you to.",
+  "handed-back":
+    "Your user took over your browser while you worked and has given it back. Take a fresh snapshot before you act, since the page may have changed, then carry on with what you were doing; if it was already done, end your turn without a word.",
+};
+
 /** What happened, in one line. */
 const eventLine = (event: SystemEvent): string => {
   switch (event.name) {
@@ -289,6 +321,8 @@ const eventLine = (event: SystemEvent): string => {
       return PROFILE_CHANGED_LINE;
     case "undelivered":
       return "Your last turn for your user ended without delivering an answer.";
+    case "browser-help":
+      return BROWSER_HELP_LINES[event.outcome];
   }
 };
 
@@ -587,6 +621,9 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       const { event } = wake;
       w.line(eventLine(event));
       if (event.name === "profile-changed") writeProfileChanges(w, event.changes);
+      if (event.name === "browser-help" && event.site !== null) {
+        w.empty("browser-tab", [["site", event.site]]);
+      }
       return;
     }
   }

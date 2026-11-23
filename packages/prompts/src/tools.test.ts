@@ -23,7 +23,7 @@ describe("j3 tools", () => {
     const workerRule = /A subagent or delegated worker does not: it reports in its final reply\./;
     for (const tool of toolList) {
       expect(workerRule.test(tool.description)).toBe(
-        ["say", "ask", "message_bot"].includes(tool.name),
+        ["say", "ask", "request_browser_help", "message_bot"].includes(tool.name),
       );
     }
   });

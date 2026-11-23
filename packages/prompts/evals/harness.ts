@@ -20,6 +20,7 @@ import {
   tools,
   type Wake,
 } from "../src/index.ts";
+import { type BrowserStage, browserTools, isBrowserTool, StandInBrowser } from "./browser.ts";
 import type { FixtureEvent, ProgramEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
 import { localInstant, nextScheduled, plannedRun, type Trigger } from "./schedule.ts";
@@ -34,7 +35,8 @@ import type { Workspace } from "./shell.ts";
  * as already read when a run includes them (the harness's own listing and
  * reading of them is not what is measured); `run_command`, a stand-in shell
  * whose workspace and programs the scenario fixes (`shell.ts`, `fixtures.ts`);
- * and `request_secret`, which the engine offers every bot ({@link SECRET_TOOL}).
+ * `request_secret`, which the engine offers every bot ({@link SECRET_TOOL});
+ * and, for a bot that has it, the engine's browser (`browser.ts`).
  *
  * Every case runs with the skills and without them. Nothing links them into a
  * harness yet, and a session that never reads one still has to behave, so a
@@ -66,12 +68,18 @@ const operatorOf = (unnamed: boolean) =>
  * A fictional operator and bot. An operator who has not said what to call
  * them has no shared facts either: nobody has got to know them yet.
  */
-const bot = (model: string, setup: BotSetup, unnamed: boolean): BotInstructionsInput => {
+const bot = (
+  model: string,
+  setup: BotSetup,
+  unnamed: boolean,
+  browser: boolean,
+): BotInstructionsInput => {
   const operator = operatorOf(unnamed);
   return {
     operator: { name: operator.name, timeZone: "Europe/Lisbon" },
     profile: { name: "Juniper", title: setup.title, job: setup.job, primary: false },
     runtime: { model, harness: model.startsWith("gpt") ? "Codex" : "Claude Code" },
+    browser,
     pinned: { shared: operator.shared, bot: setup.pinned },
   };
 };
@@ -79,9 +87,15 @@ const bot = (model: string, setup: BotSetup, unnamed: boolean): BotInstructionsI
 /** Whether a turn has the shipped skills as already read. */
 export type Skills = "with the skill" | "without the skill";
 
-const systemPrompt = (model: string, skills: Skills, setup: BotSetup, unnamed: boolean): string =>
+const systemPrompt = (
+  model: string,
+  skills: Skills,
+  setup: BotSetup,
+  unnamed: boolean,
+  browser: boolean,
+): string =>
   [
-    renderSystemFile(bot(model, setup, unnamed)),
+    renderSystemFile(bot(model, setup, unnamed, browser)),
     ...(skills === "with the skill" ? sharedSkills : []).map(
       (skill) => `# You read the skill skills/${skill.name}/SKILL.md\n\n${skill.text}`,
     ),
@@ -224,13 +238,15 @@ const engineAnswer = (engine: EngineInstance, name: string): Schema.Json | undef
 const GH_SIGNED_IN = "The GitHub CLI, gh, is signed in.";
 
 /**
- * The `j3` tools, a `run_command` that names what the workspace has, and the
- * engine's own tools when the scenario gives its instance.
+ * The `j3` tools, a `run_command` that names what the workspace has, the
+ * engine's own tools when the scenario gives its instance, and its browser
+ * when the scenario gives one.
  */
 const functionTools = (
   commands: ReadonlyArray<string>,
   shell: string,
   engine: EngineInstance | undefined,
+  browser: BrowserStage | undefined,
 ): ReadonlyArray<FunctionTool> => [
   ...toolList.map((tool): FunctionTool => ({
     type: "function",
@@ -269,6 +285,7 @@ const functionTools = (
     },
   },
   ...(engine === undefined ? [] : engineTools),
+  ...(browser === undefined ? [] : browserTools),
 ];
 
 /** A tool the model called, with its arguments as it sent them. */
@@ -372,6 +389,8 @@ export interface Scenario {
   readonly pastedSecretFails?: boolean;
   /** The engine instance whose own tools the bot gets; none offers them. */
   readonly engine?: EngineInstance;
+  /** The browser the bot has, and its instructions say so; none has no browser. */
+  readonly browser?: BrowserStage;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -380,6 +399,10 @@ const MAX_STEPS = 12;
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const decodeSetRoutine = Schema.decodeUnknownOption(tools.set_routine.input, DECODE_OPTIONS);
 const decodeAsk = Schema.decodeUnknownOption(tools.ask.input, DECODE_OPTIONS);
+const decodeBrowserHelp = Schema.decodeUnknownOption(
+  tools.request_browser_help.input,
+  DECODE_OPTIONS,
+);
 const decodeOperatorName = Schema.decodeUnknownOption(
   tools.set_operator_name.input,
   DECODE_OPTIONS,
@@ -656,15 +679,29 @@ type Answer = Pick<Call, "output" | "events" | "refused">;
 const answer = (
   routines: HeldRoutines,
   workspace: Workspace<ProgramEvent>,
+  browser: StandInBrowser | undefined,
   scenario: Scenario,
   request: Request,
 ): Answer => {
   const reply = (output: string): Answer => ({ output, events: [] });
+  if (browser !== undefined && isBrowserTool(request.name)) {
+    return reply(json(browser.answer(request.name, request.input)));
+  }
   switch (request.name) {
     case "say":
       return reply(json({ status: "recorded" }));
     case "ask":
       return reply(json({ asked: true }));
+    case "request_browser_help":
+      // As `Speech.ts` answers a request the server took.
+      return decodeBrowserHelp(request.input)._tag === "Some"
+        ? reply(
+            json({
+              status: "requested",
+              note: "Your user was asked to do this step in your browser. End this turn now, and do not use the browser until their answer arrives as your next turn.",
+            }),
+          )
+        : reply(json({ error: "The call was refused as invalid." }));
     case "list_routines":
       return reply(json(routines.list()));
     case "set_routine": {
@@ -792,15 +829,24 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const envelope = yield* renderWake(scenario.wake);
     const workspace = scenario.workspace();
     const routines = new HeldRoutines(scenario.wake);
+    const browser =
+      scenario.browser === undefined ? undefined : new StandInBrowser(scenario.browser);
     const tools = functionTools(
       workspace.commands,
       scenario.shell ?? GH_SIGNED_IN,
       scenario.engine,
+      scenario.browser,
     );
     const messages: Array<Message> = [
       {
         role: "system",
-        content: systemPrompt(model, skills, scenario.bot ?? JUNIPER, scenario.unnamed === true),
+        content: systemPrompt(
+          model,
+          skills,
+          scenario.bot ?? JUNIPER,
+          scenario.unnamed === true,
+          scenario.browser !== undefined,
+        ),
       },
       ...earlierMessages(
         yield* Effect.forEach(scenario.history ?? [], ({ wake, calls }) =>
@@ -836,7 +882,10 @@ export const runTurn = Effect.fn("evals.runTurn")(
           toolCall.function.name,
           parsed._tag === "Some" ? parsed.value : toolCall.function.arguments,
         );
-        const call: Call = { ...request, ...answer(routines, workspace, scenario, request) };
+        const call: Call = {
+          ...request,
+          ...answer(routines, workspace, browser, scenario, request),
+        };
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });
       }
