@@ -160,7 +160,10 @@ const fetchBody = async <A>(
     const response = await fetch(url, { headers: headers ?? {}, signal: guard.signal });
     if (response.status === 404) return null;
     if (!response.ok) throw new Unreachable();
-    return await read(response);
+    const body = await read(response);
+    // A read the deadline cut may still end, with only the bytes it had.
+    if (guard.signal.aborted) throw new Unreachable();
+    return body;
   } catch {
     throw new Unreachable();
   } finally {
@@ -408,6 +411,8 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
           });
         },
       });
+      // A download the deadline cut may still end, with only the bytes it had.
+      if (guard.signal.aborted) throw new Unreachable();
     } catch {
       remove(file);
       fail(release, { _tag: "unreachable" });
@@ -469,6 +474,14 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
         // The choice holds until the app restarts.
       }
       channel.set(next);
+      // An update waiting for the operator came from the other channel: it
+      // goes, with its file, and the chosen channel is read. One under way
+      // ends first; the next check reads the chosen channel.
+      const current = state.get();
+      if (current._tag === "cancelled" || current._tag === "permission") {
+        remove(fileOf(current.release));
+        state.set({ _tag: "unchecked" });
+      }
       void check();
     },
     update,

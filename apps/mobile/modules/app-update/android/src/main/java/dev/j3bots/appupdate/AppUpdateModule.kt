@@ -162,13 +162,15 @@ class AppUpdateModule : Module() {
         return
       }
       val action = "${context.packageName}.appupdate.STATUS.$sessionId"
-      receiver = StatusReceiver(promise)
+      val listener = StatusReceiver(promise)
       ContextCompat.registerReceiver(
         context,
-        receiver,
+        listener,
         IntentFilter(action),
         ContextCompat.RECEIVER_NOT_EXPORTED,
       )
+      // Only a registered receiver is unregistered if the commit fails.
+      receiver = listener
       // Android fills in the outcome, so the intent is mutable; it names
       // this app, so only the app receives it.
       val mutable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
