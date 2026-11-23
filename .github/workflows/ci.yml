@@ -106,6 +106,85 @@ jobs:
           path: apps/desktop/smoke-failure.png
           if-no-files-found: ignore
 
+  # The desktop packages as the release builds them, unsigned and unpublished,
+  # each with the server runtime of its platform (docs/operations/releasing.md),
+  # which is then run where it was packaged. It writes each package's size to
+  # the job's summary.
+  packages:
+    name: Desktop packages (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-24.04
+            targets: --linux --x64
+            runtime: linux-unpacked/resources/server-runtime
+            node: node/bin/node
+          - name: mac
+            os: macos-15
+            targets: --mac --x64 --arm64
+            runtime: mac-arm64/J3 Bots.app/Contents/Resources/server-runtime
+            node: node/bin/node
+          - name: windows
+            os: windows-2025
+            targets: --win --x64
+            runtime: win-unpacked/resources/server-runtime
+            node: node/node.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - name: Build the server runtime
+        run: node scripts/build-release.ts --server-runtime
+
+      - name: Build the web client and the app
+        run: |
+          vp run --filter @j3-bots/web build
+          vp run --filter @j3-bots/desktop build
+
+      - name: Package
+        working-directory: apps/desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          TARGETS: ${{ matrix.targets }}
+        run: vp exec -- electron-builder $TARGETS --publish never
+
+      - name: Run the packaged server runtime
+        working-directory: apps/desktop/release
+        env:
+          RUNTIME: ${{ matrix.runtime }}
+          NODE: ${{ matrix.node }}
+        run: |
+          "$RUNTIME/$NODE" --version
+          "$RUNTIME/$NODE" "$RUNTIME/server/bin.mjs" --version
+
+      - name: Package sizes
+        working-directory: apps/desktop/release
+        run: |
+          {
+            echo "| Package | Size |"
+            echo "| --- | --- |"
+            for file in *.AppImage *.deb *.dmg *.zip *.exe; do
+              [[ -f "$file" ]] || continue
+              echo "| \`$file\` | $(( $(wc -c < "$file") )) bytes |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
   release:
     name: Release archive (${{ matrix.platform }})
     strategy:

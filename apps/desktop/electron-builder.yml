@@ -30,10 +30,16 @@ files:
   - dist/**
   - package.json
 # The web client's build, which the main process reads beside the app's asar.
+# Each platform local mode runs on adds its server runtime below
+# (`server-runtime`), which `pnpm release --server-runtime` builds into
+# dist/release/server-runtime/<platform>-<arch>.
 extraResources:
   - from: ../web/dist
     to: web/dist
 npmRebuild: false
+# Fails a package that lacks the server runtime its platform needs, or carries
+# one where local mode does not run.
+afterPack: ./scripts/afterPack.ts
 # The app's icons, which the design tokens draw (packages/design-tokens,
 # `generate`): a set of sizes for Linux, an icon file holding each size
 # Windows draws, and one plate for macOS. Each platform names its own below.
@@ -64,6 +70,9 @@ linux:
   synopsis: Persistent AI teammates on your own machine
   maintainer: J3 Bots contributors
   icon: ../../packages/design-tokens/generated/icons/desktop
+  extraResources:
+    - from: ../../dist/release/server-runtime/linux-${arch}
+      to: server-runtime
 # electron-updater replaces an AppImage in place only when its name has no
 # x.y.z version; with one, it leaves a second file beside the first.
 appImage:
@@ -78,8 +87,16 @@ mac:
   # Ad hoc: no Developer ID, which Apple Silicon still needs to run the app at all.
   identity: "-"
   artifactName: J3-Bots-${version}-${arch}-unsigned.${ext}
+  # Apple Silicon only: no runtime is built for Intel Macs, where the app only
+  # connects to a server, so the x64 build finds none here.
+  extraResources:
+    - from: ../../dist/release/server-runtime/darwin-${arch}
+      to: server-runtime
 
 win:
   target: nsis
   icon: ../../packages/design-tokens/generated/icons/desktop.ico
   artifactName: J3-Bots-Setup-${version}-unsigned.${ext}
+  extraResources:
+    - from: ../../dist/release/server-runtime/win32-${arch}
+      to: server-runtime
