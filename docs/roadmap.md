@@ -102,7 +102,6 @@ Decided by the owner on 2026-11-23, after 0.3.0. Each is planned in lanes of its
 ## Later
 
 - Bots on more than one host.
-- A desktop app that bundles the server and the engine for people with no always-on machine.
 - Sharing a bot with another person.
 - Voice.
 - A semantic index over memory.

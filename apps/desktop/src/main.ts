@@ -255,6 +255,9 @@ const program = Effect.gen(function* () {
     // Mode bits say nothing of who may open a folder on Windows; until the
     // app reads the folder's ACL there, no home counts as private, and the
     // server is not started on one.
+    // TODO(windows-acl): once `@j3-bots/server/windows-acl` lands (PR #158),
+    // answer `readFolderAcl(folder)` judged "private" by `judgeAcl`, an
+    // unreadable ACL counting as not private.
     windowsPrivacy: () => Effect.succeed(false),
   });
   const { supervisor } = localHost;
