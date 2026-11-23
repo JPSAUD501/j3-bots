@@ -15,7 +15,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Bot, Plus, Search, SearchX, Users, X } from "lucide-react-native";
 import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, type FlatListProps, View } from "react-native";
-import { useSharedValue } from "react-native-reanimated";
+import { useAnimatedRef, useSharedValue } from "react-native-reanimated";
 import { displaySpacing, Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AvatarHold, AvatarRow, rowsOnScreen } from "../components/avatar/BotAvatar.tsx";
@@ -155,7 +155,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   );
   // The avatars hold while the list scrolls, from the drag through its glide.
   const scrolling = useSharedValue(false);
-  const list = useRef<FlatList<RosterItem>>(null);
+  const list = useAnimatedRef<FlatList<RosterItem>>();
   // How far the list is scrolled, which keeps the rows in view where they are as rows move.
   const scrolled = useSharedValue(0);
   const searched = query.trim();
@@ -172,7 +172,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       ? null
       : { keys: rows.map((item) => rosterKeyText(rosterKeyOf(item))), query: searched },
   );
-  useKeptPlace(list, motion, scrolled);
+  const keeping = useKeptPlace(list, motion, scrolled);
   if (rows === null) return <Connecting />;
   const newEntries: ReadonlyArray<MenuEntry> = [
     { label: t("roster.newBot"), icon: Bot, onPress: () => navigation.navigate("newBot") },
@@ -255,7 +255,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       </View>
       <ConnectionLine loaded />
       <AvatarHold held={scrolling}>
-        <RowMoves motion={motion} scrolled={scrolled}>
+        <RowMoves motion={motion} keeper={keeping.keeper}>
           <FlatList
             ref={list}
             className="flex-1"
@@ -273,6 +273,10 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
               </View>
             }
             CellRendererComponent={ReorderCell}
+            // Android detaches rows laid out off screen by where they end up,
+            // so a row travelling across the view from above it to below it
+            // would never be drawn on the way.
+            removeClippedSubviews={false}
             getItemLayout={(_, index) => ({
               length: ROW_HEIGHT,
               offset: ROW_HEIGHT * index,
@@ -302,7 +306,11 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
             onViewableItemsChanged={onViewable}
             viewabilityConfig={ON_SCREEN}
             extraData={selectedText}
-            onScrollBeginDrag={() => scrolling.set(true)}
+            onScrollBeginDrag={() => {
+              // The operator takes the list: it stops gliding to keep its place.
+              keeping.stop();
+              scrolling.set(true);
+            }}
             onScrollEndDrag={() => scrolling.set(false)}
             onMomentumScrollBegin={() => scrolling.set(true)}
             onMomentumScrollEnd={() => scrolling.set(false)}

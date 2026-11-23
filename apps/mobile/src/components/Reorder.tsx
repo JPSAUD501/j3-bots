@@ -14,6 +14,7 @@ import {
   createContext,
   type ReactNode,
   type RefObject,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -23,9 +24,14 @@ import {
 } from "react";
 import { type FlatList, type FlatListProps, View } from "react-native";
 import Animated, {
+  type AnimatedRef,
+  cancelAnimation,
   FadeIn,
   type LayoutAnimationFunction,
+  LinearTransition,
   type SharedValue,
+  scrollTo,
+  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -58,6 +64,8 @@ interface RowMotion {
   readonly arrived: ReadonlySet<string>;
   /** Where the list keeps its place while scrolled (`keptPlaces`), under reduced motion too. */
   readonly kept: ReadonlyArray<number>;
+  /** Which order this is, counted up, so the list keeps its place once for each. */
+  readonly order: number;
 }
 
 const atRest: RowMotion = {
@@ -66,13 +74,8 @@ const atRest: RowMotion = {
   moving: new Set(),
   arrived: new Set(),
   kept: [],
+  order: 0,
 };
-
-/** The rows' motion, and how far the list is scrolled, read on the UI thread. */
-const MotionNow = createContext<{
-  readonly motion: RowMotion;
-  readonly scrolled: SharedValue<number> | null;
-}>({ motion: atRest, scrolled: null });
 
 const sameView = (a: RosterView, b: RosterView) =>
   a.query === b.query &&
@@ -82,6 +85,8 @@ const sameView = (a: RosterView, b: RosterView) =>
 interface Drawn {
   readonly view: RosterView | null;
   readonly motion: RowMotion;
+  /** How many motions were drawn, the one at rest included. */
+  readonly count: number;
 }
 
 /** The motion from the order drawn with `drawn` to `view`. */
@@ -90,8 +95,9 @@ function nextMotion(drawn: Drawn, view: RosterView, reduced: boolean): RowMotion
   const moves = rosterMotion(before, view);
   // Nothing moves, as after a search: nothing stays up either.
   if (before === null || moves.size === 0) return atRest;
+  const order = drawn.count + 1;
   const kept = keptPlaces(before.keys, view.keys, moves);
-  if (reduced) return { ...atRest, kept };
+  if (reduced) return { ...atRest, kept, order };
   const shown = new Set(view.keys);
   const was = new Set(before.keys);
   const lifting = [...moves].flatMap(([key, move]) => (lifts(move) ? [key] : []));
@@ -102,6 +108,7 @@ function nextMotion(drawn: Drawn, view: RosterView, reduced: boolean): RowMotion
     moving: new Set([...motion.moving, ...motion.moves.keys()].filter((key) => shown.has(key))),
     arrived: new Set(view.keys.filter((key) => !was.has(key))),
     kept,
+    order,
   };
 }
 
@@ -114,14 +121,19 @@ function nextMotion(drawn: Drawn, view: RosterView, reduced: boolean): RowMotion
  */
 export function useRowMotion(view: RosterView | null): RowMotion {
   const reduced = useReducedMotion();
-  const [drawn, setDrawn] = useState<Drawn>({ view: null, motion: atRest });
+  const [drawn, setDrawn] = useState<Drawn>({ view: null, motion: atRest, count: 0 });
   if (view === null ? drawn.view !== null : drawn.view === null || !sameView(drawn.view, view)) {
-    setDrawn({ view, motion: view === null ? atRest : nextMotion(drawn, view, reduced) });
+    setDrawn({
+      view,
+      motion: view === null ? atRest : nextMotion(drawn, view, reduced),
+      count: drawn.count + 1,
+    });
   }
   useEffect(() => {
     if (drawn.motion.moves.size === 0) return;
     const settled = setTimeout(
-      () => setDrawn((now) => (now === drawn ? { ...now, motion: atRest } : now)),
+      () =>
+        setDrawn((now) => (now === drawn ? { ...now, motion: atRest, count: now.count + 1 } : now)),
       springs.slide.duration + lift.stepDelay,
     );
     return () => clearTimeout(settled);
@@ -140,88 +152,146 @@ function keptShift(kept: ReadonlyArray<number>, offset: number): number {
   return (kept[Math.floor(offset / ROW_HEIGHT)] ?? 0) * ROW_HEIGHT;
 }
 
-/**
- * While the list is scrolled, keeps the first row in view that does not lift
- * where it is on screen as the order changes, by scrolling as far as it
- * moved, so rows moving above the view do not push what the operator is
- * looking at.
- */
-export function useKeptPlace(
-  list: RefObject<FlatList<RosterItem> | null>,
-  { kept }: RowMotion,
-  scrolled: SharedValue<number>,
-): void {
-  useLayoutEffect(() => {
-    const offset = scrolled.get();
-    const shift = keptShift(kept, offset);
-    if (shift !== 0) list.current?.scrollToOffset({ offset: offset + shift, animated: false });
-  }, [list, kept, scrolled]);
-}
-
-/** Gives the rows below how each of them moves, and how far `scrolled` the list is. */
-export function RowMoves({
-  motion,
-  scrolled,
-  children,
-}: {
-  readonly motion: RowMotion;
-  readonly scrolled: SharedValue<number>;
-  readonly children: ReactNode;
-}) {
-  return <MotionNow value={{ motion, scrolled }}>{children}</MotionNow>;
-}
-
 const slide = reanimatedSpring(springs.slide);
 const soft = reanimatedSpring(springs.soft);
 
+/** Where the list is gliding to, to keep its place, or `null` while it is not. */
+type Heading = number | null;
+
+/** What keeps the list's place, read and moved on the UI thread. */
+interface Keeper {
+  readonly list: AnimatedRef<FlatList<RosterItem>>;
+  /** The offset the list glides through. */
+  readonly scroll: SharedValue<number>;
+  readonly heading: SharedValue<Heading>;
+  /** How far the list is scrolled, as it last said. */
+  readonly scrolled: SharedValue<number>;
+  /** The last order the list kept its place for. */
+  readonly keptFor: SharedValue<number>;
+}
+
+/** The rows' motion, and what keeps the list's place as they move. */
+const MotionNow = createContext<{ readonly motion: RowMotion; readonly keeper: Keeper | null }>({
+  motion: atRest,
+  keeper: null,
+});
+
 /**
- * A row's way to its new place on `slide`, after `delay` ms, from where it is
- * drawn: from its place a moment ago, less however far the list scrolls in
- * the same commit to keep its place, so the row sets off from where it
- * showed.
+ * Keeps the list's place for `motion`, once (`keptPlaces`): it glides on
+ * `slide`, after `delay` ms, from wherever it is scrolled or still gliding to,
+ * or, with no rows moving, as under reduced motion, it goes there at once.
  */
-const travel =
+function keepPlace(keeper: Keeper, kept: ReadonlyArray<number>, order: number, delay: number) {
+  "worklet";
+  if (keeper.keptFor.get() === order) return;
+  keeper.keptFor.set(order);
+  const { list, scroll, heading, scrolled } = keeper;
+  const gliding = heading.get();
+  const from = gliding ?? scrolled.get();
+  const shift = keptShift(kept, from);
+  if (shift === 0) return;
+  const to = from + shift;
+  if (delay < 0) {
+    cancelAnimation(scroll);
+    heading.set(null);
+    scrollTo(list, 0, to, false);
+    return;
+  }
+  if (gliding === null) scroll.set(scrolled.get());
+  heading.set(to);
+  scroll.set(
+    withDelay(
+      delay,
+      withSpring(to, slide, (finished) => {
+        if (finished === true) heading.set(null);
+      }),
+    ),
+  );
+}
+
+/**
+ * While the list is scrolled, keeps the first row in view that does not lift
+ * where it is on screen as the order changes. The rows travel to their new
+ * places in the list, and the list glides as far as that row moved, on the same
+ * `slide`, started by the rows' own transitions (`ReorderCell`) in the frame they
+ * start: rows moving above the view do not push what the operator is looking
+ * at, and the rows below close up. The scroll reaches the screen apart from the
+ * rows' transitions, so that row can shake by a frame's travel. Under reduced
+ * motion the list goes to its place at once. Returns what stops the glide, for
+ * when the operator takes the list.
+ */
+export function useKeptPlace(
+  list: AnimatedRef<FlatList<RosterItem>>,
+  { moves, kept, order }: RowMotion,
+  scrolled: SharedValue<number>,
+): { readonly keeper: Keeper; readonly stop: () => void } {
+  const scroll = useSharedValue(0);
+  const heading = useSharedValue<Heading>(null);
+  const keptOrder = useSharedValue(0);
+  const keeper = useMemo(
+    () => ({ list, scroll, heading, scrolled, keptFor: keptOrder }),
+    [list, scroll, heading, scrolled, keptOrder],
+  );
+  useAnimatedReaction(
+    () => (heading.get() === null ? null : scroll.get()),
+    (offset) => {
+      if (offset !== null) scrollTo(list, 0, offset, false);
+    },
+  );
+  useLayoutEffect(() => {
+    // With rows moving, the rows' transitions start the glide.
+    if (kept.length === 0 || moves.size > 0) return;
+    scheduleOnUI(keepPlace, keeper, kept, order, -1);
+  }, [keeper, kept, moves, order]);
+  const stop = useCallback(() => {
+    cancelAnimation(scroll);
+    heading.set(null);
+  }, [scroll, heading]);
+  return { keeper, stop };
+}
+
+/** Gives the rows below how each of them moves, and what keeps the list's place. */
+export function RowMoves({
+  motion,
+  keeper,
+  children,
+}: {
+  readonly motion: RowMotion;
+  readonly keeper: Keeper;
+  readonly children: ReactNode;
+}) {
+  return <MotionNow value={{ motion, keeper }}>{children}</MotionNow>;
+}
+
+/** A row's way to its new place on `slide`, after `delay` ms. */
+const travel = (delay: number) =>
+  LinearTransition.springify()
+    .mass(slide.mass)
+    .stiffness(slide.stiffness)
+    .damping(slide.damping)
+    .delay(delay);
+
+/** At once, for a row that lifts or one already on its way; `lift.stepDelay` later, for the rows it passes. */
+const ways = new Map([0, lift.stepDelay].map((delay) => [delay, travel(delay)]));
+
+/**
+ * A moved row's way, which also starts the list's glide to keep its place:
+ * Reanimated starts every moved row's transition in the frame the rows move,
+ * so the glide starts with them, whichever row comes first.
+ */
+const keeping =
   (
-    delay: number,
+    way: LayoutAnimationFunction,
+    keeper: Keeper,
     kept: ReadonlyArray<number>,
-    scrolled: SharedValue<number>,
+    order: number,
+    delay: number,
   ): LayoutAnimationFunction =>
   (values) => {
     "worklet";
-    const shift = keptShift(kept, scrolled.get());
-    return {
-      initialValues: {
-        originX: values.currentOriginX,
-        originY: values.currentOriginY + shift,
-        width: values.currentWidth,
-        height: values.currentHeight,
-      },
-      animations: {
-        originX: withDelay(delay, withSpring(values.targetOriginX, slide)),
-        originY: withDelay(delay, withSpring(values.targetOriginY, slide)),
-        width: withDelay(delay, withSpring(values.targetWidth, slide)),
-        height: withDelay(delay, withSpring(values.targetHeight, slide)),
-      },
-    };
+    keepPlace(keeper, kept, order, delay);
+    return way(values);
   };
-
-/**
- * Sets a row the order left in its place off from where it showed, when the
- * list scrolls under it to keep its place: by as far as the list scrolls,
- * back to none on `slide`.
- */
-function scrolledUnder(
-  nudge: SharedValue<number>,
-  kept: ReadonlyArray<number>,
-  scrolled: SharedValue<number>,
-  delay: number,
-): void {
-  "worklet";
-  const shift = keptShift(kept, scrolled.get());
-  if (shift === 0) return;
-  nudge.set(nudge.get() + shift);
-  nudge.set(withDelay(delay, withSpring(0, slide)));
-}
 
 /** A row new to the list, fading in on `soft`. */
 const arriving = FadeIn.springify().mass(soft.mass).stiffness(soft.stiffness).damping(soft.damping);
@@ -233,28 +303,25 @@ const arriving = FadeIn.springify().mass(soft.mass).stiffness(soft.stiffness).da
  * over a row still up from a move before.
  */
 export function ReorderCell({ cellKey, children, style, onLayout, onFocusCapture }: CellProps) {
-  const { motion, scrolled } = useContext(MotionNow);
-  const { moves, lifted, moving, arrived, kept } = motion;
+  const { motion, keeper } = useContext(MotionNow);
+  const { moves, lifted, moving, arrived, kept, order } = motion;
   const move = moves.get(cellKey);
   // A row already on its way sets off again at once; the others follow the rows that lift.
-  const delay = moving.has(cellKey) ? 0 : moveDelay(move ?? "step", moves, lift.stepDelay);
-  const way = useMemo(
-    () => (move === undefined || scrolled === null ? undefined : travel(delay, kept, scrolled)),
-    [move, delay, kept, scrolled],
-  );
-  const nudge = useSharedValue(0);
-  useLayoutEffect(() => {
-    if (move !== undefined || moves.size === 0 || arrived.has(cellKey) || scrolled === null) return;
-    scheduleOnUI(scrolledUnder, nudge, kept, scrolled, delay);
-  }, [move, moves, arrived, cellKey, scrolled, nudge, kept, delay]);
-  const nudged = useAnimatedStyle(() => ({ transform: [{ translateY: nudge.get() }] }));
+  const delay =
+    move === undefined ? null : moving.has(cellKey) ? 0 : moveDelay(move, moves, lift.stepDelay);
+  const travelling = delay === null ? undefined : ways.get(delay);
+  // The row kept in place steps with the rows a lifted row passes, so the list glides with it.
+  const way =
+    travelling === undefined || keeper === null || kept.length === 0
+      ? travelling
+      : keeping(travelling.build(), keeper, kept, order, moveDelay("step", moves, lift.stepDelay));
   const above =
     move !== undefined && lifts(move) ? { zIndex: 2 } : lifted.has(cellKey) ? { zIndex: 1 } : null;
   return (
     <Animated.View
       {...(way === undefined ? {} : { layout: way })}
       {...(arrived.has(cellKey) && moves.size > 0 ? { entering: arriving } : {})}
-      style={[style, above, nudged]}
+      style={[style, above]}
       onLayout={onLayout}
       onFocusCapture={onFocusCapture}
     >
