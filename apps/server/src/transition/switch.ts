@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 // The part of a version transition that changes something, as one sequence
@@ -44,6 +45,7 @@ export class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
     "start-old",
     "await-old",
     "unmark",
+    "record",
     "adopt",
   ]),
   reason: Schema.String,
@@ -59,6 +61,12 @@ export interface SwitchSteps<Snapshot, R> {
   readonly disable: Effect.Effect<void, StepFailed, R>;
   /** Copies the databases and settings; a snapshot that fails leaves nothing behind. */
   readonly snapshot: Effect.Effect<Snapshot, StepFailed, R>;
+  /**
+   * The snapshot a switch that was cut off took, which this one carries on
+   * with instead of taking another: the data on the home may be the new
+   * release's already, so even a failure to stop rolls back to it.
+   */
+  readonly resumed: Option.Option<Snapshot>;
   /** Marks a rollback to the snapshot as started; one a cut-off rollback marked stays as it is. */
   readonly mark: (snapshot: Snapshot) => Effect.Effect<void, StepFailed, R>;
   /** Starts that release's server, and enables it: the CLI runs that release's own `service install`. */
@@ -105,7 +113,10 @@ export type SwitchOutcome<Snapshot> =
     };
 
 /** What a rollback does, given to it: everything but stopping and taking a snapshot. */
-export type RollbackSteps<Snapshot, R> = Omit<SwitchSteps<Snapshot, R>, "stop" | "snapshot">;
+export type RollbackSteps<Snapshot, R> = Omit<
+  SwitchSteps<Snapshot, R>,
+  "stop" | "snapshot" | "resumed"
+>;
 
 /**
  * Puts `snapshot` back and starts the old release, as one marked state
@@ -149,9 +160,11 @@ export const switchOver = <Snapshot, R>(
 
     if (steps.supervised) {
       const stopped = yield* Effect.result(steps.stop);
-      if (stopped._tag === "Failure") return yield* back(stopped.failure, Option.none());
+      if (stopped._tag === "Failure") return yield* back(stopped.failure, steps.resumed);
     }
-    const taken = yield* Effect.result(steps.snapshot);
+    const taken = Option.isSome(steps.resumed)
+      ? Result.succeed(steps.resumed.value)
+      : yield* Effect.result(steps.snapshot);
     if (taken._tag === "Failure") return yield* back(taken.failure, Option.none());
     const snapshot = taken.success;
     if (steps.supervised) {

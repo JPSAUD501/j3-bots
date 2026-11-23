@@ -40,7 +40,7 @@ const COPY_SUFFIX = ".j3-restoring";
 export const UPDATE_LOCK = "update.lock";
 
 /** A release, as a snapshot names it. */
-const SnapshotRelease = Schema.Struct({
+export const SnapshotRelease = Schema.Struct({
   version: Schema.String,
   /** The engine release it is pinned to, when its `release.json` says. */
   engine: Schema.optionalKey(Schema.String),

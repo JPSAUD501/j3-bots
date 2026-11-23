@@ -129,7 +129,7 @@ It says when the snapshot was taken and what is lost, and asks first (`--yes` an
 
 A release refuses a database a newer release migrated, naming the migration it does not know, so starting an older release by hand on newer data fails: roll back instead.
 
-Each time an update or a rollback sees the service's server become ready, it records that release in `~/.j3-bots/state/runtime.json`, and after a rollback the release it rolled back from. The service does not read it: the unit names the release it runs. If writing it fails, the update says so and carries on, with the new release running.
+An update records in `~/.j3-bots/state/runtime.json` the release that runs: before the new release starts, the update itself, pending, with its snapshot; then the new release once it is ready, or after a rollback the release rolled back to, and the one it rolled back from. The service does not read it: the unit names the release it runs. An update cut off before the new release was recorded, by a power cut or a failure to write the file, stays pending: `j3-bots update --version <new>` carries it on from the release before, with the same snapshot, and records it. A rollback whose record cannot be written stops with its mark kept: `j3-bots update --rollback` starts the earlier release again and records it, without copying the snapshot again.
 
 ### From a checkout
 

@@ -69,6 +69,7 @@ const hostWith = (failing: ReadonlyArray<string>, service = true, running: Side 
       });
     }),
     snapshot: attempt("snapshot", () => {}).pipe(Effect.as("snapshot" as const)),
+    resumed: Option.none(),
     mark: () =>
       attempt("mark", () => {
         host.marked = true;
@@ -223,6 +224,39 @@ describe("an update's switch", () => {
       }),
     );
   }
+
+  describe("carrying on a switch cut off after its snapshot", () => {
+    it.effect("takes no other snapshot", () =>
+      Effect.gen(function* () {
+        const { host, steps } = hostWith([]);
+        const outcome = yield* switchOver({ ...steps, resumed: Option.some("snapshot" as const) });
+        assert.strictEqual(outcome._tag, "updated");
+        assert.deepStrictEqual(host.log, ["stop", "start-new", "await-new", "adopt"]);
+      }),
+    );
+
+    it.effect("rolls back to that snapshot even when stopping fails", () =>
+      Effect.gen(function* () {
+        // The data may be the new release's already: the old one starts only on the snapshot.
+        const { host, steps } = hostWith(["stop@1"]);
+        host.data = "migrated";
+        const outcome = yield* switchOver({ ...steps, resumed: Option.some("snapshot" as const) });
+        assert.strictEqual(outcome._tag, "rolled-back");
+        if (outcome._tag !== "rolled-back") return;
+        assert.isTrue(Option.contains(outcome.restored, "snapshot"));
+        assert.deepStrictEqual(host.log, [
+          "stop",
+          "mark",
+          "stop",
+          "restore",
+          "start-old",
+          "await-old",
+          "unmark",
+        ]);
+        assertBackToOld(host);
+      }),
+    );
+  });
 
   describe("without a service", () => {
     it.effect("copies the databases, then adopts the new release", () =>

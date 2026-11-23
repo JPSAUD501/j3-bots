@@ -11,15 +11,25 @@ import {
   decideStart,
   readRuntimeRecord,
   type RecordedRuntime,
+  recordPending,
   recordReady,
+  recordTransitioned,
+  type RuntimeRecord,
+  setAsideRecord,
   type StartDecision,
   type StartFacts,
-  writeRuntimeRecord,
 } from "./record.ts";
 
-const recorded = (version: string): RecordedRuntime => ({
+const recorded = (
+  version: string,
+  more: Pick<RuntimeRecord, "rollback" | "pending"> = {},
+): RecordedRuntime => ({
   _tag: "recorded",
-  record: { schema: 1, version, readyAt: DateTime.makeUnsafe("2026-11-23T00:00:00Z") },
+  record: { schema: 1, version, readyAt: DateTime.makeUnsafe("2026-11-23T00:00:00Z"), ...more },
+});
+
+const pendingTo = (to: string) => ({
+  pending: { from: { version: "0.2.0" }, to: { version: to }, snapshot: "s" },
 });
 
 describe("whether a release may start on a home", () => {
@@ -52,7 +62,42 @@ describe("whether a release may start on a home", () => {
     ],
     [
       "another build of the recorded version",
-      { recorded: recorded("0.3.0+build.1"), starting: "0.3.0+build.2" },
+      { recorded: recorded("0.3.0+a"), starting: "0.3.0+b" },
+      "refuse-unknown-schema",
+    ],
+    [
+      "a newer release, the version recorded not one releases are numbered with",
+      { recorded: recorded("nightly-2026-11-23"), starting: "0.4.0" },
+      "refuse-unknown-schema",
+    ],
+    [
+      "the release a rollback was made from",
+      { recorded: recorded("0.2.0", { rollback: { from: "0.3.0" } }) },
+      "refuse-rolled-back",
+    ],
+    [
+      "a release newer than the one a rollback was made from",
+      { recorded: recorded("0.2.0", { rollback: { from: "0.3.0" } }), starting: "0.3.1" },
+      "snapshot-then-start",
+    ],
+    [
+      "the release rolled back to",
+      { recorded: recorded("0.2.0", { rollback: { from: "0.3.0" } }), starting: "0.2.0" },
+      "start",
+    ],
+    [
+      "the release a transition cut off was moving to",
+      { recorded: recorded("0.2.0", pendingTo("0.3.0")) },
+      "snapshot-then-start",
+    ],
+    [
+      "a newer release than the one a transition cut off was moving to",
+      { recorded: recorded("0.2.0", pendingTo("0.3.0")), starting: "0.3.1" },
+      "snapshot-then-start",
+    ],
+    [
+      "the release a transition cut off started from, on data it may have migrated",
+      { recorded: recorded("0.2.0", pendingTo("0.3.0")), starting: "0.2.0" },
       "refuse-unknown-schema",
     ],
     [
@@ -84,6 +129,13 @@ describe("whether a release may start on a home", () => {
       );
     });
   }
+
+  it("orders two builds of one version as equal, and a version that is not one as nothing", () => {
+    assert.deepStrictEqual(compareVersions("0.3.0+a", "0.3.0+b"), Option.some(0));
+    assert.deepStrictEqual(compareVersions("0.3.0+a", "0.3.1"), Option.some(-1));
+    assert.isTrue(Option.isNone(compareVersions("nightly", "0.3.0")));
+    assert.isTrue(Option.isNone(compareVersions("0.3", "0.3.0")));
+  });
 
   it("orders versions as releases are numbered", () => {
     const ordered = [
@@ -127,7 +179,7 @@ it.layer(NodeServices.layer)("a home's record", (it) => {
       const path = yield* Path.Path;
       const home = yield* homeWith(Option.none());
       assert.strictEqual((yield* readRuntimeRecord(home))._tag, "none");
-      yield* writeRuntimeRecord(home, "0.3.0", Option.some("0.3.1"));
+      yield* recordTransitioned(home, "0.3.0", Option.some("0.3.1"));
       const back = yield* readRuntimeRecord(home);
       assert.strictEqual(back._tag, "recorded");
       if (back._tag !== "recorded") return;
@@ -135,6 +187,10 @@ it.layer(NodeServices.layer)("a home's record", (it) => {
       assert.deepStrictEqual(back.record.rollback, { from: "0.3.1" });
       const file = path.join(home, "state", "runtime.json");
       assert.strictEqual((yield* fs.stat(file)).mode & 0o777, 0o600);
+      // Starting the release rolled back to again keeps the rollback, so 0.3.1 is not retried.
+      yield* recordReady(home, "0.3.0");
+      const again = yield* readRuntimeRecord(home);
+      assert.isTrue(again._tag === "recorded" && again.record.rollback?.from === "0.3.1");
       yield* recordReady(home, "0.3.1");
       const ready = yield* readRuntimeRecord(home);
       assert.isTrue(ready._tag === "recorded" && ready.record.rollback === undefined);
@@ -150,6 +206,39 @@ it.layer(NodeServices.layer)("a home's record", (it) => {
         const home = yield* homeWith(Option.some(text));
         assert.strictEqual((yield* readRuntimeRecord(home))._tag, "unreadable", text);
       }
+    }),
+  );
+
+  it.effect("names a transition pending from the release that ran, until it is recorded", () =>
+    Effect.gen(function* () {
+      const home = yield* homeWith(Option.none());
+      const pending = { from: { version: "0.3.0" }, to: { version: "0.3.1" }, snapshot: "s" };
+      yield* recordPending(home, pending);
+      const during = yield* readRuntimeRecord(home);
+      assert.isTrue(during._tag === "recorded" && during.record.version === "0.3.0");
+      assert.deepStrictEqual(
+        during._tag === "recorded" ? during.record.pending : undefined,
+        pending,
+      );
+      yield* recordTransitioned(home, "0.3.1", Option.none());
+      const after = yield* readRuntimeRecord(home);
+      assert.isTrue(after._tag === "recorded" && after.record.pending === undefined);
+    }),
+  );
+
+  it.effect("can be set aside when unreadable, kept beside it, so the home starts again", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* homeWith(Option.some("{"));
+      assert.strictEqual((yield* readRuntimeRecord(home))._tag, "unreadable");
+      yield* setAsideRecord(home);
+      assert.strictEqual((yield* readRuntimeRecord(home))._tag, "none");
+      const kept = (yield* fs.readDirectory(path.join(home, "state"))).filter((name) =>
+        name.startsWith("runtime.json.unreadable-"),
+      );
+      assert.lengthOf(kept, 1);
+      assert.strictEqual(yield* fs.readFileString(path.join(home, "state", kept[0] ?? "")), "{");
     }),
   );
 

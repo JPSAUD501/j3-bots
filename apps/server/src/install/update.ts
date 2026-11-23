@@ -30,6 +30,7 @@ import {
 } from "./layout.ts";
 import { fetchRelease, isRelease, targetVersion } from "./release.ts";
 import { type ServerProbe } from "../transition/readiness.ts";
+import { readRuntimeRecord } from "../transition/record.ts";
 import { type Side, StepFailed } from "../transition/switch.ts";
 import * as Transition from "../transition/transition.ts";
 import {
@@ -304,8 +305,27 @@ type SwitchServices =
   | AdminClient
   | ChildProcessSpawner.ChildProcessSpawner;
 
-/** The service's steps for the two releases of an install: stop, start, probe, point the command at, prune. */
-const releaseSteps = (
+/**
+ * The service's steps for the two releases of an install: stop, start,
+ * probe, point the command at, prune. Each release runs from its folder in
+ * `versions/`: the one that runs now from where the unit or the command
+ * found it.
+ */
+const releaseSteps =
+  (installed: Installed, path: Path.Path): Transition.HostStepsFor<SwitchServices> =>
+  (sides) => {
+    /** A release with its folder: the one that runs now from where it was found, any other in `versions/`. */
+    const withRoot = (release: SnapshotRelease) => ({
+      version: release.version,
+      root:
+        release.version === installed.release.version
+          ? installed.root
+          : path.join(installed.install, VERSIONS, release.version),
+    });
+    return serviceSteps(installed, { old: withRoot(sides.old), new: withRoot(sides.new) });
+  };
+
+const serviceSteps = (
   installed: Installed,
   releases: Record<Side, { readonly version: string; readonly root: string }>,
 ): Transition.HostSteps<SwitchServices> => ({
@@ -393,7 +413,6 @@ type UpdateResult =
   | { readonly _tag: "declined" }
   | ({
       readonly _tag: "switched";
-      readonly from: string;
       readonly to: string;
       readonly service: boolean;
     } & Transition.TransitionResult);
@@ -467,7 +486,10 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   yield* checkNoUnfinishedRollback(installed.home);
   const from = installed.release;
   const version = yield* targetVersion(options.version);
-  if (version === from.version) {
+  // An update cut off after its snapshot is carried on, even to the release that runs.
+  const recorded = yield* readRuntimeRecord(installed.home);
+  const pending = recorded._tag === "recorded" && recorded.record.pending !== undefined;
+  if (version === from.version && !pending) {
     if (Option.exists(installed.command, (release) => path.basename(release) === version)) {
       return { _tag: "current", version } satisfies UpdateResult;
     }
@@ -515,10 +537,6 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
 
   const fromRelease: SnapshotRelease = { version: from.version, ...engineOf(from) };
   const toRelease: SnapshotRelease = { version, ...(to === undefined ? {} : engineOf(to)) };
-  const steps = releaseSteps(installed, {
-    old: { version: from.version, root: installed.root },
-    new: { version, root: fetched.root },
-  });
   yield* options.say(
     installed.service
       ? `Stopping the service, copying the databases, and starting J3 Bots ${version}…`
@@ -528,11 +546,10 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
     lock,
     from: fromRelease,
     to: toRelease,
-    steps,
+    steps: releaseSteps(installed, path),
   });
   return {
     _tag: "switched",
-    from: from.version,
     to: version,
     service: installed.service,
     ...result,
@@ -544,11 +561,13 @@ const engineOf = (release: Installation.ReleaseManifest) =>
 
 type RollbackResult =
   | { readonly _tag: "declined" }
-  | ({
+  | {
       readonly _tag: "rolled-back";
       readonly snapshot: Snapshot;
       readonly service: boolean;
-    } & Transition.RollbackResult);
+      /** The step that failed, if one did: the rollback stopped there. */
+      readonly failed: Option.Option<StepFailed>;
+    };
 
 /**
  * Puts back `rollbackSnapshot` and starts the release it was taken from, once
@@ -576,7 +595,7 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
     });
   }
   const snapshot = chosen.value;
-  const { from, to } = snapshot.manifest;
+  const { from } = snapshot.manifest;
   const versions = path.join(installed.install, VERSIONS);
   const oldRoot = path.join(versions, from.version);
   if (!(yield* isRelease(oldRoot))) {
@@ -591,15 +610,15 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
   yield* serviceRunning(installed);
   if (!(yield* options.confirm(snapshot))) return { _tag: "declined" } satisfies RollbackResult;
 
-  const steps = releaseSteps(installed, {
-    old: { version: from.version, root: oldRoot },
-    new: { version: to.version, root: installed.root },
+  const failed = yield* Transition.rollBack({
+    lock,
+    snapshot,
+    steps: releaseSteps(installed, path),
   });
-  const result = yield* Transition.rollBack({ lock, snapshot, steps });
   return {
     _tag: "rolled-back",
     snapshot,
     service: installed.service,
-    ...result,
+    failed,
   } satisfies RollbackResult;
 }, Effect.scoped);

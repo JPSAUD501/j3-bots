@@ -54,15 +54,25 @@ const carryingOnAfterHangup = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 /**
  * What a rollback that stopped at `step` leaves: from its mark until the old
- * release runs, the rollback is unfinished until `--rollback` carries it on.
- * Pointing the command comes after.
+ * release runs and is recorded, the rollback is unfinished until
+ * `--rollback` carries it on. Pointing the command comes after.
  */
-const unfinishedRollback = (step: StepFailed) =>
-  step.step === "mark" || step.step === "adopt"
-    ? []
-    : [
+const unfinishedRollback = (step: StepFailed) => {
+  switch (step.step) {
+    case "mark":
+    case "adopt":
+      return [];
+    case "record":
+    case "unmark":
+      return [
+        "The service runs the release before again, but the rollback has not finished, so no other release may run on the data directory: `j3-bots update --rollback` finishes it, without copying the databases again.",
+      ];
+    default:
+      return [
         "The rollback has not finished, so the service stays disabled and no other release may run on the data directory: `j3-bots update --rollback` finishes it.",
       ];
+  }
+};
 
 /** Asks `question` on a terminal, or answers no without one. */
 const ask = Effect.fn("update.ask")(function* (question: string) {
@@ -78,12 +88,16 @@ const bots = (count: Option.Option<number>) =>
     onSome: (n) => (n === 1 ? "1 bot has work running" : `${n} bots have work running`),
   });
 
-/** What to say when the home's record of the release that runs could not be written. */
-const unrecorded = (recording: Option.Option<string>) =>
+/**
+ * What to say when the home's record could not say that `to` runs: the update
+ * stays pending in it, and the next update to `to` carries it on, with the
+ * snapshot it took.
+ */
+const unrecorded = (recording: Option.Option<string>, to: string) =>
   Option.match(recording, {
     onNone: () => [],
     onSome: (reason) => [
-      `Writing the data directory's record of the release that runs, state/runtime.json, failed: ${reason}`,
+      `Writing the data directory's record of the release that runs, state/runtime.json, failed: ${reason} Until it is written, the update counts as unfinished: \`j3-bots update --version ${to}\` restarts the service and writes it.`,
     ],
   });
 
@@ -114,7 +128,8 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
     case "switched":
       break;
   }
-  const { outcome, from, to } = result;
+  const { outcome, to } = result;
+  const from = result.from.version;
   switch (outcome._tag) {
     case "updated": {
       const lines = [
@@ -131,7 +146,7 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
       if (Option.isSome(result.pruning)) {
         lines.push(`Removing older releases and snapshots failed: ${result.pruning.value}`);
       }
-      lines.push(...unrecorded(result.recording));
+      lines.push(...unrecorded(result.recording, to));
       return yield* Console.log(lines.join("\n"));
     }
     case "rolled-back":
@@ -142,14 +157,12 @@ const runUpdate = Effect.fn("update.run")(function* (version: Option.Option<stri
             onSome: (snapshot) => [
               `J3 Bots ${from} runs again, on the databases as they were before the update.`,
               `What J3 Bots ${to} recorded while the update waited for it, such as a message sent then, is not in them: it is kept in ${snapshot.folder}, in its replaced-* folder.`,
-              ...unrecorded(result.recording),
               ...(result.service ? [LOG] : []),
             ],
             onNone: () => [
               result.service
                 ? `J3 Bots ${from} runs again; the databases were not changed.`
                 : `J3 Bots ${from} stays installed; the databases were not changed.`,
-              ...unrecorded(result.recording),
             ],
           }),
         ].join("\n"),
@@ -213,7 +226,6 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
         ? `J3 Bots ${from.version} runs again, on the databases as they were at ${takenAt(result.snapshot)}, and its engine is ready.`
         : `J3 Bots ${from.version} is installed again, with the databases as they were at ${takenAt(result.snapshot)}.`,
       `What the rollback replaced is kept in ${result.snapshot.folder}, in its replaced-* folder, until an update removes that snapshot.`,
-      ...unrecorded(result.recording),
     ].join("\n"),
   );
 });

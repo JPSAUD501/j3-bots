@@ -6,8 +6,12 @@
 //
 // - `start`: starts V as it is, and `recordReady` once it answers ready;
 // - `snapshot-then-start`: holds the home's `TransitionLock` and runs
-//   `transition` from the recorded release to V with its own `HostSteps`;
-// - `refuse-*`: starts nothing, and says why.
+//   `transition` from the release that ran to V with its own `HostSteps`,
+//   which carries on a transition that was cut off, with its snapshot;
+// - `refuse-rolled-back`: starts the recorded release, and tries V again
+//   only when the person asks, with `transition`;
+// - `refuse-*`: starts nothing, and says why; for an unreadable record, the
+//   person may `setAsideRecord`.
 //
 // A rollback left unfinished (`unfinishedRollback`) is the one thing that
 // may start on its home: `decideStart` lets only its release start, and
@@ -17,20 +21,24 @@ export { type ServerProbe, READY_WITHIN } from "./readiness.ts";
 export {
   compareVersions,
   decideStart,
+  type PendingTransition,
   readRuntimeRecord,
   recordReady,
   type RecordedRuntime,
   type RuntimeRecord,
+  setAsideRecord,
   type StartDecision,
   type StartFacts,
 } from "./record.ts";
 export { type Side, StepFailed, type SwitchOutcome } from "./switch.ts";
 export {
   type HostSteps,
+  type HostStepsFor,
+  PendingSnapshotGone,
   rollBack,
-  type RollbackResult,
   transition,
   TransitionLock,
+  TransitionLockUnusable,
   type TransitionResult,
 } from "./transition.ts";
 export {
