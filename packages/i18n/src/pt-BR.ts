@@ -221,6 +221,7 @@ const sentences = {
   "login.totpHint":
     "A chave de configuração ou o endereço otpauth:// que o site mostra ao ativar o login em duas etapas.",
   "login.totpInvalid": "Isso não é uma chave de código único.",
+  "login.invalid": "Confira o login: ele precisa de um nome e de uma senha.",
   "login.allow": "Deixar {name} usar",
   "login.unseen": "Vai direto para o seu cofre. {name} nunca vê o que você digita aqui.",
   "login.save": "Salvar",
@@ -251,6 +252,8 @@ const sentences = {
   "vault.wrong": "Senha errada.",
   "vault.wait": "Muitas senhas erradas. Tente de novo às {time}.",
   "vault.failed": "Algo deu errado. Tente de novo.",
+  "vault.damaged":
+    "Algo no cofre não abre: o arquivo dele foi alterado ou danificado. Restaure-o de um backup.",
   "vault.changePassword": "Trocar senha",
   "vault.current": "Senha atual",
   "vault.next": "Nova senha",

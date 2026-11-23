@@ -26,7 +26,9 @@ export const vaultFailureText = (failure: VaultFailure, ctx: TimeContext): strin
           ? t("vault.notSetUp")
           : error.reason === "vault-newer"
             ? t("vault.newer")
-            : t("vault.failed");
+            : error.reason === "vault-damaged"
+              ? t("vault.damaged")
+              : t("vault.failed");
     case "NotFound":
       return t("vault.failed");
   }

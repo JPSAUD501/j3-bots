@@ -57,6 +57,7 @@ const originsOf = (typed: string): Option.Option<CredentialOrigins> => {
  */
 export function VaultSection({ vault }: { readonly vault: VaultAccess }) {
   const { t } = useI18n();
+  const failureText = useVaultFailureText();
   const { view, intents } = vault;
   const [changing, setChanging] = useState(false);
   const [changed, setChanged] = useState(false);
@@ -115,7 +116,11 @@ export function VaultSection({ vault }: { readonly vault: VaultAccess }) {
             </div>
           )}
           <h4 className="mt-2 text-sm font-medium">{t("vault.logins")}</h4>
-          {view.credentials === null ? (
+          {view.listFailure !== null ? (
+            <p role="alert" className="text-sm text-blocked">
+              {failureText(view.listFailure)}
+            </p>
+          ) : view.credentials === null ? (
             <SkeletonRows />
           ) : view.credentials.length === 0 && !adding ? (
             <p className="text-sm text-muted-foreground">{t("vault.empty")}</p>

@@ -29,8 +29,10 @@ import { latestRead } from "./Settings.ts";
  * The vault as this client shows it: `loading` until the server first tells
  * its state, `unsupported` on a server from before 0.4.0, which has none.
  * `credentials` are the saved logins, without their values, while the vault
- * is unlocked; null while they are read and whenever it is not. `stale`: the
- * connection dropped, and what shows is what the server last told.
+ * is unlocked; null while they are read and whenever it is not.
+ * `listFailure`: why the logins could not be read, as when the vault's file
+ * is damaged; null otherwise. `stale`: the connection dropped, and what shows
+ * is what the server last told.
  */
 export type VaultView =
   | { readonly _tag: "loading" }
@@ -39,6 +41,7 @@ export type VaultView =
       readonly _tag: "ready";
       readonly status: VaultStatus;
       readonly credentials: ReadonlyArray<Credential> | null;
+      readonly listFailure: VaultFailure | null;
       readonly stale: boolean;
     };
 
@@ -139,9 +142,16 @@ export const layer = Layer.effect(
     const random = yield* SecureRandom.SecureRandom;
     const view = new Cell<VaultView>({ _tag: "loading" });
 
-    const showCredentials = latestRead((credentials: ReadonlyArray<Credential> | null) =>
-      view.update((current) => (current._tag === "ready" ? { ...current, credentials } : current)),
+    const showCredentials = latestRead(
+      (listed: {
+        readonly credentials: ReadonlyArray<Credential> | null;
+        readonly listFailure: VaultFailure | null;
+      }) =>
+        view.update((current) => (current._tag === "ready" ? { ...current, ...listed } : current)),
     );
+    const notListed = { credentials: null, listFailure: null };
+    const listFailed = (failure: VaultFailure) => ({ credentials: null, listFailure: failure });
+    const refused = (error: VaultError) => Effect.succeed(listFailed({ _tag: "refused", error }));
 
     /** Follows the vault's state on one socket, reading the logins whenever they may have changed. */
     const follow = (client: J3RpcClient) => {
@@ -149,30 +159,36 @@ export const layer = Layer.effect(
       return client["vault.status"]().pipe(
         Stream.runForEach((status) =>
           Effect.gen(function* () {
-            view.update((current) => ({
-              _tag: "ready",
-              status,
-              credentials:
-                current._tag === "ready" && status.state === "unlocked"
-                  ? current.credentials
-                  : null,
-              stale: false,
-            }));
+            view.update((current) => {
+              const kept = current._tag === "ready" && status.state === "unlocked";
+              return {
+                _tag: "ready",
+                status,
+                credentials: kept ? current.credentials : null,
+                listFailure: kept ? current.listFailure : null,
+                stale: false,
+              };
+            });
             if (status.state !== "unlocked") {
               listed = null;
-              return yield* showCredentials(Effect.succeed(null));
+              return yield* showCredentials(Effect.succeed(notListed));
             }
             if (listed === status.revision) return;
             listed = status.revision;
-            // Locked again before the list came back: the next status says so.
-            const ignore = () => Effect.void;
-            yield* showCredentials(client["vault.list"]()).pipe(
-              Effect.catchTags({
-                Conflict: ignore,
-                NotFound: ignore,
-                Invalid: ignore,
-                RateLimited: ignore,
-              }),
+            yield* showCredentials(
+              client["vault.list"]().pipe(
+                Effect.map((credentials) => ({ credentials, listFailure: null })),
+                Effect.catchTags({
+                  // Locked again before the list came back: the next status says so.
+                  Conflict: (error) =>
+                    error.reason === "vault-locked" ? Effect.succeed(notListed) : refused(error),
+                  NotFound: refused,
+                  Invalid: refused,
+                  RateLimited: refused,
+                }),
+                // Only a server that has the vault gets here, so a defect is its own failure.
+                Effect.catchDefect(() => Effect.succeed(listFailed({ _tag: "unexpected" }))),
+              ),
             );
           }),
         ),

@@ -64,6 +64,7 @@ describe("the first run's steps", () => {
       _tag: "ready",
       status: { state, revision: 0, retryAt: null },
       credentials: null,
+      listFailure: null,
       stale: false,
     });
     expect(showsVault(vault("uninitialized"), false)).toBe(true);
