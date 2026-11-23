@@ -70,6 +70,15 @@ describe("png", () => {
 });
 
 describe("Canvas", () => {
+  it("clears along an open line without clearing what the line encloses", () => {
+    const canvas = new Canvas(20, 20, [10, 20, 30]);
+    // Three sides of a square: a fill would close it, a stroke follows it only.
+    canvas.clearStroke(flattenPath("M4 4L16 4L16 16L4 16"), 2);
+    const alpha = (x: number, y: number) => canvas.pixels[(y * 20 + x) * 4 + 3];
+    expect([alpha(10, 4), alpha(16, 10), alpha(10, 15)]).toEqual([0, 0, 0]);
+    expect([alpha(10, 10), alpha(4, 10), alpha(0, 0)]).toEqual([255, 255, 255]);
+  });
+
   it.each([
     [0, 4],
     [4, -1],

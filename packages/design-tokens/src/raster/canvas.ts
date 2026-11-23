@@ -116,16 +116,6 @@ export function flattenPath(d: string): ReadonlyArray<Subpath> {
   return subpaths;
 }
 
-/** A circle as a path of one closed subpath, starting at its right and running clockwise, as SVG draws one. */
-export function circlePath(center: Point, radius: number): ReadonlyArray<Subpath> {
-  const steps = 64;
-  const points = Array.from({ length: steps }, (_, i) => ({
-    x: center.x + radius * Math.cos((2 * Math.PI * i) / steps),
-    y: center.y + radius * Math.sin((2 * Math.PI * i) / steps),
-  }));
-  return [{ points, closed: true }];
-}
-
 /** The subpaths with `map` applied to every point. */
 export function mapSubpaths(
   subpaths: ReadonlyArray<Subpath>,
@@ -395,9 +385,23 @@ export class Canvas {
       const band = strokeCoverage(subpaths, outline, this.width, this.height);
       for (let i = 0; i < band.length; i++) covered[i] = Math.max(covered[i] ?? 0, band[i] ?? 0);
     }
+    this.erase(covered, 1);
+  }
+
+  /** Clears along the subpaths, `lineWidth` wide with round caps and joins, as `stroke` would cover them. */
+  clearStroke(
+    subpaths: ReadonlyArray<Subpath>,
+    lineWidth: number,
+    options: { readonly opacity?: number } = {},
+  ) {
+    this.erase(strokeCoverage(subpaths, lineWidth, this.width, this.height), options.opacity ?? 1);
+  }
+
+  /** Takes away as much of each pixel as `covered` says, times `opacity`. */
+  private erase(covered: Float32Array, opacity: number) {
     for (let i = 0; i < covered.length; i++) {
       const at = i * 4 + 3;
-      this.pixels[at] = Math.round((this.pixels[at] ?? 0) * (1 - (covered[i] ?? 0)));
+      this.pixels[at] = Math.round((this.pixels[at] ?? 0) * (1 - (covered[i] ?? 0) * opacity));
     }
   }
 

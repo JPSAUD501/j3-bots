@@ -67,7 +67,7 @@ const onWayland = () => {
 const literal = (label: string) => (MAC ? label : label.replaceAll("&", "&&"));
 
 /**
- * The tray's icon: the app icon's lead bot, with the badge that says
+ * The tray's icon: the app icon's Pip, its light lit in the waiting color while
  * something waits, in `theme`, the one the system draws its tray in.
  */
 const trayIcon = (attention: boolean, theme: Theme) => {
