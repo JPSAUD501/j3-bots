@@ -324,3 +324,24 @@ it.effect(
       assert.strictEqual(yield* control.sessionPermissionMode(sessionId), lowered);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect("makes another bot primary, and the one that was stops being primary", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const store = yield* BotStore;
+    yield* TestClock.adjust("1 second");
+    const ana = yield* bots.create({ commandId: command(), draft: { name: "Ana", primary: true } });
+    const bia = yield* createBot("Bia");
+
+    const made = yield* bots.update({
+      commandId: command(),
+      botId: bia.id,
+      changes: { primary: true },
+    });
+
+    const primaries = (yield* store.list).filter(({ bot }) => bot.primary).map(({ bot }) => bot.id);
+    assert.isTrue(made.primary);
+    assert.deepStrictEqual(primaries, [bia.id]);
+    assert.isFalse(Option.getOrThrow(yield* store.find(ana.id)).bot.primary);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);

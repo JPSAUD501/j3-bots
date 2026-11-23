@@ -8,14 +8,14 @@ import { Bots } from "../bots/Bots.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { Entries, type EntryFrame } from "./Entries.ts";
 
-const say = (botId: BotId, text: string) =>
+const say = (botId: BotId, text: string, by: "bot" | "operator" = "bot") =>
   Effect.gen(function* () {
     const entries = yield* Entries;
     return yield* entries.append({
       target: { _tag: "conversation", botId },
       entry: {
         _tag: "message",
-        author: { _tag: "bot", botId },
+        author: by === "bot" ? { _tag: "bot", botId } : { _tag: "operator" },
         text,
         attachments: [],
         mentions: { _tag: "bots", ids: [] },
@@ -84,5 +84,62 @@ it.effect("sends a snapshot when asked to resume from a sequence it never gave",
 
     assert.strictEqual(frame?._tag, "snapshot");
     assert.deepStrictEqual(frame === undefined ? [] : textsOf(frame), ["hello"]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "marks a conversation unread from the bot's last entry, until it is read past it again",
+  () =>
+    Effect.gen(function* () {
+      const bots = yield* Bots;
+      const entries = yield* Entries;
+      const unread = (botId: BotId) =>
+        entries.summary({ _tag: "conversation", botId }).pipe(Effect.map((s) => s.unread));
+      const ana = yield* bots.create({ commandId: CommandId.make("ana"), draft: { name: "Ana" } });
+      const bia = yield* bots.create({ commandId: CommandId.make("bia"), draft: { name: "Bia" } });
+      const conversation = { _tag: "conversation", botId: ana.id } as const;
+      yield* say(ana.id, "Here is the report.");
+      const reply = yield* say(ana.id, "Thanks!", "operator");
+      yield* entries.markRead(conversation, reply.order);
+      const before = yield* unread(ana.id);
+
+      yield* entries.markUnread({ commandId: CommandId.make("unread-1"), target: conversation });
+      yield* entries.markUnread({ commandId: CommandId.make("unread-2"), target: conversation });
+      const marked = yield* unread(ana.id);
+      yield* entries.markRead(conversation, reply.order);
+      const readAgain = yield* unread(ana.id);
+
+      // Only the operator wrote here: there is nothing a bot said to read again.
+      const own = yield* say(bia.id, "Hello?", "operator");
+      yield* entries.markRead({ _tag: "conversation", botId: bia.id }, own.order);
+      yield* entries.markUnread({
+        commandId: CommandId.make("unread-3"),
+        target: { _tag: "conversation", botId: bia.id },
+      });
+
+      assert.deepStrictEqual([before, marked, readAgain], [false, true, false]);
+      assert.isFalse(yield* unread(bia.id));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("applies a mark as unread once: sent again after a later read, it leaves the read", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const entries = yield* Entries;
+    const ana = yield* bots.create({ commandId: CommandId.make("ana"), draft: { name: "Ana" } });
+    const target = { _tag: "conversation", botId: ana.id } as const;
+    const said = yield* say(ana.id, "Here is the report.");
+    const unread = entries.summary(target).pipe(Effect.map((summary) => summary.unread));
+    yield* entries.markRead(target, said.order);
+    const command = { commandId: CommandId.make("unread"), target };
+
+    yield* entries.markUnread(command);
+    const marked = yield* unread;
+    // Read on another device; then the first command arrives again, as a connection replays it.
+    yield* entries.markRead(target, said.order);
+    yield* entries.markUnread(command);
+
+    assert.isTrue(marked);
+    assert.isFalse(yield* unread);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EntryTarget, Room, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type {
+  Bot,
+  EntryTarget,
+  Room,
+  RosterItem,
+  RosterItemKey,
+  Section,
+} from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { type IntentResult, refusedWith } from "../intents/Actions.ts";
 import { needsOperator } from "../stores/Roster.ts";
@@ -84,6 +91,59 @@ export function orderRoster(items: ReadonlyArray<RosterItem>): RosterItem[] {
         Number(b.pinned) - Number(a.pinned) || Number(b.needs) - Number(a.needs) || b.at - a.at,
     )
     .map(({ item }) => item);
+}
+
+/** A bot's roster item. */
+export type BotItem = Extract<RosterItem, { readonly _tag: "bot" }>;
+
+/** One section as the roster shows it: its bots, in the roster's order, maybe none. */
+export interface RosterSectionRows {
+  readonly section: Section;
+  readonly items: ReadonlyArray<BotItem>;
+}
+
+/** The roster arranged as every client draws it without a search. */
+export interface ArrangedRoster {
+  /** Pinned bots, drawn apart above the list. */
+  readonly pinned: ReadonlyArray<BotItem>;
+  /** Rooms, pinned ones first, and the bots in no section. */
+  readonly main: ReadonlyArray<RosterItem>;
+  /** Every section, in the operator's order, also those with no bots. */
+  readonly sections: ReadonlyArray<RosterSectionRows>;
+  /** Hidden bots, for the row that opens them. */
+  readonly hidden: ReadonlyArray<BotItem>;
+}
+
+/**
+ * Arranges rows already in the roster's order (`orderRoster`). A hidden bot
+ * is only among the hidden, whatever its pin or section; a pinned bot only
+ * among the pinned; a bot whose section is not among `sections` (it was just
+ * deleted) in the main list. Rooms keep their own pin, at the top of the list.
+ */
+export function arrangeRoster(
+  items: ReadonlyArray<RosterItem>,
+  sections: ReadonlyArray<Section>,
+): ArrangedRoster {
+  const pinned: Array<BotItem> = [];
+  const main: Array<RosterItem> = [];
+  const hidden: Array<BotItem> = [];
+  const bySection = new Map(sections.map((section) => [section.id, [] as Array<BotItem>]));
+  for (const item of items) {
+    if (item._tag === "room") main.push(item);
+    else if (item.bot.hidden) hidden.push(item);
+    else if (item.bot.pinned) pinned.push(item);
+    else {
+      const section = item.bot.sectionId === null ? undefined : bySection.get(item.bot.sectionId);
+      if (section === undefined) main.push(item);
+      else section.push(item);
+    }
+  }
+  return {
+    pinned,
+    main,
+    sections: sections.map((section) => ({ section, items: bySection.get(section.id) ?? [] })),
+    hidden,
+  };
 }
 
 const fold = (s: string) => s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type BotId,
-  type CommandId,
+  CommandId,
   DeviceId,
   DeviceToken,
   type Entry,
@@ -1332,6 +1332,36 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       const saved = settings.state.get();
       assert.strictEqual(saved._tag === "ready" && saved.value.operatorName, "Ana");
       assert.strictEqual(saved._tag === "ready" && saved.value.notifications.previews, previews);
+    }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect("reads a conversation again after another device marked it unread", () =>
+    Effect.gen(function* () {
+      yield* pairAndConnect;
+      const botId = yield* createBot("Echo");
+      const target: EntryTarget = { _tag: "conversation", botId };
+      const said = yield* botSays(botId, "Here is the report.");
+      const roster = (yield* Roster).state;
+      const unread = (wanted: boolean) =>
+        waitFor(
+          roster,
+          (state) =>
+            state._tag === "ready" &&
+            state.value.some(
+              (item) => item._tag === "bot" && item.bot.id === botId && item.unread === wanted,
+            ),
+        );
+      const conversation = yield* (yield* Conversations).open(target);
+      yield* waitFor(conversation.state, (state) => state.phase === "ready");
+      yield* conversation.markRead(said.order);
+      yield* unread(false);
+
+      yield* (yield* Server.Entries).markUnread({ commandId: CommandId.make("elsewhere"), target });
+      yield* unread(true);
+      // The operator comes back to it: the same entry seen again is a read the server needs.
+      yield* conversation.markRead(said.order);
+
+      yield* unread(false);
     }).pipe(Effect.scoped, Effect.provide(client())),
   );
 

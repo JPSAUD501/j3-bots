@@ -13,5 +13,6 @@ export * from "./provider.ts";
 export * from "./room.ts";
 export * from "./routine.ts";
 export * from "./rpc.ts";
+export * from "./section.ts";
 export * from "./settings.ts";
 export * from "./work.ts";

@@ -41,6 +41,7 @@ function previewText(entry: Entry): string {
 
 export const previewOf = (entry: Entry): EntryPreview => ({
   entryId: entry.id,
+  order: entry.order,
   kind: entry._tag,
   author: entry.author,
   text: previewText(entry).slice(0, PREVIEW_LENGTH),
