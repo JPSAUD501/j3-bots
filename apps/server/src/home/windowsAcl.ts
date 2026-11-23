@@ -189,23 +189,32 @@ foreach ($sid in $everyone) {
 });
 
 /**
+ * `value` as one literal PowerShell word: in single quotes, where nothing is
+ * expanded (`$`, `%`, `&` and `^` included), each quote in it doubled.
+ * PowerShell counts the typographic single quotes as quotes too.
+ */
+export const powerShellWord = (value: string) =>
+  `'${value.replaceAll(/['\u2018\u2019\u201a\u201b]/gu, (quote) => quote + quote)}'`;
+
+/**
  * The `icacls` command that makes `folder` private as `judgeAcl` wants it,
- * for the operator to run: inheritance off, full control for this user,
- * SYSTEM and Administrators, and every rule for anyone else removed. SIDs,
- * written `*S-1-…`, mean the same in every language; each is quoted, so it
- * runs the same in a Command Prompt and in PowerShell.
+ * for the operator to run in PowerShell: inheritance off, every rule that
+ * denies this user, SYSTEM or Administrators removed (`/grant:r` replaces
+ * only what they are granted), full control for the three, and every rule
+ * for anyone else removed. SIDs, written `*S-1-…`, mean the same in every
+ * language. Every argument is quoted for PowerShell, which expands `$…`
+ * inside double quotes as a Command Prompt expands `%…%`.
  */
 export const repairCommand = (folder: string, acl: FolderAcl) => {
+  const trusted = [acl.user, SYSTEM, ADMINISTRATORS];
   const others = [
-    ...new Set(
-      acl.rules
-        .filter((rule) => ![acl.user, SYSTEM, ADMINISTRATORS].includes(rule.sid))
-        .map((rule) => rule.sid),
-    ),
+    ...new Set(acl.rules.filter((rule) => !trusted.includes(rule.sid)).map((rule) => rule.sid)),
   ];
   return [
-    `icacls "${folder}" /inheritance:r`,
-    ...[acl.user, SYSTEM, ADMINISTRATORS].map((sid) => `/grant:r "*${sid}:(OI)(CI)F"`),
-    ...(others.length === 0 ? [] : ["/remove", ...others.map((sid) => `"*${sid}"`)]),
+    `icacls ${powerShellWord(folder)} /inheritance:r`,
+    "/remove:d",
+    ...trusted.map((sid) => powerShellWord(`*${sid}`)),
+    ...trusted.map((sid) => `/grant:r ${powerShellWord(`*${sid}:(OI)(CI)F`)}`),
+    ...(others.length === 0 ? [] : ["/remove", ...others.map((sid) => powerShellWord(`*${sid}`))]),
   ].join(" ");
 };

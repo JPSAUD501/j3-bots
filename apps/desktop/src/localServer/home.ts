@@ -45,7 +45,13 @@ export interface HomeSystem {
   readonly acl: WindowsAcl;
 }
 
-/** The home is not one only this user can open, and how to repair it. */
+/** `value` as one literal word for a POSIX shell: in single quotes, each quote in it written `'\''`. */
+const shellWord = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+/**
+ * The home is not one only this user can open, or the app could not look at
+ * it (`unreadable`), and how to repair it.
+ */
 class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivate", {
   home: Schema.String,
   platform: Schema.String,
@@ -55,10 +61,11 @@ class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivat
     "open-to-others",
     "closed-to-owner",
     "unverifiable",
+    "unreadable",
   ]),
-  /** On Windows, the `icacls` command that makes the home private, naming the accounts to remove. */
+  /** On Windows, the `icacls` command, for PowerShell, that makes the home private, naming the accounts to remove. */
   windowsRepair: Schema.optionalKey(Schema.String),
-  /** For `unverifiable`, what Windows said instead of who may open the home. */
+  /** For `unverifiable`, what Windows said instead of who may open the home; for `unreadable`, what the system said. */
   detail: Schema.optionalKey(Schema.String),
 }) {
   override get message(): string {
@@ -73,32 +80,39 @@ class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNotPrivat
         return `Your own permissions on ${this.home}, where this computer's bots keep their data, do not let you read and write the files there.`;
       case "unverifiable":
         return `Windows did not say who can open ${this.home}, where this computer's bots keep their data${this.detail === undefined ? "" : ` (${this.detail})`}.`;
+      case "unreadable":
+        return `J3 Bots could not look at ${this.home}, where this computer's bots keep their data${this.detail === undefined ? "" : ` (${this.detail})`}.`;
     }
   }
 
   /** What repairs it, for the operator to do. */
   get fix(): string {
     if (this.reason === "not-a-folder") return `Move ${this.home} out of the way, then try again.`;
+    if (this.reason === "unreadable") {
+      return `Make sure your user can open ${this.home} and the folders it is in, then try again.`;
+    }
     if (this.platform === "win32") {
-      const repair = this.windowsRepair ?? `icacls "${this.home}" /inheritance:r`;
+      const home = WindowsAclModule.powerShellWord(this.home);
+      const repair = this.windowsRepair ?? `icacls ${home} /inheritance:r`;
+      const takeOwnership = `takeown /F ${home} /R`;
       switch (this.reason) {
         case "not-owned":
-          return `Take it as your user (\`takeown /F "${this.home}" /R\`), then run \`${repair}\`, then try again.`;
+          return `In PowerShell, take it as your user (\`${takeOwnership}\`), then run \`${repair}\`, then try again.`;
         case "open-to-others":
         case "closed-to-owner":
-          return `Run \`${repair}\`, then try again.`;
+          return `In PowerShell, run \`${repair}\`, then try again.`;
         case "unverifiable":
-          return "Check that Windows PowerShell runs for your user, then try again.";
+          return `Check that Windows PowerShell runs for your user. If it runs and Windows denied your user access to the folder, the folder may belong to another user: in PowerShell, take it as your user (\`${takeOwnership}\`). Then try again.`;
       }
     }
     switch (this.reason) {
       case "not-owned":
-        return `Give it to this user (\`sudo chown -R "$(id -un)": '${this.home}'\`), then try again.`;
+        return `Give it to this user (\`sudo chown -R "$(id -un)": ${shellWord(this.home)}\`), then try again.`;
       case "open-to-others":
-        return `Close it to others (\`chmod 700 '${this.home}'\`), then try again.`;
+        return `Close it to others (\`chmod 700 ${shellWord(this.home)}\`), then try again.`;
       case "closed-to-owner":
       case "unverifiable":
-        return `Open it to yourself alone (\`chmod 700 '${this.home}'\`), then try again.`;
+        return `Open it to yourself alone (\`chmod 700 ${shellWord(this.home)}\`), then try again.`;
     }
   }
 }
@@ -115,12 +129,21 @@ export const checkHome = Effect.fn("LocalHome.checkHome")(function* (
   system: HomeSystem,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const info = yield* fs.stat(home).pipe(Effect.option);
-  if (Option.isNone(info)) return;
   const refuse = (
     reason: HomeNotPrivate["reason"],
     more: { readonly windowsRepair?: string; readonly detail?: string } = {},
   ) => new HomeNotPrivate({ home, platform: system.platform, reason, ...more });
+  // Only a home that is not there passes unseen; one the system would not
+  // show is refused, never taken for missing.
+  const info = yield* fs.stat(home).pipe(
+    Effect.asSome,
+    Effect.catch((error) =>
+      error.reason._tag === "NotFound"
+        ? Effect.succeedNone
+        : Effect.fail(refuse("unreadable", { detail: error.message })),
+    ),
+  );
+  if (Option.isNone(info)) return;
   if (info.value.type !== "Directory") return yield* refuse("not-a-folder");
   if (system.platform === "win32") {
     const acl = yield* system.acl
@@ -143,18 +166,27 @@ export const checkHome = Effect.fn("LocalHome.checkHome")(function* (
 /**
  * Creates `home`, and the folders it is in, if missing, private from its
  * first moment: on Windows with its access list in place, as the server
- * creates its own, elsewhere mode 0700. A home another process made first is
- * checked as an existing one is.
+ * creates its own, elsewhere mode 0700. Then checks it, as `checkHome` checks
+ * an existing home: one another process made first, since the app last
+ * looked, is left as that process made it, and refused unless private.
  */
 const createHome = Effect.fnUntraced(function* (home: string, system: HomeSystem) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  if (system.platform !== "win32") {
-    yield* fs.makeDirectory(home, { recursive: true, mode: 0o700 });
-    return yield* fs.chmod(home, 0o700);
-  }
-  if (yield* fs.exists(home)) return;
   yield* fs.makeDirectory(path.dirname(home), { recursive: true });
+  if (system.platform !== "win32") {
+    const created = yield* fs.makeDirectory(home, { mode: 0o700 }).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (error) => error.reason._tag === "AlreadyExists",
+        () => Effect.succeed(false),
+      ),
+    );
+    // The mode it was made with is masked by the process's umask.
+    if (created) yield* fs.chmod(home, 0o700);
+    return yield* checkHome(home, system);
+  }
+  // A folder already there is left as it is.
   yield* system.acl.createPrivate(home).pipe(
     Effect.mapError(
       (error) =>

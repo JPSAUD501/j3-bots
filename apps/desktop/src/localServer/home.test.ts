@@ -6,6 +6,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { AclUnreadable, type FolderAcl } from "@j3-bots/server/windows-acl";
 import * as Home from "./home.ts";
 
@@ -67,14 +68,40 @@ describe("checking the server's home", () => {
   it.effect("refuses a home its group or others can open, and says how to close it", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const home = yield* freshFolder;
+      const path = yield* Path.Path;
+      const home = path.join(yield* freshFolder, "o'neil's home");
+      yield* fs.makeDirectory(home);
       for (const mode of [0o750, 0o705]) {
         yield* fs.chmod(home, mode);
         const refusal = yield* Effect.flip(Home.checkHome(home, linux));
         assert.strictEqual(refusal.reason, "open-to-others");
-        assert.include(refusal.fix, "chmod 700");
+        // One word for the shell, whatever quotes the path holds.
+        assert.include(refusal.fix, `chmod 700 '${home.replaceAll("'", "'\\''")}'`);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses a home the system would not show, rather than take it for missing", () =>
+    Effect.gen(function* () {
+      const home = "/data/server/home";
+      const denied = FileSystem.makeNoop({
+        stat: (path) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "stat",
+              pathOrDescriptor: path,
+            }),
+          ),
+      });
+      const refusal = yield* Effect.flip(
+        Home.checkHome(home, linux).pipe(Effect.provideService(FileSystem.FileSystem, denied)),
+      );
+      assert.strictEqual(refusal.reason, "unreadable");
+      assert.include(refusal.message, "PermissionDenied");
+      assert.include(refusal.fix, "the folders it is in");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("refuses a home this user may not read, write and open, as its server would", () =>
@@ -117,17 +144,17 @@ describe("checking the server's home", () => {
           [
             { ...privateAcl, rules: [...privateAcl.rules, rule(USERS, READ_AND_EXECUTE)] },
             "open-to-others",
-            [`icacls "${home}" /inheritance:r`, `/remove "*${USERS}"`],
+            ["In PowerShell", `icacls '${home}' /inheritance:r`, `/remove '*${USERS}'`],
           ],
           [
             { ...privateAcl, owner: OTHER_USER },
             "not-owned",
-            [`takeown /F "${home}" /R`, "icacls"],
+            ["In PowerShell", `takeown /F '${home}' /R`, "icacls"],
           ],
           [
             { ...privateAcl, rules: [rule(USER, READ_AND_EXECUTE), rule(SYSTEM, FULL_CONTROL)] },
             "closed-to-owner",
-            [`/grant:r "*${USER}:(OI)(CI)F"`],
+            [`/remove:d '*${USER}'`, `/grant:r '*${USER}:(OI)(CI)F'`],
           ],
         ];
         for (const [acl, reason, fix] of cases) {
@@ -156,13 +183,18 @@ describe("checking the server's home", () => {
       );
       assert.strictEqual(refusal.reason, "unverifiable");
       assert.include(refusal.message, "Access to the path is denied.");
-      assert.include(refusal.fix, "PowerShell");
+      assert.include(refusal.fix, "Check that Windows PowerShell runs");
+      // Windows may deny its owner's list to a user who does not own the folder.
+      assert.include(refusal.fix, `takeown /F '${home}' /R`);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
 describe("creating the server's home", () => {
-  /** Windows, where a private folder is created by `createPrivate`, which these record. */
+  /**
+   * Windows, where a private folder is created by `createPrivate`, which
+   * these record, and which leaves a folder already there as it is.
+   */
   const recordingWindows = (acl: FolderAcl) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -173,14 +205,53 @@ describe("creating the server's home", () => {
           read: () => Effect.succeed(acl),
           createPrivate: (folder) =>
             Effect.gen(function* () {
-              yield* fs.makeDirectory(folder).pipe(Effect.orDie);
+              if (yield* fs.exists(folder)) return;
+              yield* fs.makeDirectory(folder);
               created.push(folder);
-            }),
+            }).pipe(Effect.orDie),
         },
       };
       return { system, created };
     });
-  const ports = Effect.succeed({ port: 3750, toolPort: 3751, enginePort: 3752 });
+  const chosen = { port: 3750, toolPort: 3751, enginePort: 3752 };
+  const ports = Effect.succeed(chosen);
+  /** Ports chosen while another process makes `home`, as it pleases, after the app looked. */
+  const portsWhileMade = (fs: FileSystem.FileSystem, home: string, mode: number) =>
+    fs
+      .makeDirectory(home)
+      .pipe(Effect.andThen(fs.chmod(home, mode)), Effect.orDie, Effect.as(chosen));
+
+  it.effect("refuses a home another process made open after the app looked, as it made it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = path.join(yield* freshFolder, "home");
+      const refusal = yield* Effect.flip(
+        Home.prepareHome(home, linux, portsWhileMade(fs, home, 0o755)),
+      );
+      assert.strictEqual(refusal._tag === "HomeNotPrivate" && refusal.reason, "open-to-others");
+      assert.isFalse(yield* fs.exists(path.join(home, "config.json")));
+      assert.strictEqual((yield* fs.stat(home)).mode & 0o777, 0o755);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("on Windows, refuses a home another process made open after the app looked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = path.join(yield* freshFolder, "home");
+      const { system, created } = yield* recordingWindows({
+        ...privateAcl,
+        rules: [...privateAcl.rules, rule(USERS, READ_AND_EXECUTE)],
+      });
+      const refusal = yield* Effect.flip(
+        Home.prepareHome(home, system, portsWhileMade(fs, home, 0o755)),
+      );
+      assert.strictEqual(refusal._tag === "HomeNotPrivate" && refusal.reason, "open-to-others");
+      assert.deepStrictEqual(created, []);
+      assert.isFalse(yield* fs.exists(path.join(home, "config.json")));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("on Windows, creates a missing home with its private list, in folders made first", () =>
     Effect.gen(function* () {
