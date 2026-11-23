@@ -28,6 +28,10 @@ export interface MenuAnchor {
 
 /** The gap between the button and the menu under it. */
 const GAP = 4;
+/** The least room the menu keeps between itself and the window's edge. */
+const EDGE = 8;
+/** The menu's width when there is room for it. */
+const WIDTH = 224;
 
 const pop = reanimatedSpring(springs.pop);
 
@@ -61,6 +65,10 @@ export function Menu(props: {
     return () => clearTimeout(timer);
   }, [anchor, held, reduced]);
   const rtl = I18nManager.isRTL;
+  // The room from the button's end edge to the window's far edge: the menu
+  // narrows to it rather than run off the screen, as in a narrow roster.
+  const room =
+    anchor === null ? WIDTH : rtl ? window.width - anchor.x - EDGE : anchor.x + anchor.width - EDGE;
   return (
     <Modal
       visible={held !== null}
@@ -93,9 +101,11 @@ export function Menu(props: {
               .damping(pop.damping)
               .withInitialValues({ transform: [{ scale: 0.9 }] })}
             exiting={ZoomOut.duration(motion.fast)}
-            className="absolute min-w-56 gap-0.5 rounded-lg border border-border bg-surface p-1.5"
+            className="absolute gap-0.5 rounded-lg border border-border bg-surface p-1.5"
             style={{
               top: anchor.y + anchor.height + GAP,
+              minWidth: Math.min(WIDTH, room),
+              maxWidth: room,
               ...(rtl
                 ? { left: anchor.x, transformOrigin: "top left" }
                 : { right: window.width - anchor.x - anchor.width, transformOrigin: "top right" }),
