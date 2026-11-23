@@ -8,6 +8,7 @@ import {
   AttachmentId,
   type AvatarChoice,
   type BotId,
+  type BotTemplate,
   Conflict,
   type EngineStatus,
   EntryId,
@@ -29,6 +30,9 @@ import {
   type RosterItem,
   type RosterItemKey,
   type RoutineRun,
+  TEMPLATE_FORMAT,
+  TEMPLATE_VERSION,
+  TemplateTooLarge,
   RoutineRunId,
   type HarnessLocation,
   type SignInHarness,
@@ -101,6 +105,7 @@ import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
 import { SecretRequestCard } from "../components/SecretRequestCard";
+import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { EngineSection } from "../components/SettingsDialog";
 import type { LocalProviderSetup } from "../components/ProviderSetup";
@@ -192,6 +197,7 @@ export default function GalleryPage() {
                 <ComposerSection />
                 <DetailsSection />
                 <EditingSection />
+                <TemplatesSection />
                 <RoomsSection />
                 <EngineSettingsSection />
                 <UsageGallerySection />
@@ -785,6 +791,7 @@ function RosterFrame() {
         selected={selected}
         rowLink={(item) => rowButton(() => setSelected(rowKey(item)))}
         onNewBot={nothing}
+        onNewFromTemplate={nothing}
         onNewRoom={nothing}
         intents={rosterIntents(source.intents, {
           selected,
@@ -1374,6 +1381,7 @@ const detailsIntents = {
   stop: nothing,
   freshStart: nothing,
   deleteBot: nothing,
+  shareTemplate: nothing,
 };
 
 const roomIntents = {
@@ -1594,6 +1602,134 @@ function MemoryVariant({
         />
       </div>
     </Frame>
+  );
+}
+
+/** A template as a research bot's share would make it, for both of its sheets. */
+const scoutTemplate: BotTemplate = {
+  format: TEMPLATE_FORMAT,
+  version: TEMPLATE_VERSION,
+  profile: {
+    name: "Scout",
+    title: "Research",
+    avatar: team.bots.scout.profile.avatar,
+    job: "Finds sources on what I ask about, reads them, and sends a short summary with links. Never buys or signs up for anything.",
+  },
+  model: toCodex,
+  permissionMode: "full-access",
+  skills: [
+    {
+      name: "source-check",
+      text: "---\nname: source-check\ndescription: How to judge a source before quoting it.\n---\n\n1. Prefer the primary source.\n2. Note the date; older than a year needs saying so.\n3. Two independent sources before calling something settled.\n",
+    },
+    {
+      name: "weekly-digest",
+      text: "---\nname: weekly-digest\ndescription: The shape of the Friday digest.\n---\n\nThree items at most, one line each, a link under each.\n",
+    },
+  ],
+  routines: [
+    {
+      name: "Friday digest",
+      instruction:
+        "Read what was saved this week and send a digest of at most three items. Send nothing if nothing was saved.",
+      trigger: { _tag: "schedule", cron: "0 16 * * 5" },
+    },
+    {
+      name: "New paper",
+      instruction: "Summarize the paper the webhook names in three lines and send it.",
+      trigger: { _tag: "webhook" },
+    },
+  ],
+};
+
+/** A template's sheet as the dialog holds it, in a frame the size of a sheet. */
+function TemplateFrame({
+  label,
+  children,
+}: {
+  label: string;
+  children: (titleId: string) => ReactNode;
+}) {
+  const titleId = useId();
+  return (
+    <Frame label={label} width={400} height={760}>
+      <div className="flex h-full flex-col bg-background">{children(titleId)}</div>
+    </Frame>
+  );
+}
+
+const shareActions = {
+  onRetry: nothing,
+  onDownload: nothing,
+  onCopy: () => Promise.resolve(true),
+  onClose: nothing,
+};
+
+function TemplatesSection() {
+  const elsewhere = { ...scoutTemplate, model: { ...toCodex, modelId: ModelId.make("gpt-6") } };
+  return (
+    <Section title="Templates: sharing a bot and creating one from a file">
+      <div className="flex flex-wrap gap-4">
+        <TemplateFrame label="Share: what the file holds, before it leaves">
+          {(titleId) => (
+            <ShareTemplateContent
+              share={{ _tag: "ready", template: scoutTemplate }}
+              titleId={titleId}
+              {...shareActions}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Share: the template could not be read">
+          {(titleId) => (
+            <ShareTemplateContent
+              share={{ _tag: "failed", name: "Scout" }}
+              titleId={titleId}
+              {...shareActions}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Share: the file would be too large to read">
+          {(titleId) => (
+            <ShareTemplateContent
+              share={{
+                _tag: "too-large",
+                name: "Scout",
+                error: new TemplateTooLarge({
+                  size: 1_210_000,
+                  largest: { _tag: "skill", name: "source-review" },
+                }),
+              }}
+              titleId={titleId}
+              {...shareActions}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Create: the mode it asks for is capped by the default">
+          {(titleId) => (
+            <TemplateForm
+              template={scoutTemplate}
+              engine={twoProviders}
+              connected
+              onCreate={() => new Promise(() => {})}
+              onClose={nothing}
+              titleId={titleId}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Create: its model is not on this server">
+          {(titleId) => (
+            <TemplateForm
+              template={elsewhere}
+              engine={twoProviders}
+              connected
+              onCreate={() => new Promise(() => {})}
+              onClose={nothing}
+              titleId={titleId}
+            />
+          )}
+        </TemplateFrame>
+      </div>
+    </Section>
   );
 }
 

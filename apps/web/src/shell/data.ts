@@ -184,6 +184,10 @@ export interface ShellIntents extends TimelineIntents {
   /** Resolves with the new bot's id once the server has created it, or with why it did not. */
   readonly createBot: (draft: NewBot) => Promise<IntentResult<BotId>>;
   readonly newBot: () => void;
+  /** Asks for a template file, then shows all a bot made from it would be and do. */
+  readonly newBotFromTemplate: () => void;
+  /** Shows what sharing the bot as a template puts in the file, then saves or copies it. */
+  readonly shareBotTemplate: (botId: BotId) => void;
   readonly newRoom: () => void;
   /** Opens the form that changes a room's name, members, host and hop limit. */
   readonly editRoom: (roomId: RoomId) => void;

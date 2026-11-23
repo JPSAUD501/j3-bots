@@ -171,11 +171,14 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
         // A message with a file, uploaded from the page as in a browser.
         yield* onPage(page, async () => {
           await page.getByText(bot.profile.name).first().click({ timeout: STEP });
-          await page.locator('input[type="file"]').setInputFiles({
-            name: "notes.txt",
-            mimeType: "text/plain",
-            buffer: Buffer.from("A file from the desktop\n".repeat(4096)),
-          });
+          await page
+            .getByRole("main")
+            .locator('input[type="file"]')
+            .setInputFiles({
+              name: "notes.txt",
+              mimeType: "text/plain",
+              buffer: Buffer.from("A file from the desktop\n".repeat(4096)),
+            });
           await page.getByRole("button", { name: "Remove notes.txt" }).waitFor({ timeout: STEP });
           await page.getByText(/^Uploading/).waitFor({ state: "detached", timeout: STEP });
           await page

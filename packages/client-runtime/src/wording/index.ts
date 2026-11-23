@@ -16,6 +16,8 @@ export {
   routineLines,
   type RoutineRunLines,
   routineRunLines,
+  templateReadText,
+  templateTooLargeText,
 } from "./details.ts";
 export { engineDownload, engineProblem, providerLine, type ProviderTone } from "./engine.ts";
 export {

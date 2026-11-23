@@ -44,3 +44,14 @@ export function deliverFile(
   // The window or the download has the bytes by then.
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+/** Saves text the page made as a file under `name`, through the browser's download. */
+export function saveText(name: string, text: string, mediaType: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: mediaType }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.rel = "noopener";
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

@@ -289,6 +289,12 @@ export interface J3Client {
     enabled: boolean,
   ) => Promise<Actions.IntentResult<Routine>>;
   readonly createBot: (draft: Details.BotDraft) => Promise<Actions.IntentResult<Bot>>;
+  /** The bot as a template, to share as a file. */
+  readonly botTemplate: (botId: BotId) => Promise<Details.BotTemplateResult>;
+  /** Creates a bot from a template the operator has seen in full. */
+  readonly createBotFromTemplate: (
+    draft: Details.TemplateDraft,
+  ) => Promise<Actions.IntentResult<Bot>>;
   /** See `Details.updateBot`; `botSaves` follows it. */
   readonly updateBot: (
     botId: BotId,
@@ -568,6 +574,8 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     setRoutineEnabled: (routineId, enabled) =>
       run.promise(services.details.setRoutineEnabled(routineId, enabled)),
     createBot: (draft) => run.promise(services.details.createBot(draft)),
+    botTemplate: (botId) => run.promise(services.details.botTemplate(botId)),
+    createBotFromTemplate: (draft) => run.promise(services.details.createBotFromTemplate(draft)),
     updateBot: (botId, changes) => run.promise(services.details.updateBot(botId, changes)),
     botSaves: services.details.botSaves,
     dismissBotSave: services.details.dismissBotSave,

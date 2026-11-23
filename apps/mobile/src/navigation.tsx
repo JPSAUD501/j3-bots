@@ -32,6 +32,7 @@ import { RoutineRunsScreen } from "./screens/RoutineRuns.tsx";
 import { SettingsScreen } from "./settings/Settings.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
+import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
 import { useColor } from "./theme.ts";
 import { Toasts } from "./toast.tsx";
 
@@ -44,12 +45,16 @@ import { Toasts } from "./toast.tsx";
  * conversation's route is not used. Each route after the roster names the
  * bot or room by its roster key, so it shows the roster's current name.
  * `share` picks where something another app shared goes, over the rest.
+ * `shareTemplate` shows a bot as a template before it is shared, and
+ * `newFromTemplate` the template file opened, before a bot is made from it.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
   conversation: { readonly item: RosterItemKey };
   details: { readonly item: RosterItemKey };
   share: undefined;
+  shareTemplate: { readonly botId: BotId };
+  newFromTemplate: undefined;
   editBot: { readonly botId: BotId };
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
   routineRuns: { readonly botId: BotId; readonly routineId: RoutineId };
@@ -191,6 +196,12 @@ export function Main() {
                 component={NewBotScreen}
                 options={{ ...sheet, title: t("newBot.title") }}
               />
+              <Stack.Screen name="shareTemplate" options={sheet} component={ShareTemplateScreen} />
+              <Stack.Screen
+                name="newFromTemplate"
+                component={NewFromTemplateScreen}
+                options={{ ...sheet, title: t("template.create.title") }}
+              />
               <Stack.Screen
                 name="settings"
                 component={SettingsScreen}
@@ -199,6 +210,7 @@ export function Main() {
             </Stack.Navigator>
           </NavigationContainer>
           <ShareOpener navigation={navigation} ready={ready} />
+          <TemplateOpener navigation={navigation} ready={ready} />
         </Toasts>
       </PresentationProvider>
     </KeyboardProvider>

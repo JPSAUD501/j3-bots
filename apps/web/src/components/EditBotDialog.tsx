@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import { Radio } from "@base-ui/react/radio";
-import { RadioGroup } from "@base-ui/react/radio-group";
-import { type Bot, type EngineStatus, PermissionMode, PROFILE_LIMITS } from "@j3-bots/contracts";
-import * as Schema from "effect/Schema";
+import { type Bot, type EngineStatus, PROFILE_LIMITS } from "@j3-bots/contracts";
 import { XIcon } from "lucide-react";
 import { useEffect, useId } from "react";
 import type { BotChanges, Save } from "@j3-bots/client-runtime";
 import type { ProfileField } from "@j3-bots/client-runtime/presentation";
 import { useBotEdit } from "@j3-bots/client-runtime/react";
-import { permissionModeText } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { AvatarPicker } from "./avatar/AvatarPicker";
+import { PermissionModeChoices } from "./PermissionModeChoices";
 import { Button } from "./ui/button";
-import { ChoiceIndicator, choiceRow } from "./ui/choice";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField, textField } from "./ui/field";
 
@@ -37,9 +33,6 @@ export interface EditBotFormProps {
   readonly titleId: string;
 }
 
-const modes = PermissionMode.literals;
-const isMode = Schema.is(PermissionMode);
-
 /** A model choice as a `<select>` value. */
 const keyOf = (choice: Bot["model"]) => JSON.stringify([choice.providerId, choice.modelId]);
 
@@ -60,8 +53,7 @@ export function EditBotForm({
   onUnsavedChange,
   titleId,
 }: EditBotFormProps) {
-  const i18n = useI18n();
-  const { t } = i18n;
+  const { t } = useI18n();
   const ids = {
     name: useId(),
     title: useId(),
@@ -237,37 +229,12 @@ export function EditBotForm({
           <p id={ids.mode} className="text-xs">
             {t("editBot.permissionMode")}
           </p>
-          <RadioGroup
-            aria-labelledby={ids.mode}
+          <PermissionModeChoices
             value={mode}
-            onValueChange={(value: unknown) => {
-              if (isMode(value)) form.edit({ permissionMode: value });
-            }}
+            onChange={(permissionMode) => form.edit({ permissionMode })}
             readOnly={saving}
-            className="flex flex-col gap-1.5"
-          >
-            {modes.map((option) => {
-              const text = permissionModeText(option, i18n);
-              return (
-                <Radio.Root
-                  key={option}
-                  value={option}
-                  className={cn(
-                    choiceRow,
-                    "group/option hover:bg-muted data-checked:border-foreground/60 data-checked:bg-muted data-readonly:hover:bg-transparent",
-                  )}
-                >
-                  <ChoiceIndicator shape="round">
-                    <Radio.Indicator className="size-2 rounded-pill bg-background" />
-                  </ChoiceIndicator>
-                  <span className="flex flex-col">
-                    <span>{text.name}</span>
-                    <span className="text-xs text-muted-foreground">{text.description}</span>
-                  </span>
-                </Radio.Root>
-              );
-            })}
-          </RadioGroup>
+            labelledBy={ids.mode}
+          />
         </div>
 
         {form.settingsChange && (

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ModelChoice, PermissionMode, ProviderId } from "@j3-bots/contracts";
+import type { EngineStatus, ModelChoice, ProviderId } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -69,19 +69,6 @@ export const defaultModelIn = (status: EngineStatus): Option.Option<ModelChoice>
     }
   }
   return Option.fromNullishOr(best?.model);
-};
-
-/**
- * The permission mode of a bot created without one, in `status`: supervised
- * unless the provider is known to take Auto. The engine's reviewer exists on
- * Claude Code and Codex; **Assumed** for any other harness.
- */
-export const defaultPermissionModeIn = (
-  status: EngineStatus,
-  model: ModelChoice,
-): PermissionMode => {
-  const provider = status.providers.find((candidate) => candidate.id === model.providerId);
-  return provider !== undefined && provider.harness !== "other" ? "auto" : "supervised";
 };
 
 /**

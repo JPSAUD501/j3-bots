@@ -567,6 +567,8 @@ function sampleIntents({ get, update }: Store): ShellIntents {
       })),
     setShown: nothing,
     newBot: nothing,
+    newBotFromTemplate: nothing,
+    shareBotTemplate: nothing,
     // The room form belongs to the client runtime's source; the sample has no dialog for it.
     newRoom: nothing,
     editRoom: nothing,

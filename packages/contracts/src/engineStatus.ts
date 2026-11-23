@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { BotId, Label, ModelId, NonNegativeInt, ProviderId, RoutineId } from "./base.ts";
+import type { ModelChoice, PermissionMode } from "./bot.ts";
 
 export const UsageWindow = Schema.Struct({
   /**
@@ -96,6 +97,16 @@ export const EngineStatus = Schema.Struct({
   providers: Schema.Array(ProviderStatus),
 });
 export type EngineStatus = typeof EngineStatus.Type;
+
+/**
+ * The permission mode of a bot created without one, in `status`: supervised
+ * unless the provider is known to take Auto. The engine's reviewer exists on
+ * Claude Code and Codex; **Assumed** for any other harness.
+ */
+export const defaultPermissionMode = (status: EngineStatus, model: ModelChoice): PermissionMode => {
+  const provider = status.providers.find((candidate) => candidate.id === model.providerId);
+  return provider !== undefined && provider.harness !== "other" ? "auto" : "supervised";
+};
 
 /** The routine whose run a turn was part of. */
 export const UsageRoutine = Schema.Union([

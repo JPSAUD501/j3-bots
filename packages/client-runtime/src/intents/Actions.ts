@@ -47,19 +47,20 @@ export const refusedWith = (
   );
 };
 
-/** The result of running a command, for a UI that shows outcomes rather than causes. */
-export const intentResult = <A>(exit: Exit.Exit<A, CommandError | NotPaired>): IntentResult<A> => {
-  if (Exit.isSuccess(exit)) return { _tag: "done", value: exit.value };
-  const error = Cause.findErrorOption(exit.cause);
-  if (error._tag === "None") return { _tag: "failed", failure: { _tag: "unexpected" } };
-  return {
-    _tag: "failed",
-    failure:
-      error.value._tag === "NotPaired"
-        ? { _tag: "not-paired" }
-        : { _tag: "refused", error: error.value },
-  };
+/** Why a command failed, for a UI that shows outcomes rather than causes. */
+export const intentFailure = (cause: Cause.Cause<CommandError | NotPaired>): IntentFailure => {
+  const error = Cause.findErrorOption(cause);
+  if (error._tag === "None") return { _tag: "unexpected" };
+  return error.value._tag === "NotPaired"
+    ? { _tag: "not-paired" }
+    : { _tag: "refused", error: error.value };
 };
+
+/** The result of running a command, for a UI that shows outcomes rather than causes. */
+export const intentResult = <A>(exit: Exit.Exit<A, CommandError | NotPaired>): IntentResult<A> =>
+  Exit.isSuccess(exit)
+    ? { _tag: "done", value: exit.value }
+    : { _tag: "failed", failure: intentFailure(exit.cause) };
 
 /**
  * Where an action on one object stands, so the UI can disable what would
