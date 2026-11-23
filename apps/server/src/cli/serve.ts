@@ -9,7 +9,7 @@ import { refuse, userFacing } from "./errors.ts";
 
 const adminFdFlag = Flag.Int("admin-fd").pipe(
   Flag.withDescription(
-    "Also serve the admin channel on this inherited file descriptor, a pipe from the process that started the server. Only that process holds the pipe. For an app that runs its own server; it passes 3.",
+    'Also serve the admin channel on this inherited file descriptor: the server\'s end of a pipe from the process that started it, as Node\'s spawn makes one for a stdio entry of "pipe" or "overlapped". Start fails on a descriptor below 3, on a TCP socket, listening or connected, and, on Linux and macOS, on anything but a socket (a FIFO, a one-way pipe, a file or a terminal). For an app that runs its own server; it passes 3.',
   ),
   Flag.optional,
 );

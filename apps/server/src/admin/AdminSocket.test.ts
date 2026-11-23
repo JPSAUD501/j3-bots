@@ -287,6 +287,27 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))(
       }),
     );
 
+    it.effect("creates the admin socket closed to other users, whatever the umask", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const socket = path.join(yield* fs.makeTempDirectoryScoped(), "admin.sock");
+        // The most open umask: a socket bound under it is anyone's from the
+        // bind until a chmod, unless the server narrows it for the bind.
+        const usual = process.umask(0);
+        yield* Effect.addFinalizer(() => Effect.sync(() => process.umask(usual)));
+        const server = yield* Effect.acquireRelease(
+          Effect.sync(() => new AdminSocket.PrivateSocketServer()),
+          (server) => Effect.sync(() => server.close()),
+        );
+        server.listen(socket);
+        // The umask is the test's again once the bind is done.
+        assert.strictEqual(process.umask(0), 0);
+        const { mode } = yield* fs.stat(socket);
+        assert.strictEqual(mode & 0o077, 0, `mode ${(mode & 0o777).toString(8)}`);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+
     it.effect.skipIf(otherUser === undefined)(
       "keeps another user of the machine off the admin socket",
       () =>

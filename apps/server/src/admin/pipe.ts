@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- An inherited descriptor is opened with node:net, and node:http parses the requests on it.
+// @effect-diagnostics nodeBuiltinImport:off -- An inherited descriptor is checked with node:fs, opened with node:net, and node:http parses the requests on it.
 // @effect-diagnostics anyUnknownInErrorContext:off -- An HTTP server is handed any app, whatever it fails with: the request handler answers every failure.
+import * as NodeFs from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -19,12 +20,16 @@ import * as NetAddress from "effect/net/NetAddress";
 // The admin channel over a pipe the server inherited from the process that
 // started it (`j3-bots serve --admin-fd <n>`): how the desktop app reaches the
 // server it runs, and on Windows, where the home has no admin socket, the only
-// admin channel. Nothing else holds the other end, and no name points at it,
-// so no other process, of this user or another, can open it.
+// admin channel. Nothing else holds the other end, and nothing can open it by
+// name: a socket pair has none, and the single-instance named pipe libuv makes
+// on Windows is opened by the parent before the server starts. So no other
+// process, of this user or another, can reach it.
 //
-// It is one HTTP/1.1 connection for the life of the process. A pipe cannot be
-// opened again, so the server never closes it for being idle: it ends only
-// when the server stops or the parent closes its end.
+// It is one HTTP/1.1 connection for the life of the process, which only the
+// parent writes to. A pipe cannot be opened again, so the server never closes
+// it for being idle: it ends when the server stops, when the parent closes its
+// end, or when a request on it is malformed, which Node's parser answers 400
+// before it closes the connection.
 
 /** How long a stop waits for a request on the pipe to be answered, such as `/shutdown`'s 202. */
 const GRACE = Duration.seconds(1);
@@ -43,27 +48,61 @@ class AdminPipeUnusable extends Schema.TaggedError<AdminPipeUnusable>()("AdminPi
 const OpenError = Schema.Struct({ code: Schema.String });
 const decodeOpenError = Schema.decodeUnknownOption(OpenError);
 
+const notOpen = (fd: number) => (cause: unknown) =>
+  new AdminPipeUnusable({
+    fd,
+    reason: Option.match(decodeOpenError(cause), {
+      onNone: () => "it is not an open pipe",
+      onSome: ({ code }) => `it is not an open pipe (${code})`,
+    }),
+  });
+
 /**
- * The inherited descriptor as a stream, ended when the scope closes. A network
- * socket is refused: the admin channel never travels over TCP.
+ * On Linux and macOS, fails unless `fd` is a socket. Node makes a stdio pipe
+ * there as a socket pair (libuv's `uv_socketpair`), the one kind that carries
+ * both directions, so a FIFO or a one-way pipe, a file or a terminal is
+ * refused. Windows has no such file types to tell apart: Node's stream over the
+ * descriptor refuses a file or a console there.
+ */
+const checkKind = (fd: number) =>
+  process.platform === "win32"
+    ? Effect.void
+    : Effect.try({ try: () => NodeFs.fstatSync(fd), catch: notOpen(fd) }).pipe(
+        Effect.flatMap((stats) =>
+          stats.isSocket()
+            ? Effect.void
+            : Effect.fail(
+                new AdminPipeUnusable({
+                  fd,
+                  reason: stats.isFIFO()
+                    ? "it is a FIFO or a one-way pipe, not a socket pair"
+                    : "it is not a socket pair",
+                }),
+              ),
+        ),
+      );
+
+/**
+ * The inherited descriptor as a stream, ended when the scope closes. A TCP
+ * socket, listening or connected, is refused: the admin channel never travels
+ * over TCP. Node gives a TCP socket a local address, and never a stream over
+ * a socket pair or a pipe.
  */
 const openPipe = (fd: number) =>
   Effect.acquireRelease(
-    Effect.try({
-      try: () => new NodeNet.Socket({ fd, readable: true, writable: true }),
-      catch: (cause) =>
-        new AdminPipeUnusable({
-          fd,
-          reason: Option.match(decodeOpenError(cause), {
-            onNone: () => "it is not an open pipe",
-            onSome: ({ code }) => `it is not an open pipe (${code})`,
-          }),
+    checkKind(fd).pipe(
+      Effect.andThen(
+        Effect.try({
+          try: () => new NodeNet.Socket({ fd, readable: true, writable: true }),
+          catch: notOpen(fd),
         }),
-    }).pipe(
+      ),
       Effect.flatMap((socket) => {
-        if (socket.remoteAddress === undefined) return Effect.succeed(socket);
+        if (socket.localAddress === undefined && socket.remoteAddress === undefined) {
+          return Effect.succeed(socket);
+        }
         socket.destroy();
-        return Effect.fail(new AdminPipeUnusable({ fd, reason: "it is a network socket" }));
+        return Effect.fail(new AdminPipeUnusable({ fd, reason: "it is a TCP socket" }));
       }),
     ),
     (socket) =>
@@ -109,11 +148,16 @@ export const server = (fd: number) =>
           answered.add(done);
           return Effect.sync(() => answered.delete(done));
         });
-        // When the parent drops its end, the server goes on; only the channel is gone.
+        // The parent closed its end, or Node's parser closed the pipe on a
+        // request it could not read: the server goes on without the channel.
         yield* Effect.forkScoped(
           Effect.callback<void>((resume) => {
             pipe.once("close", () => resume(Effect.void));
-          }).pipe(Effect.andThen(Effect.logWarning("The admin pipe was closed by the other end"))),
+          }).pipe(
+            Effect.andThen(
+              Effect.logWarning("The admin pipe closed; the server goes on without it"),
+            ),
+          ),
         );
         return HttpServer.make({
           // Not a path to open: the descriptor the channel was inherited on, for reading.

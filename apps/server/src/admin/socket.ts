@@ -6,6 +6,15 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
 /**
+ * Whether the server binds the admin socket on `platform`. Windows has none,
+ * nor a named pipe in its place: Node would serve the path as a named pipe,
+ * which other users of the machine could open or take first. There the
+ * server's only admin channel is the pipe the desktop app hands it when it
+ * starts it (`--admin-fd`).
+ */
+export const hasAdminSocket = (platform: NodeJS.Platform) => platform !== "win32";
+
+/**
  * What is at an admin socket path: nothing, a server that accepts a
  * connection, a socket nothing listens on (its server stopped without
  * closing), or something that is not a socket at all.

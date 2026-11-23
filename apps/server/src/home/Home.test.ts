@@ -135,6 +135,30 @@ it.layer(NodeServices.layer)("home", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("tells when the home's path no longer names the private folder it checked", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { home } = yield* freshHome;
+      const checked = yield* Home.identifyPrivate(home);
+      yield* Home.checkUnchanged(home, checked);
+
+      // Moved away, and a private folder of the same name made in its place.
+      const moved = `${home}.moved`;
+      yield* fs.rename(home, moved);
+      yield* fs.makeDirectory(home);
+      yield* fs.chmod(home, 0o700);
+      const replaced = yield* Home.checkUnchanged(home, checked).pipe(Effect.flip);
+      assert.deepInclude(replaced, { _tag: "HomeBlocked", reason: "home-replaced" });
+
+      // The same folder back, but opened to others.
+      yield* fs.remove(home, { recursive: true });
+      yield* fs.rename(moved, home);
+      yield* fs.chmod(home, 0o750);
+      const opened = yield* Home.checkUnchanged(home, checked).pipe(Effect.flip);
+      assert.deepInclude(opened, { _tag: "HomeNotPrivate", reason: "open-to-others" });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("gives a fix only for a refusal it can name the repair of", () =>
     Effect.gen(function* () {
       // How Node reports each refusal of `access(home, W_OK)`.

@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import { hasAdminSocket } from "./admin/socket.ts";
 import { DEFAULTS, load } from "./config.ts";
 import { initialize } from "./home/Home.ts";
 import { markRestoring, takeSnapshot } from "./install/snapshot.ts";
@@ -249,6 +250,20 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
         }
       }
       assert.deepStrictEqual(yield* fs.readDirectory(path.join(checkout, "state")), []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a home too long for the admin socket only where it binds one", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const home = path.join(yield* freshHome, "h".repeat(120));
+      const exit = yield* withEnvironment(load, { J3_HOME: home }).pipe(Effect.exit);
+      if (hasAdminSocket(process.platform)) {
+        assert.deepInclude(failure(exit), { setting: "J3_HOME", reason: "home-path-too-long" });
+      } else {
+        // No socket on Windows, so its path's limit is not the home's.
+        assert.isTrue(Exit.isSuccess(exit), String(failure(exit)));
+      }
     }).pipe(Effect.scoped),
   );
 

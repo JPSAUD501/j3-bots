@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { hasAdminSocket } from "./admin/socket.ts";
 import { HOME_ENTRIES, homeLayout } from "./home/entries.ts";
 import * as Installation from "./installation.ts";
 import { isWithin, realLocation } from "./paths.ts";
@@ -69,6 +70,7 @@ export interface ServerConfigShape {
   /**
    * The admin socket, `<home>/admin.sock`: how `j3-bots` commands reach the
    * running server. A Unix socket, so only the operator's user can connect.
+   * Never bound on Windows (`hasAdminSocket`).
    */
   readonly adminSocket: string;
   /**
@@ -380,7 +382,11 @@ export const load = Effect.gen(function* () {
 
   yield* refuseHomeInCheckout(home);
   const adminSocket = path.join(home, ADMIN_SOCKET);
-  if (new TextEncoder().encode(adminSocket).length > MAX_SOCKET_PATH_BYTES) {
+  // A limit of the socket's address, so only where the socket is bound.
+  if (
+    hasAdminSocket(process.platform) &&
+    new TextEncoder().encode(adminSocket).length > MAX_SOCKET_PATH_BYTES
+  ) {
     return yield* new ConfigRefused({
       setting: "J3_HOME",
       reason: "home-path-too-long",

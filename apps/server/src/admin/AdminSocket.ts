@@ -7,7 +7,6 @@ import { Engine } from "@j3-bots/engine-t3";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -19,6 +18,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { DeviceAuth } from "../auth/DeviceAuth.ts";
 import { ServerConfig } from "../config.ts";
 import { Devices } from "../devices/Devices.ts";
+import * as Home from "../home/Home.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
 import * as Ports from "../system/Ports.ts";
@@ -27,6 +27,7 @@ import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
 import { WebClientStatus } from "../web/WebClient.ts";
 import * as Pipe from "./pipe.ts";
+import { hasAdminSocket } from "./socket.ts";
 import {
   ADMIN_PATHS,
   AdminStatus,
@@ -175,11 +176,36 @@ const routes = Layer.mergeAll(
   ),
 );
 
+/** The umask a socket is bound under: no access for its group or other users. */
+const OWNER_ONLY = 0o077;
+
+/**
+ * An HTTP server whose Unix socket only this user can connect to from the
+ * moment it exists. The socket is created by the bind with the mode the umask
+ * leaves, so the umask is narrowed for the call that binds: a mode set after
+ * the bind would leave a moment in which the socket has the process's usual
+ * one. Node binds a path inside `listen`, before it returns (`lib/net.js`,
+ * `createServerHandle`, read on v24.x at 221ffa5), and no other JavaScript
+ * runs during that call; the umask is the process's, so a file Node's thread pool creates in
+ * that instant gets no access for group or others either.
+ */
+export class PrivateSocketServer extends NodeHttp.Server {
+  override listen(...args: ReadonlyArray<unknown>): this {
+    const umask = process.umask(OWNER_ONLY);
+    try {
+      Reflect.apply(super.listen, this, args);
+    } finally {
+      process.umask(umask);
+    }
+    return this;
+  }
+}
+
 // Node removes the socket file when the server closes.
 const listen = (adminSocket: string) =>
   Layer.mergeAll(
     Layer.effect(HttpServer.HttpServer)(
-      Ports.makeServer(() => NodeHttp.createServer(), {
+      Ports.makeServer(() => new PrivateSocketServer(), {
         path: adminSocket,
         gracefulShutdownTimeout: "1 second",
       }),
@@ -189,27 +215,31 @@ const listen = (adminSocket: string) =>
 
 const served = Layer.unwrap(
   Effect.gen(function* () {
-    const { adminSocket } = yield* ServerConfig;
-    const fs = yield* FileSystem.FileSystem;
-    // The private home (0700) is what keeps other users out; the socket's own
-    // mode is defence in depth. It is set once the routes are served, because
-    // anything that waits between the bind and the handler (`Ports.serve`)
-    // would leave a request that arrived in between unanswered.
+    const { home, adminSocket } = yield* ServerConfig;
+    // Two things keep other users out: the private home (0700), and the
+    // socket's own mode (`PrivateSocketServer`). The home is checked and
+    // identified just before the bind, and again once the socket is served:
+    // a home moved or replaced in between, which would have put the socket
+    // somewhere else, stops the server. The check after is on the layer
+    // `Ports.serve` returns, since anything that waits between the bind and
+    // the handler would leave a request that arrived in between unanswered.
+    const before = yield* Home.identifyPrivate(home);
     return Ports.serve(routes, listen(adminSocket), { logAddress: false }).pipe(
-      Layer.tap(() => fs.chmod(adminSocket, 0o600)),
+      Layer.tap(() => Home.checkUnchanged(home, before)),
     );
   }),
 );
 
 /**
- * The admin socket's routes, listening at `<home>/admin.sock`. Its server is
- * its own: the layer offers the rest of the server nothing.
+ * The admin socket's routes, listening at `<home>/admin.sock`, on every
+ * system that has one (`hasAdminSocket`). Its server is its own: the layer
+ * offers the rest of the server nothing.
  */
 export const layer: Layer.Layer<
   never,
   Layer.Error<typeof served>,
   Layer.Services<typeof served>
-> = served;
+> = hasAdminSocket(process.platform) ? served : Layer.empty;
 
 /**
  * The same routes, served on the pipe the server inherited at `fd` from the

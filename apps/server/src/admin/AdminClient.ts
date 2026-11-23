@@ -44,6 +44,7 @@ class UnexpectedStatus extends Schema.TaggedError<UnexpectedStatus>()("Unexpecte
   status: Schema.Int,
 }) {}
 
+/** How long a request waits for its answer, unless its method says otherwise. */
 const TIMEOUT = Duration.seconds(10);
 
 /** Reads an answer that is `schema` in JSON. */
@@ -105,11 +106,17 @@ export type AdminChannel = string | AdminPipe;
  * `"overlapped"`, which is `"pipe"` everywhere but Windows, where the server's
  * end must allow a write while a read waits). Requests on it go one at a
  * time over that one connection, for as long as the scope lives; closing the
- * scope closes the pipe. A request on it has no timeout: it waits for its
- * answer, or for the pipe to close when the server stops. One abandoned before
- * its answer, by an interruption, closes the pipe too, since the connection
- * cannot be told where the next answer starts: the channel is then gone, and
- * every answer is none.
+ * scope closes the pipe.
+ *
+ * A request waits for its answer as long as on the socket, and no longer, so
+ * a parent never hangs on a server that stopped answering or a descriptor
+ * that is not the admin channel. One that gets no answer in time, or is
+ * abandoned by an interruption, closes the pipe, since the connection could
+ * no longer tell where the next answer starts: the channel is then gone, and
+ * every answer is none. A parent treats that as a lost server. The desktop
+ * app, which starts the server, then kills it, as it does when `/shutdown`
+ * gets no answer. The first request may wait while the server starts, before
+ * it serves the pipe: give that one `status` with a longer `within`.
  */
 export const openPipe = (pipe: NodeNet.Socket) =>
   Effect.acquireRelease(
@@ -161,8 +168,13 @@ const clientOn = (channel: AdminChannel) =>
 export class AdminClient extends Context.Service<
   AdminClient,
   {
+    /**
+     * `within` bounds the wait for the answer (10 seconds unless given), which
+     * on a pipe includes the server's start, if it does not serve it yet.
+     */
     readonly status: (
       channel: AdminChannel,
+      options?: { readonly within?: Duration.Duration },
     ) => Effect.Effect<Option.Option<AdminStatus>, AdminRequestFailed>;
     /** The status reply, read only as far as `j3-bots update` needs it. */
     readonly readiness: (
@@ -241,9 +253,11 @@ export const layer = Layer.effect(
                       : Effect.fail(new UnexpectedStatus({ status: response.status })),
                 ),
               ),
-              // On a pipe a timeout would abandon the request and with it the
-              // channel; a server that stops closes the pipe, which ends it.
-              typeof channel === "string" ? Effect.timeout(timeout) : identity,
+              // An answer abandoned on a pipe would be read as the next one's.
+              typeof channel === "string"
+                ? identity
+                : Effect.onInterrupt(() => Effect.sync(() => channel.pipe.destroy())),
+              Effect.timeout(timeout),
               Effect.asSome,
               // A failure may hold the request or the answer: a request's body
               // may hold a key, and an answer that did not decode may hold a
@@ -263,7 +277,19 @@ export const layer = Layer.effect(
           }).pipe(Effect.provide(reached.value));
         }).pipe(Effect.provideService(FileSystem.FileSystem, fs));
     return AdminClient.of({
-      status: ask(ADMIN_PATHS.status, "GET", json(AdminStatus), false),
+      status: Effect.fn("AdminClient.status")(function* (
+        channel: AdminChannel,
+        options?: { readonly within?: Duration.Duration },
+      ) {
+        return yield* ask(
+          ADMIN_PATHS.status,
+          "GET",
+          json(AdminStatus),
+          false,
+          Option.none(),
+          options?.within,
+        )(channel);
+      }),
       readiness: ask(ADMIN_PATHS.status, "GET", json(ServerReadiness), false),
       runningWork: ask(ADMIN_PATHS.runningWork, "GET", json(RunningWorkReply), false),
       startPairing: Effect.fn("AdminClient.startPairing")(function* (

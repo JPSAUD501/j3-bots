@@ -70,23 +70,17 @@ const engine = Layer.unwrap(
  * engine that links them into each harness home, with the push sender (Expo's),
  * the domain, then the client listener, and then the tool endpoint and the
  * admin channels, which report where the client listener bound: the admin
- * socket (`adminSocket`), and with `adminFd` the pipe inherited there. Where it bound
+ * socket where the system has one (`hasAdminSocket`), and with `adminFd` the
+ * pipe inherited there. Where it bound
  * (`Listener`) is made beneath them all, since the domain names it in a
  * webhook's address. Each listener binds only once its routes are built
  * (`Ports.serve`). Releasing it, on SIGINT or SIGTERM or once a stop is asked
  * for (`ServerStop`), releases everything in reverse.
  */
-/**
- * The admin socket, on every system but Windows. There Node would serve its
- * path as a named pipe, which other users of the machine could open, so the
- * pipe inherited with `--admin-fd` is the only admin channel.
- */
-const adminSocket = process.platform === "win32" ? Layer.empty : AdminSocket.layer;
-
 export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
   Layer.mergeAll(
     ToolEndpoint.layer,
-    adminSocket,
+    AdminSocket.layer,
     Option.match(options.adminFd, { onNone: () => Layer.empty, onSome: AdminSocket.pipeLayer }),
     logShutdown,
   ).pipe(
