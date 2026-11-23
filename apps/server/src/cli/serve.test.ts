@@ -11,10 +11,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Runtime from "effect/Runtime";
+import { CliError } from "effect/cli";
+import * as Migrator from "effect/sql/Migrator";
 import * as AdminClient from "../admin/AdminClient.ts";
 import * as Socket from "../admin/socket.ts";
 import * as Home from "../home/Home.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
+import { startFailure } from "./serve.ts";
 
 const SERVER = `${import.meta.dirname}/../bin.ts`;
 
@@ -253,4 +257,30 @@ describe("serve, as the desktop app runs it", () => {
       }).pipe(Effect.scoped, Effect.provide(services)),
     { timeout: Duration.toMillis(WITHIN) * 2 },
   );
+});
+
+// The desktop app tells a start the server refused from a crash by its exit
+// status: it shows a refusal and does not start the server again.
+
+describe("how a failed start ends", () => {
+  it("ends a start refused for the home with status 78 and the home's own message", () => {
+    const refusal = new Home.HomeNotPrivate({ home: "/data/home", reason: "open-to-others" });
+    const failure = startFailure(refusal);
+    assert.strictEqual(failure[Runtime.errorExitCode], 78);
+    assert.strictEqual(failure[CliError.userMessage], refusal.message);
+  });
+
+  it("ends a database a newer release migrated as refused", () => {
+    const failure = startFailure(
+      new Migrator.MigrationError({ kind: "BadState", message: "newer" }),
+    );
+    assert.strictEqual(failure[Runtime.errorExitCode], 78);
+  });
+
+  it("ends any other failure as one the app may start again after", () => {
+    const failure = startFailure(
+      new Migrator.MigrationError({ kind: "Failed", message: "disk I/O error" }),
+    );
+    assert.notStrictEqual(failure[Runtime.errorExitCode], 78);
+  });
 });
