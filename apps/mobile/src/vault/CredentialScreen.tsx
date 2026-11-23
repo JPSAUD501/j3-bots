@@ -178,9 +178,9 @@ function useShownValues() {
     timers.current.clear();
     setValues(new Map());
   }, []);
-  const inView = useRef(false);
+  const inView = useInView(hideAll);
   const show = (field: CredentialField, value: Redacted.Redacted<string>) => {
-    if (!inView.current || AppState.currentState !== "active") return;
+    if (!inView()) return;
     clearTimeout(timers.current.get(field));
     timers.current.set(
       field,
@@ -188,22 +188,32 @@ function useShownValues() {
     );
     setValues((now) => new Map(now).set(field, value));
   };
+  return { values, show, hide };
+}
+
+/**
+ * Whether the screen is in view with the app in the foreground, asked when
+ * something to show arrives; `onLeave`, kept stable by the caller, runs when
+ * the screen loses focus or the app leaves the foreground.
+ */
+function useInView(onLeave: () => void): () => boolean {
+  const focused = useRef(false);
   useFocusEffect(
     useCallback(() => {
-      inView.current = true;
+      focused.current = true;
       return () => {
-        inView.current = false;
-        hideAll();
+        focused.current = false;
+        onLeave();
       };
-    }, [hideAll]),
+    }, [onLeave]),
   );
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state !== "active") hideAll();
+      if (state !== "active") onLeave();
     });
     return () => subscription.remove();
-  }, [hideAll]);
-  return { values, show, hide };
+  }, [onLeave]);
+  return useCallback(() => focused.current && AppState.currentState === "active", []);
 }
 
 /**
@@ -269,7 +279,7 @@ function ShownValue({
 
 /**
  * The login's one-time code now, to check it against the site's, until it is
- * no longer valid or the screen is left.
+ * no longer valid, the screen is left or the app leaves the foreground.
  */
 function CodeNow({
   credential,
@@ -283,8 +293,9 @@ function CodeNow({
   const failureText = useVaultFailureText();
   const { busy, failure, run } = useVaultRequest();
   const [code, setCode] = useState<TotpPreview | null>(null);
-  // Like the values, the code goes when the screen is left.
-  useFocusEffect(useCallback(() => () => setCode(null), []));
+  // Like the values, the code goes when the screen is left or the app is
+  // backgrounded, and a code that arrives after either is dropped.
+  const inView = useInView(useCallback(() => setCode(null), []));
   const valid = code !== null && DateTime.isLessThan(ctx.now, code.validUntil);
   return (
     <View className="gap-1">
@@ -304,7 +315,14 @@ function CodeNow({
             variant="secondary"
             label={t("vault.codeShow")}
             held={busy}
-            onPress={() => run(() => vault.totpPreview(credential.id), setCode)}
+            onPress={() =>
+              run(
+                () => vault.totpPreview(credential.id),
+                (preview) => {
+                  if (inView()) setCode(preview);
+                },
+              )
+            }
           />
         </View>
       )}

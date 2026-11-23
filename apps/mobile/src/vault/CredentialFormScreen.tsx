@@ -41,32 +41,39 @@ export function CredentialFormScreen({ navigation, route }: Props) {
   const view = useReadable(vault.view);
   const { id } = route.params;
   const unlocked = view._tag === "ready" && view.status.state === "unlocked" ? view : null;
-  const credential =
-    id === null ? null : (unlocked?.credentials?.find((found) => found.id === id) ?? null);
+  const found =
+    id === null ? null : (unlocked?.credentials?.find((listed) => listed.id === id) ?? null);
+  // The login as last listed: while the vault is locked, or its list is on
+  // its way after the unlock, the form keeps editing it.
+  const [lastSeen, setLastSeen] = useState(found);
+  if (found !== null && found !== lastSeen) setLastSeen(found);
+  const listed = unlocked !== null && unlocked.credentials !== null;
+  const credential = found ?? (listed ? null : lastSeen);
   const title =
     id === null ? t("vault.add") : t("vault.editTitle", { name: credential?.name ?? "" });
   useLayoutEffect(() => {
     navigation.setOptions({ title });
   }, [navigation, title]);
-  if (unlocked !== null && id !== null && credential === null) {
-    return unlocked.credentials === null ? (
-      <View className="flex-1 bg-background" />
-    ) : (
-      <View className="flex-1 bg-background">
-        <Centered>
-          <Body>{t("vault.gone")}</Body>
-          <Button variant="secondary" label={t("vault.back")} onPress={navigation.goBack} />
-        </Centered>
-      </View>
-    );
-  }
-  if (unlocked === null && id !== null) {
-    return (
+  if (id !== null && credential === null) {
+    if (listed) {
+      return (
+        <View className="flex-1 bg-background">
+          <Centered>
+            <Body>{t("vault.gone")}</Body>
+            <Button variant="secondary" label={t("vault.back")} onPress={navigation.goBack} />
+          </Centered>
+        </View>
+      );
+    }
+    // Opened while locked: there is no login to show until the unlock.
+    return unlocked === null ? (
       <ScrollView className="flex-1 bg-background" keyboardShouldPersistTaps="handled">
         <Section>
           <VaultGate view={view} vault={vault} />
         </Section>
       </ScrollView>
+    ) : (
+      <View className="flex-1 bg-background" />
     );
   }
   return (

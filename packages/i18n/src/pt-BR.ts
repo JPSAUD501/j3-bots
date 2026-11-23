@@ -297,7 +297,7 @@ const sentences = {
   "totp.scan.refused":
     "O J3 Bots não pode usar a câmera sem a sua permissão. Permita, ou cole a chave.",
   "totp.scan.denied":
-    "O J3 Bots não pode usar a câmera. Permita nos ajustes do celular, ou cole a chave.",
+    "O J3 Bots não pode usar a câmera. Permita em Configurações, ou cole a chave.",
   "question.recommended": "Recomendada",
   "question.destructive": "Perde algo",
   "approval.kind.command": "Quer executar um comando",
@@ -908,11 +908,11 @@ const sentences = {
   "pairing.scan.title": "Aponte a câmera para o QR code no outro dispositivo",
   "pairing.scan.notPairing": "Esse QR code não pareia um dispositivo com o J3 Bots.",
   "pairing.scan.denied":
-    "O J3 Bots não pode usar a câmera. Permita nos ajustes do celular, ou digite o endereço e o código.",
+    "O J3 Bots não pode usar a câmera. Permita em Configurações, ou digite o endereço e o código.",
   "pairing.scan.refused":
     "O J3 Bots não pode usar a câmera sem a sua permissão. Permita, ou digite o endereço e o código.",
   "scan.allow": "Permitir a câmera",
-  "scan.openSettings": "Abrir os ajustes do celular",
+  "scan.openSettings": "Abrir Configurações",
   "scan.close": "Fechar",
   "pairing.invalid":
     "Esse código está errado, expirou ou já foi usado. Um código vale uma vez, até cinco minutos depois de criado.",

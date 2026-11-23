@@ -247,15 +247,19 @@ export function ChangePasswordForm({
   const [again, setAgain] = useState("");
   const [tried, setTried] = useState(false);
   const { busy, failure, run } = useVaultRequest();
+  // No master password is shorter than the minimum, so a shorter current one is wrong.
+  const wrongCurrent = current.length < MIN_MASTER_PASSWORD_LENGTH;
   const short = next.length < MIN_MASTER_PASSWORD_LENGTH;
   const mismatch = again !== next;
   const problem = !tried
     ? null
-    : short
-      ? t("vault.tooShort", { count: MIN_MASTER_PASSWORD_LENGTH })
-      : mismatch
-        ? t("vault.mismatch")
-        : null;
+    : wrongCurrent
+      ? t("vault.wrong")
+      : short
+        ? t("vault.tooShort", { count: MIN_MASTER_PASSWORD_LENGTH })
+        : mismatch
+          ? t("vault.mismatch")
+          : null;
   const submit = () => {
     setTried(true);
     const was = masterPassword(current);
@@ -269,7 +273,7 @@ export function ChangePasswordForm({
         label={t("vault.current")}
         value={current}
         onChange={setCurrent}
-        invalid={failure !== null}
+        invalid={(tried && wrongCurrent) || failure !== null}
       />
       <SecretField
         label={t("vault.next")}
