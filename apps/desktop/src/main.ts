@@ -13,6 +13,7 @@ import {
   LocalPairingRequest,
   LocalServerState,
   type ModeChange,
+  type UseThisComputerResult,
   NetworkState,
   OpenRequest,
   type OpenResult,
@@ -345,7 +346,7 @@ const program = Effect.gen(function* () {
 
   const useThisComputer = Effect.fn("desktop.useThisComputer")(function* (
     event: IpcMainInvokeEvent,
-  ): Effect.fn.Return<ModeChange> {
+  ): Effect.fn.Return<UseThisComputerResult> {
     if (!fromApp(event)) return "failed";
     return yield* choice.useThisComputer(pageOf(event));
   });

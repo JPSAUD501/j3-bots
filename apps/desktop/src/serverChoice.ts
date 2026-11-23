@@ -5,6 +5,7 @@ import type {
   ForgetResult,
   ModeChange,
   ServerOrigin,
+  UseThisComputerResult,
 } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -31,16 +32,22 @@ export interface Page {
   readonly openHome: Effect.Effect<void>;
 }
 
+/** Why the server on this computer could not be made ready. */
+export type NotPrepared =
+  /** Its home must be repaired first: why, and what repairs it, for the operator. */
+  | { readonly _tag: "home-refused"; readonly reason: string; readonly fix: string }
+  /** Anything else, to log. */
+  | { readonly _tag: "failed"; readonly message: string };
+
 /** The server this computer runs, as choosing where the bots live acts on it. */
 export interface LocalServer {
   /** Whether this computer can run it. */
   readonly available: boolean;
   /**
    * Makes its home ready, the first time with ports chosen once, and answers
-   * the origin the page reaches it at. Fails, with a message to log, when
-   * the home cannot hold it.
+   * the origin the page reaches it at. Fails when the home cannot hold it.
    */
-  readonly prepare: Effect.Effect<ServerOrigin, { readonly message: string }>;
+  readonly prepare: Effect.Effect<ServerOrigin, NotPrepared>;
   /** Starts it, and keeps it running. */
   readonly start: Effect.Effect<void>;
   /** Stops it, gracefully, its data kept. */
@@ -119,22 +126,24 @@ export const make = Effect.fn("ServerChoice.make")(function* (
    * Runs the bots on this computer: forgets any server named before, with
    * the page's storage, keeps the server on this computer as the page's, and
    * starts it. The device this computer was signed in as before, if any, is
-   * signed in again once, without asking (`LocalDeviceRequest`).
+   * signed in again once, without asking (`LocalDeviceRequest`). A home the
+   * operator must repair first changes nothing, and is answered with why and
+   * what repairs it.
    */
   const useThisComputer = Effect.fn("ServerChoice.useThisComputer")(function* (page: Page) {
     return yield* oneAtATime.withPermits(1)(
-      Effect.gen(function* () {
-        if (!local.available) return "unavailable" satisfies ModeChange;
-        const prepared = yield* local.prepare.pipe(
-          Effect.map((server) => ({ _tag: "prepared" as const, server })),
-          Effect.catch((error) =>
-            Effect.logWarning("Preparing this computer's server failed", error.message).pipe(
-              Effect.as({ _tag: "not-prepared" as const }),
-            ),
-          ),
-        );
-        if (prepared._tag === "not-prepared") return "failed" satisfies ModeChange;
-        const { server } = prepared;
+      Effect.gen(function* (): Effect.fn.Return<UseThisComputerResult> {
+        if (!local.available) return "unavailable";
+        const prepared = yield* local.prepare.pipe(Effect.result);
+        if (prepared._tag === "Failure") {
+          const error = prepared.failure;
+          if (error._tag === "home-refused") {
+            return { _tag: "home-refused", reason: error.reason, fix: error.fix };
+          }
+          yield* Effect.logWarning("Preparing this computer's server failed", error.message);
+          return "failed";
+        }
+        const server = prepared.success;
         const kept = yield* page.clearStorage.pipe(
           Effect.andThen(
             settings.update((current) => ({
@@ -150,10 +159,10 @@ export const make = Effect.fn("ServerChoice.make")(function* (
             Effect.logWarning("Choosing this computer failed", error).pipe(Effect.as(false)),
           ),
         );
-        if (!kept) return "failed" satisfies ModeChange;
+        if (!kept) return "failed";
         yield* local.start;
         yield* page.openHome;
-        return "changed" satisfies ModeChange;
+        return "changed";
       }),
     );
   });

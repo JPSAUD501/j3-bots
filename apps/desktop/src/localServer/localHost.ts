@@ -115,6 +115,25 @@ const withUpdate = (state: LocalServerState, update: Option.Option<ServerUpdate>
     onSome: (now): LocalServerState => ({ ...state, update: now }),
   });
 
+/**
+ * Makes the server's `home` ready, as choosing this computer does, the first
+ * time with ports chosen once, and answers the origin the page reaches the
+ * server at. A home the operator must repair first is refused with why and
+ * what repairs it.
+ */
+export const prepareChosen = Effect.fn("LocalHost.prepareChosen")(
+  function* (home: string, system: Home.HomeSystem) {
+    yield* Home.checkHome(home, system);
+    const port = yield* Home.prepareHome(home, system, Home.choosePorts());
+    return yield* decodeOrigin(`http://127.0.0.1:${port}`);
+  },
+  Effect.mapError((error): ServerChoice.NotPrepared =>
+    error._tag === "HomeNotPrivate"
+      ? { _tag: "home-refused", reason: error.message, fix: error.fix }
+      : { _tag: "failed", message: error.message },
+  ),
+);
+
 /** A home the operator must repair before the server starts on it, which waiting does not change. */
 const refusedHome = (refusal: { readonly message: string; readonly fix: string }) =>
   new Supervisor.LaunchFailed({ reason: refusal.message, fix: refusal.fix, retry: false });
@@ -274,15 +293,9 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     yield* supervisor.start;
   });
 
-  const prepare = Effect.gen(function* () {
-    yield* checkHome;
-    const port = yield* Home.prepareHome(home, homeSystem, Home.choosePorts());
-    return yield* decodeOrigin(`http://127.0.0.1:${port}`);
-  }).pipe(Effect.provideContext(context));
-
   const local: ServerChoice.LocalServer = {
     available,
-    prepare,
+    prepare: prepareChosen(home, homeSystem).pipe(Effect.provideContext(context)),
     start: supervisor.start,
     stop: supervisor.stop,
   };
