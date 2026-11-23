@@ -20,7 +20,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0012](0012-desktop-reaches-the-server-directly.md) | The desktop renders the bundled web build and calls the server from its own origin | Proposed |
 | [0013](0013-background-work-belongs-to-the-turn-that-started-it.md) | Background work belongs to the turn that started it | Accepted |
 | [0014](0014-push-goes-through-a-push-sender.md) | Push goes through a push sender, and Expo's service is the first | Proposed |
-| [0015](0015-a-release-is-a-self-contained-archive.md) | A release is a self-contained archive per Linux architecture | Accepted |
+| [0015](0015-a-release-is-a-self-contained-archive.md) | A release is self-contained: an archive per Linux architecture, and a server runtime in each desktop package | Accepted |
 | [0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md) | An update keeps a snapshot to roll back to | Accepted |
 | [0017](0017-the-android-app-is-a-signed-apk-on-the-release.md) | The Android app is an APK on the release, signed with the project's key | Accepted |
 | [0018](0018-the-interface-follows-pips.md) | The interface follows Pips: lively bots on quiet chrome | Accepted |
