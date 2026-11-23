@@ -2,6 +2,7 @@
 import {
   NonNegativeInt,
   ReleaseCheckFailure,
+  ReleaseNotesUrl,
   ReleaseVersion,
   type UpdateChannel,
   UpdateChannel as UpdateChannelSchema,
@@ -9,13 +10,13 @@ import {
   VerificationFailure,
 } from "@j3-bots/contracts";
 import {
+  type Candidate,
   channelOf,
   GitHubRelease,
   GitHubReleases,
   isNewer,
   newestOn,
   offer,
-  releaseTag,
   SIGNATURE_FILE,
   SUMS_FILE,
   verifySums,
@@ -26,6 +27,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -43,6 +45,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { releaseBase } from "../install/release.ts";
 import { Layout } from "../Layout.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
+import { onlyToReleaseHosts } from "./hosts.ts";
 import { trustedReleaseKeys } from "./keys.ts";
 
 // Which newer release this server is offered, checked against its signature
@@ -56,8 +59,10 @@ import { trustedReleaseKeys } from "./keys.ts";
 // newer than the running one: never a downgrade.
 //
 // What it found is kept in `<home>/state/release-feed.json`, so a restart,
-// an update's included, neither asks again before the check is due nor
-// verifies a release again.
+// an update's included, does not ask again before the check is due. A
+// release's verdict is kept with its evidence, the signed `SHA256SUMS` and
+// its signature, which are verified again against the keys trusted now
+// before the file's word is taken: the file says nothing on its own.
 
 const REPOSITORY_API = "https://api.github.com/repos/JPSAUD501/j3-bots";
 
@@ -77,9 +82,13 @@ const CHECK_EVERY = Duration.hours(6);
 const JITTER = Duration.minutes(30);
 /** The first check after a start that finds no check due later. */
 const FIRST_CHECK_AFTER = Duration.minutes(1);
-/** A check a client asks for repeats the last one's answer within this. */
+/** No check starts within this of the last, whatever asked for it: a client, or a change of channel. */
 const CHECK_AT_MOST_EVERY = Duration.minutes(1);
-/** After a check that did not finish, the wait before the next, doubled each time up to `CHECK_EVERY`. */
+/**
+ * After a check that did not finish, the wait before the next: doubled after
+ * each scheduled one, up to `CHECK_EVERY`, and kept as it is after one a
+ * client asked for.
+ */
 const FIRST_BACKOFF = Duration.minutes(15);
 /** Releases the nightly channel reads, newest first: a week of nightlies and the stable releases between. */
 const NIGHTLY_PAGE = 30;
@@ -93,7 +102,8 @@ const CandidateRecord = Schema.Struct({
   version: ReleaseVersion,
   channel: UpdateChannelSchema,
   publishedAt: Schema.DateTimeUtc,
-  notesUrl: Schema.String,
+  notesUrl: ReleaseNotesUrl,
+  tag: Schema.String,
 });
 
 /** What a channel's last answer said, and the ETag to ask with next. */
@@ -103,14 +113,26 @@ const ChannelRecord = Schema.Struct({
 });
 type ChannelRecord = typeof ChannelRecord.Type;
 
+/**
+ * Whether a channel's newest release verified when it was last checked. A
+ * verified one keeps its evidence, `SHA256SUMS` and `SHA256SUMS.sig` exactly
+ * as downloaded, in base64.
+ */
+const Verdict = Schema.Union([
+  Schema.TaggedStruct("verified", {
+    version: ReleaseVersion,
+    sums: Schema.String,
+    signature: Schema.String,
+  }),
+  Schema.TaggedStruct("refused", { version: ReleaseVersion, failure: VerificationFailure }),
+]);
+type Verdict = typeof Verdict.Type;
+
 const FeedRecord = Schema.Struct({
   schema: Schema.Literal(1),
   stable: Schema.NullOr(ChannelRecord),
   nightly: Schema.NullOr(ChannelRecord),
-  /** Whether each channel's newest release verified when it was last checked: null `failure` when it did. */
-  verdicts: Schema.Array(
-    Schema.Struct({ version: ReleaseVersion, failure: Schema.NullOr(VerificationFailure) }),
-  ),
+  verdicts: Schema.Array(Verdict),
   lastCheck: Schema.NullOr(
     Schema.Struct({
       at: Schema.DateTimeUtc,
@@ -119,6 +141,8 @@ const FeedRecord = Schema.Struct({
       nextAt: Schema.DateTimeUtc,
     }),
   ),
+  /** Until when a rate limit, the last one GitHub answered, says to ask nothing. */
+  limitedUntil: Schema.NullOr(Schema.DateTimeUtc),
   /** The wait after the last check that did not finish; 0 after one that did. */
   backoffMinutes: NonNegativeInt,
 });
@@ -132,8 +156,12 @@ const EMPTY: FeedRecord = {
   nightly: null,
   verdicts: [],
   lastCheck: null,
+  limitedUntil: null,
   backoffMinutes: 0,
 };
+
+/** Any time at all: what nothing waits for. */
+const ANY_TIME = DateTime.makeUnsafe(0);
 
 /** What the feed answers: its part of `UpdateStatus`, and whether a check is running. */
 export interface FeedStatus extends Pick<
@@ -152,14 +180,27 @@ class CheckFailed extends Schema.TaggedError<CheckFailed>()("CheckFailed", {
 const unreachable = () => new CheckFailed({ failure: "unreachable", retryAt: null });
 const unreadable = () => new CheckFailed({ failure: "unreadable", retryAt: null });
 
-/** The time a 403 or 429 says to wait until: `retry-after` seconds, or the rate limit's reset when none is left. */
-const retryAt = (response: HttpClientResponse.HttpClientResponse, now: DateTime.Utc) => {
+/**
+ * The time a 403 or 429 says to wait until: `retry-after` seconds, or the rate
+ * limit's reset when none is left. Never before now and never after a regular
+ * check would be, whatever the header says.
+ */
+const retryAt = (
+  response: HttpClientResponse.HttpClientResponse,
+  now: DateTime.Utc,
+): DateTime.Utc | null => {
+  const from = now.epochMilliseconds;
   const after = Number(response.headers["retry-after"]);
-  if (Number.isFinite(after) && after > 0) return DateTime.add(now, { seconds: after });
   const reset = Number(response.headers["x-ratelimit-reset"]);
-  return response.headers["x-ratelimit-remaining"] === "0" && Number.isFinite(reset)
-    ? DateTime.makeUnsafe(reset * 1000)
-    : null;
+  const at =
+    Number.isFinite(after) && after > 0
+      ? from + after * 1000
+      : response.headers["x-ratelimit-remaining"] === "0" && Number.isFinite(reset)
+        ? reset * 1000
+        : null;
+  return at === null
+    ? null
+    : DateTime.makeUnsafe(Math.min(Math.max(at, from), from + Duration.toMillis(CHECK_EVERY)));
 };
 
 export class ReleaseFeed extends Context.Service<
@@ -186,17 +227,41 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
   const fs = yield* FileSystem.FileSystem;
   const layout = yield* Layout;
   const settings = yield* SettingsService;
-  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
   const api = yield* feedBase;
   const downloads = yield* releaseBase;
+  const client = (yield* HttpClient.HttpClient).pipe(onlyToReleaseHosts([api, downloads]));
   const check = signatureCheck(yield* trustedReleaseKeys);
   const file = layout.releaseFeed;
 
-  const loaded = yield* fs.readFileString(file).pipe(
+  /** Whether a verified verdict's evidence still verifies, with the keys trusted now. */
+  const holds = (verdict: Verdict): boolean => {
+    if (verdict._tag === "refused") return true;
+    const [sums, signature] = [Base64.decode(verdict.sums), Base64.decode(verdict.signature)];
+    return (
+      Result.isSuccess(sums) &&
+      Result.isSuccess(signature) &&
+      Result.isSuccess(
+        verifySums({
+          version: verdict.version,
+          sums: sums.success,
+          signature: signature.success,
+          check,
+        }),
+      )
+    );
+  };
+
+  const read = yield* fs.readFileString(file).pipe(
     Effect.flatMap(Schema.decodeEffect(FeedRecordJson)),
     Effect.orElseSucceed(() => EMPTY),
   );
-  const record = yield* Ref.make(loaded);
+  const kept = read.verdicts.filter(holds);
+  if (kept.length < read.verdicts.length) {
+    yield* Effect.logWarning("The release feed set aside a kept verdict that does not verify", {
+      versions: read.verdicts.filter((verdict) => !holds(verdict)).map(({ version }) => version),
+    });
+  }
+  const record = yield* Ref.make<FeedRecord>({ ...read, verdicts: kept });
   const checking = yield* Ref.make(false);
   const startedAt = yield* DateTime.now;
 
@@ -209,8 +274,14 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
       Option.fromUndefinedOr(saved.verdicts.find((each) => each.version === candidate.version)),
     );
     const verified = Option.flatMap(offered.available, (candidate) =>
-      Option.isSome(verdict) && verdict.value.failure === null
-        ? Option.some({ ...candidate, verified: true })
+      Option.isSome(verdict) && verdict.value._tag === "verified"
+        ? Option.some({
+            version: candidate.version,
+            channel: candidate.channel,
+            publishedAt: candidate.publishedAt,
+            notesUrl: candidate.notesUrl,
+            verified: true,
+          })
         : Option.none(),
     );
     return {
@@ -220,7 +291,8 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
       waitingForStable: offered.waitingForStable,
       refused: Option.match(verdict, {
         onNone: () => null,
-        onSome: ({ version, failure }) => (failure === null ? null : { version, reason: failure }),
+        onSome: (each) =>
+          each._tag === "refused" ? { version: each.version, reason: each.failure } : null,
       }),
       lastCheck:
         saved.lastCheck === null
@@ -249,9 +321,14 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
     );
 
   const get = (url: string, headers: Record<string, string>) =>
-    client
-      .execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers)))
-      .pipe(Effect.timeout(REQUEST_TIMEOUT), Effect.mapError(unreachable));
+    client.execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers))).pipe(
+      Effect.timeout(REQUEST_TIMEOUT),
+      // A redirect to a host releases are not read from is an answer the
+      // feed does not take, not a page it could not reach.
+      Effect.mapError((error) =>
+        error._tag === "ReleaseHostRefused" ? unreadable() : unreachable(),
+      ),
+    );
 
   /** The newest release on `channel`, asked with what `cached` last answered. */
   const fetchNewest = Effect.fn("ReleaseFeed.fetchNewest")(function* (
@@ -289,32 +366,66 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
     return { etag: response.headers["etag"] ?? null, newest: Option.getOrNull(newest) };
   });
 
-  /** A release file's bytes; none when the release has no such file. */
-  const download = Effect.fn("ReleaseFeed.download")(function* (version: string, name: string) {
-    const response = yield* get(`${downloads}/download/${releaseTag(version)}/${name}`, {
+  /**
+   * A file of the release tagged `tag`, from the folder its tag names; none
+   * when the release has no such file. Read as it streams, and given up as
+   * soon as it passes `MAX_LIST_BYTES`, whatever its length said, or did not.
+   */
+  const download = Effect.fn("ReleaseFeed.download")(function* (tag: string, name: string) {
+    const response = yield* get(`${downloads}/download/${tag}/${name}`, {
       "user-agent": `j3-bots/${running}`,
     });
     if (response.status === 404) return Option.none<Uint8Array>();
     if (response.status !== 200) return yield* unreachable();
-    const length = Number(response.headers["content-length"]);
-    if (Number.isFinite(length) && length > MAX_LIST_BYTES) return yield* unreadable();
-    const body = yield* response.arrayBuffer.pipe(Effect.mapError(unreachable));
-    if (body.byteLength > MAX_LIST_BYTES) return yield* unreadable();
-    return Option.some(new Uint8Array(body));
+    const chunks = yield* response.stream.pipe(
+      Stream.mapError(unreachable),
+      Stream.runFoldEffect(
+        () => ({ size: 0, chunks: new Array<Uint8Array>() }),
+        (read, chunk) =>
+          read.size + chunk.byteLength > MAX_LIST_BYTES
+            ? Effect.fail(unreadable())
+            : Effect.succeed({
+                size: read.size + chunk.byteLength,
+                chunks: [...read.chunks, chunk],
+              }),
+      ),
+    );
+    const body = new Uint8Array(chunks.size);
+    let offset = 0;
+    for (const chunk of chunks.chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return Option.some(body);
   });
 
-  /** Whether `version`'s `SHA256SUMS` verifies: null when it does, else why not. */
-  const verify = Effect.fn("ReleaseFeed.verify")(function* (version: string) {
-    const sums = yield* download(version, SUMS_FILE);
-    if (Option.isNone(sums)) return "checksums-missing" as const;
-    const signature = yield* download(version, SIGNATURE_FILE);
+  /** What `release`'s `SHA256SUMS` comes to: verified, with its evidence, or refused, with why. */
+  const verify = Effect.fn("ReleaseFeed.verify")(function* (release: Candidate) {
+    const { version, tag } = release;
+    const sums = yield* download(tag, SUMS_FILE);
+    if (Option.isNone(sums)) {
+      return { _tag: "refused", version, failure: "checksums-missing" } satisfies Verdict;
+    }
+    const signature = yield* download(tag, SIGNATURE_FILE);
     const verified = verifySums({
       version,
       sums: sums.value,
       signature: Option.getOrNull(signature),
       check,
     });
-    return Result.isSuccess(verified) ? null : verified.failure;
+    if (Result.isFailure(verified) || Option.isNone(signature)) {
+      return {
+        _tag: "refused",
+        version,
+        failure: Result.isFailure(verified) ? verified.failure : "signature-missing",
+      } satisfies Verdict;
+    }
+    return {
+      _tag: "verified",
+      version,
+      sums: Base64.encode(sums.value),
+      signature: Base64.encode(signature.value),
+    } satisfies Verdict;
   });
 
   /** The verdicts to keep once `next`'s newest releases are known: only theirs. */
@@ -330,37 +441,65 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
     return verdicts.filter((verdict) => newest.has(verdict.version));
   };
 
+  /**
+   * The earliest a check may start: a minute after the last, whatever asked
+   * for either, and not before a rate limit's reset.
+   */
+  const allowedAt = (saved: FeedRecord): DateTime.Utc =>
+    DateTime.max(
+      saved.lastCheck === null
+        ? ANY_TIME
+        : DateTime.addDuration(saved.lastCheck.at, CHECK_AT_MOST_EVERY),
+      saved.limitedUntil ?? ANY_TIME,
+    );
+
+  /**
+   * When `channel` is due to be checked on its own: when its last check said,
+   * a minute after a start that has none, and as soon as it may be when the
+   * last check was of the other channel.
+   */
+  const due = (saved: FeedRecord, channel: UpdateChannel): DateTime.Utc =>
+    DateTime.max(
+      allowedAt(saved),
+      saved.lastCheck === null
+        ? DateTime.addDuration(startedAt, FIRST_CHECK_AFTER)
+        : saved.lastCheck.channel === channel
+          ? saved.lastCheck.nextAt
+          : ANY_TIME,
+    );
+
   const permit = yield* Semaphore.make(1);
 
-  /** Checks `channel`, unless `fresh` says the last check is recent enough. */
-  const runCheck = (
-    fresh: (saved: FeedRecord, now: DateTime.Utc, channel: UpdateChannel) => boolean,
-  ) =>
+  /**
+   * Checks the server's channel: when it is due, or, for a check a client
+   * asked for, as soon as one may start.
+   */
+  const runCheck = (kind: "due" | "asked") =>
     permit.withPermits(1)(
       Effect.gen(function* () {
         const channel = yield* channelNow;
         const saved = yield* Ref.get(record);
-        if (fresh(saved, yield* DateTime.now, channel)) return;
+        const startAt = kind === "due" ? due(saved, channel) : allowedAt(saved);
+        if (DateTime.isLessThan(yield* DateTime.now, startAt)) return;
         yield* Ref.set(checking, true);
         yield* publish;
         const outcome = yield* Effect.gen(function* () {
           const found = yield* fetchNewest(channel, saved[channel]);
           const offered = found.newest !== null && isNewer(found.newest.version, running);
           const verified = saved.verdicts.some(
-            (each) => each.version === found.newest?.version && each.failure === null,
+            (each) => each.version === found.newest?.version && each._tag === "verified",
           );
           // A release that verified once is not downloaded again; one that
           // was refused is, since a release's files can be fixed in place.
           if (found.newest === null || !offered || verified) {
             return { found, verdicts: saved.verdicts };
           }
-          const { version } = found.newest;
-          const failure = yield* verify(version);
+          const verdict = yield* verify(found.newest);
           return {
             found,
             verdicts: [
-              ...saved.verdicts.filter((each) => each.version !== version),
-              { version, failure },
+              ...saved.verdicts.filter((each) => each.version !== verdict.version),
+              verdict,
             ],
           };
         }).pipe(
@@ -386,24 +525,29 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
                 failure: null,
                 nextAt: DateTime.addDuration(now, Duration.sum(CHECK_EVERY, jitter)),
               },
+              limitedUntil: null,
               backoffMinutes: 0,
             };
           },
           onFailure: (failed) => {
+            // Only a scheduled check doubles the wait, so a client asking
+            // again and again does not push the next check out.
             const backoff =
               saved.backoffMinutes === 0
                 ? Duration.toMinutes(FIRST_BACKOFF)
-                : Math.min(saved.backoffMinutes * 2, Duration.toMinutes(CHECK_EVERY));
+                : kind === "due"
+                  ? Math.min(saved.backoffMinutes * 2, Duration.toMinutes(CHECK_EVERY))
+                  : saved.backoffMinutes;
             const after = DateTime.add(now, { minutes: backoff });
-            // Never later than a regular check would be, whatever a reset says.
-            const latest = DateTime.addDuration(now, CHECK_EVERY);
-            const nextAt =
-              failed.retryAt === null
-                ? after
-                : DateTime.min(DateTime.max(after, failed.retryAt), latest);
             return {
               ...saved,
-              lastCheck: { at: now, channel, failure: failed.failure, nextAt },
+              lastCheck: {
+                at: now,
+                channel,
+                failure: failed.failure,
+                nextAt: failed.retryAt === null ? after : DateTime.max(after, failed.retryAt),
+              },
+              limitedUntil: failed.retryAt ?? saved.limitedUntil,
               backoffMinutes: backoff,
             };
           },
@@ -418,39 +562,41 @@ export const make = Effect.fn("ReleaseFeed.make")(function* (options: {
       }).pipe(Effect.ensuring(Ref.set(checking, false).pipe(Effect.andThen(publish)))),
     );
 
-  const checkNow = runCheck(
-    (saved, now, channel) =>
-      saved.lastCheck !== null &&
-      saved.lastCheck.channel === channel &&
-      saved.lastCheck.failure === null &&
-      Duration.isLessThan(DateTime.distance(saved.lastCheck.at, now), CHECK_AT_MOST_EVERY),
-  ).pipe(Effect.andThen(current));
+  const checkNow = runCheck("asked").pipe(Effect.andThen(current));
 
-  // On its own: when the last check says the next is due, or a minute after
-  // a start that has none. It looks again at least each minute, so a check
-  // that moved the time, or a clock that jumped, is followed.
-  const due = (saved: FeedRecord) =>
-    saved.lastCheck?.nextAt ?? DateTime.addDuration(startedAt, FIRST_CHECK_AFTER);
+  // On its own, whenever a check is due. It looks again at least each minute,
+  // so a check that moved the time, or a clock that jumped, is followed. A
+  // defect in one round is logged and the next comes a minute later, so the
+  // feed never stops checking.
   yield* Effect.forkScoped(
     Effect.forever(
       Effect.gen(function* () {
-        const wait = DateTime.distance(yield* DateTime.now, due(yield* Ref.get(record)));
+        const at = due(yield* Ref.get(record), yield* channelNow);
+        const wait = DateTime.distance(yield* DateTime.now, at);
         if (Duration.isLessThanOrEqualTo(wait, Duration.zero)) {
-          yield* runCheck((saved, now) => DateTime.isLessThan(now, due(saved)));
+          yield* runCheck("due");
         } else {
           yield* Effect.sleep(Duration.min(wait, Duration.minutes(1)));
         }
-      }),
+      }).pipe(
+        Effect.catchDefect((defect) =>
+          Effect.logError("The release feed could not run its check", { defect }).pipe(
+            Effect.andThen(Effect.sleep(Duration.minutes(1))),
+          ),
+        ),
+      ),
     ),
   );
 
-  // A new channel is checked at once, conditionally, so it costs little.
+  // A new channel is checked as soon as a check may start: at once, unless
+  // one ran within the minute or a rate limit holds. It is conditional, so it
+  // costs little.
   yield* Effect.forkScoped(
     settings.changes.pipe(
       Stream.map((saved) => saved.updateChannel),
       Stream.changes,
       Stream.drop(1),
-      Stream.runForEach(() => publish.pipe(Effect.andThen(runCheck(() => false)))),
+      Stream.runForEach(() => publish.pipe(Effect.andThen(runCheck("due")))),
     ),
   );
 

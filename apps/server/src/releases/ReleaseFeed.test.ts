@@ -7,13 +7,16 @@ import { type GitHubRelease, releaseTag } from "@j3-bots/release";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
+import { Layout } from "../Layout.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { make } from "./ReleaseFeed.ts";
+import { GITHUB_RELEASE_FILES } from "./hosts.ts";
+import { type FeedStatus, make } from "./ReleaseFeed.ts";
 
 const API = "https://api.test/repos/owner/j3-bots";
 const DOWNLOADS = "https://mirror.test/releases";
@@ -48,7 +51,11 @@ class FakeGitHub extends Context.Service<
     files: Map<string, Published>;
     /** While set, the API answers 403 with no requests left, until this epoch second. */
     limitedUntil: number | null;
-    asked: Array<{ readonly path: string; readonly etag: string | null }>;
+    /** While set, the API answers 500. */
+    failing: boolean;
+    /** While set, the releases page sends each download to the same path on this origin. */
+    redirectTo: string | null;
+    asked: Array<{ readonly origin: string; readonly path: string; readonly etag: string | null }>;
   }
 >()("@j3-bots/server/releases/ReleaseFeed.test/FakeGitHub") {}
 
@@ -72,12 +79,14 @@ const fakeGitHub = Layer.effectContext(
       listed: [],
       files: new Map(),
       limitedUntil: null,
+      failing: false,
+      redirectTo: null,
       asked: [],
     });
     const client = HttpClient.make((request, url) =>
       Effect.sync(() => {
         const etag = request.headers["if-none-match"] ?? null;
-        github.asked.push({ path: url.pathname, etag });
+        github.asked.push({ origin: url.origin, path: url.pathname, etag });
         const answer = (body: unknown) => {
           // The ETag names the body, as GitHub's does.
           const tag = `"${NodeCrypto.createHash("sha256").update(JSON.stringify(body)).digest("hex").slice(0, 16)}"`;
@@ -98,12 +107,24 @@ const fakeGitHub = Layer.effectContext(
               }),
             );
           }
+          if (github.failing) {
+            return HttpClientResponse.fromWeb(request, new Response("{}", { status: 500 }));
+          }
           if (url.pathname.endsWith("/releases/latest")) {
             return github.latest === null
               ? HttpClientResponse.fromWeb(request, new Response("{}", { status: 404 }))
               : answer(github.latest);
           }
           return answer(github.listed);
+        }
+        if (github.redirectTo !== null && url.origin === new URL(DOWNLOADS).origin) {
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(null, {
+              status: 302,
+              headers: { location: `${github.redirectTo}${url.pathname}` },
+            }),
+          );
         }
         const [, tag, name] = /\/download\/([^/]+)\/(.+)$/.exec(url.pathname) ?? [];
         const files = [...github.files].find(([version]) => releaseTag(version) === tag)?.[1];
@@ -259,15 +280,101 @@ describe("the release feed", () => {
       assert.strictEqual(limited.lastCheck?.nextAt.epochMilliseconds, github.limitedUntil * 1000);
       assert.strictEqual(limited.available?.version, "0.3.1");
 
-      // Nothing is asked on its own before the reset.
+      // Nothing is asked before the reset: not on its own, not for a client,
+      // not for a change of channel.
       const before = github.asked.length;
-      yield* TestClock.adjust("59 minutes");
+      yield* TestClock.adjust("30 minutes");
+      yield* feed.check;
+      yield* setChannel("nightly");
+      yield* setChannel("stable");
+      yield* TestClock.adjust("29 minutes");
       assert.strictEqual(github.asked.length, before);
       github.limitedUntil = null;
       yield* TestClock.adjust("90 seconds");
       // Waits for the check under way, which answered within the minute.
       assert.isNull((yield* feed.check).lastCheck?.failure);
       assert.strictEqual(github.asked.length, before + 1);
+
+      // A reset too far off to be one waits no longer than a regular check.
+      yield* TestClock.adjust("2 minutes");
+      github.limitedUntil = Number.MAX_SAFE_INTEGER;
+      const far = yield* feed.check;
+      assert.strictEqual(far.lastCheck?.failure, "rate-limited");
+      assert.strictEqual(
+        far.lastCheck?.nextAt.epochMilliseconds,
+        (far.lastCheck?.at.epochMilliseconds ?? 0) + 6 * 60 * 60 * 1000,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "asks at most once a minute after a failed check too, and a client's checks do not stretch the wait",
+    () =>
+      Effect.gen(function* () {
+        const github = yield* FakeGitHub;
+        github.failing = true;
+        const feed = yield* make({ running: "0.3.0" });
+        const wait = (status: FeedStatus) =>
+          (status.lastCheck?.nextAt.epochMilliseconds ?? 0) -
+          (status.lastCheck?.at.epochMilliseconds ?? 0);
+
+        const first = yield* feed.check;
+        assert.strictEqual(first.lastCheck?.failure, "unreadable");
+        assert.strictEqual(wait(first), 15 * 60 * 1000);
+        yield* feed.check;
+        assert.strictEqual(github.asked.length, 1);
+
+        for (let round = 0; round < 3; round++) {
+          yield* TestClock.adjust("61 seconds");
+          assert.strictEqual(wait(yield* feed.check), 15 * 60 * 1000);
+        }
+        assert.strictEqual(github.asked.length, 4);
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect(
+    "follows the releases page to GitHub's host for release files, and to no other host",
+    () =>
+      Effect.gen(function* () {
+        const github = yield* FakeGitHub;
+        github.latest = release("0.3.1", false);
+        github.files.set("0.3.1", signed("0.3.1"));
+        github.redirectTo = "https://elsewhere.test";
+        const feed = yield* make({ running: "0.3.0" });
+
+        const refused = yield* feed.check;
+        assert.isNull(refused.available);
+        assert.strictEqual(refused.lastCheck?.failure, "unreadable");
+        assert.notInclude(
+          github.asked.map((each) => each.origin),
+          "https://elsewhere.test",
+        );
+
+        github.redirectTo = GITHUB_RELEASE_FILES;
+        yield* TestClock.adjust("2 minutes");
+        const followed = yield* feed.check;
+        assert.strictEqual(followed.available?.version, "0.3.1");
+        assert.include(
+          github.asked.map((each) => `${each.origin}${each.path}`),
+          `${GITHUB_RELEASE_FILES}/releases/download/v0.3.1/SHA256SUMS.sig`,
+        );
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("stops reading a release's file past a mebibyte, whatever its length says", () =>
+    Effect.gen(function* () {
+      const github = yield* FakeGitHub;
+      github.latest = release("0.3.1", false);
+      github.files.set("0.3.1", {
+        sums: `${signed("0.3.1").sums}${"#".repeat(1024 * 1024)}`,
+        signature: signed("0.3.1").signature,
+      });
+      const feed = yield* make({ running: "0.3.0" });
+
+      const status = yield* feed.check;
+      assert.isNull(status.available);
+      assert.isNull(status.refused);
+      assert.strictEqual(status.lastCheck?.failure, "unreadable");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -304,9 +411,12 @@ describe("the release feed", () => {
           ],
         );
 
+        // The new channel is checked once a minute has passed since the last check.
         yield* setChannel("stable");
+        yield* TestClock.adjust("1 minute");
         const stable = yield* feed.check;
         assert.strictEqual(stable.channel, "stable");
+        assert.include(yield* asked, "/repos/owner/j3-bots/releases/latest");
         assert.isNull(stable.available);
         assert.isTrue(stable.waitingForStable);
 
@@ -339,6 +449,32 @@ describe("the release feed", () => {
       assert.strictEqual(github.asked.length, 3);
       const status = yield* restarted.status;
       assert.strictEqual(status.available?.version, "0.3.1");
+      assert.isNotNull(status.lastCheck);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("offers nothing from a kept verdict whose evidence does not verify", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const layout = yield* Layout;
+      const github = yield* FakeGitHub;
+      github.latest = release("0.3.1", false);
+      github.files.set("0.3.1", signed("0.3.1"));
+      yield* Effect.scoped(Effect.flatMap(make({ running: "0.3.0" }), (feed) => feed.check));
+
+      // The file says the release verified, and its list is another one.
+      const kept = yield* fs.readFileString(layout.releaseFeed);
+      const forged = signed("0.3.1").sums.replace("1".repeat(64), "3".repeat(64));
+      const original = Buffer.from(signed("0.3.1").sums).toString("base64");
+      assert.include(kept, original);
+      yield* fs.writeFileString(
+        layout.releaseFeed,
+        kept.replace(original, Buffer.from(forged).toString("base64")),
+      );
+
+      const restarted = yield* make({ running: "0.3.0" });
+      const status = yield* restarted.status;
+      assert.isNull(status.available);
       assert.isNotNull(status.lastCheck);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
