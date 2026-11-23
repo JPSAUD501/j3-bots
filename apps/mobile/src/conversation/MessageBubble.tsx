@@ -23,6 +23,7 @@ import { usePresentation } from "../presentation.tsx";
 
 import { FileCard } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
+import { VisualCard } from "./VisualCard.tsx";
 import { AnimatedView } from "./animated.ts";
 import { useTint } from "./tint.ts";
 import { EntryWidths } from "./widths.ts";
@@ -120,8 +121,9 @@ function LineAction(props: {
 
 /**
  * One message: the operator's on the right and dark, a bot's on the left and
- * light. Under each of the operator's messages, how it fares; one that failed
- * offers Send again, and one this device could not send offers Delete too.
+ * light, a bot's with the visual it showed, if any, above its words. Under
+ * each of the operator's messages, how it fares; one that failed offers Send
+ * again, and one this device could not send offers Delete too.
  */
 export function MessageBubble({
   message,
@@ -195,6 +197,9 @@ export function MessageBubble({
           />
           <Text className="text-xs font-medium text-foreground">{speaker.profile.name}</Text>
         </View>
+      )}
+      {message._tag === "message" && message.visual !== undefined && (
+        <VisualCard id={message.id} visual={message.visual} />
       )}
       {message.text !== "" && (
         <View

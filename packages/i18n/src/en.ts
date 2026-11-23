@@ -188,6 +188,10 @@ export const en = {
   "visual.close": "Close",
   "visual.failed": "Couldn’t show this visual.",
 
+  "visual.open": "Opens it full screen",
+  "visual.close": "Close",
+  "visual.failed": "Couldn’t show this visual",
+
   "card.waiting": "Waiting for you",
 
   "question.title": "Question",

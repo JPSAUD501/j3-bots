@@ -87,6 +87,7 @@ import { MessageBubble } from "./MessageBubble.tsx";
 import { AnimatedView } from "./animated.ts";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { ToLatest } from "./ToLatest.tsx";
+import { VisualHeights } from "./VisualCard.tsx";
 import { EntryWidths } from "./widths.ts";
 import { type TurnBot, WorkFold } from "./WorkFold.tsx";
 
@@ -260,6 +261,8 @@ export function ConversationView({
   );
   const [composerHeight, setComposerHeight] = useState(0);
   const [column, setColumn] = useState(0);
+  // A cache the visuals fill, not state: the conversation is mounted once per conversation.
+  const [visualHeights] = useState(() => new Map<EntryId, number>());
   const widths = useMemo(() => {
     const { max, bubbleShare, cardShare } = layout.entryWidth;
     return {
@@ -330,66 +333,68 @@ export function ConversationView({
             setColumn(Math.min(event.nativeEvent.layout.width, layout.textColumn))
           }
         >
-          <EntryWidths value={widths}>
-            {quiet ? (
-              item._tag === "bot" ? (
-                <Quiet bot={item.bot} bottom={composerHeight} />
+          <VisualHeights value={visualHeights}>
+            <EntryWidths value={widths}>
+              {quiet ? (
+                item._tag === "bot" ? (
+                  <Quiet bot={item.bot} bottom={composerHeight} />
+                ) : (
+                  <QuietRoom room={item.room} bottom={composerHeight} />
+                )
               ) : (
-                <QuietRoom room={item.room} bottom={composerHeight} />
-              )
-            ) : (
-              <KeyboardAwareLegendList
-                ref={list}
-                data={rows}
-                keyExtractor={(row) => row.key}
-                getItemType={(row) => row.kind}
-                estimatedItemSize={64}
-                // Rows keep state of their own, such as an open fold: a row is never reused for another.
-                recycleItems={false}
-                renderItem={({ item: row }) => (
-                  <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
-                    <Row
-                      row={row}
-                      room={room}
-                      turnBot={turnBot}
-                      arriving={arrived.has(row.key)}
-                      openingHold={openingHold}
-                      onOpenBot={onOpenBot}
-                      onOpenRoutine={openRoutine}
-                    />
-                  </View>
-                )}
-                extraData={{ room, widths, arrived, openingHold, turnBot }}
-                onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) =>
-                  end.follow(
-                    contentSize.height - layoutMeasurement.height - contentOffset.y,
-                    layoutMeasurement.height,
-                  )
-                }
-                scrollEventThrottle={64}
-                alignItemsAtEnd
-                initialScrollAtEnd
-                maintainScrollAtEnd
-                maintainVisibleContentPosition
-                onStartReached={() => {
-                  if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
-                }}
-                ListHeaderComponent={
-                  state?.loadingOlder === true ? (
-                    <Text className="py-3 text-center text-xs text-muted-foreground">
-                      {t("timeline.loadingOlder")}
-                    </Text>
-                  ) : null
-                }
-                viewabilityConfigCallbackPairs={pairs}
-                contentInsetEndAdjustment={contentInsetEndAdjustment}
-                keyboardOffset={insets.bottom}
-                keyboardDismissMode="interactive"
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
-              />
-            )}
-          </EntryWidths>
+                <KeyboardAwareLegendList
+                  ref={list}
+                  data={rows}
+                  keyExtractor={(row) => row.key}
+                  getItemType={(row) => row.kind}
+                  estimatedItemSize={64}
+                  // Rows keep state of their own, such as an open fold: a row is never reused for another.
+                  recycleItems={false}
+                  renderItem={({ item: row }) => (
+                    <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
+                      <Row
+                        row={row}
+                        room={room}
+                        turnBot={turnBot}
+                        arriving={arrived.has(row.key)}
+                        openingHold={openingHold}
+                        onOpenBot={onOpenBot}
+                        onOpenRoutine={openRoutine}
+                      />
+                    </View>
+                  )}
+                  extraData={{ room, widths, arrived, openingHold, turnBot }}
+                  onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) =>
+                    end.follow(
+                      contentSize.height - layoutMeasurement.height - contentOffset.y,
+                      layoutMeasurement.height,
+                    )
+                  }
+                  scrollEventThrottle={64}
+                  alignItemsAtEnd
+                  initialScrollAtEnd
+                  maintainScrollAtEnd
+                  maintainVisibleContentPosition
+                  onStartReached={() => {
+                    if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
+                  }}
+                  ListHeaderComponent={
+                    state?.loadingOlder === true ? (
+                      <Text className="py-3 text-center text-xs text-muted-foreground">
+                        {t("timeline.loadingOlder")}
+                      </Text>
+                    ) : null
+                  }
+                  viewabilityConfigCallbackPairs={pairs}
+                  contentInsetEndAdjustment={contentInsetEndAdjustment}
+                  keyboardOffset={insets.bottom}
+                  keyboardDismissMode="interactive"
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+                />
+              )}
+            </EntryWidths>
+          </VisualHeights>
           {/* Over the composer, riding on the keyboard with it. */}
           {!quiet && (
             <KeyboardStickyView
