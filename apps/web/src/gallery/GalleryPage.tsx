@@ -2695,6 +2695,20 @@ function WhereBotsLiveSection() {
             footer={<StopUsingComputer quiet onStop={() => Promise.resolve(false)} />}
           />
         </Frame>
+        <Frame
+          label="This computer's sign-in can't be read, as while a keyring is locked"
+          width={390}
+          height={420}
+        >
+          <StorageFailed
+            onRetry={nothing}
+            desktop={{
+              _tag: "local",
+              restart: nothing,
+              leave: <StopUsingComputer quiet onStop={() => Promise.resolve(false)} />,
+            }}
+          />
+        </Frame>
         <Frame label="Stopping the bots on this computer" width={390} height={360}>
           <StoppingLocal />
         </Frame>

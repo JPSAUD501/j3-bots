@@ -386,9 +386,13 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
           <StorageFailed
             onRetry={j3.reconnectNow}
             desktop={
-              desktop === null || desktopServer === undefined
+              desktop === null
                 ? undefined
-                : { server: desktopServer, restart: desktop.relaunch }
+                : local !== null
+                  ? { _tag: "local", leave: local.leave, restart: desktop.relaunch }
+                  : desktopServer === undefined
+                    ? undefined
+                    : { _tag: "server", server: desktopServer, restart: desktop.relaunch }
             }
           />
         </Screen>
@@ -501,7 +505,15 @@ function useLocalHere(origin: URL) {
         ? Promise.resolve(true)
         : j3.signOut().then((result) => result._tag !== "failed");
     return signedOut
-      .then((out) => (out ? desktopLocal.connectToServerInstead() : null))
+      .then((out) =>
+        out
+          ? // The app starts with the system only while the bots live here: off
+            // first, and on the way to a server whatever it answered.
+            (startWithSystem ? desktopLocal.setStartWithSystem(false) : Promise.resolve(null)).then(
+              () => desktopLocal.connectToServerInstead(),
+            )
+          : null,
+      )
       .then((answer) => {
         // Once it changed, the app loads the page again on the server address screen.
         if (answer === "changed") return true;
@@ -622,6 +634,7 @@ function useLocalHere(origin: URL) {
 
   return {
     screen,
+    leave: stopInstead,
     line:
       view === null
         ? undefined

@@ -137,7 +137,7 @@ function FailureDetails({ server }: { readonly server: LocalServerState }) {
       <pre
         id={logId}
         hidden={!open}
-        className="max-h-60 overflow-auto rounded-lg bg-muted p-3 font-mono text-2xs whitespace-pre-wrap break-all text-muted-foreground"
+        className="max-h-60 overflow-auto rounded-lg bg-muted p-3 font-mono text-2xs whitespace-pre-wrap break-words text-muted-foreground"
       >
         {server.logTail === undefined || server.logTail.trim() === ""
           ? t("local.failed.noLog")

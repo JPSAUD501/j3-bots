@@ -831,7 +831,7 @@ const sentences = {
   "local.signedOut.failed": "Este computador não conseguiu entrar. Tente de novo.",
   "local.signInFailed.title": "Este computador não conseguiu entrar",
   "local.signInFailed.body":
-    "Os bots estão neste computador, mas o app não conseguiu falar com eles.",
+    "Os bots continuam neste computador. Entre de novo; se continuar falhando, reinicie o J3 Bots.",
   "local.stopping": "Parando os bots neste computador…",
   "local.stop": "Parar de usar este computador",
   "local.stop.title": "Parar de usar este computador?",
@@ -866,6 +866,8 @@ const sentences = {
   "gate.storage.desktopTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.desktopBody":
     "O J3 Bots não conseguiu ler o acesso que guarda neste dispositivo para {address}. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots. Trocar para outro servidor, ou para este de novo, desconecta este dispositivo aqui.",
+  "gate.storage.localBody":
+    "O J3 Bots não conseguiu ler o acesso que guarda para os bots deste computador. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots.",
   "gate.storage.mobileTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.mobileBody":
     "O J3 Bots não conseguiu ler o acesso que guarda no armazenamento seguro deste dispositivo. Tente de novo ou reinicie o app. Esquecer o acesso desconecta este dispositivo aqui, para que você possa pareá-lo de novo.",

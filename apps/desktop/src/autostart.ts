@@ -82,8 +82,10 @@ const decodeRequest = Schema.decodeUnknownOption(StartWithSystemRequest);
 
 /**
  * Keeps the system's start of the app as the settings say, and lets the page
- * change it. As the app starts, an entry that is on is written again, so it
- * names the app where it runs now, as after an AppImage was moved.
+ * change it. It holds only while the bots live on this computer. As the app
+ * starts, an entry that is on is written again, so it names the app where it
+ * runs now, as after an AppImage was moved, and removed when the bots live
+ * elsewhere now, as when leaving this computer could not turn it off.
  */
 export const serve = Effect.fn("desktop.autostart")(function* (
   fromApp: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean,
@@ -91,8 +93,9 @@ export const serve = Effect.fn("desktop.autostart")(function* (
   const settings = yield* DesktopSettings;
   const context = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const runPromise = Effect.runPromiseWith(context);
-  if ((yield* settings.get).startWithSystem) {
-    yield* apply(true).pipe(
+  const { startWithSystem, mode } = yield* settings.get;
+  if (startWithSystem) {
+    yield* apply(mode === "local").pipe(
       Effect.catch((error) =>
         Effect.logWarning("Renewing the app's start with the system failed", error),
       ),

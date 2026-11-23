@@ -820,7 +820,8 @@ export const en = {
   "local.signedOut.pending": "Signing in…",
   "local.signedOut.failed": "This computer couldn’t sign in. Try again.",
   "local.signInFailed.title": "This computer couldn’t sign in",
-  "local.signInFailed.body": "Your bots are on this computer, but this app couldn’t reach them.",
+  "local.signInFailed.body":
+    "Your bots are still on this computer. Sign in again; if it keeps failing, restart J3 Bots.",
   "local.stopping": "Stopping the bots on this computer…",
   "local.stop": "Stop using this computer",
   "local.stop.title": "Stop using this computer?",
@@ -855,6 +856,8 @@ export const en = {
   "gate.storage.desktopTitle": "This device’s sign-in can’t be read",
   "gate.storage.desktopBody":
     "J3 Bots couldn’t read the sign-in it keeps on this device for {address}. If your system’s keychain or keyring is locked, unlock it, then restart J3 Bots. Changing to another server, or to this one again, signs this device out here.",
+  "gate.storage.localBody":
+    "J3 Bots couldn’t read the sign-in it keeps for the bots on this computer. If your system’s keychain or keyring is locked, unlock it, then restart J3 Bots.",
   "gate.storage.mobileTitle": "This device’s sign-in can’t be read",
   "gate.storage.mobileBody":
     "J3 Bots couldn’t read the sign-in it keeps in this device’s secure storage. Try again, or restart the app. Forgetting the sign-in signs this device out here, so you can pair it again.",
