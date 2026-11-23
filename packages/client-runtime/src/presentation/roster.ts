@@ -6,6 +6,7 @@ import type {
   RosterItem,
   RosterItemKey,
   Section,
+  SectionId,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { type IntentResult, refusedWith } from "../intents/Actions.ts";
@@ -148,12 +149,16 @@ export function arrangeRoster(
 
 /**
  * The rows of an arranged roster in the order they are drawn, as the keys
- * that move between conversations walk them: the hidden bots are not drawn.
+ * that move between conversations walk them: the hidden bots and those in a
+ * section `folded` says is folded are not drawn.
  */
-export const arrangedOrder = (arranged: ArrangedRoster): ReadonlyArray<RosterItem> => [
+export const arrangedOrder = (
+  arranged: ArrangedRoster,
+  folded: (sectionId: SectionId) => boolean,
+): ReadonlyArray<RosterItem> => [
   ...arranged.pinned,
   ...arranged.main,
-  ...arranged.sections.flatMap((section) => section.items),
+  ...arranged.sections.flatMap(({ section, items }) => (folded(section.id) ? [] : items)),
 ];
 
 const fold = (s: string) => s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();

@@ -93,7 +93,7 @@ import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { Roster } from "../components/Roster";
-import { HiddenBots, SectionBlock } from "../components/RosterGroups";
+import { HiddenBots, SectionBlock, useFoldedSections } from "../components/RosterGroups";
 import type { RosterIntents, RosterMenuContext } from "../components/RosterMenu";
 import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
@@ -764,6 +764,7 @@ function RosterSection() {
 /** The roster alone, at its width beside a conversation, with its own copy of the sample team. */
 function RosterFrame() {
   const source = useSampleSource();
+  const folded = useFoldedSections(source.data.sections);
   const [selected, setSelected] = useState<RosterItemKey | null>({
     _tag: "bot",
     botId: ids.atlas,
@@ -777,7 +778,12 @@ function RosterFrame() {
         rowLink={(item) => rowButton(() => setSelected(rowKey(item)))}
         onNewBot={nothing}
         onNewRoom={nothing}
-        intents={rosterIntents(source.intents, setSelected)}
+        intents={rosterIntents(source.intents, {
+          selected,
+          select: setSelected,
+          setDetailsOpen: nothing,
+        })}
+        folded={folded}
       />
     </div>
   );

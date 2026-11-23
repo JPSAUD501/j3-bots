@@ -22,7 +22,13 @@ import {
 import { useBots, useI18n } from "../app/context";
 import type { AvatarHandle } from "./avatar/BotAvatar";
 import { ReorderList, ReorderRow } from "./ReorderList";
-import { HiddenBots, HiddenRow, PinnedBots, SectionBlock, useFoldedSections } from "./RosterGroups";
+import {
+  type FoldedSections,
+  HiddenBots,
+  HiddenRow,
+  PinnedBots,
+  SectionBlock,
+} from "./RosterGroups";
 import {
   RosterItemRows,
   type RosterIntents,
@@ -109,6 +115,8 @@ interface RosterProps {
   readonly onNewBot: () => void;
   readonly onNewRoom: () => void;
   readonly intents: RosterIntents;
+  /** The sections folded on this device: the shell's, since its keys skip what they hide. */
+  readonly folded: FoldedSections;
   readonly footer?: ReactNode;
   /**
    * The roster's landmark. It takes focus only from code, where neither a row
@@ -131,6 +139,7 @@ export function Roster({
   onNewBot,
   onNewRoom,
   intents,
+  folded,
   footer,
   ref,
 }: RosterProps) {
@@ -140,7 +149,6 @@ export function Roster({
   const [showHidden, setShowHidden] = useState(false);
   const [question, setQuestion] = useState<RosterQuestion | null>(null);
   const [renaming, setRenaming] = useState<SectionId | null>(null);
-  const folded = useFoldedSections();
   const scroller = useRef<HTMLDivElement>(null);
   const [avatars] = useState(() => new RowAvatars());
 
@@ -322,6 +330,7 @@ export function Roster({
         question={question}
         onClose={() => setQuestion(null)}
         intents={intents}
+        primary={menu.primary}
       />
     </nav>
   );

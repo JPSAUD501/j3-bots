@@ -99,13 +99,19 @@ describe("arrangeRoster", () => {
       ["Work", ["Ana", "Bia"]],
     ]);
     expect(names(arranged.hidden)).toEqual(["Away"]);
-    expect(names(arrangedOrder(arranged))).toEqual([
+    expect(names(arrangedOrder(arranged, () => false))).toEqual([
       "Pinned",
       "Launch",
       "Loose",
       "Orphan",
       "Ana",
       "Bia",
+    ]);
+    expect(names(arrangedOrder(arranged, (id) => id === work.id))).toEqual([
+      "Pinned",
+      "Launch",
+      "Loose",
+      "Orphan",
     ]);
   });
 });

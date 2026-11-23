@@ -67,7 +67,7 @@ export interface RosterIntents {
 
 /** A question a menu row asks before it acts, shown once the menu has closed. */
 export type RosterQuestion =
-  | { readonly _tag: "replace-primary"; readonly bot: Bot; readonly previous: Bot }
+  | { readonly _tag: "replace-primary"; readonly bot: Bot }
   | { readonly _tag: "delete-bot"; readonly bot: Bot }
   | { readonly _tag: "delete-section"; readonly section: Section };
 
@@ -187,10 +187,7 @@ function BotRows({
             {t("roster.makePrimary")}
           </MenuItem>
         ) : (
-          <MenuItem
-            icon={<StarIcon />}
-            onClick={() => menu.ask({ _tag: "replace-primary", bot, previous: primary })}
-          >
+          <MenuItem icon={<StarIcon />} onClick={() => menu.ask({ _tag: "replace-primary", bot })}>
             {t("roster.replacePrimary")}
           </MenuItem>
         ))}
@@ -378,10 +375,13 @@ export function RosterQuestionDialog({
   question,
   onClose,
   intents,
+  primary,
 }: {
   question: RosterQuestion | null;
   onClose: () => void;
   intents: RosterIntents;
+  /** The primary bot as the roster has it now, which the question names. */
+  primary: Bot | null;
 }) {
   const { t } = useI18n();
   const open = question !== null;
@@ -391,8 +391,10 @@ export function RosterQuestionDialog({
   if (question === null) return null;
   switch (question._tag) {
     case "replace-primary": {
+      // Named as it is when the question shows, not when the menu opened.
+      if (primary === null || primary.id === question.bot.id) return null;
       const name = question.bot.profile.name;
-      const previous = question.previous.profile.name;
+      const previous = primary.profile.name;
       return (
         <ConfirmDialog
           open={open}

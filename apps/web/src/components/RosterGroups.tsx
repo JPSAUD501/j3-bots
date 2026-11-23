@@ -6,6 +6,7 @@ import {
   type RosterItem,
   type RosterItemKey,
   type Section,
+  type SectionId,
   SECTION_NAME_LENGTH,
 } from "@j3-bots/contracts";
 import { type BotItem, rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
@@ -28,11 +29,18 @@ const isSelected = (item: BotItem, selected: RosterItemKey | null) =>
 const FOLDED_KEY = "j3:roster:folded";
 const Folded = Schema.fromJsonString(Schema.Array(Schema.String));
 
+/** Which sections are folded, and the way to fold or unfold one. */
+export interface FoldedSections {
+  readonly has: (sectionId: SectionId) => boolean;
+  readonly set: (sectionId: SectionId, fold: boolean) => void;
+}
+
 /**
  * The sections the operator has folded, remembered in this browser: folding
- * is how one screen shows the roster, not part of the roster itself.
+ * is how one screen shows the roster, not part of the roster itself. What it
+ * remembers is only ever the sections that still exist.
  */
-export function useFoldedSections() {
+export function useFoldedSections(sections: ReadonlyArray<Section> | null): FoldedSections {
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => {
     let raw: string | null = null;
     try {
@@ -45,9 +53,10 @@ export function useFoldedSections() {
     );
   });
   return {
-    has: (id: string) => folded.has(id),
-    set: (id: string, fold: boolean) => {
-      const next = new Set(folded);
+    has: (id) => folded.has(id),
+    set: (id, fold) => {
+      const existing = new Set<string>((sections ?? []).map((section) => section.id));
+      const next = new Set([...folded].filter((known) => existing.has(known)));
       if (fold) next.add(id);
       else next.delete(id);
       setFolded(next);

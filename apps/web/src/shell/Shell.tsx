@@ -42,6 +42,7 @@ import {
   QuietRoom,
 } from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
+import { useFoldedSections } from "../components/RosterGroups";
 import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
@@ -96,6 +97,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const [containerRef, layout] = useShellLayout();
 
   const rosterItems = data.roster ?? [];
+  const folded = useFoldedSections(data.sections);
   const bots = rosterItems.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
   const item =
     selected === null
@@ -196,7 +198,10 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       case "next":
       case "previous": {
         // In the order the roster draws them, so the keys walk what the operator sees.
-        const rows = arrangedOrder(arrangeRoster(orderRoster(rosterItems), data.sections ?? []));
+        const rows = arrangedOrder(
+          arrangeRoster(orderRoster(rosterItems), data.sections ?? []),
+          folded.has,
+        );
         const forward = action === "next";
         const index = item === null ? -1 : rows.indexOf(item);
         // With nothing selected, down starts at the top and up at the bottom.
@@ -357,10 +362,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       onNewBot={intents.newBot}
       onNewRoom={intents.newRoom}
       sections={data.sections}
-      intents={rosterIntents(intents, (key) => {
-        navigation.select(key);
-        navigation.setDetailsOpen(true);
-      })}
+      intents={rosterIntents(intents, navigation)}
+      folded={folded}
       footer={<SettingsButton data={data} intents={intents} />}
       ref={rosterRef}
     />
