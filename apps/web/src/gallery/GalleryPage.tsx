@@ -8,6 +8,7 @@ import {
   AttachmentId,
   type AvatarChoice,
   type BotId,
+  type BotTemplate,
   Conflict,
   type EngineStatus,
   EntryId,
@@ -29,6 +30,9 @@ import {
   type RosterItem,
   type RosterItemKey,
   type RoutineRun,
+  TEMPLATE_FORMAT,
+  TEMPLATE_VERSION,
+  TemplateTooLarge,
   RoutineRunId,
   type HarnessLocation,
   type SignInHarness,
@@ -49,6 +53,7 @@ import {
   typeScale,
   type Spring,
   type Themed,
+  type TypeInput,
 } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { PlusIcon, SettingsIcon } from "lucide-react";
@@ -92,10 +97,15 @@ import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
+import { Roster } from "../components/Roster";
+import { HiddenBots, SectionBlock, useFoldedSections } from "../components/RosterGroups";
+import type { RosterIntents, RosterMenuContext } from "../components/RosterMenu";
 import { RosterRow } from "../components/RosterRow";
+import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
 import { SecretRequestCard } from "../components/SecretRequestCard";
+import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { EngineSection } from "../components/SettingsDialog";
 import type { LocalProviderSetup } from "../components/ProviderSetup";
@@ -111,6 +121,7 @@ import { LANGUAGE_NAMES, notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
 import { addresseeLine } from "@j3-bots/client-runtime/wording";
+import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
@@ -133,6 +144,8 @@ const restingRoom: Room = {
 /** The sample room while the server ends its work. */
 const stoppingRoom: Room = { ...team.room, work: "stopping" };
 const shortcuts = shellShortcuts();
+/** The type scale's two sets: the one a page shows depends on its pointer, so both are drawn. */
+const typeInputs: ReadonlyArray<TypeInput> = ["pointer", "touch"];
 
 export default function GalleryPage() {
   const [locale, setLocale] = useState<Language>("en");
@@ -176,6 +189,7 @@ export default function GalleryPage() {
                 <AvatarsSection />
                 <NotificationsSection />
                 <RosterSection />
+                <RosterOrganizeSection />
                 <BubblesSection />
                 <CardsSection />
                 <WorkSection />
@@ -183,6 +197,7 @@ export default function GalleryPage() {
                 <ComposerSection />
                 <DetailsSection />
                 <EditingSection />
+                <TemplatesSection />
                 <RoomsSection />
                 <EngineSettingsSection />
                 <UsageGallerySection />
@@ -289,22 +304,27 @@ function TokensSection() {
           <p className="font-mono text-sm">{fontFamilies.mono}: pnpm test --filter web != 0</p>
         </div>
       </Labeled>
-      <Labeled label="Type scale">
-        <div className="flex flex-col gap-1">
-          {Object.entries(typeScale).map(([name, { size, lineHeight }]) => (
-            <p
-              key={name}
-              className={size >= typeScale["2xl"].size ? "display-type" : undefined}
-              style={{ fontSize: `${size / 16}rem`, lineHeight: `${lineHeight / 16}rem` }}
-            >
-              <span className="me-3 inline-block w-10 font-sans font-normal tracking-normal text-2xs text-muted-foreground">
-                {name}
-              </span>
-              Scout finished the report
-            </p>
-          ))}
-        </div>
-      </Labeled>
+      {typeInputs.map((input) => (
+        <Labeled key={input} label={`Type scale, ${input}`}>
+          <div className="flex flex-col gap-1">
+            {Object.entries(typeScale).map(([name, step]) => {
+              const { size, lineHeight } = step[input];
+              return (
+                <p
+                  key={name}
+                  className={size >= typeScale["2xl"][input].size ? "display-type" : undefined}
+                  style={{ fontSize: `${size / 16}rem`, lineHeight: `${lineHeight / 16}rem` }}
+                >
+                  <span className="me-3 inline-block w-16 font-sans font-normal tracking-normal text-2xs text-muted-foreground">
+                    {name} {size}/{lineHeight}
+                  </span>
+                  Scout finished the report
+                </p>
+              );
+            })}
+          </div>
+        </Labeled>
+      ))}
       <Labeled label="Elevation">
         <div className="flex flex-wrap gap-4">
           {Object.keys(shadows).map((name) => (
@@ -586,6 +606,20 @@ function AvatarsSection() {
           ))}
         </div>
       </Labeled>
+      <Labeled label="The primary bot's mark at 24, 32, 40 and 52 px: it names a role, so the light still says what the bot is doing">
+        <div className="flex flex-wrap items-end gap-4">
+          {([24, 32, 40, 52] as const).map((size) => (
+            <PrimaryBadge key={size} primary size={size}>
+              <BotAvatar
+                avatar={team.bots.scout.profile.avatar}
+                seed={team.bots.scout.id}
+                state="working"
+                size={size}
+              />
+            </PrimaryBadge>
+          ))}
+        </div>
+      </Labeled>
       <Labeled label="The first 24 bots' looks, in the order new bots take them, and a room">
         <div className="flex flex-wrap items-end gap-3">
           {firstLooks.map((avatar) => (
@@ -737,6 +771,106 @@ function RosterSection() {
           </li>
         ))}
       </ul>
+    </Section>
+  );
+}
+
+/** The roster alone, at its width beside a conversation, with its own copy of the sample team. */
+function RosterFrame() {
+  const source = useSampleSource();
+  const folded = useFoldedSections(source.data.sections);
+  const [selected, setSelected] = useState<RosterItemKey | null>({
+    _tag: "bot",
+    botId: ids.atlas,
+  });
+  return (
+    <div className="flex h-full flex-col bg-sidebar">
+      <Roster
+        items={source.data.roster ?? []}
+        sections={source.data.sections}
+        selected={selected}
+        rowLink={(item) => rowButton(() => setSelected(rowKey(item)))}
+        onNewBot={nothing}
+        onNewFromTemplate={nothing}
+        onNewRoom={nothing}
+        intents={rosterIntents(source.intents, {
+          selected,
+          select: setSelected,
+          setDetailsOpen: nothing,
+        })}
+        folded={folded}
+      />
+    </div>
+  );
+}
+
+const quietIntents: RosterIntents = {
+  placeBot: nothing,
+  pinRoom: nothing,
+  markRead: nothing,
+  markUnread: nothing,
+  createSection: () => Promise.resolve(null),
+  updateSection: nothing,
+  deleteSection: nothing,
+  openDetails: nothing,
+  deleteBot: nothing,
+};
+
+const quietMenu: RosterMenuContext = {
+  intents: quietIntents,
+  sections: team.sections,
+  primary: team.bots.scout,
+  ask: nothing,
+  renameSection: nothing,
+};
+
+const homeSection = team.sections[0];
+const hiddenBots = team.roster.flatMap((item) =>
+  item._tag === "bot" && item.bot.hidden ? [item] : [],
+);
+
+function RosterOrganizeSection() {
+  return (
+    <Section title="Organizing the roster">
+      <Frame
+        label="The pinned bots as large avatars, the primary one marked; rooms and the bots in no section; a section with bots, one with none yet; the row to the hidden bots. Right-click a row or tile, or its “…”, for its menu"
+        width={340}
+        height={980}
+      >
+        <RosterFrame />
+      </Frame>
+      {homeSection !== undefined && (
+        // A section being named takes focus as it appears, so the gallery leaves it to the roster above.
+        <Labeled label="A folded section with something unread">
+          <div className="flex w-(--layout-roster-width) max-w-full flex-col rounded-md bg-sidebar p-2">
+            <SectionBlock
+              section={homeSection}
+              index={0}
+              sections={team.sections}
+              unread
+              folded
+              onFold={nothing}
+              renaming={false}
+              onStartRename={nothing}
+              onRename={nothing}
+              menu={quietMenu}
+            >
+              {null}
+            </SectionBlock>
+          </div>
+        </Labeled>
+      )}
+      <Frame label="The hidden conversations, each with Unhide" width={340} height={220}>
+        <div className="h-full bg-sidebar p-2">
+          <HiddenBots
+            items={hiddenBots}
+            selected={null}
+            rowLink={() => rowButton(nothing)}
+            onBack={nothing}
+            onUnhide={nothing}
+          />
+        </div>
+      </Frame>
     </Section>
   );
 }
@@ -1177,7 +1311,7 @@ function ComposerDemo({
 function ComposerSection() {
   return (
     <Section title="Conversation header and composer">
-      <Labeled label="Headers: a working bot (with Stop), a waiting bot (the line goes to the request), a blocked bot, a room with work under way (with Stop, which asks first), the same room while its work stops, a room at rest">
+      <Labeled label="Headers: a working bot, a waiting bot (the line goes to the request), a blocked bot, a room with work under way, the same room while its work stops, a room at rest. None offers Stop: it is in the details">
         <div className="flex flex-col gap-2">
           {(
             [
@@ -1195,10 +1329,8 @@ function ComposerSection() {
                 detailsOpen={false}
                 onToggleDetails={nothing}
                 onBack={nothing}
-                onStop={nothing}
                 onGoToWaiting={nothing}
                 folds={[]}
-                stopShortcut={shortcuts.stop}
                 onAnnounce={nothing}
               />
             </div>
@@ -1246,12 +1378,15 @@ const detailsIntents = {
   openAttachment: nothing,
   openMemoryFile: nothing,
   editProfile: nothing,
+  stop: nothing,
   freshStart: nothing,
   deleteBot: nothing,
+  shareTemplate: nothing,
 };
 
 const roomIntents = {
   editRoom: nothing,
+  stop: nothing,
   archiveRoom: () => Promise.resolve(),
   unarchiveRoom: () => Promise.resolve(),
   deleteRoom: nothing,
@@ -1329,6 +1464,7 @@ function DetailsSection() {
             files={team.files[scout.id] ?? []}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
@@ -1340,6 +1476,7 @@ function DetailsSection() {
             files={team.files[atlas.id] ?? []}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
@@ -1351,6 +1488,7 @@ function DetailsSection() {
             files={[]}
             modelName={null}
             intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
@@ -1372,6 +1510,7 @@ function DetailsSection() {
             files={null}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
+            stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
@@ -1380,6 +1519,9 @@ function DetailsSection() {
         </Pane>
         <Pane>
           <RoomDetails room={team.room} intents={roomIntents} onClose={nothing} />
+        </Pane>
+        <Pane>
+          <RoomDetails room={stoppingRoom} intents={roomIntents} onClose={nothing} />
         </Pane>
         <Pane>
           <RoomDetails room={archivedRoom} intents={roomIntents} onClose={nothing} />
@@ -1460,6 +1602,134 @@ function MemoryVariant({
         />
       </div>
     </Frame>
+  );
+}
+
+/** A template as a research bot's share would make it, for both of its sheets. */
+const scoutTemplate: BotTemplate = {
+  format: TEMPLATE_FORMAT,
+  version: TEMPLATE_VERSION,
+  profile: {
+    name: "Scout",
+    title: "Research",
+    avatar: team.bots.scout.profile.avatar,
+    job: "Finds sources on what I ask about, reads them, and sends a short summary with links. Never buys or signs up for anything.",
+  },
+  model: toCodex,
+  permissionMode: "full-access",
+  skills: [
+    {
+      name: "source-check",
+      text: "---\nname: source-check\ndescription: How to judge a source before quoting it.\n---\n\n1. Prefer the primary source.\n2. Note the date; older than a year needs saying so.\n3. Two independent sources before calling something settled.\n",
+    },
+    {
+      name: "weekly-digest",
+      text: "---\nname: weekly-digest\ndescription: The shape of the Friday digest.\n---\n\nThree items at most, one line each, a link under each.\n",
+    },
+  ],
+  routines: [
+    {
+      name: "Friday digest",
+      instruction:
+        "Read what was saved this week and send a digest of at most three items. Send nothing if nothing was saved.",
+      trigger: { _tag: "schedule", cron: "0 16 * * 5" },
+    },
+    {
+      name: "New paper",
+      instruction: "Summarize the paper the webhook names in three lines and send it.",
+      trigger: { _tag: "webhook" },
+    },
+  ],
+};
+
+/** A template's sheet as the dialog holds it, in a frame the size of a sheet. */
+function TemplateFrame({
+  label,
+  children,
+}: {
+  label: string;
+  children: (titleId: string) => ReactNode;
+}) {
+  const titleId = useId();
+  return (
+    <Frame label={label} width={400} height={760}>
+      <div className="flex h-full flex-col bg-background">{children(titleId)}</div>
+    </Frame>
+  );
+}
+
+const shareActions = {
+  onRetry: nothing,
+  onDownload: nothing,
+  onCopy: () => Promise.resolve(true),
+  onClose: nothing,
+};
+
+function TemplatesSection() {
+  const elsewhere = { ...scoutTemplate, model: { ...toCodex, modelId: ModelId.make("gpt-6") } };
+  return (
+    <Section title="Templates: sharing a bot and creating one from a file">
+      <div className="flex flex-wrap gap-4">
+        <TemplateFrame label="Share: what the file holds, before it leaves">
+          {(titleId) => (
+            <ShareTemplateContent
+              share={{ _tag: "ready", template: scoutTemplate }}
+              titleId={titleId}
+              {...shareActions}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Share: the template could not be read">
+          {(titleId) => (
+            <ShareTemplateContent
+              share={{ _tag: "failed", name: "Scout" }}
+              titleId={titleId}
+              {...shareActions}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Share: the file would be too large to read">
+          {(titleId) => (
+            <ShareTemplateContent
+              share={{
+                _tag: "too-large",
+                name: "Scout",
+                error: new TemplateTooLarge({
+                  size: 1_210_000,
+                  largest: { _tag: "skill", name: "source-review" },
+                }),
+              }}
+              titleId={titleId}
+              {...shareActions}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Create: the mode it asks for is capped by the default">
+          {(titleId) => (
+            <TemplateForm
+              template={scoutTemplate}
+              engine={twoProviders}
+              connected
+              onCreate={() => new Promise(() => {})}
+              onClose={nothing}
+              titleId={titleId}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Create: its model is not on this server">
+          {(titleId) => (
+            <TemplateForm
+              template={elsewhere}
+              engine={twoProviders}
+              connected
+              onCreate={() => new Promise(() => {})}
+              onClose={nothing}
+              titleId={titleId}
+            />
+          )}
+        </TemplateFrame>
+      </div>
+    </Section>
   );
 }
 

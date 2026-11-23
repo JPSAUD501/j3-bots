@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   Addressing,
+  BotPlacement,
   ConversationItem,
   Draft,
   DraftMention,
   IntentResult,
   PairingOffer,
   RecentTurnsState,
+  SectionChanges,
   SettingsChange,
   SettingsSaves,
   SignInView,
@@ -26,6 +28,8 @@ import type {
   RoomId,
   RosterItem,
   Routine,
+  Section,
+  SectionId,
   Settings,
   SignInHarness,
   WorkStep,
@@ -61,6 +65,11 @@ export interface ShellData {
   readonly signIns: ReadonlyMap<SignInHarness, SignInView>;
   /** Null until the roster first loads. */
   readonly roster: ReadonlyArray<RosterItem> | null;
+  /**
+   * The operator's sections, in their order. Null until the roster loads, and
+   * from a server that has no sections: no menu offers them, nor Mark as unread.
+   */
+  readonly sections: ReadonlyArray<Section> | null;
   readonly conversation: (target: EntryTarget) => ConversationView;
   /** What the operator has written to `target` and not sent. */
   readonly draft: (target: EntryTarget) => Draft;
@@ -146,6 +155,21 @@ export interface ShellIntents extends TimelineIntents {
   readonly loadOlder: (target: EntryTarget) => void;
   /** The operator has seen the conversation through this entry. */
   readonly markRead: (target: EntryTarget, through: EntryOrder) => void;
+  /** Marks a conversation or room read through `through` from the roster, shown or not. */
+  readonly markRosterRead: (target: EntryTarget, through: EntryOrder) => void;
+  /** Marks the conversation or room unread from its last entry the operator did not write. */
+  readonly markUnread: (target: EntryTarget) => void;
+  /**
+   * Pins, hides, moves into a section or makes primary. The roster changes
+   * when the server says it did; the shell says so when it did not.
+   */
+  readonly placeBot: (botId: BotId, placement: BotPlacement) => void;
+  readonly pinRoom: (roomId: RoomId, pinned: boolean) => void;
+  /** Resolves with the new section's id, or null when it was not made. */
+  readonly createSection: (name: string, botId: BotId | null) => Promise<SectionId | null>;
+  readonly updateSection: (sectionId: SectionId, changes: SectionChanges) => void;
+  /** Its bots stay, back in the main list. */
+  readonly deleteSection: (sectionId: SectionId) => void;
   /**
    * The conversation or room the shell shows with nothing over it, such as
    * the details as a sheet or a dialog; null when there is none. Whether the
@@ -160,6 +184,10 @@ export interface ShellIntents extends TimelineIntents {
   /** Resolves with the new bot's id once the server has created it, or with why it did not. */
   readonly createBot: (draft: NewBot) => Promise<IntentResult<BotId>>;
   readonly newBot: () => void;
+  /** Asks for a template file, then shows all a bot made from it would be and do. */
+  readonly newBotFromTemplate: () => void;
+  /** Shows what sharing the bot as a template puts in the file, then saves or copies it. */
+  readonly shareBotTemplate: (botId: BotId) => void;
   readonly newRoom: () => void;
   /** Opens the form that changes a room's name, members, host and hop limit. */
   readonly editRoom: (roomId: RoomId) => void;

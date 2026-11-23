@@ -101,6 +101,41 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("fails on a config.json it may not read instead of starting on the defaults", () =>
+    Effect.gen(function* () {
+      const home = yield* freshHome;
+      yield* writeConfigFile(home, JSON.stringify({ port: 4000 }));
+      const exit = yield* withEnvironment(load, { J3_HOME: home }).pipe(
+        Effect.provide(
+          Layer.effect(
+            FileSystem.FileSystem,
+            Effect.map(FileSystem.FileSystem, (fs) =>
+              FileSystem.FileSystem.of({
+                ...fs,
+                readFileString: (path, encoding) =>
+                  path.endsWith("config.json")
+                    ? Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "PermissionDenied",
+                          module: "FileSystem",
+                          method: "readFile",
+                          pathOrDescriptor: path,
+                        }),
+                      )
+                    : fs.readFileString(path, encoding),
+              }),
+            ),
+          ),
+        ),
+        Effect.exit,
+      );
+      assert.deepInclude(failure(exit), {
+        _tag: "ConfigFileUnreadable",
+        reason: "PermissionDenied",
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "takes a public origin only as a bare https origin, written as a browser writes it",
     () =>

@@ -21,12 +21,23 @@ import {
   NotebookTextIcon,
   PencilIcon,
   RotateCcwIcon,
+  Share2Icon,
   ShieldCheckIcon,
+  SquareIcon,
   Trash2Icon,
   WebhookIcon,
   XIcon,
 } from "lucide-react";
-import { useState, type ReactElement, type ReactNode, type Ref } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import {
@@ -42,12 +53,13 @@ import { FileCard } from "./FileCard";
 import { Button } from "./ui/button";
 import { SkeletonRows } from "./ui/skeleton";
 import { Confirm } from "./ui/confirm";
+import { Kbd } from "./ui/kbd";
 import { Switch } from "./ui/switch";
 
 interface PanelFrameProps {
   readonly title: string;
   readonly onClose: () => void;
-  readonly headingRef?: Ref<HTMLHeadingElement> | undefined;
+  readonly headingRef?: RefObject<HTMLHeadingElement | null> | undefined;
   /** Names the pane for assistive technology. */
   readonly headingId?: string | undefined;
   readonly children: ReactNode;
@@ -163,6 +175,47 @@ function Apart({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Gives the pane's heading the focus once the Stop that held it goes, as it
+ * does when the work it ends is over. Answers the ref for the Stop.
+ */
+function useFocusAfterStop(heading: RefObject<HTMLHeadingElement | null> | undefined) {
+  const left = useRef(false);
+  const stopRef = useCallback((element: HTMLButtonElement | null) => {
+    if (element === null) return;
+    // React runs this before it takes the button out of the page, while focus is still on it.
+    return () => {
+      if (element === document.activeElement) left.current = true;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (!left.current) return;
+    left.current = false;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    heading?.current?.focus();
+  });
+  return stopRef;
+}
+
+/** The row that stops the work under way: an icon, what it does, and what it shows at its end. */
+const stopRow = cn(rowButton, "items-center aria-disabled:text-muted-foreground");
+
+function StopRowContent({ label, end }: { label: string; end?: ReactNode }) {
+  return (
+    <>
+      <SquareIcon aria-hidden className="size-3.5 shrink-0 fill-current text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
+      {end}
+    </>
+  );
+}
+
+/** Where the Stop sits: just under the profile, before anything the pane lists. */
+function StopPlace({ children }: { children: ReactNode }) {
+  return <section className="appear px-3 pb-1">{children}</section>;
+}
+
 export interface BotDetailsIntents {
   readonly setRoutineEnabled: (routineId: RoutineId, enabled: boolean) => void;
   /** Shows the routine's recent runs. */
@@ -171,8 +224,11 @@ export interface BotDetailsIntents {
   readonly openMemoryFile: (path: MemoryPath) => void;
   /** Absent where the bot cannot be edited. */
   readonly editProfile?: () => void;
+  /** Stops the bot's work under way at once, as its keyboard shortcut does. */
+  readonly stop: () => void;
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
+  readonly shareTemplate: () => void;
 }
 
 interface BotDetailsProps {
@@ -185,12 +241,17 @@ interface BotDetailsProps {
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
   readonly intents: BotDetailsIntents;
+  /** The keys that stop the bot, shown on its Stop. */
+  readonly stopShortcut: { readonly label: string; readonly aria: string };
   readonly onClose: () => void;
-  readonly headingRef?: Ref<HTMLHeadingElement>;
+  readonly headingRef?: RefObject<HTMLHeadingElement | null>;
   readonly headingId?: string;
 }
 
-/** Answers: what is this bot, and what runs without me. */
+/**
+ * Answers: what is this bot, and what runs without me. While it has work to
+ * stop, Stop comes first under its profile.
+ */
 export function BotDetails({
   bot,
   routines,
@@ -198,6 +259,7 @@ export function BotDetails({
   memory,
   modelName,
   intents,
+  stopShortcut,
   onClose,
   headingRef,
   headingId,
@@ -206,6 +268,7 @@ export function BotDetails({
   const { t } = i18n;
   const { name, title, job } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, i18n);
+  const stopRef = useFocusAfterStop(headingRef);
   return (
     <PanelFrame
       title={t("conversation.details")}
@@ -226,14 +289,37 @@ export function BotDetails({
           </>
         }
         actions={
-          intents.editProfile && (
-            <Button size="sm" onClick={intents.editProfile}>
-              <PencilIcon aria-hidden />
-              {t("details.editProfile", { name })}
+          <>
+            {intents.editProfile && (
+              <Button size="sm" onClick={intents.editProfile}>
+                <PencilIcon aria-hidden />
+                {t("details.editProfile", { name })}
+              </Button>
+            )}
+            <Button size="sm" onClick={intents.shareTemplate}>
+              <Share2Icon aria-hidden />
+              {t("details.shareTemplate")}
             </Button>
-          )
+          </>
         }
       />
+
+      {canStop(bot) && (
+        <StopPlace>
+          <button
+            ref={stopRef}
+            type="button"
+            onClick={intents.stop}
+            aria-keyshortcuts={stopShortcut.aria}
+            className={stopRow}
+          >
+            <StopRowContent
+              label={t("details.stop")}
+              end={<Kbd className="pointer-coarse:hidden">{stopShortcut.label}</Kbd>}
+            />
+          </button>
+        </StopPlace>
+      )}
 
       <DetailsSection title={t("details.routines")}>
         {routines === null ? (
@@ -459,6 +545,8 @@ function MemoryList({
 
 export interface RoomDetailsIntents {
   readonly editRoom: () => void;
+  /** Stops the work addressed to the room; its Stop asks first. */
+  readonly stop: () => void;
   /** Resolves once the server answered, whatever it said. */
   readonly archiveRoom: () => Promise<void>;
   /** Asks for members and a host first when the room lacks them. Resolves like `archiveRoom`. */
@@ -468,7 +556,8 @@ export interface RoomDetailsIntents {
 
 /**
  * A room's details: who is in it, who hosts, how long bots may talk among
- * themselves, and what the operator does to the room itself.
+ * themselves, and what the operator does to the room itself. While the room's
+ * work is under way, Stop comes first under its profile, and asks first.
  */
 export function RoomDetails({
   room,
@@ -480,7 +569,7 @@ export function RoomDetails({
   room: Room;
   intents: RoomDetailsIntents;
   onClose: () => void;
-  headingRef?: Ref<HTMLHeadingElement>;
+  headingRef?: RefObject<HTMLHeadingElement | null>;
   headingId?: string;
 }) {
   const { t, plural } = useI18n();
@@ -491,6 +580,8 @@ export function RoomDetails({
     const bot = bots.get(id);
     return bot ? [bot] : [];
   });
+  const stopping = roomStop(room);
+  const stopRef = useFocusAfterStop(headingRef);
   return (
     <PanelFrame
       title={t("conversation.details")}
@@ -523,6 +614,29 @@ export function RoomDetails({
           )
         }
       />
+      {stopping !== "hidden" && (
+        <StopPlace>
+          {/* One button through the whole Stop, so focus stays on it once the question closes. */}
+          <Confirm
+            trigger={
+              <button
+                ref={stopRef}
+                type="button"
+                aria-disabled={stopping === "stopping"}
+                className={stopRow}
+              />
+            }
+            title={t("room.stop.title", { name })}
+            body={t("room.stop.body", { name })}
+            cancel={t("room.stop.cancel")}
+            confirm={t("room.stop")}
+            onConfirm={intents.stop}
+            busy={stopping === "stopping"}
+          >
+            <StopRowContent label={stopping === "stopping" ? t("room.stopping") : t("room.stop")} />
+          </Confirm>
+        </StopPlace>
+      )}
       <DetailsSection title={t("room.membersTitle")}>
         {members.length === 0 ? (
           <Quiet>{t("room.noMembers")}</Quiet>

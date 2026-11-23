@@ -11,22 +11,32 @@ import * as Settings from "./settings.ts";
 
 const origin = Schema.decodeSync(ServerOrigin);
 const SERVER = origin("http://192.168.1.20:3737");
+const LOCAL = origin("http://127.0.0.1:3747");
+const DEVICE = "device-1";
 
 /**
  * A server choice over the settings in `file`, whose check answers `answer`,
  * and a page that records what is done to it, with the server kept as it
  * happens.
  */
-const setUp = (file: string, answer: ConnectRefusal | null = null) =>
+const setUp = (file: string, answer: ConnectRefusal | null = null, localAvailable = true) =>
   Effect.gen(function* () {
     const settings = yield* Settings.DesktopSettings;
     const done: Array<string> = [];
     const checked: Array<string> = [];
-    const choice = yield* ServerChoice.make((server) =>
-      Effect.sync(() => {
-        checked.push(server);
-        return answer;
-      }),
+    const local: ServerChoice.LocalServer = {
+      available: localAvailable,
+      prepare: Effect.succeed(LOCAL),
+      start: Effect.sync(() => done.push("start local server")),
+      stop: Effect.sync(() => done.push("stop local server")),
+    };
+    const choice = yield* ServerChoice.make(
+      (server) =>
+        Effect.sync(() => {
+          checked.push(server);
+          return answer;
+        }),
+      local,
     );
     const page: ServerChoice.Page = {
       clearStorage: Effect.gen(function* () {
@@ -125,7 +135,76 @@ describe("forgetting the server", () => {
   );
 });
 
+describe("running the bots on this computer", () => {
+  it.effect(
+    "forgets the named server with the page's storage, keeps this computer's and starts it",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(
+          JSON.stringify({ server: SERVER, localDevice: { id: DEVICE, current: true } }),
+        );
+        const { choice, page, done, settings } = yield* setUp(file);
+        assert.strictEqual(yield* choice.useThisComputer(page), "changed");
+        assert.deepStrictEqual(done, [
+          "clear (server http://192.168.1.20:3737)",
+          "start local server",
+          "open home (server http://127.0.0.1:3747)",
+        ]);
+        const now = yield* settings.get;
+        assert.strictEqual(now.mode, "local");
+        assert.strictEqual(now.server, LOCAL);
+        // Chosen again: its next sign-in, which replaces the device, needs no asking.
+        assert.deepStrictEqual(now.localDevice, { id: DEVICE, current: false });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("changes nothing where this computer cannot run the server", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(JSON.stringify({ server: SERVER }));
+      const { choice, page, done, settings } = yield* setUp(file, null, false);
+      assert.strictEqual(yield* choice.useThisComputer(page), "unavailable");
+      assert.deepStrictEqual(done, []);
+      assert.strictEqual((yield* settings.get).server, SERVER);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("is not left by forgetting the server, which would stop the bots", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+      const { choice, page, done } = yield* setUp(file);
+      assert.strictEqual(yield* choice.forget(page), "failed");
+      assert.deepStrictEqual(done, []);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops the server, keeps the device to replace, and opens the address screen", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(
+        JSON.stringify({
+          mode: "local",
+          server: LOCAL,
+          localDevice: { id: DEVICE, current: true },
+        }),
+      );
+      const { choice, page, done, settings } = yield* setUp(file);
+      assert.strictEqual(yield* choice.connectToServerInstead(page), "changed");
+      assert.deepStrictEqual(done, [
+        "stop local server",
+        "clear (server none)",
+        "open home (server none)",
+      ]);
+      const now = yield* settings.get;
+      assert.strictEqual(now.mode, "remote");
+      assert.isNull(now.server);
+      assert.deepStrictEqual(now.localDevice, { id: DEVICE, current: false });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("the settings file", () => {
+  const REMOTE = { mode: "remote", server: SERVER, localDevice: null } as const;
+  const NONE = { mode: null, server: null, localDevice: null } as const;
+
   it("reads the server, the window, the shortcut and the appearance each on its own", () => {
     const window = { x: 10, y: 20, width: 800, height: 600, maximized: false };
     const shortcut = "Control+Alt+K";
@@ -134,14 +213,14 @@ describe("the settings file", () => {
         JSON.stringify({ server: SERVER, window: { x: "left" }, shortcut, appearance: "dark" }),
       ),
       {
-        settings: { server: SERVER, window: null, shortcut, appearance: "dark" },
+        settings: { ...REMOTE, window: null, shortcut, appearance: "dark" },
         dropped: ["window"],
       },
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "somewhere", window })),
       {
-        settings: { server: null, window, shortcut: null, appearance: "system" },
+        settings: { ...NONE, window, shortcut: null, appearance: "system" },
         dropped: ["server"],
       },
     );
@@ -149,19 +228,19 @@ describe("the settings file", () => {
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: SERVER, window, shortcut: "Shift+K" })),
       {
-        settings: { server: SERVER, window, shortcut: null, appearance: "system" },
+        settings: { ...REMOTE, window, shortcut: null, appearance: "system" },
         dropped: ["shortcut"],
       },
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: SERVER, appearance: "sepia" })),
       {
-        settings: { server: SERVER, window: null, shortcut: null, appearance: "system" },
+        settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
         dropped: ["appearance"],
       },
     );
     assert.deepStrictEqual(Settings.decodeSettings("{ not json"), {
-      settings: { server: null, window: null, shortcut: null, appearance: "system" },
+      settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
       dropped: [],
     });
   });
@@ -170,14 +249,16 @@ describe("the settings file", () => {
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "http://192.0.2.10:3737", window: null })),
       {
-        settings: { server: null, window: null, shortcut: null, appearance: "system" },
+        settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
         dropped: ["server"],
       },
     );
     assert.deepStrictEqual(
       Settings.decodeSettings(JSON.stringify({ server: "https://192.0.2.10:3737" })).settings,
       {
+        mode: "remote",
         server: origin("https://192.0.2.10:3737"),
+        localDevice: null,
         window: null,
         shortcut: null,
         appearance: "system",

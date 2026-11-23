@@ -1,10 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
-import { Label, PositiveInt } from "./base.ts";
+import { Label, MAX_LABEL_LENGTH, PositiveInt } from "./base.ts";
 
 /** An IANA time zone name, such as `America/Sao_Paulo`. The server checks that it exists. */
 export const TimeZone = Label.pipe(Schema.brand("TimeZone"));
 export type TimeZone = typeof TimeZone.Type;
+
+/** A line break, a tab or any other control character, which a name cannot hold. */
+const NOT_ONE_LINE = /[\p{Cc}\p{Zl}\p{Zp}]/u;
+
+/**
+ * What the operator asked to be called, as the operator saves it in Settings
+ * and a bot saves it with `set_operator_name`: trimmed, and one line of a
+ * label's length. Every bot's instructions open with it, so a line break or a
+ * control character would let a name write instructions of its own.
+ */
+export const OperatorName = Schema.Trim.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_LABEL_LENGTH),
+  Schema.makeFilter((name: string) =>
+    NOT_ONE_LINE.test(name)
+      ? "A name is one line: it cannot hold a line break, a tab or another control character."
+      : true,
+  ),
+);
 
 /** A clock reading's fields, at the minute, in the zone it was read in. */
 const CLOCK_FIELDS = {
@@ -94,3 +113,15 @@ export const Settings = Schema.Struct({
   notifications: NotificationSettings,
 });
 export type Settings = typeof Settings.Type;
+
+/**
+ * What `settings.update` changes. A field left out keeps its value; a null
+ * name clears it. The name is the operator's as a bot would save it.
+ */
+export const SettingsChange = Schema.Struct({
+  operatorName: Schema.optionalKey(Schema.NullOr(OperatorName)),
+  timeZone: Schema.optionalKey(TimeZone),
+  budgets: Schema.optionalKey(Budgets),
+  notifications: Schema.optionalKey(NotificationSettingsChange),
+});
+export type SettingsChange = typeof SettingsChange.Type;

@@ -7,9 +7,16 @@ import {
   DesktopState,
   type ForgetResult,
   IPC_CHANNELS,
+  LocalDeviceRequest,
+  LocalDeviceResult,
+  LocalPairingLink,
+  LocalServerState,
+  type ModeChange,
   NetworkState,
   OpenRequest,
   type OpenResult,
+  PhoneAccess,
+  PhoneAccessRequest,
   SealRequest,
   type SealResult,
 } from "@j3-bots/desktop-bridge";
@@ -19,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Mime from "effect/http/Mime";
 import {
@@ -43,6 +51,9 @@ import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./asse
 import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import * as LinkHandler from "./linkHandler.ts";
+import * as LocalHost from "./localServer/localHost.ts";
+import { quitGate } from "./localServer/quitGate.ts";
+import { thisComputer } from "./localServer/thisComputer.ts";
 import * as Menus from "./menus.ts";
 import { externalUrl, isAppUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
@@ -94,6 +105,18 @@ const encodeNetwork = Schema.encodeSync(NetworkState);
 const decodeConnectRequest = Schema.decodeUnknownOption(ConnectRequest);
 const decodeSealRequest = Schema.decodeUnknownOption(SealRequest);
 const decodeOpenRequest = Schema.decodeUnknownOption(OpenRequest);
+const decodeLocalDeviceRequest = Schema.decodeUnknownOption(LocalDeviceRequest);
+const decodePhoneAccessRequest = Schema.decodeUnknownOption(PhoneAccessRequest);
+const encodeLocalDevice = Schema.encodeSync(LocalDeviceResult);
+const encodeLocalServer = Schema.encodeSync(Schema.NullOr(LocalServerState));
+const encodePhoneAccess = Schema.encodeSync(PhoneAccess);
+const encodePairingLink = Schema.encodeSync(LocalPairingLink);
+
+/**
+ * Phone access to the server on this computer: off, until the app can open
+ * it to the network (a later version).
+ */
+const PHONE_ACCESS_OFF: PhoneAccess = { on: false, origins: [] };
 
 /** Whether the system has a network, as the page is told. */
 const networkState = () => encodeNetwork({ online: net.isOnline() });
@@ -216,11 +239,42 @@ const program = Effect.gen(function* () {
     () => Effect.sync(() => protocol.unhandle(SCHEME)),
   );
 
-  const choice = yield* ServerChoice.make((origin) =>
-    checkServer(origin).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      Effect.provideService(FetchHttpClient.Fetch, electronFetch),
-    ),
+  // The server this computer runs for its bots, in local mode.
+  const computer = thisComputer();
+  const localHost = yield* LocalHost.make({
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    userData: app.getPath("userData"),
+    platform: process.platform,
+    arch: process.arch,
+    env: process.env,
+    homeDirectory: app.getPath("home"),
+    hostname: computer.hostname,
+    loginShell: computer.loginShell,
+    // Mode bits say nothing of who may open a folder on Windows; until the
+    // app reads the folder's ACL there, no home counts as private, and the
+    // server is not started on one.
+    // TODO(windows-acl): once `@j3-bots/server/windows-acl` lands (PR #158),
+    // answer `readFolderAcl(folder)` judged "private" by `judgeAcl`, an
+    // unreadable ACL counting as not private.
+    windowsPrivacy: () => Effect.succeed(false),
+  });
+  const { supervisor } = localHost;
+  /** The server this computer runs, as the page and the tray are told: `null` outside local mode. */
+  const localServerNow = Effect.gen(function* () {
+    if ((yield* settings.get).mode !== "local") return null;
+    return yield* supervisor.state;
+  });
+  const localServerChanges = supervisor.changes.pipe(Stream.mapEffect(() => localServerNow));
+
+  const choice = yield* ServerChoice.make(
+    (origin) =>
+      checkServer(origin).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, electronFetch),
+      ),
+    localHost.local,
   );
 
   const connect = Effect.fn("desktop.connect")(function* (
@@ -265,6 +319,30 @@ const program = Effect.gen(function* () {
     return yield* choice.forget(pageOf(event));
   });
 
+  const useThisComputer = Effect.fn("desktop.useThisComputer")(function* (
+    event: IpcMainInvokeEvent,
+  ): Effect.fn.Return<ModeChange> {
+    if (!fromApp(event)) return "failed";
+    return yield* choice.useThisComputer(pageOf(event));
+  });
+
+  const connectToServerInstead = Effect.fn("desktop.connectToServerInstead")(function* (
+    event: IpcMainInvokeEvent,
+  ): Effect.fn.Return<ModeChange> {
+    if (!fromApp(event)) return "failed";
+    return yield* choice.connectToServerInstead(pageOf(event));
+  });
+
+  // Only the app's own top frame is given a device token.
+  const localDevice = Effect.fn("desktop.localDevice")(function* (
+    event: IpcMainInvokeEvent,
+    request: unknown,
+  ) {
+    const decoded = decodeLocalDeviceRequest(request);
+    if (!fromApp(event) || Option.isNone(decoded)) return encodeLocalDevice({ _tag: "failed" });
+    return encodeLocalDevice(yield* localHost.signIn(decoded.value));
+  });
+
   yield* Effect.acquireRelease(
     Effect.sync(() => {
       ipcMain.on(IPC_CHANNELS.state, (event) => {
@@ -272,12 +350,15 @@ const program = Effect.gen(function* () {
           event.returnValue = null;
           return;
         }
-        const { server } = runSync(settings.get);
+        const { server, mode } = runSync(settings.get);
         event.returnValue = encodeState({
           server,
           pairingCode: links.takeCarriedCode(server),
-          // This app runs no server of its own yet: the bots live on the one the operator named.
-          mode: server === null ? null : "remote",
+          mode,
+          localAvailable: localHost.available,
+          localServer: runSync(localServerNow),
+          phoneAccess: PHONE_ACCESS_OFF,
+          startWithSystem: false,
         });
       });
       ipcMain.handle(IPC_CHANNELS.connect, (event, request: unknown) =>
@@ -291,6 +372,33 @@ const program = Effect.gen(function* () {
         runPromise(openToken(event, request)),
       );
       ipcMain.handle(IPC_CHANNELS.network, (event) => (fromApp(event) ? networkState() : null));
+      ipcMain.handle(IPC_CHANNELS.useThisComputer, (event) => runPromise(useThisComputer(event)));
+      ipcMain.handle(IPC_CHANNELS.connectToServerInstead, (event) =>
+        runPromise(connectToServerInstead(event)),
+      );
+      ipcMain.handle(IPC_CHANNELS.localDevice, (event, request: unknown) =>
+        runPromise(localDevice(event, request)),
+      );
+      ipcMain.handle(IPC_CHANNELS.localServer, (event) =>
+        fromApp(event) ? encodeLocalServer(runSync(localServerNow)) : null,
+      );
+      ipcMain.on(IPC_CHANNELS.retryLocalServer, (event) => {
+        if (fromApp(event) && runSync(settings.get).mode === "local") {
+          void runPromise(supervisor.retry);
+        }
+      });
+      ipcMain.handle(IPC_CHANNELS.setPhoneAccess, (event, request: unknown) => {
+        const decoded = decodePhoneAccessRequest(request);
+        if (!fromApp(event) || Option.isNone(decoded)) return null;
+        return encodePhoneAccess(
+          decoded.value.on
+            ? { ...PHONE_ACCESS_OFF, refusedReason: "unavailable" }
+            : PHONE_ACCESS_OFF,
+        );
+      });
+      ipcMain.handle(IPC_CHANNELS.localPairingLink, (event) =>
+        fromApp(event) ? encodePairingLink({ _tag: "unavailable" }) : null,
+      );
       // A restart, as once a keyring is unlocked: Chromium keeps the
       // encryption it set up for the process, so only a new one sees the
       // unlocked keyring.
@@ -306,6 +414,13 @@ const program = Effect.gen(function* () {
         ipcMain.removeHandler(IPC_CHANNELS.sealToken);
         ipcMain.removeHandler(IPC_CHANNELS.openToken);
         ipcMain.removeHandler(IPC_CHANNELS.network);
+        ipcMain.removeHandler(IPC_CHANNELS.useThisComputer);
+        ipcMain.removeHandler(IPC_CHANNELS.connectToServerInstead);
+        ipcMain.removeHandler(IPC_CHANNELS.localDevice);
+        ipcMain.removeHandler(IPC_CHANNELS.localServer);
+        ipcMain.removeAllListeners(IPC_CHANNELS.retryLocalServer);
+        ipcMain.removeHandler(IPC_CHANNELS.setPhoneAccess);
+        ipcMain.removeHandler(IPC_CHANNELS.localPairingLink);
         ipcMain.removeAllListeners(IPC_CHANNELS.relaunch);
       }),
   );
@@ -349,22 +464,57 @@ const program = Effect.gen(function* () {
   });
   if (placed.maximized) window.maximize();
   yield* Appearance.serve({ window, appearance, fromApp });
-  yield* Updater.serve(window, fromApp);
+  yield* Updater.serve(window, fromApp, {
+    beforeInstall: supervisor.stop,
+    installFailed: Effect.gen(function* () {
+      if ((yield* settings.get).mode === "local") yield* supervisor.start;
+    }),
+  });
 
-  // The window's place is saved as it closes, before it goes.
-  let saved = false;
-  window.on("close", (event) => {
-    if (saved) return;
-    event.preventDefault();
+  // Quit, from the tray, the menu or the system, waits for the server this
+  // computer runs to stop; nothing is left running behind the app.
+  let quitting = false;
+  const holdQuit = quitGate({
+    serverRuns: () => runSync(supervisor.state).state !== "stopped",
+    stopServer: () => runPromise(supervisor.stop),
+    quit: () => app.quit(),
+  });
+  const beforeQuit = (event: { readonly preventDefault: () => void }) => {
+    quitting = true;
+    holdQuit(event);
+  };
+  app.on("before-quit", beforeQuit);
+  // Linux and macOS say when the system shuts down: the app quits, which the
+  // gate holds while the server stops. (Electron's types give this event no
+  // argument, so the app cannot ask the system to wait; the system's own
+  // SIGTERM and the server's stdin lifeline end the server if it is cut short.)
+  powerMonitor.on("shutdown", () => app.quit());
+
+  const saveBounds = () => {
     const bounds = window.getNormalBounds();
     const state = { ...bounds, maximized: window.isMaximized() };
-    void runPromise(
+    return runPromise(
       settings
         .update((current) => ({ ...current, window: state }))
         .pipe(
           Effect.catch((error) => Effect.logWarning("Saving the window's place failed", error)),
         ),
-    ).finally(() => {
+    );
+  };
+
+  // The window's place is saved as it closes, before it goes. While the bots
+  // run on this computer, closing the window only hides it: the app stays in
+  // the tray, and the bots keep working, until the operator quits.
+  let saved = false;
+  window.on("close", (event) => {
+    if (saved) return;
+    event.preventDefault();
+    if (!quitting && runSync(settings.get).mode === "local") {
+      void saveBounds();
+      window.hide();
+      return;
+    }
+    void saveBounds().finally(() => {
       saved = true;
       window.close();
     });
@@ -385,13 +535,33 @@ const program = Effect.gen(function* () {
   });
   yield* links.serve({ window, fromApp, bringForward: forward });
   yield* LinkHandler.register(SCHEME).pipe(Effect.forkScoped);
-  yield* Menus.serve({ window, appearance, fromApp, bringForward: forward });
+  yield* Menus.serve({
+    window,
+    appearance,
+    fromApp,
+    bringForward: forward,
+    localServer: localServerChanges,
+  });
+  // The page follows the server this computer runs.
+  yield* localServerChanges.pipe(
+    Stream.runForEach((state) =>
+      Effect.sync(() => {
+        if (!window.isDestroyed()) {
+          window.webContents.send(IPC_CHANNELS.localServerChanged, encodeLocalServer(state));
+        }
+      }),
+    ),
+    Effect.forkScoped,
+  );
   // After sleep the network may have changed under the page: it is told, so
   // the client tries again at once rather than when its backoff ends.
   yield* Effect.acquireRelease(
     Effect.sync(() => {
       const resumed = () => {
         if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.resumed, networkState());
+        // The server was frozen with the system, not stopped: it should
+        // answer at once, and is started again if it does not.
+        void runPromise(supervisor.ping);
       };
       powerMonitor.on("resume", resumed);
       return resumed;
@@ -404,6 +574,10 @@ const program = Effect.gen(function* () {
     if (launchedWhileStarting) window.focus();
   });
   app.on("window-all-closed", () => app.quit());
+  // macOS: a click on the dock's icon brings back a window that was hidden.
+  app.on("activate", forward);
+
+  if ((yield* settings.get).mode === "local" && localHost.available) yield* supervisor.start;
 
   // A load that fails (the page navigating away first, or a build that will
   // not load) leaves the window open on what it shows: the app keeps running.

@@ -8,6 +8,7 @@ import { session } from "./src/platform/platform.ts";
 import { keepPushRegistered, setUpNotifications } from "./src/platform/push.ts";
 import { applyAppearance } from "./src/preferences.ts";
 import { receiveShares } from "./src/share/incoming.ts";
+import { receiveViewedTemplates } from "./src/template/opened.ts";
 
 // The splash screen stays until the first screen has drawn in the operator's
 // theme (App.tsx), which is set before anything renders. If it cannot be
@@ -18,4 +19,5 @@ setUpNotifications(session);
 void session.start();
 keepPushRegistered(session);
 receiveShares();
+receiveViewedTemplates();
 registerRootComponent(App);

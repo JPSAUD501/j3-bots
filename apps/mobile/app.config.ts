@@ -133,6 +133,20 @@ export default ({ config, projectRoot }: ConfigContext): ExpoConfig => {
         backgroundColor: iconPlate,
       },
       ...(googleServicesFile === undefined ? {} : { googleServicesFile }),
+      // A bot template tapped in a mail or a chat opens in the app, when the
+      // app that holds it kept the media type J3 Bots shared it with
+      // (TEMPLATE_MEDIA_TYPE in packages/contracts). Android knows no media
+      // type for `.j3bot`, so any other reaches the app through the share sheet.
+      intentFilters: [
+        {
+          action: "VIEW",
+          category: ["DEFAULT", "BROWSABLE"],
+          data: [
+            { scheme: "content", mimeType: "application/vnd.j3bots.bot+json" },
+            { scheme: "file", mimeType: "application/vnd.j3bots.bot+json" },
+          ],
+        },
+      ],
       // Added by dependencies, used by nothing the app does. Notifications
       // vibrate through their channel, which needs no permission, and the app
       // schedules none to set up again after a restart.

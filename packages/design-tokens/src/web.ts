@@ -21,6 +21,12 @@ const rem = (px: number) => `${px / 16}rem`;
 
 const lines = (entries: ReadonlyArray<Entry>) => declarations(entries, "  ");
 
+/** The touch set's sizes and line heights where they differ from the pointer set's. */
+const touchTypeEntries = (): ReadonlyArray<Entry> => {
+  const pointer = new Map(typeEntries("pointer", rem));
+  return typeEntries("touch", rem).filter(([name, value]) => pointer.get(name) !== value);
+};
+
 /** The bundled faces, from the package's `fonts/`, shown in the fallback until they load. */
 const fontFaceRules = () =>
   fontFaces
@@ -56,6 +62,11 @@ const springEntries = (): ReadonlyArray<Entry> =>
  * loads them from the package with nothing from a font service. Each spring is
  * an easing utility (`ease-pop`) with its duration as a variable
  * (`--duration-pop`), since a spring's easing only holds over its own length.
+ *
+ * The type scale is the pointer set, and the touch set where the primary
+ * pointer is coarse, so the web on a phone reads as the Android app does.
+ * Tailwind's text utilities read the sizes through these variables, so the
+ * one class takes either set.
  */
 export function renderWebCss(): string {
   const colorUtilities = colorEntries("light", "").map(([name]): Entry => [
@@ -130,9 +141,15 @@ ${lines([
   // The app shell lays out by its own width, so a frame can show any layout.
   ["container-tablet", rem(layout.breakpoints.tablet)],
   ["container-wide", rem(layout.breakpoints.wide)],
-  ...typeEntries(rem),
+  ...typeEntries("pointer", rem),
   ...radiusEntries(rem),
 ])}
+}
+
+@media (pointer: coarse) {
+  :root {
+${declarations(touchTypeEntries(), "    ")}
+  }
 }
 
 @theme inline {

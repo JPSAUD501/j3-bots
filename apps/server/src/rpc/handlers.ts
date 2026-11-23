@@ -17,6 +17,7 @@ import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import { Bots } from "../bots/Bots.ts";
+import { Templates } from "../bots/Templates.ts";
 import { Devices } from "../devices/Devices.ts";
 import { Entries, type EntryFrame } from "../entries/Entries.ts";
 import { ServerConfig } from "../config.ts";
@@ -54,6 +55,7 @@ export const handlers = ServedRpcs.toLayer(
     const entries = yield* Entries;
     const store = yield* BotStore;
     const bots = yield* Bots;
+    const templates = yield* Templates;
     const attachments = yield* Attachments;
     const rooms = yield* Rooms;
     const sections = yield* Sections;
@@ -125,6 +127,9 @@ export const handlers = ServedRpcs.toLayer(
       "bot.delete": (input) => bots.remove(input),
       "bot.freshStart": (input) => bots.freshStart(input),
       "bot.files": botFiles,
+      "bot.template": ({ botId }) => templates.template(botId),
+      "bot.createFromTemplate": ({ commandId, ...from }) =>
+        bots.createFromTemplate({ commandId, from }),
       "section.create": (input) => sections.create(input),
       "section.update": (input) => sections.update(input),
       "section.delete": (input) => sections.remove(input),

@@ -13,11 +13,12 @@ import {
 import {
   addressed,
   addresseeOf,
+  arrangedOrder,
+  arrangeRoster,
   arrivalCounts,
   buildTimeline,
   canStop,
   liveTurn,
-  filterRoster,
   openingHeld,
   orderRoster,
   readThrough,
@@ -41,6 +42,7 @@ import {
   QuietRoom,
 } from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
+import { useFoldedSections } from "../components/RosterGroups";
 import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
@@ -55,6 +57,7 @@ import { useSeenEntries } from "../lib/useSeenEntries";
 import { addresseeLine, botModelName } from "@j3-bots/client-runtime/wording";
 import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
+import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
 interface ShellNavigation {
@@ -94,6 +97,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const [containerRef, layout] = useShellLayout();
 
   const rosterItems = data.roster ?? [];
+  const folded = useFoldedSections(data.sections);
   const bots = rosterItems.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
   const item =
     selected === null
@@ -193,7 +197,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         return true;
       case "next":
       case "previous": {
-        const rows = orderRoster(filterRoster(rosterItems, ""));
+        // In the order the roster draws them, so the keys walk what the operator sees.
+        const rows = arrangedOrder(
+          arrangeRoster(orderRoster(rosterItems), data.sections ?? []),
+          folded.has,
+        );
         const forward = action === "next";
         const index = item === null ? -1 : rows.indexOf(item);
         // With nothing selected, down starts at the top and up at the bottom.
@@ -352,7 +360,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       selected={selected}
       rowLink={navigation.rowLink}
       onNewBot={intents.newBot}
+      onNewFromTemplate={intents.newBotFromTemplate}
       onNewRoom={intents.newRoom}
+      sections={data.sections}
+      intents={rosterIntents(intents, navigation)}
+      folded={folded}
       footer={<SettingsButton data={data} intents={intents} />}
       ref={rosterRef}
     />
@@ -409,13 +421,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           detailsOpen={detailsOpen}
           onToggleDetails={toggleDetails}
           onBack={() => navigation.select(null)}
-          onStop={() => {
-            if (item._tag === "bot") intents.stopBot(item.bot.id);
-            else intents.stopRoom(item.room.id);
-          }}
           onGoToWaiting={goToEntry}
           folds={folds}
-          stopShortcut={shortcuts.stop}
           titleRef={titleRef}
           onAnnounce={(text) =>
             setAnnouncement((previous) => ({
@@ -538,16 +545,19 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             memory={data.memory(bot.id)}
             files={data.files(bot.id)}
             modelName={botModelName(data.engine, bot)}
+            stopShortcut={shortcuts.stop}
             onClose={close}
             headingRef={detailsHeadingRef}
             headingId={detailsHeadingId}
             intents={{
+              stop: () => intents.stopBot(bot.id),
               setRoutineEnabled: intents.setRoutineEnabled,
               openRoutine: intents.openRoutine,
               openAttachment: intents.openAttachment,
               openMemoryFile: (path) => intents.openMemoryFile(bot.id, path),
               freshStart: () => intents.freshStart(bot.id, bot.profile.name),
               deleteBot: () => intents.deleteBot(bot.id),
+              shareTemplate: () => intents.shareBotTemplate(bot.id),
               ...(editProfile ? { editProfile: () => editProfile(bot.id) } : {}),
             }}
           />
@@ -559,6 +569,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             room={item.room}
             intents={{
               editRoom: () => intents.editRoom(room.id),
+              stop: () => intents.stopRoom(room.id),
               archiveRoom: () => intents.archiveRoom(room.id),
               unarchiveRoom: () => intents.unarchiveRoom(room.id),
               deleteRoom: () => intents.deleteRoom(room.id),

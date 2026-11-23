@@ -134,22 +134,53 @@ export const fontFaces = [
   { family: fontFamilies.mono, weight: 400, file: "JetBrainsMono-Regular" },
 ] as const;
 
+/** A size and its line height, in px (sp on Android). */
+export interface TypeSize {
+  readonly size: number;
+  readonly lineHeight: number;
+}
+
 /**
- * Size and line height in px. Message text is `base` on pointer devices and
- * `lg` on phones. From `2xl` up the steps are for the display face.
+ * A step of the type scale on each kind of screen: `pointer` where a mouse
+ * leads, read close up, and `touch` on a phone, read at arm's length. A
+ * client takes one set whole: Android always `touch`, the web `pointer`
+ * unless its primary pointer is coarse.
+ */
+export interface TypeStep {
+  readonly pointer: TypeSize;
+  readonly touch: TypeSize;
+}
+
+const step = (pointer: TypeSize, touch: TypeSize = pointer): TypeStep => ({ pointer, touch });
+
+/**
+ * The type scale. Each step stands for the same roles on both kinds of
+ * screen, so a screen names a step once and reads well on either:
+ *
+ * - `2xs`: metadata, such as a time, a status, a time between messages.
+ * - `xs`: small labels, notices, code inside a message.
+ * - `sm`: secondary text, such as a roster row's line, a hint, a control.
+ * - `base`: names, menu items, a row's title; message text on a pointer screen.
+ * - `lg`: message text and the composer on a touch screen.
+ *
+ * From `xl` up the steps are headings, the same on both; from `2xl` up they
+ * are for the display face. On touch, names and message text share one size
+ * and differ in leading: a paragraph needs more room between lines than a
+ * one-line name. docs/design/design-language.md has the reasoning.
  */
 export const typeScale = {
-  "2xs": { size: 11, lineHeight: 16 },
-  xs: { size: 12, lineHeight: 16 },
-  sm: { size: 13, lineHeight: 18 },
-  base: { size: 14, lineHeight: 20 },
-  md: { size: 15, lineHeight: 20 },
-  lg: { size: 16, lineHeight: 24 },
-  xl: { size: 20, lineHeight: 26 },
-  "2xl": { size: 24, lineHeight: 28 },
-  "3xl": { size: 30, lineHeight: 34 },
-  "4xl": { size: 40, lineHeight: 42 },
-} as const;
+  "2xs": step({ size: 12, lineHeight: 16 }, { size: 13, lineHeight: 18 }),
+  xs: step({ size: 13, lineHeight: 18 }, { size: 14, lineHeight: 20 }),
+  sm: step({ size: 14, lineHeight: 20 }, { size: 16, lineHeight: 22 }),
+  base: step({ size: 15, lineHeight: 22 }, { size: 17, lineHeight: 22 }),
+  lg: step({ size: 16, lineHeight: 24 }, { size: 17, lineHeight: 24 }),
+  xl: step({ size: 20, lineHeight: 26 }),
+  "2xl": step({ size: 24, lineHeight: 28 }),
+  "3xl": step({ size: 30, lineHeight: 34 }),
+  "4xl": step({ size: 40, lineHeight: 42 }),
+} as const satisfies Record<string, TypeStep>;
+
+export type TypeInput = keyof TypeStep;
 
 export const fontWeights = { regular: 400, medium: 500, semibold: 600, bold: 700 } as const;
 

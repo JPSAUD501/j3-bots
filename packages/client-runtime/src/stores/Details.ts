@@ -4,6 +4,7 @@ import type {
   Bot,
   BotFile,
   BotId,
+  BotTemplate,
   MemoryDocument,
   MemoryFile,
   MemoryPath,
@@ -18,6 +19,7 @@ import type {
   Routine,
   RoutineId,
   RoutineRun,
+  TemplateTooLarge,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -28,6 +30,7 @@ import { Connection } from "../connection/Connection.ts";
 import {
   Actions,
   type IntentFailure,
+  intentFailure,
   intentResult,
   type IntentResult,
 } from "../intents/Actions.ts";
@@ -59,6 +62,25 @@ export interface BotDraft {
   readonly primary?: boolean;
 }
 
+/** What asking the server for a bot's template got. */
+export type BotTemplateResult =
+  | { readonly _tag: "done"; readonly value: BotTemplate }
+  /** Its file would be over the size any J3 Bots reads: nothing to share until a part is shortened. */
+  | { readonly _tag: "too-large"; readonly error: TemplateTooLarge }
+  | { readonly _tag: "failed"; readonly failure: IntentFailure };
+
+/**
+ * A bot to create from a template the operator has seen, with the model the
+ * preview showed (`templateStart`) and the permission mode only when the
+ * operator picked one: left out, the server decides it as the preview did
+ * (`templatePermissionMode`), from the model's default at that moment.
+ */
+export interface TemplateDraft {
+  readonly template: BotTemplate;
+  readonly model?: ModelChoice;
+  readonly permissionMode?: PermissionMode;
+}
+
 /** What `updateBot` changes. Fields left out keep their value. */
 export interface BotChanges {
   readonly profile?: ProfileChanges;
@@ -85,6 +107,8 @@ export interface RoomChanges {
   readonly members?: ReadonlyArray<BotId>;
   readonly hostId?: BotId;
   readonly hopLimit?: number;
+  /** A room keeps its own pin, at the top of the roster's list. */
+  readonly pinned?: boolean;
   readonly archived?: boolean;
 }
 
@@ -175,6 +199,9 @@ export class Details extends Context.Service<
     /** Lets go of a failed write the operator gave up on. One under way stays. */
     readonly dismissMemorySave: (scope: MemoryScope, path: MemoryPath) => void;
     readonly createBot: (draft: BotDraft) => Effect.Effect<IntentResult<Bot>>;
+    /** The bot as a template, read from the server when asked: it is never kept. */
+    readonly botTemplate: (botId: BotId) => Effect.Effect<BotTemplateResult>;
+    readonly createBotFromTemplate: (draft: TemplateDraft) => Effect.Effect<IntentResult<Bot>>;
     /** Changes a bot's profile, model or permission mode. The roster shows the result. */
     readonly updateBot: (botId: BotId, changes: BotChanges) => Effect.Effect<SaveResult<Bot>>;
     /**
@@ -416,6 +443,29 @@ export const layer = Layer.effect(
         .pipe(Effect.exit, Effect.map(intentResult));
     });
 
+    const botTemplate = Effect.fn("Details.botTemplate")(function* (botId: BotId) {
+      return yield* connection
+        .call((client) => client["bot.template"]({ botId }))
+        .pipe(
+          Effect.map((value): BotTemplateResult => ({ _tag: "done", value })),
+          Effect.catchTag("TemplateTooLarge", (error) =>
+            Effect.succeed<BotTemplateResult>({ _tag: "too-large", error }),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.succeed<BotTemplateResult>({ _tag: "failed", failure: intentFailure(cause) }),
+          ),
+        );
+    });
+
+    const createBotFromTemplate = Effect.fn("Details.createBotFromTemplate")(function* (
+      draft: TemplateDraft,
+    ) {
+      const commandId = yield* actions.commandId;
+      return yield* connection
+        .call((client) => client["bot.createFromTemplate"]({ commandId, ...draft }))
+        .pipe(Effect.exit, Effect.map(intentResult));
+    });
+
     const freshStart = Effect.fn("Details.freshStart")(function* (botId: BotId) {
       const commandId = yield* actions.commandId;
       return yield* actions.run(
@@ -471,6 +521,8 @@ export const layer = Layer.effect(
       routineRuns: routineRuns.acquire,
       setRoutineEnabled,
       createBot,
+      botTemplate,
+      createBotFromTemplate,
       updateBot,
       botSaves,
       dismissBotSave: (botId) => dismissFailed(botSaves, botId),

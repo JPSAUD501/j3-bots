@@ -5,21 +5,18 @@ import {
   ChevronRightIcon,
   CornerDownRightIcon,
   PanelRightIcon,
-  SquareIcon,
 } from "lucide-react";
-import { useCallback, useLayoutEffect, useRef, type RefObject } from "react";
-import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
+import type { RefObject } from "react";
 import { useTurnAnnouncement } from "@j3-bots/client-runtime/react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
 import { RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
 import { LiveBotAvatar, useOffline } from "./avatar/mood";
+import { PrimaryBadge } from "./avatar/PrimaryBadge";
 import { toneClass } from "./RosterRow";
 import { SwapText } from "./SwapText";
-import { Kbd } from "./ui/kbd";
 import { Button } from "./ui/button";
-import { Confirm } from "./ui/confirm";
 
 interface ConversationHeaderProps {
   readonly subject:
@@ -29,13 +26,10 @@ interface ConversationHeaderProps {
   readonly onToggleDetails: () => void;
   /** Phones only: back to the roster. */
   readonly onBack: () => void;
-  /** A bot's Stop runs at once; a room's, once the operator confirms it. */
-  readonly onStop: () => void;
   /** Brings the card a waiting bot needs answered into view. */
   readonly onGoToWaiting: (entryId: EntryId) => void;
   /** The conversation's work folds: when a turn ends, the line it folds into is said aloud. */
   readonly folds: ReadonlyArray<WorkFoldEntry>;
-  readonly stopShortcut: { readonly label: string; readonly aria: string };
   /** The name's button, which opens the details. */
   readonly titleRef?: RefObject<HTMLButtonElement | null>;
   /**
@@ -49,8 +43,9 @@ interface ConversationHeaderProps {
 
 /**
  * Who this is, and one line saying what it is doing now. The name opens the
- * details; while the bot waits, the line takes the operator to what it waits
- * on. Changes of state are announced through `onAnnounce`, once each.
+ * details, where Stop is while there is work to stop; while the bot waits, the
+ * line takes the operator to what it waits on. Changes of state are announced
+ * through `onAnnounce`, once each.
  *
  * Mount one per conversation, so moving to another conversation announces nothing.
  */
@@ -59,10 +54,8 @@ export function ConversationHeader({
   detailsOpen,
   onToggleDetails,
   onBack,
-  onStop,
   onGoToWaiting,
   folds,
-  stopShortcut,
   titleRef,
   onAnnounce,
 }: ConversationHeaderProps) {
@@ -78,30 +71,6 @@ export function ConversationHeader({
     subject._tag === "bot" && subject.bot.state._tag === "waiting"
       ? subject.bot.state.entryId
       : null;
-  const stoppable = subject._tag === "bot" && canStop(subject.bot);
-  const roomStopping = subject._tag === "room" ? roomStop(subject.room) : "hidden";
-
-  // A Stop goes away once the work it ends is over. When it held focus, focus
-  // moves to the details toggle beside it or, on a phone, where that is
-  // hidden, to the name, which opens the details there.
-  const detailsToggle = useRef<HTMLButtonElement>(null);
-  const stopLeft = useRef(false);
-  const stopRef = useCallback((element: HTMLButtonElement | null) => {
-    if (element === null) return;
-    // React runs this before it takes the button out of the page, while focus is still on it.
-    return () => {
-      if (element === document.activeElement) stopLeft.current = true;
-    };
-  }, []);
-  useLayoutEffect(() => {
-    if (!stopLeft.current) return;
-    stopLeft.current = false;
-    const active = document.activeElement;
-    if (active !== null && active !== document.body) return;
-    detailsToggle.current?.focus();
-    if (document.activeElement !== detailsToggle.current) titleRef?.current?.focus();
-  });
-
   // Each change of state and each new line is said once, then how the turn ended; not the first.
   const offline = useOffline();
   useTurnAnnouncement(subject._tag === "bot" ? subject.bot : null, folds, offline, ctx, onAnnounce);
@@ -121,7 +90,9 @@ export function ConversationHeader({
           phone, where it is the only way to the details, the block is a full touch target. */}
       <div className="relative flex min-w-0 items-center @max-tablet:min-h-(--layout-touch-target) gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:hover]:[--avatar-cutout:var(--muted)] has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
         {subject._tag === "bot" ? (
-          <LiveBotAvatar bot={subject.bot} size={32} />
+          <PrimaryBadge primary={subject.bot.primary} size={32}>
+            <LiveBotAvatar bot={subject.bot} size={32} />
+          </PrimaryBadge>
         ) : (
           <RoomAvatar size={32} members={roomAvatarMembers(subject.room, bots)} />
         )}
@@ -179,30 +150,7 @@ export function ConversationHeader({
             <CornerDownRightIcon aria-hidden />
           </Button>
         )}
-        {stoppable && (
-          <Button ref={stopRef} size="sm" onClick={onStop} aria-keyshortcuts={stopShortcut.aria}>
-            <SquareIcon className="size-3 fill-current" aria-hidden />
-            {t("conversation.stop")}
-            <Kbd className="pointer-coarse:hidden">{stopShortcut.label}</Kbd>
-          </Button>
-        )}
-        {roomStopping !== "hidden" && (
-          // One button through the whole Stop, so focus stays on it once the question closes.
-          <Confirm
-            trigger={<Button ref={stopRef} size="sm" aria-disabled={roomStopping === "stopping"} />}
-            title={t("room.stop.title", { name })}
-            body={t("room.stop.body", { name })}
-            cancel={t("room.stop.cancel")}
-            confirm={t("room.stop")}
-            onConfirm={onStop}
-            busy={roomStopping === "stopping"}
-          >
-            <SquareIcon className="size-3 fill-current" aria-hidden />
-            {roomStopping === "stopping" ? t("conversation.stopping") : t("conversation.stop")}
-          </Confirm>
-        )}
         <Button
-          ref={detailsToggle}
           variant="ghost-muted"
           size="icon"
           onClick={onToggleDetails}

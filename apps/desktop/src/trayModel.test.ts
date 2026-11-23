@@ -15,6 +15,7 @@ describe("the tray's menu", () => {
   it("says how many need the operator, names those it was given and counts the rest", () => {
     const model = trayModel(
       { pairing, count: 5, waiting: [waiting("Wren"), waiting("Scout")] },
+      null,
       createI18n("en"),
     );
     assert.strictEqual(model.count, 5);
@@ -24,8 +25,43 @@ describe("the tray's menu", () => {
       ["Wren", "Scout"],
     );
     assert.strictEqual(model.more, "And 3 more");
-    const one = trayModel({ pairing, count: 1, waiting: [waiting("Wren")] }, createI18n("pt-BR"));
+    const one = trayModel(
+      { pairing, count: 1, waiting: [waiting("Wren")] },
+      null,
+      createI18n("pt-BR"),
+    );
     assert.strictEqual(one.summary, "1 precisa de você");
     assert.isNull(one.more);
+  });
+
+  it("says first that the bots on this computer are not running, while they are not", () => {
+    const report = { pairing, count: 1, waiting: [waiting("Wren")] };
+    const en = createI18n("en");
+    const pt = createI18n("pt-BR");
+    const summary = (local: Parameters<typeof trayModel>[1], i18n = en) =>
+      trayModel(report, local, i18n).summary;
+    assert.strictEqual(summary({ state: "ready" }), "1 needs you");
+    assert.strictEqual(summary({ state: "starting" }), "Starting your bots…");
+    assert.strictEqual(summary({ state: "stopped" }), "Bots stopped");
+    assert.strictEqual(
+      summary({ state: "restarting", attempt: 2, retryInSeconds: 4 }),
+      "Bots stopped · restarting in 4 s",
+    );
+    assert.strictEqual(summary({ state: "restarting", attempt: 3 }), "Bots stopped · restarting…");
+    assert.strictEqual(
+      summary({ state: "failed", reason: "Port 3747 is in use." }),
+      "Bots couldn’t start",
+    );
+    assert.strictEqual(summary({ state: "stopped" }, pt), "Bots parados");
+    assert.strictEqual(
+      summary({ state: "restarting", attempt: 2, retryInSeconds: 4 }, pt),
+      "Bots parados · reiniciando em 4 s",
+    );
+    assert.strictEqual(summary({ state: "failed" }, pt), "Os bots não iniciaram");
+    // What waits is still listed, under the line that says the bots are not running.
+    assert.deepStrictEqual(
+      trayModel(report, { state: "stopped" }, en).entries.map((entry) => entry.label),
+      ["Wren"],
+    );
   });
 });

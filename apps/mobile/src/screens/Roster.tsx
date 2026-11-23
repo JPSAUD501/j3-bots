@@ -12,7 +12,7 @@ import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { Bot, Plus, Search, SearchX, Users, X } from "lucide-react-native";
+import { Bot, FileInput, Plus, Search, SearchX, Users, X } from "lucide-react-native";
 import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, type FlatListProps, View } from "react-native";
 import { useAnimatedRef, useSharedValue } from "react-native-reanimated";
@@ -38,6 +38,7 @@ import { useI18n } from "../i18n.ts";
 import { Onboarding } from "../onboarding/Onboarding.tsx";
 import { useSideBySide } from "../layout.ts";
 import { asItWas, type Navigation, type Screens, useOpenConversation } from "../navigation.tsx";
+import { pickTemplate } from "../template/opened.ts";
 import { useBots } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { useColor } from "../theme.ts";
@@ -176,6 +177,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   if (rows === null) return <Connecting />;
   const newEntries: ReadonlyArray<MenuEntry> = [
     { label: t("roster.newBot"), icon: Bot, onPress: () => navigation.navigate("newBot") },
+    { label: t("roster.newFromTemplate"), icon: FileInput, onPress: () => void pickTemplate() },
     // A room needs two bots: with fewer, the row says so and makes a bot instead.
     bots.size >= ROOM_MEMBERS.min
       ? {
