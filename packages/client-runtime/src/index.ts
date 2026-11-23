@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 export {
   type ConversationHandle,
+  type VaultHandle,
   createJ3Client,
   type DownloadResult,
   type J3Client,
@@ -128,6 +129,14 @@ export {
   type SettingsSaves,
 } from "./stores/Settings.ts";
 export type { Synced } from "./stores/synced.ts";
+export {
+  type CredentialChanges,
+  type NewCredential,
+  Vault,
+  type VaultFailure,
+  type VaultResult,
+  type VaultView,
+} from "./stores/Vault.ts";
 export {
   type RecentTurns,
   type RecentTurnsState,

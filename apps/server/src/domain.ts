@@ -33,6 +33,7 @@ import * as SettingsService from "./settings/SettingsService.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as Host from "./system/Host.ts";
 import * as BotTools from "./tools/BotTools.ts";
+import * as Vault from "./vault/Vault.ts";
 import * as BotStates from "./turns/BotStates.ts";
 import * as Cards from "./turns/Cards.ts";
 import * as Ledger from "./turns/Ledger.ts";
@@ -93,7 +94,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
   Layer.provideMerge(Layer.mergeAll(Stops.layer, HeldQueues.layer)),
   Layer.provideMerge(Sender.layer),
   Layer.provideMerge(Observer.layer),
-  Layer.provideMerge(Layer.mergeAll(Ledger.layer, Wakes.layer, WorkSteps.layer)),
+  Layer.provideMerge(Layer.mergeAll(Ledger.layer, Wakes.layer, WorkSteps.layer, Vault.layer)),
   Layer.provideMerge(
     Layer.mergeAll(MemoryFiles.layer, Entries.layer, Attachments.layer, BotStore.layer),
   ),

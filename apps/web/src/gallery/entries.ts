@@ -31,6 +31,8 @@ function previewText(entry: Entry): string {
       return entry.action;
     case "secret-request":
       return entry.label;
+    case "credential-request":
+      return entry.origin;
     case "connector-suggestion":
     case "connector-auth":
       return entry.name;

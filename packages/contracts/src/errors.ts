@@ -35,6 +35,8 @@ export const Resource = Schema.Literals([
   "attachment",
   /** Only an answer to a request about sections names it, which an older client never makes. */
   "section",
+  /** A saved login, which only the vault's requests name. */
+  "credential",
   /** A connector, a gallery entry, or a sign-in to one: only connector requests name them. */
   "connector",
   "connector-listing",
@@ -75,6 +77,13 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "vault-locked",
     /** The vault has no master password yet: `vault.setup` sets one. */
     "vault-not-set-up",
+    /** The vault already has a master password: `vault.changePassword` changes it. */
+    "vault-set-up",
+    /**
+     * A newer release of J3 Bots changed the vault's file, which this one
+     * cannot read. Nothing in it can be used until that release runs again.
+     */
+    "vault-newer",
     /**
      * The connector's address is in the operator's own network. Nothing was
      * added; the operator confirms it, and the client sends it again saying so.
@@ -132,6 +141,10 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "answer-length",
     /** A dismissal of a question the harness asked: only a bot's `ask` question takes one. */
     "not-dismissible",
+    /** The master password given is not the vault's. */
+    "master-password",
+    /** The one-time code setup is neither a base32 secret nor an `otpauth://totp/` address. */
+    "totp",
     /** A connect form's values: a required one missing, or one the form does not ask for. */
     "connector-fields",
     /** The gallery entry cannot be connected yet (`ConnectKind` `unsupported`). */
@@ -148,3 +161,7 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
 /** What a command can fail with. */
 export const CommandError = Schema.Union([NotFound, Conflict, Invalid]);
 export type CommandError = typeof CommandError.Type;
+
+/** What a request to the vault can fail with: a command's errors, and the unlock limit. */
+export const VaultError = Schema.Union([NotFound, Conflict, Invalid, RateLimited]);
+export type VaultError = typeof VaultError.Type;

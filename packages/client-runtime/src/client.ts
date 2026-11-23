@@ -5,6 +5,9 @@ import type {
   BotFile,
   BotId,
   CommandId,
+  Credential,
+  CredentialField,
+  CredentialId,
   Device,
   DeviceId,
   DeviceToken,
@@ -18,6 +21,7 @@ import type {
   MemoryScope,
   Mentions,
   HarnessLocation,
+  MasterPassword,
   Notification,
   ProviderConnectionRequest,
   Room,
@@ -29,6 +33,7 @@ import type {
   SectionId,
   Settings as SettingsValue,
   SignInHarness,
+  TotpPreview,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -71,6 +76,7 @@ import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
 import type { Synced } from "./stores/synced.ts";
 import * as Usage from "./stores/Usage.ts";
+import * as Vault from "./stores/Vault.ts";
 import * as WorkSteps from "./stores/WorkSteps.ts";
 
 /** What a platform provides to run the client. See `ports.ts`. */
@@ -101,6 +107,7 @@ export const layer = SignOut.layer.pipe(
       Presence.layer,
       Usage.layer,
       ProviderSetup.layer,
+      Vault.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -109,6 +116,36 @@ export const layer = SignOut.layer.pipe(
   Layer.provideMerge(Connection.layer),
   Layer.provide(refuseRedirects),
 );
+
+/** The vault, with each request answered as a promise; see `Vault.Vault`. */
+export interface VaultHandle {
+  readonly view: Readable<Vault.VaultView>;
+  readonly setup: (password: MasterPassword) => Promise<Vault.VaultResult>;
+  readonly unlock: (password: MasterPassword) => Promise<Vault.VaultResult>;
+  readonly lock: () => Promise<Vault.VaultResult>;
+  readonly changePassword: (
+    current: MasterPassword,
+    next: MasterPassword,
+  ) => Promise<Vault.VaultResult>;
+  readonly save: (
+    credential: Vault.NewCredential,
+    request: EntryId | null,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly update: (
+    id: CredentialId,
+    changes: Vault.CredentialChanges,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly remove: (id: CredentialId) => Promise<Vault.VaultResult>;
+  readonly setAllowedBots: (
+    id: CredentialId,
+    bots: ReadonlyArray<BotId>,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly reveal: (
+    id: CredentialId,
+    field: CredentialField,
+  ) => Promise<Vault.VaultResult<Redacted.Redacted<string>>>;
+  readonly totpPreview: (id: CredentialId) => Promise<Vault.VaultResult<TotpPreview>>;
+}
 
 export interface ConversationHandle {
   readonly target: EntryTarget;
@@ -380,6 +417,9 @@ export interface J3Client {
     request: ProviderConnectionRequest,
   ) => Promise<ProviderSetup.ConnectEndpointResult>;
 
+  /** The operator's vault on the server; see `Vault`. */
+  readonly vault: VaultHandle;
+
   readonly setView: (target: EntryTarget | null) => void;
   /** Calls `listener` for each notification. Returns the function that stops it. */
   readonly onNotification: (listener: (notification: Notification) => void) => () => void;
@@ -424,6 +464,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         presence: yield* Presence.Presence,
         usage: yield* Usage.Usage,
         providerSetup: yield* ProviderSetup.ProviderSetup,
+        vault: yield* Vault.Vault,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -625,6 +666,19 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         services.devices.startPairing.pipe(Effect.exit, Effect.map(Actions.intentResult)),
       ),
 
+    vault: {
+      view: services.vault.view,
+      setup: (password) => run.promise(services.vault.setup(password)),
+      unlock: (password) => run.promise(services.vault.unlock(password)),
+      lock: () => run.promise(services.vault.lock),
+      changePassword: (current, next) => run.promise(services.vault.changePassword(current, next)),
+      save: (credential, request) => run.promise(services.vault.save(credential, request)),
+      update: (id, changes) => run.promise(services.vault.update(id, changes)),
+      remove: (id) => run.promise(services.vault.remove(id)),
+      setAllowedBots: (id, bots) => run.promise(services.vault.setAllowedBots(id, bots)),
+      reveal: (id, field) => run.promise(services.vault.reveal(id, field)),
+      totpPreview: (id) => run.promise(services.vault.totpPreview(id)),
+    },
     signIns: services.providerSetup.signIns,
     signIn: (harness, openPage) => fire(services.providerSetup.signIn(harness, openPage)),
     cancelSignIn: (harness) => fire(services.providerSetup.cancelSignIn(harness)),

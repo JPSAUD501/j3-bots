@@ -121,6 +121,7 @@ const sentences = {
   "summary.askedApproval": "Pediu aprovação: {action}",
   "summary.needsSecret": "Precisa de uma credencial: {label}",
   "summary.askedSecret": "Pediu uma credencial: {label}",
+  "summary.askedLogin": "Pediu para salvar um login de {origin}",
   "summary.suggestedConnector": "Sugeriu conectar {name}",
   "summary.connectorSignIn": "{name} precisa que você entre de novo",
   "summary.suggestsConnector": "Sugere conectar {name}",

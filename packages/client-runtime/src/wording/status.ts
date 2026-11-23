@@ -118,6 +118,8 @@ function previewSummary(
       return t(current ? "summary.needsApproval" : "summary.askedApproval", { action: text });
     case "secret-request":
       return t(current ? "summary.needsSecret" : "summary.askedSecret", { label: text });
+    case "credential-request":
+      return t("summary.askedLogin", { origin: text });
     case "connector-suggestion":
       return t("summary.suggestedConnector", { name: text });
     case "connector-auth":

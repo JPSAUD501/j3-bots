@@ -123,6 +123,7 @@ export const en = {
   "summary.askedApproval": "Asked for approval: {action}",
   "summary.needsSecret": "Needs a credential: {label}",
   "summary.askedSecret": "Asked for a credential: {label}",
+  "summary.askedLogin": "Asked to save a login for {origin}",
   "summary.suggestedConnector": "Suggested connecting {name}",
   "summary.connectorSignIn": "{name} needs you to sign in again",
   "summary.suggestsConnector": "Suggests connecting {name}",
