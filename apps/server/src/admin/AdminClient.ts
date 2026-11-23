@@ -47,7 +47,7 @@ class UnexpectedStatus extends Schema.TaggedError<UnexpectedStatus>()("Unexpecte
 const TIMEOUT = Duration.seconds(10);
 
 /** Reads an answer that is `schema` in JSON. */
-const json = <A>(schema: Schema.Codec<A, unknown>) =>
+const json = <S extends Schema.Constraint>(schema: S) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(schema)));
 
 /** Reads an answer with no body. */
@@ -233,10 +233,12 @@ export const layer = Layer.effect(
               // Read whole before the status is looked at: on a pipe, the next
               // request waits for this answer to end.
               Effect.flatMap((response) =>
-                Effect.flatMap(response.text, (text) =>
-                  response.status >= 200 && response.status < 300
-                    ? read(text)
-                    : Effect.fail(new UnexpectedStatus({ status: response.status })),
+                Effect.flatMap(
+                  response.text,
+                  (text): Effect.Effect<A, Schema.SchemaError | UnexpectedStatus> =>
+                    response.status >= 200 && response.status < 300
+                      ? read(text)
+                      : Effect.fail(new UnexpectedStatus({ status: response.status })),
                 ),
               ),
               // On a pipe a timeout would abandon the request and with it the

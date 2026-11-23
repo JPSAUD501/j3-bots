@@ -123,8 +123,8 @@ const routes = Layer.mergeAll(
     ADMIN_PATHS.shutdown,
     Effect.gen(function* () {
       yield* Effect.logInfo("Stopping, as asked on the admin channel");
-      // A stop releases the admin channels before the rest of the server, and
-      // each answers the requests in progress, this one included, before it closes.
+      // A stop releases the admin channels before the engine and the database,
+      // and each answers the requests in progress, this one included, before it closes.
       yield* (yield* ServerStop).request;
       return HttpServerResponse.empty({ status: 202 });
     }),

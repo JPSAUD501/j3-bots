@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- An inherited descriptor is opened with node:net, and node:http parses the requests on it.
+// @effect-diagnostics anyUnknownInErrorContext:off -- An HTTP server is handed any app, whatever it fails with: the request handler answers every failure.
 import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -29,10 +30,10 @@ import * as NetAddress from "effect/net/NetAddress";
 const GRACE = Duration.seconds(1);
 
 /** `--admin-fd` names something the admin channel cannot be served on. */
-export class AdminPipeUnusable extends Schema.TaggedError<AdminPipeUnusable>()(
-  "AdminPipeUnusable",
-  { fd: Schema.Int, reason: Schema.String },
-) {
+class AdminPipeUnusable extends Schema.TaggedError<AdminPipeUnusable>()("AdminPipeUnusable", {
+  fd: Schema.Int,
+  reason: Schema.String,
+}) {
   override get message(): string {
     return `--admin-fd ${this.fd} cannot carry the admin channel: ${this.reason}. It must name a pipe this process inherited, open for reading and writing, from the process that started it.`;
   }
@@ -78,7 +79,6 @@ type Handler = (request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResp
  * What an `HttpServer` is handed to serve: any app, whatever it fails with,
  * since the request handler answers every failure itself.
  */
-// @effect-diagnostics-next-line anyUnknownInErrorContext:off
 type App = Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   unknown,
@@ -124,7 +124,6 @@ export const server = (fd: number) =>
           ) {
             const serveScope = yield* Effect.scope;
             const requests = yield* Scope.fork(serveScope, "parallel");
-            // @effect-diagnostics-next-line anyUnknownInErrorContext:off
             const handler: Handler = yield* NodeHttpServer.makeHandler<
               HttpServerRequest.HttpServerRequest | Scope.Scope,
               unknown,
