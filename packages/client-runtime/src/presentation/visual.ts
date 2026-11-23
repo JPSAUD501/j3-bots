@@ -45,7 +45,8 @@ export const VISUAL_BRIDGE = "J3Visual";
 //   before the page runs, so none of its scripts can make one.
 // - Another realm, which would have them all again. A visual holds no nested
 //   document: `visualDocument` refuses a page whose markup has one, and this
-//   removes every frame a script adds, to the document or to a shadow root,
+//   removes every frame a script adds, to the document or to a shadow root
+//   (each attached unclonable, so no copy of one escapes it),
 //   at the next microtask, before the frame's document can load. The ways to
 //   parse a declarative shadow root, whose inside this could not see, are
 //   deleted, with `document.write`. A nested document is cross-origin to the
@@ -60,7 +61,7 @@ const GUARD = `(function () {
   for (var i = 0; i < names.length; i++) if (/^(webkit)?RTC/.test(names[i])) drop(window, names[i]);
   var parsers = [
     [Document.prototype, "open"], [Document.prototype, "write"], [Document.prototype, "writeln"],
-    [Document, "parseHTMLUnsafe"], [Element.prototype, "setHTMLUnsafe"], [Element.prototype, "setHTML"],
+    [Document, "parseHTMLUnsafe"], [Document, "parseHTML"], [Element.prototype, "setHTMLUnsafe"], [Element.prototype, "setHTML"],
     [ShadowRoot.prototype, "setHTMLUnsafe"], [ShadowRoot.prototype, "setHTML"]
   ];
   for (i = 0; i < parsers.length; i++) drop(parsers[i][0], parsers[i][1]);
@@ -87,7 +88,11 @@ const GUARD = `(function () {
   });
   apply(observe, guard, [document, options]);
   Element.prototype.attachShadow = function attachShadow_(init) {
-    var root = apply(attachShadow, this, [init]);
+    var own = {
+      __proto__: null, mode: init.mode, delegatesFocus: init.delegatesFocus,
+      slotAssignment: init.slotAssignment, serializable: init.serializable, clonable: false
+    };
+    var root = apply(attachShadow, this, [own]);
     apply(observe, guard, [root, options]);
     return root;
   };

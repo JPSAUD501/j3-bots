@@ -38,6 +38,20 @@ export type EntryDraft = DistributiveOmit<Entry, "id" | "order" | "createdAt">;
 /** How many entries a subscription's snapshot holds. */
 const SNAPSHOT_SIZE = 100;
 
+/**
+ * About how much a frame sent to a client may hold, in characters of the
+ * entries' stored bodies, which are already JSON: a page of entries stops
+ * once it is past this, and a replay that would be is answered with a
+ * snapshot instead. An entry is a few kilobytes, a visual up to half a
+ * megabyte of page, so a hundred entries could otherwise reach hundreds of
+ * megabytes. A page always holds at least one entry, so it goes over by less
+ * than one entry.
+ */
+const FRAME_BUDGET = 8 * 1024 * 1024;
+
+/** The total size of some entries' stored bodies. */
+const SizeRows = Schema.Array(Schema.Struct({ size: Schema.Number }));
+
 /** The fields every entry has, kept in their own columns rather than in `body_json`. */
 const COMMON_FIELDS = new Set(["_tag", "id", "order", "author", "createdAt"]);
 
@@ -199,21 +213,53 @@ export const layer = Layer.effect(
         sql`SELECT ${sql.literal(ENTRY_COLUMNS)} FROM entries WHERE ${sql.in("id", ids)} ORDER BY position`,
     });
 
+    /**
+     * The newest entries of `target` before `before`, oldest first: at most
+     * `limit`, and, given a `budget`, no more than reach it (at least one).
+     */
     const newest = Effect.fn("Entries.newest")(function* (
       target: EntryTarget,
       before: EntryOrder | null,
       limit: number,
+      budget: number | null,
     ) {
-      const rows = yield* sql`
-        SELECT ${sql.literal(ENTRY_COLUMNS)} FROM entries
-        WHERE ${targetColumn(target)}
-          ${before === null ? sql`` : sql`AND position < ${before}`}
-        ORDER BY position DESC
-        LIMIT ${limit + 1}
-      `;
+      const older = before === null ? sql`` : sql`AND position < ${before}`;
+      const rows =
+        budget === null
+          ? yield* sql`
+              SELECT ${sql.literal(ENTRY_COLUMNS)} FROM entries
+              WHERE ${targetColumn(target)} ${older}
+              ORDER BY position DESC
+              LIMIT ${limit + 1}
+            `
+          : // Each row with the size of the newer ones before it: a row is
+            // kept while they are still under the budget.
+            yield* sql`
+              SELECT ${sql.literal(ENTRY_COLUMNS)} FROM (
+                SELECT ${sql.literal(ENTRY_COLUMNS)},
+                  SUM(length(body_json)) OVER (ORDER BY position DESC) - length(body_json) AS newer
+                FROM entries
+                WHERE ${targetColumn(target)} ${older}
+                ORDER BY position DESC
+                LIMIT ${limit + 1}
+              )
+              WHERE newer < ${budget}
+              ORDER BY position DESC
+            `;
       const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(EntryRow))(rows);
-      const entries = yield* Effect.forEach(decoded.slice(0, limit).toReversed(), toEntry);
-      return { entries, hasOlder: decoded.length > limit };
+      const kept = decoded.slice(0, limit);
+      const entries = yield* Effect.forEach(kept.toReversed(), toEntry);
+      const oldest = kept.at(-1);
+      if (budget === null || decoded.length > limit || oldest === undefined) {
+        return { entries, hasOlder: decoded.length > limit };
+      }
+      // Cut by the budget, or the last of them: whether any is older.
+      const beyond = yield* sql`
+        SELECT 1 FROM entries
+        WHERE ${targetColumn(target)} AND position < ${oldest.position}
+        LIMIT 1
+      `;
+      return { entries, hasOlder: beyond.length > 0 };
     }, Effect.orDie);
 
     const encodeBody = Schema.encodeEffect(Body);
@@ -337,7 +383,7 @@ export const layer = Layer.effect(
       readonly limit: number;
     }) {
       yield* requireTarget(input.target);
-      return yield* newest(input.target, input.before, input.limit);
+      return yield* newest(input.target, input.before, input.limit, FRAME_BUDGET);
     });
 
     const markRead = Effect.fn("Entries.markRead")(function* (
@@ -406,7 +452,7 @@ export const layer = Layer.effect(
     });
 
     const summary = Effect.fn("Entries.summary")(function* (target: EntryTarget) {
-      const { entries } = yield* newest(target, null, 1);
+      const { entries } = yield* newest(target, null, 1, null);
       const mark =
         target._tag === "conversation"
           ? sql`(SELECT read_through_order FROM conversations WHERE bot_id = ${target.botId})`
@@ -426,7 +472,7 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           yield* requireTarget(target);
           const sequence = yield* changes.watermark;
-          const { entries, hasOlder } = yield* newest(target, null, SNAPSHOT_SIZE);
+          const { entries, hasOlder } = yield* newest(target, null, SNAPSHOT_SIZE, FRAME_BUDGET);
           return { _tag: "snapshot", sequence, entries, hasOlder } satisfies EntryFrame;
         }),
       );
@@ -449,9 +495,13 @@ export const layer = Layer.effect(
               sequence: after,
               upsert: [],
             });
-          const rows = yield* rowsOf({
-            ids: [...new Set(resume.changes.map((change) => EntryId.make(change.entityId)))],
-          }).pipe(Effect.orDie);
+          const ids = [...new Set(resume.changes.map((change) => EntryId.make(change.entityId)))];
+          // Too much to send at once: the bounded snapshot instead.
+          const sized = yield* sql`
+            SELECT COALESCE(SUM(length(body_json)), 0) AS size FROM entries WHERE ${sql.in("id", ids)}
+          `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SizeRows)), Effect.orDie);
+          if ((sized[0]?.size ?? 0) > FRAME_BUDGET) return Option.none<EntryFrame>();
+          const rows = yield* rowsOf({ ids }).pipe(Effect.orDie);
           const upsert = yield* Effect.forEach(rows, toEntry);
           return Option.some<EntryFrame>({ _tag: "changed", sequence: last.sequence, upsert });
         }),
@@ -489,7 +539,7 @@ export const layer = Layer.effect(
       );
 
     const latest = (target: EntryTarget, limit: number) =>
-      Effect.map(newest(target, null, limit), (page) => page.entries);
+      Effect.map(newest(target, null, limit, null), (page) => page.entries);
 
     return Entries.of({
       append,
