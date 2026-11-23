@@ -19,6 +19,56 @@ interface ConfirmProps {
   readonly busy?: boolean;
 }
 
+interface ConfirmDialogProps {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly title: string;
+  readonly body: string;
+  readonly cancel: string;
+  readonly confirm: string;
+  readonly onConfirm: () => void;
+  /** `destructive` for what cannot be undone; `primary` for a change the operator can make again. */
+  readonly tone?: "destructive" | "primary";
+}
+
+/**
+ * The question `Confirm` asks, opened by its owner rather than a trigger of
+ * its own: from a menu row, which closes as the question opens.
+ */
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  body,
+  cancel,
+  confirm,
+  onConfirm,
+  tone = "destructive",
+}: ConfirmDialogProps) {
+  return (
+    <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
+      <AlertDialog.Portal>
+        <AlertDialog.Backdrop className={cn(dialogBackdrop, "z-50")} />
+        <AlertDialog.Popup className={cn(alertDialog, "z-50 max-w-sm gap-2 p-5")}>
+          <AlertDialog.Title className={dialogTitle}>{title}</AlertDialog.Title>
+          <AlertDialog.Description className="text-sm text-muted-foreground">
+            {body}
+          </AlertDialog.Description>
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            <AlertDialog.Close render={<Button />}>{cancel}</AlertDialog.Close>
+            <AlertDialog.Close
+              render={<Button variant={tone === "destructive" ? "destructive" : "primary"} />}
+              onClick={onConfirm}
+            >
+              {confirm}
+            </AlertDialog.Close>
+          </div>
+        </AlertDialog.Popup>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  );
+}
+
 /**
  * Asks before something that cannot be undone, naming what goes and what
  * stays. Cancel is where focus starts; the action runs only once confirmed.

@@ -85,6 +85,8 @@ export interface RoomChanges {
   readonly members?: ReadonlyArray<BotId>;
   readonly hostId?: BotId;
   readonly hopLimit?: number;
+  /** A room keeps its own pin, at the top of the roster's list. */
+  readonly pinned?: boolean;
   readonly archived?: boolean;
 }
 

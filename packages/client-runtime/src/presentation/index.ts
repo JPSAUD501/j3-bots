@@ -102,6 +102,7 @@ export {
   withoutDeleted,
 } from "./roomForm.ts";
 export {
+  arrangedOrder,
   arrangeRoster,
   type ArrangedRoster,
   type BotItem,

@@ -86,7 +86,10 @@ Answers: who do I have, who needs me, what is each of them doing.
 
 - One row per bot and per room: avatar, name, time of last activity, one line of status or the last message.
 - Rows that need the operator (a pending question or approval, an unread result) come first and are marked.
-- Pinned rows stay at the top. Hidden bots keep running and are reachable through search.
+- Pinned bots stay at the top, as large avatars with their names; a room keeps its own pin, at the top of the list.
+- The operator can group bots in named sections, in an order they choose, each one folded or open. A bot is in one section at most, and deleting a section never deletes its bots: they return to the list.
+- Hidden bots keep running. They are left out of the list and reachable through search and through a "Hidden conversations" row at its end, which says how many there are and whether one has something unread, and lists them, each with Unhide.
+- Each bot and room has a menu (right-click, the "…" or a long press) to mark it read or unread, pin it, move it to a section, make it the primary bot, hide it, and reach its details. The primary bot's avatar carries a small star wherever it appears.
 - Search finds bots, rooms and messages.
 - New bot and new room are one action each.
 

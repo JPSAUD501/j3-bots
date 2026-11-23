@@ -57,6 +57,7 @@ import {
   type Draft,
   type DraftChangedElsewhere,
   type IntentFailure,
+  type IntentResult,
   type J3Client,
   type Loaded,
   type MemoryEdit,
@@ -424,6 +425,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   // of its list, and still shows one opened from a search or a notification.
   const listedRoster = useReadable(j3.roster);
   const roster = listedRoster._tag === "ready" ? listedRoster.value : null;
+  const sections = useReadable(j3.sections);
   const bots = (roster ?? []).flatMap((row) => (row._tag === "bot" ? [row.bot] : []));
   const engine = useEngineStatus();
   const settings = useSettings();
@@ -498,6 +500,10 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     onScreen: string | null;
   }>({ bot: null, memory: null, room: null, onScreen: null });
   const say = useSay();
+  /** The roster shows a change once the server has it: one that did not take says so. */
+  const rosterChanged = (result: IntentResult<unknown>) => {
+    if (result._tag === "failed" && stillPaired()) say(t("roster.changeFailed"));
+  };
 
   const view: ConversationView =
     conversation.state === null
@@ -687,6 +693,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     engineStale: engine._tag === "ready" && engine.stale,
     signIns,
     roster,
+    sections,
     conversation: (asked) =>
       viewKey !== null && targetKey(asked) === viewKey ? view : loadingView,
     draft: (asked) => drafts.get(targetKey(asked)) ?? blankDraft,
@@ -958,6 +965,18 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     markRead: (asked, through) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
     },
+    markRosterRead: (asked, through) => void j3.markRosterRead(asked, through).then(rosterChanged),
+    markUnread: (asked) => void j3.markUnread(asked).then(rosterChanged),
+    placeBot: (botId, placement) => void j3.placeBot(botId, placement).then(rosterChanged),
+    pinRoom: (roomId, pinned) => void j3.updateRoom(roomId, { pinned }).then(rosterChanged),
+    createSection: (name, botId) =>
+      j3.createSection(name, botId).then((result) => {
+        rosterChanged(result);
+        return result._tag === "done" ? result.value.id : null;
+      }),
+    updateSection: (sectionId, changes) =>
+      void j3.updateSection(sectionId, changes).then(rosterChanged),
+    deleteSection: (sectionId) => void j3.deleteSection(sectionId).then(rosterChanged),
     setShown,
     stopBot: (botId) => void j3.stopBot(botId),
     stopRoom: (roomId) => {

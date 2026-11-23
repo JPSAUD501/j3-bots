@@ -14,6 +14,7 @@ import {
   ModelId,
   PairingCode,
   ProviderId,
+  SectionId,
   ServerOrigin,
   type Bot,
   type BotState,
@@ -24,6 +25,7 @@ import {
   type Room,
   type RoomId,
   type RosterItem,
+  type Section,
 } from "@j3-bots/contracts";
 import { freeAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
@@ -100,6 +102,28 @@ function updateBot(state: State, botId: BotId, update: (bot: Bot) => Bot): State
       item._tag === "bot" && item.bot.id === botId ? { ...item, bot: update(item.bot) } : item,
     ),
   };
+}
+
+/** Marks the bot's conversation or the room read or unread, as the server would. */
+function withUnread(state: State, target: EntryTarget, unread: boolean): State {
+  const key = keyOf(target);
+  return {
+    ...state,
+    roster: state.roster.map((item) => (itemKey(item) === key ? { ...item, unread } : item)),
+  };
+}
+
+/** `sections` with the one at `id` moved before `before`, or to the end. */
+function placedSection(
+  sections: ReadonlyArray<Section>,
+  id: SectionId,
+  before: SectionId | null,
+): ReadonlyArray<Section> {
+  const moving = sections.find((section) => section.id === id);
+  if (moving === undefined) return sections;
+  const others = sections.filter((section) => section.id !== id);
+  const index = before === null ? -1 : others.findIndex((section) => section.id === before);
+  return index === -1 ? [...others, moving] : others.toSpliced(index, 0, moving);
 }
 
 const setState = (botState: BotState) => (bot: Bot) => ({ ...bot, state: botState });
@@ -495,6 +519,52 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     openMemoryFile: nothing,
     loadOlder: nothing,
     markRead: nothing,
+    markRosterRead: (target) => update((s) => withUnread(s, target, false)),
+    markUnread: (target) => update((s) => withUnread(s, target, true)),
+    placeBot: (botId, { primary, ...placement }) =>
+      update((s) => ({
+        ...s,
+        roster: s.roster.map((item) => {
+          if (item._tag !== "bot") return item;
+          if (item.bot.id === botId)
+            return { ...item, bot: { ...item.bot, ...placement, ...(primary ? { primary } : {}) } };
+          // One primary bot at a time: making another one primary replaces it.
+          return primary && item.bot.primary
+            ? { ...item, bot: { ...item.bot, primary: false } }
+            : item;
+        }),
+      })),
+    pinRoom: (roomId, pinned) =>
+      update((s) => updateRoom(s, roomId, (room) => ({ ...room, pinned }))),
+    createSection: (name, botId) => {
+      const id = SectionId.make(`local-section-${++created}`);
+      update((s) => {
+        const made = { ...s, sections: [...s.sections, { id, name }] };
+        return botId === null ? made : updateBot(made, botId, (bot) => ({ ...bot, sectionId: id }));
+      });
+      return Promise.resolve(id);
+    },
+    updateSection: (sectionId, { name, before }) =>
+      update((s) => {
+        const renamed = s.sections.map((section) =>
+          section.id === sectionId && name !== undefined ? { ...section, name } : section,
+        );
+        return {
+          ...s,
+          sections: before === undefined ? renamed : placedSection(renamed, sectionId, before),
+        };
+      }),
+    // Its bots stay, in no section.
+    deleteSection: (sectionId) =>
+      update((s) => ({
+        ...s,
+        sections: s.sections.filter((section) => section.id !== sectionId),
+        roster: s.roster.map((item) =>
+          item._tag === "bot" && item.bot.sectionId === sectionId
+            ? { ...item, bot: { ...item.bot, sectionId: null } }
+            : item,
+        ),
+      })),
     setShown: nothing,
     newBot: nothing,
     // The room form belongs to the client runtime's source; the sample has no dialog for it.
@@ -549,6 +619,7 @@ function toData(state: State): ShellData {
     engineStale: false,
     signIns: new Map(),
     roster: state.roster,
+    sections: state.sections,
     conversation: (target) => ({
       phase: "ready",
       items: state.entries[keyOf(target)] ?? [],

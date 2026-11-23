@@ -146,6 +146,16 @@ export function arrangeRoster(
   };
 }
 
+/**
+ * The rows of an arranged roster in the order they are drawn, as the keys
+ * that move between conversations walk them: the hidden bots are not drawn.
+ */
+export const arrangedOrder = (arranged: ArrangedRoster): ReadonlyArray<RosterItem> => [
+  ...arranged.pinned,
+  ...arranged.main,
+  ...arranged.sections.flatMap((section) => section.items),
+];
+
 const fold = (s: string) => s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 
 /**

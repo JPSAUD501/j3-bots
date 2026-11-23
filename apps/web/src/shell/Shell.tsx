@@ -13,11 +13,12 @@ import {
 import {
   addressed,
   addresseeOf,
+  arrangedOrder,
+  arrangeRoster,
   arrivalCounts,
   buildTimeline,
   canStop,
   liveTurn,
-  filterRoster,
   openingHeld,
   orderRoster,
   readThrough,
@@ -55,6 +56,7 @@ import { useSeenEntries } from "../lib/useSeenEntries";
 import { addresseeLine, botModelName } from "@j3-bots/client-runtime/wording";
 import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
+import { rosterIntents } from "./rosterIntents";
 import { isEditable, shellShortcuts } from "./shortcuts";
 
 interface ShellNavigation {
@@ -193,7 +195,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         return true;
       case "next":
       case "previous": {
-        const rows = orderRoster(filterRoster(rosterItems, ""));
+        // In the order the roster draws them, so the keys walk what the operator sees.
+        const rows = arrangedOrder(arrangeRoster(orderRoster(rosterItems), data.sections ?? []));
         const forward = action === "next";
         const index = item === null ? -1 : rows.indexOf(item);
         // With nothing selected, down starts at the top and up at the bottom.
@@ -353,6 +356,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       rowLink={navigation.rowLink}
       onNewBot={intents.newBot}
       onNewRoom={intents.newRoom}
+      sections={data.sections}
+      intents={rosterIntents(intents, (key) => {
+        navigation.select(key);
+        navigation.setDetailsOpen(true);
+      })}
       footer={<SettingsButton data={data} intents={intents} />}
       ref={rosterRef}
     />
