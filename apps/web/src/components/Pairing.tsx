@@ -5,8 +5,9 @@ import type { PairingCode } from "@j3-bots/contracts";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import type { I18n } from "@j3-bots/i18n";
 import { useI18n, usePresentation } from "../app/context";
-import type { DesktopServer, DesktopUpdate } from "../shell/data";
-import { AppUpdate } from "./AppUpdate";
+import type { DesktopServer, DesktopUpdate, RemoteServerUpdate } from "../shell/data";
+import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
+import { ServerBehind, serverUpdateOffered } from "./ServerUpdate";
 import { KeyRoundIcon, RefreshCwIcon } from "lucide-react";
 import { bigFieldClass, BigButton, FirstScreen, FormProblem } from "../onboarding/parts";
 import { Centered, Heading, StateMark } from "./EmptyStates";
@@ -237,35 +238,90 @@ export function Pairing({
   );
 }
 
+/** Which side of a protocol mismatch is behind, and the version the server runs. */
+export interface Mismatch {
+  /** `server`: it speaks an older protocol than this app; `client`: a newer one. */
+  readonly behind: "server" | "client";
+  readonly serverVersion: string;
+}
+
 /**
  * The server speaks another version of the protocol: this page is older or
- * newer than it. A browser reloads to get the server's own page; the desktop
- * app carries its page, so the app or the server needs updating, or the app
- * another server; its `update`, when it can update itself, shows beneath.
+ * newer than it. A browser reloads to get the server's own page. The desktop
+ * app carries its page, so the side that is behind is updated: a server
+ * behind the app is updated from here when it can be (`serverUpdate`), and
+ * says what to run on its machine otherwise, a server older than updates
+ * from the apps included; an app behind the server
+ * updates itself (`update`). Retry and Change server stay either way.
  */
 export function Incompatible({
   server,
   update,
+  mismatch,
+  serverUpdate,
 }: {
   server?: DesktopServer | undefined;
   update?: DesktopUpdate | undefined;
+  /** Null when the server's version could not be read. */
+  mismatch?: Mismatch | null | undefined;
+  /** Updating the server, when it has the update routes. */
+  serverUpdate?: RemoteServerUpdate | undefined;
 }) {
   const { t } = useI18n();
   if (server !== undefined) {
+    // An update on offer is the way forward; trying again only checks the versions anew.
+    const offered =
+      (mismatch?.behind === "server" &&
+        serverUpdate !== undefined &&
+        serverUpdateOffered(serverUpdate)) ||
+      (mismatch?.behind !== "server" && update !== undefined && appUpdateWaiting(update));
+    const actions = (
+      <div className="flex flex-wrap items-start justify-center gap-2">
+        <Button
+          variant={offered ? "secondary" : "primary"}
+          onClick={() => window.location.reload()}
+        >
+          {t("gate.retry")}
+        </Button>
+        <ChangeServer address={server.address} onChange={server.forget} paired />
+      </div>
+    );
+    if (mismatch?.behind === "server") {
+      return (
+        <Centered>
+          <StateMark icon={RefreshCwIcon} />
+          <Heading
+            title={t("gate.incompatible.serverBehindTitle")}
+            body={t("gate.incompatible.serverBehindBody", {
+              address: server.address,
+              version: mismatch.serverVersion,
+            })}
+          />
+          {serverUpdate !== undefined && <ServerBehind update={serverUpdate} />}
+          {actions}
+        </Centered>
+      );
+    }
     return (
       <Centered>
         <StateMark icon={RefreshCwIcon} />
         <Heading
-          title={t("gate.incompatible.appTitle")}
-          body={t("gate.incompatible.appBody", { address: server.address })}
+          title={
+            mismatch?.behind === "client"
+              ? t("gate.incompatible.appBehindTitle")
+              : t("gate.incompatible.appTitle")
+          }
+          body={
+            mismatch?.behind === "client"
+              ? t("gate.incompatible.appBehindBody", {
+                  address: server.address,
+                  version: mismatch.serverVersion,
+                })
+              : t("gate.incompatible.appBody", { address: server.address })
+          }
         />
-        <div className="flex flex-wrap items-start justify-center gap-2">
-          <Button variant="primary" onClick={() => window.location.reload()}>
-            {t("gate.retry")}
-          </Button>
-          <ChangeServer address={server.address} onChange={server.forget} paired />
-        </div>
         {update !== undefined && <AppUpdate update={update} className="items-center text-center" />}
+        {actions}
       </Centered>
     );
   }

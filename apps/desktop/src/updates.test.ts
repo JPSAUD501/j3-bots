@@ -1,15 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { initial, mayCheck, step, type Step, type UpdateEvent, type Updates } from "./updates.ts";
+import {
+  initial as initialOn,
+  mayCheck,
+  step,
+  type Step,
+  type UpdateEvent,
+  type UpdateMode,
+  type Updates,
+} from "./updates.ts";
+
+const initial = (mode: UpdateMode) => initialOn(mode, "stable");
 
 /** Runs `events` from `from`, and answers where they lead and whether any step installed. */
 const run = (from: Updates, events: ReadonlyArray<UpdateEvent>) =>
-  events.reduce<{ readonly state: Updates; readonly installs: number }>(
-    ({ state, installs }, event) => {
+  events.reduce<{
+    readonly state: Updates;
+    readonly installs: number;
+    readonly actions: ReadonlyArray<Step["action"]>;
+  }>(
+    ({ state, installs, actions }, event) => {
       const taken: Step = step(state, event);
-      return { state: taken.next, installs: installs + (taken.install ? 1 : 0) };
+      return {
+        state: taken.next,
+        installs: installs + (taken.action?._tag === "install" ? 1 : 0),
+        actions: [...actions, taken.action],
+      };
     },
-    { state: from, installs: 0 },
+    { state: from, installs: 0, actions: [] },
   );
 
 const found: ReadonlyArray<UpdateEvent> = [
@@ -17,6 +35,7 @@ const found: ReadonlyArray<UpdateEvent> = [
   { _tag: "available", version: "0.0.2" },
   { _tag: "progress", percent: 40 },
   { _tag: "downloaded", version: "0.0.2" },
+  { _tag: "verified", version: "0.0.2", matched: true },
 ];
 
 describe("updating the app", () => {
@@ -73,6 +92,7 @@ describe("updating the app", () => {
       { _tag: "available", version: "0.0.2" },
       { _tag: "restart-requested" },
       { _tag: "downloaded", version: "0.0.2" },
+      { _tag: "verified", version: "0.0.2", matched: true },
     ]);
     expect(installs).toBe(0);
     expect(state.phase).toEqual({ _tag: "downloaded", version: "0.0.2", restart: "offered" });
@@ -83,6 +103,7 @@ describe("updating the app", () => {
     expect(failed.phase).toEqual({ _tag: "failed", stage: "check" });
     expect(mayCheck(failed)).toBe(true);
     expect(mayCheck(run(initial("install"), found.slice(0, 2)).state)).toBe(false);
+    expect(mayCheck(run(initial("install"), found.slice(0, 4)).state)).toBe(false);
     const ready = run(initial("install"), found).state;
     expect(mayCheck(ready)).toBe(false);
     // A stray error leaves a ready version ready.
@@ -127,5 +148,51 @@ describe("updating the app", () => {
     const { state, installs } = run(initial("off"), [...found, { _tag: "restart-requested" }]);
     expect(state.phase._tag).toBe("unavailable");
     expect(installs).toBe(0);
+  });
+
+  it("checks a download against the release's signed checksums before it offers the restart", () => {
+    const downloaded = run(initial("install"), found.slice(0, 4));
+    expect(downloaded.state.phase).toEqual({ _tag: "verifying", version: "0.0.2" });
+    expect(downloaded.actions.at(-1)).toEqual({ _tag: "verify", version: "0.0.2" });
+    // Nothing installs before the verdict.
+    const asked = run(downloaded.state, [{ _tag: "restart-requested" }]);
+    expect(asked.installs).toBe(0);
+    expect(asked.state.phase._tag).toBe("verifying");
+  });
+
+  it("refuses a download that does not match, and never offers it", () => {
+    const { state, installs } = run(initial("install"), [
+      ...found.slice(0, 4),
+      { _tag: "verified", version: "0.0.2", matched: false },
+      { _tag: "restart-requested" },
+    ]);
+    expect(state.phase).toEqual({ _tag: "failed", stage: "verify" });
+    expect(installs).toBe(0);
+    expect(mayCheck(state)).toBe(true);
+  });
+
+  it("takes no verdict on a version other than the one it checks", () => {
+    const { state } = run(initial("install"), [
+      ...found.slice(0, 4),
+      { _tag: "verified", version: "0.0.1", matched: true },
+    ]);
+    expect(state.phase).toEqual({ _tag: "verifying", version: "0.0.2" });
+  });
+
+  it("follows another channel from scratch, dropping what the old one offered", () => {
+    const ready = run(initial("install"), found).state;
+    const { state, actions } = run(ready, [{ _tag: "channel-chosen", channel: "nightly" }]);
+    expect(state.channel).toBe("nightly");
+    expect(state.phase).toEqual({ _tag: "idle", checked: false });
+    expect(actions).toEqual([{ _tag: "follow-channel" }]);
+  });
+
+  it("keeps its channel while a version is on its way or installing", () => {
+    for (const events of [found.slice(0, 1), found.slice(0, 3), found.slice(0, 4)]) {
+      const moving = run(initial("install"), events).state;
+      const { state, actions } = run(moving, [{ _tag: "channel-chosen", channel: "nightly" }]);
+      expect(state.channel).toBe("stable");
+      expect(actions).toEqual([null]);
+    }
   });
 });

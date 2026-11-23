@@ -49,6 +49,11 @@ export const updateHasDetails = (update: ServerUpdate): boolean =>
 interface ConnectionBannerProps {
   readonly state: ConnectionState;
   readonly local?: LocalLine | undefined;
+  /**
+   * The version a server this device follows the update of is restarting
+   * on, while that has it out of reach; null otherwise.
+   */
+  readonly updatingTo?: string | null | undefined;
   /** Whether a connection has been made since the page loaded. */
   readonly everConnected: boolean;
   readonly onRetryNow: () => void;
@@ -59,7 +64,9 @@ interface ConnectionBannerProps {
 /**
  * One quiet line above the shell while the server is out of reach: what is
  * happening, and Try now when a retry is waiting. In local mode, while the
- * server on this computer moves to a new release, it says only that; while
+ * server on this computer moves to a new release, it says only that, as it
+ * does while a remote server restarts on the release this device updated it
+ * to and is out of reach meanwhile; while
  * that server is not running, it says that first, with what starts it again.
  * Once both run, it speaks only of an update of that server that was rolled
  * back, with Try again and its details, or of a newer one than the app that
@@ -70,6 +77,7 @@ interface ConnectionBannerProps {
 export function ConnectionBanner({
   state,
   local,
+  updatingTo = null,
   everConnected,
   onRetryNow,
   children,
@@ -79,13 +87,18 @@ export function ConnectionBanner({
   const retryAt = down !== null ? down.restartAt : state._tag === "waiting" ? state.retryAt : null;
   const seconds = useSecondsUntil(retryAt);
   // An update of the server on this computer, from the stop of the one that ran to the new one's
-  // answer; a start that failed or waits to try again says so instead.
-  const updating =
+  // answer; a start that failed or waits to try again says so instead. A remote server restarting
+  // on an update says the same, rather than that the connection was lost.
+  const updatingVersion =
     local?.server.update?._tag === "updating" &&
     local.server.state !== "failed" &&
     local.server.state !== "restarting"
-      ? t("local.line.update.updating", { version: local.server.update.to })
-      : null;
+      ? local.server.update.to
+      : updatingTo !== null && (state._tag === "waiting" || state._tag === "connecting")
+        ? updatingTo
+        : null;
+  const updating =
+    updatingVersion === null ? null : t("local.line.update.updating", { version: updatingVersion });
   /** The server on this computer, while it is not running. */
   const downText = ((): string | null => {
     switch (down?.server.state) {
@@ -207,7 +220,7 @@ export function ConnectionBanner({
                 )}
               </>
             )}
-            {down === null && state._tag === "waiting" && (
+            {updating === null && down === null && state._tag === "waiting" && (
               <>
                 {/* Changes every second, so it is shown and not announced. */}
                 <span aria-hidden className="tabular-nums">

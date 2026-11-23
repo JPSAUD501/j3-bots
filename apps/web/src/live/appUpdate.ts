@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { UpdateChannel } from "@j3-bots/contracts";
 import type { UpdateStatus } from "@j3-bots/desktop-bridge";
 import { useEffect, useSyncExternalStore } from "react";
 import type { DesktopUpdate } from "../shell/data";
@@ -37,11 +38,25 @@ const subscribe = (listener: () => void) => {
 };
 const current = () => latest;
 
+/** Asks the app to follow `channel`, and takes the status it answers. */
+const setChannel = (channel: UpdateChannel) => {
+  void desktop?.setUpdateChannel(channel).then((status) => {
+    if (status === null) return;
+    latest = status;
+    notify();
+  });
+};
+
 /** Updating the desktop app, with its status as it changes; absent in a browser. */
 export function useDesktopUpdate(): DesktopUpdate | undefined {
   const status = useSyncExternalStore(subscribe, current, current);
   if (desktop === null || status === null) return undefined;
-  return { status, check: desktop.checkForUpdates, restart: desktop.restartToUpdate };
+  return {
+    status,
+    check: desktop.checkForUpdates,
+    restart: desktop.restartToUpdate,
+    setChannel,
+  };
 }
 
 /** `update` when the app can update itself, or nothing. */

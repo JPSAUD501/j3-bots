@@ -16,6 +16,8 @@ import {
   NotificationRequest,
   LocalServerState,
   OpenRequest,
+  releaseFile,
+  releasePage,
   SavingReport,
   ServerOrigin,
   ShellCommand,
@@ -116,7 +118,7 @@ describe("the desktop bridge", () => {
   });
 
   it("refuses an update status that is not one the main process gives", () => {
-    const status = (phase: unknown) => ({ current: "0.0.1-test", phase });
+    const status = (phase: unknown) => ({ current: "0.0.1-test", channel: "stable", phase });
     assert.isTrue(decodes(UpdateStatus, status({ _tag: "idle", checked: false })));
     assert.isTrue(
       decodes(UpdateStatus, status({ _tag: "downloading", version: "0.0.2-test", percent: 41.5 })),
@@ -136,7 +138,18 @@ describe("the desktop bridge", () => {
     assert.isFalse(
       decodes(UpdateStatus, status({ _tag: "downloaded", version: "1.2.3", restart: "now" })),
     );
-    assert.isFalse(decodes(UpdateStatus, { current: "dev", phase: { _tag: "unavailable" } }));
+    assert.isTrue(decodes(UpdateStatus, status({ _tag: "verifying", version: "0.0.2-test" })));
+    assert.isTrue(decodes(UpdateStatus, status({ _tag: "failed", stage: "verify" })));
+    assert.isFalse(
+      decodes(UpdateStatus, { current: "dev", channel: "stable", phase: { _tag: "unavailable" } }),
+    );
+    assert.isFalse(
+      decodes(UpdateStatus, {
+        current: "0.0.1-test",
+        channel: "beta",
+        phase: { _tag: "idle", checked: false },
+      }),
+    );
   });
 
   it("refuses a request from a page that is not one it may make", () => {
@@ -176,6 +189,7 @@ describe("the desktop bridge", () => {
       onUpdate: call,
       checkForUpdates: call,
       restartToUpdate: call,
+      setUpdateChannel: call,
       reportSaving: call,
       notify: call,
       closeNotifications: call,
@@ -352,5 +366,18 @@ describe("a link to the app", () => {
     ]) {
       assert.isNull(opened(text), text);
     }
+  });
+
+  it("finds a release's files under the tag the release workflow gives it", () => {
+    const repository = "https://github.com/JPSAUD501/j3-bots/releases";
+    assert.strictEqual(
+      releaseFile("0.4.0", "SHA256SUMS.sig"),
+      `${repository}/download/v0.4.0/SHA256SUMS.sig`,
+    );
+    assert.strictEqual(
+      releaseFile("0.4.1-nightly.20261124.57", "J3-Bots-x86_64.AppImage"),
+      `${repository}/download/0.4.1-nightly.20261124.57/J3-Bots-x86_64.AppImage`,
+    );
+    assert.strictEqual(releasePage("0.4.0-rc.1"), `${repository}/tag/v0.4.0-rc.1`);
   });
 });

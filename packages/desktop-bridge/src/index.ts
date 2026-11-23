@@ -9,7 +9,9 @@ import {
   PairingCode,
   PairingLinkTarget,
   ServerOrigin,
+  UpdateChannel,
 } from "@j3-bots/contracts";
+import { releaseTag } from "@j3-bots/release";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
@@ -371,10 +373,13 @@ export type AppVersion = typeof AppVersion.Type;
  * version is out, and this build, which does not install updates itself (a
  * deb, an unsigned Mac build), says where to get it. `available` and
  * `downloading`: a newer version is on its way, in the background.
- * `downloaded`: it is ready, and restarting into it is `offered`, or was asked
- * for and waits until no save is under way (`waiting-for-save`).
- * `installing`: the app is restarting into it. `failed`: the last check or
- * download (`check`) or install (`install`) failed; the next check tries again.
+ * `verifying`: it is downloaded, and the app checks it against the release's
+ * signed checksums before it offers anything. `downloaded`: it matched, and
+ * restarting into it is `offered`, or was asked for and waits until no save is
+ * under way (`waiting-for-save`). `installing`: the app is restarting into it.
+ * `failed`: the last check or download (`check`) failed, the download did not
+ * match the release's signed checksums, or they could not be read (`verify`),
+ * or the install (`install`) failed; the next check tries again.
  */
 export const UpdatePhase = Schema.Union([
   Schema.TaggedStruct("unavailable", {}),
@@ -386,12 +391,13 @@ export const UpdatePhase = Schema.Union([
     version: AppVersion,
     percent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   }),
+  Schema.TaggedStruct("verifying", { version: AppVersion }),
   Schema.TaggedStruct("downloaded", {
     version: AppVersion,
     restart: Schema.Literals(["offered", "waiting-for-save"]),
   }),
   Schema.TaggedStruct("installing", { version: AppVersion }),
-  Schema.TaggedStruct("failed", { stage: Schema.Literals(["check", "install"]) }),
+  Schema.TaggedStruct("failed", { stage: Schema.Literals(["check", "verify", "install"]) }),
 ]);
 export type UpdatePhase = typeof UpdatePhase.Type;
 
@@ -401,11 +407,26 @@ export type UpdatePhase = typeof UpdatePhase.Type;
  * are the update feed (`publish` in `apps/desktop/electron-builder.yml`).
  */
 export const releasePage = (version: AppVersion): string =>
-  `https://github.com/JPSAUD501/j3-bots/releases/tag/v${version}`;
+  `https://github.com/JPSAUD501/j3-bots/releases/tag/${releaseTag(version)}`;
 
-/** The app's own version, and where updating it stands. */
-export const UpdateStatus = Schema.Struct({ current: AppVersion, phase: UpdatePhase });
+/** A file `name` of the release that carries `version`, in the same repository. */
+export const releaseFile = (version: AppVersion, name: string): string =>
+  `https://github.com/JPSAUD501/j3-bots/releases/download/${releaseTag(version)}/${encodeURIComponent(name)}`;
+
+/**
+ * The app's own version, the releases it follows (`channel`), and where
+ * updating it stands.
+ */
+export const UpdateStatus = Schema.Struct({
+  current: AppVersion,
+  channel: UpdateChannel,
+  phase: UpdatePhase,
+});
 export type UpdateStatus = typeof UpdateStatus.Type;
+
+/** The releases the operator chose for the app to follow. */
+export const UpdateChannelRequest = Schema.Struct({ channel: UpdateChannel });
+export type UpdateChannelRequest = typeof UpdateChannelRequest.Type;
 
 /** Whether a save is under way in the page, as it reports each change. */
 export const SavingReport = Schema.Struct({ saving: Schema.Boolean });
@@ -575,6 +596,7 @@ export const HostedBridge = Schema.Struct({
   onUpdate: Callable,
   checkForUpdates: Callable,
   restartToUpdate: Callable,
+  setUpdateChannel: Callable,
   reportSaving: Callable,
   notify: Callable,
   closeNotifications: Callable,

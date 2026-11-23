@@ -2,7 +2,15 @@
 // @effect-diagnostics nodeBuiltinImport:off -- One synchronous existence check of the development feed, before the updater is configured.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import { IPC_CHANNELS, SavingReport, UpdateStatus } from "@j3-bots/desktop-bridge";
+import type { UpdateChannel } from "@j3-bots/contracts";
+import {
+  IPC_CHANNELS,
+  releaseFile,
+  SavingReport,
+  UpdateChannelRequest,
+  UpdateStatus,
+} from "@j3-bots/desktop-bridge";
+import { sha256File, signatureCheck } from "@j3-bots/release/node";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
@@ -14,11 +22,16 @@ import {
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from "electron";
-import { AppImageUpdater, autoUpdater } from "electron-updater";
+import { AppImageUpdater, autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
+import { type DownloadCheckPorts, verifyDownload } from "./downloadCheck.ts";
+import { electronFetch } from "./electronFetch.ts";
 import { restartApp, runningAppImage } from "./restart.ts";
+import { DesktopSettings } from "./settings.ts";
 import {
+  type Action,
   initial,
   mayCheck,
+  mayChooseChannel,
   step,
   type UpdateEvent,
   type UpdateMode,
@@ -26,8 +39,10 @@ import {
 } from "./updates.ts";
 
 // Updating the app from its release feed: electron-updater checks at launch
-// and every six hours and downloads in the background; the operator restarts
-// into the new version from the page (`updates.ts` decides when).
+// and every six hours and downloads in the background; each download is
+// checked against the release's signed checksums (`downloadCheck.ts`), and
+// the operator restarts into the new version from the page (`updates.ts`
+// decides when).
 
 const CHECK_EVERY = "6 hours";
 
@@ -36,6 +51,40 @@ const DEV_FEED = "dev-app-update.yml";
 
 const encodeStatus = Schema.encodeSync(UpdateStatus);
 const decodeSaving = Schema.decodeUnknownOption(SavingReport);
+const decodeChannel = Schema.decodeUnknownOption(UpdateChannelRequest);
+
+/**
+ * What checking a download reads: the release's files from the repository
+ * the feed is (`releaseFile`), over the system's network stack, and the
+ * release key. A file the release does not have answers 404.
+ */
+const downloadCheck: DownloadCheckPorts = {
+  releaseFile: async (version, name) => {
+    const response = await electronFetch(releaseFile(version, name));
+    if (response.status === 404) return null;
+    if (response.status !== 200) throw new Error(`The release answered ${response.status}.`);
+    return new Uint8Array(await response.arrayBuffer());
+  },
+  sha256File,
+  check: signatureCheck(),
+  platform: process.platform,
+};
+
+/**
+ * Points electron-updater at the releases of `channel`: the stable ones, read
+ * from the release GitHub marks as the latest and its `latest*.yml`, or the
+ * nightly builds too, the newest prerelease whose version is a nightly one
+ * and its `nightly*.yml` (read in electron-updater 6.8.9,
+ * `providers/GitHubProvider.js`). Setting a channel also lets electron-updater
+ * install an older version (`AppUpdater.js`, `set channel`); the app never
+ * does, so a nightly build waits on the stable channel until a stable release
+ * is newer than it.
+ */
+const follow = (channel: UpdateChannel) => {
+  autoUpdater.channel = channel === "nightly" ? "nightly" : "latest";
+  autoUpdater.allowPrerelease = channel === "nightly";
+  autoUpdater.allowDowngrade = false;
+};
 
 /**
  * How this build updates. An NSIS install and an AppImage install a newer
@@ -76,9 +125,12 @@ export const serve = Effect.fn("desktop.updates")(function* (
   steps: InstallSteps,
 ) {
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const settings = yield* DesktopSettings;
+  const { updateChannel } = yield* settings.get;
   const check = yield* Effect.acquireRelease(
     Effect.sync(() => {
-      let state: Updates = initial(updateMode());
+      let state: Updates = initial(updateMode(), updateChannel);
+      follow(state.channel);
       // Where the build installs, downloaded in the background and installed
       // only when the operator asks, never as the app quits.
       autoUpdater.autoDownload = state.installs;
@@ -86,15 +138,52 @@ export const serve = Effect.fn("desktop.updates")(function* (
       // The AppImage an update was installed to, when not the one the app runs from.
       let installedTo: string | null = null;
 
-      const status = () => encodeStatus({ current: app.getVersion(), phase: state.phase });
+      // The file electron-updater downloaded last, which a verdict is about.
+      let downloadedFile: string | null = null;
+
+      const status = () =>
+        encodeStatus({ current: app.getVersion(), channel: state.channel, phase: state.phase });
       const dispatch = (event: UpdateEvent) => {
         const taken = step(state, event);
-        const changed = taken.next.phase !== state.phase;
+        const changed = taken.next.phase !== state.phase || taken.next.channel !== state.channel;
         state = taken.next;
         if (changed && !window.isDestroyed()) {
           window.webContents.send(IPC_CHANNELS.updateChanged, status());
         }
-        if (taken.install) install();
+        if (taken.action !== null) act(taken.action);
+      };
+      const act = (action: Action) => {
+        switch (action._tag) {
+          case "install":
+            return install();
+          case "verify":
+            return verify(action.version);
+          case "follow-channel":
+            follow(state.channel);
+            return check();
+        }
+      };
+      /**
+       * Checks the downloaded file against the signed checksums of the
+       * release it belongs to. Anything short of a match, including checksums
+       * that cannot be read, refuses it: the restart is never offered.
+       */
+      const verify = (version: string) => {
+        const file = downloadedFile;
+        const verdict =
+          file === null
+            ? Effect.succeed(false)
+            : verifyDownload({ file, version }, downloadCheck).pipe(
+                Effect.as(true),
+                Effect.catch((refusal) =>
+                  Effect.logWarning("The app's update did not match its release", refusal).pipe(
+                    Effect.as(false),
+                  ),
+                ),
+              );
+        void runPromise(verdict).then((matched) =>
+          dispatch({ _tag: "verified", version, matched }),
+        );
       };
       /**
        * Installs silently and starts the new version once this one has quit:
@@ -132,8 +221,10 @@ export const serve = Effect.fn("desktop.updates")(function* (
           dispatch({ _tag: "available", version: info.version }),
         "download-progress": (info: { readonly percent: number }) =>
           dispatch({ _tag: "progress", percent: info.percent }),
-        "update-downloaded": (info: { readonly version: string }) =>
-          dispatch({ _tag: "downloaded", version: info.version }),
+        "update-downloaded": (info: UpdateDownloadedEvent) => {
+          downloadedFile = info.downloadedFile;
+          dispatch({ _tag: "downloaded", version: info.version });
+        },
         "update-cancelled": () => dispatch({ _tag: "failed" }),
         error: () => dispatch({ _tag: "failed" }),
         "appimage-filename-updated": (path: string) => {
@@ -154,6 +245,28 @@ export const serve = Effect.fn("desktop.updates")(function* (
       });
       ipcMain.on(IPC_CHANNELS.restartToUpdate, (event) => {
         if (fromApp(event)) dispatch({ _tag: "restart-requested" });
+      });
+      /**
+       * Keeps the operator's channel, then follows it. One that is not kept,
+       * or that comes while a version is on its way, changes nothing; the
+       * answer says which channel holds.
+       */
+      const choose = Effect.fn("desktop.chooseUpdateChannel")(function* (channel: UpdateChannel) {
+        if (channel === state.channel || !mayChooseChannel(state)) return status();
+        const saved = yield* settings
+          .update((current) => ({ ...current, updateChannel: channel }))
+          .pipe(Effect.result);
+        if (saved._tag === "Failure") {
+          yield* Effect.logWarning("Saving the app's update channel failed", saved.failure);
+          return status();
+        }
+        dispatch({ _tag: "channel-chosen", channel });
+        return status();
+      });
+      ipcMain.handle(IPC_CHANNELS.setUpdateChannel, (event, request: unknown) => {
+        const decoded = decodeChannel(request);
+        if (!fromApp(event)) return null;
+        return Option.isSome(decoded) ? runPromise(choose(decoded.value.channel)) : status();
       });
       ipcMain.on(IPC_CHANNELS.saving, (event, report: unknown) => {
         const decoded = decodeSaving(report);
@@ -180,6 +293,7 @@ export const serve = Effect.fn("desktop.updates")(function* (
         ipcMain.removeHandler(IPC_CHANNELS.update);
         ipcMain.removeAllListeners(IPC_CHANNELS.checkForUpdates);
         ipcMain.removeAllListeners(IPC_CHANNELS.restartToUpdate);
+        ipcMain.removeHandler(IPC_CHANNELS.setUpdateChannel);
         ipcMain.removeAllListeners(IPC_CHANNELS.saving);
         if (!window.isDestroyed()) {
           window.webContents.off("did-navigate", pageGone);
