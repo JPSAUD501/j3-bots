@@ -29,6 +29,7 @@ import * as SQLite from "expo-sqlite";
 import { AppState } from "react-native";
 import { makeSession } from "../session.ts";
 import { phoneTimeZone } from "./timeZone.ts";
+import { forgetImages } from "./images.ts";
 import { forgetOpenedFiles } from "./openFile.ts";
 import { endPush } from "./push.ts";
 import { makeUploader } from "./upload.ts";
@@ -193,7 +194,10 @@ const makePlatform = (origin: URL): Layer.Layer<Platform> =>
 export const session = makeSession({
   storedServer: storedServer(secureCredential),
   forget: forgetPairing(sqlite, secureCredential),
-  forgetFiles: Effect.sync(forgetOpenedFiles),
+  forgetFiles: Effect.sync(() => {
+    forgetOpenedFiles();
+    forgetImages();
+  }),
   makePlatform,
   endPush,
 });

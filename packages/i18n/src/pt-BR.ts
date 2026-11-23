@@ -180,6 +180,7 @@ const sentences = {
   "file.opening": "Abrindo…",
   "file.save": "Salvar {name}",
   "file.viewer.close": "Fechar a imagem",
+  "file.share": "Abrir {name} em outro app",
   "file.kindAndSize": "{kind} · {size}",
 
   "card.waiting": "Esperando por você",
@@ -687,7 +688,6 @@ const sentences = {
   "timeline.newMessages": "Novas mensagens",
   "timeline.toLatest": "Ir para a mensagem mais recente",
 
-  "composer.files": "Arquivos para enviar",
   "composer.stillUploading": "Os arquivos ainda estão subindo",
   "composer.file.uploading": "Enviando, {percent}",
   "composer.file.uploadingUnmeasured": "Enviando…",
@@ -728,6 +728,7 @@ const sentences = {
   "composer.dictation.listening": "Ouvindo…",
   "composer.dictation.listeningOnline":
     "Ouvindo… O serviço de voz deste aparelho pode reconhecer isto online.",
+  "composer.dictation.onlineNote": "pode ser reconhecido online",
   "composer.dictation.denied": "O ditado precisa do microfone.",
   "composer.dictation.settings": "Configurações",
   "composer.dictation.noSpeech": "Nada foi ouvido. Tente de novo.",

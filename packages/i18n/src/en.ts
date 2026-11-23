@@ -182,6 +182,7 @@ export const en = {
   "file.opening": "Opening…",
   "file.save": "Save {name}",
   "file.viewer.close": "Close the image",
+  "file.share": "Open {name} in another app",
   "file.kindAndSize": "{kind} · {size}",
 
   "card.waiting": "Waiting for you",
@@ -682,7 +683,6 @@ export const en = {
   "timeline.newMessages": "New messages",
   "timeline.toLatest": "Go to the latest message",
 
-  "composer.files": "Files to send",
   "composer.stillUploading": "Files are still uploading",
   "composer.file.uploading": "Uploading, {percent}",
   "composer.file.uploadingUnmeasured": "Uploading…",
@@ -721,6 +721,7 @@ export const en = {
   "composer.dictation.listening": "Listening…",
   "composer.dictation.listeningOnline":
     "Listening… This device’s speech service may recognize this online.",
+  "composer.dictation.onlineNote": "may be recognized online",
   "composer.dictation.denied": "Dictation needs the microphone.",
   "composer.dictation.settings": "Settings",
   "composer.dictation.noSpeech": "Nothing was heard. Try again.",

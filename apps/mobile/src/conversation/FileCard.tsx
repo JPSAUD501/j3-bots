@@ -11,13 +11,14 @@ import {
   FileText,
   type LucideIcon,
 } from "lucide-react-native";
-import { use, useState } from "react";
-import { Pressable, View } from "react-native";
+import { use } from "react";
+import { Image, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
-import { openAttachment } from "../platform/openFile.ts";
-import { useSay } from "../toast.tsx";
+import { useImageFile } from "../platform/images.ts";
+import { useColor } from "../theme.ts";
+import { useFileOpener } from "./FileOpener.tsx";
 import { EntryWidths } from "./widths.ts";
 
 const kindIcons = {
@@ -29,50 +30,36 @@ const kindIcons = {
 } as const satisfies Record<FileIcon, LucideIcon>;
 
 /**
- * A file in the conversation: name, kind and size. Pressing it opens it in
- * the system's viewer, or the share sheet when no app views its type; while
- * its bytes come, it says it is opening and takes no second press.
+ * A file in the conversation: its image or its kind, its name and size.
+ * Pressing it opens it (`FileOpener`); while its bytes come, it says it is
+ * opening and takes no second press.
  */
 export function FileCard({ attachment }: { readonly attachment: Attachment }) {
   const i18n = useI18n();
   const { t } = i18n;
   const client = useJ3Client();
-  const say = useSay();
+  const opener = useFileOpener();
   const widths = use(EntryWidths);
-  const [opening, setOpening] = useState(false);
+  const image = useImageFile(client, attachment);
+  const opening = opener.opening(attachment);
   const { name } = attachment;
-  const open = () => {
-    setOpening(true);
-    void openAttachment(client, attachment)
-      .then((outcome) => {
-        switch (outcome) {
-          case "gone":
-            return say(t("file.gone", { name }));
-          case "unreachable":
-            return say(t("file.unreachable", { name }));
-          case "failed":
-            return say(t("file.cannotOpen", { name }));
-          // Opened; or the pairing ended, and the pairing screen says so.
-          case "opened":
-          case "not-paired":
-            return;
-        }
-      })
-      .finally(() => setOpening(false));
-  };
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={t("file.open", { name })}
       accessibilityHint={fileDetail(attachment, i18n)}
       accessibilityState={{ busy: opening }}
-      onPress={opening ? undefined : open}
+      onPress={opening ? undefined : () => opener.open(attachment)}
       style={{ width: Math.min(256, widths.bubble) }}
       className="flex-row items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
     >
-      <View className="size-8 items-center justify-center rounded-md bg-muted">
-        <Icon icon={kindIcons[fileIcon(attachment.mediaType)]} color="accent-muted-foreground" />
-      </View>
+      {image._tag === "shown" ? (
+        <Image source={{ uri: image.uri }} className="size-10 rounded-md bg-muted" />
+      ) : (
+        <View className="size-10 items-center justify-center rounded-md bg-muted">
+          <FileKindIcon mediaType={attachment.mediaType} />
+        </View>
+      )}
       <View className="min-w-0 flex-1">
         <Text numberOfLines={1} className="text-sm font-medium text-foreground">
           {name}
@@ -81,6 +68,70 @@ export function FileCard({ attachment }: { readonly attachment: Attachment }) {
           {opening ? t("file.opening") : fileDetail(attachment, i18n)}
         </Text>
       </View>
+    </Pressable>
+  );
+}
+
+/** The icon of a file's kind. */
+export function FileKindIcon({
+  mediaType,
+  size = 16,
+  color = "accent-muted-foreground",
+}: {
+  readonly mediaType: string;
+  readonly size?: number;
+  readonly color?: string;
+}) {
+  return <Icon icon={kindIcons[fileIcon(mediaType)]} size={size} color={color} />;
+}
+
+/** The line height of a paragraph that holds a file, which makes room for its chip. */
+export const FILE_LINE_HEIGHT = 32;
+// The chip's height, and how far below the text's baseline its foot goes, so
+// that it stands centered on the line: React Native sets a view inside text
+// with its foot on the baseline.
+const CHIP_HEIGHT = 24;
+const BELOW_BASELINE = 6;
+
+/**
+ * A file where it stands in a message's text: its image or its kind, and its
+ * name, on a quiet tint of the bubble's text color (`color`). Pressing it opens it.
+ */
+export function InlineFile({
+  attachment,
+  color,
+}: {
+  readonly attachment: Attachment;
+  /** The bubble's text color, as a theme `accent-` class. */
+  readonly color: string;
+}) {
+  const { t } = useI18n();
+  const client = useJ3Client();
+  const opener = useFileOpener();
+  const image = useImageFile(client, attachment);
+  const ink = useColor(color);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={t("file.open", { name: attachment.name })}
+      onPress={() => opener.open(attachment)}
+      style={{ height: CHIP_HEIGHT, transform: [{ translateY: BELOW_BASELINE }] }}
+      className="mx-0.5 max-w-56 flex-row items-center gap-1 overflow-hidden rounded-md ps-0.5 pe-1.5"
+    >
+      <View
+        style={{ backgroundColor: ink, opacity: 0.14 }}
+        className="absolute inset-0 rounded-md"
+      />
+      {image._tag === "shown" ? (
+        <Image source={{ uri: image.uri }} className="size-5 rounded-sm" />
+      ) : (
+        <View className="size-5 items-center justify-center">
+          <FileKindIcon mediaType={attachment.mediaType} color={color} />
+        </View>
+      )}
+      <Text numberOfLines={1} style={{ color: ink }} className="shrink text-sm font-medium">
+        {attachment.name}
+      </Text>
     </Pressable>
   );
 }

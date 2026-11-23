@@ -1,33 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type DraftFile, targetKey } from "@j3-bots/client-runtime";
+import { targetKey } from "@j3-bots/client-runtime";
 import {
-  draftFileName,
   draftReadiness,
   EVERYONE,
   followFieldEdit,
   insertMention,
+  markCount,
+  placedMessage,
   type Mentionable,
   mentionOptions,
   mentionQuery,
   type MentionOption,
 } from "@j3-bots/client-runtime/presentation";
-import { useDraft, useJ3Client, useReadable, useRestored } from "@j3-bots/client-runtime/react";
-import {
-  draftFileDetail,
-  fileProblemText,
-  messageProblemText,
-} from "@j3-bots/client-runtime/wording";
-import type { Avatar, EntryTarget } from "@j3-bots/contracts";
-import { layout, reanimatedSpring, springs } from "@j3-bots/design-tokens";
-import { ArrowUp, File, Images, Plus, Users, X } from "lucide-react-native";
-import { type ComponentRef, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useDraft, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
+import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wording";
+import type { Attachment, Avatar, EntryTarget } from "@j3-bots/contracts";
+import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
+import { ArrowUp, File, Images, Plus, Users } from "lucide-react-native";
+import { type ComponentRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, ScrollView, View } from "react-native";
 import { KeyboardController } from "react-native-keyboard-controller";
-import { Text, TextInput } from "../text.tsx";
+import { Text } from "../text.tsx";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { Menu, type MenuAnchor } from "../components/Menu.tsx";
 import { useI18n } from "../i18n.ts";
+import { useImageFiles } from "../platform/images.ts";
 import { type PickedFile, pickDocuments, pickPhotos } from "../platform/pick.ts";
 import Animated, {
   Easing,
@@ -36,9 +34,9 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import { enteringWhen, settleIn } from "../motion.ts";
-import { useColor } from "../theme.ts";
+import { ChipField, type FieldEdit, type FieldHandle, type FieldStatus } from "./ChipField.tsx";
 import { DictationButton, DictationLine, useDictation } from "./Dictation.tsx";
+import { useFileOpener } from "./FileOpener.tsx";
 import { AnimatedView } from "./animated.ts";
 import { PressScale } from "../press.tsx";
 import { useTint } from "./tint.ts";
@@ -51,16 +49,20 @@ export interface MentionCandidate extends Mentionable {
 /**
  * The composer at the bottom of a conversation, a rounded rectangle that
  * grows with its text, bound to the conversation's draft: what anything else writes to the draft, text or files, shows here.
- * Files picked upload at once and show above the pill; the message goes once
- * they all have. A message over a limit of `message.send` is kept, and says
+ * Files picked upload at once and stand in the text where the caret was, each
+ * a chip showing its image or a page and its name, which a tap opens once it
+ * is uploaded and whose × removes it; the message goes once they all have. A message over a limit of `message.send` is kept, and says
  * why instead of sending. While Send hands the draft over, or the drafts load
  * or could not be read, the field takes no change, and attaching and removing
  * files are unavailable. In a room, `@` offers its members and `@everyone`
  * above the composer; only a pick mentions one, and a quiet line under it
  * says who the message wakes. While the field has focus the composer's border
- * takes the conversation's tint (`tint`, the bot's avatar; none in a room). While there is nothing to send, the trailing
- * button dictates where the platform has a speech recognizer: what is heard
- * becomes the draft's text as it is heard, and waits there for Send. Typing
+ * takes the conversation's tint (`tint`, the bot's avatar; none in a room).
+ * While the draft has no words, the trailing button dictates where the
+ * platform has a speech recognizer, beside Send when files wait to go: what is
+ * heard becomes the draft's words as it is heard, where the caret was, and
+ * waits there for Send; while it listens, the field says so where the text
+ * goes, and sizes nothing. Typing
  * stops it, and so does the conversation leaving the operator's view. Mount
  * one per conversation.
  */
@@ -93,29 +95,51 @@ export function Composer({
   const switching = useReadable(client.draftsSwitching);
   const readFailed = useReadable(client.draftsReadFailed);
   const notSaved = useReadable(client.draftsNotSaved).has(targetKey(target));
-  const field = useRef<ComponentRef<typeof TextInput>>(null);
+  const field = useRef<FieldHandle>(null);
   const attachButton = useRef<ComponentRef<typeof View>>(null);
   const [attachAt, setAttachAt] = useState<MenuAnchor | null>(null);
-  const placeholderColor = useColor("accent-muted-foreground");
+  const opener = useFileOpener();
 
   const { text, mentions, files } = draft;
   const label = t("composer.label", { name: recipient });
   const { empty, uploading, sendable, problem } = draftReadiness(text, files);
+  // No words yet, though files may stand there: what dictation can fill.
+  const wordless = placedMessage(text).text === "";
   // The draft takes no change while it is handed over, loads, or could not be read.
   const frozen = draft.sending || switching || readFailed;
-  // Files the draft already held when shown appear in place; only those attached since arrive.
-  const restored = useRestored(
-    targetKey(target),
-    files.map((file) => file.key),
-    switching || readFailed,
+  const uploaded = useMemo(
+    () =>
+      files.flatMap((file): ReadonlyArray<Attachment> =>
+        file._tag === "ready" ? [file.attachment] : [],
+      ),
+    [files],
   );
-  // Dictation starts only on an empty draft, so what is heard is the whole text.
+  const images = useImageFiles(client, uploaded);
+  // Dictation starts only on a draft with no words, so what is heard is all of
+  // them: it goes where the caret was when the first of it was heard, between
+  // the draft's files, a space apart from a file on either side.
+  const dictatedInto = useRef<{ readonly text: string; readonly at: number } | null>(null);
   const dictation = useDictation({
-    onHeard: (heard) => client.setDraftText(target, heard),
+    onHeard: (heard) => {
+      const held = client.drafts.get().get(targetKey(target))?.text ?? "";
+      const into = (dictatedInto.current ??= {
+        text: held,
+        at: Math.min(selection.current[0], held.length),
+      });
+      const before = into.text.slice(0, into.at);
+      const after = into.text.slice(into.at);
+      const lead = heard !== "" && before !== "" && !/\s$/.test(before) ? " " : "";
+      const tail = heard !== "" && after !== "" && !/^\s/.test(after) ? " " : "";
+      client.setDraftText(target, before + lead + heard + tail + after);
+    },
     frozen,
     inView,
   });
   const listening = dictation?.state._tag === "listening";
+  const dictationIdle = dictation === null || dictation.state._tag === "idle";
+  useEffect(() => {
+    if (dictationIdle) dictatedInto.current = null;
+  }, [dictationIdle]);
   const ready = !frozen && sendable;
   const tint = useTint(tintOf);
   const [focused, setFocused] = useState(false);
@@ -138,10 +162,15 @@ export function Composer({
   const selection = useRef<readonly [number, number]>([text.length, text.length]);
   // Where the caret is while the field has focus, collapsed; null otherwise.
   const [caret, setCaret] = useState<number | null>(null);
-  // Where the caret goes once the text a pick wrote has reached the field.
-  const placeCaret = useRef<{ readonly text: string; readonly at: number } | null>(null);
+  // Where the caret goes once the text a pick or an attach wrote has reached the field.
+  const placeCaret = useRef<{
+    readonly reached: (text: string) => boolean;
+    readonly at: number;
+    /** The field takes the focus back, as after a picker, which takes it away. */
+    readonly focus: boolean;
+  } | null>(null);
 
-  const edit = (after: string) => {
+  const edit = (change: FieldEdit) => {
     setNotTaken(false);
     dictation?.abort();
     dictation?.dismiss();
@@ -150,7 +179,7 @@ export function Composer({
       {
         _tag: "change",
         before: text,
-        after,
+        after: change.text,
         // An edit over a selection replaced it; the field does not tell what it wrote.
         over: start < end ? [start, end] : null,
         written: null,
@@ -158,7 +187,8 @@ export function Composer({
       },
       mentions,
     );
-    client.setDraftText(target, after, followed);
+    selection.current = change.selection;
+    client.setDraftText(target, change.text, followed, change.order);
   };
 
   const members = frozen ? undefined : mentionable;
@@ -171,32 +201,45 @@ export function Composer({
     const next = insertMention(text, caret, mentions, query, option);
     // A pick that leaves the text as it was changes nothing in the field: the caret moves now.
     if (next.text === text) moveCaret(next.caret);
-    else placeCaret.current = { text: next.text, at: next.caret };
+    else
+      placeCaret.current = {
+        reached: (shown) => shown === next.text,
+        at: next.caret,
+        focus: false,
+      };
     client.setDraftText(target, next.text, next.mentions);
   };
   const moveCaret = (at: number) => {
-    field.current?.setSelection(at, at);
+    field.current?.select(at, at);
     selection.current = [at, at];
-    setCaret(at);
+    setCaret(focused ? at : null);
   };
   useLayoutEffect(() => {
     const pending = placeCaret.current;
-    if (pending === null || pending.text !== text) return;
+    if (pending === null || !pending.reached(text)) return;
     placeCaret.current = null;
-    field.current?.setSelection(pending.at, pending.at);
-    selection.current = [pending.at, pending.at];
-    setCaret(pending.at);
-  }, [text]);
+    if (pending.focus) field.current?.focus();
+    moveCaret(pending.at);
+  });
 
   const attach = (picked: ReadonlyArray<PickedFile>) => {
     if (picked.length === 0) return;
-    // The draft may have stopped taking changes while the picker was open.
+    // The draft may have changed, or stopped taking changes, while the picker was open.
+    const now = client.drafts.get().get(targetKey(target));
     const stillFrozen =
-      client.drafts.get().get(targetKey(target))?.sending === true ||
-      client.draftsSwitching.get() ||
-      client.draftsReadFailed.get();
+      now?.sending === true || client.draftsSwitching.get() || client.draftsReadFailed.get();
     setNotTaken(stillFrozen);
-    if (!stillFrozen) client.attachFiles(target, picked);
+    if (stillFrozen) return;
+    // The files stand where the caret was, and the caret goes after them.
+    const held = now?.text ?? "";
+    const at = Math.min(selection.current[0], held.length);
+    const marks = markCount(held) + picked.length;
+    placeCaret.current = {
+      reached: (shown) => markCount(shown) === marks,
+      at: at + picked.length,
+      focus: true,
+    };
+    client.attachFiles(target, picked, at);
   };
   // The keyboard goes first: the + moves down with the composer as it hides, so
   // a menu placed while it was up would be left floating where the + had been.
@@ -241,28 +284,21 @@ export function Composer({
       ? null
       : messageProblemText(problem, i18n);
 
+  // A ready file opens; one still uploading, or that failed, has nothing to open yet.
+  const openFile = (key: string) => {
+    const file = files.find((held) => held.key === key);
+    if (file?._tag === "ready") opener.open(file.attachment);
+  };
+  const status: FieldStatus | null =
+    dictation?.state._tag === "listening"
+      ? {
+          text: t("composer.dictation.listening"),
+          note: dictation.state.place === "device" ? null : t("composer.dictation.onlineNote"),
+        }
+      : null;
+
   return (
     <View className="gap-1.5 px-3 pt-1 pb-2">
-      {files.length > 0 && (
-        <ScrollView
-          accessibilityLabel={t("composer.files")}
-          className="max-h-28 grow-0"
-          contentContainerClassName="flex-row flex-wrap gap-1.5"
-          keyboardShouldPersistTaps="handled"
-        >
-          {files.map((file) => (
-            <FileChip
-              key={file.key}
-              file={file}
-              arriving={!restored.has(file.key)}
-              onRemove={() => {
-                if (!frozen) client.detachFile(target, file.key);
-              }}
-              unavailable={frozen}
-            />
-          ))}
-        </ScrollView>
-      )}
       {/* Drafts that load say nothing: it takes a moment. Drafts that could not be read say so until read. */}
       {readFailed && !switching && (
         <View className="flex-row items-center justify-between gap-2 ps-3">
@@ -295,35 +331,36 @@ export function Composer({
         >
           <Icon icon={Plus} size={20} color="accent-muted-foreground" />
         </PressScale>
-        <TextInput
+        <ChipField
           ref={field}
-          multiline
           value={text}
-          editable={!frozen}
-          onChangeText={edit}
-          onSelectionChange={({ nativeEvent: { selection: next } }) => {
-            selection.current = [next.start, next.end];
-            setCaret(next.start === next.end ? next.end : null);
-          }}
-          onFocus={() => {
-            const [start, end] = selection.current;
-            setCaret(start === end ? end : null);
-            setFocused(true);
-          }}
-          onBlur={() => {
-            setCaret(null);
-            setFocused(false);
-          }}
+          files={files}
+          images={images}
           placeholder={label}
-          placeholderTextColor={placeholderColor}
-          accessibilityLabel={label}
-          accessibilityHint={addressee}
-          style={{ maxHeight: layout.composerMaxHeight }}
-          className="min-h-11 flex-1 px-1 py-2.5 text-lg text-foreground"
+          status={status}
+          editable={!frozen}
+          label={label}
+          {...(addressee === undefined ? {} : { hint: addressee })}
+          onEdit={edit}
+          onSelection={(next) => {
+            selection.current = next;
+            setCaret(next[0] === next[1] ? next[1] : null);
+          }}
+          onFocusChange={(now) => {
+            const [start, end] = selection.current;
+            setCaret(now && start === end ? end : null);
+            setFocused(now);
+          }}
+          onPressFile={openFile}
+          onRemoveFile={(key) => {
+            if (!frozen) client.detachFile(target, key);
+          }}
         />
-        {dictation !== null && (empty || listening) && !draft.sending ? (
+        {/* With files and no words, both: dictating about the files, or sending them. */}
+        {dictation !== null && (wordless || listening) && !draft.sending && (
           <DictationButton dictation={dictation} unavailable={frozen} />
-        ) : (
+        )}
+        {(dictation === null || draft.sending || !(empty || listening)) && (
           <SendButton
             state={draft.sending ? "sending" : ready ? "ready" : "disabled"}
             tint={tint.color}
@@ -360,6 +397,7 @@ export function Composer({
       {notSaved && (
         <Text className="px-3 text-xs text-muted-foreground">{t("composer.notSaved")}</Text>
       )}
+      {failures.length > 0 && <Text className="px-3 text-xs text-blocked">{failuresText}</Text>}
       {alert !== null && (
         <Text accessibilityLiveRegion="assertive" className="px-3 text-xs text-blocked">
           {alert}
@@ -424,53 +462,6 @@ function SendButton({
         />
       </Animated.View>
     </PressScale>
-  );
-}
-
-/** A file in the draft: its name, how its upload goes or why it cannot go, and a way out. */
-function FileChip({
-  file,
-  arriving,
-  onRemove,
-  unavailable,
-}: {
-  readonly file: DraftFile;
-  /** Attached since the draft was shown: it settles in. */
-  readonly arriving: boolean;
-  readonly onRemove: () => void;
-  /** The draft takes no change: the file cannot be removed meanwhile. */
-  readonly unavailable: boolean;
-}) {
-  const i18n = useI18n();
-  const name = draftFileName(file);
-  const failed = file._tag === "failed";
-  return (
-    <AnimatedView
-      {...enteringWhen(arriving, settleIn(springs.soft))}
-      className={`max-w-full flex-row items-center gap-2 rounded-md border ps-2 ${
-        failed ? "border-blocked/40 bg-blocked-surface" : "border-border bg-surface"
-      }`}
-    >
-      <Icon icon={File} size={16} color="accent-muted-foreground" />
-      <View className="min-w-0 shrink py-1">
-        <Text numberOfLines={1} className="max-w-48 text-xs font-medium text-foreground">
-          {name}
-        </Text>
-        <Text className={`text-2xs ${failed ? "text-blocked" : "text-muted-foreground"}`}>
-          {/* The phone's uploader reports no progress: it refuses redirects instead (`platform/upload.ts`). */}
-          {draftFileDetail(file, i18n, { progress: false })}
-        </Text>
-      </View>
-      <PressScale
-        accessibilityRole="button"
-        accessibilityLabel={i18n.t("composer.file.remove", { name })}
-        accessibilityState={{ disabled: unavailable }}
-        onPress={unavailable ? undefined : onRemove}
-        className="size-11 items-center justify-center"
-      >
-        <Icon icon={X} size={16} color="accent-muted-foreground" />
-      </PressScale>
-    </AnimatedView>
   );
 }
 
