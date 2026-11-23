@@ -13,6 +13,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 // name. The trigger that keeps a kind fixed names the column, so it goes first
 // and comes back as it was.
 //
+// The list keeps `credential-request`, the vault's save-login card, which
+// migration 0023 adds.
+//
 // An added `NOT NULL` column needs a default, so `kind` has one from now on.
 // It is never used: every entry is written with its kind.
 export default Effect.gen(function* () {
@@ -21,8 +24,8 @@ export default Effect.gen(function* () {
   yield* sql`
     ALTER TABLE entries ADD COLUMN entry_kind TEXT NOT NULL DEFAULT 'message' CHECK (
       entry_kind IN (
-        'message', 'question', 'approval', 'secret-request', 'work-fold', 'notice', 'handoff',
-        'routine-change', 'connector-suggestion', 'connector-auth'
+        'message', 'question', 'approval', 'secret-request', 'credential-request', 'work-fold',
+        'notice', 'handoff', 'routine-change', 'connector-suggestion', 'connector-auth'
       )
     )
   `;
