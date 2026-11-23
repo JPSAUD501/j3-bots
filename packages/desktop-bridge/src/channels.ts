@@ -58,6 +58,25 @@ export const IPC_CHANNELS = {
   shortcut: "j3bots:shortcut",
   /** `ShortcutRequest`, answered with `ShortcutChange`. */
   setShortcut: "j3bots:set-shortcut",
+  /** Runs the bots on this computer, and loads the page again on its server. Answers `ModeChange`. */
+  useThisComputer: "j3bots:use-this-computer",
+  /**
+   * Stops the server on this computer, its data kept, forgets it, and loads
+   * the page again on the server address screen. Answers `ModeChange`.
+   */
+  connectToServerInstead: "j3bots:connect-to-server-instead",
+  /** `LocalDeviceRequest`, answered with `LocalDeviceResult` once the server is ready, or will not be. */
+  localDevice: "j3bots:local-device",
+  /** Answers `LocalServerState | null`. */
+  localServer: "j3bots:local-server",
+  /** From the main process, each time the local server's state changes: `LocalServerState | null`. */
+  localServerChanged: "j3bots:local-server-changed",
+  /** Starts the local server again now, after it failed or while it waits to restart. Not answered. */
+  retryLocalServer: "j3bots:retry-local-server",
+  /** `PhoneAccessRequest`, answered with the `PhoneAccess` that holds after it. */
+  setPhoneAccess: "j3bots:set-phone-access",
+  /** Answers `LocalPairingLink`. */
+  localPairingLink: "j3bots:local-pairing-link",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -102,4 +121,16 @@ export interface DesktopBridge {
   readonly onCommand: (listener: (command: unknown) => void) => () => void;
   readonly shortcutStatus: () => Promise<unknown>;
   readonly setShortcut: (accelerator: string) => Promise<unknown>;
+  readonly useThisComputer: () => Promise<unknown>;
+  readonly connectToServerInstead: () => Promise<unknown>;
+  /** Signs this computer in to its own server (a `LocalDeviceRequest`). */
+  readonly localDevice: (request: unknown) => Promise<unknown>;
+  /**
+   * Calls `listener` with the local server's state now, then each time it
+   * changes; answers a function that stops it.
+   */
+  readonly onLocalServer: (listener: (state: unknown) => void) => () => void;
+  readonly retryLocalServer: () => void;
+  readonly setPhoneAccess: (on: boolean) => Promise<unknown>;
+  readonly localPairingLink: () => Promise<unknown>;
 }

@@ -64,6 +64,22 @@ const bridge: DesktopBridge = {
   },
   shortcutStatus: () => ipcRenderer.invoke(IPC_CHANNELS.shortcut),
   setShortcut: (accelerator) => ipcRenderer.invoke(IPC_CHANNELS.setShortcut, { accelerator }),
+  useThisComputer: () => ipcRenderer.invoke(IPC_CHANNELS.useThisComputer),
+  connectToServerInstead: () => ipcRenderer.invoke(IPC_CHANNELS.connectToServerInstead),
+  localDevice: (request) => ipcRenderer.invoke(IPC_CHANNELS.localDevice, request),
+  onLocalServer: (listener) => {
+    const forward = (_event: unknown, state: unknown) => listener(state);
+    ipcRenderer.on(IPC_CHANNELS.localServerChanged, forward);
+    // Then the state now, so a change between the two is never missed: the
+    // listener may hear one state twice, never a stale one last.
+    void ipcRenderer.invoke(IPC_CHANNELS.localServer).then(listener);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.localServerChanged, forward);
+    };
+  },
+  retryLocalServer: () => ipcRenderer.send(IPC_CHANNELS.retryLocalServer),
+  setPhoneAccess: (on) => ipcRenderer.invoke(IPC_CHANNELS.setPhoneAccess, { on }),
+  localPairingLink: () => ipcRenderer.invoke(IPC_CHANNELS.localPairingLink),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

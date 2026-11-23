@@ -152,6 +152,16 @@ class ConfigFileInvalid extends Schema.TaggedError<ConfigFileInvalid>()("ConfigF
   }
 }
 
+/** The configuration file is there, and the server may not read it. */
+class ConfigFileUnreadable extends Schema.TaggedError<ConfigFileUnreadable>()(
+  "ConfigFileUnreadable",
+  { path: Schema.String, reason: Schema.String },
+) {
+  override get message(): string {
+    return `${this.path} cannot be read (${this.reason}).\nGive the server's user read access to it, or delete it to have the server write the defaults again.`;
+  }
+}
+
 const CONFIG_FILE = HOME_ENTRIES.config;
 const ADMIN_SOCKET = HOME_ENTRIES.adminSocket;
 /** The shortest `sun_path` among supported systems is 104 bytes, its terminator included. */
@@ -361,7 +371,13 @@ const workspaceNames = Effect.fn("workspaceNames")(function* (home: string) {
 const readConfigFile = Effect.fn("readConfigFile")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   if (!(yield* fs.exists(file))) return {} satisfies ConfigFile;
-  const text = yield* fs.readFileString(file);
+  const text = yield* fs
+    .readFileString(file)
+    .pipe(
+      Effect.mapError(
+        (error) => new ConfigFileUnreadable({ path: file, reason: error.reason._tag }),
+      ),
+    );
   return yield* decodeConfigFile(text, { onExcessProperty: "error" }).pipe(
     Effect.mapError((error) => new ConfigFileInvalid({ path: file, detail: error.message })),
   );
