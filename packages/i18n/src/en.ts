@@ -1199,4 +1199,16 @@ export const en = {
   "browser.dialog.leave": "Leave this page?",
   "browser.dialog.accept": "OK",
   "browser.dialog.dismiss": "Cancel",
+  "browser.header.open": "Open {name}’s browser",
+  "browser.panel.open": "Open the browser on {site}",
+  "browser.panel.newTab": "New page",
+  "browser.viewer.title": "Browser",
+  "browser.viewer.address": "Address",
+  "browser.viewer.badAddress": "That isn’t a web address.",
+  "browser.viewer.back": "Back",
+  "browser.viewer.forward": "Forward",
+  "browser.viewer.reload": "Reload",
+  "browser.viewer.leaveKey": "{key} leaves the page",
+  "browser.viewer.heldElsewhere":
+    "Someone has control on another device. You can take it once they finish.",
 } as const;

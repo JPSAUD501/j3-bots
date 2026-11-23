@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EntryId, RosterItem, RosterItemKey } from "@j3-bots/contracts";
+import type {
+  BrowserHelpEntry,
+  BrowserTabRef,
+  EntryId,
+  RosterItem,
+  RosterItemKey,
+} from "@j3-bots/contracts";
 import {
   useEffect,
   useEffectEvent,
@@ -29,6 +35,11 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useArrivals, useConversationEnd } from "@j3-bots/client-runtime/react";
 import { BotsProvider, useI18n } from "../app/context";
+import { BrowserIndicator } from "../browser/BrowserIndicator";
+import { BrowserPanel } from "../browser/BrowserPanel";
+import { BrowserViewer, type BrowserViewerHandle } from "../browser/BrowserViewer";
+import { BrowserProvider } from "../browser/context";
+import type { BrowserSource } from "../browser/source";
 import { AvatarConnection } from "../components/avatar/mood";
 import { AppShell, type Region } from "../components/AppShell";
 import { Composer, type MentionCandidate } from "../components/Composer";
@@ -65,6 +76,10 @@ interface ShellNavigation {
   readonly detailsOpen: boolean;
   readonly select: (key: RosterItemKey | null) => void;
   readonly setDetailsOpen: (open: boolean) => void;
+  /** The tab of the bot's browser the viewer shows, or the bot's front tab; null with the viewer closed. */
+  readonly browser: BrowserTabRef | "front" | null;
+  /** Opens the viewer, closing the details, or closes it. */
+  readonly setBrowser: (target: BrowserTabRef | "front" | null) => void;
   /** The element a roster row renders as: a router link in the app, a button in a preview. */
   readonly rowLink: (item: RosterItem) => ReactElement;
 }
@@ -75,14 +90,16 @@ const coarsePointer = () => window.matchMedia("(pointer: coarse)").matches;
 interface ShellProps {
   readonly data: ShellData;
   readonly intents: ShellIntents;
+  /** The bots' browsers. */
+  readonly browser: BrowserSource;
   readonly navigation: ShellNavigation;
   /** Window-wide shortcuts. Off where several shells share a page. */
   readonly keyboard?: boolean;
 }
 
 /** The whole interface: roster, conversation and details, from data and intents. */
-export function Shell({ data, intents, navigation, keyboard = true }: ShellProps) {
-  const { selected, detailsOpen } = navigation;
+export function Shell({ data, intents, browser, navigation, keyboard = true }: ShellProps) {
+  const { selected } = navigation;
   const i18n = useI18n();
   const { t } = i18n;
   const shortcuts = shellShortcuts();
@@ -112,11 +129,21 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // the home never shows in between.
   const [openingFirstBot, setOpeningFirstBot] = useState(false);
   if (openingFirstBot && item !== null) setOpeningFirstBot(false);
+  // Beside the conversation, or over it: a bot's browser, or else the details.
+  const browserTarget = item?._tag === "bot" ? navigation.browser : null;
+  const detailsOpen = navigation.detailsOpen && browserTarget === null;
+  const aside = browserTarget !== null ? "browser" : detailsOpen ? "details" : null;
+  // On a phone the details take the screen; the browser rises over the conversation as a sheet.
   const active: Region = item === null ? "roster" : detailsOpen ? "details" : "conversation";
-  // Below `wide` the details are a modal dialog: it owns focus and every key, Escape
-  // included, and the shell's shortcuts wait until it closes.
+  // Below `wide` the details and the browser are a modal dialog: it owns focus and every key,
+  // Escape included, and the shell's shortcuts wait until it closes.
   const detailsModal = layout === "phone" || layout === "tablet";
-  const detailsCover = item !== null && detailsOpen && detailsModal;
+  const detailsCover = item !== null && aside !== null && detailsModal;
+  const viewerRef = useRef<BrowserViewerHandle>(null);
+  const closeAside = () => {
+    if (aside === "browser") viewerRef.current?.requestClose();
+    else navigation.setDetailsOpen(false);
+  };
   const selectionKey = item === null ? null : rosterKeyText(rosterKeyOf(item));
 
   // The conversation the operator can see: the one shown, with no sheet or
@@ -163,17 +190,17 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // steals focus. Nor under a dialog, as the bot editor a notification click
   // leaves open over the conversation it opens: the dialog keeps focus, and the
   // keys typed there never reach what lies under it.
-  const shown = useRef({ selectionKey, detailsOpen });
+  const shown = useRef({ selectionKey, aside });
   useEffect(() => {
     const before = shown.current;
-    shown.current = { selectionKey, detailsOpen };
+    shown.current = { selectionKey, aside };
     const moved = before.selectionKey !== selectionKey;
     const focus = (element: HTMLElement | null | undefined) => {
       if (element && !isCovered(element)) element.focus();
     };
-    if (before.detailsOpen !== detailsOpen && (detailsOpen || !moved)) {
+    if (before.aside !== aside && (aside !== null || !moved)) {
       if (detailsModal) return;
-      focus(detailsOpen ? detailsHeadingRef.current : titleRef.current);
+      focus(aside !== null ? detailsHeadingRef.current : titleRef.current);
     } else if (moved && selectionKey !== null && !coarsePointer()) {
       focus(composerRef.current);
     } else if (moved && selectionKey === null && before.selectionKey !== null) {
@@ -186,14 +213,14 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         : roster?.querySelector<HTMLElement>("[data-roster-search]");
       focus(row ?? search ?? roster);
     }
-  }, [selectionKey, detailsOpen, detailsModal]);
+  }, [selectionKey, aside, detailsModal]);
 
   /** Does `action`; whether it did anything, so a key that did nothing is left to the page. */
   const act = useEffectEvent((action: ShellAction): boolean => {
     switch (action) {
       case "closeDetails":
-        if (!detailsOpen) return false;
-        navigation.setDetailsOpen(false);
+        if (aside === null) return false;
+        closeAside();
         return true;
       case "next":
       case "previous": {
@@ -238,7 +265,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
     }
   });
   const onKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || detailsCover) return;
+    // A key an input method composes with is the input method's.
+    if (event.defaultPrevented || event.isComposing || detailsCover) return;
     // Keys pressed in a dialog over the shell, such as a confirmation, are that dialog's.
     if (event.target instanceof Element && event.target.closest("[role=alertdialog]")) return;
     const action: ShellAction | null =
@@ -260,6 +288,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   // details' dialog closes as Escape closes it.
   const onAction = useEffectEvent((action: ShellAction) => {
     if (document.querySelector("[role=alertdialog]") !== null) return;
+    // While the operator types into the bot's page, its keys are the page's, the menus' included.
+    if (document.activeElement?.closest("[data-browser-page]")) return;
     if (detailsCover && action !== "closeDetails") return;
     act(action);
   });
@@ -404,7 +434,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             i18n,
           )
         : null;
-    const toggleDetails = () => navigation.setDetailsOpen(!detailsOpen);
+    const toggleDetails = () =>
+      aside === "browser"
+        ? viewerRef.current?.requestClose(() => navigation.setDetailsOpen(true))
+        : navigation.setDetailsOpen(!detailsOpen);
+    const browserBot = item._tag === "bot" ? item.bot : null;
     const goToEntry = (entryId: EntryId) => {
       const card = timeline?.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(entryId)}"]`);
       card?.scrollIntoView({ block: "center" });
@@ -431,6 +465,19 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               text,
             }))
           }
+          {...(browserBot === null
+            ? {}
+            : {
+                actions: (
+                  <BrowserIndicator
+                    bot={browserBot}
+                    open={browserTarget !== null}
+                    onOpen={() =>
+                      browserTarget === null ? navigation.setBrowser("front") : closeAside()
+                    }
+                  />
+                ),
+              })}
         />
         {view.phase === "not-found" ? (
           <ConversationGone onBack={() => navigation.select(null)} />
@@ -478,6 +525,16 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
                   turnBot={
                     item._tag === "bot" ? { bot: item.bot, lastEntry: item.lastEntry } : null
                   }
+                  {...(browserBot === null
+                    ? {}
+                    : {
+                        turnExtra: (
+                          <BrowserPanel
+                            bot={browserBot}
+                            onOpen={(tab) => navigation.setBrowser(tab.ref)}
+                          />
+                        ),
+                      })}
                 />
               </div>
             </div>
@@ -534,7 +591,34 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         </div>
       </>
     );
-    if (detailsOpen) {
+    if (browserBot !== null && browserTarget !== null) {
+      // The step the bot asked for in its browser, while it waits on the operator.
+      const help = view.items.findLast(
+        (entry): entry is BrowserHelpEntry =>
+          entry._tag === "browser-help" && entry.status._tag === "pending",
+      );
+      details = (
+        <BrowserViewer
+          // One viewer per bot: another bot's browser opens afresh.
+          key={browserBot.id}
+          bot={browserBot}
+          target={browserTarget}
+          help={
+            help === undefined
+              ? null
+              : {
+                  tab: help.tab,
+                  onDone: () => intents.answerBrowserHelp(help.id, "done"),
+                  onDecline: () => intents.answerBrowserHelp(help.id, "declined"),
+                }
+          }
+          onClose={() => navigation.setBrowser(null)}
+          headingRef={detailsHeadingRef}
+          headingId={detailsHeadingId}
+          ref={viewerRef}
+        />
+      );
+    } else if (detailsOpen) {
       const close = () => navigation.setDetailsOpen(false);
       if (item._tag === "bot") {
         const { bot } = item;
@@ -585,21 +669,24 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   return (
     <BotsProvider bots={bots}>
-      <AvatarConnection connected={data.connected}>
-        <AppShell
-          roster={roster}
-          conversation={conversation}
-          details={details}
-          detailsHeadingId={detailsHeadingId}
-          detailsHeadingRef={detailsHeadingRef}
-          returnFocusRef={titleRef}
-          active={active}
-          layout={layout}
-          containerRef={containerRef}
-          conversationRef={setConversationRegion}
-          onCloseDetails={() => navigation.setDetailsOpen(false)}
-        />
-      </AvatarConnection>
+      <BrowserProvider source={browser}>
+        <AvatarConnection connected={data.connected}>
+          <AppShell
+            roster={roster}
+            conversation={conversation}
+            details={details}
+            asideKind={aside === "browser" ? "browser" : "details"}
+            detailsHeadingId={detailsHeadingId}
+            detailsHeadingRef={detailsHeadingRef}
+            returnFocusRef={titleRef}
+            active={active}
+            layout={layout}
+            containerRef={containerRef}
+            conversationRef={setConversationRegion}
+            onCloseDetails={closeAside}
+          />
+        </AvatarConnection>
+      </BrowserProvider>
       <span className="sr-only" aria-live="polite">
         {announcement !== null && <span key={announcement.id}>{announcement.text}</span>}
       </span>

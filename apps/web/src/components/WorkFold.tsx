@@ -14,7 +14,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import {
   liveTurn,
   millisBetween,
@@ -63,6 +63,8 @@ interface WorkFoldProps {
    */
   readonly onOpenChange: (open: boolean) => void;
   readonly defaultOpen?: boolean;
+  /** While the turn runs, what shows under its line, as the bot's browser. */
+  readonly extra?: ReactNode;
 }
 
 /**
@@ -71,7 +73,14 @@ interface WorkFoldProps {
  * row folds into one quiet line, "Worked for 2m", that opens to every step,
  * as the running row does once there are steps. Never opens by itself.
  */
-export function WorkFold({ fold, live, steps, onOpenChange, defaultOpen = false }: WorkFoldProps) {
+export function WorkFold({
+  fold,
+  live,
+  steps,
+  onOpenChange,
+  defaultOpen = false,
+  extra,
+}: WorkFoldProps) {
   const ctx = usePresentation();
   const { t, plural } = ctx.i18n;
   const [open, setOpen] = useState(defaultOpen);
@@ -94,7 +103,10 @@ export function WorkFold({ fold, live, steps, onOpenChange, defaultOpen = false 
       {...(live === null ? {} : { "data-live": "" })}
     >
       {live !== null ? (
-        <LiveLine turn={live} hasSteps={hasSteps} />
+        <>
+          <LiveLine turn={live} hasSteps={hasSteps} />
+          {extra}
+        </>
       ) : fold !== null && !hasSteps ? (
         // A turn stopped or failed before its first step: how it ended, with nothing to open.
         <p

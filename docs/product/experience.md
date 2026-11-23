@@ -37,6 +37,18 @@ A bot needs a decision or permission.
 - Both produce a notification on the operator's devices. Answering on any device resolves the card everywhere.
 - A question the bot asked on its own can be dismissed, which is a "no". The bot does not ask again. A question its coding tool asks mid-task has no dismiss: it waits for an answer, or for the operator to stop the bot.
 
+### Watching the bot's browser, and taking it over
+
+A bot shops, books or reads a site in its own browser, on the machine J3 Bots runs on.
+
+- While the bot has a page open, a globe sits in its conversation's header, its mark breathing while the bot acts on the page. Under the line of the turn under way, a picture of the page and the site's name, taken again as the page changes and every few seconds while the bot works. It is a picture, not a live view: watching it costs nothing.
+- Either opens the browser: beside the conversation on a wide window, over it on a tablet, rising from the bottom on a phone. The page is live, its site and address shown, and a line says who is acting on it: "The bot is browsing", "You have control" or "On another device". While the operator only watches, the page takes nothing they do, and the bot's pointer shows where it acts.
+- **Take control** is the one primary action. Once taken, the bot cannot act on the page, and everything the operator does over it goes to the page: the pointer, the wheel, typing, a phone's keyboard on a field they tap. Back, forward, reload and the address field appear only now. **Done** gives the page back to the bot.
+- When the bot asked for help on the page (a sign-in, a code, a check that a person is there), **Done** tells it the step is done, and **Can't do it** tells it the operator could not; either gives the page back. **Open browser** on that card opens the browser on the page.
+- A sign-in window the page opens shows in the browser as the bot's front page; the operator keeps control in it, and the browser goes back to the page it came from when it closes.
+- Leaving the browser while in control asks once whether to give the page back to the bot. Keeping it leaves the bot waiting until the operator returns and presses Done; giving it back this way leaves a help card open, since the step may not be done.
+- The operator's clipboard and files never reach the page: pasting, dropping, downloads and file pickers are out of reach in this version.
+
 ### Work that starts on its own
 
 The operator says "every weekday morning, tell me what changed in the repo" or "let me know when the deploy finishes".
@@ -111,6 +123,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 - Messages as bubbles, the operator's on one side and the bot's on the other, with timestamps between groups.
 - Cards inline: questions, approvals, files, handoffs, routines created or changed.
 - A finished turn's work folds into one line ("Worked for 2m") that opens to show the steps.
+- While the bot has a page open in its browser, a globe in the header, and a picture of the page under the turn under way, open the browser.
 - A composer labeled with the bot's name. Attachments and dictation are in the composer; nothing else is.
 
 ### Details

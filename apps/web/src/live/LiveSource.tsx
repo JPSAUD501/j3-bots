@@ -1107,7 +1107,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   }
 
   return (
-    <ShellSourceProvider source={{ data, intents }}>
+    <ShellSourceProvider source={{ data, intents, browser: j3 }}>
       {children}
       {[...openFolds].map((foldId) => (
         <FoldReader

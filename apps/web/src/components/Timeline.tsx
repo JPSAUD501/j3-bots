@@ -16,7 +16,7 @@ import type {
   WorkStep,
 } from "@j3-bots/contracts";
 import type * as Redacted from "effect/Redacted";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { MentionLabel } from "@j3-bots/client-runtime";
 import {
   addresseeOf,
@@ -96,6 +96,8 @@ interface TimelineProps {
    * what it is doing (`withLiveTurn`). Null in a room.
    */
   readonly turnBot?: TurnBot | null;
+  /** What shows under the line of the bot's turn under way, as its browser. */
+  readonly turnExtra?: ReactNode;
 }
 
 /**
@@ -112,6 +114,7 @@ export function Timeline({
   arrived,
   flyFrom,
   turnBot = null,
+  turnExtra,
 }: TimelineProps) {
   const bots = useBots();
   const i18n = useI18n();
@@ -144,6 +147,7 @@ export function Timeline({
               <WorkFold
                 fold={fold}
                 live={item.live ? turnBot : null}
+                {...(item.live && turnExtra !== undefined ? { extra: turnExtra } : {})}
                 steps={fold === null ? null : workSteps(fold.id)}
                 onOpenChange={(open) => {
                   if (fold === null) return;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import { useState, type ReactNode, type Ref, type RefObject } from "react";
+import { cn } from "../lib/cn";
 import { useKeptWhileLeaving } from "../lib/useKeptWhileLeaving";
 import type { ShellLayout } from "../shell/layout";
 
@@ -11,6 +12,8 @@ interface AppShellProps {
   readonly conversation: ReactNode;
   /** Null when the details are closed. */
   readonly details: ReactNode | null;
+  /** What `details` holds: the details, or a bot's browser, which takes more room. */
+  readonly asideKind: "details" | "browser";
   /** The id of the details' heading, which names the pane. */
   readonly detailsHeadingId: string;
   /** Where focus goes when the details open as a dialog. */
@@ -41,6 +44,7 @@ export function AppShell({
   roster,
   conversation,
   details,
+  asideKind,
   detailsHeadingId,
   detailsHeadingRef,
   returnFocusRef,
@@ -55,6 +59,14 @@ export function AppShell({
   const modal = layout === "phone" || layout === "tablet";
   const covered = details !== null && modal;
   const pane = useKeptWhileLeaving(details);
+  // The kind of what leaves stays with it, so it leaves as it came.
+  const [keptKind, setKeptKind] = useState(asideKind);
+  if (details !== null && keptKind !== asideKind) setKeptKind(asideKind);
+  const browser = (details === null ? keptKind : asideKind) === "browser";
+  // Beside the conversation the browser takes what room the conversation can spare.
+  const paneWidth = browser
+    ? "w-[clamp(25rem,calc(100cqw_-_var(--layout-roster-width)_-_28rem),60rem)]"
+    : "w-(--layout-details-width)";
   return (
     <div ref={containerRef} className="@container h-full w-full">
       <div ref={setFrame} className="relative flex h-full w-full overflow-hidden bg-background">
@@ -77,7 +89,7 @@ export function AppShell({
           <aside
             aria-labelledby={detailsHeadingId}
             inert={pane.leaving}
-            className="flex w-(--layout-details-width) shrink-0 overflow-hidden"
+            className={cn("flex shrink-0 overflow-hidden", paneWidth)}
           >
             {/*
              * The pane takes its room at once, so the conversation is laid out
@@ -89,7 +101,10 @@ export function AppShell({
               onAnimationEnd={(event) => {
                 if (event.target === event.currentTarget && pane.leaving) pane.gone();
               }}
-              className="flex w-(--layout-details-width) shrink-0 animate-[pane-in_var(--duration-slide)_var(--ease-slide)] flex-col border-s border-border bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] [--pane-from:100%] rtl:[--pane-from:-100%] data-leaving:animate-[pane-out_var(--duration-state)_var(--ease-out)_forwards]"
+              className={cn(
+                paneWidth,
+                "flex shrink-0 animate-[pane-in_var(--duration-slide)_var(--ease-slide)] flex-col border-s border-border bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] [--pane-from:100%] rtl:[--pane-from:-100%] data-leaving:animate-[pane-out_var(--duration-state)_var(--ease-out)_forwards]",
+              )}
             >
               {pane.shown}
             </div>
@@ -97,22 +112,42 @@ export function AppShell({
         )}
         <Dialog.Root
           open={details !== null && modal}
-          onOpenChange={(open) => {
-            if (!open) onCloseDetails();
+          onOpenChange={(open, change) => {
+            if (open) return;
+            // Escape typed into the bot's browser page is the page's.
+            if (change.reason === "escape-key" && change.event.defaultPrevented) {
+              change.cancel();
+              return;
+            }
+            onCloseDetails();
           }}
           onOpenChangeComplete={(open) => {
             if (!open) pane.gone();
           }}
         >
           <Dialog.Portal container={frame}>
-            {/* Beside the pane, the scrim closes it; a phone's pane covers everything. */}
-            <Dialog.Backdrop className="absolute inset-0 z-10 hidden bg-scrim transition-opacity duration-(--duration-slow) ease-out data-ending-style:opacity-0 data-starting-style:opacity-0 @tablet:block" />
+            {/*
+             * Beside the pane, the scrim closes it; a phone's details cover everything, and its
+             * browser rises as a sheet over the scrim.
+             */}
+            <Dialog.Backdrop
+              className={cn(
+                "absolute inset-0 z-10 hidden bg-scrim transition-opacity duration-(--duration-slow) ease-out data-ending-style:opacity-0 data-starting-style:opacity-0 @tablet:block",
+                browser && "block",
+              )}
+            />
             <Dialog.Popup
               aria-labelledby={detailsHeadingId}
               aria-modal
               initialFocus={detailsHeadingRef}
               finalFocus={returnFocusRef}
-              className="absolute inset-0 z-20 flex flex-col bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none transition-transform duration-(--duration-slide) ease-slide data-ending-style:translate-x-full data-ending-style:duration-(--duration-state) data-ending-style:ease-out data-starting-style:translate-x-full rtl:data-ending-style:-translate-x-full rtl:data-starting-style:-translate-x-full @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-overlay"
+              className={cn(
+                "absolute inset-0 z-20 flex flex-col bg-background pr-[env(safe-area-inset-right)] outline-none transition-transform duration-(--duration-slide) ease-slide data-ending-style:duration-(--duration-state) data-ending-style:ease-out @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:border-s @tablet:border-border @tablet:shadow-overlay @tablet:pt-(--inset-top) @tablet:data-ending-style:translate-x-full @tablet:data-starting-style:translate-x-full @tablet:rtl:data-ending-style:-translate-x-full @tablet:rtl:data-starting-style:-translate-x-full",
+                browser
+                  ? // A sheet on a phone, with the conversation's top still in sight; over the conversation from the tablet up.
+                    "@max-tablet:top-[calc(var(--inset-top)_+_--spacing(3))] @max-tablet:rounded-t-sheet @max-tablet:shadow-overlay @max-tablet:data-ending-style:translate-y-full @max-tablet:data-starting-style:translate-y-full @tablet:w-[calc(100%_-_var(--layout-roster-width))]"
+                  : "pt-(--inset-top) pb-[env(safe-area-inset-bottom)] data-ending-style:translate-x-full data-starting-style:translate-x-full rtl:data-ending-style:-translate-x-full rtl:data-starting-style:-translate-x-full @tablet:w-(--layout-details-width)",
+              )}
             >
               {pane.shown}
             </Dialog.Popup>

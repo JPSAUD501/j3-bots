@@ -159,7 +159,7 @@ export function sampleTeam(now: DateTime.Utc) {
         stalled: false,
         quietSince: null,
         activity: "Checking which of the three the shop has in stock",
-        tool: null,
+        tool: "browser",
       },
       { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
     ),

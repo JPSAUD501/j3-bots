@@ -25,6 +25,7 @@ import {
   ProviderId,
   type ProviderStatus,
   type Bot,
+  type BrowserTabRef,
   type Room,
   RoomId,
   type RosterItem,
@@ -2548,27 +2549,45 @@ const rowButton = (onClick: () => void) => <button type="button" onClick={onClic
 function ShellFrame({
   initial,
   details = false,
+  browser = false,
   firstRun = false,
   engine,
 }: {
   initial: RosterItemKey | null;
   details?: boolean;
+  /** The bot's browser open on its front tab. */
+  browser?: boolean;
   firstRun?: boolean;
   engine?: EngineStatus;
 }) {
   const source = useSampleSource(engine === undefined ? { firstRun } : { firstRun, engine });
   const [selected, setSelected] = useState(initial);
   const [detailsOpen, setDetailsOpen] = useState(details);
+  const [browserTarget, setBrowserTarget] = useState<BrowserTabRef | "front" | null>(
+    browser ? "front" : null,
+  );
   return (
     <Shell
       data={source.data}
       intents={source.intents}
+      browser={source.browser}
       keyboard={false}
       navigation={{
         selected,
         detailsOpen: detailsOpen && selected !== null,
-        select: setSelected,
-        setDetailsOpen,
+        select: (key) => {
+          setSelected(key);
+          setBrowserTarget(null);
+        },
+        setDetailsOpen: (open) => {
+          setDetailsOpen(open);
+          if (open) setBrowserTarget(null);
+        },
+        browser: browserTarget,
+        setBrowser: (target) => {
+          setBrowserTarget(target);
+          if (target !== null) setDetailsOpen(false);
+        },
         rowLink: (item) => rowButton(() => setSelected(rowKey(item))),
       }}
     />
@@ -2582,6 +2601,13 @@ function ShellSection() {
       <div className="flex flex-col gap-6">
         <Frame label="Desktop, 1280 px: roster, conversation and details" width={1280} height={760}>
           <ShellFrame initial={scout} details />
+        </Frame>
+        <Frame
+          label="Desktop, 1440 px: Scout's browser beside the conversation; Take control hands the page to the operator, Done gives it back"
+          width={1440}
+          height={800}
+        >
+          <ShellFrame initial={scout} browser />
         </Frame>
         <Frame
           label="Tablet, 900 px: the name opens the details as a modal dialog over the conversation; Escape, the scrim or the close button returns to the title"
@@ -2604,6 +2630,13 @@ function ShellSection() {
             height={760}
           >
             <ShellFrame initial={{ _tag: "bot", botId: ids.atlas }} />
+          </Frame>
+          <Frame
+            label="Phone: Scout's browser, a sheet over the conversation"
+            width={390}
+            height={760}
+          >
+            <ShellFrame initial={scout} browser />
           </Frame>
         </div>
       </div>
