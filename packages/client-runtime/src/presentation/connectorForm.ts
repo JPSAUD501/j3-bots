@@ -143,6 +143,16 @@ export function fieldValues(
 }
 
 /**
+ * What a form keeps of `typed` once the server took it: the values of its
+ * plain fields, and none of its secret ones.
+ */
+export const withoutSecrets = (
+  fields: ReadonlyArray<ConnectorField>,
+  typed: ReadonlyMap<FieldKey, string>,
+): ReadonlyMap<FieldKey, string> =>
+  new Map([...typed].filter(([key]) => !fields.some((field) => field.key === key && field.secret)));
+
+/**
  * A gallery entry's form: a value for each of its fields, as `fieldValues`
  * takes them, and for an `own-app` entry the client the operator registered.
  */

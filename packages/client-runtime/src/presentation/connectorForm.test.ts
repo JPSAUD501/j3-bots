@@ -7,7 +7,13 @@ import {
 } from "@j3-bots/contracts";
 import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vite-plus/test";
-import { commandSource, listingSource, remoteSource, type SourceDraft } from "./connectorForm.ts";
+import {
+  commandSource,
+  listingSource,
+  remoteSource,
+  type SourceDraft,
+  withoutSecrets,
+} from "./connectorForm.ts";
 
 const ready = (draft: SourceDraft): ConnectorSource => {
   if (draft._tag !== "ready") throw new Error(`Refused: ${JSON.stringify(draft.problems)}`);
@@ -69,6 +75,19 @@ describe("a gallery entry's form", () => {
       }),
     );
     expect(own.clientId).toBe(true);
+  });
+});
+
+describe("a form the server took", () => {
+  it("keeps what its plain fields hold and none of its secret ones", () => {
+    const kept = withoutSecrets(
+      fields,
+      new Map([
+        [token, "key"],
+        [team, "core"],
+      ]),
+    );
+    expect([...kept]).toEqual([[team, "core"]]);
   });
 });
 

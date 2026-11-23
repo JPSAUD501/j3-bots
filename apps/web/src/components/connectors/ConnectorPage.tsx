@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { refusedWith } from "@j3-bots/client-runtime";
-import { fieldValues, sameGrant } from "@j3-bots/client-runtime/presentation";
+import { fieldValues, sameGrant, withoutSecrets } from "@j3-bots/client-runtime/presentation";
 import { useConnectorSignIn } from "@j3-bots/client-runtime/react";
 import {
   connectedText,
@@ -374,8 +374,13 @@ function ReplaceFields({
         setFailure(null);
         void intents.update(connector.id, { values: typed.values }).then((result) => {
           setSubmitting(false);
-          if (result._tag === "done") onDone();
-          else setFailure(connectFailureText(result.failure, i18n));
+          if (result._tag === "done") {
+            // The server keeps them now: none stays in the form.
+            setValues(withoutSecrets(connector.fields, values));
+            onDone();
+          } else {
+            setFailure(connectFailureText(result.failure, i18n));
+          }
         });
       }}
     >

@@ -80,6 +80,10 @@ export function AddOwnConnector({
     void intents.add({ source, grant, suggestion: null }).then((result) => {
       setSubmitting(false);
       if (result._tag === "done") {
+        // The server keeps them now: none stays in the form.
+        setHeaders(headers.map((row) => ({ ...row, value: "" })));
+        setEnv(env.map((row) => ({ ...row, value: "" })));
+        setClientSecret("");
         onAdded(result.value);
       } else if (source._tag === "remote" && refusedWith(result, "private-network")) {
         setAsking({ _tag: "private-network", host: new URL(Redacted.value(source.url)).hostname });

@@ -5,6 +5,7 @@ import {
   initialGrant,
   listingKey,
   listingSource,
+  withoutSecrets,
 } from "@j3-bots/client-runtime/presentation";
 import { connectFailureText, publisherText } from "@j3-bots/client-runtime/wording";
 import type {
@@ -160,6 +161,9 @@ function ConnectForm({
     void intents.add({ source: draft.source, grant, suggestion }).then((result) => {
       setSubmitting(false);
       if (result._tag === "done") {
+        // The server keeps them now: none stays in the form.
+        setValues(withoutSecrets(listing.fields, values));
+        setClientSecret("");
         onAdded(result.value);
         return;
       }

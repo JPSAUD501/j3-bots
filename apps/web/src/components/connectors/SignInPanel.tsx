@@ -27,7 +27,6 @@ export function SignInPanel({
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
-  const [address, setAddress] = useState("");
   const { phase } = signIn;
 
   switch (phase._tag) {
@@ -83,33 +82,7 @@ export function SignInPanel({
             {phase.route === "relay" ? t("signIn.waiting.relay") : t("signIn.waiting")}
           </p>
           {phase.route === "paste" && (
-            <form
-              className="flex flex-col gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                signIn.paste(address);
-              }}
-            >
-              <p className="text-sm text-muted-foreground">{t("signIn.paste.steps")}</p>
-              <LineField
-                label={t("signIn.paste.label")}
-                type="url"
-                mono
-                value={address}
-                onChange={setAddress}
-                problem={phase.pasteRefused ? t("signIn.paste.refused") : null}
-              />
-              <Button
-                type="submit"
-                size="sm"
-                variant="primary"
-                className="self-start"
-                aria-disabled={address.trim() === ""}
-              >
-                {t("signIn.paste.submit")}
-              </Button>
-              <p className="text-xs text-muted-foreground">{t("signIn.paste.apps")}</p>
-            </form>
+            <PasteForm refused={phase.pasteRefused} onPaste={signIn.paste} />
           )}
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" onClick={signIn.openAgain}>
@@ -126,6 +99,47 @@ export function SignInPanel({
         </Panel>
       );
   }
+}
+
+/**
+ * Where the operator pastes the address the browser landed on, which carries
+ * the sign-in's code. The field empties as it is sent, and the form lives only
+ * while the sign-in waits for an address, so a new wait, after a refusal, a
+ * cancel or another sign-in, starts empty.
+ */
+function PasteForm({ refused, onPaste }: { refused: boolean; onPaste: (address: string) => void }) {
+  const { t } = usePresentation().i18n;
+  const [address, setAddress] = useState("");
+  return (
+    <form
+      className="flex flex-col gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setAddress("");
+        onPaste(address);
+      }}
+    >
+      <p className="text-sm text-muted-foreground">{t("signIn.paste.steps")}</p>
+      <LineField
+        label={t("signIn.paste.label")}
+        type="url"
+        mono
+        value={address}
+        onChange={setAddress}
+        problem={refused ? t("signIn.paste.refused") : null}
+      />
+      <Button
+        type="submit"
+        size="sm"
+        variant="primary"
+        className="self-start"
+        aria-disabled={address.trim() === ""}
+      >
+        {t("signIn.paste.submit")}
+      </Button>
+      <p className="text-xs text-muted-foreground">{t("signIn.paste.apps")}</p>
+    </form>
+  );
 }
 
 function Panel({ children }: { children: ReactNode }) {
