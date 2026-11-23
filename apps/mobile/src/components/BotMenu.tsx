@@ -264,9 +264,9 @@ export function BotMenu({
       width={WIDTH}
       preview={
         pressed.from === "row" ? (
-          <RosterRow item={item} selected lifted />
+          <RosterRow item={item} height={pressed.anchor.height} selected lifted />
         ) : (
-          <PinnedBot item={item} selected />
+          <PinnedBot item={item} height={pressed.anchor.height} selected />
         )
       }
     />

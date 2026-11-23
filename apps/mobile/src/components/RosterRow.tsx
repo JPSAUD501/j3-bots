@@ -24,8 +24,8 @@ export const toneClass = {
 } as const satisfies Record<LineTone, string>;
 
 /**
- * One bot or room: avatar, name, time, and one line of status, in a 64 px
- * row. Rows that need the operator carry it in the line's words and color
+ * One bot or room: avatar, name, time, and one line of status, in a row
+ * `height` tall (`RosterSizes`), 64 px at the default font size. Rows that need the operator carry it in the line's words and color
  * and in the avatar's light. Unread shows once: as an idle bot's dark light,
  * or as a dot under the time; screen readers hear "Unread" either way. The
  * primary bot's avatar carries its mark, which screen readers hear in the
@@ -34,6 +34,7 @@ export const toneClass = {
  */
 export function RosterRow({
   item,
+  height,
   selected,
   avatarRef,
   onOpen,
@@ -41,6 +42,7 @@ export function RosterRow({
   lifted = false,
 }: {
   readonly item: RosterItem;
+  readonly height: number;
   /** Its conversation is open beside the roster. */
   readonly selected: boolean;
   /** A bot row's avatar, to make it move: a row that rises makes its bot hop. */
@@ -96,7 +98,8 @@ export function RosterRow({
           })}
       onPressIn={() => setPressed(true)}
       onPressOut={() => setPressed(false)}
-      className={`${lifted ? "" : "mx-2"} h-(--layout-row-touch) flex-row items-center gap-3 rounded-lg px-2 active:bg-muted ${selected ? "bg-muted" : ""}`}
+      className={`${lifted ? "" : "mx-2"} flex-row items-center gap-3 rounded-lg px-2 active:bg-muted ${selected ? "bg-muted" : ""}`}
+      style={{ height }}
     >
       {item._tag === "bot" ? (
         <LiveBotAvatar

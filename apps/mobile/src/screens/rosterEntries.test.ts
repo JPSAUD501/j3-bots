@@ -3,7 +3,10 @@ import type { ArrangedRoster, BotItem } from "@j3-bots/client-runtime/presentati
 import { BotId, ModelId, ProviderId, SectionId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
-import { pinColumns, pinnedHeight, rosterEntries } from "./rosterEntries.ts";
+import { pinColumns, pinnedHeight, rosterEntries, rosterSizes } from "./rosterEntries.ts";
+
+// The touch scale's lines, `text-base` and `text-sm`, at the default font size.
+const sizes = rosterSizes({ base: 22, sm: 22 });
 
 const bot = (name: string): BotItem => ({
   _tag: "bot",
@@ -41,10 +44,25 @@ describe("the pinned band", () => {
   });
 
   it("grows by a line for each line of bots, and takes no room with none", () => {
-    expect(pinnedHeight(0, 4)).toBe(0);
-    expect(pinnedHeight(1, 4)).toBe(pinnedHeight(4, 4));
-    expect(pinnedHeight(5, 4)).toBe(pinnedHeight(8, 4));
-    expect(pinnedHeight(5, 4)).toBeGreaterThan(pinnedHeight(4, 4));
+    const band = (count: number) => pinnedHeight(count, 4, sizes.pinCell);
+    expect(band(0)).toBe(0);
+    expect(band(1)).toBe(band(4));
+    expect(band(5)).toBe(band(8));
+    expect(band(5)).toBeGreaterThan(band(4));
+  });
+});
+
+describe("rosterSizes", () => {
+  it("keeps the design's heights at the default font size", () => {
+    expect(sizes).toEqual({ row: 64, section: 48, empty: 40, hidden: 56, pinCell: 94 });
+  });
+
+  it("grows each entry with its text at a larger font size, never below the design", () => {
+    const large = rosterSizes({ base: 40, sm: 38 });
+    expect(large.row).toBe(40 + 2 + 38 + 18);
+    expect(large.section).toBe(38 + 26);
+    expect(large.pinCell).toBe(64 + 8 + 38);
+    expect(rosterSizes({ base: 18, sm: 17 })).toMatchObject({ row: 64, section: 48, hidden: 56 });
   });
 });
 
@@ -54,9 +72,10 @@ describe("rosterEntries", () => {
       arranged({ pinned: [bot("Ada")], main: [bot("Bo"), bot("Cy")], hidden: [bot("Di")] }),
       412,
       new Set(),
+      sizes,
     );
     expect(entries.map((entry) => entry.key)).toEqual(["pinned", "bot:Bo", "bot:Cy", "hidden"]);
-    const unhidden = rosterEntries(arranged({ main: [bot("Bo")] }), 412, new Set());
+    const unhidden = rosterEntries(arranged({ main: [bot("Bo")] }), 412, new Set(), sizes);
     expect(unhidden.map((entry) => entry.key)).toEqual(["pinned", "bot:Bo"]);
   });
 
@@ -75,6 +94,7 @@ describe("rosterEntries", () => {
       }),
       412,
       new Set([trips.id]),
+      sizes,
     );
     expect(entries.map((entry) => entry.key)).toEqual([
       "pinned",

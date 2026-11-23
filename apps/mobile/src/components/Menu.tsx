@@ -161,7 +161,9 @@ export function Menu(props: {
   const leftward = anchor === null ? width : anchor.x + anchor.width - EDGE;
   const fromLeft = (props.edge === "start") !== rtl;
   const above = anchor !== null && anchor.y + anchor.height / 2 > window.height / 2;
-  // The menu narrows to the room it has rather than run off the screen, as in a narrow roster.
+  // The menu narrows to the room it has rather than run off the screen, as in a narrow roster. Its
+  // width is set, not left to its rows, so a row whose text wraps, at a large font size, is
+  // measured at the width it wraps to and the card holds every row.
   const room = fromLeft ? rightward : leftward;
   return (
     <Modal
@@ -205,8 +207,7 @@ export function Menu(props: {
                 ? { left: anchor.x }
                 : { right: window.width - anchor.x - anchor.width }),
               transformOrigin: `${above ? "bottom" : "top"} ${fromLeft ? "left" : "right"}`,
-              minWidth: Math.min(width, room),
-              maxWidth: room,
+              width: Math.min(width, room),
               elevation: OVERLAY_ELEVATION,
             }}
           >

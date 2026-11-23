@@ -9,7 +9,6 @@ import { useI18n } from "../i18n.ts";
 import { useReducedMotion } from "../motion.ts";
 import { feelLongPress } from "../platform/haptics.ts";
 import { PressScale } from "../press.tsx";
-import { SECTION_EMPTY_HEIGHT, SECTION_HEIGHT } from "../screens/rosterEntries.ts";
 import { Text } from "../text.tsx";
 import { Icon } from "./Icon.tsx";
 import type { MenuAnchor } from "./Menu.tsx";
@@ -24,6 +23,7 @@ const pop = reanimatedSpring(springs.pop);
  */
 export function SectionHeader({
   section,
+  height,
   count,
   unread,
   folded,
@@ -32,6 +32,8 @@ export function SectionHeader({
   lifted = false,
 }: {
   readonly section: Section;
+  /** As the list counts it (`RosterSizes`). */
+  readonly height: number;
   readonly count: number;
   readonly unread: boolean;
   readonly folded: boolean;
@@ -78,7 +80,7 @@ export function SectionHeader({
             }
       }
       className={`${lifted ? "" : "mx-2"} flex-row items-end gap-2 rounded-lg px-3 pb-2 active:bg-muted`}
-      style={{ height: SECTION_HEIGHT }}
+      style={{ height }}
     >
       <Text
         numberOfLines={1}
@@ -97,10 +99,10 @@ export function SectionHeader({
 }
 
 /** What an open section with no bots shows: that it has none, in the rows' place. */
-export function SectionEmpty() {
+export function SectionEmpty({ height }: { readonly height: number }) {
   const { t } = useI18n();
   return (
-    <View className="mx-2 justify-center px-3" style={{ height: SECTION_EMPTY_HEIGHT }}>
+    <View className="mx-2 justify-center px-3" style={{ height }}>
       <Text className="text-sm text-muted-foreground">{t("roster.section.empty")}</Text>
     </View>
   );

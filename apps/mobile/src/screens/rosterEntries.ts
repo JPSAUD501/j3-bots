@@ -7,17 +7,13 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import type { RosterItem, Section, SectionId } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
-
-/** A bot's or room's row. */
-const ROW_HEIGHT = layout.rowHeight.touch;
+import type { TextLines } from "../lines.tsx";
 
 /** A pinned bot's avatar, which stands larger than a row's. */
 export const PIN_AVATAR = 64;
 
 /** Geometry of the pinned bots' band, in px. */
 const pin = {
-  /** The avatar, the gap under it and one line of name. */
-  cell: PIN_AVATAR + 8 + 20,
   /** The least width a pinned bot takes, so a name of a few words fits under its avatar. */
   minWidth: 88,
   rowGap: 12,
@@ -27,19 +23,40 @@ const pin = {
   inset: 8,
 } as const;
 
-/** The row that opens the hidden bots, at the end of the list. */
-export const HIDDEN_ROW_HEIGHT = 56;
+/**
+ * How tall each kind of thing the roster lists is, in px, from how tall its
+ * text's lines are on this phone (`TextLines`): at the default font size
+ * each is the height the design sets, and at a larger one it grows with its
+ * text, so its lines never touch the next.
+ */
+export interface RosterSizes {
+  /** A bot's or room's row: its name over its status line. */
+  readonly row: number;
+  /** A section's header: its name, with room above to set it apart. */
+  readonly section: number;
+  /** The line an open section with no bots shows. */
+  readonly empty: number;
+  /** The row that opens the hidden bots, at the end of the list. */
+  readonly hidden: number;
+  /** A pinned bot: its avatar, the gap under it and one line of name. */
+  readonly pinCell: number;
+}
 
-/** A section's header: its name, which folds it, with room above to set it apart. */
-export const SECTION_HEIGHT = 48;
-
-/** The line an open section with no bots shows. */
-export const SECTION_EMPTY_HEIGHT = 40;
+export const rosterSizes = (lines: TextLines): RosterSizes => ({
+  // The name, 2 px, the status line, and at least 9 px above and below.
+  row: Math.max(layout.rowHeight.touch, lines.base + 2 + lines.sm + 2 * 9),
+  // The name sits 8 px off the bottom, with at least 18 px above it.
+  section: Math.max(48, lines.sm + 26),
+  empty: Math.max(40, lines.sm + 2 * 9),
+  hidden: Math.max(56, lines.base + 2 * 17),
+  pinCell: PIN_AVATAR + 8 + lines.sm,
+});
 
 /**
  * One thing the roster lists, with the key the list knows it by and the
- * height it takes: every entry's height is known, so the list places one
- * without measuring it, and a reorder knows how far each moved.
+ * height it takes: every entry's height is known before it is drawn, from
+ * `RosterSizes`, so the list places one without measuring it, and a reorder
+ * knows how far each moved.
  */
 export type RosterEntry =
   /**
@@ -53,6 +70,8 @@ export type RosterEntry =
       readonly height: number;
       readonly bots: ReadonlyArray<BotItem>;
       readonly columns: number;
+      /** Each bot's height in the band. */
+      readonly cell: number;
     }
   | {
       readonly kind: "row";
@@ -91,22 +110,24 @@ export type RosterEntry =
 export const pinColumns = (width: number): number =>
   Math.max(1, Math.floor((width - 2 * pin.inset) / pin.minWidth));
 
-/** How tall the band of `count` pinned bots is, `columns` to a line. */
-export const pinnedHeight = (count: number, columns: number): number => {
+/** How tall the band of `count` pinned bots is, `columns` to a line, each `cell` tall. */
+export const pinnedHeight = (count: number, columns: number, cell: number): number => {
   if (count === 0) return 0;
   const lines = Math.ceil(count / columns);
-  return pin.top + lines * pin.cell + (lines - 1) * pin.rowGap + pin.bottom;
+  return pin.top + lines * cell + (lines - 1) * pin.rowGap + pin.bottom;
 };
 
 /** The pinned band's geometry, for the band to draw itself by. */
 export const PIN_BAND = pin;
 
-const row = (item: RosterItem): RosterEntry => ({
-  kind: "row",
-  key: rosterKeyText(rosterKeyOf(item)),
-  height: ROW_HEIGHT,
-  item,
-});
+const row =
+  (sizes: RosterSizes) =>
+  (item: RosterItem): RosterEntry => ({
+    kind: "row",
+    key: rosterKeyText(rosterKeyOf(item)),
+    height: sizes.row,
+    item,
+  });
 
 /**
  * A section's header, then its bots unless it is folded, or, open with none,
@@ -116,11 +137,12 @@ const row = (item: RosterItem): RosterEntry => ({
 const sectionEntries = (
   { section, items }: ArrangedRoster["sections"][number],
   folded: boolean,
+  sizes: RosterSizes,
 ): ReadonlyArray<RosterEntry> => {
   const header: RosterEntry = {
     kind: "section",
     key: `section:${section.id}`,
-    height: SECTION_HEIGHT,
+    height: sizes.section,
     section,
     count: items.length,
     unread: items.some((item) => item.unread),
@@ -128,9 +150,9 @@ const sectionEntries = (
   };
   if (folded) return [header];
   if (items.length === 0) {
-    return [header, { kind: "empty", key: `empty:${section.id}`, height: SECTION_EMPTY_HEIGHT }];
+    return [header, { kind: "empty", key: `empty:${section.id}`, height: sizes.empty }];
   }
-  return [header, ...items.map(row)];
+  return [header, ...items.map(row(sizes))];
 };
 
 /**
@@ -142,27 +164,33 @@ export const rosterEntries = (
   arranged: ArrangedRoster,
   width: number,
   folded: ReadonlySet<SectionId>,
+  sizes: RosterSizes,
 ): ReadonlyArray<RosterEntry> => {
   const columns = pinColumns(width);
   const pinned: RosterEntry = {
     kind: "pinned",
     key: "pinned",
-    height: pinnedHeight(arranged.pinned.length, columns),
+    height: pinnedHeight(arranged.pinned.length, columns, sizes.pinCell),
     bots: arranged.pinned,
     columns,
+    cell: sizes.pinCell,
   };
   const hidden: ReadonlyArray<RosterEntry> =
     arranged.hidden.length === 0
       ? []
-      : [{ kind: "hidden", key: "hidden", height: HIDDEN_ROW_HEIGHT, bots: arranged.hidden }];
+      : [{ kind: "hidden", key: "hidden", height: sizes.hidden, bots: arranged.hidden }];
   return [
     pinned,
-    ...arranged.main.map(row),
-    ...arranged.sections.flatMap((each) => sectionEntries(each, folded.has(each.section.id))),
+    ...arranged.main.map(row(sizes)),
+    ...arranged.sections.flatMap((each) =>
+      sectionEntries(each, folded.has(each.section.id), sizes),
+    ),
     ...hidden,
   ];
 };
 
 /** What a search lists: only the rows that match, as rows. */
-export const foundEntries = (found: ReadonlyArray<RosterItem>): ReadonlyArray<RosterEntry> =>
-  found.map(row);
+export const foundEntries = (
+  found: ReadonlyArray<RosterItem>,
+  sizes: RosterSizes,
+): ReadonlyArray<RosterEntry> => found.map(row(sizes));

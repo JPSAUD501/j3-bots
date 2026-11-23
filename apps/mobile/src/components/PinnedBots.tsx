@@ -49,6 +49,7 @@ export function PinnedBots({
   columns,
   width,
   height,
+  cell,
   selectedKey,
   onOpen,
   onMenu,
@@ -59,6 +60,8 @@ export function PinnedBots({
   readonly width: number;
   /** The band's height, as the list counts it (`pinnedHeight`). */
   readonly height: number;
+  /** Each bot's height in it (`RosterSizes`). */
+  readonly cell: number;
   /** The bot whose conversation is open beside the roster, by roster key. */
   readonly selectedKey: string | null;
   readonly onOpen: (item: BotItem) => void;
@@ -85,10 +88,11 @@ export function PinnedBots({
             entering={arriving}
             exiting={leaving}
             layout={making}
-            style={{ width: cellWidth, height: PIN_BAND.cell }}
+            style={{ width: cellWidth, height: cell }}
           >
             <PinnedBot
               item={item}
+              height={cell}
               selected={selectedKey === `bot:${item.bot.id}`}
               onOpen={() => onOpen(item)}
               onMenu={(anchor) => onMenu(item, anchor)}
@@ -103,11 +107,13 @@ export function PinnedBots({
 /** One pinned bot: its avatar, large, and its name. */
 export function PinnedBot({
   item,
+  height,
   selected,
   onOpen,
   onMenu,
 }: {
   readonly item: BotItem;
+  readonly height: number;
   readonly selected: boolean;
   readonly onOpen?: () => void;
   readonly onMenu?: (anchor: MenuAnchor) => void;
@@ -148,7 +154,7 @@ export function PinnedBot({
             },
           })}
       className={`items-center gap-2 rounded-lg px-1 active:bg-muted ${selected ? "bg-muted" : ""}`}
-      style={{ height: PIN_BAND.cell }}
+      style={{ height }}
     >
       <LiveBotAvatar
         bot={bot}

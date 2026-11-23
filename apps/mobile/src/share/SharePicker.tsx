@@ -12,8 +12,10 @@ import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { useI18n } from "../i18n.ts";
+import { useTextLines } from "../lines.tsx";
 import { useSideBySide } from "../layout.ts";
 import type { Screens } from "../navigation.tsx";
+import { rosterSizes } from "../screens/rosterEntries.ts";
 import { useSay } from "../toast.tsx";
 import { Body, Centered, Title } from "../ui.tsx";
 import { type Put, useWaitingShare, type WaitingShare } from "./incoming.ts";
@@ -50,6 +52,7 @@ export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "sha
   const say = useSay();
   const sideBySide = useSideBySide();
   const insets = useSafeAreaInsets();
+  const lines = useTextLines();
 
   useEffect(() => {
     if (waiting === null) {
@@ -90,7 +93,7 @@ export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "sha
   return (
     <View className="flex-1 bg-background">
       <Summary waiting={waiting} />
-      {roster._tag === "loading" ? (
+      {roster._tag === "loading" || lines === null ? (
         <Centered>
           <Title>{t("firstRun.connecting.title")}</Title>
         </Centered>
@@ -106,7 +109,12 @@ export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "sha
             </View>
           }
           renderItem={({ item }) => (
-            <RosterRow item={item} selected={false} onOpen={() => pick(rosterKeyOf(item))} />
+            <RosterRow
+              item={item}
+              height={rosterSizes(lines).row}
+              selected={false}
+              onOpen={() => pick(rosterKeyOf(item))}
+            />
           )}
         />
       )}

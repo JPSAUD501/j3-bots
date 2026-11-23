@@ -59,15 +59,11 @@ import { PressScale } from "../press.tsx";
 import { useColor } from "../theme.ts";
 import { useNotificationTaps } from "../notificationTaps.ts";
 import { Body, Centered, Title } from "../ui.tsx";
+import { useTextLines } from "../lines.tsx";
 import { toggleFolded, useFolded } from "./folded.ts";
 import { useSectionActions } from "./placing.ts";
 import { useRosterItem } from "./rosterItem.ts";
-import {
-  foundEntries,
-  HIDDEN_ROW_HEIGHT,
-  type RosterEntry,
-  rosterEntries,
-} from "./rosterEntries.ts";
+import { foundEntries, type RosterEntry, rosterEntries, rosterSizes } from "./rosterEntries.ts";
 
 type Props = NativeStackScreenProps<Screens, "roster">;
 
@@ -207,12 +203,20 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   // Beside a conversation the roster is its column's width.
   const width = sideBySide ? layout.rosterWidth : windowWidth;
   // A search finds hidden bots too, in the order the web lists what it finds.
+  // Each entry is as tall as its text needs at the operator's font size, once the lines are read.
+  const lines = useTextLines();
+  const sizes = lines === null ? null : rosterSizes(lines);
   const entries =
-    roster._tag === "loading"
+    roster._tag === "loading" || sizes === null
       ? null
       : searching
-        ? foundEntries(orderRoster(filterRoster(roster.value, query)))
-        : rosterEntries(arrangeRoster(orderRoster(roster.value), sections ?? []), width, folded);
+        ? foundEntries(orderRoster(filterRoster(roster.value, query)), sizes)
+        : rosterEntries(
+            arrangeRoster(orderRoster(roster.value), sections ?? []),
+            width,
+            folded,
+            sizes,
+          );
   const motion = useRowMotion(entries === null ? null : { rows: entries, query: searched });
   const keeping = useKeptPlace(list, motion, scrolled);
   // The bot whose menu is open, and the rows the operator just moved out of the list, which fade
@@ -360,6 +364,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
               preview: (
                 <SectionHeader
                   section={pressedSection.section}
+                  height={pressedSection.anchor.height}
                   count={pressedSection.count}
                   unread={pressedSection.unread}
                   folded={pressedSection.folded}
@@ -402,6 +407,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                         columns={entry.columns}
                         width={width}
                         height={entry.height}
+                        cell={entry.cell}
                         selectedKey={selectedText}
                         onOpen={openBot}
                         onMenu={(item, anchor) => setPressed({ item, from: "pinned", anchor })}
@@ -418,6 +424,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                         {(avatar) => (
                           <RosterRow
                             item={item}
+                            height={entry.height}
                             selected={selected}
                             avatarRef={avatar}
                             onOpen={() => openConversation(key)}
@@ -437,6 +444,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                   return (
                     <SectionHeader
                       section={entry.section}
+                      height={entry.height}
                       count={entry.count}
                       unread={entry.unread}
                       folded={entry.folded}
@@ -453,10 +461,14 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                     />
                   );
                 case "empty":
-                  return <SectionEmpty />;
+                  return <SectionEmpty height={entry.height} />;
                 case "hidden":
                   return (
-                    <HiddenRow bots={entry.bots} onOpen={() => navigation.navigate("hidden")} />
+                    <HiddenRow
+                      bots={entry.bots}
+                      height={entry.height}
+                      onOpen={() => navigation.navigate("hidden")}
+                    />
                   );
               }
             }}
@@ -486,9 +498,11 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
  */
 function HiddenRow({
   bots,
+  height,
   onOpen,
 }: {
   readonly bots: ReadonlyArray<BotItem>;
+  readonly height: number;
   readonly onOpen: () => void;
 }) {
   const { t, plural } = useI18n();
@@ -503,7 +517,7 @@ function HiddenRow({
         .join(", ")}
       onPress={onOpen}
       className="mx-2 flex-row items-center gap-2 rounded-lg px-3 active:bg-muted"
-      style={{ height: HIDDEN_ROW_HEIGHT }}
+      style={{ height }}
     >
       <Text className="text-base text-muted-foreground">{t("roster.hidden")}</Text>
       {unread && <View className="size-2 rounded-pill bg-accent" />}
