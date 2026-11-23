@@ -72,8 +72,17 @@ export type ConnectionState =
       readonly attempt: number;
       readonly retryAt: DateTime.Utc;
     }
-  /** The server speaks another protocol version. Nothing is retried until `reconnectNow`. */
-  | { readonly _tag: "incompatible"; readonly serverProtocol: number }
+  /**
+   * The server speaks another protocol version, so no socket opens. Its
+   * release version says which side is behind; the update routes, which are
+   * outside the protocol, can still bring the server forward. Nothing is
+   * retried until `reconnectNow`.
+   */
+  | {
+      readonly _tag: "incompatible";
+      readonly serverProtocol: number;
+      readonly serverVersion: string;
+    }
   /** The credential storage failed. Nothing is retried until `reconnectNow`. */
   | { readonly _tag: "storage-failed" };
 
@@ -104,7 +113,10 @@ export const PairingFailure = Schema.Union([
   /** Too many failed codes; pairing opens again at `retryAt`. */
   Schema.TaggedStruct("rate-limited", { retryAt: Schema.DateTimeUtc }),
   Schema.TaggedStruct("unreachable", {}),
-  Schema.TaggedStruct("incompatible-server", { serverProtocol: Schema.Int }),
+  Schema.TaggedStruct("incompatible-server", {
+    serverProtocol: Schema.Int,
+    serverVersion: Schema.String,
+  }),
   /** Paired, but the credential could not be kept, so the pairing is lost. */
   Schema.TaggedStruct("storage-failed", {}),
 ]);
@@ -190,7 +202,11 @@ type AttemptOutcome =
   | { readonly _tag: "unreachable" }
   | { readonly _tag: "dropped" }
   | { readonly _tag: "revoked" }
-  | { readonly _tag: "incompatible"; readonly serverProtocol: number }
+  | {
+      readonly _tag: "incompatible";
+      readonly serverProtocol: number;
+      readonly serverVersion: string;
+    }
   | { readonly _tag: "credential-changed" }
   /** The platform reported the network gone. */
   | { readonly _tag: "offline" }
@@ -452,7 +468,11 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const info = yield* http.serverInfo;
         if (info.protocolVersion !== PROTOCOL_VERSION) {
-          return { _tag: "incompatible", serverProtocol: info.protocolVersion } as const;
+          return {
+            _tag: "incompatible",
+            serverProtocol: info.protocolVersion,
+            serverVersion: info.version,
+          } as const;
         }
         const grant = yield* http.socketTicket(paired.token);
         return yield* holdSocket(http.socketUrl(grant.ticket), paired.deviceId);
@@ -559,7 +579,11 @@ export const layer = Layer.effect(
             );
             continue;
           case "incompatible":
-            state.set({ _tag: "incompatible", serverProtocol: outcome.serverProtocol });
+            state.set({
+              _tag: "incompatible",
+              serverProtocol: outcome.serverProtocol,
+              serverVersion: outcome.serverVersion,
+            });
             yield* wake.pipe(Effect.raceFirst(firstChange(credential, (next) => next !== current)));
             failures = 0;
             continue;
@@ -604,6 +628,7 @@ export const layer = Layer.effect(
         return yield* failed({
           _tag: "incompatible-server",
           serverProtocol: info.protocolVersion,
+          serverVersion: info.version,
         });
       }
       const request: PairRequest = { code: code.value, name };

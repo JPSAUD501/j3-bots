@@ -874,6 +874,14 @@ export const en = {
   "gate.incompatible.appTitle": "This app doesn’t match the server",
   "gate.incompatible.appBody":
     "The J3 Bots server at {address} speaks a different version than this app. Update the app or the server so they match, or change to another server.",
+  "gate.incompatible.serverBehindTitle": "The server needs an update",
+  "gate.incompatible.serverBehindBody":
+    "The server at {address} runs J3 Bots {version}, which is older than this app.",
+  "gate.incompatible.appBehindTitle": "This app needs an update",
+  "gate.incompatible.appBehindBody":
+    "The server at {address} runs J3 Bots {version}, which is newer than this app.",
+  "gate.incompatible.serverBehindNoRelease":
+    "There’s no newer release for it on its channel yet. Change to another server, or use an app that matches it.",
   "gate.storage.title": "This browser won’t keep the sign-in",
   "gate.storage.body":
     "J3 Bots keeps this device’s sign-in in the browser’s site data, and the browser refused. Allow site data for this page, then try again.",
@@ -1244,6 +1252,80 @@ export const en = {
   "desktop.tray.local.restartingNow": "Bots stopped · restarting…",
   "desktop.tray.local.failed": "Bots couldn’t start",
   "desktop.tray.phoneOn": "Phone access on",
+  "settings.about": "About and updates",
+
+  "serverUpdate.title": "The server",
+  "serverUpdate.runs": "J3 Bots {version}",
+  "serverUpdate.available": "J3 Bots {version} is available.",
+  "serverUpdate.available.hint":
+    "Your bots stop for a minute or two while the server updates. If the new version doesn’t start, the server goes back to {current} on its own.",
+  "serverUpdate.update": "Update the server",
+  "serverUpdate.whatsNew": "What’s new",
+  "serverUpdate.checkFailed": "Couldn’t check for updates. The server tries again later.",
+  "serverUpdate.waitingForStable":
+    "The server waits for a stable release newer than the {version} it runs.",
+  "serverUpdate.refusedRelease":
+    "J3 Bots {version} is out, but it didn’t check out against the project’s signature, so it isn’t offered.",
+  "serverUpdate.downloading": "Downloading {version}… {percent}%",
+  "serverUpdate.downloadingNoTotal": "Downloading {version}…",
+  "serverUpdate.verifying": "Checking the download against the project’s signature…",
+  "serverUpdate.installing": "Getting {version} ready…",
+  "serverUpdate.restarting": "Restarting your bots on {version}…",
+  "serverUpdate.restartingNoVersion": "Restarting your bots…",
+  "serverUpdate.working": "Updating the server…",
+  "serverUpdate.lost": "The update hasn’t finished. On the server’s machine, run this to see why:",
+  "serverUpdate.unreachable": "Couldn’t reach the server to see its updates.",
+  "serverUpdate.unsupported":
+    "This server is older than updates from the apps. Update it on its machine:",
+  "serverUpdate.unable.desktopManaged":
+    "This server runs inside the J3 Bots app on its computer. Updating that app updates it.",
+  "serverUpdate.unable.startedByHand":
+    "This server was started by hand, not as a service. Update it on its machine:",
+  "serverUpdate.unable.checkout": "This server runs from a source checkout. Update it there.",
+  "serverUpdate.unable.unpacked":
+    "This server runs from a release unpacked by hand. Install it with install.sh to update it from here.",
+  "serverUpdate.unable.noSystemd":
+    "This server’s machine has no service manager to run the update in. Update it on its machine:",
+  "serverUpdate.unable.noLinger":
+    "The server’s service may stop when its user logs out, and an update with it. Let it keep running, then try again:",
+  "serverUpdate.unable.rollbackUnfinished":
+    "A rollback hasn’t finished on this server. Finish it on its machine:",
+  "serverUpdate.unable.unknown": "This server can’t update from here. Update it on its machine.",
+  "serverUpdate.result.done": "Your bots run {version}.",
+  "serverUpdate.result.rolledBack":
+    "The update to {to} didn’t go through, so your bots are back on {from}, with their data as it was.",
+  "serverUpdate.result.failed":
+    "The update to {to} failed, and so did going back to {from}. On the server’s machine, run:",
+  "serverUpdate.result.unknown": "The update to {version} has ended.",
+  "serverUpdate.failure.healthCheck": "The new version didn’t become ready in time.",
+  "serverUpdate.failure.download": "The release couldn’t be downloaded.",
+  "serverUpdate.failure.verification":
+    "The download didn’t check out against the project’s signature.",
+  "serverUpdate.failure.engine": "The new version’s engine couldn’t be fetched.",
+  "serverUpdate.failure.disk": "There wasn’t room for it on the server.",
+  "serverUpdate.failure.interrupted": "A restart of the server’s machine cut it off.",
+  "serverUpdate.failure.unknown": "Something went wrong.",
+  "serverUpdate.refusal.notAvailable":
+    "That version isn’t offered anymore. Check for updates again.",
+  "serverUpdate.refusal.busy": "An update is already running.",
+  "serverUpdate.refusal.workRunning": "Bots have work running. Stop it to update.",
+  "serverUpdate.refusal.unable": "This server can’t update from here.",
+  "serverUpdate.refusal.unknown": "The server didn’t start the update.",
+  "serverUpdate.notReached": "Couldn’t reach the server. Try again.",
+  "serverUpdate.stopWork.title": "Stop the bots’ work?",
+  "serverUpdate.stopWork.body.one":
+    "{count} bot has work running, which stops while the server updates.",
+  "serverUpdate.stopWork.body.other":
+    "{count} bots have work running, which stops while the server updates.",
+  "serverUpdate.stopWork.confirm": "Stop and update",
+  "serverUpdate.stopWork.cancel": "Not now",
+
+  "updateChannel.label": "Updates",
+  "updateChannel.stable": "Stable",
+  "updateChannel.nightly": "Nightly",
+  "updateChannel.nightly.hint":
+    "A build of each day’s changes, before they are released. It may have problems a release doesn’t.",
+
   "update.version": "J3 Bots {version}",
   "update.unavailable": "This build doesn’t update itself.",
   "update.upToDate": "Up to date.",

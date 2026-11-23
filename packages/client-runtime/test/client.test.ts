@@ -302,10 +302,14 @@ const proxyLoginExpired = Layer.effect(
 
 const encodeServerInfo = Schema.encodeSync(Schema.toCodecJson(ServerInfo));
 
+/** The release a server of another protocol says it runs. */
+const OTHER_RELEASE = "9.8.7";
+
 /**
  * The server as a release of protocol `version` would answer the server
  * check, as one built before or after this client: all else is this server's.
  */
+
 const speakingProtocol = (version: number) =>
   Layer.effect(
     HttpClient.HttpClient,
@@ -319,7 +323,9 @@ const speakingProtocol = (version: number) =>
               Effect.map((info) =>
                 HttpClientResponse.fromWeb(
                   request,
-                  Response.json(encodeServerInfo({ ...info, protocolVersion: version })),
+                  Response.json(
+                    encodeServerInfo({ ...info, protocolVersion: version, version: OTHER_RELEASE }),
+                  ),
                 ),
               ),
             )
@@ -1109,6 +1115,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           assert.deepStrictEqual(refusal.reason, {
             _tag: "incompatible-server",
             serverProtocol: version,
+            serverVersion: OTHER_RELEASE,
           });
 
           const device = TestPlatform.makeDevice();
@@ -1121,7 +1128,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
               (yield* Connection).state,
               (state) => state._tag === "incompatible",
             );
-            assert.deepStrictEqual(refused, { _tag: "incompatible", serverProtocol: version });
+            assert.deepStrictEqual(refused, {
+              _tag: "incompatible",
+              serverProtocol: version,
+              serverVersion: OTHER_RELEASE,
+            });
             assert.isTrue(Option.isSome(yield* (yield* CredentialStore).load));
           }).pipe(
             Effect.scoped,

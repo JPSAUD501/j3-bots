@@ -60,6 +60,8 @@ export const useConnection = () => useReadable(useJ3Client().connection);
 export const useEngineStatus = () => useReadable(useJ3Client().engine);
 export const useSettings = () => useReadable(useJ3Client().settings);
 export const useDevices = () => useReadable(useJ3Client().devices);
+export const useServerUpdate = () => useReadable(useJ3Client().serverUpdate.view);
+export const useServerUpdateEnded = () => useReadable(useJ3Client().serverUpdate.ended);
 
 /** Where an action on a card stands, to disable its buttons while it runs. */
 export const useCardAction = (entryId: EntryId): ActionState | undefined =>
