@@ -110,9 +110,15 @@ export const instanceIdFor = (providerId: string) =>
 export const TOOL_SERVER = "j3";
 
 /**
- * Claude Code tools that reach a person outside J3 Bots or vanish with the
- * session. Removed from the model's tool list; the base prompt names the J3
- * Bots replacement for each.
+ * Claude Code tools removed from the model's tool list. Most reach a person
+ * outside J3 Bots or vanish with the session, and the base prompt names the
+ * J3 Bots replacement for each. The engine's `preview_evaluate` runs a
+ * script in a browser tab, which could read back a value the server filled
+ * there (`docs/architecture/security.md`, "Filling a login"). Claude Code's
+ * list is fixed per provider instance, and one instance serves every bot of
+ * a provider, so it is removed for every bot, not only those with vault
+ * access; a bot still reads and acts on pages through the other browser
+ * tools. The engine's tool server is `t3-code` (`toolNames.ts`).
  */
 const CLAUDE_DISALLOWED_TOOLS = [
   "AskUserQuestion",
@@ -123,6 +129,7 @@ const CLAUDE_DISALLOWED_TOOLS = [
   "CronList",
   "ScheduleWakeup",
   "PushNotification",
+  "mcp__t3-code__preview_evaluate",
 ] as const;
 
 const claudeLaunchArgs = (systemPromptFile: string) =>

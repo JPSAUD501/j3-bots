@@ -28,6 +28,7 @@ import {
   decodeTextFrame,
   encodeInput,
   millisOf,
+  pageOf,
   PREVIEW_STREAM_PATH,
   tabKeyOf,
   tabOf,
@@ -260,6 +261,29 @@ export const makeBrowserBridge = (input: {
     return url.toString();
   });
 
+  /**
+   * The engine's own listing of the tab's thread, asked now: the page of the
+   * tab, if a bot still drives it. A tab a person opened is no bot's, so it
+   * is gone here as it is from `tabs`.
+   */
+  const readTab = Effect.fn("BrowserBridge.readTab")(function* (
+    tab: Parameters<BrowserBridge["Service"]["readTab"]>[0],
+  ) {
+    if (!(yield* isReady)) return yield* new EngineUnavailable();
+    const key = tabKeyOf(tab);
+    if (Option.isNone(key)) return Option.none();
+    const listing = yield* rpc["preview.list"]({
+      threadId: ThreadId.make(key.value.threadId),
+    }).pipe(
+      Effect.timeout(LIST_TIMEOUT),
+      Effect.mapError(() => new EngineUnavailable()),
+    );
+    const snapshot = listing.sessions.find(
+      (candidate) => candidate.tabId === key.value.tabId && Option.isSome(tabOf(candidate, 0)),
+    );
+    return Option.map(Option.fromUndefinedOr(snapshot), pageOf);
+  });
+
   /** A viewer whose tab this package never named: gone from the start. */
   const goneViewer: BrowserViewer = {
     output: Stream.fail(new ViewerClosed({ reason: "gone" })),
@@ -283,5 +307,5 @@ export const makeBrowserBridge = (input: {
     return yield* viewerOf(socket).pipe(Effect.mapError(() => new EngineUnavailable()));
   });
 
-  return BrowserBridge.of({ tabs, openViewer });
+  return BrowserBridge.of({ tabs, readTab, openViewer });
 };

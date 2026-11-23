@@ -189,7 +189,9 @@ The engine runs a headless Chromium of its own, and a bot opens tabs in it with 
 
 All of this is **Verified**.
 
-## Provisioning
+**Reading one tab.** `BrowserBridge.readTab` lists the tab's session with `preview.list` and answers with the tab's committed page, from the snapshot's `navStatus`: blank, loading an address, loaded at one, or failed, or none when the tab is gone. The server reads it to fill a login, apart from the tab feed, which follows the events and can trail the engine. That `navStatus` holds the address the main frame committed, not one a script showed with `history.pushState`, is **Assumed**; the server's fill reads it twice and refuses when it changed ([Server: filling a login](server.md#filling-a-login)).
+
+**The server as a viewer.** To fill a login, the server opens a viewer of its own, as a device's would be, takes the tab, sends `text` and `key` input and closes the viewer, which gives the tab back. The engine does not tell a viewer which element has focus or in which frame: the `probe` frame answers a point with whether it is over an editable element, not which (**Read** at `59651c1`, `ServerBrowserStream.ts`). So the server types where the page's focus is, as a person's keyboard would.
 
 Before each start of the engine, while it is stopped, J3 Bots writes `<engine dir>/userdata/settings.json`, the engine's secret store and each harness's configuration, from what it keeps: the provider instances and the stored [provider connection](#reaching-the-models). It writes all of them whole each time, so a provisioning cut short is completed by the next start. The engine reads its settings at startup and watches them afterwards (**Verified**), but J3 Bots never writes them while it runs, so the engine's own web interface, which writes the same file, is never writing it at the same time. J3 Bots reads the file, sets its own keys and instances, and writes it back, keeping what the engine keeps there.
 
@@ -219,7 +221,7 @@ For Claude Code:
 - `launchArgs` is `--append-system-prompt-file .j3/system.md --allowedTools mcp__j3__* --disallowedTools <tools>`:
   - The prompt file path is resolved inside each thread's project folder, so one instance serves every bot and each gets its own file.
   - `--allowedTools mcp__j3__*` lets J3 Bots' own tools run without an approval in every permission mode. Without it, a supervised bot's every `say` waits on an approval card.
-  - `--disallowedTools` removes the harness tools that reach a person or vanish with the session: the question tool, plan mode, the cron, wake-up and loop tools, and push notifications. A removed tool is absent from the model's tool list.
+  - `--disallowedTools` removes the harness tools that reach a person or vanish with the session: the question tool, plan mode, the cron, wake-up and loop tools, and push notifications. A removed tool is absent from the model's tool list. It also removes the engine's `preview_evaluate` (`mcp__t3-code__preview_evaluate`), which runs a script in a browser tab and could read back a value the server filled there ([Security: filling a login](security.md#filling-a-login)). The list is the instance's, and one instance serves every bot of the provider, so every Claude Code bot loses it, with vault access or without; the other browser tools still read and act on pages. The name is the engine's MCP server, `t3-code`, and its tool (**Verified**: a Claude Code session on T3 Code lists the tool as `mcp__t3-code__preview_evaluate`). That Claude Code drops an MCP tool given to `--disallowedTools` as it drops its own is **Assumed**. Codex has no flag for it: its `config.toml` can turn tools of one MCP server off (`disabled_tools`), and the engine adds its server to that file's `mcp_servers` itself, so whether a key J3 Bots writes there for `t3-code` would be kept is **Assumed**, and nothing is written. A Codex bot keeps `preview_evaluate`.
 
 For Codex:
 
