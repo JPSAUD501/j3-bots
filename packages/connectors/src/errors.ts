@@ -101,3 +101,39 @@ export class AuthFailing extends Schema.TaggedError<AuthFailing>()("AuthFailing"
 
 /** Why a connector's credentials can't sign a request. */
 export type CredentialsUnavailable = NeedsSignIn | VaultLocked | AuthFailing;
+
+/** A connector's server took longer than the deadline J3 Bots gives it. */
+export class TimedOut extends Schema.TaggedError<TimedOut>()("TimedOut", {}) {
+  override get message(): string {
+    return "A connector's server did not answer in time.";
+  }
+}
+
+/** A connector's server answered with an HTTP or MCP error of its own. */
+export class ServerError extends Schema.TaggedError<ServerError>()("ServerError", {
+  /** The HTTP status, when the error was one; null for an MCP error. */
+  status: Schema.NullOr(Schema.Int),
+}) {
+  override get message(): string {
+    return this.status === null
+      ? "A connector's server answered with an error."
+      : `A connector's server answered with HTTP ${this.status}.`;
+  }
+}
+
+/** What a connector's server answered is not an MCP server's answer. */
+export class NotMcp extends Schema.TaggedError<NotMcp>()("NotMcp", {}) {
+  override get message(): string {
+    return "A connector's server did not answer as an MCP server.";
+  }
+}
+
+/** Every way a request to a connector can fail. */
+export type ConnectorFailure =
+  | CredentialsUnavailable
+  | UrlRefused
+  | Unreachable
+  | ResponseTooLarge
+  | TimedOut
+  | ServerError
+  | NotMcp;

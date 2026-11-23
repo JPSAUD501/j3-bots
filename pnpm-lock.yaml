@@ -569,6 +569,9 @@ importers:
 
   packages/connectors:
     dependencies:
+      '@j3-bots/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@j3-bots/prompts':
         specifier: workspace:*
         version: link:../prompts

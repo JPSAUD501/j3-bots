@@ -5,15 +5,35 @@
  *
  * - {@link makeGuardedFetch} and {@link layerGuardedHttpClient}: every request
  *   to a URL someone else chose goes through the SSRF guard.
+ * - {@link openSession}: one MCP session with a connector's server, signed
+ *   from the store at each request.
+ * - {@link catalogOf}, {@link compareCatalog} and {@link answerChanges}: the
+ *   tools the operator accepted, and the changes held for them.
+ * - {@link toolName}: the name a bot calls a connector's tool by.
+ * - {@link statusOf} and {@link observe}: a connector's status.
  * - The errors a connector's request can end in, none of which carries a URL,
  *   a secret or the remote server's text.
  */
 export {
+  answerChanges,
+  CatalogTool,
+  type CatalogState,
+  catalogOf,
+  compareCatalog,
+  type HeldChange,
+  ListedTool,
+  MAX_DESCRIPTION_CHARACTERS,
+} from "./catalog.ts";
+export {
   AuthFailing,
   AuthFailure,
+  type ConnectorFailure,
   type CredentialsUnavailable,
   NeedsSignIn,
+  NotMcp,
   ResponseTooLarge,
+  ServerError,
+  TimedOut,
   Unreachable,
   UnreachableReason,
   UrlRefusal,
@@ -31,3 +51,26 @@ export {
   type Resolver,
   type UrlPolicy,
 } from "./guard.ts";
+export { ConnectorSlug, MAX_TOOL_NAME, slugFor, toolName } from "./names.ts";
+export {
+  type CallCredentials,
+  type ConnectorCredentials,
+  DEFAULT_SESSION_LIMITS,
+  type McpSession,
+  openSession,
+  type SecretHeader,
+  type SessionLimits,
+  type SessionOptions,
+  type ToolAnswer,
+} from "./session.ts";
+export {
+  type Activity,
+  type Failing,
+  type FailingReason,
+  nextFailing,
+  type Observation,
+  observe,
+  type SignInNeed,
+  type StatusInputs,
+  statusOf,
+} from "./status.ts";
