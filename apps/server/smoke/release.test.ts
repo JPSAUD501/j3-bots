@@ -42,8 +42,8 @@ const SCRIPTED_AGENT = `${import.meta.dirname}/../../../packages/engine-t3/scrip
 const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseManifest));
 
 /**
- * A harness stand-in: it records each run, with the configuration folder it
- * was given, in `log`, then writes where the real harness writes when it runs,
+ * A harness stand-in: it records each run, with the configuration folder and
+ * the home folder it was given, in `log`, then writes where the real harness writes when it runs,
  * that folder, which is the user's own when no variable names another
  * (**Verified** with Claude Code 2.1.330 and Codex 0.171.0: run by the engine
  * on the user's own folders, each created and wrote them), and fails, as a
@@ -51,7 +51,7 @@ const decodeManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseM
  */
 const harnessStandIn = (name: string, variable: string, own: string, log: string) =>
   [
-    `printf '%s\\t%s\\n' ${name} "\${${variable}:-}" >> '${log}'`,
+    `printf '%s\\t%s\\t%s\\n' ${name} "\${${variable}:-}" "$HOME" >> '${log}'`,
     `dir="\${${variable}:-$HOME/${own}}"`,
     `mkdir -p "$dir" && : > "$dir/run"`,
     "exit 1",
@@ -240,8 +240,8 @@ it.layer(services, { excludeTestServices: true })("release archive", (it) => {
         const said = yield* Fiber.join(reply).pipe(Effect.timeout(TURN_WITHIN));
         assert.isTrue(Option.isSome(said));
 
-        // The engine ran each harness only on J3 Bots' own folders, and left
-        // the user's home as it was.
+        // The engine ran each harness only on J3 Bots' own folders, Codex for
+        // a bot in a home of J3 Bots' own, and left the user's home as it was.
         const runs = (yield* fs.readFileString(harnessRuns))
           .split("\n")
           .filter((line) => line !== "")
@@ -258,6 +258,13 @@ it.layer(services, { excludeTestServices: true })("release archive", (it) => {
             `${name} ran with ${folder || "no"} folder`,
           );
         }
+        assert.isTrue(
+          runs.some(
+            ([name, , runHome = ""]) =>
+              name === "codex" && runHome.startsWith(`${home}${path.sep}`),
+          ),
+          "codex never ran in a home of J3 Bots' own",
+        );
         assert.deepStrictEqual(yield* fs.readDirectory(userHome), []);
       }).pipe(Effect.scoped),
     Duration.toMillis(Duration.minutes(10)),

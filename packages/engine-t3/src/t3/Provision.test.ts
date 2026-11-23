@@ -307,31 +307,60 @@ describe("a harness configuration J3 Bots cannot read", () => {
 });
 
 describe("a Codex instance", () => {
-  it.effect("runs in a home of its own, and the commands it runs keep the server user's", () =>
+  /** A `config.toml` with what J3 Bots owns set otherwise, beside a key it does not own. */
+  const writeOldConfig = (files: PrivateFiles, configFile: string) =>
+    files.write(
+      configFile,
+      [
+        "[shell_environment_policy]",
+        'inherit = "core"',
+        'set = { HOME = "/old" }',
+        "",
+        "[features]",
+        "shell_snapshot = true",
+        "",
+      ].join("\n"),
+    );
+
+  it.effect(
+    "runs in a home of its own, and the commands it runs keep the server user's, in a login shell",
+    () =>
+      Effect.gen(function* () {
+        const { fs, path, files, input, home, settings } = yield* setUp;
+        const configFile = path.join(input.home, "codex", "config.toml");
+        yield* files.folder(path.join(input.home, "codex"));
+        yield* writeOldConfig(files, configFile);
+
+        yield* provision(input);
+
+        const variables = (yield* settings).providerInstances["j3-codex"]?.environment ?? [];
+        const own = path.join(engineFolders(path, home).codexHomes, "j3-codex");
+        assert.strictEqual(variables.find(({ name }) => name === "HOME")?.value, own);
+        assert.deepStrictEqual(yield* fs.readDirectory(own), []);
+        const config = parse(yield* fs.readFileString(configFile));
+        assert.deepStrictEqual(config["shell_environment_policy"], {
+          inherit: "core",
+          set: { HOME: "/home/sam" },
+        });
+        assert.deepStrictEqual(config["features"], { shell_snapshot: false });
+      }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("keeps the server's environment when the server has no home folder", () =>
     Effect.gen(function* () {
       const { fs, path, files, input, home, settings } = yield* setUp;
       const configFile = path.join(input.home, "codex", "config.toml");
       yield* files.folder(path.join(input.home, "codex"));
-      yield* files.write(
-        configFile,
-        ["[shell_environment_policy]", 'inherit = "core"', 'set = { HOME = "/old" }', ""].join(
-          "\n",
-        ),
-      );
+      yield* writeOldConfig(files, configFile);
 
-      yield* provision(input);
+      yield* provision({ ...input, userHome: undefined });
 
       const variables = (yield* settings).providerInstances["j3-codex"]?.environment ?? [];
-      const own = path.join(engineFolders(path, home).codexHomes, "j3-codex");
-      assert.strictEqual(variables.find(({ name }) => name === "HOME")?.value, own);
-      assert.deepStrictEqual(yield* fs.readDirectory(own), []);
-      assert.deepStrictEqual(
-        parse(yield* fs.readFileString(configFile))["shell_environment_policy"],
-        {
-          inherit: "core",
-          set: { HOME: "/home/sam" },
-        },
-      );
+      assert.isUndefined(variables.find(({ name }) => name === "HOME"));
+      assert.isFalse(yield* fs.exists(engineFolders(path, home).codexHomes));
+      const config = parse(yield* fs.readFileString(configFile));
+      assert.deepStrictEqual(config["shell_environment_policy"], { inherit: "core" });
+      assert.deepStrictEqual(config["features"], { shell_snapshot: false });
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });

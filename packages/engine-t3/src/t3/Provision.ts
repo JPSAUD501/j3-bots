@@ -64,7 +64,8 @@ export interface ProvisionInput {
   readonly sharedSkills: string;
   /**
    * The server user's home folder (`HOME`), which the commands a Codex bot
-   * runs get back (`codexConfig`), or undefined when the server has none.
+   * runs get back (`codexConfig`), or undefined when the server has none, as
+   * on Windows, where Codex then runs with the server's own environment.
    */
   readonly userHome: string | undefined;
 }
@@ -196,11 +197,14 @@ const ENGINE_DEFAULT_INSTANCES = [
  * user's own a Codex bot would be offered theirs. **Read** in Codex 0.171.0,
  * `ext/skills/src/host_roots.rs` and `core-plugins/src/marketplace.rs`;
  * **Verified** with its app server's `skills/list`
- * (`docs/decisions/0019-codex-runs-with-a-home-of-its-own.md`). The commands
- * a Codex bot runs get the server user's home back (`codexConfig`).
+ * (`docs/decisions/0019-codex-runs-with-a-home-of-its-own.md`). Only when the
+ * commands a Codex bot runs get the server user's home back (`codexConfig`),
+ * so undefined when the server has no `HOME`.
  */
-const codexProcessHome = (path: Path.Path, home: string, instanceId: string) =>
-  path.join(engineFolders(path, home).codexHomes, instanceId);
+const codexProcessHome = (path: Path.Path, input: ProvisionInput, instanceId: string) =>
+  input.userHome === undefined
+    ? undefined
+    : path.join(engineFolders(path, input.home).codexHomes, instanceId);
 
 /** Where the engine's secret store keeps one instance variable. **Read** at `db51b67`, `settingsSecrets.ts`. */
 const secretFileName = (instanceId: string, variable: string) =>
@@ -252,16 +256,10 @@ const instanceVariables = (
   path: Path.Path,
   input: ProvisionInput,
   spec: InstanceSpec,
-): ReadonlyArray<SettingsVariable> =>
-  spec.kind === "codex"
-    ? [
-        {
-          name: "HOME",
-          value: codexProcessHome(path, input.home, spec.instanceId),
-          sensitive: false,
-        },
-      ]
-    : [];
+): ReadonlyArray<SettingsVariable> => {
+  const home = spec.kind === "codex" ? codexProcessHome(path, input, spec.instanceId) : undefined;
+  return home === undefined ? [] : [{ name: "HOME", value: home, sensitive: false }];
+};
 
 const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
   switch (spec.kind) {
@@ -321,14 +319,27 @@ const engineSettings = (
 
 /**
  * J3 Bots' part of a Codex instance's `config.toml`: the base prompt, the
- * connection's model provider, the bot tools, and the server user's home
- * folder for the commands a bot runs. Codex itself runs with a home of its
- * own (`codexProcessHome`); `shell_environment_policy.set` puts `HOME` back
- * in the environment of every command it runs, so a bot's shell, `git` and
- * `gh` find the same configuration as a Claude Code bot's. **Read** in Codex
- * 0.171.0, `protocol/src/shell_environment.rs` `populate_env`, used by its
- * shell, `exec_command` and hook runners. Codex writes the rest of the file
- * itself (trusted projects, its own settings), and that is kept.
+ * connection's model provider, the bot tools, the server user's home folder
+ * for the commands a bot runs, and Codex's features. Codex itself runs with a
+ * home of its own (`codexProcessHome`); `shell_environment_policy.set` puts
+ * `HOME` back in the environment of every command it runs, so a bot's shell,
+ * `git` and `gh` find the same configuration as a Claude Code bot's. **Read**
+ * in Codex 0.171.0, `protocol/src/shell_environment.rs` `populate_env`, used
+ * by its shell, `exec_command` and hook runners.
+ *
+ * The shell snapshot is off. With it, Codex runs the login shell once, with
+ * its own environment, whose `HOME` is the empty one, and runs every command
+ * in a plain shell that reads what that run captured, so a bot's commands
+ * would never read the user's profile. Without it, each command runs as a
+ * login shell (`bash -lc`) with the `HOME` above, which reads the profile as
+ * a Claude Code bot's does. **Read** in Codex 0.171.0,
+ * `core/src/shell_snapshot.rs`, `core/src/tools/runtimes/mod.rs`
+ * `maybe_wrap_shell_lc_with_snapshot` and `core/src/shell.rs`
+ * `derive_exec_args`; **Verified** through `exec_command`
+ * (`docs/decisions/0019-codex-runs-with-a-home-of-its-own.md`). J3 Bots owns
+ * `[features]`: only Codex's own terminal client and its `codex features`
+ * command write it, and a bot runs with neither. Codex writes the rest of the
+ * file itself (trusted projects, its own settings), and that is kept.
  */
 const codexConfig = (input: ProvisionInput, connection: StoredConnection | null): TomlEdit => {
   const modelProvider: ReadonlyArray<TomlTable> =
@@ -353,6 +364,7 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
       ["default_tools_approval_mode", "approve"],
     ],
   };
+  const features: TomlTable = { path: ["features"], values: [["shell_snapshot", false]] };
   const commandHome: ReadonlyArray<TomlTable> =
     input.userHome === undefined
       ? []
@@ -366,8 +378,9 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
       ["model_providers", CODEX_MODEL_PROVIDER],
       ["mcp_servers", TOOL_SERVER],
       ["shell_environment_policy", "set"],
+      ["features"],
     ],
-    tables: [...modelProvider, tools, ...commandHome],
+    tables: [...modelProvider, tools, ...commandHome, features],
   };
 };
 
@@ -559,7 +572,8 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
       }
       case "codex": {
         yield* input.files.folder(spec.home);
-        yield* input.files.folder(codexProcessHome(path, input.home, spec.instanceId));
+        const processHome = codexProcessHome(path, input, spec.instanceId);
+        if (processHome !== undefined) yield* input.files.folder(processHome);
         const configFile = path.join(spec.home, "config.toml");
         const text = yield* readIfPresent(fs, configFile, unreadable(configFile));
         const edited = editToml(text ?? "", codexConfig(input, connection));
