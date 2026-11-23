@@ -215,10 +215,11 @@ describe("filling a saved login", () => {
         loaded(LOGIN_URL),
         loaded(LOGIN_URL),
         { _tag: "loading", url: "https://example.com/home" },
+        loaded("https://example.com/home"),
       ]);
       const { running, viewer } = yield* fillHeld(request(at, "password"));
 
-      assert.deepStrictEqual(yield* Fiber.join(running), { _tag: "filled", submitted: true });
+      assert.deepStrictEqual(yield* runOut(running), { _tag: "filled", submitted: true });
       yield* viewer.released;
       // Enter within the hold, and the tab given back only once the engine
       // answered a probe sent after them: the input before it has run.
@@ -258,6 +259,25 @@ describe("filling a saved login", () => {
         loaded(LOGIN_URL),
         loaded(LOGIN_URL),
         loaded(`${LOGIN_URL}?error=1`),
+      ]);
+      const { running, viewer } = yield* fillHeld(request(at, "password"));
+
+      assert.deepStrictEqual(yield* runOut(running), { _tag: "filled", submitted: true });
+      assert.strictEqual(
+        keys(yield* viewer.inputs).filter((key) => key === "Backspace down").length,
+        Array.from(PASSWORD).length,
+      );
+    }).pipe(Effect.provide(domain)),
+  );
+
+  it.effect("clears a password on a page that loaded at its own address again", () =>
+    Effect.gen(function* () {
+      const at = yield* scene({ url: LOGIN_URL });
+      // A sign-in that failed and showed the form again, or one answered with no new document.
+      yield* at.browser.scriptReads([
+        loaded(LOGIN_URL),
+        loaded(LOGIN_URL),
+        { _tag: "loading", url: LOGIN_URL },
       ]);
       const { running, viewer } = yield* fillHeld(request(at, "password"));
 
@@ -504,6 +524,33 @@ describe("a fill refused before the page", () => {
       });
 
       assert.deepStrictEqual(yield* Fiber.join(running), refusal("no-access"));
+      yield* viewer.released;
+      assert.deepStrictEqual(typed(yield* viewer.inputs), []);
+    }).pipe(Effect.provide(domain)),
+  );
+
+  it.effect("types nothing for a turn that ended while the take waited", () =>
+    Effect.gen(function* () {
+      const at = yield* scene({ url: LOGIN_URL });
+      const running = yield* (yield* CredentialFills)
+        .fillLogin(yield* request(at, "password"))
+        .pipe(Effect.forkChild);
+      const viewer = yield* at.browser.nextViewer;
+      assert.deepStrictEqual(yield* viewer.nextInput, { type: "take" });
+      yield* (yield* TestEngineControl).finishTurn({
+        sessionId: at.session,
+        turnId: at.turnId,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(at.bot.id);
+      yield* viewer.emit({
+        _tag: "control",
+        controller: "this-viewer",
+        generation: 1,
+        dialog: null,
+      });
+
+      assert.deepStrictEqual(yield* Fiber.join(running), refusal("stopped"));
       yield* viewer.released;
       assert.deepStrictEqual(typed(yield* viewer.inputs), []);
     }).pipe(Effect.provide(domain)),

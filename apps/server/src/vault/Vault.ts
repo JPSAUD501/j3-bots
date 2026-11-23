@@ -212,14 +212,19 @@ export class Vault extends Context.Service<
     readonly totpPreview: (id: CredentialId) => Effect.Effect<TotpPreview, Conflict | NotFound>;
     /**
      * A login's value for the server to type into a bot's browser tab
-     * (`Fill.ts`): its user name, its password, or its one-time code now.
-     * Fails with `NotFound("credential")` for a login without that value, an
-     * empty user name included. Nothing records it as shown: no device saw it.
+     * (`Fill.ts`): its user name, its password, or its one-time code now,
+     * with the login as it was when the value was opened, read together so
+     * no change to the login falls between them. Fails with
+     * `NotFound("credential")` for a login without that value, an empty user
+     * name included. Nothing records it as shown: no device saw it.
      */
     readonly fillValue: (input: {
       readonly id: CredentialId;
       readonly field: CredentialField;
-    }) => Effect.Effect<Redacted.Redacted<string>, Conflict | NotFound>;
+    }) => Effect.Effect<
+      { readonly value: Redacted.Redacted<string>; readonly credential: Credential },
+      Conflict | NotFound
+    >;
     /**
      * What connectors need to reach their servers: OAuth clients and tokens,
      * headers and environment values. The master password locks them with
@@ -935,17 +940,18 @@ export const layer = Layer.effect(
       serial(
         Effect.gen(function* () {
           const { sql, key } = yield* unlocked;
+          const credential = yield* credentialOf(sql, key, input.id);
           const opened = yield* openedField(sql, key, input.id, input.field);
           if (input.field !== "totp") {
             const value = text(opened);
             if (value === "") return yield* new NotFound({ resource: "credential" });
-            return Redacted.make(value);
+            return { value: Redacted.make(value), credential };
           }
           const config = yield* totpOf(input.id, opened);
           const now = yield* DateTime.now;
           const code = totpAt(config, Math.floor(DateTime.toEpochMillis(now) / 1000));
           if (Option.isNone(code)) return yield* damaged(input.id, "totp");
-          return Redacted.make(code.value.code);
+          return { value: Redacted.make(code.value.code), credential };
         }),
       );
 

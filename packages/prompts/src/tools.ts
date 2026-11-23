@@ -521,6 +521,7 @@ export const FILL_NOTES: Readonly<
     "The page changed while it was being filled. Nothing was typed, and this tab takes no fill in this turn.",
   "refused-before":
     "A fill was already refused on this tab in this turn. Nothing was typed. Tell your user what happened.",
+  stopped: "Your turn was stopped before anything was typed.",
   unavailable:
     "The browser or the vault did not answer, so the fill may not have finished. Look at the page before you try again.",
 };

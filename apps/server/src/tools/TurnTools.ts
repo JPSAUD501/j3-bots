@@ -74,7 +74,12 @@ export interface FillCall {
  * that turn, or a forward of the same request that already has its answer.
  */
 export type FillClaim =
-  | { readonly _tag: "claimed"; readonly turnId: TurnId }
+  | {
+      readonly _tag: "claimed";
+      readonly turnId: TurnId;
+      /** Whether the call is still open in the session's running admitted turn: not stopped, not ended. */
+      readonly stillOpen: Effect.Effect<boolean>;
+    }
   | { readonly _tag: "stored"; readonly result: Schema.Json };
 
 /**

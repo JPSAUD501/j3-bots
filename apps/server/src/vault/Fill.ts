@@ -39,6 +39,7 @@ import type { BotSession } from "../bots/EngineSessions.ts";
 import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import {
   type FillCall,
+  type FillClaim,
   type TurnEnded,
   type TurnToolRefused,
   type TurnToolRetry,
@@ -112,6 +113,9 @@ export class CredentialFills extends Context.Service<
     readonly fillLogin: (request: FillRequest) => Effect.Effect<FillOutcome, FillCallRefused>;
   }
 >()("@j3-bots/server/vault/Fill/CredentialFills") {}
+
+/** A fill's call, pinned to its turn. */
+type Claimed = Extract<FillClaim, { readonly _tag: "claimed" }>;
 
 /** Why nothing was typed. */
 class Refused extends Schema.TaggedError<Refused>()("Refused", { reason: FillRefusal }) {}
@@ -382,56 +386,73 @@ const make = (timing: FillTiming) =>
         bridge.readTab(tab.id).pipe(Effect.mapError(() => refused("unavailable")));
 
       /**
-       * Returns once the tab starts loading another document, fails to, or
-       * closes. An address that changes while the page stays loaded is not
-       * enough: a page changes its address with `history.pushState` without
-       * leaving, and the engine reports that as loaded at the new one.
+       * Whether the page a password was submitted from is gone, within the
+       * navigation wait: the tab closed, failed, went blank, or loaded
+       * another address after it was seen loading. Anything short of that
+       * counts as staying, and the field is cleared. That covers a page that
+       * only changes its address with `history.pushState`, which the engine
+       * reports as loaded at the new one; a submission the server answers
+       * with no new document; and a sign-in still loading when the wait ends.
        */
-      const leaves = Effect.fnUntraced(function* (tab: EngineBrowserTab) {
-        while (true) {
-          const page = yield* readPage(tab).pipe(Effect.option);
-          const moved = Option.exists(page, (current) =>
-            Option.match(current, {
-              onNone: () => true,
-              onSome: (shown) => shown._tag !== "loaded",
-            }),
-          );
-          if (moved) return;
-          yield* Effect.sleep(timing.poll);
-        }
+      const left = Effect.fnUntraced(function* (tab: EngineBrowserTab, url: string) {
+        let loading = false;
+        const settled = Effect.gen(function* () {
+          while (true) {
+            const page = yield* readPage(tab).pipe(Effect.option);
+            if (Option.isSome(page)) {
+              if (Option.isNone(page.value)) return true;
+              const shown = page.value.value;
+              if (shown._tag === "blank" || shown._tag === "failed") return true;
+              if (shown._tag === "loading") loading = true;
+              else if (loading) return shown.url !== url;
+            }
+            yield* Effect.sleep(timing.poll);
+          }
+        });
+        const answer = yield* settled.pipe(Effect.timeoutOption(timing.navigation));
+        return Option.getOrElse(answer, () => false);
       });
 
       /** The fill itself, once the bot and the login are known to allow it. */
       const fillTab = Effect.fn("CredentialFills.fillTab")(function* (
         request: FillRequest,
+        claim: Claimed,
         tab: EngineBrowserTab,
         seen: { origin: SiteOrigin | null; credential: Credential | null },
       ) {
         const { viewer, stillHeld, drained } = yield* hold(tab);
         // Read from the engine now that the bot cannot act: its account of
-        // where it is counts for nothing. The bot's access and the login are
-        // looked up again too, as they are now: the operator may have taken
-        // either away while the take waited.
+        // where it is counts for nothing.
         const url = yield* loadedPage(yield* readPage(tab));
         const origin = yield* pageOrigin(url);
         seen.origin = origin;
-        const credential = yield* loginFor(
-          yield* usable(request.caller.botId),
-          request.credential,
-          origin,
-        );
-        seen.credential = credential;
-        const value = yield* vault.fillValue({ id: credential.id, field: request.field }).pipe(
-          Effect.catchTags({
-            NotFound: () => Effect.fail(refused("no-value")),
-            Conflict: vaultRefusal,
-          }),
-        );
-        // Again right before typing: a page that moved types nothing.
+        const botId = request.caller.botId;
+        const found = yield* loginFor(yield* usable(botId), request.credential, origin);
+        seen.credential = found;
+        // The value comes with the login as it was when it was opened, so a
+        // change to the login in between cannot pair a new value with the
+        // origins it had before.
+        const { value, credential } = yield* vault
+          .fillValue({ id: found.id, field: request.field })
+          .pipe(
+            Effect.catchTags({
+              NotFound: () => Effect.fail(refused("no-value")),
+              Conflict: vaultRefusal,
+            }),
+          );
+        if (!credential.allowedBots.includes(botId)) return yield* refused("unknown-login");
+        yield* loginFor([credential], request.credential, origin);
+        // Again right before typing: a page that moved types nothing. Then
+        // what the operator may have changed since the take: the bot's
+        // switches, the login's bots, and the turn, which they may have
+        // stopped while this fill waited for another.
         const again = yield* readPage(tab);
         if (Option.isNone(again) || again.value._tag !== "loaded" || again.value.url !== url) {
           return yield* refused("navigated");
         }
+        const still = yield* loginFor(yield* usable(botId), request.credential, origin);
+        if (still.id !== credential.id) return yield* refused("origin");
+        if (!(yield* claim.stillOpen)) return yield* refused("stopped");
         yield* stillHeld;
         yield* viewer.send({ type: "text", text: Redacted.value(value) });
         const submitted = request.submit || request.field === "password";
@@ -445,8 +466,7 @@ const make = (timing: FillTiming) =>
         // stays, as one that only shows an error does, has the password
         // taken out of the field first, one character at a time from where
         // the typing left the cursor.
-        const moved = yield* leaves(tab).pipe(Effect.timeoutOption(timing.navigation));
-        if (Option.isNone(moved)) {
+        if (!(yield* left(tab, url))) {
           for (const _ of Redacted.value(value)) {
             yield* viewer.send(BACKSPACE_DOWN);
             yield* viewer.send(BACKSPACE_UP);
@@ -458,7 +478,7 @@ const make = (timing: FillTiming) =>
 
       const attempt = Effect.fn("CredentialFills.attempt")(function* (
         request: FillRequest,
-        turnId: TurnId,
+        claim: Claimed,
         seen: { origin: SiteOrigin | null; credential: Credential | null },
       ) {
         const named = (yield* usable(request.caller.botId)).filter(
@@ -468,19 +488,22 @@ const make = (timing: FillTiming) =>
         const front = yield* tabs.frontOf(request.engineSessionId);
         if (Option.isNone(front)) return yield* refused("no-tab");
         const { tab, heldByDevice } = front.value;
-        const refusedTabs = refusedTabsOf(request, turnId);
+        const refusedTabs = refusedTabsOf(request, claim.turnId);
         if (refusedTabs.has(tab.id)) return yield* refused("refused-before");
-        const filled = heldByDevice ? Effect.fail(refused("held")) : fillTab(request, tab, seen);
+        const filled = heldByDevice
+          ? Effect.fail(refused("held"))
+          : fillTab(request, claim, tab, seen);
         return yield* filled.pipe(
           // Once the tab was looked at, a refusal holds for the tab and the
-          // turn. A locked vault, a browser that did not answer or a person
-          // holding the tab is no refusal of the page.
+          // turn. A locked vault, a browser that did not answer, a person
+          // holding the tab or a stopped turn is no refusal of the page.
           Effect.tapError((error) =>
             Effect.sync(() => {
               if (
                 error._tag === "Refused" &&
                 error.reason !== "unavailable" &&
-                error.reason !== "held"
+                error.reason !== "held" &&
+                error.reason !== "stopped"
               ) {
                 refusedTabs.add(tab.id);
               }
@@ -538,7 +561,7 @@ const make = (timing: FillTiming) =>
           origin: null,
           credential: null,
         };
-        const outcome = yield* attempt(request, claim.turnId, seen).pipe(
+        const outcome = yield* attempt(request, claim, seen).pipe(
           Effect.map(({ submitted }): FillOutcome => ({ _tag: "filled", submitted })),
           Effect.catchTags({
             Refused: (error) =>

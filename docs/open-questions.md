@@ -71,6 +71,7 @@ The name is chosen: J3 Bots ([Concepts: Names](product/concepts.md#names)). Whet
 The server fills a saved login through the engine's viewer channel ([Server: filling a login](architecture/server.md#filling-a-login)). Its tests run against the in-memory browser, so these are **Assumed** until seen on the pinned engine with a real harness:
 
 - the engine queues a viewer's input messages in the order they arrived, so a `probe` answered means the typing before it ran;
+- a form submission answered with no new document shows as loading, then loaded again at the same address, or stays loading; either way the fill clears the field;
 - Claude Code drops the engine's `preview_evaluate` when it is given to `--disallowedTools`, as it drops its own tools;
 - a password field shows dots in a snapshot, as on screen;
 - after a password the page stays on, one Backspace per character empties the field, because typing leaves the caret at the end;

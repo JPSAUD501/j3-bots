@@ -1148,7 +1148,11 @@ export const layer = Layer.effect(
         if (matched._tag === "stored") return matched;
         const pinned = yield* transaction(pin("fill_credential", matched.pin));
         if (pinned._tag === "stored") return pinned;
-        return { _tag: "claimed", turnId: matched.pin.turnId } as const;
+        return {
+          _tag: "claimed",
+          turnId: matched.pin.turnId,
+          stillOpen: stillAdmitted(matched.pin),
+        } as const;
       },
       Effect.timeoutOrElse({
         duration: ADMISSION_DEADLINE,

@@ -192,6 +192,7 @@ export type TotpPreview = typeof TotpPreview.Type;
  * - `origin`: the page's origin is none of the login's.
  * - `navigated`: the page changed while the server held the tab.
  * - `refused-before`: a fill was refused on this tab earlier in this turn.
+ * - `stopped`: the bot's turn was stopped or ended before anything was typed.
  * - `unavailable`: the browser or the vault could not be reached, or the
  *   browser did not confirm that it ran the typing.
  */
@@ -207,6 +208,7 @@ export const FillRefusal = Schema.Literals([
   "origin",
   "navigated",
   "refused-before",
+  "stopped",
   "unavailable",
 ]);
 export type FillRefusal = typeof FillRefusal.Type;
