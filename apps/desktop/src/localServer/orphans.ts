@@ -132,14 +132,15 @@ const adopted = (
 
 /**
  * What to do with the server found on the admin socket (Unix): take it over
- * when it is this version, which the app would start anyway; stop it
- * otherwise, gracefully, then for good after `STOP_DEADLINE`. A server whose
+ * when it is `version`, the release the app would start as it is anyway;
+ * stop it otherwise, or with no version given, gracefully, then for good
+ * after `STOP_DEADLINE`. A server whose
  * process cannot be told apart from a later one given its pid is left alone:
  * the start that follows is refused while it runs, and says so.
  */
 export const takeOverOnSocket = Effect.fn("Orphans.takeOverOnSocket")(function* (
   admin: AdminChannel,
-  version: string,
+  version: Option.Option<string>,
   processes: Processes,
 ) {
   const status = yield* admin.status(Duration.seconds(5)).pipe(Effect.option);
@@ -154,11 +155,11 @@ export const takeOverOnSocket = Effect.fn("Orphans.takeOverOnSocket")(function* 
     return Option.none<RunningServer>();
   }
   const known = knownProcess(processes, pid, started.value);
-  if (status.value.version === version) {
+  if (Option.contains(version, status.value.version)) {
     yield* Effect.logInfo("Taking over the server an earlier run of the app left running", { pid });
     return Option.some(adopted(pid, admin, known));
   }
-  yield* Effect.logInfo("Stopping a server of another version an earlier run left running", {
+  yield* Effect.logInfo("Stopping a server an earlier run left running, which it would not start", {
     pid,
     version: status.value.version,
   });

@@ -78,6 +78,7 @@ const bridge: DesktopBridge = {
     };
   },
   retryLocalServer: () => ipcRenderer.send(IPC_CHANNELS.retryLocalServer),
+  retryServerUpdate: () => ipcRenderer.send(IPC_CHANNELS.retryServerUpdate),
   setPhoneAccess: (on) => ipcRenderer.invoke(IPC_CHANNELS.setPhoneAccess, { on }),
   localPairingLink: () => ipcRenderer.invoke(IPC_CHANNELS.localPairingLink),
   setStartWithSystem: (on) => ipcRenderer.invoke(IPC_CHANNELS.setStartWithSystem, { on }),

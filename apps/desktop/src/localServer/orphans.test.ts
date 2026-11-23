@@ -33,7 +33,13 @@ const fakeProcesses = () => {
 
 /** The admin socket of a server of `version`; a `/shutdown` does `whenAsked`. */
 const socket = (version: string, whenAsked: () => void = () => {}): AdminChannel => ({
-  status: () => Effect.succeed({ version, pid: PID, listener: { port: 3747 } }),
+  status: () =>
+    Effect.succeed({
+      version,
+      pid: PID,
+      listener: { port: 3747 },
+      engine: { state: { _tag: "ready" } },
+    }),
   localDevice: () => Effect.die("not used here"),
   shutdown: Effect.sync(whenAsked),
 });
@@ -44,7 +50,11 @@ describe("a server an earlier run of the app left running", () => {
     () =>
       Effect.gen(function* () {
         const system = fakeProcesses();
-        const adopted = yield* Orphans.takeOverOnSocket(socket("0.3.0"), "0.3.0", system.processes);
+        const adopted = yield* Orphans.takeOverOnSocket(
+          socket("0.3.0"),
+          Option.some("0.3.0"),
+          system.processes,
+        );
         assert.isTrue(Option.isSome(adopted));
         if (Option.isNone(adopted)) return;
         system.reused();
@@ -62,7 +72,7 @@ describe("a server an earlier run of the app left running", () => {
         const system = fakeProcesses();
         const taken = yield* Orphans.takeOverOnSocket(
           socket("0.2.9", system.reused),
-          "0.3.0",
+          Option.some("0.3.0"),
           system.processes,
         );
         assert.isTrue(Option.isNone(taken));
@@ -74,7 +84,7 @@ describe("a server an earlier run of the app left running", () => {
     Effect.gen(function* () {
       const system = fakeProcesses();
       const stopping = yield* Effect.forkChild(
-        Orphans.takeOverOnSocket(socket("0.2.9"), "0.3.0", system.processes),
+        Orphans.takeOverOnSocket(socket("0.2.9"), Option.some("0.3.0"), system.processes),
       );
       yield* TestClock.adjust(Duration.seconds(29));
       assert.deepStrictEqual(system.signals, []);
@@ -93,7 +103,7 @@ describe("a server an earlier run of the app left running", () => {
         socket("0.2.9", () => {
           asked = true;
         }),
-        "0.3.0",
+        Option.some("0.3.0"),
         system.processes,
       );
       assert.isTrue(Option.isNone(taken));

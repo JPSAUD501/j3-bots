@@ -73,7 +73,7 @@ export const restartDelay = (attempt: number): Duration.Duration =>
   Duration.min(Duration.seconds(2 ** Math.max(0, attempt - 1)), LONGEST_PAUSE);
 
 /** The last thing the server wrote before it ended: its refusal, for a refused start. */
-const lastMessage = (logTail: string): string | undefined => {
+export const lastMessage = (logTail: string): string | undefined => {
   const lines = logTail
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -139,6 +139,8 @@ export interface SupervisorOptions {
   readonly launch: Effect.Effect<RunningServer, LaunchFailed>;
   /** A server already running on this home, taken over at the first start, if there is one. */
   readonly adopt: Effect.Effect<Option.Option<RunningServer>>;
+  /** Runs once each server it started or took over answers. */
+  readonly onReady?: Effect.Effect<void>;
 }
 
 export interface Supervisor {
@@ -170,7 +172,7 @@ export interface Supervisor {
  * it can be asked neither way (Windows, its pipe already closed), it is
  * killed at once.
  */
-const stopServer = Effect.fn("Supervisor.stopServer")(function* (server: RunningServer) {
+export const stopServer = Effect.fn("Supervisor.stopServer")(function* (server: RunningServer) {
   const stopped = yield* Effect.gen(function* () {
     const asked = yield* server.admin.shutdown.pipe(
       Effect.as(true),
@@ -227,6 +229,7 @@ export const make = Effect.fn("Supervisor.make")(function* (options: SupervisorO
     }
     const since = yield* Clock.currentTimeMillis;
     yield* set({ _tag: "ready", attempt, server });
+    if (options.onReady !== undefined) yield* options.onReady;
     const exit = yield* server.exited;
     const ended = yield* Clock.currentTimeMillis;
     return { exit, healthy: ended - since >= Duration.toMillis(HEALTHY_AFTER) };

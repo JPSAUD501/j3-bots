@@ -16,7 +16,7 @@ import * as http from "node:http";
 const pipe = new net.Socket({ fd: 3, readable: true, writable: true });
 const server = http.createServer((request, response) => {
   response.writeHead(200, { "content-type": "application/json" });
-  response.end(JSON.stringify({ version: "0.3.0", pid: process.pid, listener: { port: 3747 } }));
+  response.end(JSON.stringify({ version: "0.3.0", pid: process.pid, listener: { port: 3747 }, engine: { state: { _tag: "ready" } } }));
 });
 server.keepAliveTimeout = 0;
 server.emit("connection", pipe);

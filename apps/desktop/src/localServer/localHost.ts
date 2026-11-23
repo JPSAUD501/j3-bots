@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ServerOrigin } from "@j3-bots/desktop-bridge";
+import { type LocalServerState, ServerOrigin, type ServerUpdate } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import type * as ServerChoice from "../serverChoice.ts";
 import { DesktopSettings } from "../settings.ts";
@@ -16,6 +17,7 @@ import * as Runtime from "./runtime.ts";
 import * as ServerProcess from "./serverProcess.ts";
 import * as ShellPath from "./shellPath.ts";
 import * as Supervisor from "./supervisor.ts";
+import * as VersionTransition from "./versionTransition.ts";
 
 // The server this computer runs for its bots ("local mode"): where its files
 // are, whether this computer can run it, and the supervisor, sign-in and
@@ -24,7 +26,10 @@ import * as Supervisor from "./supervisor.ts";
 //   <userData>/server/home              its data home (J3_HOME)
 //   <userData>/server/server.log        its output, appended at each start
 //   <userData>/server/server.pid        the last one started (Windows)
-//   <userData>/server-runtime/<version> the runtime it runs from
+//   <userData>/server-runtime/<version> the runtimes of the releases it ran
+//
+// Which release starts on the home, and the move from one to the next that
+// an app update brings, is `versionTransition.ts`'s.
 
 /** The systems the app runs the server on, as `<platform>-<arch>`. */
 const SUPPORTED = new Set(["linux-x64", "win32-x64"]);
@@ -86,6 +91,13 @@ const portOf = (origin: ServerOrigin): number => {
   return url.port === "" ? 80 : Number(url.port);
 };
 
+/** The supervisor's state with what the server's version is going through. */
+const withUpdate = (state: LocalServerState, update: Option.Option<ServerUpdate>) =>
+  Option.match(update, {
+    onNone: () => state,
+    onSome: (now): LocalServerState => ({ ...state, update: now }),
+  });
+
 export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -106,8 +118,8 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
 
   const supported =
     SUPPORTED.has(target) || (target === "darwin-arm64" && options.env[EXPERIMENTAL_FLAG] === "1");
-  const version = supported ? yield* Runtime.versionOf(source).pipe(Effect.option) : Option.none();
-  const available = Option.isSome(version);
+  const bundled = supported ? yield* Runtime.releaseOf(source).pipe(Effect.option) : Option.none();
+  const available = Option.isSome(bundled);
   if (supported && !available) {
     yield* Effect.logWarning(
       "This build carries no server runtime; local mode is unavailable",
@@ -126,7 +138,44 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
 
   const checkHome = Home.checkHome(home, options.platform, options.windowsPrivacy);
 
+  /** Starts the server from `runtime`. */
+  const run = Effect.fn("LocalHost.run")(function* (runtime: Runtime.Runtime) {
+    yield* fs.makeDirectory(serverFolder, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
+    const server = yield* ServerProcess.launch({
+      node: runtime.node,
+      entry: runtime.entry,
+      env: serverEnvironment(options.env, {
+        path: yield* shellPath,
+        home,
+        host: "127.0.0.1",
+      }),
+      logFile,
+      platform: options.platform,
+    });
+    if (options.platform === "win32") yield* Orphans.record(pidFile, server.pid, runtime.node);
+    return server;
+  }, Effect.provideContext(context));
+
+  const versions = Option.isSome(bundled)
+    ? Option.some(
+        yield* VersionTransition.make({
+          home,
+          source,
+          bundled: bundled.value,
+          runtimes: path.join(options.userData, "server-runtime"),
+          platform: options.platform,
+          run,
+        }),
+      )
+    : Option.none();
+
   const launch = Effect.gen(function* () {
+    if (Option.isNone(versions)) {
+      return yield* new Supervisor.LaunchFailed({
+        reason: `This copy of J3 Bots carries no server to run on this computer (${source}).`,
+        retry: false,
+      });
+    }
     yield* checkHome.pipe(
       Effect.mapError(
         (refusal) =>
@@ -151,37 +200,11 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
             }),
       ),
     );
-    const runtime = yield* Runtime.install({
-      source,
-      folder: path.join(options.userData, "server-runtime"),
-      platform: options.platform,
-    }).pipe(
-      Effect.mapError(
-        (error) =>
-          new Supervisor.LaunchFailed({
-            reason: error.message,
-            retry: error.reason === "not-copied",
-          }),
-      ),
-    );
-    yield* fs.makeDirectory(serverFolder, { recursive: true, mode: 0o700 }).pipe(Effect.ignore);
-    const server = yield* ServerProcess.launch({
-      node: runtime.node,
-      entry: runtime.entry,
-      env: serverEnvironment(options.env, {
-        path: yield* shellPath,
-        home,
-        host: "127.0.0.1",
-      }),
-      logFile,
-      platform: options.platform,
-    });
-    if (options.platform === "win32") yield* Orphans.record(pidFile, server.pid, runtime.node);
-    return server;
+    return yield* versions.value.launch;
   }).pipe(Effect.provideContext(context));
 
   const adopt = Effect.gen(function* () {
-    if (Option.isNone(version)) return Option.none<Supervisor.RunningServer>();
+    if (Option.isNone(versions)) return Option.none<Supervisor.RunningServer>();
     if (options.platform === "win32") {
       yield* Orphans.stopRecorded(pidFile, (pid) => ServerProcess.killTree(pid, options.platform));
       return Option.none<Supervisor.RunningServer>();
@@ -191,14 +214,40 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     if (!trusted || !(yield* fs.exists(adminSocket).pipe(Effect.orElseSucceed(() => false)))) {
       return Option.none<Supervisor.RunningServer>();
     }
-    return yield* Orphans.takeOverOnSocket(
-      AdminChannel.overSocket(adminSocket),
-      version.value,
-      yield* Orphans.systemProcesses(options.platform),
+    const processes = yield* Orphans.systemProcesses(options.platform);
+    return yield* versions.value.adopt((version) =>
+      Orphans.takeOverOnSocket(AdminChannel.overSocket(adminSocket), version, processes),
     );
   }).pipe(Effect.provideContext(context));
 
-  const supervisor = yield* Supervisor.make({ launch, adopt });
+  const onReady = Option.match(versions, {
+    onNone: () => Effect.void,
+    onSome: (now) => now.onReady.pipe(Effect.provideContext(context)),
+  });
+
+  const supervisor = yield* Supervisor.make({ launch, adopt, onReady });
+  const update = Option.match(versions, {
+    onNone: () => Effect.succeed(Option.none<ServerUpdate>()),
+    onSome: (now) => now.update,
+  });
+  const updates = Option.match(versions, {
+    onNone: () => Stream.make(Option.none<ServerUpdate>()),
+    onSome: (now) => now.updates,
+  });
+
+  /** The server's state, as the page and the tray are told it. */
+  const state = Effect.zipWith(supervisor.state, update, withUpdate);
+  const changes = Stream.zipLatestWith(supervisor.changes, updates, withUpdate);
+
+  /**
+   * Tries the app's release again after the server was rolled back from it:
+   * the server that runs stops, and the next start moves the data again.
+   */
+  const retryUpdate = Effect.gen(function* () {
+    if (Option.isNone(versions) || !(yield* versions.value.retry)) return;
+    yield* supervisor.stop;
+    yield* supervisor.start;
+  });
 
   const prepare = Effect.gen(function* () {
     yield* checkHome;
@@ -218,5 +267,5 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     name: Credential.deviceName(options.hostname),
   });
 
-  return { available, local, supervisor, signIn, logFile } as const;
+  return { available, local, supervisor, state, changes, retryUpdate, signIn, logFile } as const;
 });

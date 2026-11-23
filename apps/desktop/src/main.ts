@@ -268,9 +268,9 @@ const program = Effect.gen(function* () {
   /** The server this computer runs, as the page and the tray are told: `null` outside local mode. */
   const localServerNow = Effect.gen(function* () {
     if ((yield* settings.get).mode !== "local") return null;
-    return yield* supervisor.state;
+    return yield* localHost.state;
   });
-  const localServerChanges = supervisor.changes.pipe(Stream.mapEffect(() => localServerNow));
+  const localServerChanges = localHost.changes.pipe(Stream.mapEffect(() => localServerNow));
 
   const choice = yield* ServerChoice.make(
     (origin) =>
@@ -387,9 +387,10 @@ const program = Effect.gen(function* () {
         fromApp(event) ? encodeLocalServer(runSync(localServerNow)) : null,
       );
       ipcMain.on(IPC_CHANNELS.retryLocalServer, (event) => {
-        if (fromApp(event) && runSync(settings.get).mode === "local") {
-          void runPromise(supervisor.retry);
-        }
+        if (fromApp(event)) void runPromise(choice.whileLocal(supervisor.retry));
+      });
+      ipcMain.on(IPC_CHANNELS.retryServerUpdate, (event) => {
+        if (fromApp(event)) void runPromise(choice.whileLocal(localHost.retryUpdate));
       });
       ipcMain.handle(IPC_CHANNELS.setPhoneAccess, (event, request: unknown) => {
         const decoded = decodePhoneAccessRequest(request);
@@ -423,6 +424,7 @@ const program = Effect.gen(function* () {
         ipcMain.removeHandler(IPC_CHANNELS.localDevice);
         ipcMain.removeHandler(IPC_CHANNELS.localServer);
         ipcMain.removeAllListeners(IPC_CHANNELS.retryLocalServer);
+        ipcMain.removeAllListeners(IPC_CHANNELS.retryServerUpdate);
         ipcMain.removeHandler(IPC_CHANNELS.setPhoneAccess);
         ipcMain.removeHandler(IPC_CHANNELS.localPairingLink);
         ipcMain.removeAllListeners(IPC_CHANNELS.relaunch);

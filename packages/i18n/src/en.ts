@@ -823,6 +823,14 @@ export const en = {
   "local.line.start": "Start them",
   "local.line.restarting": "Your bots stopped.",
   "local.line.failed": "Your bots couldn’t start.",
+  "local.line.update.updating": "Updating your bots to {version}…",
+  "local.line.update.rolledBack":
+    "The update to {failed} didn’t work. Your bots are back on {running}.",
+  "local.line.update.olderApp":
+    "Your bots run on {running}, which is newer than this app. Update J3 Bots.",
+  "local.line.update.retry": "Try again",
+  "local.update.title": "The update to {failed} didn’t work",
+  "local.update.body": "Your bots and their data are as they were before it, on {running}.",
   "local.failed.title": "Your bots couldn’t start",
   "local.failed.unknown": "Something stopped J3 Bots from starting on this computer.",
   "local.failed.retry": "Try again",
@@ -1185,6 +1193,7 @@ export const en = {
   "desktop.tray.more.one": "And {count} more",
   "desktop.tray.more.other": "And {count} more",
   "desktop.tray.local.starting": "Starting your bots…",
+  "desktop.tray.local.updating": "Updating your bots…",
   "desktop.tray.local.stopped": "Bots stopped",
   "desktop.tray.local.restarting": "Bots stopped · restarting in {seconds} s",
   "desktop.tray.local.restartingNow": "Bots stopped · restarting…",

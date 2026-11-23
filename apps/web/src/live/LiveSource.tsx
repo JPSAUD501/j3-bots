@@ -81,7 +81,7 @@ import type { AppLink } from "@j3-bots/desktop-bridge";
 import { memoryFileName } from "@j3-bots/client-runtime/wording";
 import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
-import { ConnectionBanner } from "../components/ConnectionBanner";
+import { ConnectionBanner, updateHasDetails } from "../components/ConnectionBanner";
 import {
   ConnectInstead,
   LocalServerFailed,
@@ -379,10 +379,20 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
         </Screen>
       );
     case "incompatible":
+      // An update of the server on this computer rolled back to a release the
+      // app does not speak with still says so, with its Try again and details.
       return (
-        <Screen>
-          <Incompatible server={desktopServer} update={update} />
-        </Screen>
+        <ConnectionBanner
+          state={connection}
+          local={local?.line}
+          everConnected={everConnected}
+          onRetryNow={j3.reconnectNow}
+        >
+          <Screen>
+            <Incompatible server={desktopServer} update={update} />
+          </Screen>
+          {local?.details}
+        </ConnectionBanner>
       );
     case "storage-failed":
       return (
@@ -455,6 +465,15 @@ function useLocalHere(origin: URL) {
   const readyNow = useRef(ready);
   useEffect(() => {
     readyNow.current = ready;
+  }, [ready]);
+  // A server that spoke another protocol is not asked again by itself: once
+  // the one on this computer is ready anew, as after Try again of an update
+  // that rolled back, the page tries it.
+  const wakeIncompatible = useEffectEvent(() => {
+    if (connection._tag === "incompatible") j3.reconnectNow();
+  });
+  useEffect(() => {
+    if (ready) wakeIncompatible();
   }, [ready]);
 
   const fresh = localMode !== null && connection._tag === "unpaired" && connection.reason === "new";
@@ -530,6 +549,25 @@ function useLocalHere(origin: URL) {
   // Signed out, the bots this computer has are still here: leaving them asks first.
   const stopInstead = <StopUsingComputer quiet onStop={stopUsing} />;
   const failed = view !== null && view.server.state === "failed" ? view.server : null;
+  const update = view?.server.state === "ready" ? view.server.update : undefined;
+  const rolledBack = update?._tag === "rolled-back" && updateHasDetails(update) ? update : null;
+  /** What the details dialog explains: the start that failed, or the update that was rolled back. */
+  const explained =
+    failed !== null
+      ? {
+          title: t("local.failed.title"),
+          lead: null,
+          failure: failed,
+          retry: desktopLocal.retryLocalServer,
+        }
+      : rolledBack !== null
+        ? {
+            title: t("local.update.title", { failed: rolledBack.failed }),
+            lead: t("local.update.body", { running: rolledBack.running }),
+            failure: rolledBack,
+            retry: desktopLocal.retryServerUpdate,
+          }
+        : null;
 
   const intents: DesktopLocal = {
     stopUsing,
@@ -617,19 +655,26 @@ function useLocalHere(origin: URL) {
   };
 
   const details = (
-    <Dialog.Root open={detailsOpen && failed !== null} onOpenChange={setDetailsOpen}>
+    <Dialog.Root open={detailsOpen && explained !== null} onOpenChange={setDetailsOpen}>
       <Dialog.Portal>
         <Dialog.Backdrop className={dialogBackdrop} />
         <Dialog.Popup className={cn(alertDialog, "max-w-md gap-3 p-5")}>
-          <Dialog.Title className={dialogTitle}>{t("local.failed.title")}</Dialog.Title>
-          {failed !== null && (
-            <LocalServerFailedBody
-              server={failed}
-              onRetry={() => {
-                setDetailsOpen(false);
-                desktopLocal.retryLocalServer();
-              }}
-            />
+          {explained !== null && (
+            <>
+              <Dialog.Title className={dialogTitle}>{explained.title}</Dialog.Title>
+              {explained.lead !== null && (
+                <Dialog.Description className="text-sm text-pretty text-muted-foreground">
+                  {explained.lead}
+                </Dialog.Description>
+              )}
+              <LocalServerFailedBody
+                server={explained.failure}
+                onRetry={() => {
+                  setDetailsOpen(false);
+                  explained.retry();
+                }}
+              />
+            </>
           )}
         </Dialog.Popup>
       </Dialog.Portal>
@@ -647,6 +692,7 @@ function useLocalHere(origin: URL) {
             restartAt: view.restartAt,
             onRetry: desktopLocal.retryLocalServer,
             onDetails: () => setDetailsOpen(true),
+            onRetryUpdate: desktopLocal.retryServerUpdate,
           },
     intents,
     details,

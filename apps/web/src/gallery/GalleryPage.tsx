@@ -38,7 +38,7 @@ import {
   type SignInHarness,
   type UsageWindow,
 } from "@j3-bots/contracts";
-import type { LocalServerState } from "@j3-bots/desktop-bridge";
+import type { LocalServerState, ServerUpdate } from "@j3-bots/desktop-bridge";
 import {
   avatarCast,
   avatarShapeNames,
@@ -2551,7 +2551,22 @@ const localLine = (server: LocalServerState): LocalLine => ({
   restartAt: server.state === "restarting" ? retryAt : null,
   onRetry: nothing,
   onDetails: nothing,
+  onRetryUpdate: nothing,
 });
+
+/** An update of the server on this computer that did not become ready, rolled back as the app reports it. */
+const rolledBack = {
+  _tag: "rolled-back",
+  running: "0.3.0",
+  failed: "0.3.1",
+  reason: "it stopped with exit code 1: The engine could not be started: its runtime is damaged.",
+  logTail: [
+    "starting J3 Bots 0.3.1",
+    "moving the bots' data to 0.3.1",
+    "error: the engine could not be started: its runtime is damaged",
+    "stopped",
+  ].join("\n"),
+} satisfies ServerUpdate;
 
 /** The first screen and, on its second choice, the server address screen with a way back. */
 function WhereFlow({ notice = null }: { notice?: string | null }) {
@@ -2606,7 +2621,7 @@ function WhereBotsLiveSection() {
   const { t } = useI18n();
   return (
     <Section title="Where the bots live (desktop app)">
-      <Labeled label="The connection line on this computer: starting, stopped, restarting with a retry waiting, failed">
+      <Labeled label="The connection line on this computer: starting, stopped, restarting with a retry waiting, failed; updating, an update rolled back, a server newer than the app">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
           {(
             [
@@ -2614,10 +2629,13 @@ function WhereBotsLiveSection() {
               { state: "stopped" },
               { state: "restarting", attempt: 2, retryInSeconds: 30 },
               notStarted,
+              { state: "starting", update: { _tag: "updating", from: "0.3.0", to: "0.3.1" } },
+              { state: "ready", update: rolledBack },
+              { state: "ready", update: { _tag: "older-app", running: "0.3.1", app: "0.3.0" } },
             ] satisfies ReadonlyArray<LocalServerState>
           ).map((server) => (
             <ConnectionBanner
-              key={server.state}
+              key={`${server.state}-${server.update?._tag ?? "none"}`}
               state={{ _tag: "connected" }}
               local={localLine(server)}
               everConnected
@@ -2679,6 +2697,21 @@ function WhereBotsLiveSection() {
           <div className="flex flex-col gap-3 p-5">
             <p className="text-lg font-semibold">{t("local.failed.title")}</p>
             <LocalServerFailedBody server={notStarted} onRetry={nothing} />
+          </div>
+        </Frame>
+        <Frame
+          label="An update rolled back, from the connection line: why, and Try again"
+          width={448}
+          height={460}
+        >
+          <div className="flex flex-col gap-3 p-5">
+            <p className="text-lg font-semibold">
+              {t("local.update.title", { failed: rolledBack.failed })}
+            </p>
+            <p className="text-sm text-pretty text-muted-foreground">
+              {t("local.update.body", { running: rolledBack.running })}
+            </p>
+            <LocalServerFailedBody server={rolledBack} onRetry={nothing} />
           </div>
         </Frame>
         <Frame label="This computer was signed out (signing in fails)" width={390} height={560}>

@@ -60,6 +60,33 @@ export const LocalServerPhase = Schema.Literals([
 export type LocalServerPhase = typeof LocalServerPhase.Type;
 
 const Message = Schema.String.check(Schema.isMaxLength(4096));
+const LogTail = Schema.String.check(Schema.isMaxLength(8192));
+/** A J3 Bots release, as its `release.json` names it. */
+const ReleaseVersion = Schema.String.check(Schema.isPattern(/^[0-9A-Za-z.+-]{1,64}$/));
+
+/**
+ * What the server on this computer's version is going through, beyond its
+ * state. `updating`: the app carries a new release, `to`, and moves the
+ * bots' data from `from` to it: a copy first, then `to` started on it. While
+ * it does, the state is `starting`. `rolled-back`: `failed` did not become
+ * ready, so the data as it was before was put back and `running` runs on it;
+ * the app does not try `failed` again until the operator asks
+ * (`retryServerUpdate`). `reason` and `logTail` say why, when the app saw it
+ * fail since it started. `older-app`: this app carries `app`, older than
+ * `running`, which the data was last handed to and which reads it, so it
+ * runs `running` instead.
+ */
+export const ServerUpdate = Schema.Union([
+  Schema.TaggedStruct("updating", { from: ReleaseVersion, to: ReleaseVersion }),
+  Schema.TaggedStruct("rolled-back", {
+    running: ReleaseVersion,
+    failed: ReleaseVersion,
+    reason: Schema.optionalKey(Message),
+    logTail: Schema.optionalKey(LogTail),
+  }),
+  Schema.TaggedStruct("older-app", { running: ReleaseVersion, app: ReleaseVersion }),
+]);
+export type ServerUpdate = typeof ServerUpdate.Type;
 
 export const LocalServerState = Schema.Struct({
   state: LocalServerPhase,
@@ -72,7 +99,9 @@ export const LocalServerState = Schema.Struct({
   /** What repairs it, when that is known apart from `reason`. */
   fix: Schema.optionalKey(Message),
   /** The last lines the server wrote to its log, for the page to show on request. */
-  logTail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8192))),
+  logTail: Schema.optionalKey(LogTail),
+  /** What its version is going through, if anything: see `ServerUpdate`. */
+  update: Schema.optionalKey(ServerUpdate),
 });
 export type LocalServerState = typeof LocalServerState.Type;
 
@@ -522,6 +551,7 @@ export const HostedBridge = Schema.Struct({
   localDevice: Callable,
   onLocalServer: Callable,
   retryLocalServer: Callable,
+  retryServerUpdate: Callable,
   setPhoneAccess: Callable,
   localPairingLink: Callable,
   setStartWithSystem: Callable,

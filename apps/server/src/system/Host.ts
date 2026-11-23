@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- Free space, a trial listen and the user's name, home and groups have no Effect API.
-import * as NodeFs from "node:fs/promises";
+// @effect-diagnostics nodeBuiltinImport:off -- A trial listen and the user's name, home and groups have no Effect API.
 import * as NodeNet from "node:net";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
@@ -13,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { freeSpaceAt } from "./freeSpace.ts";
 import { type PortState, portStateOf } from "./Ports.ts";
 import { privateKeysIn } from "./sshKeys.ts";
 
@@ -136,16 +136,6 @@ export const layer = Layer.effect(
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
     const user = NodeOs.userInfo();
 
-    const nearestExisting = Effect.fn("Host.nearestExisting")(function* (start: string) {
-      let folder = path.resolve(start);
-      while (!(yield* fs.exists(folder).pipe(Effect.orElseSucceed(() => false)))) {
-        const parent = path.dirname(folder);
-        if (parent === folder) return folder;
-        folder = parent;
-      }
-      return folder;
-    });
-
     return Host.of({
       nodeVersion: process.versions.node,
       platform: process.platform,
@@ -154,13 +144,9 @@ export const layer = Layer.effect(
       userName: user.username,
       searchPath,
       freeSpace: Effect.fn("Host.freeSpace")(function* (target: string) {
-        const folder = yield* nearestExisting(target);
-        return yield* Effect.tryPromise({
-          try: () => NodeFs.statfs(folder),
-          catch: () => "unreadable",
-        }).pipe(
-          Effect.map((stats) => Option.some(stats.bavail * stats.bsize)),
-          Effect.orElseSucceed(() => Option.none()),
+        return yield* freeSpaceAt(target).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
         );
       }),
       portState: trialListen,
