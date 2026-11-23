@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import type { ServerConfigShape } from "../config.ts";
@@ -34,6 +35,7 @@ import {
   engineSession,
   finishRunning,
   flushed,
+  gateSettled,
   holdGate,
   nextTurn,
   providerIs,
@@ -41,8 +43,10 @@ import {
   sendToBot,
   sessionAfter,
   timesSent,
+  turnEnded,
   until,
 } from "../testing/turns.ts";
+import { busyBackoff } from "./model.ts";
 import { Stops } from "./Stops.ts";
 
 // A bot's first turn opens its conversation (`docs/product/experience.md`,
@@ -629,6 +633,56 @@ it.effect("stops a waiting hello and the messages behind it, and sends none of t
     assert.deepStrictEqual(
       yield* sentInOrder(session, [FIRST_RUN, "Book the venue.", "And the caterer."]),
       [],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("cancels a message held behind a hello that ended when the provider changes", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const { providerId } = OTHER_PROVIDER_MODEL;
+    yield* providerIs(providerId, signedOut);
+    const bot = yield* createNewBot("Ana", OTHER_PROVIDER_MODEL);
+    const session = yield* engineSession(bot.id);
+    const message = yield* sendToBot(bot.id, "Book the venue.");
+    yield* flushed(bot.id);
+
+    // The hello runs and ends. The message's start then meets a turn the
+    // engine began on its own, and waits out the busy deadline as pending.
+    yield* providerIs(providerId, { _tag: "ready" });
+    const hello = yield* nextTurn(bot.id);
+    const sending = yield* control.holdNext("dispatch");
+    yield* finishRunning(bot.id);
+    yield* sending.entered;
+    const background = yield* control.startEngineTurn(session);
+    const answer = yield* control.holdNextAnswer("dispatch");
+    yield* sending.release;
+    yield* answer.entered;
+    yield* nextTurn(bot.id, hello);
+    yield* control.finishTurn({
+      sessionId: session,
+      turnId: background,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(bot.id);
+    yield* answer.release;
+    yield* gateSettled(bot.id);
+    yield* flushed(bot.id);
+    assert.deepStrictEqual(yield* delivery(message), { _tag: "pending" });
+
+    // No longer held: the change of provider cancels it, as any queued message.
+    yield* (yield* Bots).update({
+      commandId: command(),
+      botId: bot.id,
+      changes: { model: DEFAULT_MODEL },
+    });
+    yield* deliveryIs(message, "cancelled");
+    const moved = yield* sessionAfter(bot.id, session);
+    yield* TestClock.adjust(busyBackoff(1));
+    yield* flushed(bot.id);
+    assert.deepStrictEqual(
+      [yield* timesSent(session, "Book the venue."), yield* timesSent(moved, "Book the venue.")],
+      [0, 0],
     );
   }).pipe(Effect.provide(TestDomain.layer)),
 );

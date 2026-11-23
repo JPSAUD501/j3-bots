@@ -159,7 +159,7 @@ export const QuestionEntry = Schema.TaggedStruct("question", {
   origin: Schema.Literals(["ask", "engine"]),
   questions: Schema.NonEmptyArray(Question).check(Schema.isMaxLength(MAX_CARD_QUESTIONS)),
   status: Schema.Union([
-    Schema.TaggedStruct("pending", { behindOpening: Schema.optionalKey(Schema.Literal(true)) }),
+    Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("answered", { answers: QuestionAnswers }),
     /** The operator dismissed an `ask` question, which the bot reads as "no". */
     Schema.TaggedStruct("dismissed", {}),
@@ -261,7 +261,7 @@ export const ApprovalEntry = Schema.TaggedStruct("approval", {
    */
   sessionGrant: Schema.NullOr(SessionGrant),
   status: Schema.Union([
-    Schema.TaggedStruct("pending", { behindOpening: Schema.optionalKey(Schema.Literal(true)) }),
+    Schema.TaggedStruct("pending", {}),
     Schema.TaggedStruct("decided", { decision: ApprovalDecision }),
     Schema.TaggedStruct("expired", {}),
     /**

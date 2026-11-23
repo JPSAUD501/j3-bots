@@ -162,18 +162,31 @@ const modeNotices = (botId: BotId) =>
 
 /**
  * The engine stops and starts again, under a policy allowing up to `ceiling`,
- * and the server has taken it in: its turn machinery was released again, so
- * what is sent next goes to the engine as it runs now.
+ * and the server has taken it in: its turn machinery was released again, and
+ * the refusals of permission modes met before were cleared
+ * (`EngineSessions.engineStarted`). So what is sent next goes to the engine as
+ * it runs now, and no refusal from before the restart is read again. A bot
+ * refused anew was asked again, which only a cleared refusal allows.
  */
 const engineRestarts = (ceiling: PermissionMode) =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
     const readiness = yield* Readiness;
+    const sql = yield* SqlClient.SqlClient;
     const before = yield* readiness.generation;
+    const refusedBefore = yield* control.modeRefusals;
     yield* control.setReachable(false);
     yield* control.limitPermissionModes(ceiling);
     yield* control.setReachable(true);
     yield* until(Effect.map(readiness.generation, (now) => now > before));
+    yield* until(
+      Effect.gen(function* () {
+        const [held] = yield* sql<{ readonly n: number }>`
+          SELECT COUNT(*) AS n FROM bots WHERE mode_refused_revision IS NOT NULL
+        `.pipe(Effect.orDie);
+        return held?.n === 0 || (yield* control.modeRefusals) > refusedBefore;
+      }),
+    );
   });
 
 /** Waits for the engine to have refused `count` permission modes in all. */
