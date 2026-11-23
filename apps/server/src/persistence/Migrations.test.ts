@@ -27,6 +27,7 @@ import Migration0010 from "./migrations/0010_push_registrations.ts";
 import Migration0011 from "./migrations/0011_push_deliveries.ts";
 import Migration0012 from "./migrations/0012_room_integrity.ts";
 import Migration0013 from "./migrations/0013_bot_avatar_colors.ts";
+import { updateChannelMigration } from "./migrations/0023_update_channel.ts";
 import { json } from "./columns.ts";
 import { migrate } from "./Migrations.ts";
 import * as Sqlite from "./Sqlite.ts";
@@ -464,5 +465,34 @@ it.effect("keeps a time zone set before devices gave theirs, and lets UTC take t
 
     assert.strictEqual(yield* afterDevice("Europe/Lisbon"), "Europe/Lisbon");
     assert.strictEqual(yield* afterDevice("UTC"), "America/Sao_Paulo");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("starts the update channel as the one of the release that first runs with it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    /** The channel a home gets when `running` is the first release with the setting. */
+    const channelFrom = (running: string) =>
+      Effect.gen(function* () {
+        const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+        return yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* SqliteMigrator.run({
+            loader: SqliteMigrator.fromRecord({ "1_initial": Migration0001 }),
+          });
+          yield* updateChannelMigration(running);
+          const rows = yield* sql`SELECT update_channel FROM settings`;
+          const [row] = yield* Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Struct({ update_channel: Schema.String })),
+          )(rows);
+          return row?.update_channel;
+        }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+      });
+
+    assert.strictEqual(yield* channelFrom("0.3.2-nightly.20261124.1"), "nightly");
+    assert.strictEqual(yield* channelFrom("0.3.1"), "stable");
+    assert.strictEqual(yield* channelFrom("0.3.1-rc.1"), "stable");
   }).pipe(Effect.provide(NodeServices.layer)),
 );
