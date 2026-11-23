@@ -235,6 +235,9 @@ const callHostTool = async (turn: Turn, tool: string, input: Record<string, unkn
   return failed ? Option.none<string>() : Option.some(text);
 };
 
+/** The commands the `steps` script runs, in turn. */
+const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"];
+
 /**
  * Every script the conformance suite uses.
  *
@@ -258,9 +261,6 @@ const callHostTool = async (turn: Turn, tool: string, input: Record<string, unkn
  * `provider-acp-registry/src/server/adapter.ts`), and this agent claims no
  * other agent's name. Only the engine's own delegated task outlives a turn.
  */
-/** The commands the `steps` script runs, in turn. */
-const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"];
-
 const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   plain: async (turn) => {
     await say(turn, "Scripted reply.");

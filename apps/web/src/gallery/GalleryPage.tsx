@@ -915,13 +915,18 @@ const turnStates = (() => {
   const as = (state: Bot["state"]): Bot => ({ ...team.bots.scout, state });
   const running = variants.folds[0];
   return [
-    { name: "thinking", bot: as({ _tag: "thinking", since: ago(7), stalled: false }), fold: null },
+    {
+      name: "thinking",
+      bot: as({ _tag: "thinking", since: ago(7), stalled: false, quietSince: null }),
+      fold: null,
+    },
     {
       name: "working",
       bot: as({
         _tag: "working",
         since: ago(72),
         stalled: false,
+        quietSince: null,
         activity: "pnpm test billing",
         tool: null,
       }),
@@ -934,7 +939,14 @@ const turnStates = (() => {
     },
     {
       name: "stalled",
-      bot: as({ _tag: "working", since: ago(1220), stalled: true, activity: null, tool: null }),
+      bot: as({
+        _tag: "working",
+        since: ago(1220),
+        stalled: true,
+        quietSince: ago(780),
+        activity: null,
+        tool: null,
+      }),
       fold: running?.entry ?? null,
     },
     {
@@ -943,6 +955,7 @@ const turnStates = (() => {
         _tag: "working",
         since: ago(3723),
         stalled: false,
+        quietSince: null,
         activity: null,
         tool: "browser",
       }),
@@ -1843,7 +1856,7 @@ function UsageGallerySection() {
 /** A bot just created: its first turn has started and nothing is in its conversation yet. */
 const speakingFirst = {
   ...team.bots.moss,
-  state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false },
+  state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false, quietSince: null },
   opening: true,
 } as const;
 

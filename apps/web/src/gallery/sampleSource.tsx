@@ -179,7 +179,11 @@ function sampleIntents({ get, update }: Store): ShellIntents {
   /** The bot thinks for a moment, then says `text` in `key`. */
   const replyLater = (botId: BotId, key: string, text: string) => {
     update((s) =>
-      updateBot(s, botId, setState({ _tag: "thinking", since: now(), stalled: false })),
+      updateBot(
+        s,
+        botId,
+        setState({ _tag: "thinking", since: now(), stalled: false, quietSince: null }),
+      ),
     );
     window.setTimeout(() => {
       update((s) =>
@@ -391,7 +395,9 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           primary,
           pinned: false,
           hidden: false,
-          state: canSpeak ? { _tag: "thinking", since: now(), stalled: false } : { _tag: "idle" },
+          state: canSpeak
+            ? { _tag: "thinking", since: now(), stalled: false, quietSince: null }
+            : { _tag: "idle" },
           settingsHeld: false,
           opening: true,
           createdAt: now(),

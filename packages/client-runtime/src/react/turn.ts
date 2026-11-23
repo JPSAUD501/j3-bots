@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, WorkFoldEntry } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { foldOfTurn, liveTurn } from "../presentation/turn.ts";
 import type { PresentationContext } from "../wording/status.ts";
-import { turnAnnouncement } from "../wording/turn.ts";
+import { nextSpoken, turnAnnouncement, type Spoken } from "../wording/turn.ts";
 
 /**
  * Says what `bot` is doing through `announce`, politely, as its conversation
  * changes: each new state and each new line while it works, then the line
- * its turn folds into (`turnAnnouncement`). What it is doing as the
+ * its turn folds into, once, and that what it shows is only what it last
+ * knew while `offline` (`turnAnnouncement`). What it is doing as the
  * conversation opens is not said. `folds` are the conversation's work folds;
  * a null `bot`, a room, says nothing. Mount one per conversation.
  */
 export function useTurnAnnouncement(
   bot: Bot | null,
   folds: ReadonlyArray<WorkFoldEntry>,
+  offline: boolean,
   ctx: PresentationContext,
   announce: (text: string) => void,
 ): void {
@@ -32,16 +34,13 @@ export function useTurnAnnouncement(
     live === null && last !== null
       ? (folds.findLast((fold) => foldOfTurn(fold, last)) ?? null)
       : null;
-  const said = bot === null ? null : turnAnnouncement(bot, ended, ctx);
-  const key = said?.key ?? null;
-  const text = said?.text ?? "";
-  const speak = useEffectEvent(() => {
-    if (text !== "") announce(text);
-  });
-  const spoken = useRef(key);
+  const said = bot === null ? null : turnAnnouncement(bot, ended, offline, ctx);
+  // What it is doing as the conversation opens is taken as said.
+  const spoken = useRef<Spoken>({ key: said?.key ?? null, ending: null });
+  // After every render: a render that changes nothing to say says nothing.
   useEffect(() => {
-    if (spoken.current === key) return;
-    spoken.current = key;
-    speak();
-  }, [key]);
+    const next = nextSpoken(spoken.current, said);
+    spoken.current = next.spoken;
+    if (next.say !== null) announce(next.say);
+  });
 }

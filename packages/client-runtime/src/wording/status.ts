@@ -190,9 +190,13 @@ export function noticeText(
   }
 }
 
-/** A turn the server reports as stalled: how long it has been quiet. */
-function stalledLine(since: DateTime.Utc, ctx: PresentationContext): StatusLine {
-  const duration = shortDuration(millisBetween(since, ctx.now), ctx.i18n);
+/**
+ * A turn the server reports as stalled: how long it has been quiet, from its
+ * last activity, or only that it has been when the server does not say.
+ */
+function stalledLine(quietSince: DateTime.Utc | null, ctx: PresentationContext): StatusLine {
+  if (quietSince === null) return { text: ctx.i18n.t("presence.stalledQuiet"), tone: "waiting" };
+  const duration = shortDuration(millisBetween(quietSince, ctx.now), ctx.i18n);
   return { text: ctx.i18n.t("presence.stalled", { duration }), tone: "waiting" };
 }
 
@@ -248,11 +252,11 @@ export function rosterLine(item: RosterItem, ctx: PresentationContext): StatusLi
         };
       case "thinking":
         return state.stalled
-          ? stalledLine(state.since, ctx)
+          ? stalledLine(state.quietSince, ctx)
           : { text: t("presence.thinking"), tone: "default" };
       case "working":
         return state.stalled
-          ? stalledLine(state.since, ctx)
+          ? stalledLine(state.quietSince, ctx)
           : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
       case "idle":
         if (lastEntry === null && item.bot.opening) {
@@ -308,11 +312,11 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
   switch (state._tag) {
     case "thinking":
       return state.stalled
-        ? stalledLine(state.since, ctx)
+        ? stalledLine(state.quietSince, ctx)
         : { text: t("presence.thinking"), tone: "default" };
     case "working":
       return state.stalled
-        ? stalledLine(state.since, ctx)
+        ? stalledLine(state.quietSince, ctx)
         : { text: activityText(state.activity, state.tool, ctx.i18n), tone: "default" };
     case "waiting":
       return { text: t("presence.waiting"), tone: "waiting" };

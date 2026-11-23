@@ -114,10 +114,10 @@ export const springs = {
   slide: spring(2.5, 0.86),
 } as const;
 
-/** Eases for what a spring does not suit: fades, and moves with no end to overshoot. */
 /** The `out` ease's control points, for a platform that takes them as numbers, as Reanimated's `Easing.bezier` does. */
 export const easeOutCurve = [0.2, 0.8, 0.2, 1] as const;
 
+/** Eases for what a spring does not suit: fades, and moves with no end to overshoot. */
 export const eases = {
   /** Fast out, long settle. */
   out: `cubic-bezier(${easeOutCurve.join(", ")})`,

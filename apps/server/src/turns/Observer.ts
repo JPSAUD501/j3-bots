@@ -489,10 +489,14 @@ export const layer = Layer.effect(
             ending: endingOf(turn.outcome_json),
             // Its first step came after the turn ended: it worked for no time of the turn's.
             waitedMs: 0,
+            waitedBeforeMs: 0,
             background: turn.background_pending,
           } as const);
 
-    /** The turn's work fold in the bot's conversation, written with its first step. */
+    /**
+     * The turn's work fold in the bot's conversation, written with its first
+     * step, or as the turn ends when it was stopped or failed before one.
+     */
     const foldOf = Effect.fn("Observer.foldOf")(function* (session: Watched, turn: TurnRow) {
       if (turn.work_fold_entry_id !== null) return turn.work_fold_entry_id;
       const entry = yield* entries.append({
@@ -729,8 +733,17 @@ export const layer = Layer.effect(
             outcome_json = ${yield* encodeOutcome(end.outcome)}
           WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
         `;
-        if (turn.value.work_fold_entry_id !== null) {
-          yield* finishFold(turn.value.work_fold_entry_id, end.outcome, end.at, end.backgroundWork);
+        // A turn stopped or failed before its first step still says how it
+        // ended, in a fold of no steps; one that completed leaves its reply.
+        // A routine run's has none, as its steps have none.
+        const foldId =
+          turn.value.work_fold_entry_id ??
+          ((end.outcome._tag === "interrupted" || end.outcome._tag === "failed") &&
+          session.purpose !== "side"
+            ? yield* foldOf(session, turn.value)
+            : null);
+        if (foldId !== null) {
+          yield* finishFold(foldId, end.outcome, end.at, end.backgroundWork);
         }
         // It handed off to work that goes on after it: a room's Stop finds it
         // by this turn until the engine no longer reports the work.

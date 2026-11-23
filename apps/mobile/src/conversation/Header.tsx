@@ -8,7 +8,7 @@ import { useState } from "react";
 import { AccessibilityInfo, Alert, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
 import { RoomAvatar } from "../components/avatar/BotAvatar.tsx";
-import { LiveBotAvatar } from "../components/avatar/mood.tsx";
+import { LiveBotAvatar, useOffline } from "../components/avatar/mood.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";
 import { SwapText } from "../components/SwapText.tsx";
@@ -61,7 +61,8 @@ export function ConversationHeader({
   const ground = pressed ? "muted" : "background";
 
   // Each change of state and each new line is said once, then how the turn ended; not the first.
-  useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, ctx, announce);
+  const offline = useOffline();
+  useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
 
   const confirmRoomStop = () =>
     Alert.alert(t("room.stop.title", { name }), t("room.stop.body", { name }), [

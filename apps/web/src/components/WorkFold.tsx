@@ -88,22 +88,31 @@ export function WorkFold({ fold, live, steps, onOpenChange, defaultOpen = false 
   const hasSteps = fold !== null && fold.stepCount > 0;
   return (
     <Collapsible.Root
-      open={open && fold !== null}
+      open={open && hasSteps}
       onOpenChange={setOpen}
       className="mt-3 max-w-(--layout-card-width) self-start data-live:w-full"
       {...(live === null ? {} : { "data-live": "" })}
     >
       {live !== null ? (
         <LiveLine turn={live} hasSteps={hasSteps} />
+      ) : fold !== null && !hasSteps ? (
+        // A turn stopped or failed before its first step: how it ended, with nothing to open.
+        <p
+          className={cn(
+            "flex min-h-8 items-center text-xs",
+            folding && "arrive-pop origin-left",
+            endTone(fold),
+          )}
+        >
+          {workFoldTitle(fold, ctx)}
+        </p>
       ) : fold !== null ? (
         <Collapsible.Trigger
           className={cn(
-            "pressable group -ms-2 flex items-center gap-1.5 rounded-md px-2 text-xs hover:bg-muted hover:text-foreground",
+            "pressable group -ms-2 flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs hover:bg-muted hover:text-foreground",
             touchTarget,
             folding && "arrive-pop origin-left",
-            fold.status._tag === "finished" && fold.status.ending === "failed"
-              ? "text-blocked"
-              : "text-muted-foreground",
+            endTone(fold),
           )}
         >
           <ChevronRightIcon
@@ -113,16 +122,12 @@ export function WorkFold({ fold, live, steps, onOpenChange, defaultOpen = false 
           {/* A fold whose turn this client no longer sees running carries the quiet live mark. */}
           {fold.status._tag === "running" && <LiveMark />}
           <span>{workFoldTitle(fold, ctx)}</span>
-          {fold.stepCount > 0 && (
-            // The dot is its own item, so the line's gap stands on both sides of it.
-            <>
-              <span className="text-muted-foreground">·</span>
-              <span className="text-muted-foreground">{plural("work.steps", fold.stepCount)}</span>
-            </>
-          )}
+          {/* The dot is its own item, so the line's gap stands on both sides of it. */}
+          <span className="text-muted-foreground">·</span>
+          <span className="text-muted-foreground">{plural("work.steps", fold.stepCount)}</span>
         </Collapsible.Trigger>
       ) : null}
-      {fold !== null && (
+      {hasSteps && (
         <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-(--duration-slide) ease-slide data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
           {steps === null ? (
             <p className="py-2 ps-5 text-xs text-muted-foreground">{t("work.loading")}</p>
@@ -155,12 +160,19 @@ export function WorkFold({ fold, live, steps, onOpenChange, defaultOpen = false 
   );
 }
 
+/** A failed turn's line in the blocked tone; any other ending's quiet. */
+const endTone = (fold: WorkFoldEntry) =>
+  fold.status._tag === "finished" && fold.status.ending === "failed"
+    ? "text-blocked"
+    : "text-muted-foreground";
+
 /**
  * The running row: the bot at list size in its state, what it is doing now,
  * swapping as it moves to a new step, and the turn's clock, counted from the
  * turn's start on the server. Once there are steps, a chevron opens them.
- * Assistive technology reads the line and the time so far, not each tick;
- * the conversation's header says each new line aloud.
+ * Assistive technology reads the line and the time so far in minutes, not
+ * each tick, nor the visible line a second time; out of touch, only the line.
+ * The conversation's header says each new line aloud.
  */
 function LiveLine({ turn, hasSteps }: { readonly turn: TurnBot; readonly hasSteps: boolean }) {
   const ctx = usePresentation();
@@ -175,8 +187,10 @@ function LiveLine({ turn, hasSteps }: { readonly turn: TurnBot; readonly hasStep
     <div className="flex min-h-8 items-center gap-2.5 text-xs">
       <LiveBotAvatar bot={turn.bot} lastEntry={turn.lastEntry} size={24} />
       <span className="min-w-0 flex-1">
-        <SwapText text={line.text} className={toneClass[line.tone]} />
-        {elapsed !== null && <span className="sr-only">{turnLabel(line, elapsed, ctx)}</span>}
+        <span aria-hidden>
+          <SwapText text={line.text} className={toneClass[line.tone]} />
+        </span>
+        <span className="sr-only">{turnLabel(line, offline ? null : elapsed, ctx)}</span>
       </span>
       {elapsed !== null && !offline && (
         <span

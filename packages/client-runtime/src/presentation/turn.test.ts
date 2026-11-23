@@ -6,7 +6,12 @@ import { buildTimeline, type TimelineItem } from "./timeline.ts";
 import { liveTurn, turnClock, turnElapsed, withLiveTurn } from "./turn.ts";
 
 const started = "2026-11-20T14:00:00Z";
-const scout = bot("Scout", { _tag: "thinking", since: at(started), stalled: false });
+const scout = bot("Scout", {
+  _tag: "thinking",
+  since: at(started),
+  stalled: false,
+  quietSince: null,
+});
 const asScout = { _tag: "bot", botId: scout.id } as const;
 
 const fold = (
@@ -31,6 +36,7 @@ const finished = (createdAt?: string) =>
       finishedAt: at("2026-11-20T14:01:12Z"),
       ending: "completed",
       waitedMs: 0,
+      waitedBeforeMs: 0,
       background: false,
     },
     started,
@@ -49,6 +55,7 @@ describe("liveTurn", () => {
       _tag: "working",
       since: at(started),
       stalled: true,
+      quietSince: at(started),
       activity: null,
       tool: null,
     });
@@ -93,13 +100,29 @@ describe("withLiveTurn", () => {
     expect(work(rows)).toEqual([expect.objectContaining({ live: true })]);
   });
 
-  it("lets the bot's reply take the place of a turn that did no work", () => {
-    const reply = message("2026-11-20T14:00:30Z", asScout, "All green");
+  it("keeps a turn with no work below what the bot says mid-turn, until the turn ends", () => {
+    const reply = message("2026-11-20T14:00:30Z", asScout, "Looking now");
     const rows = withLiveTurn(buildTimeline([asked, reply]), liveTurn(scout));
-    expect(work(rows)).toEqual([]);
-    // A reply from before the turn does not.
-    const earlier = message("2026-11-20T13:50:00Z", asScout, "Earlier");
-    expect(work(withLiveTurn(buildTimeline([earlier, asked]), liveTurn(scout)))).toHaveLength(1);
+    expect(rows.map((row) => row.kind)).toEqual(["divider", "message", "message", "work"]);
+    expect(work(withLiveTurn(buildTimeline([asked, reply]), null))).toEqual([]);
+  });
+
+  it("shows one row whether the turn's finished fold or the end of its state arrives first", () => {
+    const stopped = fold({
+      _tag: "finished",
+      finishedAt: at("2026-11-20T14:01:04Z"),
+      ending: "interrupted",
+      waitedMs: 0,
+      waitedBeforeMs: 0,
+      background: false,
+    });
+    // The conversation hears the fold while the roster still says the turn runs.
+    const foldFirst = work(withLiveTurn(buildTimeline([asked, stopped]), liveTurn(scout)));
+    // The roster hears the end while the conversation still has the fold running.
+    const stateFirst = work(withLiveTurn(buildTimeline([asked, fold({ _tag: "running" })]), null));
+    expect(foldFirst).toEqual([expect.objectContaining({ fold: stopped, live: false })]);
+    expect(stateFirst).toEqual([expect.objectContaining({ live: false })]);
+    expect(foldFirst[0]?.key).toBe(stateFirst[0]?.key);
   });
 
   it("never takes another turn's fold for this one", () => {

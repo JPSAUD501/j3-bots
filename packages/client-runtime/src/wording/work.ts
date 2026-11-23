@@ -92,8 +92,11 @@ export function workFoldTitle(entry: WorkFoldEntry, ctx: PresentationContext): s
   const { status } = entry;
   if (status._tag === "running") return t("presence.working");
   if (status.background && status.ending === "completed") return t("work.inBackground");
+  // From the turn's start, less every wait since; from an older server, from the fold's first step.
+  const waited =
+    entry.turnStartedAt === null ? status.waitedMs : status.waitedMs + status.waitedBeforeMs;
   const from = entry.turnStartedAt ?? entry.createdAt;
-  const worked = Math.max(0, millisBetween(from, status.finishedAt) - status.waitedMs);
+  const worked = Math.max(0, millisBetween(from, status.finishedAt) - waited);
   const duration = shortDuration(worked, ctx.i18n);
   switch (status.ending) {
     case "completed":

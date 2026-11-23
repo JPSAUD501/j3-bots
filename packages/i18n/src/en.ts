@@ -55,6 +55,7 @@ export const en = {
   "presence.waiting": "Waiting for you",
   "presence.waiting.goTo": "Waiting for you: go to the request",
   "presence.stalled": "No activity for {duration}",
+  "presence.stalledQuiet": "No recent activity",
 
   "failure.usageLimit": "Usage limit reached",
   "failure.usageLimitUntil": "Usage limit reached, resets {when}",
@@ -210,7 +211,7 @@ export const en = {
   "work.stepDone": "Done",
   "work.stepFailed": "Failed",
   "work.live": "{status}, {duration} so far",
-  "work.offline": "Was working when the connection dropped",
+  "work.offline": "Last known: {status}",
   "work.showSteps": "Steps so far",
 
   "tool.backgroundTask.did": "Started a background task",

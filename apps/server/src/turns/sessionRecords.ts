@@ -74,8 +74,10 @@ export const sessionRecords = (
 
   /**
    * The fold ends with its turn, less the time the turn waited on the
-   * operator. `background`: work the turn handed off still runs, and its
-   * steps go on until `backgroundEnded`.
+   * operator: `waitedMs` after the fold was written, as clients that count
+   * from it read it, and `waitedBeforeMs` from the turn's start until then.
+   * `background`: work the turn handed off still runs, and its steps go on
+   * until `backgroundEnded`.
    */
   const finishFold = Effect.fn("sessionRecords.finishFold")(function* (
     entryId: EntryId,
@@ -86,15 +88,23 @@ export const sessionRecords = (
     const found = yield* entries.find(entryId);
     if (Option.isNone(found) || found.value.entry._tag !== "work-fold") return;
     const fold = found.value.entry;
-    const waits = yield* waitRows(entryId);
-    const waitedMs = waitedWithin(
-      waits.map((row) => ({ from: row.opened_at, until: row.closed_at })),
-      fold.turnStartedAt ?? fold.createdAt,
-      at,
-    );
+    const waits = (yield* waitRows(entryId)).map((row) => ({
+      from: row.opened_at,
+      until: row.closed_at,
+    }));
+    const written = DateTime.min(fold.createdAt, at);
+    const waitedBeforeMs =
+      fold.turnStartedAt === null ? 0 : waitedWithin(waits, fold.turnStartedAt, written);
     yield* entries.update({
       ...fold,
-      status: { _tag: "finished", finishedAt: at, ending: endingOf(outcome), waitedMs, background },
+      status: {
+        _tag: "finished",
+        finishedAt: at,
+        ending: endingOf(outcome),
+        waitedMs: waitedWithin(waits, fold.createdAt, at),
+        waitedBeforeMs,
+        background,
+      },
     });
     if (!background) yield* sql.afterCommit(workSteps.finished(entryId));
   }, Effect.orDie);

@@ -22,13 +22,22 @@ import {
 } from "./avatar.ts";
 
 const since = at("2026-11-20T10:00:00Z");
-const working: BotState = { _tag: "working", since, stalled: false, activity: null, tool: null };
+const working: BotState = {
+  _tag: "working",
+  since,
+  stalled: false,
+  quietSince: null,
+  activity: null,
+  tool: null,
+};
 const quiet = { unread: false, speaking: false, offline: false };
 
 describe("avatarMood", () => {
   it("shows a turn under way as thinking or working, and an idle bot as idle", () => {
     expect(avatarMood({ _tag: "idle" }, quiet)).toEqual({ state: "idle", stalled: false });
-    expect(avatarMood({ _tag: "thinking", since, stalled: false }, quiet).state).toBe("thinking");
+    expect(
+      avatarMood({ _tag: "thinking", since, stalled: false, quietSince: null }, quiet).state,
+    ).toBe("thinking");
     expect(avatarMood(working, quiet).state).toBe("working");
   });
 
@@ -63,7 +72,9 @@ describe("avatarMood", () => {
       state: "working",
       stalled: true,
     });
-    expect(avatarMood({ _tag: "thinking", since, stalled: true }, quiet).stalled).toBe(true);
+    expect(
+      avatarMood({ _tag: "thinking", since, stalled: true, quietSince: since }, quiet).stalled,
+    ).toBe(true);
   });
 });
 

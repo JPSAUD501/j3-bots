@@ -233,7 +233,9 @@ export function ConversationView({
     () => (state?.items ?? []).flatMap((entry) => (entry._tag === "work-fold" ? [entry] : [])),
     [state?.items],
   );
-  const turnBot = item._tag === "bot" ? { bot: item.bot, lastEntry: item.lastEntry } : null;
+  const lastEntry = item._tag === "bot" ? item.lastEntry : null;
+  // One object while the bot and its latest entry stay, so the list's rows are not all drawn again.
+  const turnBot = useMemo(() => (bot === null ? null : { bot, lastEntry }), [bot, lastEntry]);
   const inView = useInView();
   const pairs = useReadMark(target, rows, markRead, inView);
   // What arrives at the end settles in, and is counted while the operator reads above it.

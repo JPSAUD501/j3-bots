@@ -55,8 +55,10 @@ export function foldOfTurn(fold: WorkFoldEntry, startedAt: DateTime.Utc): boolea
  * The conversation's rows with the turn under way shown in them, once:
  *
  * - once the turn has done work, its fold is the row, in the fold's place;
- * - before that, a row at the end, where the bot's reply will appear, until
- *   the bot says something in the turn: the reply then takes its place.
+ * - before that, a row at the end, where the bot's reply will appear, below
+ *   anything the bot says meanwhile, until the turn ends;
+ * - once its fold has finished, the turn is over, whatever the bot's state
+ *   still says: the conversation can learn it before the roster does.
  *
  * The row's key comes from the turn's start, as its fold's does, so it is
  * the same element from the turn's first moment to its fold.
@@ -68,28 +70,14 @@ export function withLiveTurn(
   if (turn === null) return rows;
   const key = turnKey(turn.startedAt);
   const index = rows.findLastIndex(
-    (row) =>
-      row.kind === "work" &&
-      row.fold !== null &&
-      row.fold.status._tag === "running" &&
-      foldOfTurn(row.fold, turn.startedAt),
+    (row) => row.kind === "work" && row.fold !== null && foldOfTurn(row.fold, turn.startedAt),
   );
-  if (index !== -1) {
-    return rows.map((row, i) =>
-      i === index && row.kind === "work" ? { ...row, key, live: true } : row,
-    );
+  const found = rows[index];
+  if (found === undefined || found.kind !== "work" || found.fold === null) {
+    return [...rows, { kind: "work", key, fold: null, live: true }];
   }
-  const started = DateTime.toEpochMillis(turn.startedAt);
-  const spoke = rows.some(
-    (row) =>
-      row.kind === "message" &&
-      row.message._tag === "message" &&
-      row.message.author._tag === "bot" &&
-      row.message.author.botId === turn.botId &&
-      DateTime.toEpochMillis(row.message.createdAt) >= started,
-  );
-  if (spoke) return rows;
-  return [...rows, { kind: "work", key, fold: null, live: true }];
+  if (found.fold.status._tag === "finished") return rows;
+  return rows.map((row, i) => (i === index ? { ...found, key, live: true } : row));
 }
 
 /** How long the turn has run at `now`, in ms; never less than none, whatever the device's clock says. */

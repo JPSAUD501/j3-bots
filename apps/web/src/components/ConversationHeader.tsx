@@ -14,7 +14,7 @@ import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
 import { RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
-import { LiveBotAvatar } from "./avatar/mood";
+import { LiveBotAvatar, useOffline } from "./avatar/mood";
 import { toneClass } from "./RosterRow";
 import { SwapText } from "./SwapText";
 import { Kbd } from "./ui/kbd";
@@ -103,7 +103,8 @@ export function ConversationHeader({
   });
 
   // Each change of state and each new line is said once, then how the turn ended; not the first.
-  useTurnAnnouncement(subject._tag === "bot" ? subject.bot : null, folds, ctx, onAnnounce);
+  const offline = useOffline();
+  useTurnAnnouncement(subject._tag === "bot" ? subject.bot : null, folds, offline, ctx, onAnnounce);
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border px-2 @tablet:px-3">

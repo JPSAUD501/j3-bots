@@ -21,11 +21,14 @@ const read = () => {
   for (const listener of seconds.listeners) listener();
 };
 
-/** Ticks only while the app is in front; the state is unknown for a moment at launch. */
+/**
+ * Ticks while the app may be in front: also while its state is still unknown,
+ * as it is for a moment at launch, so a clock read then does not stand still.
+ */
 const follow = (state: typeof AppState.currentState) => {
   if (seconds.timer !== null) clearInterval(seconds.timer);
   seconds.timer = null;
-  if (state !== "active") return;
+  if (state === "background" || state === "inactive") return;
   seconds.timer = setInterval(read, 1000);
   read();
 };

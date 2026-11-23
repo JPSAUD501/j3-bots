@@ -545,6 +545,8 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
     const session = yield* engineSession(bot.id);
     yield* sendToBot(bot.id, "Run the checks.");
     const turnId = yield* nextTurn(bot.id);
+    // The turn thinks for two minutes before its steps.
+    yield* TestClock.adjust(Duration.minutes(2));
     const at = yield* DateTime.now;
     const step = (id: string, label: string, status: "running" | "completed") =>
       control.step({
@@ -575,6 +577,14 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
     yield* until(
       states.of(bot.id).pipe(Effect.map((state) => state._tag === "working" && state.stalled)),
     );
+    // The quiet counts from the turn's last step, not from its start.
+    const quiet = yield* states.of(bot.id);
+    assert.isTrue(
+      quiet._tag === "working" &&
+        quiet.quietSince !== null &&
+        DateTime.Equivalence(quiet.quietSince, at) &&
+        !DateTime.Equivalence(quiet.since, at),
+    );
     yield* control.toolCall({
       sessionId: session,
       turnId,
@@ -583,7 +593,13 @@ it.effect("shows the newest running step of parallel steps, and a stall that act
       recorded: "now",
     });
     yield* until(
-      states.of(bot.id).pipe(Effect.map((state) => state._tag === "working" && !state.stalled)),
+      states
+        .of(bot.id)
+        .pipe(
+          Effect.map(
+            (state) => state._tag === "working" && !state.stalled && state.quietSince === null,
+          ),
+        ),
     );
   }).pipe(Effect.provide(TestDomain.layer)),
 );

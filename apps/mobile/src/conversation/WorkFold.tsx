@@ -95,10 +95,14 @@ export function WorkFold({
         />
       ) : fold !== null ? (
         <AnimatedView {...enteringWhen(folding, settleIn(springs.pop))}>
-          <FoldLine fold={fold} open={open} onToggle={toggle} />
+          {fold.stepCount > 0 ? (
+            <FoldLine fold={fold} open={open} onToggle={toggle} />
+          ) : (
+            <EndLine fold={fold} />
+          )}
         </AnimatedView>
       ) : null}
-      {open && fold !== null && (
+      {open && fold !== null && fold.stepCount > 0 && (
         <AnimatedView entering={opening} exiting={closing}>
           <Steps foldId={fold.id} />
         </AnimatedView>
@@ -116,6 +120,21 @@ function useChevron(open: boolean) {
   return useAnimatedStyle(() => ({ transform: [{ rotate: `${turn.get() * 90}deg` }] }));
 }
 
+const failedOf = (fold: WorkFoldEntry) =>
+  fold.status._tag === "finished" && fold.status.ending === "failed";
+
+/** A turn stopped or failed before its first step: how it ended, with nothing to open. */
+function EndLine({ fold }: { readonly fold: WorkFoldEntry }) {
+  const ctx = usePresentation();
+  return (
+    <View className="min-h-11 justify-center">
+      <Text className={`text-xs ${failedOf(fold) ? "text-blocked" : "text-muted-foreground"}`}>
+        {workFoldTitle(fold, ctx)}
+      </Text>
+    </View>
+  );
+}
+
 /** The folded line: how the turn ended and how long it worked, and how many steps. */
 function FoldLine({
   fold,
@@ -129,15 +148,15 @@ function FoldLine({
   const ctx = usePresentation();
   const { plural } = ctx.i18n;
   const { status } = fold;
-  const failed = status._tag === "finished" && status.ending === "failed";
+  const failed = failedOf(fold);
   const title = workFoldTitle(fold, ctx);
-  const count = fold.stepCount > 0 ? plural("work.steps", fold.stepCount) : null;
+  const count = plural("work.steps", fold.stepCount);
   const chevron = useChevron(open);
   return (
     <PressScale
       accessibilityRole="button"
       accessibilityState={{ expanded: open }}
-      accessibilityLabel={count === null ? title : `${title}, ${count}`}
+      accessibilityLabel={`${title}, ${count}`}
       onPress={onToggle}
       frame={{ alignSelf: "flex-start", marginStart: -8 }}
       className="min-h-11 flex-row items-center gap-1.5 rounded-md px-2"
@@ -154,7 +173,7 @@ function FoldLine({
       <Text className={`text-xs ${failed ? "text-blocked" : "text-muted-foreground"}`}>
         {title}
       </Text>
-      {count !== null && <Text className="text-xs text-muted-foreground">· {count}</Text>}
+      <Text className="text-xs text-muted-foreground">· {count}</Text>
     </PressScale>
   );
 }
@@ -163,8 +182,9 @@ function FoldLine({
  * The running row: the bot at list size in its state, what it is doing now,
  * swapping as it moves to a new step, and the turn's clock, counted from the
  * turn's start on the server. Once there are steps, a chevron opens them.
- * TalkBack reads the line and the time so far, not each tick; the header
- * says each new line aloud.
+ * TalkBack reads the line and the time so far in whole minutes, so its label
+ * changes once a minute, not each tick; out of touch, only the line. The
+ * header says each new line aloud.
  */
 function LiveLine({
   turn,
@@ -190,7 +210,7 @@ function LiveLine({
     <View className="min-h-11 flex-row items-center gap-2.5">
       <View
         accessible
-        accessibilityLabel={elapsed === null ? line.text : turnLabel(line, elapsed, ctx)}
+        accessibilityLabel={turnLabel(line, elapsed, ctx)}
         className="min-w-0 flex-1 flex-row items-center gap-2.5"
       >
         <LiveBotAvatar bot={turn.bot} lastEntry={turn.lastEntry} size={24} />
