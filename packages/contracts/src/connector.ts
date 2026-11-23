@@ -489,13 +489,15 @@ export type OAuthClientInput = typeof OAuthClientInput.Type;
  * program run through `npx` or `uvx` must name its package at an exact
  * version, as `@scope/server@1.2.3` or `server==1.2.3`: the server refuses a
  * tag, a range or no version (`Invalid("command-unpinned")`), so the code
- * that runs is the version the operator saw.
+ * that runs is the version the operator saw. Through `npm exec`, which reads
+ * its own options after the package too, the package must follow `--`.
  */
 export const CommandLine = Schema.Struct({
   command: Program,
   args: Schema.Array(CommandArgument).check(Schema.isMaxLength(64)),
+  // Each variable is one of the connector's fields, of which it has at most 32.
   env: Schema.Array(Schema.Struct({ name: EnvName, value: secretValue(0, 10_000) })).check(
-    Schema.isMaxLength(64),
+    Schema.isMaxLength(32),
   ),
 });
 export type CommandLine = typeof CommandLine.Type;

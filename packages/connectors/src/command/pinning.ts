@@ -12,7 +12,10 @@ import * as Option from "effect/Option";
  *
  * The check reads the launcher's own options. One it does not know may take
  * a value, so which word is the package cannot be told: the command is
- * refused rather than guessed at. Other programs are run as they are given.
+ * refused rather than guessed at. `npx` stops reading its options at the
+ * package, so what follows is the package's own; `npm exec` reads options
+ * after it too, so through `npm exec` the package must follow a `--`. Other
+ * programs are run as they are given.
  */
 
 /** Why a command is refused. */
@@ -105,19 +108,24 @@ const PYTHON_PINNED =
 const programName = (program: string): string =>
   (program.split(/[\\/]/).pop() ?? program).toLowerCase().replace(/\.(cmd|exe|bat|ps1)$/, "");
 
-/** The launcher `program` and `args` run, and the arguments it reads; none for any other program. */
-const launcherOf = (
-  program: string,
-  args: ReadonlyArray<string>,
-): Option.Option<{ readonly launcher: Launcher; readonly args: ReadonlyArray<string> }> => {
+interface Launched {
+  readonly launcher: Launcher;
+  /** The arguments the launcher reads. */
+  readonly args: ReadonlyArray<string>;
+  /** Whether it reads options after the package too, so the package must follow `--`. */
+  readonly optionsAfterPackage: boolean;
+}
+
+/** The launcher `program` and `args` run; none for any other program. */
+const launcherOf = (program: string, args: ReadonlyArray<string>): Option.Option<Launched> => {
   const name = programName(program);
-  if (name === "npx") return Option.some({ launcher: "npm-exec", args });
+  if (name === "npx") return Option.some({ launcher: "npm-exec", args, optionsAfterPackage: false });
   if (name === "npm" && (args[0] === "exec" || args[0] === "x")) {
-    return Option.some({ launcher: "npm-exec", args: args.slice(1) });
+    return Option.some({ launcher: "npm-exec", args: args.slice(1), optionsAfterPackage: true });
   }
-  if (name === "uvx") return Option.some({ launcher: "uv-run", args });
+  if (name === "uvx") return Option.some({ launcher: "uv-run", args, optionsAfterPackage: false });
   if (name === "uv" && args[0] === "tool" && args[1] === "run") {
-    return Option.some({ launcher: "uv-run", args: args.slice(2) });
+    return Option.some({ launcher: "uv-run", args: args.slice(2), optionsAfterPackage: false });
   }
   return Option.none();
 };
@@ -129,10 +137,11 @@ const launcherOf = (
  * that package gives. uv's `--with` adds packages beside it, several to a
  * word, separated by commas.
  */
-const packagesOf = (
-  launcher: Launcher,
-  args: ReadonlyArray<string>,
-): Option.Option<ReadonlyArray<string>> | "shell" => {
+const packagesOf = ({
+  launcher,
+  args,
+  optionsAfterPackage,
+}: Launched): Option.Option<ReadonlyArray<string>> | "shell" => {
   const known = launcher === "npm-exec" ? npm : uv;
   const named: Array<string> = [];
   let firstIsProgram = false;
@@ -141,7 +150,10 @@ const packagesOf = (
   for (let at = 0; at < args.length; at++) {
     const word = args[at] ?? "";
     if (word === "--") return withFirst(args[at + 1]);
-    if (!word.startsWith("-") || word === "-") return withFirst(word);
+    if (!word.startsWith("-") || word === "-") {
+      // Options after it would be the launcher's, and could name another package.
+      return optionsAfterPackage ? Option.none() : withFirst(word);
+    }
     const equals = word.indexOf("=");
     const option = equals < 0 ? word : word.slice(0, equals);
     if (known.shell.has(option)) return "shell";
@@ -173,7 +185,7 @@ export const pinRefusal = (
   const found = launcherOf(program, args);
   if (Option.isNone(found)) return Option.none();
   const { launcher } = found.value;
-  const packages = packagesOf(launcher, found.value.args);
+  const packages = packagesOf(found.value);
   if (packages === "shell") return Option.some("shell");
   if (Option.isNone(packages)) return Option.some("unclear");
   return packages.value.every((spec) => pinned(launcher, spec))

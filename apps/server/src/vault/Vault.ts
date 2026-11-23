@@ -137,10 +137,10 @@ const TotpJson = json(TotpConfig);
 const ConnectorAddressJson = json(ConnectorSecret.fields.address);
 const ConnectorOAuthJson = json(ConnectorSecret.fields.oauth);
 const NamedSecretsJson = json(Schema.Array(NamedSecret));
-const ArgsJson = json(ConnectorSecret.fields.args);
+const CommandJson = json(ConnectorSecret.fields.command);
 
 /** The fields a connector's record seals, one value each. */
-const CONNECTOR_FIELDS = ["address", "oauth", "headers", "args", "env"] as const;
+const CONNECTOR_FIELDS = ["address", "oauth", "headers", "command", "env"] as const;
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const bytesOf = (text: string) => Buffer.from(text, "base64");
@@ -943,10 +943,10 @@ export const layer = Layer.effect(
             "headers",
             Schema.decodeEffect(NamedSecretsJson)(yield* opened("headers")),
           );
-          const args = yield* readBack(
+          const command = yield* readBack(
             recordId,
-            "args",
-            Schema.decodeEffect(ArgsJson)(yield* opened("args")),
+            "command",
+            Schema.decodeEffect(CommandJson)(yield* opened("command")),
           );
           const env = yield* readBack(
             recordId,
@@ -958,7 +958,7 @@ export const layer = Layer.effect(
             address,
             oauth,
             headers,
-            args,
+            command,
             env,
           });
         }),
@@ -972,13 +972,13 @@ export const layer = Layer.effect(
           const address = yield* Schema.encodeEffect(ConnectorAddressJson)(secret.address);
           const oauth = yield* Schema.encodeEffect(ConnectorOAuthJson)(secret.oauth);
           const headers = yield* Schema.encodeEffect(NamedSecretsJson)(secret.headers);
-          const args = yield* Schema.encodeEffect(ArgsJson)(secret.args);
+          const command = yield* Schema.encodeEffect(CommandJson)(secret.command);
           const env = yield* Schema.encodeEffect(NamedSecretsJson)(secret.env);
           const rows = [
             yield* sealedRow(key, recordId, "address", utf8(address)),
             yield* sealedRow(key, recordId, "oauth", utf8(oauth)),
             yield* sealedRow(key, recordId, "headers", utf8(headers)),
-            yield* sealedRow(key, recordId, "args", utf8(args)),
+            yield* sealedRow(key, recordId, "command", utf8(command)),
             yield* sealedRow(key, recordId, "env", utf8(env)),
           ];
           const now = timeText(yield* DateTime.now);

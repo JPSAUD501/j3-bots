@@ -123,7 +123,9 @@ export const startProcess = (
       try {
         child = NodeChildProcess.spawn(launched.command, [...launched.args], {
           cwd: input.cwd,
-          env: input.environment,
+          // Node adds its own NODE_V8_COVERAGE to a child's environment unless the environment
+          // names it: so it is named, and left out unless the command was given it.
+          env: { NODE_V8_COVERAGE: undefined, ...input.environment },
           stdio: ["pipe", "pipe", "ignore"],
           detached: input.platform !== "win32",
           windowsHide: true,

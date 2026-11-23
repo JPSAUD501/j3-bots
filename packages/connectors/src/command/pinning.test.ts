@@ -16,6 +16,7 @@ describe("pinRefusal", () => {
       "npx --package=@scope/tools@0.4.0-beta.1 tools-cli --port 3",
       "npx -p tools@1.0.0 -p helper@2.0.0 tools",
       "npm exec -- server@1.0.0 --flag",
+      "npm exec --package=tools@1.0.0 -- tools-cli --port 3",
       "C:\\Program Files\\nodejs\\npx.cmd -y server@1.0.0",
       "uvx mcp-server-fetch==2025.4.7",
       "uvx --from mcp-server-git==0.6.2 mcp-server-git --repository /srv/repo",
@@ -33,7 +34,7 @@ describe("pinRefusal", () => {
       "npx server-memory@^1.2.3",
       "npx -p tools tools-cli",
       "npx -p tools@1.0.0 -p helper tools",
-      "npm x server@next",
+      "npm x -- server@next",
       "npx github:someone/server",
       "npx ./server",
       "uvx mcp-server-fetch",
@@ -50,6 +51,9 @@ describe("pinRefusal", () => {
     assert.strictEqual(refusal("npx --unknown-option value server@1.0.0"), "unclear");
     assert.strictEqual(refusal("npx -y"), "unclear");
     assert.strictEqual(refusal("uvx --index"), "unclear");
+    // npm exec reads `--package` after the package too, so it must follow `--`.
+    assert.strictEqual(refusal("npm exec server@1.0.0 --package=other"), "unclear");
+    assert.strictEqual(refusal("npm x server@1.0.0"), "unclear");
     assert.strictEqual(refusal("npx -c tools@1.0.0"), "shell");
     assert.strictEqual(refusal("npm exec --call=anything"), "shell");
   });

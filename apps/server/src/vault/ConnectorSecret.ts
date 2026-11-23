@@ -58,8 +58,11 @@ export type NamedSecret = typeof NamedSecret.Type;
  * What a connector needs to reach its server, every value redacted. `oauth`
  * is null for a connector that signs in with no OAuth; its `tokens` are null
  * while a client is registered and no sign-in has finished. `headers` go on
- * each request to a remote server; `args` are a started server's arguments,
- * which can carry a key, and `env` its environment.
+ * each request to a remote server. `command` is a started server's command
+ * line, null for any other: its program and its arguments, which can carry a
+ * key; `env` is its environment. The process starts from this record alone,
+ * which one write replaces whole, so a start never mixes a command line with
+ * another's environment.
  */
 export const ConnectorSecret = Schema.Struct({
   connectorId: ConnectorId,
@@ -71,7 +74,7 @@ export const ConnectorSecret = Schema.Struct({
   address: Schema.NullOr(Secret),
   oauth: Schema.NullOr(Schema.Struct({ client: OAuthClient, tokens: Schema.NullOr(OAuthTokens) })),
   headers: Schema.Array(NamedSecret),
-  args: Schema.Array(Secret),
+  command: Schema.NullOr(Schema.Struct({ program: Schema.String, args: Schema.Array(Secret) })),
   env: Schema.Array(NamedSecret),
 });
 export type ConnectorSecret = typeof ConnectorSecret.Type;

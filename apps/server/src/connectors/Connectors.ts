@@ -538,7 +538,7 @@ export const layer = Layer.effect(
       const ready = yield* Deferred.make<McpSession, ConnectorGone>();
       const started = yield* openCommandSession({
         platform: commandReach.platform,
-        program: connector.value.transport.program,
+        program: command.program,
         args: command.args,
         variables: command.env,
         serverEnvironment: commandReach.environment,
@@ -1027,7 +1027,7 @@ export const layer = Layer.effect(
         address: source.url,
         oauth: null,
         headers: headers.map((header) => ({ name: header.name, value: header.value })),
-        args: [],
+        command: null,
         env: [],
       });
       const now = yield* DateTime.now;
@@ -1098,7 +1098,7 @@ export const layer = Layer.effect(
         address: null,
         oauth: null,
         headers: [],
-        args: source.args,
+        command: { program: source.command, args: source.args },
         env: source.env.map((variable) => ({ name: variable.name, value: variable.value })),
       });
       const now = yield* DateTime.now;
@@ -1218,9 +1218,10 @@ export const layer = Layer.effect(
       yield* checkCommand(command);
       const secret = yield* vault.connectorSecrets.get(vaultIdOf(connector.id));
       if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
+      // The whole command line is replaced in one write, so no start mixes the old one with the new.
       yield* vault.connectorSecrets.put({
         ...secret.value,
-        args: command.args,
+        command: { program: command.command, args: command.args },
         env: command.env.map((variable) => ({ name: variable.name, value: variable.value })),
       });
       const fields = envFieldsOf(command);

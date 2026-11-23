@@ -79,8 +79,12 @@ export const windowsCommandWord = (word: string): string => {
   return `${quoted}${"\\".repeat(backslashes * 2)}"`;
 };
 
-/** `value` as a PowerShell string literal, which reads nothing in it but its quotes. */
-export const powerShellLiteral = (value: string) => `'${value.replaceAll("'", "''")}'`;
+/**
+ * `value` as a PowerShell string literal, which reads nothing in it but its
+ * quotes. PowerShell takes the typographic single quotes (‘ ’ ‚ ‛) for `'`
+ * too, so each of them is doubled as well.
+ */
+export const powerShellLiteral = (value: string) => `'${value.replace(/['‘’‚‛]/g, "$&$&")}'`;
 
 /**
  * A program in Windows' own `System32`, by its full path: the search path,

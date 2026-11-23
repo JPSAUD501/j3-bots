@@ -4,7 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
-import { CommandFailed, type ConnectorFailure, ResponseTooLarge } from "../errors.ts";
+import { CommandFailed, type ConnectorFailure, NotMcp, ResponseTooLarge } from "../errors.ts";
 import {
   type McpSession,
   request,
@@ -15,7 +15,7 @@ import {
 } from "../session.ts";
 import { type CommandVariable, commandEnvironment } from "./environment.ts";
 import { startProcess } from "./process.ts";
-import { resolveProgram } from "./program.ts";
+import { interpreterReads, resolveProgram } from "./program.ts";
 import { ProcessTransport } from "./transport.ts";
 
 /**
@@ -77,10 +77,15 @@ export const openCommandSession = (
       environment,
       cwd: options.cwd,
     });
+    const args = options.args.map(Redacted.value);
+    if (interpreterReads(options.platform, executable, args)) {
+      yield* Effect.logWarning("A command's arguments would be read by Windows' command interpreter");
+      return yield* new CommandFailed({ reason: "exited" });
+    }
     const running = yield* startProcess({
       platform: options.platform,
       executable,
-      args: options.args.map(Redacted.value),
+      args,
       environment,
       cwd: options.cwd,
     });
@@ -104,14 +109,17 @@ export const openCommandSession = (
     );
     /**
      * A failure as the process explains it: one that came because it ended
-     * is its ending, and one because a message was too long is that.
+     * is its ending, and one because a message was too long is that. One
+     * that does not read what it is sent is not speaking MCP.
      */
     const explained = <A>(effect: Effect.Effect<A, ConnectorFailure>) =>
       effect.pipe(
         Effect.mapError((failure): ConnectorFailure =>
           transport.tooLarge
             ? new ResponseTooLarge({ limit: MAX_MESSAGE_BYTES })
-            : ended || failure._tag === "Unreachable"
+            : transport.stalled
+              ? new NotMcp()
+              : ended || failure._tag === "Unreachable"
               ? new CommandFailed({ reason: "exited" })
               : failure,
         ),

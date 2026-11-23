@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- The folder a coverage variable would name.
+import * as NodeOs from "node:os";
+import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -12,6 +15,16 @@ describe("openCommandSession", () => {
     "speaks MCP with the process, which gets only the allowed environment and the operator's",
     () =>
       Effect.gen(function* () {
+        // Node hands this variable of its own to every child unless told otherwise.
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            process.env["NODE_V8_COVERAGE"] = NodePath.join(NodeOs.tmpdir(), "j3-coverage");
+          }),
+          () =>
+            Effect.sync(() => {
+              delete process.env["NODE_V8_COVERAGE"];
+            }),
+        );
         const { session } = yield* openCommandSession({
           ...fixtureOptions(["--tool", "extra"]),
           onToolsChanged: Effect.void,

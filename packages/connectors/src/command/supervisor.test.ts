@@ -4,7 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
-import type { ConnectorFailure } from "../errors.ts";
+import { CommandFailed, type ConnectorFailure } from "../errors.ts";
 import { alive, answerOf, eventually, fixtureOptions } from "../testing/stdioFixture.ts";
 import { openCommandSession } from "./session.ts";
 import { makeSupervisor, type SupervisorOptions } from "./supervisor.ts";
@@ -100,25 +100,62 @@ describe("the command connectors' supervisor", () => {
   );
 
   it.live(
-    "stops the process with everything it started",
+    "stops the process with everything it started, at once though it is in use",
     () =>
       Effect.gen(function* () {
         const { supervisor, failures } = yield* supervised();
-        const { pid, child } = yield* Effect.scoped(
+        yield* Effect.scoped(
           Effect.gen(function* () {
             const session = yield* supervisor.use("notes");
-            return {
-              pid: Number(yield* answerOf(session, "whoami")),
-              child: Number(yield* answerOf(session, "spawn")),
-            };
+            const pid = Number(yield* answerOf(session, "whoami"));
+            const child = Number(yield* answerOf(session, "spawn"));
+            assert.isTrue(alive(child));
+            yield* supervisor.stop("notes");
+            assert.isFalse(alive(pid));
+            yield* eventually(Effect.sync(() => !alive(child)));
+            // The use still held has nothing left to talk to.
+            yield* Effect.flip(answerOf(session, "whoami"));
           }),
         );
-        assert.isTrue(alive(child));
-        yield* supervisor.stop("notes");
-        yield* eventually(Effect.sync(() => !alive(pid) && !alive(child)));
         // A stop asked for is not a crash.
         assert.deepStrictEqual(yield* Ref.get(failures), []);
         assert.deepStrictEqual(yield* supervisor.running, []);
+      }).pipe(Effect.scoped),
+    SLOW,
+  );
+
+  it.live(
+    "starts a process that failed to start again, by itself, after a pause",
+    () =>
+      Effect.gen(function* () {
+        const attempts = yield* Ref.make(0);
+        const failures = yield* Ref.make<ReadonlyArray<ConnectorFailure>>([]);
+        const supervisor = yield* makeSupervisor<string>({
+          start: () =>
+            Ref.updateAndGet(attempts, (n) => n + 1).pipe(
+              Effect.flatMap((attempt) =>
+                attempt < 3
+                  ? Effect.fail(new CommandFailed({ reason: "exited" }))
+                  : openCommandSession({ ...fixtureOptions(), onToolsChanged: Effect.void }),
+              ),
+            ),
+          onFailure: (_key, failure) => Ref.update(failures, (all) => [...all, failure]),
+          idle: Duration.minutes(1),
+          capacity: 2,
+          backoff: {
+            initial: Duration.millis(50),
+            max: Duration.millis(200),
+            stable: Duration.seconds(30),
+          },
+          restarts: 3,
+        });
+        yield* Effect.flip(Effect.scoped(supervisor.use("notes")));
+        yield* eventually(
+          Effect.map(supervisor.running, (running) => running.includes("notes")),
+        );
+        assert.strictEqual(yield* Ref.get(attempts), 3);
+        // The second attempt was the supervisor's own, so its failure is told; the first was the use's.
+        assert.strictEqual((yield* Ref.get(failures)).length, 1);
       }).pipe(Effect.scoped),
     SLOW,
   );

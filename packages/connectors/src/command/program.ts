@@ -53,6 +53,24 @@ const candidates = (
 };
 
 /**
+ * Whether Windows would hand `executable` with `args` to its command
+ * interpreter, which reads its own syntax in the arguments: a batch file,
+ * such as the `npx.cmd` npm installs, is run through `cmd.exe`, whatever
+ * quoting the arguments were given. An argument with a character it treats
+ * as more than text (a quote, `%` and `!` expansion, `^` escapes, `&` `|` `<`
+ * `>` and parentheses, a control character) could run something the
+ * operator never saw, so such a start is refused.
+ */
+export const interpreterReads = (
+  platform: NodeJS.Platform,
+  executable: string,
+  args: ReadonlyArray<string>,
+): boolean =>
+  platform === "win32" &&
+  /\.(bat|cmd)$/i.test(executable) &&
+  args.some((arg) => /["%!^&|<>()]/.test(arg) || [...arg].some((c) => c.charCodeAt(0) < 0x20));
+
+/**
  * The full path of `program` on `platform`, run from `cwd` with
  * `environment`, or `CommandFailed("not-found")`.
  */

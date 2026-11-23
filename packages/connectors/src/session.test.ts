@@ -15,6 +15,7 @@ import {
   DEFAULT_SESSION_LIMITS,
   openSession,
   type SessionLimits,
+  scrubberOf,
 } from "./session.ts";
 import { type FakeOptions, fakeMcpServer } from "./testing/fakeMcpServer.ts";
 
@@ -325,4 +326,13 @@ describe("openSession", () => {
       );
     }).pipe(Effect.scoped),
   );
+});
+
+describe("scrubberOf", () => {
+  it("finds a value as given and as a JSON string holds it", () => {
+    const secret = 'pa"ss\\word-42';
+    const scrub = scrubberOf([secret]);
+    assert.strictEqual(scrub(`token ${secret}`), "token [redacted]");
+    assert.strictEqual(scrub(JSON.stringify({ token: secret })), '{"token":"[redacted]"}');
+  });
 });

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { windowsCommandWord, windowsCommandWords } from "./windows.ts";
+import { powerShellLiteral, windowsCommandWord, windowsCommandWords } from "./windows.ts";
 
 describe("windowsCommandWords", () => {
   it("splits as the C runtime does: quotes group, and backslashes count only before a quote", () => {
@@ -42,5 +42,12 @@ describe("windowsCommandWord", () => {
     assert.deepStrictEqual(windowsCommandWords(words.map(windowsCommandWord).join(" ")), words);
     // A word with nothing to quote is left as it is.
     assert.strictEqual(windowsCommandWord(String.raw`C:\J3\t3.exe`), String.raw`C:\J3\t3.exe`);
+  });
+});
+
+describe("powerShellLiteral", () => {
+  it("doubles every quote PowerShell ends a literal with, typographic ones too", () => {
+    assert.strictEqual(powerShellLiteral("it's"), "'it''s'");
+    assert.strictEqual(powerShellLiteral("a‘b’c‚d‛e"), "'a‘‘b’’c‚‚d‛‛e'");
   });
 });

@@ -3,11 +3,12 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FiberMap from "effect/FiberMap";
 import * as RcMap from "effect/RcMap";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
 import { CommandFailed, type ConnectorFailure } from "../errors.ts";
 import type { McpSession } from "../session.ts";
 import type { CommandSession } from "./session.ts";
@@ -19,12 +20,16 @@ import type { CommandSession } from "./session.ts";
  * - **Lazy**: a process starts when its connector is first used, never ahead.
  * - **Shared**: one process per connector serves every bot that uses it.
  * - **Idle stop**: it stops once no one has used it for `idle`.
- * - **Restart with backoff**: one that ends by itself is started again, by
- *   itself, after a pause that doubles from `backoff.initial` to
- *   `backoff.max` while it keeps ending or failing to start, and starts over
- *   once a run lasted `backoff.stable`. Past `restarts` in a row it is left
- *   stopped until its next use. A use during the pause waits it out. A stop
- *   asked for ends a restart under way and the pause with it.
+ * - **Restart with backoff**: one that ends by itself, or fails to start, is
+ *   started again, by itself, after a pause that doubles from
+ *   `backoff.initial` to `backoff.max` while it keeps ending or failing to
+ *   start, and starts over once a run lasted `backoff.stable`. Past
+ *   `restarts` in a row it is left stopped until its next use. A use during
+ *   the pause waits it out. A stop asked for ends a restart under way and the
+ *   pause with it.
+ * - **Stop at once**: a stop asked for ends the process even while it is in
+ *   use, so one started with what the operator since changed does not run on
+ *   until its last call ends; the calls under way fail.
  * - **Capped**: at most `capacity` run at once. A start past it stops the
  *   process unused the longest, if one is idle; when every one is in use, the
  *   start fails with `ExceededCapacityError`.
@@ -34,7 +39,7 @@ export interface SupervisorOptions<K extends string> {
   /** Starts the key's process and opens its session; the scope's close stops it. */
   readonly start: (key: K) => Effect.Effect<CommandSession, ConnectorFailure, Scope.Scope>;
   /**
-   * A process ended by itself (`CommandFailed("exited")`), or its restart
+   * A process ended by itself (`CommandFailed("exited")`), or a restart
    * failed. A start a use asked for that failed is that use's to hear of.
    */
   readonly onFailure: (key: K, failure: ConnectorFailure) => Effect.Effect<void>;
@@ -55,8 +60,8 @@ export interface Supervisor<K extends string> {
     key: K,
   ) => Effect.Effect<McpSession, ConnectorFailure | Cause.ExceededCapacityError, Scope.Scope>;
   /**
-   * Stops the key's process: at once if no one uses it, else once its last
-   * use ends. The next use starts another, with no pause.
+   * Stops the key's process at once, and waits for it to end; the calls
+   * under way with it fail. The next use starts another, with no pause.
    */
   readonly stop: (key: K) => Effect.Effect<void>;
   /** The keys whose process runs, or starts. */
@@ -86,6 +91,11 @@ export const makeSupervisor = <K extends string>(
     const generations = yield* Ref.make<ReadonlyMap<K, number>>(new Map());
     /** The restarts under way, which a stop ends. */
     const restarting = yield* FiberMap.make<K>();
+    /**
+     * The scope each key's process runs in, a child of its entry's: a stop
+     * closes it at once, where the entry's closes only once no one holds it.
+     */
+    const lives = yield* Ref.make<ReadonlyMap<K, Scope.Closeable>>(new Map());
 
     const initial = Duration.toMillis(options.backoff.initial);
     const max = Duration.toMillis(options.backoff.max);
@@ -134,14 +144,28 @@ export const makeSupervisor = <K extends string>(
         return [next, new Map(all).set(key, next)];
       });
       const startedAt = yield* Clock.currentTimeMillis;
-      const command = yield* options.start(key).pipe(Effect.tapError(() => failed(key, startedAt)));
+      const life = yield* Scope.fork(yield* Effect.scope);
+      yield* Ref.update(lives, (all) => new Map(all).set(key, life));
+      yield* Scope.addFinalizer(
+        life,
+        Ref.update(lives, (all) => {
+          if (all.get(key) !== life) return all;
+          const rest = new Map(all);
+          rest.delete(key);
+          return rest;
+        }),
+      );
+      const command = yield* options
+        .start(key)
+        .pipe(Scope.provide(life), Effect.tapError(() => failed(key, startedAt)));
       yield* Effect.logInfo("A command connector's process started.").pipe(
         Effect.annotateLogs({ connector: key }),
       );
       // Added after the start, so it runs before the process is stopped: an end the
       // supervisor asked for is not a crash.
       const stopping = yield* Ref.make(false);
-      yield* Effect.addFinalizer(() =>
+      yield* Scope.addFinalizer(
+        life,
         Ref.set(stopping, true).pipe(
           Effect.andThen(
             Effect.logInfo("A command connector's process stopped.").pipe(
@@ -181,8 +205,17 @@ export const makeSupervisor = <K extends string>(
 
     const acquire = (key: K) =>
       RcMap.get(processes, key).pipe(
-        // A start that failed is not kept: the next use tries again, after its pause.
-        Effect.tapError(() => RcMap.invalidate(processes, key)),
+        // A start that failed is not kept: the next use tries again, after its pause, as does
+        // the supervisor by itself unless a restart is already under way.
+        Effect.tapError((failure) =>
+          RcMap.invalidate(processes, key).pipe(
+            Effect.andThen(
+              Cause.isExceededCapacityError(failure)
+                ? Effect.void
+                : FiberMap.run(restarting, key, restart(key), { onlyIfMissing: true }),
+            ),
+          ),
+        ),
       );
 
     const use = Effect.fn("Supervisor.use")(function* (key: K) {
@@ -216,6 +249,8 @@ export const makeSupervisor = <K extends string>(
         rest.delete(key);
         return rest;
       });
+      const life = (yield* Ref.get(lives)).get(key);
+      if (life !== undefined) yield* Scope.close(life, Exit.void);
       yield* RcMap.invalidate(processes, key);
     });
 

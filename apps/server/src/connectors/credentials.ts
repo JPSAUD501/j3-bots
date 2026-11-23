@@ -63,17 +63,23 @@ export const addressOf = (
   });
 
 /**
- * A command connector's arguments and environment, from the vault, as its
- * process is started with them.
+ * A command connector's command line and environment, as its process is
+ * started with them: from its vault record alone, which one write replaces
+ * whole, never from the program the connector's row shows.
  */
 export const commandOf = (
   vault: typeof Vault.Service,
   connector: StoredConnector,
-): Effect.Effect<Pick<ConnectorSecret, "args" | "env">, CredentialsUnavailable> =>
+): Effect.Effect<
+  NonNullable<ConnectorSecret["command"]> & Pick<ConnectorSecret, "env">,
+  CredentialsUnavailable
+> =>
   Effect.gen(function* () {
     const secret = yield* secretOf(vault, connector);
-    if (Option.isNone(secret)) return yield* new AuthFailing({ reason: "secret-unusable" });
-    return { args: secret.value.args, env: secret.value.env };
+    if (Option.isNone(secret) || secret.value.command === null) {
+      return yield* new AuthFailing({ reason: "secret-unusable" });
+    }
+    return { ...secret.value.command, env: secret.value.env };
   });
 
 /**

@@ -16,7 +16,9 @@ import {
  *
  * A line that is not a JSON-RPC message, as a server that logs to its
  * output writes, is skipped. A message longer than `maxMessageBytes` ends
- * the connection: every request waiting on it fails.
+ * the connection: every request waiting on it fails. So does a process that
+ * leaves more than `maxMessageBytes` of what was sent it unread, rather than
+ * the server holding all it sends.
  */
 export class ProcessTransport implements Transport {
   onclose?: (() => void) | undefined;
@@ -25,16 +27,20 @@ export class ProcessTransport implements Transport {
 
   /** The connection ended because one message was longer than allowed. */
   tooLarge = false;
+  /** The connection ended because the process left too much of its input unread. */
+  stalled = false;
 
   readonly #input: NodeStream.Writable;
   readonly #output: NodeStream.Readable;
   readonly #buffer: ReadBuffer;
+  readonly #maxUnread: number;
   #closed = false;
 
   constructor(input: NodeStream.Writable, output: NodeStream.Readable, maxMessageBytes: number) {
     this.#input = input;
     this.#output = output;
     this.#buffer = new ReadBuffer({ maxBufferSize: maxMessageBytes });
+    this.#maxUnread = maxMessageBytes;
   }
 
   readonly #onData = (chunk: Buffer) => {
@@ -71,6 +77,11 @@ export class ProcessTransport implements Transport {
 
   send(message: JSONRPCMessage): Promise<void> {
     if (this.#closed) return Promise.reject(new Error("The process's input is closed."));
+    if (this.#input.writableLength > this.#maxUnread) {
+      this.stalled = true;
+      void this.close();
+      return Promise.reject(new Error("The process is not reading its input."));
+    }
     return new Promise((resolve, reject) => {
       this.#input.write(serializeMessage(message), (error) => {
         if (error === null || error === undefined) resolve();

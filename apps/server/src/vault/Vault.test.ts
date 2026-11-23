@@ -79,7 +79,7 @@ const connectorSecret: ConnectorSecret = {
     },
   },
   headers: [{ name: "X-Api-Key", value: Redacted.make("header-value") }],
-  args: [],
+  command: null,
   env: [],
 };
 

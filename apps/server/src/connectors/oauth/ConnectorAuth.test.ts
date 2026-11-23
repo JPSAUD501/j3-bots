@@ -78,7 +78,7 @@ const run = <A, E>(
       address: Redacted.make(MCP_URL),
       oauth: null,
       headers: [],
-      args: [],
+      command: null,
       env: [],
     });
     return yield* use;

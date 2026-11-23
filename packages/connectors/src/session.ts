@@ -375,12 +375,13 @@ const sentValues = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string>
 /**
  * Replaces, in a server's text, every exact one of `values`, should the
  * server echo one: the credentials a request was sent with, the address'
- * path and query, a command's environment. Best effort: a value shorter than
- * {@link MIN_SCRUBBED}, or one the server changed (encoded, split, cased), is
- * not found.
+ * path and query, a command's environment. Each is also found as a JSON
+ * string holds it, since a structured answer is read as JSON. Best effort: a
+ * value shorter than {@link MIN_SCRUBBED}, or one the server changed
+ * otherwise (encoded, split, cased), is not found.
  */
 export const scrubberOf = (values: ReadonlyArray<string>): ((text: string) => string) => {
-  const secrets = [...new Set(values)]
+  const secrets = [...new Set(values.flatMap((value) => [value, JSON.stringify(value).slice(1, -1)]))]
     .filter((value) => value.length >= MIN_SCRUBBED)
     // The longest first, so a value that holds another is taken whole.
     .toSorted((a, b) => b.length - a.length);
