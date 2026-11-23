@@ -93,6 +93,7 @@ export {
   type RoutineRuns,
   type Save,
   type SaveResult,
+  type TemplateDraft,
 } from "./stores/Details.ts";
 export { Devices, type PairingOffer, type RevokeResult } from "./stores/Devices.ts";
 export {

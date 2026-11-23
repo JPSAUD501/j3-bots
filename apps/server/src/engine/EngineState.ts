@@ -71,7 +71,6 @@ export const defaultModelIn = (status: EngineStatus): Option.Option<ModelChoice>
   return Option.fromNullishOr(best?.model);
 };
 
-
 /**
  * The engine's latest status, kept current, for the decisions that read it
  * once rather than follow it: the default model of a new bot (`defaultModelIn`)

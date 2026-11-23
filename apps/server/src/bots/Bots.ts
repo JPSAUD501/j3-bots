@@ -34,11 +34,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
-import {
-  defaultModelIn,
-  EngineState,
-  providerReady,
-} from "../engine/EngineState.ts";
+import { defaultModelIn, EngineState, providerReady } from "../engine/EngineState.ts";
 import { Ids } from "../Ids.ts";
 import { WORKSPACE_ENTRIES } from "../home/entries.ts";
 import { Layout } from "../Layout.ts";

@@ -4,6 +4,7 @@ import type {
   Bot,
   BotFile,
   BotId,
+  BotTemplate,
   MemoryDocument,
   MemoryFile,
   MemoryPath,
@@ -57,6 +58,16 @@ export interface BotDraft {
   readonly model?: ModelChoice;
   readonly permissionMode?: PermissionMode;
   readonly primary?: boolean;
+}
+
+/**
+ * A bot to create from a template the operator has seen, with the model and
+ * permission mode the preview showed (`templateStart`) or the operator picked.
+ */
+export interface TemplateDraft {
+  readonly template: BotTemplate;
+  readonly model?: ModelChoice;
+  readonly permissionMode?: PermissionMode;
 }
 
 /** What `updateBot` changes. Fields left out keep their value. */
@@ -177,6 +188,9 @@ export class Details extends Context.Service<
     /** Lets go of a failed write the operator gave up on. One under way stays. */
     readonly dismissMemorySave: (scope: MemoryScope, path: MemoryPath) => void;
     readonly createBot: (draft: BotDraft) => Effect.Effect<IntentResult<Bot>>;
+    /** The bot as a template, read from the server when asked: it is never kept. */
+    readonly botTemplate: (botId: BotId) => Effect.Effect<IntentResult<BotTemplate>>;
+    readonly createBotFromTemplate: (draft: TemplateDraft) => Effect.Effect<IntentResult<Bot>>;
     /** Changes a bot's profile, model or permission mode. The roster shows the result. */
     readonly updateBot: (botId: BotId, changes: BotChanges) => Effect.Effect<SaveResult<Bot>>;
     /**
@@ -418,6 +432,21 @@ export const layer = Layer.effect(
         .pipe(Effect.exit, Effect.map(intentResult));
     });
 
+    const botTemplate = Effect.fn("Details.botTemplate")(function* (botId: BotId) {
+      return yield* connection
+        .call((client) => client["bot.template"]({ botId }))
+        .pipe(Effect.exit, Effect.map(intentResult));
+    });
+
+    const createBotFromTemplate = Effect.fn("Details.createBotFromTemplate")(function* (
+      draft: TemplateDraft,
+    ) {
+      const commandId = yield* actions.commandId;
+      return yield* connection
+        .call((client) => client["bot.createFromTemplate"]({ commandId, ...draft }))
+        .pipe(Effect.exit, Effect.map(intentResult));
+    });
+
     const freshStart = Effect.fn("Details.freshStart")(function* (botId: BotId) {
       const commandId = yield* actions.commandId;
       return yield* actions.run(
@@ -473,6 +502,8 @@ export const layer = Layer.effect(
       routineRuns: routineRuns.acquire,
       setRoutineEnabled,
       createBot,
+      botTemplate,
+      createBotFromTemplate,
       updateBot,
       botSaves,
       dismissBotSave: (botId) => dismissFailed(botSaves, botId),

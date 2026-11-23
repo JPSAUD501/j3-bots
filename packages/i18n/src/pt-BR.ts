@@ -866,6 +866,57 @@ const sentences = {
   "newBot.body": "Dê um nome a ele. Ele vai perguntar para que você o quer, uma pergunta por vez.",
   "newBot.cancel": "Cancelar",
 
+  "roster.newFromTemplate": "Criar a partir de um modelo",
+  "details.shareTemplate": "Compartilhar como modelo…",
+
+  "template.share.title": "Compartilhar {name} como modelo",
+  "template.share.body":
+    "Quem tiver este arquivo pode criar um bot que faz o que {name} faz. A memória, a conversa e os arquivos ficam aqui.",
+  "template.share.download": "Baixar arquivo",
+  "template.share.copy": "Copiar",
+  "template.share.copied": "Copiado para a área de transferência.",
+  "template.share.copyFailed": "Não foi possível copiar o modelo. Baixe o arquivo.",
+  "template.share.send": "Compartilhar",
+  "template.share.sendFailed": "Não foi possível compartilhar o modelo. Tente de novo.",
+  "template.share.loading": "Preparando o modelo…",
+  "template.share.failed": "Não foi possível preparar o modelo. Tente de novo.",
+  "template.share.retry": "Tentar de novo",
+  "template.close": "Fechar",
+  "template.create.title": "Novo bot a partir de um modelo",
+  "template.create.body":
+    "Isto é tudo o que {name} vai ser e fazer. Nada é criado até você tocar em Criar.",
+  "template.create.untrusted":
+    "Este arquivo veio de fora do J3 Bots. O que ele diz chega só ao bot novo, nunca aos seus outros bots, à sua memória ou aos seus arquivos.",
+  "template.create.submit": "Criar {name}",
+  "template.create.creating": "Criando…",
+  "template.create.cancel": "Cancelar",
+  "template.create.failed": "O bot não foi criado. Tente de novo.",
+  "template.create.schedule":
+    "Uma rotina deste modelo tem um horário que o J3 Bots não consegue seguir, então nada foi criado.",
+  "template.create.noModel": "Conecte um provedor antes de criar um bot.",
+  "template.create.offline": "Criar um bot exige conexão com o servidor.",
+  "template.pick": "Escolher um arquivo de modelo",
+  "template.drop": "Solte para criar um bot a partir deste modelo",
+  "template.read.tooLarge": "Este arquivo é grande demais para ser um modelo.",
+  "template.read.newer":
+    "Este modelo foi feito por um J3 Bots mais novo. Atualize este para criar um bot a partir dele.",
+  "template.read.invalid": "Este arquivo não é um modelo do J3 Bots, ou está danificado.",
+  "template.read.unreadable": "Não foi possível ler este arquivo.",
+  "template.job": "Função",
+  "template.job.empty": "Nenhuma função escrita.",
+  "template.skills": "Habilidades",
+  "template.skills.none": "Nenhuma habilidade.",
+  "template.routines": "Rotinas",
+  "template.routines.none": "Nenhuma rotina.",
+  "template.routines.paused": "Cada uma começa pausada. Você liga nos detalhes de {name}.",
+  "template.model": "Roda em",
+  "template.model.replaced": "{model} não está neste servidor, então {name} roda em {replacement}.",
+  "template.permission": "Modo de permissão",
+  "template.permission.capped":
+    "O modelo pede {mode}. Um bot criado de um modelo começa com no máximo o modo de sempre, a não ser que você escolha outro.",
+  "template.leftOut":
+    "Fora do arquivo: memória, conversa, arquivos, contas conectadas e tudo o mais desta máquina.",
+
   "details.loading": "Carregando…",
   "details.deleteFailed": "O bot não foi excluído. Tente de novo.",
   "memory.close": "Fechar",

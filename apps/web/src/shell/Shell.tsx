@@ -360,6 +360,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       selected={selected}
       rowLink={navigation.rowLink}
       onNewBot={intents.newBot}
+      onNewFromTemplate={intents.newBotFromTemplate}
       onNewRoom={intents.newRoom}
       sections={data.sections}
       intents={rosterIntents(intents, navigation)}
@@ -559,6 +560,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               openMemoryFile: (path) => intents.openMemoryFile(bot.id, path),
               freshStart: () => intents.freshStart(bot.id, bot.profile.name),
               deleteBot: () => intents.deleteBot(bot.id),
+              shareTemplate: () => intents.shareBotTemplate(bot.id),
               ...(editProfile ? { editProfile: () => editProfile(bot.id) } : {}),
             }}
           />

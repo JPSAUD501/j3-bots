@@ -50,10 +50,7 @@ export const SkillName = Schema.String.check(
 /** A skill as a template carries it: its name and its `SKILL.md`, the one file of its folder that travels. */
 export const TemplateSkill = Schema.Struct({
   name: SkillName,
-  text: Schema.String.check(
-    Schema.isMinLength(1),
-    Schema.isMaxLength(TEMPLATE_LIMITS.skillText),
-  ),
+  text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(TEMPLATE_LIMITS.skillText)),
 });
 export type TemplateSkill = typeof TemplateSkill.Type;
 

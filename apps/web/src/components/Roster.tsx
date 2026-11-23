@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { RosterItem, RosterItemKey, Section, SectionId } from "@j3-bots/contracts";
-import { BotIcon, PlusIcon, SearchIcon, SearchXIcon, UsersIcon, XIcon } from "lucide-react";
+import {
+  BotIcon,
+  FileInputIcon,
+  PlusIcon,
+  SearchIcon,
+  SearchXIcon,
+  UsersIcon,
+  XIcon,
+} from "lucide-react";
 import {
   useRef,
   useState,
@@ -113,6 +121,7 @@ interface RosterProps {
   /** The link a row navigates with, such as a router link to its conversation. */
   readonly rowLink: (item: RosterItem) => ReactElement;
   readonly onNewBot: () => void;
+  readonly onNewFromTemplate: () => void;
   readonly onNewRoom: () => void;
   readonly intents: RosterIntents;
   /** The sections folded on this device: the shell's, since its keys skip what they hide. */
@@ -137,6 +146,7 @@ export function Roster({
   selected,
   rowLink,
   onNewBot,
+  onNewFromTemplate,
   onNewRoom,
   intents,
   folded,
@@ -300,6 +310,9 @@ export function Roster({
           <MenuPopup side="bottom" align="end">
             <MenuItem onClick={onNewBot} icon={<BotIcon />}>
               {t("roster.newBot")}
+            </MenuItem>
+            <MenuItem onClick={onNewFromTemplate} icon={<FileInputIcon />}>
+              {t("roster.newFromTemplate")}
             </MenuItem>
             {/* A room needs two bots: with fewer, the row says so and makes a bot instead. */}
             {bots.size >= ROOM_MEMBERS.min ? (

@@ -103,10 +103,7 @@ export type EngineStatus = typeof EngineStatus.Type;
  * unless the provider is known to take Auto. The engine's reviewer exists on
  * Claude Code and Codex; **Assumed** for any other harness.
  */
-export const defaultPermissionMode = (
-  status: EngineStatus,
-  model: ModelChoice,
-): PermissionMode => {
+export const defaultPermissionMode = (status: EngineStatus, model: ModelChoice): PermissionMode => {
   const provider = status.providers.find((candidate) => candidate.id === model.providerId);
   return provider !== undefined && provider.harness !== "other" ? "auto" : "supervised";
 };

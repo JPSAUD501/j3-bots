@@ -32,6 +32,7 @@ import type {
   RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
+import { TEMPLATE_FILE_EXTENSION, TEMPLATE_MEDIA_TYPE } from "@j3-bots/contracts";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   createContext,
@@ -68,6 +69,8 @@ import {
   type OpenedNotification,
   type RoomFormMode,
   roomStopFailed,
+  templateFileName,
+  templateFileText,
 } from "@j3-bots/client-runtime/presentation";
 import type { AppLink } from "@j3-bots/desktop-bridge";
 import { memoryFileName } from "@j3-bots/client-runtime/wording";
@@ -80,6 +83,12 @@ import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import { NewBotDialog } from "../components/NewBotDialog";
 import { RoomDialog } from "../components/RoomDialog";
 import { RoutineRunsDialog } from "../components/RoutineRuns";
+import {
+  NewFromTemplateDialog,
+  ShareTemplateDialog,
+  type TemplateOpened,
+  type TemplateShare,
+} from "../components/TemplateDialogs";
 import { guessDeviceName, Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";
@@ -96,7 +105,8 @@ import {
 } from "./notify";
 import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIcon";
 import { onAppLink } from "./appLinks";
-import { deliverFile, reserveWindow } from "./openFile";
+import { deliverFile, reserveWindow, saveText } from "./openFile";
+import { readTemplate, useTemplateDrop } from "./templateFiles";
 import { updatable, useDesktopUpdate, useReportSaving } from "./appUpdate";
 import {
   useDesktopShortcut,
@@ -458,6 +468,15 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [openFolds, setOpenFolds] = useState<ReadonlySet<EntryId>>(new Set());
   const [steps, setSteps] = useState<ReadonlyMap<EntryId, ReadonlyArray<WorkStep>>>(new Map());
   const [newBot, setNewBot] = useState(false);
+  // The bot being shared as a template, and the template file opened to make a bot from.
+  const [sharing, setSharing] = useState<{
+    readonly botId: BotId;
+    readonly share: TemplateShare;
+  } | null>(null);
+  const [opened, setOpened] = useState<TemplateOpened | null>(null);
+  const templatePicker = useRef<HTMLInputElement>(null);
+  const openTemplate = (file: File) => void readTemplate(file).then(setOpened);
+  useTemplateDrop(openTemplate);
   const [memoryView, setMemoryView] = useState<MemoryView | null>(null);
   const [editingBot, setEditingBot] = useState<BotId | null>(null);
   const [roomForm, setRoomForm] = useState<RoomFormTarget | null>(null);
@@ -992,6 +1011,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
           result._tag === "done" ? { _tag: "done", value: result.value.id } : result,
         ),
     newBot: () => setNewBot(true),
+    newBotFromTemplate: () => templatePicker.current?.click(),
+    shareBotTemplate: (botId) => shareTemplate(botId),
     newRoom: () => setRoomForm({ _tag: "create" }),
     editRoom: (roomId) => setRoomForm({ _tag: "edit", roomId }),
     archiveRoom: (roomId) =>
@@ -1060,6 +1081,25 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     ...(providerSetup === undefined ? {} : { providerSetup }),
   };
 
+  /** Reads the bot as a template for the share sheet, which shows it loading meanwhile. */
+  function shareTemplate(botId: BotId) {
+    const name = bots.find((bot) => bot.id === botId)?.profile.name ?? "";
+    setSharing({ botId, share: { _tag: "loading", name } });
+    void j3.botTemplate(botId).then((result) =>
+      setSharing((current) =>
+        current?.botId !== botId
+          ? current
+          : {
+              botId,
+              share:
+                result._tag === "done"
+                  ? { _tag: "ready", template: result.value }
+                  : { _tag: "failed", name },
+            },
+      ),
+    );
+  }
+
   return (
     <ShellSourceProvider source={{ data, intents }}>
       {children}
@@ -1082,6 +1122,54 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
             void goToBot(result.value);
           })
         }
+      />
+      <ShareTemplateDialog
+        share={sharing?.share ?? null}
+        onRetry={() => {
+          if (sharing !== null) shareTemplate(sharing.botId);
+        }}
+        onDownload={(template) =>
+          saveText(
+            templateFileName(template.profile.name),
+            templateFileText(template),
+            TEMPLATE_MEDIA_TYPE,
+          )
+        }
+        onCopy={(template) =>
+          navigator.clipboard.writeText(templateFileText(template)).then(
+            () => true,
+            () => false,
+          )
+        }
+        onClose={() => setSharing(null)}
+      />
+      <NewFromTemplateDialog
+        opened={opened}
+        engine={data.engine}
+        connected={data.connected}
+        onCreate={(draft) =>
+          j3.createBotFromTemplate(draft).then((result) => {
+            if (result._tag === "done") {
+              setOpened(null);
+              void goToBot(result.value.id);
+              return "done";
+            }
+            return refusedWith(result, "schedule") ? "schedule" : "failed";
+          })
+        }
+        onClose={() => setOpened(null)}
+      />
+      <input
+        ref={templatePicker}
+        type="file"
+        hidden
+        accept={`${TEMPLATE_FILE_EXTENSION},${TEMPLATE_MEDIA_TYPE},application/json`}
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          // Cleared, so picking the same file again opens it again.
+          event.currentTarget.value = "";
+          if (file !== undefined) openTemplate(file);
+        }}
       />
       <RoomDialog
         mode={roomFormMode}

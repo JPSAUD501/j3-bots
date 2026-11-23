@@ -75,8 +75,7 @@ export const layer = Layer.effect(
     const routines = yield* Routines;
 
     /** What is at `location`, links not followed; none when it cannot be read. */
-    const kindOf = (location: string) =>
-      fs.lstat(location).pipe(Effect.option);
+    const kindOf = (location: string) => fs.lstat(location).pipe(Effect.option);
 
     const readSkill = Effect.fnUntraced(function* (folder: string, name: string) {
       const dir = path.join(folder, name);

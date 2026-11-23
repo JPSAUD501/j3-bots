@@ -130,6 +130,17 @@ export { shownSaveProblem } from "./saves.ts";
 export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export {
+  isTemplateFileName,
+  readTemplateFile,
+  templateFileName,
+  templateFileText,
+  templateFileTooLarge,
+  type TemplateModel,
+  type TemplateRead,
+  type TemplateStart,
+  templateStart,
+} from "./template.ts";
+export {
   calendarDaysAgo,
   clockTime,
   formatAt,

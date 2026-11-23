@@ -856,6 +856,57 @@ export const en = {
   "newBot.body": "Give it a name. It will ask what you want it for, one question at a time.",
   "newBot.cancel": "Cancel",
 
+  "roster.newFromTemplate": "New bot from a template",
+  "details.shareTemplate": "Share as template…",
+
+  "template.share.title": "Share {name} as a template",
+  "template.share.body":
+    "Anyone with this file can create a bot that does what {name} does. Its memory, conversation and files stay here.",
+  "template.share.download": "Download file",
+  "template.share.copy": "Copy",
+  "template.share.copied": "Copied to the clipboard.",
+  "template.share.copyFailed": "The template couldn’t be copied. Download the file instead.",
+  "template.share.send": "Share",
+  "template.share.sendFailed": "The template couldn’t be shared. Try again.",
+  "template.share.loading": "Preparing the template…",
+  "template.share.failed": "The template couldn’t be prepared. Try again.",
+  "template.share.retry": "Try again",
+  "template.close": "Close",
+  "template.create.title": "New bot from a template",
+  "template.create.body":
+    "This is everything {name} will be and do. Nothing is created until you choose Create.",
+  "template.create.untrusted":
+    "This file came from outside J3 Bots. What it says reaches only the new bot, never your other bots, your memory or your files.",
+  "template.create.submit": "Create {name}",
+  "template.create.creating": "Creating…",
+  "template.create.cancel": "Cancel",
+  "template.create.failed": "The bot wasn’t created. Try again.",
+  "template.create.schedule":
+    "A routine in this template has a schedule J3 Bots can’t run, so nothing was created.",
+  "template.create.noModel": "Connect a provider before creating a bot.",
+  "template.create.offline": "Creating a bot takes a connection to the server.",
+  "template.pick": "Choose a template file",
+  "template.drop": "Drop to create a bot from this template",
+  "template.read.tooLarge": "This file is too large to be a template.",
+  "template.read.newer":
+    "This template was made by a newer J3 Bots. Update this one to create a bot from it.",
+  "template.read.invalid": "This file isn’t a J3 Bots template, or it’s damaged.",
+  "template.read.unreadable": "This file couldn’t be read.",
+  "template.job": "Job",
+  "template.job.empty": "No job written.",
+  "template.skills": "Skills",
+  "template.skills.none": "No skills.",
+  "template.routines": "Routines",
+  "template.routines.none": "No routines.",
+  "template.routines.paused": "Each one starts paused. You turn it on in {name}’s details.",
+  "template.model": "Runs on",
+  "template.model.replaced": "{model} isn’t on this server, so {name} runs on {replacement}.",
+  "template.permission": "Permission mode",
+  "template.permission.capped":
+    "The template asks for {mode}. A bot from a template starts with no more than the usual mode unless you choose it.",
+  "template.leftOut":
+    "Not in the file: memory, the conversation, files, connected accounts and anything else on this machine.",
+
   "details.loading": "Loading…",
   "details.deleteFailed": "The bot wasn’t deleted. Try again.",
   "memory.close": "Close",

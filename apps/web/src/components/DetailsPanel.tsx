@@ -21,6 +21,7 @@ import {
   NotebookTextIcon,
   PencilIcon,
   RotateCcwIcon,
+  Share2Icon,
   ShieldCheckIcon,
   Trash2Icon,
   WebhookIcon,
@@ -173,6 +174,7 @@ export interface BotDetailsIntents {
   readonly editProfile?: () => void;
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
+  readonly shareTemplate: () => void;
 }
 
 interface BotDetailsProps {
@@ -226,12 +228,18 @@ export function BotDetails({
           </>
         }
         actions={
-          intents.editProfile && (
-            <Button size="sm" onClick={intents.editProfile}>
-              <PencilIcon aria-hidden />
-              {t("details.editProfile", { name })}
+          <>
+            {intents.editProfile && (
+              <Button size="sm" onClick={intents.editProfile}>
+                <PencilIcon aria-hidden />
+                {t("details.editProfile", { name })}
+              </Button>
+            )}
+            <Button size="sm" onClick={intents.shareTemplate}>
+              <Share2Icon aria-hidden />
+              {t("details.shareTemplate")}
             </Button>
-          )
+          </>
         }
       />
 
