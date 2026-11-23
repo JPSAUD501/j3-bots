@@ -7,7 +7,7 @@ import * as Result from "effect/Result";
  * key's Ed25519 signature over the release's `SHA256SUMS`.
  */
 export interface ReleaseKey {
-  /** What names the key where people read about it, such as the year it was made. */
+  /** Its name in `release-keys/`, where each key is kept as `<id>.pem`. */
   readonly id: string;
   /** The key as SubjectPublicKeyInfo PEM, as `openssl pkey -pubout` writes it. */
   readonly pem: string;
@@ -22,12 +22,10 @@ export interface ReleaseKey {
  */
 export const RELEASE_KEYS: ReadonlyArray<ReleaseKey> = [
   {
-    id: "2026",
-    pem: [
-      "-----BEGIN PUBLIC KEY-----",
-      "MCowBQYDK2VwAyEAnL4CWfO6teDA5jgo0VoeOOnrxy5a7R3y0DNeJeCRDfg=",
-      "-----END PUBLIC KEY-----",
-    ].join("\n"),
+    id: "j3-bots-1",
+    pem: `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAnL4CWfO6teDA5jgo0VoeOOnrxy5a7R3y0DNeJeCRDfg=
+-----END PUBLIC KEY-----`,
   },
 ];
 

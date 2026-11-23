@@ -68,6 +68,7 @@ export const UpdateChannel = Schema.Literals(UPDATE_CHANNELS);
 export type UpdateChannel = typeof UpdateChannel.Type;
 
 const VERIFICATION_FAILURES = [
+  "checksums-missing",
   "signature-missing",
   "signature-invalid",
   "checksums-malformed",
@@ -81,11 +82,12 @@ const VERIFICATION_FAILURES = [
  * carries `SHA256SUMS`, the SHA-256 of each file it publishes, and
  * `SHA256SUMS.sig`, an Ed25519 signature over it by the project's release key.
  *
+ * - `checksums-missing`: the release has no `SHA256SUMS`;
  * - `signature-missing`: the release has no `SHA256SUMS.sig`;
  * - `signature-invalid`: the signature is not one, or not the release key's
  *   over these `SHA256SUMS`;
  * - `checksums-malformed`: the signed `SHA256SUMS` has a line that is not a
- *   digest and a name, or names a file twice;
+ *   digest and a name, a blank line, or a file named twice, or is empty;
  * - `wrong-release`: the signed `SHA256SUMS` is another release's, as a
  *   replay of an older one would be;
  * - `entry-missing`: the file is not listed in it;
@@ -198,14 +200,24 @@ const REFUSALS = ["not-available", "busy", "work-running", "unable"] as const;
 export const UpdateRefusal = Schema.Literals(REFUSALS);
 export type UpdateRefusal = typeof UpdateRefusal.Type;
 
-/** The open sets of the status, closed as the server writes them or open as a client reads them. */
-interface Sets {
-  readonly channel: Schema.Top;
-  readonly verification: Schema.Top;
-  readonly check: Schema.Top;
-  readonly inability: Schema.Top;
-  readonly failure: Schema.Top;
-  readonly outcome: Schema.Top;
+/**
+ * The open sets of the status, closed as the server writes them or open as a
+ * client reads them. One type parameter each, so each keeps its own type.
+ */
+interface Sets<
+  Channel extends Schema.Top,
+  Verification extends Schema.Top,
+  Check extends Schema.Top,
+  Inability extends Schema.Top,
+  Failure extends Schema.Top,
+  Outcome extends Schema.Top,
+> {
+  readonly channel: Channel;
+  readonly verification: Verification;
+  readonly check: Check;
+  readonly inability: Inability;
+  readonly failure: Failure;
+  readonly outcome: Outcome;
 }
 
 const STATES = [
@@ -220,7 +232,7 @@ const STATES = [
   "failed",
 ] as const;
 
-const states = <S extends Sets>(sets: S) =>
+const states = <Failure extends Schema.Top>(sets: { readonly failure: Failure }) =>
   [
     /** Nothing is running. */
     Schema.TaggedStruct("idle", {}),
@@ -259,7 +271,18 @@ const UnknownUpdateState = Schema.Struct({ _tag: UnknownLiteral(STATES) }).pipe(
   }),
 );
 
-const statusOf = <S extends Sets>(sets: S, state: Schema.Top) =>
+const statusOf = <
+  Channel extends Schema.Top,
+  Verification extends Schema.Top,
+  Check extends Schema.Top,
+  Inability extends Schema.Top,
+  Failure extends Schema.Top,
+  Outcome extends Schema.Top,
+  State extends Schema.Top,
+>(
+  sets: Sets<Channel, Verification, Check, Inability, Failure, Outcome>,
+  state: State,
+) =>
   Schema.Struct({
     /** `UPDATE_API_VERSION` of the server that answered. */
     api: PositiveInt,

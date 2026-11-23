@@ -27,8 +27,15 @@ export const SIGNATURE_FILE = "SHA256SUMS.sig";
 
 const ED25519_SIGNATURE_BYTES = 64;
 
-/** One line of `sha256sum`'s output: 64 lowercase hex digits, a space, ` ` or `*` (binary mode), the name. */
-const SUMS_LINE = /^([0-9a-f]{64}) [ *]([^/\\]+)$/;
+/**
+ * One line of `sha256sum`'s output: 64 lowercase hex digits, a space, ` ` or
+ * `*` (binary mode), and a name with no folder, no control character and no
+ * space at either end.
+ */
+const SUMS_LINE = /^([0-9a-f]{64}) [ *]([^\s/\\\p{Cc}](?:[^/\\\p{Cc}]*[^\s/\\\p{Cc}])?)$/u;
+
+/** `SHA256SUMS.sig` as the release writes it: the 64 bytes in base64, 88 characters, and maybe one line feed. */
+const SIGNATURE_TEXT = /^([A-Za-z0-9+/]{86}==)\n?$/;
 
 /** Held only by this module: what `VerifiedSums`' constructor asks for. */
 const VERIFIED = Symbol("VerifiedSums");
@@ -56,13 +63,17 @@ export const releaseAnchors = (version: string): ReadonlyArray<string> => [
   `j3-bots-${version}-linux-arm64.tar.gz`,
 ];
 
-/** Each line's digest by name; a failure for a line that is not one, or a name given twice. */
+/**
+ * Each line's digest by name: lines that end with a line feed, the last one
+ * maybe without. A failure for a blank line, a line that is not one, a name
+ * given twice, or no line at all.
+ */
 const parseSums = (
   text: string,
 ): Result.Result<ReadonlyMap<string, string>, VerificationFailure> => {
   const digests = new Map<string, string>();
-  for (const line of text.split("\n")) {
-    if (line === "") continue;
+  const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
+  for (const line of lines) {
     const parsed = SUMS_LINE.exec(line);
     const [digest, name] = [parsed?.[1], parsed?.[2]];
     if (digest === undefined || name === undefined || digests.has(name)) {
@@ -70,14 +81,15 @@ const parseSums = (
     }
     digests.set(name, digest);
   }
-  return Result.succeed(digests);
+  return digests.size === 0 ? Result.fail("checksums-malformed") : Result.succeed(digests);
 };
 
-/** The 64 bytes `SHA256SUMS.sig` holds, base64 and maybe a line break; none when it holds anything else. */
+/** The 64 bytes `SHA256SUMS.sig` holds; `signature-invalid` when it holds anything else. */
 const signatureBytes = (file: Uint8Array): Result.Result<Uint8Array, VerificationFailure> => {
-  const text = new TextDecoder("utf-8", { fatal: false }).decode(file).trim();
+  const encoded = SIGNATURE_TEXT.exec(new TextDecoder("utf-8", { fatal: false }).decode(file))?.[1];
+  if (encoded === undefined) return Result.fail("signature-invalid");
   return Result.flatMap(
-    Result.mapError(Base64.decode(text), (): VerificationFailure => "signature-invalid"),
+    Result.mapError(Base64.decode(encoded), (): VerificationFailure => "signature-invalid"),
     (bytes) =>
       bytes.length === ED25519_SIGNATURE_BYTES
         ? Result.succeed(bytes)

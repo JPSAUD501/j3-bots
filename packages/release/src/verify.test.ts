@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- signs test lists with a key made for the run.
+import * as NodeCrypto from "node:crypto";
 import { assert, describe, it } from "@effect/vitest";
 import * as Result from "effect/Result";
 import { TEST_PUBLIC_KEY, VERIFICATION_CASES } from "../testing/vectors.ts";
@@ -56,5 +58,52 @@ describe("a release's signed checksums", () => {
     assert.isTrue(
       Result.isFailure(rawPublicKey("-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----")),
     );
+  });
+});
+
+describe("a signed list's lines", () => {
+  // A key made for this run, so any bytes can be signed.
+  const key = NodeCrypto.generateKeyPairSync("ed25519");
+  const check = signatureCheck([
+    { id: "run", pem: key.publicKey.export({ type: "spki", format: "pem" }).toString() },
+  ]);
+  const signed = (sums: string, signature = (bytes: Uint8Array) => bytes) =>
+    verifySums({
+      version: "0.3.1",
+      sums: bytes(sums),
+      signature: signature(
+        bytes(`${NodeCrypto.sign(null, bytes(sums), key.privateKey).toString("base64")}\n`),
+      ),
+      check,
+    });
+  const line = (name: string) => `${"a".repeat(64)}  ${name}\n`;
+  const anchor = line("j3-bots-0.3.1-linux-x64.tar.gz");
+
+  it("takes the lines sha256sum writes, the last one with or without its line feed", () => {
+    assert.isTrue(Result.isSuccess(signed(anchor + line("install.sh"))));
+    assert.isTrue(Result.isSuccess(signed((anchor + line("install.sh")).trimEnd())));
+    assert.isTrue(Result.isSuccess(signed(anchor.replace("  ", " *"))));
+  });
+
+  for (const [name, sums] of [
+    ["a blank line", `${anchor}\n${line("install.sh")}`],
+    ["a carriage return", anchor.replace("\n", "\r\n")],
+    ["a space after the name", anchor.replace("\n", " \n")],
+    ["an uppercase digest", anchor.replace("a".repeat(64), "A".repeat(64))],
+    ["a name in a folder", anchor + line("bin/j3-bots")],
+    ["a name given twice", anchor + anchor],
+    ["no line at all", ""],
+  ] as const) {
+    it(`refuses ${name}`, () => {
+      assert.deepStrictEqual(signed(sums), Result.fail("checksums-malformed"));
+    });
+  }
+
+  it("refuses a signature file with anything around the signature", () => {
+    const crlf = (signature: Uint8Array) =>
+      bytes(new TextDecoder().decode(signature).replace("\n", "\r\n"));
+    const twice = (signature: Uint8Array) => bytes(new TextDecoder().decode(signature).repeat(2));
+    assert.deepStrictEqual(signed(anchor, crlf), Result.fail("signature-invalid"));
+    assert.deepStrictEqual(signed(anchor, twice), Result.fail("signature-invalid"));
   });
 });
