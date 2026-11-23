@@ -70,6 +70,31 @@ const NOT_PUBLIC_V6 = blockList(
 
 const GLOBAL_UNICAST_V6 = blockList([["2000::", 3]], "ipv6");
 
+/**
+ * Cloud metadata services, which hand out the machine's credentials. Most
+ * answer at link-local addresses, never allowed anyway; these sit inside a
+ * private network's ranges, or in public space, so an operator's
+ * confirmation must not open them: Alibaba Cloud's (`100.100.100.200`),
+ * Azure's platform endpoint (`168.63.129.16`), and the IPv6 addresses of
+ * AWS (`fd00:ec2::254`, and `fd00:ec2::23` for EKS Pod Identity), Google
+ * Cloud (`fd20:ce::254`), Oracle Cloud (`fd00:c1::a9fe:a9fe`) and Akamai
+ * (`fd00:a9fe:a9fe::1`).
+ */
+const METADATA = (() => {
+  const list = new NodeNet.BlockList();
+  for (const address of ["100.100.100.200", "168.63.129.16"]) list.addAddress(address, "ipv4");
+  for (const address of [
+    "fd00:ec2::254",
+    "fd00:ec2::23",
+    "fd20:ce::254",
+    "fd00:c1::a9fe:a9fe",
+    "fd00:a9fe:a9fe::1",
+  ]) {
+    list.addAddress(address, "ipv6");
+  }
+  return list;
+})();
+
 const LOOPBACK_V4 = blockList([["127.0.0.0", 8]], "ipv4");
 
 /** A home or office network's own ranges: private, carrier NAT, and IPv6 unique-local. */
@@ -112,7 +137,7 @@ const classify = (
 /** Whether `address`, an IP literal, is a public unicast address. Anything else, a name included, is not. */
 export const isPublicAddress = (address: string): boolean => {
   const ip = classify(address);
-  if (ip === null) return false;
+  if (ip === null || METADATA.check(ip.address, ip.family)) return false;
   if (ip.family === "ipv4") return !NOT_PUBLIC_V4.check(ip.address, "ipv4");
   return GLOBAL_UNICAST_V6.check(ip.address, "ipv6") && !NOT_PUBLIC_V6.check(ip.address, "ipv6");
 };
@@ -120,12 +145,12 @@ export const isPublicAddress = (address: string): boolean => {
 /**
  * Whether `address`, an IP literal, is in a private network's own ranges,
  * which an operator may allow for a connector they confirmed is theirs.
- * Loopback, link-local (where cloud metadata services answer) and reserved
- * addresses are not among them.
+ * Loopback, link-local (where most cloud metadata services answer), reserved
+ * and cloud metadata addresses are not among them.
  */
 export const isPrivateNetworkAddress = (address: string): boolean => {
   const ip = classify(address);
-  if (ip === null) return false;
+  if (ip === null || METADATA.check(ip.address, ip.family)) return false;
   return ip.family === "ipv4"
     ? PRIVATE_NETWORK_V4.check(ip.address, "ipv4")
     : PRIVATE_NETWORK_V6.check(ip.address, "ipv6");

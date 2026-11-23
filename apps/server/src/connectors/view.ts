@@ -98,7 +98,8 @@ const signInNeedOf = (
   }
 };
 
-const statusOfConnector = (
+/** The connector's status, as the operator sees it: a bot is offered its tools only while it is connected. */
+export const statusOfConnector = (
   connector: StoredConnector,
   seen: Seen,
   vaultLocked: boolean,

@@ -127,17 +127,20 @@ describe("openSession", () => {
           refusal: { status: 403, challenge },
         });
         const current = yield* Ref.make(TOKEN);
-        const seen = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([]);
+        type Refusal = readonly [Option.Option<string>, string];
+        const seen = yield* Ref.make<ReadonlyArray<Refusal>>([]);
         const credentials: ConnectorCredentials = {
           current: Effect.map(Ref.get(current), bearer),
-          rejected: (wwwAuthenticate) =>
-            Ref.update(seen, (all) => [...all, wwwAuthenticate]).pipe(
-              Effect.andThen(Ref.set(current, RENEWED)),
-            ),
+          rejected: (wwwAuthenticate, sent) =>
+            Ref.update(seen, (all): ReadonlyArray<Refusal> => [
+              ...all,
+              [wwwAuthenticate, Option.match(sent, { onNone: () => "", onSome: Redacted.value })],
+            ]).pipe(Effect.andThen(Ref.set(current, RENEWED))),
         };
         const session = yield* open(fake.url, credentials);
         yield* session.listTools;
-        assert.deepStrictEqual(yield* Ref.get(seen), [Option.some(challenge)]);
+        // The refusal names the token it refused, so one renewed meanwhile is not renewed again.
+        assert.deepStrictEqual(yield* Ref.get(seen), [[Option.some(challenge), TOKEN]]);
       }).pipe(Effect.scoped),
   );
 
@@ -186,6 +189,81 @@ describe("openSession", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "takes out the token a call was sent with, though the store holds another by its answer",
+    () =>
+      Effect.gen(function* () {
+        let token = TOKEN;
+        const fake = yield* fakeMcpServer({
+          tools: [{ name: "whoami" }],
+          call: (_, __, headers) => {
+            // The sign-in renews its token while the call runs.
+            token = RENEWED;
+            return { _tag: "result", text: `you sent ${headers.authorization}` };
+          },
+        });
+        const credentials: ConnectorCredentials = {
+          current: Effect.sync(() => bearer(token)),
+          rejected: () => Effect.fail(new NeedsSignIn()),
+        };
+        const session = yield* open(fake.url, credentials);
+        const answer = yield* session.callTool({ name: "whoami", arguments: {} });
+        assert.strictEqual(answer.text, "you sent Bearer [redacted]");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("takes the connector's secrets and its address' query out of the tools it lists", () =>
+    Effect.gen(function* () {
+      const query = "addr_7e6d5c4b3a291807";
+      const fake = yield* fakeMcpServer({
+        tools: [
+          {
+            name: "search",
+            description: `Searches with ${API_KEY} at ?key=${query}`,
+            inputSchema: {
+              type: "object",
+              properties: { token: { type: "string", default: TOKEN } },
+            },
+          },
+          { name: API_KEY, description: "Named for the key." },
+        ],
+        call: echo,
+      });
+      const session = yield* open(`${fake.url}?key=${query}`, fixed(bearer(TOKEN)));
+      const tools = yield* session.listTools;
+      assert.deepStrictEqual(
+        tools.map((tool) => tool.name),
+        ["search"],
+      );
+      assert.deepStrictEqual(leaks(JSON.stringify(tools), [TOKEN, API_KEY, query]), []);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads a listing page by page, and stops at one past its budget", () =>
+    Effect.gen(function* () {
+      const tools = Array.from({ length: 10 }, (_, n) => ({
+        name: `tool_${n}`,
+        description: "d".repeat(900),
+        inputSchema: { type: "object", description: "s".repeat(4_000) },
+      }));
+      const fake = yield* fakeMcpServer({ tools, call: echo, pageSize: 2 });
+      const pages = () => fake.requests.filter((request) => request.rpc === "tools/list").length;
+
+      const whole = yield* open(fake.url, fixed(bearer(TOKEN)));
+      assert.deepStrictEqual(
+        (yield* whole.listTools).map((tool) => tool.name),
+        tools.map((tool) => tool.name),
+      );
+      assert.strictEqual(pages(), 5);
+
+      // Three tools' worth: the second page passes it, and the third is never asked for.
+      const bounded = yield* open(fake.url, fixed(bearer(TOKEN)), { maxCatalogBytes: 15_000 });
+      const error = yield* Effect.flip(bounded.listTools);
+      assert.strictEqual(error._tag, "ResponseTooLarge");
+      assert.strictEqual(pages(), 7);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stops reading an answer larger than the guard reads", () =>
     Effect.gen(function* () {
       const huge = JSON.stringify({
@@ -202,29 +280,27 @@ describe("openSession", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("gives up on a call that outlasts its deadline", () =>
-    Effect.gen(function* () {
-      const fake = yield* fakeMcpServer({ tools: [], call: () => ({ _tag: "hang" }) });
-      const session = yield* open(fake.url, fixed(bearer(TOKEN)));
-      const call = yield* Effect.forkChild(
-        Effect.flip(session.callTool({ name: "slow", arguments: {} })),
-      );
-      yield* fake.callArrived;
-      yield* TestClock.adjust(DEFAULT_SESSION_LIMITS.callDeadline);
-      const error = yield* Fiber.join(call);
-      assert.strictEqual(error._tag, "TimedOut");
-    }).pipe(Effect.scoped),
-  );
+  it.effect(
+    "ends a call that is stopped or outlasts its deadline, and closes its request at a server that ignores cancellation",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* fakeMcpServer({ tools: [], call: () => ({ _tag: "hang" }) });
+        const session = yield* open(fake.url, fixed(bearer(TOKEN)));
+        const slow = session.callTool({ name: "slow", arguments: {} });
+        for (let round = 1; round <= 3; round++) {
+          const stopped = yield* Effect.forkChild(slow);
+          yield* fake.held(2 * round - 1);
+          yield* Fiber.interrupt(stopped);
 
-  it.effect("tells the server to stop a call that is interrupted", () =>
-    Effect.gen(function* () {
-      const fake = yield* fakeMcpServer({ tools: [], call: () => ({ _tag: "hang" }) });
-      const session = yield* open(fake.url, fixed(bearer(TOKEN)));
-      const call = yield* Effect.forkChild(session.callTool({ name: "slow", arguments: {} }));
-      yield* fake.callArrived;
-      yield* Fiber.interrupt(call);
-      yield* fake.cancelled;
-    }).pipe(Effect.scoped),
+          const late = yield* Effect.forkChild(Effect.flip(slow));
+          yield* fake.held(2 * round);
+          yield* TestClock.adjust(DEFAULT_SESSION_LIMITS.callDeadline);
+          assert.strictEqual((yield* Fiber.join(late))._tag, "TimedOut");
+        }
+        // The server is told, and ignores it; every request it held is closed all the same.
+        yield* fake.cancelled;
+        yield* fake.released;
+      }).pipe(Effect.scoped),
   );
 
   it.effect("hears when the server's tools change", () =>

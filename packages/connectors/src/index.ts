@@ -39,6 +39,7 @@ export {
   UrlRefusal,
   UrlRefused,
   VaultLocked,
+  Withdrawn,
 } from "./errors.ts";
 export {
   checkUrl,

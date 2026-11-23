@@ -3,6 +3,7 @@
 import * as NodeCrypto from "node:crypto";
 import { defuseTags } from "@j3-bots/prompts";
 import * as Schema from "effect/Schema";
+import { codePointsEnd } from "./text.ts";
 
 /**
  * A connector's tool catalog (`docs/architecture/server.md`, "Connectors"):
@@ -59,15 +60,17 @@ export type CatalogTool = typeof CatalogTool.Type;
 const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}]/gu;
 const KEPT_CONTROLS = new Set(["\n", "\t"]);
 
-/** A remote description as a bot reads it: no hidden characters, no J3 Bots tags, at most {@link MAX_DESCRIPTION_CHARACTERS}. */
-const cleanDescription = (text: string): string => {
-  const visible = text.replace(UNSEEN, (char) => (KEPT_CONTROLS.has(char) ? char : ""));
-  return cap(defuseTags(visible.trim()), MAX_DESCRIPTION_CHARACTERS);
-};
+/** Remote text as a model reads it: no hidden characters, and no J3 Bots tags. */
+const cleanText = (text: string): string =>
+  defuseTags(text.replace(UNSEEN, (char) => (KEPT_CONTROLS.has(char) ? char : "")));
+
+/** A remote description as a bot reads it: cleaned, at most {@link MAX_DESCRIPTION_CHARACTERS}. */
+const cleanDescription = (text: string): string =>
+  cap(cleanText(text).trim(), MAX_DESCRIPTION_CHARACTERS);
 
 const cap = (text: string, max: number) => {
-  const characters = Array.from(text);
-  return characters.length <= max ? text : `${characters.slice(0, max - 1).join("")}…`;
+  const end = codePointsEnd(text, max - 1);
+  return end === null || codePointsEnd(text, max) === null ? text : `${text.slice(0, end)}…`;
 };
 
 /** A remote title as the operator reads it: one line, cleaned, at most {@link MAX_TITLE_CHARACTERS}; null when empty. */
@@ -90,35 +93,94 @@ const canonical = (value: Schema.Json): string => {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${canonical(object[key] ?? null)}`).join(",")}}`;
 };
 
+/**
+ * An input schema with every string in it cleaned as a description is, since
+ * a model reads those too; undefined when cleaning would change a key, which
+ * a call names its arguments by.
+ */
+const cleanObject = (
+  object: Schema.JsonObject,
+  clean: (text: string) => string,
+): Schema.JsonObject | undefined => {
+  const out: Record<string, Schema.Json> = {};
+  for (const [key, value] of Object.entries(object)) {
+    if (clean(key) !== key) return undefined;
+    const cleaned = cleanJson(value, clean);
+    if (cleaned === undefined) return undefined;
+    out[key] = cleaned;
+  }
+  return out;
+};
+
+const cleanJson = (
+  value: Schema.Json,
+  clean: (text: string) => string,
+): Schema.Json | undefined => {
+  if (typeof value === "string") return clean(value);
+  if (value === null || typeof value !== "object") return value;
+  if (!isJsonArray(value)) return cleanObject(value, clean);
+  const out: Array<Schema.Json> = [];
+  for (const item of value) {
+    const cleaned = cleanJson(item, clean);
+    if (cleaned === undefined) return undefined;
+    out.push(cleaned);
+  }
+  return out;
+};
+
 const sha256 = (text: string) => NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
 
+export interface CatalogOptions {
+  /** Tools kept from the listing's earlier pages: a name among them is left out. */
+  readonly earlier?: ReadonlyArray<CatalogTool>;
+  /**
+   * Takes values that must not be shown out of remote text (the connector's
+   * own secrets, should its server echo them), before it is cleaned. A tool
+   * whose name or schema keys it would change is left out.
+   */
+  readonly redact?: (text: string) => string;
+}
+
 /**
- * The tools of a listing that J3 Bots can offer, cleaned: a valid name, an
- * object input schema within {@link MAX_SCHEMA_BYTES}, and the first of any
- * repeated name. The rest are left out.
+ * The tools of a listing that J3 Bots can offer, cleaned, after `earlier`: a
+ * valid name, an object input schema within {@link MAX_SCHEMA_BYTES}, and the
+ * first of any repeated name. The rest are left out.
  */
-export const catalogOf = (listed: ReadonlyArray<ListedTool>): ReadonlyArray<CatalogTool> => {
-  const seen = new Set<string>();
-  const tools: Array<CatalogTool> = [];
+export const catalogOf = (
+  listed: ReadonlyArray<ListedTool>,
+  options: CatalogOptions = {},
+): ReadonlyArray<CatalogTool> => {
+  const redact = options.redact ?? ((text: string) => text);
+  const tools: Array<CatalogTool> = [...(options.earlier ?? [])];
+  const seen = new Set(tools.map((tool) => tool.name));
   for (const tool of listed) {
     if (!UPSTREAM_NAME.test(tool.name) || seen.has(tool.name)) continue;
-    if (tool.inputSchema["type"] !== "object") continue;
-    const schema = canonical(tool.inputSchema);
+    if (redact(tool.name) !== tool.name) continue;
+    const inputSchema = cleanObject(tool.inputSchema, (text) => cleanText(redact(text)));
+    if (inputSchema === undefined || inputSchema["type"] !== "object") continue;
+    const schema = canonical(inputSchema);
     if (Buffer.byteLength(schema, "utf8") > MAX_SCHEMA_BYTES) continue;
     seen.add(tool.name);
-    const title = cleanTitle(tool.title);
-    const description = cleanDescription(tool.description ?? "");
+    const title = cleanTitle(tool.title === undefined ? undefined : redact(tool.title));
+    const description = cleanDescription(redact(tool.description ?? ""));
     tools.push({
       name: tool.name,
       title,
       description,
-      inputSchema: tool.inputSchema,
+      inputSchema,
       inputDigest: sha256(schema),
       digest: sha256(`${canonical(title)}\n${canonical(description)}\n${schema}`),
     });
   }
   return tools;
 };
+
+/** About how many bytes a tool takes to keep: what a listing's budget counts. */
+export const toolBytes = (tool: CatalogTool): number =>
+  Buffer.byteLength(
+    `${tool.name}${tool.title ?? ""}${tool.description}${canonical(tool.inputSchema)}`,
+    "utf8",
+  );
 
 /** A change to a connector's tools that waits for the operator. */
 export type HeldChange =

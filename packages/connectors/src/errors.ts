@@ -99,8 +99,18 @@ export class AuthFailing extends Schema.TaggedError<AuthFailing>()("AuthFailing"
   }
 }
 
+/**
+ * The request may no longer be signed: whoever it was for lost the right to
+ * make it (a bot whose grant was taken away, say) before it went out.
+ */
+export class Withdrawn extends Schema.TaggedError<Withdrawn>()("Withdrawn", {}) {
+  override get message(): string {
+    return "A connector request was withdrawn before it was sent.";
+  }
+}
+
 /** Why a connector's credentials can't sign a request. */
-export type CredentialsUnavailable = NeedsSignIn | VaultLocked | AuthFailing;
+export type CredentialsUnavailable = NeedsSignIn | VaultLocked | AuthFailing | Withdrawn;
 
 /** A connector's server took longer than the deadline J3 Bots gives it. */
 export class TimedOut extends Schema.TaggedError<TimedOut>()("TimedOut", {}) {

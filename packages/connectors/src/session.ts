@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- Which effect a fetch from inside the SDK belongs to is known only through node:async_hooks.
+import * as NodeAsyncHooks from "node:async_hooks";
 import {
   type CallToolResult,
   Client,
@@ -14,7 +16,7 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import { ListedTool } from "./catalog.ts";
+import { type CatalogTool, catalogOf, ListedTool, toolBytes } from "./catalog.ts";
 import {
   AuthFailing,
   type ConnectorFailure,
@@ -27,6 +29,7 @@ import {
   Unreachable,
   UrlRefused,
   VaultLocked,
+  Withdrawn,
 } from "./errors.ts";
 import {
   DEFAULT_GUARD,
@@ -35,6 +38,7 @@ import {
   makeGuardedFetch,
   type UrlPolicy,
 } from "./guard.ts";
+import { codePointsEnd } from "./text.ts";
 
 /**
  * One MCP session with a connector's server, over Streamable HTTP, for one
@@ -62,21 +66,28 @@ export interface ConnectorCredentials {
   readonly current: Effect.Effect<CallCredentials, CredentialsUnavailable>;
   /**
    * The server refused the credentials just sent, with this
-   * `WWW-Authenticate`: renew them (a refresh) or fail. The request is sent
-   * once more with what `current` gives next.
+   * `WWW-Authenticate`: renew them (a refresh) or fail. `sent` is the bearer
+   * token that request carried, so a token renewed meanwhile by another
+   * request is not renewed again. The request is sent once more with what
+   * `current` gives next.
    */
   readonly rejected: (
     wwwAuthenticate: Option.Option<string>,
+    sent: Option.Option<Redacted.Redacted<string>>,
   ) => Effect.Effect<void, CredentialsUnavailable>;
 }
 
 export interface SessionLimits {
-  /** How long opening the session, or listing tools, may take. */
+  /** How long opening the session, or listing every page of its tools, may take. */
   readonly listDeadline: Duration.Duration;
   /** How long one tool call may take. */
   readonly callDeadline: Duration.Duration;
   /** The most characters of a tool's answer a bot reads; the rest is cut. */
   readonly maxResultCharacters: number;
+  /** The most a listing's tools may take, in bytes, across its pages, once cleaned: past it, the listing fails. */
+  readonly maxCatalogBytes: number;
+  /** The most pages a listing may take. */
+  readonly maxListPages: number;
   readonly guard: GuardOptions;
 }
 
@@ -84,6 +95,8 @@ export const DEFAULT_SESSION_LIMITS: SessionLimits = {
   listDeadline: Duration.seconds(30),
   callDeadline: Duration.minutes(10),
   maxResultCharacters: 100_000,
+  maxCatalogBytes: 8 * 1024 * 1024,
+  maxListPages: 64,
   guard: DEFAULT_GUARD,
 };
 
@@ -107,7 +120,8 @@ export interface ToolAnswer {
 }
 
 export interface McpSession {
-  readonly listTools: Effect.Effect<ReadonlyArray<ListedTool>, ConnectorFailure>;
+  /** Every tool its server lists, cleaned, with the connector's secrets taken out. */
+  readonly listTools: Effect.Effect<ReadonlyArray<CatalogTool>, ConnectorFailure>;
   /** Interrupting a call aborts its request. */
   readonly callTool: (input: {
     readonly name: string;
@@ -182,23 +196,61 @@ const refusedCredentials = (response: Response): boolean => {
 };
 
 /**
+ * A request one of the session's effects is making, as the fetch the SDK
+ * calls sees it: the effect's signal, which aborts the request itself when
+ * the effect is interrupted or runs out of time, and the credentials each
+ * attempt was signed with, which its answer is scrubbed of.
+ */
+interface InFlight {
+  readonly signal: AbortSignal;
+  readonly sent: Array<CallCredentials>;
+}
+
+const inFlight = new NodeAsyncHooks.AsyncLocalStorage<InFlight>();
+
+/**
  * A fetch that signs each request with the credentials as they are now. When
  * the server refuses them it reports the refusal, which may renew them, and
  * sends the request once more; a second refusal means the operator must sign
  * in again.
+ *
+ * A request one of the session's effects makes is aborted when that effect
+ * is interrupted or runs out of time. One the SDK sends on its own has the
+ * guard's deadline for its answer.
  */
 const signingFetch =
   (guarded: GuardedFetch, credentials: ConnectorCredentials): GuardedFetch =>
   async (input, init) => {
-    const attempt = async () =>
-      guarded(input, { ...init, headers: signed(init?.headers, await run(credentials.current)) });
+    const flight = inFlight.getStore();
+    const own = init?.signal ?? null;
+    const signal =
+      flight === undefined
+        ? own
+        : own === null
+          ? flight.signal
+          : AbortSignal.any([flight.signal, own]);
+    const attempt = async () => {
+      const current = await run(credentials.current);
+      flight?.sent.push(current);
+      const response = await guarded(input, {
+        ...init,
+        signal,
+        headers: signed(init?.headers, current),
+      });
+      return { response, bearer: current.bearer };
+    };
     const first = await attempt();
-    if (!refusedCredentials(first)) return first;
-    await first.body?.cancel();
-    await run(credentials.rejected(Option.fromNullishOr(first.headers.get("www-authenticate"))));
+    if (!refusedCredentials(first.response)) return first.response;
+    await first.response.body?.cancel();
+    await run(
+      credentials.rejected(
+        Option.fromNullishOr(first.response.headers.get("www-authenticate")),
+        first.bearer,
+      ),
+    );
     const second = await attempt();
-    if (!refusedCredentials(second)) return second;
-    await second.body?.cancel();
+    if (!refusedCredentials(second.response)) return second.response;
+    await second.response.body?.cancel();
     throw new NeedsSignIn();
   };
 
@@ -213,6 +265,7 @@ const isConnectorFailure = Schema.is(
     TimedOut,
     ServerError,
     NotMcp,
+    Withdrawn,
   ]),
 );
 
@@ -229,19 +282,38 @@ const failureOf = (error: unknown): ConnectorFailure => {
   return new NotMcp();
 };
 
-/** One request to the server, with a deadline; interrupting it aborts the request. */
+/** What a request answered, and the credentials it was sent with. */
+interface Sent<A> {
+  readonly value: A;
+  readonly sent: ReadonlyArray<CallCredentials>;
+}
+
+/** One request to the server, with a deadline; interrupting it, or running out of time, aborts it. */
 const request = <A>(
   deadline: Duration.Duration,
   send: (signal: AbortSignal) => Promise<A>,
-): Effect.Effect<A, ConnectorFailure> =>
-  Effect.tryPromise({ try: send, catch: failureOf }).pipe(
-    Effect.timeoutOrElse({ duration: deadline, orElse: () => Effect.fail(new TimedOut()) }),
-  );
+): Effect.Effect<Sent<A>, ConnectorFailure> =>
+  Effect.tryPromise({
+    try: (signal) => {
+      const flight: InFlight = { signal, sent: [] };
+      return inFlight
+        .run(flight, () => send(signal))
+        .then((value) => ({ value, sent: flight.sent }));
+    },
+    catch: failureOf,
+  }).pipe(Effect.timeoutOrElse({ duration: deadline, orElse: () => Effect.fail(new TimedOut()) }));
 
 /** Beyond any deadline here, so the SDK's own timer never fires first. */
 const sdkTimeout = (deadline: Duration.Duration) => Duration.toMillis(deadline) + 60_000;
 
 const decodeListed = Schema.decodeUnknownResult(ListedTool);
+
+/** What decodes as a listed tool, from one page. */
+const listedOf = (tools: ReadonlyArray<unknown>): ReadonlyArray<ListedTool> =>
+  tools.flatMap((tool) => {
+    const decoded = decodeListed(tool);
+    return Result.isSuccess(decoded) ? [decoded.success] : [];
+  });
 
 /** A tool's answer as text: binary parts are named, not inlined. */
 const answerText = (result: CallToolResult): string => {
@@ -268,25 +340,52 @@ const answerText = (result: CallToolResult): string => {
   return parts.join("\n\n");
 };
 
-/** Secrets shorter than this are not searched for: they would match ordinary text. */
+/** Values shorter than this are not searched for: they would match ordinary text. */
 const MIN_SCRUBBED = 8;
 
-/** The text with every value of the connector's credentials replaced, in case the server echoed one. */
-const scrub = (text: string, credentials: CallCredentials): string => {
+/**
+ * Values of the connector's address that may be a secret: the whole of its
+ * path and query, and each query value, as given and as decoded.
+ */
+const addressValues = (url: URL): ReadonlyArray<string> => [
+  `${url.pathname}${url.search}`,
+  url.search.slice(1),
+  ...url.search
+    .slice(1)
+    .split("&")
+    .flatMap((pair) => pair.split("=").slice(1)),
+  ...url.searchParams.values(),
+];
+
+/**
+ * Replaces, in remote text, every exact value of the credentials a request
+ * was sent with and of the address' path and query, should the server echo
+ * one. Best effort: a value shorter than {@link MIN_SCRUBBED}, or one the
+ * server changed (encoded, split, cased), is not found.
+ */
+const scrubberOf = (
+  sent: ReadonlyArray<CallCredentials>,
+  address: ReadonlyArray<string>,
+): ((text: string) => string) => {
   const secrets = [
-    ...Option.toArray(credentials.bearer),
-    ...credentials.headers.map((header) => header.value),
+    ...new Set([
+      ...sent.flatMap((credentials) =>
+        [...Option.toArray(credentials.bearer), ...credentials.headers.map((h) => h.value)].map(
+          Redacted.value,
+        ),
+      ),
+      ...address,
+    ]),
   ]
-    .map(Redacted.value)
-    .filter((value) => value.length >= MIN_SCRUBBED);
-  return secrets.reduce((out, secret) => out.replaceAll(secret, "[redacted]"), text);
+    .filter((value) => value.length >= MIN_SCRUBBED)
+    // The longest first, so a value that holds another is taken whole.
+    .toSorted((a, b) => b.length - a.length);
+  return (text) => secrets.reduce((out, secret) => out.replaceAll(secret, "[redacted]"), text);
 };
 
 const cut = (text: string, max: number): { readonly text: string; readonly cut: boolean } => {
-  const characters = Array.from(text);
-  return characters.length <= max
-    ? { text, cut: false }
-    : { text: characters.slice(0, max).join(""), cut: true };
+  const end = codePointsEnd(text, max);
+  return end === null ? { text, cut: false } : { text: text.slice(0, end), cut: true };
 };
 
 /**
@@ -335,28 +434,55 @@ export const openSession = (
         ).pipe(Effect.timeoutOrElse({ duration: Duration.seconds(5), orElse: () => Effect.void })),
     );
 
-    const listTools = request(limits.listDeadline, (signal) =>
-      client.listTools(undefined, { signal, timeout: sdkTimeout(limits.listDeadline) }),
-    ).pipe(
-      Effect.map(({ tools }) =>
-        tools.flatMap((tool) => {
-          const decoded = decodeListed(tool);
-          return Result.isSuccess(decoded) ? [decoded.success] : [];
-        }),
-      ),
+    const address = addressValues(options.url);
+
+    /**
+     * Every page of the server's tools, each cleaned as it comes so a listing
+     * holds no more than {@link SessionLimits.maxCatalogBytes} of them: a
+     * server that lists more, or more than `maxListPages` pages, fails it.
+     */
+    const listTools = Effect.gen(function* () {
+      if (client.getServerCapabilities()?.tools === undefined) return [];
+      const tooLarge = new ResponseTooLarge({ limit: limits.maxCatalogBytes });
+      let tools: ReadonlyArray<CatalogTool> = [];
+      let bytes = 0;
+      let cursor: string | undefined;
+      for (let pages = 0; pages < limits.maxListPages; pages++) {
+        const page = cursor === undefined ? {} : { params: { cursor } };
+        const answer = yield* request(limits.listDeadline, (signal) =>
+          client.request(
+            { method: "tools/list", ...page },
+            { signal, timeout: sdkTimeout(limits.listDeadline) },
+          ),
+        );
+        const before = tools.length;
+        tools = catalogOf(listedOf(answer.value.tools), {
+          earlier: tools,
+          redact: scrubberOf(answer.sent, address),
+        });
+        for (const tool of tools.slice(before)) bytes += toolBytes(tool);
+        if (bytes > limits.maxCatalogBytes) return yield* tooLarge;
+        cursor = answer.value.nextCursor;
+        if (cursor === undefined) return tools;
+      }
+      return yield* tooLarge;
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: limits.listDeadline,
+        orElse: () => Effect.fail(new TimedOut()),
+      }),
     );
 
     const callTool: McpSession["callTool"] = Effect.fn("McpSession.callTool")(function* (input) {
-      const result = yield* request(limits.callDeadline, (signal) =>
+      const answer = yield* request(limits.callDeadline, (signal) =>
         client.callTool(
           { name: input.name, arguments: { ...input.arguments } },
           { signal, timeout: sdkTimeout(limits.callDeadline) },
         ),
       );
-      // Read again rather than kept from the call: nothing holds a secret between requests.
-      const credentials = yield* options.credentials.current;
-      const text = cut(scrub(answerText(result), credentials), limits.maxResultCharacters);
-      return { text: text.text, cut: text.cut, isError: result.isError === true };
+      const scrub = scrubberOf(answer.sent, address);
+      const text = cut(scrub(answerText(answer.value)), limits.maxResultCharacters);
+      return { text: text.text, cut: text.cut, isError: answer.value.isError === true };
     });
 
     return { listTools, callTool } satisfies McpSession;

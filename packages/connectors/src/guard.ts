@@ -17,7 +17,7 @@ import {
   isPrivateNetworkAddress,
   isPublicAddress,
 } from "./address.ts";
-import { ResponseTooLarge, Unreachable, UrlRefused } from "./errors.ts";
+import { ResponseTooLarge, TimedOut, Unreachable, UrlRefused } from "./errors.ts";
 
 /**
  * The guard every request to a connector's server goes through
@@ -35,7 +35,8 @@ import { ResponseTooLarge, Unreachable, UrlRefused } from "./errors.ts";
  *   cannot reach the operator's network.
  * - A redirect is never followed here. The policy either refuses it or hands
  *   it back to the caller, whose next request comes through the guard again.
- * - An answer is read only up to a size limit.
+ * - A server has a deadline to begin its answer once connected, and an
+ *   answer is read only up to a size limit.
  */
 
 export interface UrlPolicy {
@@ -67,6 +68,12 @@ export interface GuardOptions {
   readonly maxResponseBytes: number;
   /** How long a connection may take to open, in milliseconds. */
   readonly connectTimeoutMs: number;
+  /**
+   * How long, once connected, the server may stay silent before its answer
+   * begins, in milliseconds: the bound on a request no caller waits on with
+   * a deadline of its own. Past the longest call J3 Bots makes.
+   */
+  readonly answerTimeoutMs: number;
   /** The system's resolver, apart from tests. */
   readonly resolve: Resolver;
 }
@@ -74,6 +81,7 @@ export interface GuardOptions {
 export const DEFAULT_GUARD: GuardOptions = {
   maxResponseBytes: 8 * 1024 * 1024,
   connectTimeoutMs: 10_000,
+  answerTimeoutMs: 11 * 60_000,
   resolve: systemResolver,
 };
 
@@ -184,7 +192,7 @@ const guardedLookup =
     );
   };
 
-const isOwnError = Schema.is(Schema.Union([UrlRefused, Unreachable, ResponseTooLarge]));
+const isOwnError = Schema.is(Schema.Union([UrlRefused, Unreachable, ResponseTooLarge, TimedOut]));
 
 const TLS_ERROR = /^(ERR_TLS_|ERR_SSL_|CERT_|UNABLE_TO_|DEPTH_ZERO|SELF_SIGNED|HOSTNAME_MISMATCH)/;
 
@@ -295,18 +303,26 @@ const send = (
       reject(signal.aborted ? signal.reason : connectionError(error));
     };
     outgoing.on("error", fail);
-    // Only opening the connection has a deadline here: a long call may stay
-    // quiet for minutes, and its own deadline belongs to the caller.
+    // Opening the connection has a deadline, and so has the wait for the
+    // answer to begin. Reading the answer has none here: a call streams for
+    // as long as its caller's own deadline allows.
+    const silent = () => outgoing.destroy(new TimedOut());
     outgoing.on("socket", (socket) => {
-      if (!socket.connecting) return;
+      const awaitAnswer = () => socket.setTimeout(options.answerTimeoutMs, silent);
+      if (!socket.connecting) {
+        awaitAnswer();
+        return;
+      }
       const late = () => outgoing.destroy(new Unreachable({ reason: "connect" }));
       socket.setTimeout(options.connectTimeoutMs, late);
       socket.once(https ? "secureConnect" : "connect", () => {
-        socket.setTimeout(0);
         socket.off("timeout", late);
+        awaitAnswer();
       });
     });
     outgoing.on("response", (incoming) => {
+      incoming.socket.setTimeout(0);
+      incoming.socket.off("timeout", silent);
       const status = incoming.statusCode ?? 0;
       if (status >= 300 && status < 400 && incoming.headers.location !== undefined) {
         if (policy.redirects === "refuse") {

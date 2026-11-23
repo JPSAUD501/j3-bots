@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
+import { usesVault } from "./credentials.ts";
 
 /**
  * A connector as the server keeps it: what the operator added, with none of
@@ -52,6 +53,15 @@ export interface StoredConnector {
   readonly createdAt: DateTime.Utc;
 }
 
+/** What is left to do for a connector already removed: what waits for an unlocked vault. */
+export interface PendingRemoval {
+  readonly id: ConnectorId;
+  /** Its OAuth sign-in is to be revoked at the service. */
+  readonly revoke: boolean;
+  /** Its vault record is to be deleted. */
+  readonly secrets: boolean;
+}
+
 /** What may change of a stored connector after it was added. */
 export type ConnectorChanges = Partial<
   Pick<StoredConnector, "name" | "grant" | "signedInAt" | "accepted" | "keptRevision">
@@ -77,6 +87,8 @@ const Row = Schema.Struct({
 type Row = typeof Row.Type;
 
 const GrantRow = Schema.Struct({ connector_id: ConnectorId, bot_id: BotId });
+
+const RemovalRow = Schema.Struct({ connector_id: ConnectorId, revoke: Flag, secrets: Flag });
 
 const COLUMNS = `id, name, slug, glyph, publisher_json, listing_json, transport_json, sign_in,
   fields_json, private_network, all_bots, signed_in_at, tools_json, kept_revision, created_at`;
@@ -115,16 +127,28 @@ export class ConnectorStore extends Context.Service<
     readonly get: (id: ConnectorId) => Effect.Effect<Option.Option<StoredConnector>>;
     /** Every connector, oldest first. */
     readonly all: Effect.Effect<ReadonlyArray<StoredConnector>>;
-    /** A slug for a connector named `name` that no other connector has. */
-    readonly freeSlug: (name: string) => Effect.Effect<ConnectorSlug>;
-    readonly insert: (connector: StoredConnector) => Effect.Effect<void>;
+    /**
+     * Adds the connector, with a slug from its name that no other connector
+     * has, chosen in the same transaction. None when a connector with its id
+     * is already there.
+     */
+    readonly insert: (
+      connector: Omit<StoredConnector, "slug">,
+    ) => Effect.Effect<Option.Option<StoredConnector>>;
     readonly update: (
       id: ConnectorId,
       changes: ConnectorChanges,
       at: DateTime.Utc,
     ) => Effect.Effect<Option.Option<StoredConnector>>;
-    /** Removes the connector; one already gone is no error. */
+    /**
+     * Removes the connector, and records in the same transaction what is
+     * left to do for it ({@link PendingRemoval}); one already gone is no error.
+     */
     readonly remove: (id: ConnectorId) => Effect.Effect<void>;
+    /** The removals not done yet. */
+    readonly pendingRemovals: Effect.Effect<ReadonlyArray<PendingRemoval>>;
+    /** What was left to do for the removed connector is done. */
+    readonly removalDone: (id: ConnectorId) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/connectors/ConnectorStore") {}
 
@@ -185,9 +209,10 @@ export const layer = Layer.effect(
       return rows.map((row) => toStored(row, byConnector.get(row.id) ?? []));
     }).pipe(Effect.orDie);
 
-    const freeSlug = Effect.fn("ConnectorStore.freeSlug")(function* (name: string) {
-      const rows = yield* slugRows(undefined).pipe(Effect.orDie);
-      return slugFor(name, new Set(rows.map((row) => row.slug)));
+    const removalRows = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: RemovalRow,
+      execute: () => sql`SELECT connector_id, revoke, secrets FROM connector_removals`,
     });
 
     const writeGrant = Effect.fn("ConnectorStore.writeGrant")(function* (
@@ -206,7 +231,13 @@ export const layer = Layer.effect(
     });
 
     const insert = Effect.fn("ConnectorStore.insert")(
-      function* (connector: StoredConnector) {
+      function* (draft: Omit<StoredConnector, "slug">) {
+        if (Option.isSome(yield* findRow(draft.id))) return Option.none<StoredConnector>();
+        const taken = yield* slugRows(undefined);
+        const connector: StoredConnector = {
+          ...draft,
+          slug: slugFor(draft.name, new Set(taken.map((row) => row.slug))),
+        };
         const at = timeText(connector.createdAt);
         yield* sql`
         INSERT INTO connectors (
@@ -226,6 +257,7 @@ export const layer = Layer.effect(
         )
       `;
         yield* writeGrant(connector.id, connector.grant);
+        return yield* get(connector.id);
       },
       sql.withTransaction,
       Effect.orDie,
@@ -253,10 +285,38 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
-    const remove = Effect.fn("ConnectorStore.remove")(function* (id: ConnectorId) {
-      yield* sql`DELETE FROM connectors WHERE id = ${id}`.pipe(Effect.orDie);
+    const remove = Effect.fn("ConnectorStore.remove")(
+      function* (id: ConnectorId) {
+        const connector = yield* get(id);
+        if (Option.isNone(connector)) return;
+        const revoke = connector.value.signIn === "oauth" ? 1 : 0;
+        const secrets = usesVault(connector.value) ? 1 : 0;
+        yield* sql`
+          INSERT INTO connector_removals (connector_id, revoke, secrets)
+          VALUES (${id}, ${revoke}, ${secrets})
+          ON CONFLICT (connector_id) DO NOTHING
+        `;
+        yield* sql`DELETE FROM connectors WHERE id = ${id}`;
+      },
+      sql.withTransaction,
+      Effect.orDie,
+    );
+
+    const pendingRemovals = removalRows(undefined).pipe(
+      Effect.map((rows) =>
+        rows.map((row): PendingRemoval => ({
+          id: row.connector_id,
+          revoke: row.revoke,
+          secrets: row.secrets,
+        })),
+      ),
+      Effect.orDie,
+    );
+
+    const removalDone = Effect.fn("ConnectorStore.removalDone")(function* (id: ConnectorId) {
+      yield* sql`DELETE FROM connector_removals WHERE connector_id = ${id}`.pipe(Effect.orDie);
     });
 
-    return { get, all, freeSlug, insert, update, remove };
+    return { get, all, insert, update, remove, pendingRemovals, removalDone };
   }),
 );

@@ -6,6 +6,7 @@ import {
   type CredentialsUnavailable,
   NeedsSignIn,
   VaultLocked,
+  Withdrawn,
 } from "@j3-bots/connectors";
 import type { Conflict, ConnectorId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
@@ -61,13 +62,19 @@ export const addressOf = (
     return url.value;
   });
 
-/** Signs the connector's requests from the vault and, for an OAuth connector, its sign-in. */
+/**
+ * Signs the connector's requests from the vault and, for an OAuth connector,
+ * its sign-in. `allowed` is asked first, right before each request goes out:
+ * a request it refuses is withdrawn unsigned.
+ */
 export const credentialsOf = (
   vault: typeof Vault.Service,
   signIns: typeof ConnectorSignIns.Service,
   connector: StoredConnector,
+  allowed: Effect.Effect<boolean>,
 ): ConnectorCredentials => ({
   current: Effect.gen(function* () {
+    if (!(yield* allowed)) return yield* new Withdrawn();
     const secret = yield* secretOf(vault, connector);
     const headers = Option.match(secret, { onNone: () => [], onSome: (s) => s.headers });
     const bearer =
@@ -76,8 +83,8 @@ export const credentialsOf = (
         : Option.none();
     return { bearer, headers } satisfies CallCredentials;
   }),
-  rejected: (wwwAuthenticate) =>
+  rejected: (wwwAuthenticate, sent) =>
     connector.signIn === "oauth"
-      ? signIns.rejected(connector.id, wwwAuthenticate)
+      ? signIns.rejected(connector.id, wwwAuthenticate, sent)
       : Effect.fail(new NeedsSignIn()),
 });

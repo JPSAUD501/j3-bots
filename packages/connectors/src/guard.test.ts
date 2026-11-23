@@ -102,12 +102,25 @@ describe("checkUrl", () => {
     }
   });
 
-  it("reaches a private network only when the operator confirmed it, and never loopback or link-local", () => {
+  it("reaches a private network only when the operator confirmed it, and never loopback, link-local or a metadata service", () => {
     assert.strictEqual(refusal("https://192.168.1.20/mcp", CONFIRMED), "allowed");
     assert.strictEqual(refusal("https://[fd12::5]/mcp", CONFIRMED), "allowed");
-    assert.strictEqual(refusal("https://169.254.169.254/mcp", CONFIRMED), "private-address");
     assert.strictEqual(refusal("https://127.0.0.1/mcp", CONFIRMED), "private-address");
     assert.strictEqual(refusal("http://192.168.1.20/mcp", CONFIRMED), "not-https");
+    for (const host of [
+      "169.254.169.254",
+      "100.100.100.200",
+      "[::ffff:100.100.100.200]",
+      "168.63.129.16",
+      "[fd00:ec2::254]",
+      "[fd00:ec2::23]",
+      "[fd20:ce::254]",
+      "[fd00:c1::a9fe:a9fe]",
+      "[fd00:a9fe:a9fe::1]",
+    ]) {
+      assert.strictEqual(refusal(`https://${host}/latest`, CONFIRMED), "private-address", host);
+      assert.strictEqual(refusal(`https://${host}/latest`, REMOTE), "private-address", host);
+    }
   });
 
   it("lets a command connector use plain HTTP to loopback, and nothing else", () => {

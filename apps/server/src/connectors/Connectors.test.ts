@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { DEFAULT_SESSION_LIMITS } from "@j3-bots/connectors";
+import { DEFAULT_SESSION_LIMITS, type SessionLimits } from "@j3-bots/connectors";
 import { type FakeOptions, fakeMcpServer } from "@j3-bots/connectors/testing";
 import {
   CommandId,
@@ -13,10 +13,13 @@ import {
   ToolReviewRevision,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { Vault } from "../vault/Vault.ts";
@@ -43,7 +46,7 @@ const domain = TestDomain.layer.pipe(
           ...DEFAULT_SESSION_LIMITS.guard,
           resolve: () => Promise.reject(new Error("no such host")),
         },
-      },
+      } satisfies SessionLimits,
       loopback: "allow-http",
     }),
   ),
@@ -305,6 +308,116 @@ describe("Connectors", () => {
         const seen = shown(connected, refused, needs, updated, answer);
         assert.notInclude(seen, KEY);
         assert.notInclude(seen, NEW_KEY);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.effect(
+    "offers no tools while the vault is locked, and answers again once it opens",
+    () =>
+      Effect.gen(function* () {
+        const { connectors, ana } = yield* setUp(
+          { tools: [{ name: "search" }], call: () => ({ _tag: "result", text: "found it" }) },
+          [{ name: "X-Api-Key", value: KEY }],
+        );
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+        const vault = yield* Vault;
+        const search = { botId: ana, name: "tracker__search", arguments: {} };
+
+        yield* vault.lock;
+        yield* awaitConnector((connector) => connector.status._tag === "vault-locked");
+        assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
+        const locked = yield* connectors.call(search);
+        assert.include(locked.text, "vault is locked");
+
+        // The session that failed to open while it was locked is not kept.
+        yield* vault.unlock(PASSWORD);
+        assert.include((yield* connectors.call(search)).text, "found it");
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.effect(
+    "opens a session again after one that timed out opening",
+    () =>
+      Effect.gen(function* () {
+        let holding = false;
+        const { fake, connectors, ana } = yield* setUp(
+          {
+            tools: [{ name: "search" }],
+            call: () => ({ _tag: "result", text: "found it" }),
+            hold: (rpc) => holding && rpc === "initialize",
+          },
+          [],
+        );
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+        const search = { botId: ana, name: "tracker__search", arguments: {} };
+
+        holding = true;
+        const first = yield* Effect.forkChild(connectors.call(search));
+        yield* fake.held(1);
+        yield* TestClock.adjust(DEFAULT_SESSION_LIMITS.listDeadline);
+        assert.include((yield* Fiber.join(first)).text, "did not answer in time");
+        // The open that timed out was aborted, not left waiting at the server.
+        yield* fake.released;
+
+        holding = false;
+        assert.include((yield* connectors.call(search)).text, "found it");
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
+    "removes a connector while the vault is locked, and its secrets once it opens",
+    () =>
+      Effect.gen(function* () {
+        const { connectors, ana } = yield* setUp(
+          { tools: [{ name: "search" }], call: () => ({ _tag: "result", text: "found it" }) },
+          [{ name: "X-Api-Key", value: KEY }],
+        );
+        const vault = yield* Vault;
+        yield* vault.lock;
+        yield* connectors.remove({ commandId: CommandId.make("remove"), connectorId: ID });
+        assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
+        assert.deepStrictEqual(
+          yield* connectors.subscribe.pipe(Stream.runHead),
+          Option.some({ _tag: "snapshot" as const, connectors: [] }),
+        );
+
+        yield* vault.unlock(PASSWORD);
+        const secret = yield* vault.connectorSecrets
+          .get(vaultIdOf(ID))
+          .pipe(Effect.repeat({ until: Option.isNone, schedule: Schedule.spaced("20 millis") }));
+        assert.isTrue(Option.isNone(secret));
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.effect(
+    "lists a connector once more after a burst of changes, not once per change",
+    () =>
+      Effect.gen(function* () {
+        const tool = (name: string) => ({ name, description: `${name} `.repeat(2_000) });
+        const tools = ["a", "b", "c", "d", "e", "f"].map(tool);
+        const { fake, connectors, ana } = yield* setUp(
+          { tools, call: () => ({ _tag: "result", text: "found it" }), pageSize: 2 },
+          [],
+        );
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+        yield* fake.streamOpened;
+        const lists = () => fake.requests.filter((request) => request.rpc === "tools/list").length;
+        const before = lists();
+
+        fake.setTools([...tools, tool("g")]);
+        for (let change = 0; change < 50; change++) fake.notifyToolsChanged();
+        yield* awaitConnector(
+          (connector) => connector.review?.changes.some((c) => c.tool.name === "g") === true,
+        );
+        // One listing of four pages for the burst, and at most one more for what came while it ran.
+        assert.isAtMost(lists() - before, 8);
       }).pipe(Effect.scoped, Effect.provide(domain)),
     SLOW,
   );

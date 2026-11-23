@@ -7,9 +7,10 @@ import * as Schema from "effect/Schema";
 
 /**
  * A Streamable HTTP MCP server for tests, on loopback: enough of the protocol
- * for a session to open, list tools, call them and hear that its tools
- * changed. Each tool answers with what its handler returns, and the server
- * records every request's headers.
+ * for a session to open, list tools (in pages), call them and hear that its
+ * tools changed. Each tool answers with what its handler returns, and the
+ * server records every request's headers. Like a server that ignores
+ * cancellation, it keeps a request it holds open until the client closes it.
  */
 
 interface FakeTool {
@@ -18,7 +19,7 @@ interface FakeTool {
   readonly inputSchema?: Readonly<Record<string, unknown>>;
 }
 
-/** What a call answers: a result, a raw body, or nothing at all (it hangs until the session closes). */
+/** What a call answers: a result, a raw body, or nothing at all (it is held until the client closes it). */
 type FakeAnswer =
   | { readonly _tag: "result"; readonly text: string; readonly isError?: boolean }
   | { readonly _tag: "raw"; readonly body: string }
@@ -39,8 +40,10 @@ export interface FakeMcpServer {
   readonly notifyToolsChanged: () => void;
   /** Done once the client opened its stream for server messages. */
   readonly streamOpened: Effect.Effect<void>;
-  /** Done once the first tool call arrived. */
-  readonly callArrived: Effect.Effect<void>;
+  /** Done once the server has held `count` requests unanswered, in all. */
+  readonly held: (count: number) => Effect.Effect<void>;
+  /** Done once the client has closed every request the server holds. */
+  readonly released: Effect.Effect<void>;
   /** Done once the client cancelled a request (`notifications/cancelled`). */
   readonly cancelled: Effect.Effect<void>;
 }
@@ -51,6 +54,10 @@ export interface FakeOptions {
   /** Answers `refusal` (401 `invalid_token` by default) unless `authorization` is accepted. */
   readonly authorize?: (authorization: string | undefined) => boolean;
   readonly refusal?: { readonly status: number; readonly challenge: string };
+  /** Holds every request for these methods unanswered, as it is asked. */
+  readonly hold?: (rpc: string) => boolean;
+  /** Lists the tools this many to a page. */
+  readonly pageSize?: number;
 }
 
 const Rpc = Schema.Struct({
@@ -61,6 +68,7 @@ const Rpc = Schema.Struct({
       protocolVersion: Schema.optionalKey(Schema.String),
       name: Schema.optionalKey(Schema.String),
       arguments: Schema.optionalKey(Schema.Unknown),
+      cursor: Schema.optionalKey(Schema.String),
     }),
   ),
 });
@@ -74,8 +82,27 @@ export const fakeMcpServer = (options: FakeOptions) =>
         const requests: Array<FakeRequest> = [];
         const streams = new Set<NodeHttp.ServerResponse>();
         const streamOpened = Deferred.makeUnsafe<void>();
-        const callArrived = Deferred.makeUnsafe<void>();
         const cancelled = Deferred.makeUnsafe<void>();
+        let heldCount = 0;
+        const holding = new Set<NodeHttp.ServerResponse>();
+        const heldWaiters: Array<{
+          readonly count: number;
+          readonly done: Deferred.Deferred<void>;
+        }> = [];
+        const releasedWaiters: Array<Deferred.Deferred<void>> = [];
+        const hold = (response: NodeHttp.ServerResponse) => {
+          heldCount += 1;
+          holding.add(response);
+          response.on("close", () => {
+            holding.delete(response);
+            if (holding.size > 0) return;
+            for (const done of releasedWaiters.splice(0)) Deferred.doneUnsafe(done, Effect.void);
+          });
+          for (const waiter of heldWaiters.filter((w) => w.count <= heldCount)) {
+            heldWaiters.splice(heldWaiters.indexOf(waiter), 1);
+            Deferred.doneUnsafe(waiter.done, Effect.void);
+          }
+        };
         const reply = (response: NodeHttp.ServerResponse, id: string | number, result: unknown) => {
           response.writeHead(200, {
             "content-type": "application/json",
@@ -130,6 +157,7 @@ export const fakeMcpServer = (options: FakeOptions) =>
               response.end();
               return;
             }
+            if (options.hold?.(rpc.method) === true) return hold(response);
             switch (rpc.method) {
               case "initialize":
                 return reply(response, rpc.id, {
@@ -137,21 +165,24 @@ export const fakeMcpServer = (options: FakeOptions) =>
                   capabilities: { tools: { listChanged: true } },
                   serverInfo: { name: "fake", version: "1.0.0" },
                 });
-              case "tools/list":
+              case "tools/list": {
+                const from = Number(rpc.params?.cursor ?? 0);
+                const to = from + (options.pageSize ?? tools.length);
                 return reply(response, rpc.id, {
-                  tools: tools.map((tool) => ({
+                  tools: tools.slice(from, to).map((tool) => ({
                     inputSchema: { type: "object", properties: {} },
                     ...tool,
                   })),
+                  ...(to < tools.length ? { nextCursor: String(to) } : {}),
                 });
+              }
               case "tools/call": {
-                Deferred.doneUnsafe(callArrived, Effect.void);
                 const answer = options.call(
                   rpc.params?.name ?? "",
                   rpc.params?.arguments,
                   request.headers,
                 );
-                if (answer._tag === "hang") return;
+                if (answer._tag === "hang") return hold(response);
                 if (answer._tag === "raw") {
                   response.writeHead(200, { "content-type": "application/json" });
                   response.end(answer.body);
@@ -177,7 +208,19 @@ export const fakeMcpServer = (options: FakeOptions) =>
                 url: `http://127.0.0.1:${port}/mcp`,
                 requests,
                 streamOpened: Deferred.await(streamOpened),
-                callArrived: Deferred.await(callArrived),
+                held: (count) =>
+                  Effect.suspend(() => {
+                    if (heldCount >= count) return Effect.void;
+                    const done = Deferred.makeUnsafe<void>();
+                    heldWaiters.push({ count, done });
+                    return Deferred.await(done);
+                  }),
+                released: Effect.suspend(() => {
+                  if (holding.size === 0) return Effect.void;
+                  const done = Deferred.makeUnsafe<void>();
+                  releasedWaiters.push(done);
+                  return Deferred.await(done);
+                }),
                 cancelled: Deferred.await(cancelled),
                 setTools: (next) => {
                   tools = next;

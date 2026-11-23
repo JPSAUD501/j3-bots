@@ -61,13 +61,15 @@ export type Observation =
 
 /**
  * What a failure says about the connector. A locked vault is the vault's
- * status, which reaches the connector from the vault. A call that timed out,
+ * status, which reaches the connector from the vault, and a withdrawn
+ * request says nothing of the connector. A call that timed out,
  * answered too much, or got an MCP error is that call's trouble; the same
  * while connecting or listing means the server is not working.
  */
 export const observe = (failure: ConnectorFailure, activity: Activity): Observation => {
   switch (failure._tag) {
     case "VaultLocked":
+    case "Withdrawn":
       return { _tag: "unchanged" };
     case "NeedsSignIn":
       return { _tag: "needs-sign-in", need: "rejected" };

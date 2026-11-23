@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AuthFailure, CredentialsUnavailable } from "@j3-bots/connectors";
+import type { AuthFailure, CredentialsUnavailable, VaultLocked } from "@j3-bots/connectors";
 import { NeedsSignIn } from "@j3-bots/connectors";
 import {
   type BotId,
@@ -43,18 +43,28 @@ export class ConnectorSignIns extends Context.Service<
     readonly accessToken: (
       id: ConnectorId,
     ) => Effect.Effect<Redacted.Redacted<string>, CredentialsUnavailable>;
-    /** The connector's server refused the token just sent, with this `WWW-Authenticate`. */
+    /**
+     * The connector's server refused `sent`, the token a request carried,
+     * with this `WWW-Authenticate`. A token renewed since it was sent is not
+     * renewed again: the request goes once more with the current one.
+     */
     readonly rejected: (
       id: ConnectorId,
       wwwAuthenticate: Option.Option<string>,
+      sent: Option.Option<Redacted.Redacted<string>>,
     ) => Effect.Effect<void, CredentialsUnavailable>;
     /** A bot's call needed a sign-in it did not have: show the operator the card for it. */
     readonly needed: (input: {
       readonly botId: BotId;
       readonly connectorId: ConnectorId;
     }) => Effect.Effect<void>;
-    /** Revokes the sign-in at the service when it offers that, before the connector's secrets go. */
-    readonly disconnect: (id: ConnectorId) => Effect.Effect<void>;
+    /**
+     * Revokes the sign-in at the service when it offers that, before the
+     * connector's secrets go; a service that can't be reached is not waited
+     * for. Fails while the vault is locked, since the token is there: the
+     * removal finishes once it opens.
+     */
+    readonly disconnect: (id: ConnectorId) => Effect.Effect<void, VaultLocked>;
     /** Signs in to the connector with the OAuth client the operator registered at the service. */
     readonly useOperatorClient: (
       id: ConnectorId,

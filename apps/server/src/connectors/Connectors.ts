@@ -3,12 +3,10 @@ import {
   type Activity,
   answerChanges,
   type CatalogTool,
-  catalogOf,
   checkUrl,
   compareCatalog,
   type ConnectorFailure,
   DEFAULT_SESSION_LIMITS,
-  type ListedTool,
   type McpSession,
   NeedsSignIn,
   nextFailing,
@@ -20,9 +18,10 @@ import {
   type ToolAnswer,
   toolName,
   type UrlPolicy,
+  type Withdrawn,
 } from "@j3-bots/connectors";
 import {
-  type BotId,
+  BotId,
   type CommandError,
   type CommandId,
   Conflict,
@@ -68,9 +67,9 @@ import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Vault } from "../vault/Vault.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
-import { ConnectorStore, type StoredConnector } from "./ConnectorStore.ts";
+import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
 import { addressOf, credentialsOf, usesVault, vaultIdOf } from "./credentials.ts";
-import { connectorOf, NOTHING_SEEN, offeredOf, type Seen } from "./view.ts";
+import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
 
 /**
  * The operator's connectors (`docs/architecture/server.md`, "Connectors"):
@@ -106,7 +105,7 @@ export class ToolNotOffered extends Schema.TaggedError<ToolNotOffered>()("ToolNo
 export class Connectors extends Context.Service<
   Connectors,
   {
-    /** The tools `botId` is offered now: granted, signed-in connectors' accepted tools. */
+    /** The tools `botId` is offered now: the accepted tools of granted connectors that are connected. */
     readonly toolsFor: (botId: BotId) => Effect.Effect<ReadonlyArray<OfferedTool>>;
     /** Each bot whose offered tools may have changed, from the moment of subscribing. */
     readonly toolsChanged: Stream.Stream<BotId>;
@@ -160,7 +159,7 @@ const changeOf = (tag: Change["_tag"], id: ConnectorId): Change => ({ _tag: tag,
 /** Whose session it is: a bot's, or the one the server lists a connector's tools with. */
 type Holder = BotId | "catalog";
 
-/** A session of a connector that is no longer there. */
+/** A session of a connector that is no longer there, or no longer the bot's. */
 class ConnectorGone extends Schema.TaggedError<ConnectorGone>()("ConnectorGone", {}) {}
 const isGone = Schema.is(ConnectorGone);
 
@@ -181,6 +180,7 @@ const CLIENT = { name: "j3-bots", version: packageJson.version };
 const SEPARATOR = "/";
 const sessionKey = (id: ConnectorId, holder: Holder) => `${id}${SEPARATOR}${holder}`;
 const decodeConnectorId = Schema.decodeUnknownOption(Connector.fields.id);
+const decodeBotId = Schema.decodeUnknownOption(BotId);
 
 /** How this server reaches connectors' servers. */
 interface ConnectorReachSettings {
@@ -198,8 +198,8 @@ export class ConnectorReach extends Context.Reference<ConnectorReachSettings>(
   { defaultValue: () => ({ limits: DEFAULT_SESSION_LIMITS, loopback: "refuse" }) },
 ) {}
 
-/** What the bot is told when a connector gave no answer. */
-const unavailableOf = (failure: ConnectorFailure): ConnectorUnavailable => {
+/** What the bot is told when a connector gave no answer; a withdrawn call is not one it may make. */
+const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): ConnectorUnavailable => {
   switch (failure._tag) {
     case "NeedsSignIn":
       return "needs-sign-in";
@@ -279,8 +279,10 @@ export const layer = Layer.effect(
     const changes = yield* PubSub.unbounded<Change>();
     const toolChanges = yield* PubSub.unbounded<BotId>();
     const scope = yield* Effect.scope;
-    /** The connectors being listed in the background, each with whether it was asked for again meanwhile. */
-    const listing = yield* Ref.make<ReadonlyMap<ConnectorId, boolean>>(new Map());
+    /** The connectors being listed in the background, each with the listing asked for next, if any. */
+    const flights = yield* Ref.make<ReadonlyMap<ConnectorId, Option.Option<Effect.Effect<void>>>>(
+      new Map(),
+    );
 
     const seenOf = (id: ConnectorId) =>
       Effect.map(Ref.get(seenRef), (seen) => seen.get(id) ?? NOTHING_SEEN);
@@ -340,11 +342,10 @@ export const layer = Layer.effect(
      * the first time. A listing is an answer, signed as calls are, so it
      * clears a failure and a refusal.
      */
-    const recordListing = (id: ConnectorId, listed: ReadonlyArray<ListedTool>) =>
+    const recordListing = (id: ConnectorId, catalog: ReadonlyArray<CatalogTool>) =>
       changing(
         id,
         Effect.gen(function* () {
-          const catalog = catalogOf(listed);
           yield* updateSeen(id, () => ({
             listed: Option.some(catalog),
             failing: Option.none(),
@@ -384,27 +385,52 @@ export const layer = Layer.effect(
       }
     });
 
+    /** Whether `holder` may still use the connector: the server's own session always, a bot's while it is granted. */
+    const allowed = (id: ConnectorId, holder: Holder): Effect.Effect<boolean> =>
+      holder === "catalog"
+        ? Effect.succeed(true)
+        : Effect.map(store.get(id), (connector) =>
+            Option.exists(
+              connector,
+              (c) => c.grant._tag === "all-bots" || c.grant.ids.includes(holder),
+            ),
+          );
+
     const sessions = yield* RcMap.make({
       lookup: Effect.fn("Connectors.openSession")(function* (key: string) {
-        const [rawId, holder] = key.split(SEPARATOR);
+        const [rawId, rawHolder] = key.split(SEPARATOR);
         const id = decodeConnectorId(rawId);
-        if (Option.isNone(id) || holder === undefined) return yield* new ConnectorGone();
+        const holder = Option.fromNullishOr(rawHolder).pipe(
+          Option.flatMap((raw) =>
+            raw === "catalog" ? Option.some<Holder>("catalog") : decodeBotId(raw),
+          ),
+        );
+        if (Option.isNone(id) || Option.isNone(holder)) return yield* new ConnectorGone();
         const connector = yield* store.get(id.value);
         if (Option.isNone(connector)) return yield* new ConnectorGone();
         const url = yield* addressOf(vault, connector.value);
-        const ready = yield* Deferred.make<McpSession>();
+        const ready = yield* Deferred.make<McpSession, ConnectorGone>();
         const session = yield* openSession({
           url,
           policy: policyOf(connector.value.privateNetwork),
-          credentials: credentialsOf(vault, signIns, connector.value),
+          credentials: credentialsOf(
+            vault,
+            signIns,
+            connector.value,
+            allowed(id.value, holder.value),
+          ),
           limits: reach.limits,
           client: CLIENT,
-          onToolsChanged: Deferred.await(ready).pipe(
-            Effect.flatMap((opened) => opened.listTools),
-            Effect.flatMap((listed) => recordListing(id.value, listed)),
-            Effect.ignore,
+          // However often its server says so, one listing at a time, and one more after it.
+          onToolsChanged: inFlight(
+            id.value,
+            Deferred.await(ready).pipe(
+              Effect.flatMap((opened) => opened.listTools),
+              Effect.flatMap((listed) => recordListing(id.value, listed)),
+              Effect.ignore,
+            ),
           ),
-        });
+        }).pipe(Effect.tapError(() => Deferred.fail(ready, new ConnectorGone())));
         yield* Deferred.succeed(ready, session);
         yield* recordListing(id.value, yield* session.listTools);
         return session;
@@ -413,15 +439,31 @@ export const layer = Layer.effect(
       capacity: MAX_SESSIONS,
     });
 
-    const closeSessions = Effect.fn("Connectors.closeSessions")(function* (id: ConnectorId) {
+    const closeSessions = Effect.fn("Connectors.closeSessions")(function* (
+      id: ConnectorId,
+      holder?: Holder,
+    ) {
       for (const key of yield* RcMap.keys(sessions)) {
-        if (key.startsWith(`${id}${SEPARATOR}`)) yield* RcMap.invalidate(sessions, key);
+        const own =
+          holder === undefined
+            ? key.startsWith(`${id}${SEPARATOR}`)
+            : key === sessionKey(id, holder);
+        if (own) yield* RcMap.invalidate(sessions, key);
       }
     });
 
+    /**
+     * A session that failed to open is not kept: `RcMap` would answer every
+     * later use with the same failure until it went idle.
+     */
+    const openFor = (id: ConnectorId, holder: Holder) =>
+      RcMap.get(sessions, sessionKey(id, holder)).pipe(
+        Effect.tapError(() => RcMap.invalidate(sessions, sessionKey(id, holder))),
+      );
+
     /** Lists the connector's tools again, through the server's own session. */
     const relist = (id: ConnectorId) =>
-      Effect.scoped(RcMap.get(sessions, sessionKey(id, "catalog"))).pipe(
+      Effect.scoped(openFor(id, "catalog")).pipe(
         Effect.tapError((failure) =>
           failure._tag === "ConnectorGone" || failure._tag === "ExceededCapacityError"
             ? Effect.void
@@ -431,24 +473,26 @@ export const layer = Layer.effect(
       );
 
     /**
-     * Lists the tools of a connector this server has not seen listed since it
-     * started, in the background: so its review shows, and a connector that
-     * did not answer when it was added gets its tools. One listing runs at a
-     * time; a request while one runs makes it try once more if it fails, since
-     * what it was signed with may have changed since it began.
+     * Runs a listing of the connector in the background, one at a time: a
+     * listing asked for while one runs is run once after it, the last asked
+     * for in place of any before.
      */
-    const ensureListed = Effect.fn("Connectors.ensureListed")(function* (id: ConnectorId) {
-      if (Option.isSome((yield* seenOf(id)).listed)) return;
+    const inFlight = Effect.fn("Connectors.inFlight")(function* (
+      id: ConnectorId,
+      list: Effect.Effect<void>,
+    ) {
       const started = yield* Ref.modify(
-        listing,
-        (ids): [boolean, ReadonlyMap<ConnectorId, boolean>] =>
-          ids.has(id) ? [false, new Map(ids).set(id, true)] : [true, new Map(ids).set(id, false)],
+        flights,
+        (all): [boolean, ReadonlyMap<ConnectorId, Option.Option<Effect.Effect<void>>>] =>
+          all.has(id)
+            ? [false, new Map(all).set(id, Option.some(list))]
+            : [true, new Map(all).set(id, Option.none())],
       );
       if (!started) return;
-      yield* listUntilAsked(id).pipe(
-        Effect.ensuring(
-          Ref.update(listing, (ids) => {
-            const next = new Map(ids);
+      yield* drain(id, list).pipe(
+        Effect.onError(() =>
+          Ref.update(flights, (all) => {
+            const next = new Map(all);
             next.delete(id);
             return next;
           }),
@@ -457,25 +501,82 @@ export const layer = Layer.effect(
       );
     });
 
-    const listUntilAsked = (id: ConnectorId): Effect.Effect<void> =>
+    const drain = (id: ConnectorId, list: Effect.Effect<void>): Effect.Effect<void> =>
       Effect.gen(function* () {
-        yield* relist(id);
-        const listed = Option.isSome((yield* seenOf(id)).listed);
-        const again = yield* Ref.modify(
-          listing,
-          (ids): [boolean, ReadonlyMap<ConnectorId, boolean>] =>
-            ids.get(id) === true && !listed ? [true, new Map(ids).set(id, false)] : [false, ids],
+        yield* list;
+        // Taking the next listing and ending the flight are one step, so no request falls between.
+        const next = yield* Ref.modify(
+          flights,
+          (
+            all,
+          ): [
+            Option.Option<Effect.Effect<void>>,
+            ReadonlyMap<ConnectorId, Option.Option<Effect.Effect<void>>>,
+          ] => {
+            const queued = all.get(id) ?? Option.none();
+            const rest = new Map(all);
+            if (Option.isSome(queued)) rest.set(id, Option.none());
+            else rest.delete(id);
+            return [queued, rest];
+          },
         );
-        if (again) yield* listUntilAsked(id);
+        if (Option.isSome(next)) yield* drain(id, next.value);
       });
+
+    /**
+     * Lists the tools of a connector this server has not seen listed since it
+     * started, in the background: so its review shows, and a connector that
+     * did not answer when it was added gets its tools. Asked again while a
+     * listing runs, it tries once more after it if the connector is still not
+     * listed, since what it was signed with may have changed since it began.
+     */
+    const ensureListed = Effect.fn("Connectors.ensureListed")(function* (id: ConnectorId) {
+      const unlisted = Effect.map(seenOf(id), (seen) => Option.isNone(seen.listed));
+      if (!(yield* unlisted)) return;
+      yield* inFlight(
+        id,
+        Effect.gen(function* () {
+          if (yield* unlisted) yield* relist(id);
+        }),
+      );
+    });
+
+    /**
+     * Finishes a removal: revokes the sign-in, deletes the vault record, and
+     * forgets the removal. While the vault is locked it waits for the next
+     * unlock; a vault never set up holds no record.
+     */
+    const finishRemoval = Effect.fn("Connectors.finishRemoval")(function* (
+      removal: PendingRemoval,
+    ) {
+      if (removal.revoke) yield* signIns.disconnect(removal.id);
+      if (removal.secrets) {
+        yield* vault.connectorSecrets.remove(vaultIdOf(removal.id)).pipe(
+          Effect.catchIf(
+            (conflict) => conflict.reason === "vault-not-set-up",
+            () => Effect.void,
+          ),
+        );
+      }
+      yield* store.removalDone(removal.id);
+    });
+
+    const finishRemovals = Effect.fn("Connectors.finishRemovals")(function* () {
+      for (const removal of yield* store.pendingRemovals) {
+        yield* finishRemoval(removal).pipe(Effect.ignore);
+      }
+    });
 
     // The vault's state: a connector that keeps secrets there is "vault locked" while it is, and is listed once it opens.
     yield* Stream.runForEach(vault.status, (status) =>
       Effect.gen(function* () {
         const locked = status.state !== "unlocked";
         if ((yield* Ref.getAndSet(vaultLocked, locked)) === locked) return;
+        if (!locked) yield* finishRemovals();
         for (const connector of yield* store.all) {
           if (!usesVault(connector)) continue;
+          // A session opened, or failing to open, under the other state is not used again.
+          yield* closeSessions(connector.id);
           yield* touch(connector.id);
           if (!locked) yield* ensureListed(connector.id);
         }
@@ -490,6 +591,8 @@ export const layer = Layer.effect(
         for (const [id, state] of states) {
           const before = previous.get(id);
           if (before !== undefined && sameSignIn(before, state)) continue;
+          // Its sessions were signed for the sign-in as it was.
+          yield* closeSessions(id);
           if (state._tag === "signed-in") {
             yield* updateSeen(id, (seen) => ({ ...seen, refused: false }));
             yield* ensureListed(id);
@@ -520,7 +623,18 @@ export const layer = Layer.effect(
       const granted = yield* grantedTo(botId);
       for (const connector of granted) yield* ensureListed(connector.id);
       const seen = yield* Ref.get(seenRef);
-      return granted.flatMap((connector) =>
+      const locked = yield* Ref.get(vaultLocked);
+      const states = yield* Ref.get(signInStates);
+      const connected = granted.filter(
+        (connector) =>
+          statusOfConnector(
+            connector,
+            seen.get(connector.id) ?? NOTHING_SEEN,
+            locked,
+            Option.fromNullishOr(states.get(connector.id)),
+          )._tag === "connected",
+      );
+      return connected.flatMap((connector) =>
         offeredOf(connector, seen.get(connector.id) ?? NOTHING_SEEN).map((tool): OfferedTool => ({
           name: toolName(connector.slug, tool.name),
           connectorId: connector.id,
@@ -575,7 +689,7 @@ export const layer = Layer.effect(
       const key = sessionKey(connector.id, input.botId);
       const outcome = yield* Effect.scoped(
         Effect.gen(function* () {
-          const session = yield* RcMap.get(sessions, key).pipe(
+          const session = yield* openFor(connector.id, input.botId).pipe(
             Effect.mapError((failure) =>
               failure._tag === "ConnectorGone" || failure._tag === "ExceededCapacityError"
                 ? failure
@@ -600,6 +714,11 @@ export const layer = Layer.effect(
         if (isGone(stumble)) return yield* new ToolNotOffered();
         // Every session this server keeps open is in use: no fault of the connector's.
         if (Cause.isExceededCapacityError(stumble)) return yield* unavailable(connector, "busy");
+        // The bot lost the connector before the call went out: it went unsigned.
+        if (stumble.failure._tag === "Withdrawn") {
+          yield* closeSessions(connector.id, input.botId);
+          return yield* new ToolNotOffered();
+        }
         yield* record(connector.id, observe(stumble.failure, stumble.activity));
         if (breaksSession(stumble.failure)) yield* RcMap.invalidate(sessions, key);
         if (stumble.failure._tag === "NeedsSignIn") {
@@ -726,7 +845,7 @@ export const layer = Layer.effect(
         value: header.value,
       }));
       const checked = checkUrl(Redacted.value(source.url), policy);
-      const listing: Result.Result<ReadonlyArray<ListedTool>, ConnectorFailure> = Result.isFailure(
+      const listing: Result.Result<ReadonlyArray<CatalogTool>, ConnectorFailure> = Result.isFailure(
         checked,
       )
         ? Result.fail(checked.failure)
@@ -747,6 +866,7 @@ export const layer = Layer.effect(
           : headers.length > 0
             ? "fields"
             : "none";
+      // A retry of the same add seals the same values under the same id.
       yield* vault.connectorSecrets.put({
         connectorId: vaultIdOf(input.id),
         address: source.url,
@@ -755,27 +875,34 @@ export const layer = Layer.effect(
         env: [],
       });
       const now = yield* DateTime.now;
-      const catalog = Result.isSuccess(listing)
-        ? Option.some(catalogOf(listing.success))
-        : Option.none();
-      const connector: StoredConnector = {
-        id: input.id,
-        name: source.name,
-        slug: yield* store.freeSlug(source.name),
-        glyph: null,
-        publisher: { _tag: "operator" },
-        listing: null,
-        transport: displayTransport(source),
-        signIn,
-        fields: signIn === "fields" ? headers.map(fieldOf) : [],
-        privateNetwork: source.privateNetwork,
-        grant: input.grant ?? (yield* defaultGrant(input.suggestion)),
-        signedInAt: signIn === "fields" ? now : null,
-        accepted: Option.getOrNull(catalog),
-        keptRevision: null,
-        createdAt: now,
-      };
-      yield* store.insert(connector);
+      const catalog = Result.isSuccess(listing) ? Option.some(listing.success) : Option.none();
+      const grant = input.grant ?? (yield* defaultGrant(input.suggestion));
+      const inserted = yield* store
+        .insert({
+          id: input.id,
+          name: source.name,
+          glyph: null,
+          publisher: { _tag: "operator" },
+          listing: null,
+          transport: displayTransport(source),
+          signIn,
+          fields: signIn === "fields" ? headers.map(fieldOf) : [],
+          privateNetwork: source.privateNetwork,
+          grant,
+          signedInAt: signIn === "fields" ? now : null,
+          accepted: Option.getOrNull(catalog),
+          keptRevision: null,
+          createdAt: now,
+        })
+        .pipe(
+          // A connector not stored leaves no sealed record behind.
+          Effect.onError(() =>
+            vault.connectorSecrets.remove(vaultIdOf(input.id)).pipe(Effect.ignore),
+          ),
+        );
+      // The same add, made at once from elsewhere: that one is the connector.
+      if (Option.isNone(inserted)) return yield* render(yield* require(input.id));
+      const connector = inserted.value;
       yield* updateSeen(input.id, () => ({
         listed: catalog,
         failing: Result.isFailure(listing)
@@ -786,7 +913,9 @@ export const layer = Layer.effect(
       if (source.oauthClient !== null) {
         yield* signIns
           .useOperatorClient(input.id, source.oauthClient)
-          .pipe(Effect.tapError(() => forget(input.id)));
+          .pipe(
+            Effect.tapError(() => store.remove(input.id).pipe(Effect.andThen(forget(input.id)))),
+          );
       }
       yield* closeSuggestion(input.suggestion, connector);
       yield* toolsTouched(yield* botsOf(connector));
@@ -794,16 +923,18 @@ export const layer = Layer.effect(
       return yield* render(connector);
     });
 
-    /** Takes a connector out of the server: its row, its sessions, what was seen of it, its secrets. */
+    /**
+     * What follows a connector's row out of the server: its sessions, what was
+     * seen of it, then its sign-in and secrets, now or once the vault opens.
+     */
     const forget = Effect.fn("Connectors.forget")(function* (id: ConnectorId) {
-      yield* store.remove(id);
       yield* closeSessions(id);
       yield* Ref.update(seenRef, (seen) => {
         const next = new Map(seen);
         next.delete(id);
         return next;
       });
-      yield* vault.connectorSecrets.remove(vaultIdOf(id)).pipe(Effect.ignore);
+      yield* finishRemovals();
     });
 
     const update = Effect.fn("Connectors.update")(function* (input: {
@@ -856,10 +987,8 @@ export const layer = Layer.effect(
       readonly connectorId: ConnectorId;
     }) {
       const connector = yield* store.get(input.connectorId);
-      if (Option.isSome(connector) && usesVault(connector.value) && (yield* Ref.get(vaultLocked))) {
-        return yield* new Conflict({ reason: "vault-locked" });
-      }
       const losing = Option.isSome(connector) ? yield* botsOf(connector.value) : [];
+      // The row goes, and what is left to do with it is recorded, in one transaction.
       yield* receipts.once({
         commandId: input.commandId,
         method: "connector.remove",
@@ -868,7 +997,6 @@ export const layer = Layer.effect(
         apply: store.remove(input.connectorId),
       });
       // Safe to repeat: a retry after a lost reply finishes what the first left.
-      yield* signIns.disconnect(input.connectorId);
       yield* forget(input.connectorId);
       yield* PubSub.publish(changes, changeOf("remove", input.connectorId));
       yield* toolsTouched(losing);
@@ -891,6 +1019,9 @@ export const layer = Layer.effect(
       });
       const connector = yield* require(input.connectorId);
       const after = yield* botsOf(connector);
+      for (const lost of before.filter((id) => !after.includes(id))) {
+        yield* closeSessions(input.connectorId, lost);
+      }
       yield* toolsTouched([
         ...before.filter((id) => !after.includes(id)),
         ...after.filter((id) => !before.includes(id)),
