@@ -32,5 +32,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0024](0024-the-local-server-is-a-supervised-child-of-the-app.md) | The local-mode server is a supervised child of the app | Proposed |
 | [0025](0025-a-file-stands-where-the-operator-placed-it.md) | A file stands where the operator placed it, as a mark in the draft's text | Accepted |
 | [0029](0029-the-vault-key-comes-from-a-master-password-held-in-memory.md) | The vault's key comes from a master password, held in memory | Proposed |
+| [NNNN](NNNN-the-server-types-a-saved-login-into-the-bots-tab.md) | The server types a saved login into the bot's tab, unattended | Proposed |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

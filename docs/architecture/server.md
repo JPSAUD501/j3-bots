@@ -11,7 +11,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 | Entity | What it holds |
 | --- | --- |
 | Settings | One row: the operator's name, their time zone and whether it was set, the budgets, notification preferences |
-| Bot | Profile, model, permission mode, whether it may use the browser and how many times it lost it that are not yet withdrawn from its project, how many times its model, permission mode or browser switch changed, workspace path and the real path it had when first provisioned, engine project id, whether its conversation was told that its main session is not ready, the count of model or permission mode changes at which the engine refused its permission mode, and the refusal of it its conversation was told of |
+| Bot | Profile, model, permission mode, whether it may use the browser, whether it may fill saved logins ([Filling a login](#filling-a-login)) and how many times it lost it that are not yet withdrawn from its project, how many times its model, permission mode or browser switch changed, workspace path and the real path it had when first provisioned, engine project id, whether its conversation was told that its main session is not ready, the count of model or permission mode changes at which the engine refused its permission mode, and the refusal of it its conversation was told of |
 | Conversation | One per bot. A sequence of entries, and how far the operator has read |
 | Section | A named group of bots in the roster: its name and its place among the others. A bot names the one it is in, or none |
 | Room | Name, members, host, status (active or archived) and when it was archived. A sequence of entries |
@@ -271,7 +271,7 @@ Every one of these values is sealed, the name and the sites included. In the cle
 - the ids of the bots allowed to use each login;
 - when each value was last shown, which field it was, and on which device.
 
-`vault.list` returns the logins with none of their values. `vault.reveal` returns one value to the client that asked, and in the same step records the time, the device and the field; the login shows this as when it was last shown. `vault.totpPreview` returns the current code and until when it holds. `allowedBots` records which bots may use a login, none by default. In this release no bot can read one: nothing fills a login into a page or hands a value to a bot.
+`vault.list` returns the logins with none of their values. `vault.reveal` returns one value to the client that asked, and in the same step records the time, the device and the field; the login shows this as when it was last shown. `vault.totpPreview` returns the current code and until when it holds. `allowedBots` records which bots may use a login, none by default. A bot never reads one: the server types it into the bot's tab for it ([Filling a login](#filling-a-login)).
 
 **The save-login card.** A bot that meets a website login its operator wants kept calls `request_credential`, with the page's origin and a note in its own words. The call puts a save-login card (`credential-request`) in the bot's own conversation, also during a room turn, since only the operator types into it. The bot gets back only that the card is shown. The operator types the login into the card. The client sends it to `vault.save` with the card's id. The server saves the login in the vault, then marks the card as saved, with the login's id and name. The vault is a separate database, so the two steps are not one transaction. The login is saved first, so a retry after a crash between them finds the login saved and still marks the card. `vault.save` carries the id the client chose for the login, so a retry after a lost reply adds nothing. A card that was closed in another way stays closed, and the login is saved anyway, since the operator typed it. A dismissal (`card.answer` with `dismiss`) closes the card. Neither a save nor a dismissal wakes the bot. While the vault is locked or has no password, the card offers unlock or setup in place. A card with any other answer is refused with `Invalid("answer")`.
 
@@ -286,6 +286,42 @@ In the server these are typed records: every token, secret and value is a redact
 **What carries a value.** Values travel as redacted types from the client to the vault and back, both in the contract and in the server, and are decoded as redacted types at the RPC boundary. The client gets a value only from `vault.reveal` and `vault.totpPreview`. No value reaches an entry, a change, a command receipt, a log line, an error or a tool result. None of the vault's requests takes a command id, so no receipt keeps one: `vault.save` is made safe to repeat by the login id it carries instead. A test drives every vault request over the socket and checks that no value appears in any log, error or answer except the one that reveals it.
 
 **Backups.** No update snapshot copies the vault, and no rollback puts an older one back ([decision 0016](../decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md)). A rollback to a release that predates the vault leaves the file in place, and a later update finds it as it was. A release that finds the vault `newer` leaves it alone. A copy of the file is useless without the master password, and so is the operator's data if the password is lost. Exporting the vault re-encrypted under a password of the export's own is planned with the operator's export ([#154](https://github.com/JPSAUD501/j3-bots/issues/154)).
+
+## Filling a login
+
+A bot signs in to a site with a saved login without ever holding its values: it asks, and the server types them into the bot's browser tab while it holds the tab ([decision NNNN](../decisions/NNNN-the-server-types-a-saved-login-into-the-bots-tab.md)). There is no confirmation for each fill: the operator decides ahead of time, per bot and per login.
+
+**Who may.** A bot may fill a login only when both of these hold:
+
+- its **vault access** is on (`bots.vault`, the `vault` of `bot.update`, off by default). It is a server switch, not a session setting: it is read at each call, so a change takes effect at once and moves no session's settings count;
+- the login allows the bot (`allowedBots`).
+
+The bot's browser switch must be on too, since the fill uses the bot's tab ([The bot's browser](#the-bots-browser)).
+
+**What the bot sees.** Two `j3` tools, whose answers are fixed shapes that carry no value:
+
+- `list_credentials` answers with the name and origins of every login that allows the bot, while its vault access is on and the vault unlocked. A vault with no password lists none. Otherwise it answers `locked`, or `refused` with `no-access` or `unavailable`.
+- `fill_credential` takes the login's name, the field (`username`, `password` or `totp`) and, optionally, `submit`. It answers `filled` with whether Enter was pressed, `refused` with a reason, or `locked`. The reasons are `FillRefusal` in the contract.
+
+**The fill.** The bot first clicks the field, with the engine's browser tools, so that the page's focus is in it. Then, one fill at a time on the whole server:
+
+1. **The bot and the login.** The bot's vault access and the logins that allow it under that name are read. None gives `unknown-login`.
+2. **The tab.** The fill acts on the bot's front tab: the tab of the calling session that most recently opened or navigated ([The bot's browser](#the-bots-browser)). A session with no tab gives `no-tab`, and a tab a paired device holds gives `held`.
+3. **Take it.** The server opens an engine viewer of its own on the tab and takes it, as a device would. From then until it closes the viewer, the bot's browser actions on the tab fail with the engine's `humanControl` ([Engine: the bot's browser](engine.md#the-bots-browser)). The engine must say the server holds it within 5 s; when another viewer holds it, `held`.
+4. **Read where the tab is.** Only now, so the bot can no longer move it, the server reads the tab's committed address from the engine (`BrowserBridge.readTab`), not from anything the bot said. A page still loading gives `loading`; a blank or failed one, or an address that is not `http:` or `https:`, gives `origin`; plain `http:` on a host other than `localhost`, `127.0.0.0/8` or `[::1]` gives `insecure`.
+5. **Match the origin.** The page's origin, as the URL parser writes it (scheme, ASCII host, so a lookalike name stays in punycode, and a port other than the default), must equal one of the login's origins exactly. No domain or suffix match: `https://example.com` does not cover `https://accounts.example.com`. No match gives `origin`; two logins of that name matching gives `ambiguous`.
+6. **Open the value.** `Vault.fillValue` opens the user name or password, or computes the current one-time code from the login's TOTP key (RFC 6238). It records no reveal, since no device saw it. A login without that value gives `no-value`.
+7. **Read again, then type.** The server reads the tab once more and refuses with `navigated` unless it is still loaded at the same address and the server still holds it. Then it types the value with the engine's `text` input (Chromium's `Input.insertText`), where the page's focus is.
+8. **Submit.** With `submit`, it presses Enter. After a password it always does, `submit` or not, so the bot never gets the tab back with a filled password field on the page. It then waits up to 6 s for the page to move on, and if it stays, as a page that only shows an error does, deletes what it typed with one Backspace per character.
+9. **Give it back.** Closing the viewer gives the tab back to the bot, whose call then returns.
+
+The viewer is released when the fill ends however it ends, refused, failed or interrupted, so a tab is never left held. A fill runs in the server's scope, not the call's: a bridge that gives up on a forward does not cut it short between typing and giving the tab back, and the forward's retry under the same request id gets the same answer.
+
+**A refusal is final for the turn.** Once a fill was refused on a tab, every other fill the same session asks for on that tab in the same turn is refused with `refused-before`, without taking the tab. This keeps a bot that a page talked into the wrong fill from trying again until something works. A locked vault, a browser that did not answer and a person holding the tab are not refusals of the page, and do not count.
+
+**What is kept.** Each fill, typed or not, is a step of the bot's running turn in its work fold: tool `login`, the login's name and id, the field, the page's origin as checked, and the outcome (`CredentialFill` in the contract). A fill outside a running turn is not recorded there. The server's log gets one line per fill with the bot, the login's id, the field and the outcome. No value reaches a step, an entry, a log line, a tool result or an error. A test drives `list_credentials` and three fills through the bot tools and checks every step, answer, conversation entry and captured log line for the values and the one-time code.
+
+**Reading the value back.** The fill keeps the value from the bot's tools; it does not keep it from the page. What the server cannot rule out, and what stands against it, is in [Security: filling a login](security.md#filling-a-login).
 
 ## Attachments
 
@@ -378,6 +414,8 @@ The `j3` tools are pre-approved in every permission mode, so they never raise an
 | `remember`, `forget`, `recall` | Write, remove and search memory, in the bot's own scope or the shared one. |
 | `set_routine` | Create, change, pause, resume or delete one of the bot's own routines, by the same commands, checks and routine-change entries as the operator's, with the bot as the author and no approval card. A schedule and a time without an offset, also in an update of a routine whose schedule kept another zone, are read in the operator's zone as it is set at the call: the operator speaks in their own zone. Returns the routine as saved. A webhook routine's address is a credential. It lives in the routine itself, which the operator is shown, also through their live subscription and an operator edit's command receipt; in the stored tool result, which answers a replayed request; and wherever the bot then puts it: the calling system, a private `say` (`to: "dm"` in a room), or a command it runs, whose text shows in that command's work step like any command. The server never adds it to entries, notices or logs on its own. In a routine's side session the only call taken is `pause` of the routine that session runs, so a routine can stop itself once its job is done; every other call is refused. |
 | `request_credential` | Show a save-login card for a site's origin, with a note, in the bot's own conversation. The operator saves the login from the card straight into [the vault](#the-vault); the bot never sees what they type and is not woken when they save. |
+| `list_credentials` | The names and origins of the saved logins the bot may fill, never a value. See [Filling a login](#filling-a-login). |
+| `fill_credential` | Have the server type one value of a saved login (user name, password or one-time code) into the field the bot focused in its front tab, after checking the page's origin. Answers only whether it was filled. See [Filling a login](#filling-a-login). |
 | `list_routines` | The bot's own routines with their ids, instructions, triggers, whether each is paused, and their last runs. |
 | `list_teammates` | Names, titles and jobs of the operator's other bots and the rooms this bot is in. |
 | `create_bot`, `update_bot` | Primary bot only by default: create a teammate with a name and a job, or refine one. |

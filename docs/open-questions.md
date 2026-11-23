@@ -65,3 +65,15 @@ Agents connected through ACP have no system-prompt field. T3 Code sends each tur
 The name is chosen: J3 Bots ([Concepts: Names](product/concepts.md#names)). Whether it is free to use is not checked yet: conflicting trademarks, and the npm scope, GitHub name, domain and app-store names it needs.
 
 **Settled by** those checks, which are the owner's to make.
+
+## 11. Does a fill hold on the pinned engine as the source reads?
+
+The server fills a saved login through the engine's viewer channel ([Server: filling a login](architecture/server.md#filling-a-login)). Its tests run against the in-memory browser, so these are **Assumed** until seen on the pinned engine with a real harness:
+
+- the tab's `navStatus` holds the address the main frame committed, not one a script showed with `history.pushState`;
+- Claude Code drops the engine's `preview_evaluate` when it is given to `--disallowedTools`, as it drops its own tools;
+- a password field shows dots in a snapshot, as on screen;
+- after a password the page stays on, one Backspace per character empties the field, because typing leaves the caret at the end;
+- Codex keeps `preview_evaluate`: its `disabled_tools` for the engine's server would be lost or kept when the engine adds that server to the file.
+
+**Matters because** each is part of what keeps a filled value from the bot ([Security: filling a login](architecture/security.md#filling-a-login)). **Settled by** a real-engine conformance case with the scripted agent: a local sign-in page, a fill of each field, the page's received value and the field after a failed sign-in; and one Claude Code and one Codex session on the pin, listing their tools.
