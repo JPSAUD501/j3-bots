@@ -12,6 +12,10 @@
       "types": "./src/transition/index.ts",
       "import": "./src/transition/index.ts"
     },
+    "./windows-acl": {
+      "types": "./src/home/windowsAcl.ts",
+      "import": "./src/home/windowsAcl.ts"
+    },
     "./testing": {
       "types": "./src/testing/index.ts",
       "import": "./src/testing/index.ts"
