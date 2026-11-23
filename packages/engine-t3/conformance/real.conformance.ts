@@ -311,12 +311,20 @@ const testPage = Effect.acquireRelease(
         });
         return;
       }
+      // The page repaints on its own. The engine sends a new viewer one still of
+      // an idle page and drops it silently when the capture fails, after which
+      // an idle page sends nothing until it repaints (Read at 59651c1,
+      // `ServerBrowser.ts` L3300-3314 and L3369-3371). This case is about the
+      // stream, not that still.
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(
         `<!doctype html><title>Conformance page</title>
 <input id="field" style="position:absolute;left:0;top:0;width:600px;height:200px;font-size:40px">
+<p id="clock" style="position:absolute;left:0;top:220px"></p>
 <script>
   const field = document.getElementById("field");
   field.addEventListener("input", () => fetch("/typed", { method: "POST", body: field.value }));
+  const clock = document.getElementById("clock");
+  setInterval(() => (clock.textContent = String(Date.now())), 250);
 </script>`,
       );
     });

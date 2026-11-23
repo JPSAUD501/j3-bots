@@ -531,6 +531,7 @@ A query that does not decode becomes a socket that closes at once with 1008. A r
 - A picture that arrives while one is in flight waits. A newer one takes its place, and the engine is acknowledged for the one dropped unsent.
 - The engine is acknowledged for a picture only once the client acknowledged it, so a slow client slows the engine's capture rather than piling pictures up.
 - A socket whose write buffer would pass 2 MiB is dropped: one picture in flight never comes near that, so only a client that stopped reading gets there.
+- The first picture may never come for a page that does not repaint ([Engine: the bot's browser](engine.md#the-bots-browser)). A client shows that it waits for it.
 
 **Dropped links, and the grace.**
 - The server pings every 15 s, and a socket it has heard nothing from for 45 s counts as dropped.
