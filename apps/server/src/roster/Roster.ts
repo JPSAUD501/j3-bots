@@ -7,6 +7,7 @@ import type {
   RoomWorkState,
   RosterItem,
   RosterItemKey,
+  Section,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -19,15 +20,22 @@ import { Entries } from "../entries/Entries.ts";
 import { previewOf } from "../entries/preview.ts";
 import { ChangeLog, type ChangeScope } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { Sections } from "../sections/Sections.ts";
 import { RoomStates } from "../turns/RoomStates.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 
 export type RosterFrame =
-  | { readonly _tag: "snapshot"; readonly items: ReadonlyArray<RosterItem> }
+  | {
+      readonly _tag: "snapshot";
+      readonly items: ReadonlyArray<RosterItem>;
+      readonly sections: ReadonlyArray<Section>;
+    }
   | {
       readonly _tag: "changed";
       readonly upsert: ReadonlyArray<RosterItem>;
       readonly remove: ReadonlyArray<RosterItemKey>;
+      /** Every section, when the sections changed. */
+      readonly sections?: ReadonlyArray<Section>;
     };
 
 const createdAtOf = (item: RosterItem) =>
@@ -57,7 +65,10 @@ const compare = (a: RosterItem, b: RosterItem): number => {
   return DateTime.Order(createdAtOf(a), createdAtOf(b));
 };
 
-/** Every bot and room, with a preview of its last entry and whether it is unread. */
+/**
+ * Every bot and room, with a preview of its last entry and whether it is
+ * unread, and the sections that group the bots.
+ */
 export class Roster extends Context.Service<
   Roster,
   {
@@ -73,6 +84,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const bots = yield* BotStore;
     const rooms = yield* Rooms;
+    const sections = yield* Sections;
     const entries = yield* Entries;
     const changes = yield* ChangeLog;
     const roomStates = yield* RoomStates;
@@ -120,6 +132,7 @@ export const layer = Layer.effect(
         // Joined before the snapshot is read, so no change falls between.
         const signals = yield* changes.subscribe;
         const snapshot = yield* items;
+        const sectionsNow = yield* sections.list;
         // The work each active room was last sent with, to this subscriber.
         const sentWork = new Map<RoomId, RoomWorkState>();
         const sent = (item: RosterItem) => {
@@ -146,7 +159,17 @@ export const layer = Layer.effect(
         });
 
         /** The frame for one changed scope: the item as it is now, or its removal. */
-        const changedOf = Effect.fn("Roster.changedOf")(function* (scope: ChangeScope) {
+        const changedOf = Effect.fn("Roster.changedOf")(function* (
+          scope: Exclude<ChangeScope, { readonly _tag: "routines" }>,
+        ) {
+          if (scope._tag === "sections") {
+            return {
+              _tag: "changed",
+              upsert: [],
+              remove: [],
+              sections: yield* sections.list,
+            } satisfies RosterFrame;
+          }
           if (scope._tag === "room") {
             const room = yield* rooms.find(scope.roomId);
             if (Option.isSome(room)) {
@@ -179,9 +202,16 @@ export const layer = Layer.effect(
         });
 
         return Stream.concat(
-          Stream.succeed<RosterFrame>({ _tag: "snapshot", items: snapshot.map(sent) }),
+          Stream.succeed<RosterFrame>({
+            _tag: "snapshot",
+            items: snapshot.map(sent),
+            sections: sectionsNow,
+          }),
           Stream.fromSubscription(signals).pipe(
-            Stream.filter((scope) => scope._tag !== "routines"),
+            Stream.filter(
+              (scope): scope is Exclude<ChangeScope, { readonly _tag: "routines" }> =>
+                scope._tag !== "routines",
+            ),
             Stream.mapEffect(changedOf),
           ),
         );

@@ -24,6 +24,7 @@ import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import { Roster } from "../roster/Roster.ts";
+import { Sections } from "../sections/Sections.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { Presence } from "../presence/Presence.ts";
 import { connectProviders } from "../providers/connect.ts";
@@ -54,6 +55,7 @@ export const handlers = ServedRpcs.toLayer(
     const bots = yield* Bots;
     const attachments = yield* Attachments;
     const rooms = yield* Rooms;
+    const sections = yield* Sections;
     const routines = yield* Routines;
     const memory = yield* Memory;
     const settings = yield* SettingsService;
@@ -107,6 +109,7 @@ export const handlers = ServedRpcs.toLayer(
         NotFound
       > => entries.history(input),
       "entries.markRead": ({ target, through }) => entries.markRead(target, through),
+      "entries.markUnread": ({ target }) => entries.markUnread(target),
       "entries.workSteps": ({ entryId }) => workSteps.follow(entryId),
       "message.send": (input) => pipeline.sendMessage(input),
       "message.retry": (input) => pipeline.retryMessage(input),
@@ -120,6 +123,9 @@ export const handlers = ServedRpcs.toLayer(
       "bot.delete": (input) => bots.remove(input),
       "bot.freshStart": (input) => bots.freshStart(input),
       "bot.files": botFiles,
+      "section.create": (input) => sections.create(input),
+      "section.update": (input) => sections.update(input),
+      "section.delete": (input) => sections.remove(input),
       "room.create": (input) => rooms.create(input),
       "room.update": ({ commandId, roomId, ...changes }) =>
         rooms.update({ commandId, roomId, changes }),

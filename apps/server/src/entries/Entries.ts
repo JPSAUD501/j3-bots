@@ -138,6 +138,12 @@ export class Entries extends Context.Service<
     readonly latest: (target: EntryTarget, limit: number) => Effect.Effect<ReadonlyArray<Entry>>;
     /** Moves the operator's read mark forward to `through`. */
     readonly markRead: (target: EntryTarget, through: EntryOrder) => Effect.Effect<void, NotFound>;
+    /**
+     * Moves the operator's read mark back to just before the last entry a bot
+     * or J3 Bots wrote, which makes the target unread; a target with none
+     * stays as it is.
+     */
+    readonly markUnread: (target: EntryTarget) => Effect.Effect<void, NotFound>;
     readonly summary: (target: EntryTarget) => Effect.Effect<TargetSummary>;
     /**
      * The latest entries, then every change after them. With `after`, only the
@@ -354,6 +360,33 @@ export const layer = Layer.effect(
       ).pipe(Effect.orDie);
     });
 
+    const markUnread = Effect.fn("Entries.markUnread")(function* (target: EntryTarget) {
+      yield* requireTarget(target);
+      // The last entry `summary` counts once the mark is before it. The mark
+      // moves only back, and only from past it: a target never read, or
+      // already unread there, or with no such entry (a comparison with null
+      // is never true) stays as it is. Before the first entry, nothing is read.
+      const last = sql`
+        (SELECT MAX(position) FROM entries
+         WHERE ${targetColumn(target)} AND author_kind <> 'operator')
+      `;
+      const moveBack = sql`
+        SET read_through_order = CASE WHEN ${last} = 0 THEN NULL ELSE ${last} - 1 END
+        WHERE read_through_order >= ${last}
+      `;
+      yield* transaction(
+        Effect.gen(function* () {
+          if (target._tag === "conversation") {
+            yield* sql`UPDATE conversations ${moveBack} AND bot_id = ${target.botId}`;
+            yield* changes.touch({ _tag: "bot", botId: target.botId });
+          } else {
+            yield* sql`UPDATE rooms ${moveBack} AND id = ${target.roomId}`;
+            yield* changes.touch({ _tag: "room", roomId: target.roomId });
+          }
+        }),
+      ).pipe(Effect.orDie);
+    });
+
     const summary = Effect.fn("Entries.summary")(function* (target: EntryTarget) {
       const { entries } = yield* newest(target, null, 1);
       const mark =
@@ -447,6 +480,7 @@ export const layer = Layer.effect(
       history,
       latest,
       markRead,
+      markUnread,
       summary,
       subscribe,
     });

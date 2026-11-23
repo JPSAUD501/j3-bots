@@ -36,6 +36,7 @@ import { Ids } from "../Ids.ts";
 import { Layout } from "../Layout.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
+import { Sections } from "../sections/Sections.ts";
 import { Ledger } from "../turns/Ledger.ts";
 import { rotationRequests } from "../turns/rotationRequests.ts";
 import { Signals } from "../turns/Signals.ts";
@@ -130,6 +131,7 @@ export const layer = Layer.effect(
     const sql = yield* SqlClient.SqlClient;
     const store = yield* BotStore;
     const rooms = yield* Rooms;
+    const sections = yield* Sections;
     const attachments = yield* Attachments;
     const sessions = yield* EngineSessions;
     const engineState = yield* EngineState;
@@ -295,6 +297,9 @@ export const layer = Layer.effect(
             if (Option.isNone(decided)) return before.bot;
             const change = decided.value;
             if (change.model !== undefined) yield* checkModel(status, change.model);
+            if (change.sectionId !== undefined && change.sectionId !== null) {
+              yield* sections.require(change.sectionId);
+            }
             const at = yield* DateTime.now;
             if (change.primary === true && !before.bot.primary) yield* makePrimary(at);
             yield* store.update(input.botId, change, at, input.chooser);

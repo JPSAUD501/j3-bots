@@ -75,6 +75,7 @@ export function bot(
     primary: false,
     pinned: false,
     hidden: false,
+    sectionId: null,
     state,
     settingsHeld: false,
     opening: false,

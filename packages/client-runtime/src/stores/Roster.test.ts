@@ -32,6 +32,7 @@ const bot = (
     primary: false,
     pinned: options.pinned ?? false,
     hidden: options.hidden ?? false,
+    sectionId: null,
     state: options.state ?? { _tag: "idle" },
     settingsHeld: false,
     opening: false,
