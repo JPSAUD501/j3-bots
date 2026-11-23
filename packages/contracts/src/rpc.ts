@@ -18,6 +18,7 @@ import {
   Sequence,
 } from "./base.ts";
 import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
+import { BrowserTabs } from "./browser.ts";
 import { Device, PairingCode, PushRegistration } from "./device.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
@@ -704,6 +705,21 @@ export const ProviderRpcs = RpcGroup.make(
   }),
 );
 
+export const BrowserRpcs = RpcGroup.make(
+  /**
+   * The tabs the bot opened in the engine's browser, then the whole list
+   * again on every change: a tab opened, closed, navigated or loaded, or
+   * taken or given back by a person. Small, and always starts afresh. A
+   * tab's picture and control are on the media socket (`HTTP_PATHS.browser`).
+   */
+  Rpc.make("browser.subscribe", {
+    payload: { botId: BotId },
+    success: BrowserTabs,
+    error: NotFound,
+    stream: true,
+  }),
+);
+
 /** Every RPC a paired client can make, on the socket at `HTTP_PATHS.rpc`. */
 export const J3Rpcs = RosterRpcs.merge(
   EntryRpcs,
@@ -716,4 +732,5 @@ export const J3Rpcs = RosterRpcs.merge(
   SettingsRpcs,
   ClientRpcs,
   ProviderRpcs,
+  BrowserRpcs,
 );
