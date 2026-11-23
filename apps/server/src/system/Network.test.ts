@@ -6,7 +6,13 @@ import { assert, it } from "@effect/vitest";
 import { ServerOrigin } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { guardConnections, isPrivateAddress, Network, reachableOrigins } from "./Network.ts";
+import {
+  guardConnections,
+  isPrivateAddress,
+  isServedHost,
+  Network,
+  reachableOrigins,
+} from "./Network.ts";
 
 /**
  * What a client that sends a request to a guarded server reads back, and
@@ -107,4 +113,43 @@ it.effect(
         }),
       ),
     ),
+);
+
+it.effect("serves a Host no web page can rebind to this machine, and no other", () =>
+  Effect.sync(() => {
+    const none = Option.none();
+    for (const host of [
+      "127.0.0.1:3737",
+      "LOCALHOST:3737",
+      "[::1]:3737",
+      "[::ffff:127.0.0.1]:3737",
+      // The Android emulator's alias for its host's loopback.
+      "10.0.2.2:3737",
+      "100.101.102.103:3737",
+      // Through a proxy on another port.
+      "127.0.0.1:8080",
+      "localhost",
+    ]) {
+      assert.isTrue(isServedHost(host, none), host);
+    }
+    for (const host of [
+      undefined,
+      "",
+      "evil.example:3737",
+      // Names that resolve to loopback are names all the same.
+      "127.0.0.1.nip.io:3737",
+      "localhost.evil.example:3737",
+      // Only an authority: a user or a path could hide a name before an address.
+      "evil.example@127.0.0.1:3737",
+      "127.0.0.1:3737/evil.example",
+      "127.0.0.1:99999",
+      "::1",
+    ]) {
+      assert.isFalse(isServedHost(host, none), String(host));
+    }
+    const behindProxy = Option.some(ServerOrigin.make("https://bots.example.com"));
+    assert.isTrue(isServedHost("bots.example.com", behindProxy));
+    assert.isTrue(isServedHost("Bots.Example.com:8443", behindProxy));
+    assert.isFalse(isServedHost("bots.example.com.evil.example", behindProxy));
+  }),
 );

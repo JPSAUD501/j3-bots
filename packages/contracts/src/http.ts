@@ -22,9 +22,12 @@ export const HTTP_PATHS = {
   /** `GET`, no credential. Answers `ServerInfo`. */
   server: "/api/server",
   /**
-   * `POST` a `PairRequest`, no credential. Answers `PairResult`; 400 with
-   * `Invalid("pairing-code")` for a wrong or expired code, 429 with `RateLimited`
-   * while pairing is locked out.
+   * `POST` a `PairRequest` as `Content-Type: application/json`, no credential.
+   * Answers `PairResult`; 400 with `Invalid("pairing-code")` for a wrong or
+   * expired code, 429 with `RateLimited` while pairing is locked out. Any other
+   * content type is answered 415 before the body is read, and does not count
+   * as an attempt: a web page can send `text/plain` anywhere without asking,
+   * but not JSON to another origin.
    */
   pair: "/api/pair",
   /**

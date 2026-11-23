@@ -8,6 +8,8 @@ Bots run with full access to the user that runs J3 Bots. Whoever can open the se
 
 Every other request needs a paired device's token, which the server checks itself. Webhooks are the exception: their address is their credential ([Webhooks](#webhooks)).
 
+Over plain HTTP, open the server at an address or at `localhost`, as `j3-bots pair` prints it: the server answers `403` to a request for any other name, such as `http://<machine>.local:3737`, except the one in [`publicOrigin`](#publicorigin). A web page on a name its owner points at your machine's address could otherwise talk to the server as if it were its own page ([Security](../architecture/security.md#j3-bots-own-surface)). Web pages cannot lock pairing either: only a JSON request counts as an attempt, and a page cannot send one to another origin.
+
 The ways below, from least to most exposed:
 
 | Way | Who reaches it | HTTPS |
@@ -45,7 +47,7 @@ For HTTPS, `tailscale cert <machine>.<tailnet>.ts.net` issues a certificate for 
 Some platforms publish only containers, behind a proxy of their own that holds the certificate: Coolify, for one, or a tunnel that does the same. For them, [`deploy/container-proxy/compose.yaml`](../../deploy/container-proxy/compose.yaml) runs a small Caddy container that forwards HTTP and WebSocket traffic, unchanged, to the server on the host. The server keeps running as its systemd user service.
 
 1. Leave `host` at `"lan"` and `tls` at `null`. The container reaches the server at `host.docker.internal`, which Docker points at the host's address on its bridge network. That address is private, so `lan` serves it.
-2. Set [`publicOrigin`](#publicorigin) to your domain, such as `"https://bots.example.com"`, and restart the service.
+2. Set [`publicOrigin`](#publicorigin) to your domain, such as `"https://bots.example.com"`, and restart the service. The container forwards the `Host` the platform's proxy received, your domain, and over plain HTTP the server answers only an address or that name, so without `publicOrigin` every request through the domain gets `403`. The container's own health check asks at `127.0.0.1`, an address, and is answered either way (**Verified** with Caddy 2.10.2, which passes the client's `Host` on unchanged).
 3. On the platform, create a Docker Compose app from this repository, with `deploy/container-proxy/compose.yaml`, on the machine that runs J3 Bots. Give its `proxy` service your domain on port 8080. If the server listens on a port other than 3737, set `J3_PORT` to it.
 4. Deploy. The container counts as healthy while the server answers, so the platform routes to it only then.
 
@@ -68,9 +70,10 @@ When other machines reach the server at an address it does not listen on, such a
 It must be an `https` origin: no path, not even a trailing `/`, in lower case, without a default port. Then:
 
 - a webhook routine's address names it, so the services that call it can reach it;
-- `j3-bots pair` lists it first, and its QR code carries it. Settings → Devices, opened at the domain, puts the domain in its QR code too.
+- `j3-bots pair` lists it first, and its QR code carries it. Settings → Devices, opened at the domain, puts the domain in its QR code too;
+- over plain HTTP, the server answers requests for its name, which a proxy that keeps the client's `Host` forwards. Any other name gets `403`.
 
-It changes nothing about where or how the server listens.
+It changes nothing about where the server listens.
 
 ## Webhooks
 

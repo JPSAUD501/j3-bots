@@ -80,6 +80,35 @@ export const isPrivateAddress = (address: string): boolean => {
   return false;
 };
 
+/** A `Host` header holds an authority alone: no user, path, query or fragment. */
+const AUTHORITY = /^[^\s@/\\?#]+$/;
+
+/**
+ * Whether a plain-HTTP listener answers a request whose `Host` header is
+ * `host`. A web page on a name its owner points at this machine's address
+ * (DNS rebinding) is same-origin with the server under that name, so it could
+ * read what the server answers, and its browser sends that name as `Host`.
+ * No one can rebind an IP literal, nor `localhost`, which browsers resolve to
+ * loopback themselves, and `publicOrigin` names the operator's own domain. So
+ * the host must be one of those. Its port is not compared: the name is what a
+ * rebinding page cannot fake, and a proxy, Docker or an emulator may reach the
+ * server at a port other than the one it bound.
+ */
+export const isServedHost = (
+  host: string | undefined,
+  publicOrigin: Option.Option<ServerOrigin>,
+): boolean => {
+  if (host === undefined || !AUTHORITY.test(host)) return false;
+  const url = URL.parse(`http://${host}`);
+  if (url === null) return false;
+  const name = url.hostname;
+  return (
+    name === "localhost" ||
+    NodeNet.isIP(name.startsWith("[") ? name.slice(1, -1) : name) !== 0 ||
+    Option.exists(publicOrigin, (origin) => URL.parse(origin)?.hostname === name)
+  );
+};
+
 /** The address that listens on every IPv4 interface. */
 export const EVERY_IPV4_INTERFACE = "0.0.0.0";
 
