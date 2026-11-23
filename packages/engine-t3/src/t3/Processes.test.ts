@@ -8,7 +8,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { makeProcesses, servesHome, stopPlan, windowsCommandWords } from "./Processes.ts";
+import { makeProcesses, servesHome, windowsCommandWord, windowsCommandWords } from "./Processes.ts";
 
 describe("windowsCommandWords", () => {
   it("splits as the C runtime does: quotes group, and backslashes count only before a quote", () => {
@@ -66,13 +66,21 @@ describe("servesHome", () => {
   });
 });
 
-describe("stopPlan", () => {
-  it("signals where there are signals, and kills the tree on Windows, which has none", () => {
-    assert.deepStrictEqual(stopPlan("linux", Duration.seconds(10)), {
-      _tag: "signals",
-      grace: Duration.seconds(10),
-    });
-    assert.deepStrictEqual(stopPlan("win32", Duration.seconds(10)), { _tag: "tree-kill" });
+describe("windowsCommandWord", () => {
+  it("quotes a word so that Windows' splitting gives it back as it was", () => {
+    const words = [
+      "serve",
+      String.raw`C:\Users\Sam Lee\AppData\Roaming\J3 Bots\server\home\engine`,
+      "C:\\Folder Ending In\\",
+      String.raw`a\"b`,
+      'say "hi"',
+      "",
+      "tab\there",
+      "\\\\server\\share\\",
+    ];
+    assert.deepStrictEqual(windowsCommandWords(words.map(windowsCommandWord).join(" ")), words);
+    // A word with nothing to quote is left as it is.
+    assert.strictEqual(windowsCommandWord(String.raw`C:\J3\t3.exe`), String.raw`C:\J3\t3.exe`);
   });
 });
 
@@ -88,58 +96,68 @@ const PARENT_SCRIPT = [
   "setInterval(() => {}, 1000);",
 ].join(" ");
 
+/** Ends `pids` when the test's scope closes, so that no test leaves a process behind. */
+const endWithTest = (pids: ReadonlyArray<number>) =>
+  Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+    }),
+  );
+
+/** Starts PARENT_SCRIPT with `marker` among its arguments; its pid and its child's. */
+const startParent = (marker: string) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(process.execPath, ["-e", PARENT_SCRIPT, marker], {
+        stdin: "ignore",
+        stderr: "inherit",
+      }),
+    );
+    const parent = Number(handle.pid);
+    const child = yield* handle.stdout.pipe(
+      Stream.decodeText,
+      Stream.splitLines,
+      Stream.runHead,
+      Effect.flatMap((line) => Effect.fromOption(line)),
+      Effect.map(Number),
+      Effect.timeout("30 seconds"),
+    );
+    yield* endWithTest([parent, child]);
+    return { parent, child };
+  });
+
 describe("makeProcesses", () => {
   it.live(
     "reads a running process's command line, and stops it; on Windows, with what it started",
     () =>
       Effect.gen(function* () {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const processes = yield* makeProcesses(process.platform, process.env);
         const marker = `j3-processes-test-${process.pid}`;
-        const handle = yield* spawner.spawn(
-          ChildProcess.make(process.execPath, ["-e", PARENT_SCRIPT, marker], {
-            stdin: "ignore",
-            stderr: "inherit",
-          }),
-        );
-        const parent = Number(handle.pid);
-        const child = yield* handle.stdout.pipe(
-          Stream.decodeText,
-          Stream.splitLines,
-          Stream.runHead,
-          Effect.flatMap((line) => Effect.fromOption(line)),
-          Effect.map(Number),
-          Effect.timeout("30 seconds"),
-        );
-        // Whatever the stop leaves running is ended here, so no test leaves a process behind.
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            for (const pid of [parent, child]) {
-              try {
-                process.kill(pid, "SIGKILL");
-              } catch {
-                // Already gone.
-              }
-            }
-          }),
-        );
+        const { parent, child } = yield* startParent(marker);
 
-        const line = yield* processes.commandLine(parent);
+        const found = yield* processes.lookUp(parent);
         assert.isTrue(
-          Option.exists(line, (found) => found.includes(marker)),
-          String(line),
+          Option.exists(found, ({ commandLine }) => commandLine.includes(marker)),
+          String(found),
         );
         assert.isTrue(yield* processes.isAlive(parent));
         assert.isTrue(yield* processes.isAlive(child));
 
         const gone = yield* processes.stop(
-          parent,
-          stopPlan(process.platform, Duration.seconds(1)),
+          Option.getOrThrow(found),
+          Duration.seconds(1),
           Duration.seconds(10),
         );
         assert.isTrue(gone);
         assert.isFalse(yield* processes.isAlive(parent));
-        assert.isTrue(Option.isNone(yield* processes.commandLine(parent)));
+        assert.isTrue(Option.isNone(yield* processes.lookUp(parent)));
         // Windows ends the tree; elsewhere the engine's harnesses live in scopes of their own.
         if (process.platform === "win32") {
           const childGone = yield* processes
@@ -150,6 +168,26 @@ describe("makeProcesses", () => {
             );
           assert.isTrue(Option.isSome(childGone));
         }
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    { timeout: 60_000 },
+  );
+
+  it.live.runIf(process.platform === "win32")(
+    "on Windows, leaves alone a process that has the id of the one it found, and what that one started",
+    () =>
+      Effect.gen(function* () {
+        const processes = yield* makeProcesses(process.platform, process.env);
+        const { parent, child } = yield* startParent(`j3-processes-other-${process.pid}`);
+        const found = Option.getOrThrow(yield* processes.lookUp(parent));
+        assert.strictEqual(found._tag, "windows");
+        if (found._tag !== "windows") return;
+        // As if the process found had ended and this one had been given its id:
+        // the same id, started at another time.
+        const earlier = { ...found, started: String(BigInt(found.started) - 10_000_000n) };
+
+        assert.isTrue(yield* processes.stop(earlier, Duration.seconds(1), Duration.seconds(10)));
+        assert.isTrue(yield* processes.isAlive(parent));
+        assert.isTrue(yield* processes.isAlive(child));
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: 60_000 },
   );
