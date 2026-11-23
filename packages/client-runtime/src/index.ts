@@ -8,6 +8,8 @@ export {
   type LoadedHandle,
   type PairResult,
   type Platform,
+  type ServerUpdateHandle,
+  type ServerUpdateStart,
   type UsageHandle,
   type WorkStepsHandle,
 } from "./client.ts";
@@ -136,3 +138,12 @@ export {
   Usage,
 } from "./stores/Usage.ts";
 export { WorkSteps, type WorkStepsState } from "./stores/WorkSteps.ts";
+export {
+  behind,
+  isRunning,
+  type RequestResult,
+  ServerUpdate,
+  type ServerUpdateView,
+  type StartResult,
+  type UpdateResult,
+} from "./update/ServerUpdate.ts";

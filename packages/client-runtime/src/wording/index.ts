@@ -54,3 +54,10 @@ export {
 export { windowText, type WindowText } from "./usage.ts";
 export { type Announcement, turnAnnouncement, turnLabel, turnLine } from "./turn.ts";
 export { stepText, workFoldTitle } from "./work.ts";
+export {
+  type ServerUpdateLine,
+  serverUpdateLine,
+  startRefusalText,
+  type UpdateTone,
+  updateResultLine,
+} from "./update.ts";

@@ -884,6 +884,12 @@ const sentences = {
   "gate.incompatible.appTitle": "Este app não combina com o servidor",
   "gate.incompatible.appBody":
     "O servidor do J3 Bots em {address} fala uma versão diferente da deste app. Atualize o app ou o servidor para que combinem, ou troque para outro servidor.",
+  "gate.incompatible.serverBehindTitle": "O servidor precisa de uma atualização",
+  "gate.incompatible.serverBehindBody":
+    "O servidor em {address} roda o J3 Bots {version}, mais antigo que este app.",
+  "gate.incompatible.appBehindTitle": "Este app precisa de uma atualização",
+  "gate.incompatible.appBehindBody":
+    "O servidor em {address} roda o J3 Bots {version}, mais novo que este app.",
   "gate.storage.title": "Este navegador não guarda o acesso",
   "gate.storage.body":
     "O J3 Bots guarda o acesso deste dispositivo nos dados de site do navegador, e o navegador recusou. Permita dados de site para esta página e tente de novo.",
@@ -1263,6 +1269,82 @@ const sentences = {
   "desktop.tray.local.restartingNow": "Bots parados · reiniciando…",
   "desktop.tray.local.failed": "Os bots não iniciaram",
   "desktop.tray.phoneOn": "Uso pelo celular ligado",
+  "settings.about": "Sobre e atualizações",
+
+  "serverUpdate.title": "O servidor",
+  "serverUpdate.runs": "J3 Bots {version}",
+  "serverUpdate.available": "O J3 Bots {version} está disponível.",
+  "serverUpdate.available.hint":
+    "Seus bots param por um ou dois minutos enquanto o servidor atualiza. Se a nova versão não iniciar, o servidor volta sozinho para a {current}.",
+  "serverUpdate.update": "Atualizar o servidor",
+  "serverUpdate.whatsNew": "Novidades",
+  "serverUpdate.checkFailed":
+    "Não deu para procurar atualizações. O servidor tenta de novo mais tarde.",
+  "serverUpdate.waitingForStable":
+    "O servidor espera uma versão estável mais nova que a {version} que ele roda.",
+  "serverUpdate.refusedRelease":
+    "O J3 Bots {version} saiu, mas não confere com a assinatura do projeto, então não é oferecido.",
+  "serverUpdate.downloading": "Baixando a {version}… {percent}%",
+  "serverUpdate.downloadingNoTotal": "Baixando a {version}…",
+  "serverUpdate.verifying": "Conferindo o download com a assinatura do projeto…",
+  "serverUpdate.installing": "Preparando a {version}…",
+  "serverUpdate.restarting": "Reiniciando seus bots na {version}…",
+  "serverUpdate.restartingNoVersion": "Reiniciando seus bots…",
+  "serverUpdate.working": "Atualizando o servidor…",
+  "serverUpdate.lost":
+    "A atualização não terminou. Na máquina do servidor, rode isto para ver o motivo:",
+  "serverUpdate.unreachable": "Não deu para falar com o servidor para ver as atualizações.",
+  "serverUpdate.unsupported":
+    "Este servidor é anterior às atualizações pelos apps. Atualize na máquina dele:",
+  "serverUpdate.unable.desktopManaged":
+    "Este servidor roda dentro do app J3 Bots no computador dele. Atualizar esse app atualiza o servidor.",
+  "serverUpdate.unable.startedByHand":
+    "Este servidor foi iniciado à mão, não como serviço. Atualize na máquina dele:",
+  "serverUpdate.unable.checkout": "Este servidor roda de uma cópia do código. Atualize por lá.",
+  "serverUpdate.unable.unpacked":
+    "Este servidor roda de uma versão descompactada à mão. Instale com o install.sh para atualizar por aqui.",
+  "serverUpdate.unable.noSystemd":
+    "A máquina deste servidor não tem um gerenciador de serviços para rodar a atualização. Atualize na máquina dele:",
+  "serverUpdate.unable.noLinger":
+    "O serviço do servidor pode parar quando o usuário dele sai da sessão, e a atualização junto. Deixe-o continuar rodando e tente de novo:",
+  "serverUpdate.unable.rollbackUnfinished":
+    "Uma volta de versão não terminou neste servidor. Termine na máquina dele:",
+  "serverUpdate.unable.unknown":
+    "Este servidor não atualiza por aqui. Atualize na máquina dele.",
+  "serverUpdate.result.done": "Seus bots rodam a {version}.",
+  "serverUpdate.result.rolledBack":
+    "A atualização para a {to} não iniciou, então seus bots voltaram para a {from}, com os dados como estavam.",
+  "serverUpdate.result.failed":
+    "A atualização para a {to} falhou, e voltar para a {from} também. Na máquina do servidor, rode:",
+  "serverUpdate.result.unknown": "A atualização para a {version} terminou.",
+  "serverUpdate.failure.healthCheck": "A nova versão não ficou pronta a tempo.",
+  "serverUpdate.failure.download": "Não deu para baixar a versão.",
+  "serverUpdate.failure.verification": "O download não conferiu com a assinatura do projeto.",
+  "serverUpdate.failure.engine": "Não deu para obter o motor da nova versão.",
+  "serverUpdate.failure.disk": "Faltou espaço no servidor.",
+  "serverUpdate.failure.interrupted": "Um reinício da máquina do servidor interrompeu.",
+  "serverUpdate.failure.unknown": "Algo deu errado.",
+  "serverUpdate.refusal.notAvailable":
+    "Essa versão não é mais oferecida. Procure atualizações de novo.",
+  "serverUpdate.refusal.busy": "Já tem uma atualização rodando.",
+  "serverUpdate.refusal.workRunning": "Há bots trabalhando. Pare o trabalho para atualizar.",
+  "serverUpdate.refusal.unable": "Este servidor não atualiza por aqui.",
+  "serverUpdate.refusal.unknown": "O servidor não iniciou a atualização.",
+  "serverUpdate.notReached": "Não deu para falar com o servidor. Tente de novo.",
+  "serverUpdate.stopWork.title": "Parar o trabalho dos bots?",
+  "serverUpdate.stopWork.body.one":
+    "{count} bot está trabalhando, e o trabalho para enquanto o servidor atualiza.",
+  "serverUpdate.stopWork.body.other":
+    "{count} bots estão trabalhando, e o trabalho para enquanto o servidor atualiza.",
+  "serverUpdate.stopWork.confirm": "Parar e atualizar",
+  "serverUpdate.stopWork.cancel": "Agora não",
+
+  "updateChannel.label": "Atualizações",
+  "updateChannel.stable": "Estável",
+  "updateChannel.nightly": "Nightly",
+  "updateChannel.nightly.hint":
+    "Uma versão com as mudanças de cada dia, antes de saírem. Pode ter problemas que uma versão estável não tem.",
+
   "update.version": "J3 Bots {version}",
   "update.unavailable": "Esta versão não se atualiza sozinha.",
   "update.upToDate": "Está na versão mais recente.",

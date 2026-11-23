@@ -27,8 +27,10 @@ import type {
   RoutineId,
   Section as RosterSection,
   SectionId,
+  ReleaseVersion,
   Settings as SettingsValue,
   SignInHarness,
+  UpdateChannel,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -72,6 +74,7 @@ import * as Settings from "./stores/Settings.ts";
 import type { Synced } from "./stores/synced.ts";
 import * as Usage from "./stores/Usage.ts";
 import * as WorkSteps from "./stores/WorkSteps.ts";
+import * as ServerUpdate from "./update/ServerUpdate.ts";
 
 /** What a platform provides to run the client. See `ports.ts`. */
 export type Platform =
@@ -101,6 +104,7 @@ export const layer = SignOut.layer.pipe(
       Presence.layer,
       Usage.layer,
       ProviderSetup.layer,
+      ServerUpdate.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -387,6 +391,12 @@ export interface J3Client {
   ) => Promise<ProviderSetup.ConnectEndpointResult>;
 
   readonly setView: (target: EntryTarget | null) => void;
+  /**
+   * The server's updates: what it runs and is offered, an update under way,
+   * and starting one. It works while the server speaks another protocol too.
+   */
+  readonly serverUpdate: ServerUpdateHandle;
+
   /** Calls `listener` for each notification. Returns the function that stops it. */
   readonly onNotification: (listener: (notification: Notification) => void) => () => void;
 
@@ -403,6 +413,22 @@ export interface J3Client {
 
   /** Closes the socket and every subscription. */
   readonly dispose: () => Promise<void>;
+}
+
+/** A start of the server's update, or why it did not start. */
+export type ServerUpdateStart = ServerUpdate.StartResult | { readonly _tag: "not-paired" };
+
+/** Updating the server from this client; see `ServerUpdate`. */
+export interface ServerUpdateHandle {
+  readonly view: Readable<ServerUpdate.ServerUpdateView>;
+  readonly ended: Readable<ServerUpdate.UpdateResult | null>;
+  readonly dismissEnded: () => void;
+  readonly refresh: () => void;
+  readonly check: () => Promise<ServerUpdate.RequestResult | "not-paired">;
+  readonly setChannel: (
+    channel: UpdateChannel,
+  ) => Promise<ServerUpdate.RequestResult | "not-paired">;
+  readonly start: (version: ReleaseVersion, stopWork: boolean) => Promise<ServerUpdateStart>;
 }
 
 /** Starts the client runtime on `platform`. */
@@ -434,6 +460,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         files: yield* Files.Files,
         details: yield* Details.Details,
         signOut: yield* SignOut.SignOut,
+        serverUpdate: yield* ServerUpdate.ServerUpdate,
       };
     }),
   );
@@ -636,6 +663,35 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     cancelSignIn: (harness) => fire(services.providerSetup.cancelSignIn(harness)),
     harnessLocations: () => run.promise(services.providerSetup.harnesses),
     connectEndpoint: (request) => run.promise(services.providerSetup.connect(request)),
+
+    serverUpdate: {
+      view: services.serverUpdate.view,
+      ended: services.serverUpdate.ended,
+      dismissEnded: () => run.sync(services.serverUpdate.dismissEnded),
+      refresh: () => fire(services.serverUpdate.refresh),
+      check: () =>
+        run.promise(
+          services.serverUpdate.check.pipe(
+            Effect.catchTag("NotPaired", () => Effect.succeed("not-paired" as const)),
+          ),
+        ),
+      setChannel: (channel) =>
+        run.promise(
+          services.serverUpdate
+            .setChannel(channel)
+            .pipe(Effect.catchTag("NotPaired", () => Effect.succeed("not-paired" as const))),
+        ),
+      start: (version, stopWork) =>
+        run.promise(
+          services.serverUpdate
+            .start(version, stopWork)
+            .pipe(
+              Effect.catchTag("NotPaired", () =>
+                Effect.succeed<ServerUpdateStart>({ _tag: "not-paired" }),
+              ),
+            ),
+        ),
+    },
 
     setView: (target) => fire(services.presence.setView(target)),
     onNotification: (listener) => listen(services.presence.notifications, listener),
