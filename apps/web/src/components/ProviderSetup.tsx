@@ -10,6 +10,7 @@ import {
   type SignInHarness,
   signInHarnesses,
 } from "@j3-bots/contracts";
+import * as Redacted from "effect/Redacted";
 import { ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import type { I18n } from "@j3-bots/i18n";
 import { type ReactNode, useEffect, useEffectEvent, useId, useRef, useState } from "react";
@@ -275,11 +276,13 @@ function EndpointForm({
     setBadUrl(false);
     setUrl(root.url);
     setPhase({ _tag: "sending" });
-    void onConnect({ baseUrl: root.url, key: key.trim(), stopWork }).then((result) => {
-      // Once the server keeps the key, this page does not.
-      if (result._tag === "applied" || result._tag === "stored") setKey("");
-      setPhase({ _tag: "answered", result });
-    });
+    void onConnect({ baseUrl: root.url, key: Redacted.make(key.trim()), stopWork }).then(
+      (result) => {
+        // Once the server keeps the key, this page does not.
+        if (result._tag === "applied" || result._tag === "stored") setKey("");
+        setPhase({ _tag: "answered", result });
+      },
+    );
   };
 
   const answer = phase._tag === "answered" ? endpointAnswer(phase.result, i18n) : null;

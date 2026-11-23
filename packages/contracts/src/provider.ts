@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { OpenLiterals } from "./base.ts";
 
@@ -162,8 +163,20 @@ export const MAX_PROVIDER_KEY_LENGTH = 4096;
 
 export const ProviderConnectionRequest = Schema.Struct({
   baseUrl: ProviderBaseUrl,
-  /** Kept only in the engine's secret store, and never logged, stored elsewhere or sent back. */
-  key: Schema.NonEmptyString.check(Schema.isMaxLength(MAX_PROVIDER_KEY_LENGTH)),
+  /**
+   * Kept only in the engine's secret store, and never logged, stored
+   * elsewhere or sent back. Redacted as soon as it is decoded, and checked
+   * only then, so neither a refused key nor a log of the request prints it.
+   */
+  key: Schema.Redacted(Schema.String).check(
+    Schema.makeFilter(
+      (key: Redacted.Redacted<string>) => {
+        const length = Redacted.value(key).length;
+        return length >= 1 && length <= MAX_PROVIDER_KEY_LENGTH;
+      },
+      { expected: `a key of 1 to ${MAX_PROVIDER_KEY_LENGTH} characters` },
+    ),
+  ),
   /**
    * Whether the operator agreed that the engine's restart stops the work
    * bots have running. Without it, the server stores nothing while any runs.

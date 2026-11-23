@@ -6,7 +6,9 @@ import { Engine } from "@j3-bots/engine-t3";
 import * as TestEngine from "@j3-bots/engine-t3/testing";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,7 +17,10 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { ServerConfig } from "../config.ts";
+import { HARNESSES } from "../engine/harnesses.ts";
 import * as Host from "../system/Host.ts";
 import { configFor } from "../testing/database.ts";
 import { invocation, pageIn, signIn, signInCommand } from "./signIn.ts";
@@ -81,7 +86,7 @@ it("runs each harness's own sign-in in J3 Bots' home for it, with only the varia
   );
 });
 
-it("runs a Windows .cmd shim through cmd.exe, and refuses a path cmd.exe would expand", () => {
+it("runs a Windows .cmd shim through cmd.exe, every word quoted, and refuses what cmd.exe would read in quotes", () => {
   assert.deepStrictEqual(
     invocation("C:\\Tools\\claude.exe", ["auth", "login"], "win32"),
     Result.succeed({
@@ -90,17 +95,46 @@ it("runs a Windows .cmd shim through cmd.exe, and refuses a path cmd.exe would e
       shell: false,
     }),
   );
+  // `&`, `^`, `(` and `)` in a folder's name are part of the path, not commands of their own.
   assert.deepStrictEqual(
-    invocation("C:\\Users\\Ada Lovelace\\npm\\codex.cmd", ["login"], "win32"),
+    invocation("C:\\Users\\Ada\\R&D^(Co)\\npm\\codex.cmd", ["login", "C:\\Data\\"], "win32"),
     Result.succeed({
-      command: '"C:\\Users\\Ada Lovelace\\npm\\codex.cmd" login',
+      command: '"C:\\Users\\Ada\\R&D^(Co)\\npm\\codex.cmd" "login" "C:\\Data\\\\"',
       args: [],
       shell: true,
     }),
   );
-  assert.isTrue(Result.isFailure(invocation("C:\\%PATH%\\codex.cmd", ["login"], "win32")));
+  for (const path of ["C:\\%PATH%\\codex.cmd", "C:\\Hi!\\codex.cmd", 'C:\\a"b\\codex.cmd']) {
+    assert.isTrue(Result.isFailure(invocation(path, ["login"], "win32")), path);
+  }
   // Elsewhere a `.cmd` is a file like another.
   assert.isFalse(invocation("/opt/codex.cmd", ["login"], "linux").pipe(Result.getOrThrow).shell);
+});
+
+// A real cmd.exe, which only Windows has.
+it.layer(NodeServices.layer, { excludeTestServices: true })("cmd.exe", (it) => {
+  it.effect.runIf(process.platform === "win32")(
+    "runs a .cmd shim in a folder whose name cmd.exe would otherwise split, with its arguments",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const folder = path.join(yield* fs.makeTempDirectoryScoped(), "R&D^(Co)");
+        yield* fs.makeDirectory(folder);
+        const shim = path.join(folder, "stand-in.cmd");
+        yield* fs.writeFileString(shim, '@echo off\r\n> "%~dp0args.txt" echo [%~1] [%~2]\r\n');
+        const how = invocation(shim, ["auth", "login"], "win32").pipe(Result.getOrThrow);
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const code = yield* spawner.exitCode(
+          ChildProcess.make(how.command, how.args, { shell: how.shell }),
+        );
+        assert.strictEqual(code, 0);
+        assert.strictEqual(
+          (yield* fs.readFileString(path.join(folder, "args.txt"))).trim(),
+          "[auth] [login]",
+        );
+      }).pipe(Effect.scoped),
+  );
 });
 
 it("finds a harness on Windows as its .exe or its npm .cmd shim", () => {
@@ -112,13 +146,34 @@ it("finds a harness on Windows as its .exe or its npm .cmd shim", () => {
   assert.deepStrictEqual(Host.executableNames("linux", ".EXE")("codex"), ["codex"]);
 });
 
-it("reads the page a harness prints, and nothing that is not an https URL", () => {
+it("reads only the harness's own sign-in page in what it prints", () => {
   assert.strictEqual(
-    pageIn("If the browser didn't open, visit: https://claude.example/oauth?code=true\u001b[0m"),
-    "https://claude.example/oauth?code=true",
+    pageIn(
+      "If the browser didn't open, visit: https://claude.ai/oauth/authorize?code=true\u001b[0m",
+      "claude-code",
+    ),
+    "https://claude.ai/oauth/authorize?code=true",
   );
-  assert.strictEqual(pageIn("Starting local login server on http://localhost:1455."), null);
-  assert.strictEqual(pageIn("Paste code here if prompted >"), null);
+  // Another URL earlier on the line is passed over, and the page found after it.
+  assert.strictEqual(
+    pageIn(
+      "Help: https://docs.example.com/login, then https://auth.openai.com/oauth/authorize?state=s",
+      "codex",
+    ),
+    "https://auth.openai.com/oauth/authorize?state=s",
+  );
+  for (const line of [
+    "Starting local login server on http://localhost:1455.",
+    "Paste code here if prompted >",
+    // Another harness's page, a page with a user name, another path, another port.
+    "https://auth.openai.com/oauth/authorize?state=s",
+    "https://ada:hunter2@claude.ai/oauth/authorize?code=true",
+    "https://claude.ai/oauth/authorize/../../logout",
+    "https://claude.ai:8443/oauth/authorize",
+    "https://claude.ai.example.com/oauth/authorize",
+  ]) {
+    assert.strictEqual(pageIn(line, "claude-code"), null, line);
+  }
 });
 
 /** A stand-in harness: a shell script in `folder`, which `PATH` finds as `name`. */
@@ -142,6 +197,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
     executable: string,
     home: string,
     onStatus: (status: ProviderSignInStatus) => Effect.Effect<void> = () => Effect.void,
+    limits?: Parameters<typeof signIn>[0]["limits"],
   ) =>
     Effect.gen(function* () {
       const reported: Array<ProviderSignInStatus> = [];
@@ -157,6 +213,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
           report: (status) =>
             Effect.sync(() => void reported.push(status)).pipe(Effect.andThen(onStatus(status))),
         },
+        ...(limits === undefined ? {} : { limits }),
       }).pipe(Effect.result);
       return { result, reported };
     });
@@ -176,8 +233,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
           "claude",
           [
             `echo "Opening browser to sign in… ${SECRET}"`,
-            `"$BROWSER" "https://claude.example/oauth/authorize?state=abc"`,
-            `echo "If the browser didn't open, visit: https://claude.example/short"`,
+            `"$BROWSER" "https://claude.com/cai/oauth/authorize?state=abc"`,
+            `echo "If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=abc"`,
             waitFor(go),
             `printf '{"accessToken":"${SECRET}"}' > "$CLAUDE_CONFIG_DIR/.credentials.json"`,
           ].join("\n"),
@@ -192,7 +249,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
           { _tag: "starting" },
           {
             _tag: "waiting-for-browser",
-            url: "https://claude.example/oauth/authorize?state=abc",
+            url: "https://claude.com/cai/oauth/authorize?state=abc",
             opened: false,
           },
         ]);
@@ -202,7 +259,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
   );
 
   it.effect(
-    "offers the printed page when the harness opens the browser itself",
+    "offers the printed page to open when the harness hands BROWSER none, and no other URL it printed",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -212,7 +269,12 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
         const claude = yield* harness(
           root,
           "claude",
-          [`echo "Visit https://claude.example/short to sign in"`, waitFor(go)].join("\n"),
+          [
+            `echo "Diagnostics at https://status.example.com/report?token=${SECRET}"`,
+            `echo "Or https://ada:${SECRET}@claude.ai/oauth/authorize?code=true"`,
+            `echo "Visit https://claude.ai/oauth/authorize?code=true&state=xyz to sign in"`,
+            waitFor(go),
+          ].join("\n"),
         );
         const { result, reported } = yield* runApp("claude-code", claude, root, (status) =>
           status._tag === "waiting-for-browser"
@@ -220,11 +282,15 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
             : Effect.void,
         );
         assert.isTrue(Result.isSuccess(result));
-        assert.deepStrictEqual(reported.at(-1), {
-          _tag: "waiting-for-browser",
-          url: "https://claude.example/short",
-          opened: true,
-        });
+        assert.deepStrictEqual(reported, [
+          { _tag: "starting" },
+          {
+            _tag: "waiting-for-browser",
+            url: "https://claude.ai/oauth/authorize?code=true&state=xyz",
+            opened: false,
+          },
+        ]);
+        assert.notInclude(JSON.stringify(reported), SECRET);
       }).pipe(Effect.scoped),
     // The printed page waits two seconds for one handed to `BROWSER`.
     10_000,
@@ -237,7 +303,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
       const refused = yield* harness(
         root,
         "refused",
-        `"$BROWSER" "https://claude.example/oauth"\nsleep 0.5\necho "${SECRET}" >&2\nexit 1`,
+        `"$BROWSER" "https://claude.com/cai/oauth/authorize"\nsleep 0.5\necho "${SECRET}" >&2\nexit 1`,
       );
       const ended = yield* runApp("claude-code", refused, root);
       assert.deepStrictEqual(
@@ -277,7 +343,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
         [
           `echo $$ > '${pid}'`,
           `printf 'revoked\\n' > "$CODEX_HOME/auth.json"`,
-          `"$BROWSER" "https://auth.example/oauth/authorize"`,
+          `"$BROWSER" "https://auth.openai.com/oauth/authorize"`,
           "exec sleep 60",
         ].join("\n"),
       );
@@ -305,6 +371,96 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "stops a harness that ignores SIGTERM, and all it started, on a cancel and at each deadline",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const limits = {
+          pageWait: Duration.seconds(1),
+          signInWait: Duration.seconds(2),
+          stopWithin: Duration.millis(300),
+        };
+        /** A sign-in of a stand-in that ignores SIGTERM, as do the child it starts, and how it ended. */
+        const stubborn = (harnessName: "claude-code" | "codex", page: boolean, cancel: boolean) =>
+          Effect.gen(function* () {
+            const home = path.join(root, `${harnessName}-${page}-${cancel}`);
+            yield* fs.makeDirectory(home, { mode: 0o700 });
+            const pids = path.join(root, `${path.basename(home)}.pids`);
+            const executable = yield* harness(
+              root,
+              `${path.basename(home)}-stand-in`,
+              [
+                "trap '' TERM",
+                `echo $$ >> '${pids}'`,
+                "sleep 600 &",
+                `echo $! >> '${pids}'`,
+                ...(page ? [`"$BROWSER" "${HARNESSES[harnessName].signInPages[0]}?state=s"`] : []),
+                "wait",
+              ].join("\n"),
+            );
+            const waiting = yield* Deferred.make<void>();
+            const fiber = yield* runApp(
+              harnessName,
+              executable,
+              home,
+              (status) =>
+                status._tag === "waiting-for-browser"
+                  ? Deferred.succeed(waiting, void 0)
+                  : Effect.void,
+              limits,
+            ).pipe(Effect.forkChild);
+            if (cancel) {
+              yield* Deferred.await(waiting);
+              const [stopping] = yield* Effect.timed(Fiber.interrupt(fiber));
+              assert.isBelow(Duration.toMillis(stopping), 3_000);
+            }
+            const [took, ended] = yield* Effect.timed(Fiber.await(fiber));
+            const running = (yield* fs.readFileString(pids))
+              .trim()
+              .split("\n")
+              .map(Number)
+              .filter((pid) => {
+                try {
+                  process.kill(pid, 0);
+                  return true;
+                } catch {
+                  return false;
+                }
+              });
+            // Nothing the sign-in made is left: not the page's folder, not Codex's new folder.
+            const left = [...(yield* fs.readDirectory(root)), ...(yield* fs.readDirectory(home))];
+            return {
+              took: Duration.toMillis(took),
+              running,
+              left: left.filter((name) => name.startsWith(".sign-in")),
+              reason:
+                Exit.isSuccess(ended) && Result.isFailure(ended.value.result)
+                  ? ended.value.result.failure.reason
+                  : null,
+            };
+          });
+
+        const cancelled = yield* stubborn("claude-code", true, true);
+        assert.deepStrictEqual([cancelled.running, cancelled.left], [[], []]);
+        const noPage = yield* stubborn("claude-code", false, false);
+        assert.deepStrictEqual(
+          [noPage.reason, noPage.running, noPage.left],
+          ["needs-terminal", [], []],
+        );
+        assert.isBelow(noPage.took, 3_000);
+        const timedOut = yield* stubborn("codex", true, false);
+        assert.deepStrictEqual(
+          [timedOut.reason, timedOut.running, timedOut.left],
+          ["timed-out", [], []],
+        );
+        assert.isBelow(timedOut.took, 4_000);
+      }).pipe(Effect.scoped),
+    20_000,
+  );
+
   it.effect("refuses a Codex sign-in that left no credential file, replacing nothing", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -316,7 +472,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("a sign-in with no t
       const keyring = yield* harness(
         root,
         "stand-in",
-        `"$BROWSER" "https://auth.example/oauth"\nexit 0`,
+        `"$BROWSER" "https://auth.openai.com/oauth/authorize"\nexit 0`,
       );
       const { result } = yield* runApp("codex", keyring, home);
       assert.deepStrictEqual(
@@ -361,7 +517,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins client
         yield* harness(
           bin,
           "claude",
-          [`"$BROWSER" "https://claude.example/oauth"`, waitFor(go)].join("\n"),
+          [`"$BROWSER" "https://claude.com/cai/oauth/authorize"`, waitFor(go)].join("\n"),
         );
         const statuses = yield* Effect.gen(function* () {
           const engine = yield* Engine;
@@ -405,6 +561,37 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins client
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "ends a cancel of a harness that ignores SIGTERM in time, and can sign in again",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const bin = path.join(home, "bin");
+        yield* fs.makeDirectory(bin);
+        yield* harness(
+          bin,
+          "claude",
+          `trap '' TERM\n"$BROWSER" "https://claude.com/cai/oauth/authorize"\nsleep 600 &\nwait`,
+        );
+        yield* Effect.gen(function* () {
+          const signIns = yield* SignIns.SignIns;
+          const untilPage = signIns.follow("claude-code", true).pipe(
+            Stream.takeUntil((status) => status._tag === "waiting-for-browser"),
+            Stream.runCollect,
+          );
+          assert.strictEqual((yield* untilPage).at(-1)?._tag, "waiting-for-browser");
+          // SIGTERM, then SIGKILL three seconds later.
+          const [stopping] = yield* Effect.timed(signIns.cancel("claude-code"));
+          assert.isBelow(Duration.toMillis(stopping), 6_000);
+          assert.strictEqual((yield* untilPage).at(-1)?._tag, "waiting-for-browser");
+          yield* signIns.cancel("claude-code");
+        }).pipe(Effect.provide(signInsIn(home, bin)));
+      }).pipe(Effect.scoped),
+    20_000,
+  );
+
   it.effect("lets a second client follow the sign-in under way, and a cancel end it for both", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -412,7 +599,11 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("the sign-ins client
       const home = yield* fs.makeTempDirectoryScoped();
       const bin = path.join(home, "bin");
       yield* fs.makeDirectory(bin);
-      yield* harness(bin, "claude", `"$BROWSER" "https://claude.example/oauth"\nexec sleep 60`);
+      yield* harness(
+        bin,
+        "claude",
+        `"$BROWSER" "https://claude.com/cai/oauth/authorize"\nexec sleep 60`,
+      );
       yield* Effect.gen(function* () {
         const signIns = yield* SignIns.SignIns;
         const first = yield* signIns

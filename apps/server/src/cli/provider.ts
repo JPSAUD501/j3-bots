@@ -51,10 +51,10 @@ const readKey = Effect.gen(function* () {
   const stdio = yield* Stdio.Stdio;
   if (yield* stdio.stdinIsTerminal) {
     const typed = yield* Prompt.run(Prompt.Hidden({ message: "The endpoint's key" }));
-    return Redacted.value(typed).trim();
+    return Redacted.make(Redacted.value(typed).trim());
   }
   const piped = yield* stdio.stdin.pipe(Stream.decodeText(), Stream.mkString);
-  return piped.trim();
+  return Redacted.make(piped.trim());
 });
 
 const EXAMPLES =
@@ -129,7 +129,9 @@ const connect = Command.make("connect", { baseUrl: baseUrlFlag, yes: yesFlag }).
       const key = yield* readKey.pipe(
         Effect.mapError(() => refuse("No key was read, so nothing changed.")),
       );
-      if (key.length === 0) return yield* refuse("The key is empty, so nothing changed.");
+      if (Redacted.value(key) === "") {
+        return yield* refuse("The key is empty, so nothing changed.");
+      }
       const send = (stopWork: boolean) =>
         userFacing(admin.connectProviders(socket, { baseUrl: url, key, stopWork })).pipe(
           Effect.flatMap((answer) =>

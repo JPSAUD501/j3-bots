@@ -27,6 +27,11 @@ export interface HarnessFacts {
    */
   readonly deviceAuth: string | undefined;
   /**
+   * The pages its sign-in sends the operator to, as origin and path, the
+   * query left out: the only URLs a sign-in with no terminal hands a client.
+   */
+  readonly signInPages: ReadonlyArray<string>;
+  /**
    * Its sign-in first revokes the sign-in already stored in its configuration
    * folder, even when it is then cancelled, so `provider login` runs it in a
    * new, empty folder and moves the credential file in only once it succeeded.
@@ -43,6 +48,13 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
     // The command the engine names for a signed-out Claude Code instance.
     signIn: ["auth", "login"],
     deviceAuth: undefined,
+    // Claude Code 2.1.330: `CLAUDE_AI_AUTHORIZE_URL` and `CONSOLE_AUTHORIZE_URL`
+    // in its bundled JavaScript, and the page it printed on a test machine.
+    signInPages: [
+      "https://claude.com/cai/oauth/authorize",
+      "https://claude.ai/oauth/authorize",
+      "https://platform.claude.com/oauth/authorize",
+    ],
     // Claude Code 2.1.328 replaces its stored sign-in only once the new one's
     // tokens arrived, without revoking it first.
     revokesStoredSignIn: false,
@@ -54,6 +66,8 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
     credentialFile: "auth.json",
     signIn: ["login"],
     deviceAuth: "--device-auth",
+    // The page Codex 0.171.0 gave on a test machine.
+    signInPages: ["https://auth.openai.com/oauth/authorize"],
     // Codex 0.170.0: `clear_existing_auth_before_login` in `codex-rs/cli/src/login.rs`.
     revokesStoredSignIn: true,
   },

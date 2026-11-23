@@ -114,12 +114,20 @@ export const signInCommand = (
   };
 };
 
+/** Whether `cmd.exe` reads something in `word` even in quotes: what it expands, a quote, a control character. */
+const cmdReadsInQuotes = (word: string): boolean =>
+  [...word].some((char) => `%!"`.includes(char) || char <= "\u001f" || char === "\u007f");
+
 /**
  * How the system runs `executable` with `args`. On Windows a harness
- * installed with npm is a `.cmd` shim, which only `cmd.exe` runs: its command
- * line is given to `cmd.exe` as written, so a path `cmd.exe` would expand
- * (`%`) is refused rather than run as something else. **Assumed**: no
- * Windows run yet.
+ * installed with npm is a `.cmd` shim, which only `cmd.exe` runs, so its
+ * command line goes to `cmd.exe` (`shell`), which Node gives it as
+ * `cmd.exe /d /s /c "<line>"`. Every word of that line is quoted, so that
+ * `cmd.exe` reads `& | < > ^ ( )` in a path, such as `C:\Tools & Co`, as part
+ * of it rather than as a command of its own. What quotes cannot keep from
+ * `cmd.exe` is refused rather than run as something else: `%` and `!`, which
+ * it would expand, a `"`, which would end the quoting, and a control
+ * character. **Assumed**: not yet run on Windows.
  */
 export const invocation = (
   executable: string,
@@ -132,13 +140,15 @@ export const invocation = (
   if (platform !== "win32" || !/\.(cmd|bat)$/i.test(executable)) {
     return Result.succeed({ command: executable, args, shell: false });
   }
-  if (executable.includes("%")) {
-    return Result.fail(`${executable} has a % in its path, which cmd.exe would expand`);
+  const words: Array<string> = [];
+  for (const word of [executable, ...args]) {
+    if (cmdReadsInQuotes(word)) {
+      return Result.fail(`${word} holds a character cmd.exe would read even in quotes`);
+    }
+    // In quotes, backslashes before the closing quote are doubled, so that it stays a quote.
+    words.push(`"${word.replace(/(\\+)$/, "$1$1")}"`);
   }
-  return Result.match(CommandLine.join([executable, ...args], { format: "windows" }), {
-    onFailure: () => Result.fail(`${executable} cannot be written as a command line`),
-    onSuccess: (line) => Result.succeed({ command: line, args: [], shell: true }),
-  });
+  return Result.succeed({ command: words.join(" "), args: [], shell: true });
 };
 
 /** Whether `target` is a symbolic link. */
@@ -190,12 +200,29 @@ export const prepareHome = Effect.fn("signIn.prepareHome")(function* (
   return home;
 });
 
-/** How long a sign-in with no terminal has to give a page before it counts as needing one. */
-const PAGE_WAIT = Duration.seconds(30);
+/** How long a sign-in may take at each step. */
+interface SignInLimits {
+  /** How long a sign-in with no terminal has to give a page before it counts as needing one. */
+  readonly pageWait: Duration.Input;
+  /** How long a sign-in waits for the operator to finish on the page. */
+  readonly signInWait: Duration.Input;
+  /**
+   * How long a harness that was asked to stop (`SIGTERM`) has before it and
+   * everything it started are killed (`SIGKILL`), as for every command the
+   * engine adapter runs: a harness that ignores the request cannot hold a
+   * cancel or a deadline up.
+   */
+  readonly stopWithin: Duration.Input;
+}
+
+const SIGN_IN_LIMITS: SignInLimits = {
+  pageWait: Duration.seconds(30),
+  signInWait: Duration.minutes(10),
+  stopWithin: Duration.seconds(3),
+};
+
 /** How long a printed page waits for the same harness to hand one to `BROWSER`, which is preferred. */
 const PRINTED_PAGE_GRACE = Duration.seconds(2);
-/** How long a sign-in waits for the operator to finish on the page. */
-const SIGN_IN_WAIT = Duration.minutes(10);
 /** How often the page handed to `BROWSER` is looked for. */
 const PAGE_POLL = Duration.millis(250);
 /** How much of what the harness printed is kept, in memory only, to tell why it ended. */
@@ -205,20 +232,37 @@ const TAIL_LENGTH = 4000;
 const NEEDS_TERMINAL = /\b(tty|terminal|raw mode|isatty|interactive)\b/i;
 
 /**
- * The first `https:` URL in `line`, cut at the first control character or
- * quote, which no URL holds and a terminal's colours would add.
+ * The first page in `line` that `harness` signs in on (`signInPages`): an
+ * `https:` URL with that origin and path and no user name or password, cut
+ * at the first control character or quote, which no URL holds and a
+ * terminal's colours would add. Never any other URL the harness prints, such
+ * as its documentation or a diagnostic one, whatever it carries.
  */
-export const pageIn = (line: string): string | null => {
-  const start = line.indexOf("https://");
-  if (start === -1) return null;
-  let end = start;
-  while (end < line.length) {
-    const code = line.charCodeAt(end);
-    if (code <= 0x20 || code === 0x7f || `"'<>\``.includes(line.charAt(end))) break;
-    end++;
+export const pageIn = (line: string, harness: Harness): string | null => {
+  const pages = HARNESSES[harness].signInPages;
+  for (
+    let start = line.indexOf("https://");
+    start !== -1;
+    start = line.indexOf("https://", start + 1)
+  ) {
+    let end = start;
+    while (end < line.length) {
+      const code = line.charCodeAt(end);
+      if (code <= 0x20 || code === 0x7f || `"'<>\``.includes(line.charAt(end))) break;
+      end++;
+    }
+    const candidate = line.slice(start, end);
+    if (!URL.canParse(candidate)) continue;
+    const url = new URL(candidate);
+    if (
+      url.username === "" &&
+      url.password === "" &&
+      pages.includes(`${url.origin}${url.pathname}`)
+    ) {
+      return candidate;
+    }
   }
-  const candidate = line.slice(start, end);
-  return URL.canParse(candidate) && new URL(candidate).protocol === "https:" ? candidate : null;
+  return null;
 };
 
 /**
@@ -237,6 +281,8 @@ interface Run {
   readonly deviceAuth: boolean;
   readonly platform: string;
   readonly io: SignInIo;
+  /** Shorter limits than a person needs, for a test. */
+  readonly limits?: SignInLimits;
 }
 
 /**
@@ -252,9 +298,11 @@ interface Run {
  * harness prints is read for the page it waits on, kept in memory only, and
  * never logged or passed on: only the page is, through `report`. The page
  * `BROWSER` is handed is preferred to a printed one, since the harness opens
- * nothing itself then. A sign-in that gives no page within `PAGE_WAIT`, or
+ * nothing itself then. A sign-in that gives no page within `pageWait`, or
  * ends before one saying it needs a terminal, needs one; one not finished
- * within `SIGN_IN_WAIT` is stopped. Interrupting it stops the harness.
+ * within `signInWait` is stopped. Interrupting it stops the harness, and
+ * however it ends, the harness and everything it started are stopped within
+ * `stopWithin` (`SignInLimits`).
  */
 export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
   const { harness, home } = run;
@@ -268,13 +316,16 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
         .pipe(Effect.mapError(unexpected))
     : home;
   const terminal = run.io._tag === "terminal";
-  // Where `BROWSER` hands the page, with no terminal, where a harness is known to honour it.
+  const limits = run.limits ?? SIGN_IN_LIMITS;
+  // Where `BROWSER` hands the page, with no terminal, where a harness is known
+  // to honour it: in J3 Bots' private folder of provider homes, which a folder
+  // the system mounts `noexec`, such as `/tmp` often is, would not run.
   const pageFile =
     terminal || run.platform === "win32"
       ? null
       : path.join(
           yield* fs
-            .makeTempDirectoryScoped({ prefix: "j3-sign-in-" })
+            .makeTempDirectoryScoped({ directory: path.dirname(home), prefix: ".sign-in-page-" })
             .pipe(Effect.mapError(unexpected)),
           "page",
         );
@@ -301,6 +352,8 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
     extendEnv: false,
     shell: how.success.shell,
     windowsHide: !terminal,
+    killSignal: "SIGTERM",
+    forceKillAfter: limits.stopWithin,
   } as const;
   const unchanged = folder === home ? "" : ` The sign-in in ${home} is as it was.`;
 
@@ -339,11 +392,12 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
       Stream.runForEach((line) =>
         Effect.gen(function* () {
           yield* Ref.update(tail, (text) => `${text}${line}\n`.slice(-TAIL_LENGTH));
-          const url = pageIn(line);
+          const url = pageIn(line, harness);
           if (url === null || (yield* Ref.getAndSet(printed, true))) return;
-          // The harness may also hand it to `BROWSER`, which then wins.
+          // The harness may also hand it to `BROWSER`, which then wins. Only
+          // where it has none to hand it to did the harness open the page.
           yield* Effect.sleep(PRINTED_PAGE_GRACE).pipe(
-            Effect.andThen(Deferred.succeed(page, { url, opened: true })),
+            Effect.andThen(Deferred.succeed(page, { url, opened: pageFile === null })),
             Effect.forkScoped,
           );
         }),
@@ -358,7 +412,7 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
           const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
           const url = text
             .split("\n")
-            .map(pageIn)
+            .map((line) => pageIn(line, harness))
             .find((found) => found !== null);
           if (url !== undefined && url !== null) {
             return yield* Deferred.succeed(page, { url, opened: false });
@@ -372,7 +426,7 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
       Effect.forkScoped,
     );
     const noPage = Deferred.await(page).pipe(
-      Effect.timeoutOption(PAGE_WAIT),
+      Effect.timeoutOption(limits.pageWait),
       Effect.flatMap((found) =>
         Option.isSome(found)
           ? Effect.never
@@ -387,12 +441,12 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
     const ended = yield* handle.exitCode.pipe(
       Effect.mapError(unexpected),
       Effect.raceFirst(noPage),
-      Effect.timeoutOption(SIGN_IN_WAIT),
+      Effect.timeoutOption(limits.signInWait),
     );
     if (Option.isNone(ended)) {
       return yield* failed(
         "timed-out",
-        `Nobody finished ${facts.name}'s sign-in within ten minutes, so it was stopped.${unchanged}`,
+        `Nobody finished ${facts.name}'s sign-in in time, so it was stopped.${unchanged}`,
       );
     }
     exitCode = ended.value;

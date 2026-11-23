@@ -13,6 +13,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import type { RpcClientError } from "effect/rpc/RpcClientError";
 import { Connection } from "../connection/Connection.ts";
 import { Cell, type Readable } from "../Store.ts";
 
@@ -59,6 +60,43 @@ export class ProviderSetup extends Context.Service<
   }
 >()("@j3-bots/client-runtime/stores/ProviderSetup") {}
 
+/** A client's `provider.signIn`, as a sign-in is followed through it. */
+type SignInCall = (payload: {
+  readonly harness: SignInHarness;
+  readonly start: boolean;
+}) => Stream.Stream<ProviderSignInStatus, RpcClientError>;
+
+/**
+ * Follows `harness`'s sign-in through `call`, which runs `use` again on each
+ * new socket until it finishes (`Connection.call`), passing on each status.
+ * Each attempt asks the server to start one until a first status has
+ * arrived: a request lost on a socket that dropped started nothing, and the
+ * server folds a second start into the sign-in under way. From then on it
+ * only follows, so a sign-in that ended meanwhile is not run again. Says
+ * whether any status arrived.
+ */
+export const followSignIn = <E>(
+  call: (
+    use: (signIn: SignInCall) => Effect.Effect<void, RpcClientError>,
+  ) => Effect.Effect<void, E>,
+  harness: SignInHarness,
+  onStatus: (status: ProviderSignInStatus) => Effect.Effect<void>,
+): Effect.Effect<boolean, E> => {
+  let seen = false;
+  return call((signIn) =>
+    signIn({ harness, start: !seen }).pipe(
+      Stream.runForEach((status) =>
+        Effect.andThen(
+          Effect.sync(() => {
+            seen = true;
+          }),
+          onStatus(status),
+        ),
+      ),
+    ),
+  ).pipe(Effect.map(() => seen));
+};
+
 export const layer = Layer.effect(
   ProviderSetup,
   Effect.gen(function* () {
@@ -70,32 +108,31 @@ export const layer = Layer.effect(
       Effect.sync(() => signIns.update((current) => new Map(current).set(harness, view)));
 
     const follow = (harness: SignInHarness, openPage: (url: string) => void) => {
-      // Only the first socket starts one: on the next, a sign-in that ended meanwhile is not run again.
-      let start = true;
       let pageOpened = false;
-      const open = (status: ProviderSignInStatus) =>
-        Effect.sync(() => {
-          if (status._tag !== "waiting-for-browser" || status.opened || pageOpened) return;
-          pageOpened = true;
-          openPage(status.url);
-        });
-      return connection
-        .call((client) => {
-          const first = start;
-          start = false;
-          return client["provider.signIn"]({ harness, start: first }).pipe(
-            Stream.runForEach((status) => Effect.andThen(show(harness, status), open(status))),
-          );
-        })
-        .pipe(
-          Effect.exit,
-          Effect.flatMap((exit) =>
-            Exit.isSuccess(exit)
-              ? Effect.void
-              : // Not paired any more, or a server that answers this RPC with a defect.
-                show(harness, Exit.hasDies(exit) ? { _tag: "unsupported" } : idle),
-          ),
+      const onStatus = (status: ProviderSignInStatus) =>
+        Effect.andThen(
+          show(harness, status),
+          Effect.sync(() => {
+            if (status._tag !== "waiting-for-browser" || status.opened || pageOpened) return;
+            pageOpened = true;
+            openPage(status.url);
+          }),
         );
+      return followSignIn(
+        (use) => connection.call((client) => use(client["provider.signIn"])),
+        harness,
+        onStatus,
+      ).pipe(
+        Effect.exit,
+        Effect.flatMap((exit) => {
+          // Not paired any more, or a server that answers this RPC with a defect.
+          if (Exit.isFailure(exit)) {
+            return show(harness, Exit.hasDies(exit) ? { _tag: "unsupported" } : idle);
+          }
+          // A server that reported nothing has no sign-in under way.
+          return exit.value ? Effect.void : show(harness, idle);
+        }),
+      );
     };
 
     const signIn = Effect.fn("ProviderSetup.signIn")(function* (
