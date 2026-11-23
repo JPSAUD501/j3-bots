@@ -202,7 +202,11 @@ export function Main() {
                   component={NewBotScreen}
                   options={{ ...sheet, title: t("newBot.title") }}
                 />
-                <Stack.Screen name="shareTemplate" options={sheet} component={ShareTemplateScreen} />
+                <Stack.Screen
+                  name="shareTemplate"
+                  options={sheet}
+                  component={ShareTemplateScreen}
+                />
                 <Stack.Screen
                   name="newFromTemplate"
                   component={NewFromTemplateScreen}
