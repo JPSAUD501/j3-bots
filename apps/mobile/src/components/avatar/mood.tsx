@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useAsleep, useAvatarMood, useConnection } from "@j3-bots/client-runtime/react";
 import type { Bot, EntryPreview } from "@j3-bots/contracts";
-import { createContext, type ReactNode, type Ref, useContext } from "react";
-import { type AvatarGround, type AvatarHandle, BotAvatar } from "./BotAvatar.tsx";
-
-const Offline = createContext(false);
+import { type ReactNode, type Ref, useContext } from "react";
+import { type AvatarGround, type AvatarHandle, AvatarsAsleep, BotAvatar } from "./BotAvatar.tsx";
 
 /** Whether the app has lost sight of the server long enough that what it shows may be out of date. */
-export const useOffline = (): boolean => useContext(Offline);
+export const useOffline = (): boolean => useContext(AvatarsAsleep);
 
 /**
  * Tells the avatars below it whether the app can see the server
@@ -17,7 +15,7 @@ export const useOffline = (): boolean => useContext(Offline);
 export function AvatarConnection({ children }: { readonly children: ReactNode }) {
   const connection = useConnection()._tag;
   const connected = connection === "connected" || connection === "background";
-  return <Offline value={useAsleep(connected)}>{children}</Offline>;
+  return <AvatarsAsleep value={useAsleep(connected)}>{children}</AvatarsAsleep>;
 }
 
 /** A bot's avatar as it is now: its state, what is unread and what is arriving, live. */
@@ -38,7 +36,7 @@ export function LiveBotAvatar({
   readonly label?: string;
   readonly ref?: Ref<AvatarHandle>;
 }) {
-  const offline = useContext(Offline);
+  const offline = useContext(AvatarsAsleep);
   const mood = useAvatarMood(bot, { unread, lastEntry, offline });
   return (
     <BotAvatar

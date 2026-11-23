@@ -156,8 +156,9 @@ export function ApprovalCard({ entry }: { readonly entry: ApprovalEntry }) {
             // Decided or expired, the record still says what was decided on.
             <Text className="text-2xs text-muted-foreground">{t("approval.summaryQualifier")}</Text>
           )}
-          <Scrolling label={t("approval.summary")} className="rounded-md">
-            <Text selectable className="px-2.5 py-2 text-sm text-foreground">
+          {/* Prose, not code: it lines up with the card's other lines, with no block around it. */}
+          <Scrolling label={t("approval.summary")}>
+            <Text selectable className="text-sm text-foreground">
               {entry.action}
             </Text>
           </Scrolling>

@@ -25,11 +25,11 @@ interface LineBox {
  */
 export function Scrolling({
   label,
-  className,
+  className = "",
   children,
 }: {
   readonly label: string | null;
-  readonly className: string;
+  readonly className?: string;
   readonly children: ReactNode;
 }) {
   return (

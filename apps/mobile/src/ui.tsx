@@ -1,8 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ReactNode } from "react";
-import { View } from "react-native";
+import { motion, reanimatedSpring, springs } from "@j3-bots/design-tokens";
+import { type ComponentRef, type ReactNode, type Ref, useEffect } from "react";
+import { I18nManager, Pressable, View } from "react-native";
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
+import { useReducedMotion } from "./motion.ts";
 import { PressScale } from "./press.tsx";
 import { Text, displaySpacing } from "./text.tsx";
+import { useColor } from "./theme.ts";
 
 // The few building blocks the first screens share. Each owns its look:
 // callers pick a variant, they do not restyle.
@@ -53,7 +63,12 @@ const buttonLook = {
  * go. A `held` button keeps its place and its focus but takes no press, as
  * while an answer it sent is on its way.
  */
-export function Button(props: {
+export function Button({
+  ref,
+  ...props
+}: {
+  /** For giving it a screen reader's focus. */
+  readonly ref?: Ref<ComponentRef<typeof View>>;
   readonly label: string;
   /** What a screen reader says, when the label alone does not name what it acts on. */
   readonly accessibilityLabel?: string;
@@ -71,6 +86,7 @@ export function Button(props: {
   const held = props.held === true;
   return (
     <PressScale
+      ref={ref}
       frame={props.grow === true ? { flexGrow: 1 } : undefined}
       accessibilityRole="button"
       accessibilityLabel={props.accessibilityLabel ?? props.label}
@@ -82,5 +98,65 @@ export function Button(props: {
     >
       <Text className={`text-base font-semibold ${look.text}`}>{props.label}</Text>
     </PressScale>
+  );
+}
+
+/** How far the thumb travels: the track's 40 px, less the thumb's 20 and 2 px each side. */
+const THUMB_TRAVEL = 16;
+/** Lifts the thumb off its track: the `thumb` shadow, which Android's `boxShadow` cannot draw. */
+const THUMB_ELEVATION = 2;
+
+const thumbSpring = reanimatedSpring(springs.pop);
+
+/**
+ * A setting that is on or off, drawn as the web draws it rather than as the
+ * system does: a pill track, `control-on` or `control-off`, with the light
+ * thumb inside it, which springs across on `pop` while the track's color
+ * changes. Its touch target is 44 px, wider than the track.
+ */
+export function Switch(props: {
+  readonly value: boolean;
+  readonly onChange: (value: boolean) => void;
+  readonly accessibilityLabel: string;
+  readonly accessibilityHint?: string | undefined;
+  /** Shows the value it holds and takes no change. */
+  readonly disabled?: boolean;
+}) {
+  const reduced = useReducedMotion();
+  const on = useColor("accent-control-on");
+  const off = useColor("accent-control-off");
+  const position = useSharedValue(props.value ? 1 : 0);
+  const shade = useSharedValue(props.value ? 1 : 0);
+  useEffect(() => {
+    const to = props.value ? 1 : 0;
+    position.set(reduced ? to : withSpring(to, thumbSpring));
+    shade.set(withTiming(to, { duration: motion.state }));
+  }, [props.value, reduced, position, shade]);
+  const track = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(shade.get(), [0, 1], [off, on]),
+  }));
+  // A transform is not mirrored with the layout: in a right-to-left language the thumb's end is left.
+  const travel = I18nManager.isRTL ? -THUMB_TRAVEL : THUMB_TRAVEL;
+  const thumb = useAnimatedStyle(() => ({
+    transform: [{ translateX: position.get() * travel }],
+  }));
+  const disabled = props.disabled === true;
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityLabel={props.accessibilityLabel}
+      accessibilityHint={props.accessibilityHint}
+      accessibilityState={{ checked: props.value, disabled }}
+      disabled={disabled}
+      onPress={() => props.onChange(!props.value)}
+      className={`size-11 items-center justify-center ${disabled ? "opacity-50" : ""}`}
+    >
+      <Animated.View style={track} className="h-6 w-10 justify-center rounded-pill px-0.5">
+        <Animated.View
+          style={[thumb, { elevation: THUMB_ELEVATION }]}
+          className="size-5 rounded-pill bg-control-thumb"
+        />
+      </Animated.View>
+    </Pressable>
   );
 }

@@ -19,12 +19,13 @@ import {
 } from "@j3-bots/client-runtime/wording";
 import type { Avatar, EntryTarget } from "@j3-bots/contracts";
 import { layout, reanimatedSpring, springs } from "@j3-bots/design-tokens";
-import { ArrowUp, File, Plus, Users, X } from "lucide-react-native";
+import { ArrowUp, File, Images, Plus, Users, X } from "lucide-react-native";
 import { type ComponentRef, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AccessibilityInfo, Alert, ScrollView, View } from "react-native";
+import { AccessibilityInfo, ScrollView, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { Menu, type MenuAnchor } from "../components/Menu.tsx";
 import { useI18n } from "../i18n.ts";
 import { type PickedFile, pickDocuments, pickPhotos } from "../platform/pick.ts";
 import Animated, {
@@ -92,6 +93,8 @@ export function Composer({
   const readFailed = useReadable(client.draftsReadFailed);
   const notSaved = useReadable(client.draftsNotSaved).has(targetKey(target));
   const field = useRef<ComponentRef<typeof TextInput>>(null);
+  const attachButton = useRef<ComponentRef<typeof View>>(null);
+  const [attachAt, setAttachAt] = useState<MenuAnchor | null>(null);
   const placeholderColor = useColor("accent-muted-foreground");
 
   const { text, mentions, files } = draft;
@@ -195,11 +198,9 @@ export function Composer({
     if (!stillFrozen) client.attachFiles(target, picked);
   };
   const openPicker = () =>
-    Alert.alert(t("composer.attach"), undefined, [
-      { text: t("composer.attach.photos"), onPress: () => void pickPhotos().then(attach) },
-      { text: t("composer.attach.files"), onPress: () => void pickDocuments().then(attach) },
-      { text: t("composer.attach.cancel"), style: "cancel" },
-    ]);
+    attachButton.current?.measureInWindow((x, y, width, height) =>
+      setAttachAt({ x, y, width, height }),
+    );
 
   // Each read in vain is said again, though the words are the same.
   const retryRead = () =>
@@ -278,6 +279,7 @@ export function Composer({
           accessibilityRole="button"
           accessibilityLabel={t("composer.attach")}
           accessibilityState={{ disabled: frozen }}
+          ref={attachButton}
           onPress={frozen ? undefined : openPicker}
           className="size-11 items-center justify-center rounded-full active:bg-muted"
         >
@@ -320,6 +322,24 @@ export function Composer({
           />
         )}
       </AnimatedView>
+      <Menu
+        anchor={attachAt}
+        edge="start"
+        onClose={() => setAttachAt(null)}
+        label={t("composer.attach")}
+        entries={[
+          {
+            label: t("composer.attach.photos"),
+            icon: Images,
+            onPress: () => void pickPhotos().then(attach),
+          },
+          {
+            label: t("composer.attach.files"),
+            icon: File,
+            onPress: () => void pickDocuments().then(attach),
+          },
+        ]}
+      />
       {dictation !== null && <DictationLine dictation={dictation} />}
       {addressee !== undefined && (
         <Text numberOfLines={1} className="px-3 text-xs text-muted-foreground">

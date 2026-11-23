@@ -339,7 +339,6 @@ const sentences = {
   "composer.attach": "Anexar um arquivo",
   "composer.attach.photos": "Fotos e vídeos",
   "composer.attach.files": "Arquivos",
-  "composer.attach.cancel": "Cancelar",
   "composer.dictate": "Ditar uma mensagem",
   "composer.send": "Enviar mensagem",
 
@@ -999,6 +998,8 @@ const sentences = {
   "settings.signOut.title": "Sair neste dispositivo?",
   "settings.signOut.body":
     "Este navegador perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",
+  "settings.signOut.body.mobile":
+    "Este celular perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",
   "settings.signOut.cancel": "Continuar conectado",
 } as const satisfies Catalog;
 

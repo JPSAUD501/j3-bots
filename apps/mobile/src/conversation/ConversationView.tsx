@@ -70,6 +70,7 @@ import Animated from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { RoomAvatar, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { CommandLine } from "../components/CommandLine.tsx";
 import { PendingButton } from "../components/form.tsx";
@@ -317,7 +318,7 @@ export function ConversationView({
   };
 
   const archived = room !== null && room.status === "archived";
-  const quiet = item._tag === "bot" && state?.phase === "ready" && state.items.length === 0;
+  const quiet = state?.phase === "ready" && state.items.length === 0;
 
   return (
     <View className="flex-1 bg-background">
@@ -343,7 +344,11 @@ export function ConversationView({
         >
           <EntryWidths value={widths}>
             {quiet ? (
-              <Quiet bot={item.bot} bottom={composerHeight} />
+              item._tag === "bot" ? (
+                <Quiet bot={item.bot} bottom={composerHeight} />
+              ) : (
+                <QuietRoom room={item.room} bottom={composerHeight} />
+              )
             ) : (
               <KeyboardAwareLegendList
                 ref={list}
@@ -503,6 +508,36 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
           </Text>
           <CommandLine command={held.command} />
         </View>
+      )}
+    </View>
+  );
+}
+
+/**
+ * A room before anything is said in it: its members, its name, and who
+ * answers what is written there. An archived room takes nothing and may have
+ * no host, so it shows only who was in it.
+ */
+function QuietRoom({ room, bottom }: { readonly room: Room; readonly bottom: number }) {
+  const { t } = usePresentation().i18n;
+  const bots = useBots();
+  const host = room.hostId === null ? undefined : bots.get(room.hostId);
+  return (
+    <View
+      className="flex-1 items-center justify-center gap-4 px-6"
+      style={{ paddingBottom: bottom }}
+    >
+      <Animated.View entering={popIn()}>
+        <RoomAvatar size={96} members={roomAvatarMembers(room, bots)} />
+      </Animated.View>
+      <Title>{room.name}</Title>
+      {room.status === "active" && (
+        <Body>
+          {/* The host bot may arrive after the room does. */}
+          {host === undefined
+            ? t("empty.quiet.roomAnyHost")
+            : t("empty.quiet.room", { host: host.profile.name })}
+        </Body>
       )}
     </View>
   );

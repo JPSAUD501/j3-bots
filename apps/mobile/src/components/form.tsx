@@ -2,10 +2,11 @@
 import { useNavigation, usePreventRemove } from "@react-navigation/native";
 import { Check, type LucideIcon, Minus, Plus } from "lucide-react-native";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AccessibilityInfo, Alert, Switch, View } from "react-native";
+import { AccessibilityInfo, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useConfirm } from "../confirm.tsx";
 import { useI18n } from "../i18n.ts";
 import Animated, {
   cancelAnimation,
@@ -18,7 +19,7 @@ import Animated, {
 import { useReducedMotion } from "../motion.ts";
 import { useColor } from "../theme.ts";
 import { PressScale } from "../press.tsx";
-import { Button } from "../ui.tsx";
+import { Button, Switch } from "../ui.tsx";
 import { Icon } from "./Icon.tsx";
 
 // The parts the details, the forms and Settings are built from. Each owns its
@@ -325,9 +326,6 @@ export function SwitchRow(props: {
   /** Shows the value it holds and takes no change, as while a save is under way. */
   readonly readOnly?: boolean;
 }) {
-  const on = useColor("accent-control-on");
-  const off = useColor("accent-control-off");
-  const thumb = useColor("accent-control-thumb");
   return (
     <View className="min-h-11 flex-row items-center gap-3">
       <View className="min-w-0 flex-1 gap-0.5">
@@ -340,10 +338,8 @@ export function SwitchRow(props: {
         accessibilityLabel={props.label}
         accessibilityHint={props.hint}
         value={props.value}
-        onValueChange={props.onChange}
+        onChange={props.onChange}
         disabled={props.readOnly === true}
-        trackColor={{ true: on, false: off }}
-        thumbColor={thumb}
       />
     </View>
   );
@@ -422,6 +418,7 @@ export function DeleteButton(props: {
   readonly cancel: string;
   readonly onDelete: () => Promise<void>;
 }) {
+  const confirm = useConfirm();
   const [pending, setPending] = useState(false);
   return (
     <Button
@@ -445,22 +442,6 @@ export function DeleteButton(props: {
 }
 
 /**
- * Asks before something that cannot be undone, naming what goes and what
- * stays; `onConfirm` runs only once the operator agrees.
- */
-export const confirm = (question: {
-  readonly title: string;
-  readonly body: string;
-  readonly cancel: string;
-  readonly confirm: string;
-  readonly onConfirm: () => void;
-}): void =>
-  Alert.alert(question.title, question.body, [
-    { text: question.cancel, style: "cancel" },
-    { text: question.confirm, style: "destructive", onPress: question.onConfirm },
-  ]);
-
-/**
  * While `unsaved`, leaving the screen, by its back button, the system's back
  * or a swipe, asks first, so what the operator typed is never thrown away by
  * a stray gesture. A caller passes false while a save is under way: the save
@@ -470,6 +451,7 @@ export const confirm = (question: {
  */
 export function useDiscardGuard(unsaved: boolean, onLeave?: () => void): (go: () => void) => void {
   const { t } = useI18n();
+  const confirm = useConfirm();
   const navigation = useNavigation();
   const leaving = useRef(false);
   const guarded = useRef(unsaved);

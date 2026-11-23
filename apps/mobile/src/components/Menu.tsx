@@ -38,10 +38,12 @@ const pop = reanimatedSpring(springs.pop);
 /**
  * A menu that drops from under the button that opened it, as the web's New
  * menu does: a `surface` card over a scrim, its end edge on the button's, which
- * pops in on `pop` from that corner and fades away. Measured against the
- * window, it stays under its button however the screen is split, as beside a
- * conversation on a tablet or an unfolded phone. Open while `anchor` is set. A
- * press on a row closes it, then acts; a press outside or Back closes it.
+ * pops in on `pop` from that corner and fades away. A button at the start of
+ * its row, as the composer's, lines it up with its start edge instead; from a
+ * button in the lower half of the window it opens upward. Measured against the
+ * window, it stays by its button however the screen is split, as beside a conversation on a tablet or an
+ * unfolded phone. Open while `anchor` is set. A press on a row closes it, then
+ * acts; a press outside or Back closes it.
  */
 export function Menu(props: {
   readonly anchor: MenuAnchor | null;
@@ -49,6 +51,8 @@ export function Menu(props: {
   /** Names the menu for screen readers. */
   readonly label: string;
   readonly entries: ReadonlyArray<MenuEntry>;
+  /** The button's edge the menu lines up with: its end unless said otherwise. */
+  readonly edge?: "start" | "end";
 }) {
   const { anchor } = props;
   const window = useWindowDimensions();
@@ -65,10 +69,13 @@ export function Menu(props: {
     return () => clearTimeout(timer);
   }, [anchor, held, reduced]);
   const rtl = I18nManager.isRTL;
-  // The room from the button's end edge to the window's far edge: the menu
-  // narrows to it rather than run off the screen, as in a narrow roster.
-  const room =
-    anchor === null ? WIDTH : rtl ? window.width - anchor.x - EDGE : anchor.x + anchor.width - EDGE;
+  // The room from the button's left and right edges to the window's far edges.
+  const rightward = anchor === null ? WIDTH : window.width - anchor.x - EDGE;
+  const leftward = anchor === null ? WIDTH : anchor.x + anchor.width - EDGE;
+  const fromLeft = (props.edge === "start") !== rtl;
+  const above = anchor !== null && anchor.y + anchor.height / 2 > window.height / 2;
+  // The menu narrows to the room it has rather than run off the screen, as in a narrow roster.
+  const room = fromLeft ? rightward : leftward;
   return (
     <Modal
       visible={held !== null}
@@ -103,12 +110,15 @@ export function Menu(props: {
             exiting={ZoomOut.duration(motion.fast)}
             className="absolute gap-0.5 rounded-lg border border-border bg-surface p-1.5"
             style={{
-              top: anchor.y + anchor.height + GAP,
+              ...(above
+                ? { bottom: window.height - anchor.y + GAP }
+                : { top: anchor.y + anchor.height + GAP }),
+              ...(fromLeft
+                ? { left: anchor.x }
+                : { right: window.width - anchor.x - anchor.width }),
+              transformOrigin: `${above ? "bottom" : "top"} ${fromLeft ? "left" : "right"}`,
               minWidth: Math.min(WIDTH, room),
               maxWidth: room,
-              ...(rtl
-                ? { left: anchor.x, transformOrigin: "top left" }
-                : { right: window.width - anchor.x - anchor.width, transformOrigin: "top right" }),
               elevation: OVERLAY_ELEVATION,
             }}
           >

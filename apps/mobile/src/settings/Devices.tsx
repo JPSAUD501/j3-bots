@@ -17,7 +17,8 @@ import { useMemo, useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
 import Svg, { Path, Rect } from "react-native-svg";
-import { ChoiceRow, confirm, Problem, Quiet, Section, SkeletonRows } from "../components/form.tsx";
+import { useConfirm } from "../confirm.tsx";
+import { ChoiceRow, Problem, Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { usePresentation } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 
@@ -98,6 +99,7 @@ function DeviceRow(props: {
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
+  const confirm = useConfirm();
   const { device, state } = props;
   return (
     <View className="flex-row items-center gap-3 rounded-md border border-border px-3 py-2">

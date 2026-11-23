@@ -11,7 +11,7 @@ import {
   stepAvatar,
   stillFace,
 } from "@j3-bots/client-runtime/presentation";
-import type { Avatar } from "@j3-bots/contracts";
+import type { Avatar, Bot, BotId, Room } from "@j3-bots/contracts";
 import {
   AVATAR_EYE,
   avatarBodyColor,
@@ -214,6 +214,9 @@ function useScreenFocused(): boolean {
   );
   return useSyncExternalStore(subscribe, () => navigation?.isFocused() ?? true);
 }
+
+/** Whether the app has gone without the server long enough for the bots to sleep (`AvatarConnection`). */
+export const AvatarsAsleep = createContext(false);
 
 /** The colors an avatar paints with, in the theme shown now. */
 function usePaint(color: ReturnType<typeof resolveAvatar>["color"], asleep: boolean) {
@@ -478,7 +481,7 @@ function MovingAvatar({
     [running, sim],
   );
 
-  const frame = useDerivedValue(() => avatarFrame(shapeValue.get(), face.get(), size), [size]);
+  const frame = useDerivedValue(() => avatarFrame(shapeValue.get(), face.get(), size));
   const bodyPart = useDerivedValue(() => joined(frame.get().body));
   const stalkPart = useDerivedValue(() => frame.get().stalk);
   const mouthPart = useDerivedValue(() => {
@@ -680,7 +683,18 @@ function ThoughtDot({
   return <AnimatedCircle cx={dot.x} cy={dot.y} animatedProps={grow} fill={body} />;
 }
 
-/** Two members overlapping, idle and still: a room. */
+/** The room's members as its avatar draws them, leaving out any bot not known yet. */
+export function roomAvatarMembers(
+  room: Room,
+  bots: ReadonlyMap<BotId, Bot>,
+): ReadonlyArray<{ readonly id: string; readonly avatar: Avatar }> {
+  return room.members.flatMap((id) => {
+    const bot = bots.get(id);
+    return bot === undefined ? [] : [{ id, avatar: bot.profile.avatar }];
+  });
+}
+
+/** Two members overlapping and still: a room, idle, or asleep with the bots while offline. */
 export function RoomAvatar({
   members,
   size,
@@ -691,6 +705,7 @@ export function RoomAvatar({
   readonly ground?: AvatarGround;
 }) {
   const [back, front] = members;
+  const state = useContext(AvatarsAsleep) ? "offline" : "idle";
   const part = Math.round(size * roomAvatarShare);
   return (
     <View
@@ -700,7 +715,7 @@ export function RoomAvatar({
     >
       {back !== undefined && (
         <View style={{ position: "absolute", top: 0, left: 0 }}>
-          <BotAvatar avatar={back.avatar} seed={back.id} state="idle" size={part} still />
+          <BotAvatar avatar={back.avatar} seed={back.id} state={state} size={part} still />
         </View>
       )}
       {front !== undefined && (
@@ -708,7 +723,7 @@ export function RoomAvatar({
           <BotAvatar
             avatar={front.avatar}
             seed={front.id}
-            state="idle"
+            state={state}
             size={part}
             still
             cutout

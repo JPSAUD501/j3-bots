@@ -341,7 +341,6 @@ export const en = {
   "composer.attach": "Attach a file",
   "composer.attach.photos": "Photos and videos",
   "composer.attach.files": "Files",
-  "composer.attach.cancel": "Cancel",
   "composer.dictate": "Dictate a message",
   "composer.send": "Send message",
 
@@ -982,5 +981,7 @@ export const en = {
   "settings.signOut.title": "Sign out this device?",
   "settings.signOut.body":
     "This browser loses access, and pairing it again takes a new code. Drafts and unsent messages are discarded. Your bots and conversations stay on the server.",
+  "settings.signOut.body.mobile":
+    "This phone loses access, and pairing it again takes a new code. Drafts and unsent messages are discarded. Your bots and conversations stay on the server.",
   "settings.signOut.cancel": "Stay signed in",
 } as const;
