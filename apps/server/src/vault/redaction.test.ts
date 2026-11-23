@@ -95,7 +95,9 @@ it.layer(
         ),
       );
       showsNone(
-        shown(yield* Effect.exit(client["vault.save"]({ id, ...login, totp: Redacted.make(TOTP) }))),
+        shown(
+          yield* Effect.exit(client["vault.save"]({ id, ...login, totp: Redacted.make(TOTP) })),
+        ),
       );
       const revealed = yield* client["vault.reveal"]({ id, field: "password" });
       assert.strictEqual(Redacted.value(revealed), PASSWORD);
@@ -103,9 +105,13 @@ it.layer(
       showsNone(shown(yield* Effect.exit(client["vault.list"]())));
 
       yield* client["vault.lock"]();
-      showsNone(shown(yield* Effect.exit(client["vault.unlock"]({ password: Redacted.make(WRONG) }))));
+      showsNone(
+        shown(yield* Effect.exit(client["vault.unlock"]({ password: Redacted.make(WRONG) }))),
+      );
       // Refused by the contract before the vault sees it.
-      showsNone(shown(yield* Effect.exit(unchecked["vault.unlock"]({ password: MASTER.repeat(60) }))));
+      showsNone(
+        shown(yield* Effect.exit(unchecked["vault.unlock"]({ password: MASTER.repeat(60) }))),
+      );
       showsNone(
         shown(
           yield* Effect.exit(

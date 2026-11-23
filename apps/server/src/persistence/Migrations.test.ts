@@ -529,8 +529,6 @@ it.effect("admits the save-login card's kind, keeping every entry and what links
         Effect.flip,
       );
       assert.strictEqual(moved.reason._tag, "ConstraintError");
-    }).pipe(
-      Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
-    );
+    }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

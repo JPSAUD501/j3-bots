@@ -102,7 +102,7 @@ it.layer(endpoint, { excludeTestServices: true })("j3 bridge", (it) => {
         call(5, "create_bot", { name: "Scout" }),
       ]);
 
-      assert.strictEqual(replies.get(2)?.tools?.length, 13);
+      assert.strictEqual(replies.get(2)?.tools?.length, 14);
       assert.deepStrictEqual(replies.get(3)?.content?.[0]?.text, '{"recorded":true}');
       assert.isTrue(replies.get(4)?.isError);
       // Only the primary bot creates teammates.

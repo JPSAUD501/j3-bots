@@ -5,9 +5,9 @@ import * as Schema from "effect/Schema";
  * A connector's id, as the vault files its secret under it. A connector's own
  * id is the one its contract gives it; the vault only needs it stable.
  */
-export const ConnectorId = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9._-]{0,99}$/)).pipe(
-  Schema.brand("ConnectorId"),
-);
+export const ConnectorId = Schema.String.check(
+  Schema.isPattern(/^[a-z0-9][a-z0-9._-]{0,99}$/),
+).pipe(Schema.brand("ConnectorId"));
 export type ConnectorId = typeof ConnectorId.Type;
 
 const Secret = Schema.Redacted(Schema.String);
@@ -60,9 +60,7 @@ export type NamedSecret = typeof NamedSecret.Type;
  */
 export const ConnectorSecret = Schema.Struct({
   connectorId: ConnectorId,
-  oauth: Schema.NullOr(
-    Schema.Struct({ client: OAuthClient, tokens: Schema.NullOr(OAuthTokens) }),
-  ),
+  oauth: Schema.NullOr(Schema.Struct({ client: OAuthClient, tokens: Schema.NullOr(OAuthTokens) })),
   headers: Schema.Array(NamedSecret),
   env: Schema.Array(NamedSecret),
 });

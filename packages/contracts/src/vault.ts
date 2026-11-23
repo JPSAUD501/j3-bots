@@ -66,6 +66,7 @@ export const MAX_CREDENTIAL_ORIGINS = 10;
 export const CredentialOrigins = Schema.NonEmptyArray(SiteOrigin).check(
   Schema.isMaxLength(MAX_CREDENTIAL_ORIGINS),
 );
+export type CredentialOrigins = typeof CredentialOrigins.Type;
 
 /**
  * A secret of `min` to `max` characters, redacted as soon as it is decoded

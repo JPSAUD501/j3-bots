@@ -140,9 +140,7 @@ export const layer = Layer.effect(
     const view = new Cell<VaultView>({ _tag: "loading" });
 
     const showCredentials = latestRead((credentials: ReadonlyArray<Credential> | null) =>
-      view.update((current) =>
-        current._tag === "ready" ? { ...current, credentials } : current,
-      ),
+      view.update((current) => (current._tag === "ready" ? { ...current, credentials } : current)),
     );
 
     /** Follows the vault's state on one socket, reading the logins whenever they may have changed. */

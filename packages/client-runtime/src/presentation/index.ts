@@ -80,9 +80,11 @@ export {
   defaultBotName,
   makingProgress,
   nextStep,
+  type OnboardingFlow,
   type OnboardingStep,
   previousStep,
   showsConnect,
+  showsVault,
 } from "./onboarding.ts";
 export {
   notificationOpening,
