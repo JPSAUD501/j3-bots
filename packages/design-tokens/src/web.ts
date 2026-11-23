@@ -6,7 +6,7 @@ import {
   typeEntries,
   type Entry,
 } from "./themeEntries.ts";
-import { eases, press, springs } from "./springs.ts";
+import { eases, lift, press, springs } from "./springs.ts";
 import {
   displayTracking,
   fontFaces,
@@ -88,6 +88,7 @@ ${lines([
   ["press-scale", String(press.scale)],
   ["press-scale-round", String(press.roundScale)],
   ["press-scale-row", String(press.rowScale)],
+  ["lift-scale", String(lift.scale)],
   ["display-tracking", `${displayTracking}em`],
   ["layout-roster-width", rem(layout.rosterWidth)],
   ["layout-details-width", rem(layout.detailsWidth)],

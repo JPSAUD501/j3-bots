@@ -5,11 +5,11 @@ import type { Avatar, BotId, RosterItem } from "@j3-bots/contracts";
 import { needsOperator } from "@j3-bots/client-runtime";
 import { rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
-import type { ComponentProps } from "react";
+import type { ComponentProps, Ref } from "react";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
-import { RoomAvatar } from "./avatar/BotAvatar";
+import { type AvatarHandle, RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 
 export const toneClass: Record<LineTone, string> = {
@@ -25,6 +25,8 @@ interface RosterRowProps extends useRender.ComponentProps<"button"> {
   /** The room's members, for a room row. */
   readonly memberAvatars?: ReadonlyArray<{ readonly id: BotId; readonly avatar: Avatar }>;
   readonly selected: boolean;
+  /** A bot row's avatar, to make it move: a row that rises makes its bot hop. */
+  readonly avatarRef?: Ref<AvatarHandle>;
 }
 
 /**
@@ -37,6 +39,7 @@ export function RosterRow({
   item,
   memberAvatars = [],
   selected,
+  avatarRef,
   render,
   ...props
 }: RosterRowProps) {
@@ -51,7 +54,13 @@ export function RosterRow({
     <>
       <span className="[--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
         {item._tag === "bot" ? (
-          <LiveBotAvatar bot={item.bot} unread={item.unread} lastEntry={item.lastEntry} size={40} />
+          <LiveBotAvatar
+            bot={item.bot}
+            unread={item.unread}
+            lastEntry={item.lastEntry}
+            size={40}
+            {...(avatarRef === undefined ? {} : { ref: avatarRef })}
+          />
         ) : (
           <RoomAvatar members={memberAvatars} size={40} />
         )}

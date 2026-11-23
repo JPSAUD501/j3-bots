@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { BotIcon, PlusIcon, SearchIcon, SearchXIcon, UsersIcon, XIcon } from "lucide-react";
-import { useState, type KeyboardEvent, type ReactElement, type ReactNode, type Ref } from "react";
+import {
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+  type RefCallback,
+} from "react";
 import {
   filterRoster,
   orderRoster,
@@ -10,6 +18,8 @@ import {
   rosterKeyText,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
+import type { AvatarHandle } from "./avatar/BotAvatar";
+import { ReorderList, ReorderRow } from "./ReorderList";
 import { RosterRow } from "./RosterRow";
 import { Button } from "./ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
@@ -26,6 +36,31 @@ const sameKey = (item: RosterItem, key: RosterItemKey | null) =>
  * Only unmodified keys: `Alt+↑` and `Alt+↓` belong to the shell, which moves
  * between conversations with them.
  */
+/** The bot rows' avatars, by row key, so a row that rises can make its bot hop. */
+class RowAvatars {
+  private readonly handles = new Map<string, AvatarHandle>();
+  private readonly refs = new Map<string, RefCallback<AvatarHandle>>();
+
+  /** The row's avatar ref, the same from render to render, so React keeps it attached. */
+  ref(key: string): RefCallback<AvatarHandle> {
+    const known = this.refs.get(key);
+    if (known !== undefined) return known;
+    const ref: RefCallback<AvatarHandle> = (handle) => {
+      if (handle === null) return;
+      this.handles.set(key, handle);
+      return () => {
+        if (this.handles.get(key) === handle) this.handles.delete(key);
+      };
+    };
+    this.refs.set(key, ref);
+    return ref;
+  }
+
+  hop(key: string): void {
+    this.handles.get(key)?.poke("hop");
+  }
+}
+
 function moveFocus(event: KeyboardEvent<HTMLElement>) {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const rows = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-roster-row]")];
@@ -82,6 +117,9 @@ export function Roster({
   const bots = useBots();
   const [query, setQuery] = useState("");
   const rows = orderRoster(filterRoster(items, query));
+  const keys = rows.map((item) => rosterKeyText(rosterKeyOf(item)));
+  const scroller = useRef<HTMLDivElement>(null);
+  const [avatars] = useState(() => new RowAvatars());
   return (
     <nav
       ref={ref}
@@ -142,31 +180,41 @@ export function Roster({
           </MenuPopup>
         </Menu>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      {/* The list keeps its own place as rows move (`ReorderList`), so the browser's anchoring stays out. */}
+      <div
+        ref={scroller}
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 [overflow-anchor:none]"
+      >
         {rows.length === 0 ? (
           <RosterEmpty query={query.trim()} />
         ) : (
-          // Rows are keyed by bot or room, so a row that moves keeps its element: where the
-          // roster's order changes, a layout animation can slide each row to its place.
-          <ul className="flex flex-col gap-px">
-            {rows.map((item) => (
-              <li key={rosterKeyText(rosterKeyOf(item))}>
-                <RosterRow
-                  item={item}
-                  selected={sameKey(item, selected)}
-                  render={rowLink(item)}
-                  memberAvatars={
-                    item._tag === "room"
-                      ? item.room.members.flatMap((id) => {
-                          const bot = bots.get(id);
-                          return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
-                        })
-                      : []
-                  }
-                />
-              </li>
-            ))}
-          </ul>
+          <ReorderList
+            view={{ keys, query: query.trim() }}
+            scroller={scroller}
+            onRise={(key) => avatars.hop(key)}
+          >
+            {rows.map((item) => {
+              const key = rosterKeyText(rosterKeyOf(item));
+              return (
+                <ReorderRow key={key} rowKey={key}>
+                  <RosterRow
+                    item={item}
+                    avatarRef={avatars.ref(key)}
+                    selected={sameKey(item, selected)}
+                    render={rowLink(item)}
+                    memberAvatars={
+                      item._tag === "room"
+                        ? item.room.members.flatMap((id) => {
+                            const bot = bots.get(id);
+                            return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
+                          })
+                        : []
+                    }
+                  />
+                </ReorderRow>
+              );
+            })}
+          </ReorderList>
         )}
       </div>
       {footer}

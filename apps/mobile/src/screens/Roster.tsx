@@ -15,7 +15,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Bot, Plus, Search, SearchX, Users, X } from "lucide-react-native";
 import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, type FlatListProps, View } from "react-native";
-import { useSharedValue } from "react-native-reanimated";
+import { useAnimatedRef, useSharedValue } from "react-native-reanimated";
 import { displaySpacing, Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AvatarHold, AvatarRow, rowsOnScreen } from "../components/avatar/BotAvatar.tsx";
@@ -23,6 +23,14 @@ import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { StateMark } from "../components/States.tsx";
 import { Menu, type MenuAnchor, type MenuEntry } from "../components/Menu.tsx";
+import {
+  ReorderCell,
+  ROW_HEIGHT,
+  RowLift,
+  RowMoves,
+  useKeptPlace,
+  useRowMotion,
+} from "../components/Reorder.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
@@ -147,12 +155,25 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   );
   // The avatars hold while the list scrolls, from the drag through its glide.
   const scrolling = useSharedValue(false);
-  if (roster._tag === "loading") return <Connecting />;
-  const searching = query.trim() !== "";
+  const list = useAnimatedRef<FlatList<RosterItem>>();
+  // How far the list is scrolled, which keeps the rows in view where they are as rows move.
+  const scrolled = useSharedValue(0);
+  const searched = query.trim();
+  const searching = searched !== "";
   // A search finds hidden bots too, in the order the web lists what it finds.
-  const rows = searching
-    ? orderRoster(filterRoster(roster.value, query))
-    : rosterRows(roster.value);
+  const rows =
+    roster._tag === "loading"
+      ? null
+      : searching
+        ? orderRoster(filterRoster(roster.value, query))
+        : rosterRows(roster.value);
+  const motion = useRowMotion(
+    rows === null
+      ? null
+      : { keys: rows.map((item) => rosterKeyText(rosterKeyOf(item))), query: searched },
+  );
+  const keeping = useKeptPlace(list, motion, scrolled);
+  if (rows === null) return <Connecting />;
   const newEntries: ReadonlyArray<MenuEntry> = [
     { label: t("roster.newBot"), icon: Bot, onPress: () => navigation.navigate("newBot") },
     // A room needs two bots: with fewer, the row says so and makes a bot instead.
@@ -234,42 +255,67 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       </View>
       <ConnectionLine loaded />
       <AvatarHold held={scrolling}>
-        <FlatList
-          className="flex-1"
-          contentContainerStyle={{ paddingBottom: insets.bottom }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          data={rows}
-          keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
-          ListEmptyComponent={
-            <View className="items-center gap-3 px-6 py-12">
-              <StateMark icon={searching ? SearchX : Bot} />
-              <Body>
-                {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
-              </Body>
-            </View>
-          }
-          renderItem={({ item }) => {
-            const key = rosterKeyOf(item);
-            const text = rosterKeyText(key);
-            return (
-              <AvatarRow rows={onScreen} rowKey={text}>
-                <RosterRow
-                  item={item}
-                  selected={text === selectedText}
-                  onOpen={() => openConversation(key)}
-                />
-              </AvatarRow>
-            );
-          }}
-          onViewableItemsChanged={onViewable}
-          viewabilityConfig={ON_SCREEN}
-          extraData={selectedText}
-          onScrollBeginDrag={() => scrolling.set(true)}
-          onScrollEndDrag={() => scrolling.set(false)}
-          onMomentumScrollBegin={() => scrolling.set(true)}
-          onMomentumScrollEnd={() => scrolling.set(false)}
-        />
+        <RowMoves motion={motion} keeper={keeping.keeper}>
+          <FlatList
+            ref={list}
+            className="flex-1"
+            contentContainerStyle={{ paddingBottom: insets.bottom }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            data={rows}
+            keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
+            ListEmptyComponent={
+              <View className="items-center gap-3 px-6 py-12">
+                <StateMark icon={searching ? SearchX : Bot} />
+                <Body>
+                  {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
+                </Body>
+              </View>
+            }
+            CellRendererComponent={ReorderCell}
+            // Android detaches rows laid out off screen by where they end up,
+            // so a row travelling across the view from above it to below it
+            // would never be drawn on the way.
+            removeClippedSubviews={false}
+            getItemLayout={(_, index) => ({
+              length: ROW_HEIGHT,
+              offset: ROW_HEIGHT * index,
+              index,
+            })}
+            renderItem={({ item }) => {
+              const key = rosterKeyOf(item);
+              const text = rosterKeyText(key);
+              const selected = text === selectedText;
+              return (
+                <AvatarRow rows={onScreen} rowKey={text}>
+                  <RowLift rowKey={text} selected={selected}>
+                    {(avatar) => (
+                      <RosterRow
+                        item={item}
+                        selected={selected}
+                        avatarRef={avatar}
+                        onOpen={() => openConversation(key)}
+                      />
+                    )}
+                  </RowLift>
+                </AvatarRow>
+              );
+            }}
+            scrollEventThrottle={16}
+            onScroll={(event) => scrolled.set(event.nativeEvent.contentOffset.y)}
+            onViewableItemsChanged={onViewable}
+            viewabilityConfig={ON_SCREEN}
+            extraData={selectedText}
+            onScrollBeginDrag={() => {
+              // The operator takes the list: it stops gliding to keep its place.
+              keeping.stop();
+              scrolling.set(true);
+            }}
+            onScrollEndDrag={() => scrolling.set(false)}
+            onMomentumScrollBegin={() => scrolling.set(true)}
+            onMomentumScrollEnd={() => scrolling.set(false)}
+          />
+        </RowMoves>
       </AvatarHold>
     </View>
   );
