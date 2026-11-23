@@ -40,7 +40,7 @@ function Shown({ notice, onDone }: { notice: Notice; onDone: () => void }) {
     return () => window.clearTimeout(timer);
   }, []);
   return (
-    <p className="max-w-sm rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-lg">
+    <p className="max-w-sm rounded-md bg-foreground px-3 py-2 text-sm text-background shadow-overlay">
       {notice.text}
     </p>
   );

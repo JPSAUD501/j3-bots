@@ -2,7 +2,8 @@
 import { handoffPeer } from "@j3-bots/client-runtime/presentation";
 import type { BotId, HandoffEntry } from "@j3-bots/contracts";
 import { use, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "../text.tsx";
 import { AvatarShape } from "../components/Avatar.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots } from "../presentation.tsx";

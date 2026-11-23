@@ -12,7 +12,8 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { use, useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { openAttachment } from "../platform/openFile.ts";

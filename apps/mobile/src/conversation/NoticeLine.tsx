@@ -8,7 +8,8 @@ import {
   CornerDownRight,
   OctagonPause,
 } from "lucide-react-native";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { usePresentation } from "../presentation.tsx";
 

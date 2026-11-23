@@ -8,7 +8,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { AccessibilityInfo, Text, View } from "react-native";
+import { AccessibilityInfo, View } from "react-native";
+import { Text } from "./text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 /** How long a toast stays: long enough to read twice. */

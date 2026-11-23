@@ -4,7 +4,8 @@ import { type GroupPosition, type TimelineMessage } from "@j3-bots/client-runtim
 import { deliveryLine } from "@j3-bots/client-runtime/wording";
 import type { Bot } from "@j3-bots/contracts";
 import { use, useEffect, useRef } from "react";
-import { AccessibilityInfo, Pressable, Text, View } from "react-native";
+import { AccessibilityInfo, Pressable, View } from "react-native";
+import { Text } from "../text.tsx";
 import { AvatarShape } from "../components/Avatar.tsx";
 import { useI18n } from "../i18n.ts";
 import { FileCard } from "./FileCard.tsx";

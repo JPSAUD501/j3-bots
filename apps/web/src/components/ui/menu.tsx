@@ -6,7 +6,7 @@ import { touchTarget } from "../../lib/touchTarget";
 
 /** A menu row: compact for a mouse, the full touch target on a touch screen. */
 const item = cn(
-  "flex h-8 cursor-default items-center gap-2 rounded-md px-2 outline-none data-highlighted:bg-muted",
+  "flex h-9 cursor-default items-center gap-2 rounded-md px-2.5 outline-none transition-colors duration-(--duration-fast) data-highlighted:bg-muted",
   touchTarget,
 );
 
@@ -27,7 +27,7 @@ export function MenuPopup({
       <MenuPrimitive.Positioner side={side} align={align} sideOffset={6} className="z-50">
         <MenuPrimitive.Popup
           data-slot="menu-popup"
-          className="min-w-48 origin-(--transform-origin) rounded-lg border border-border bg-surface p-1 text-sm shadow-lg outline-none transition-[opacity,scale] duration-(--duration-fast) data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0"
+          className="min-w-48 origin-(--transform-origin) rounded-lg border border-border bg-surface p-1.5 text-sm shadow-overlay outline-none transition-[opacity,scale] duration-(--duration-pop) ease-pop data-starting-style:scale-90 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0 data-ending-style:duration-(--duration-fast) data-ending-style:ease-out"
         >
           {children}
         </MenuPrimitive.Popup>

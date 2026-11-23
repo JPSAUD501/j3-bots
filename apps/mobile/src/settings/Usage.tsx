@@ -9,7 +9,8 @@ import {
 import { timeInSentence, windowText } from "@j3-bots/client-runtime/wording";
 import { type EngineStatus, USAGE_PERIOD, type UsageWindow } from "@j3-bots/contracts";
 import * as Duration from "effect/Duration";
-import { Text, View } from "react-native";
+import { View } from "react-native";
+import { Text } from "../text.tsx";
 import { AvatarShape } from "../components/Avatar.tsx";
 import { Quiet, Section } from "../components/form.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";

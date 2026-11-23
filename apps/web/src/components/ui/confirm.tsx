@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { useState, type ReactElement, type ReactNode } from "react";
+import { cn } from "../../lib/cn";
 import { Button } from "./button";
+import { alertDialog, dialogBackdrop, dialogTitle } from "./dialog";
 
 interface ConfirmProps {
   /** The button that opens the question, as an element to render the trigger with. */
@@ -36,9 +38,9 @@ export function Confirm({
     <AlertDialog.Root open={open} onOpenChange={(next) => setOpen(next && !busy)}>
       <AlertDialog.Trigger render={trigger}>{children}</AlertDialog.Trigger>
       <AlertDialog.Portal>
-        <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <AlertDialog.Popup className="fixed inset-x-4 top-1/2 z-50 mx-auto flex max-w-sm -translate-y-1/2 flex-col gap-2 rounded-lg border border-border bg-surface p-5 text-foreground shadow-xl outline-none transition-[opacity,scale] duration-(--duration-slow) data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
-          <AlertDialog.Title className="text-lg font-medium">{title}</AlertDialog.Title>
+        <AlertDialog.Backdrop className={cn(dialogBackdrop, "z-50")} />
+        <AlertDialog.Popup className={cn(alertDialog, "z-50 max-w-sm gap-2 p-5")}>
+          <AlertDialog.Title className={dialogTitle}>{title}</AlertDialog.Title>
           <AlertDialog.Description className="text-sm text-muted-foreground">
             {body}
           </AlertDialog.Description>

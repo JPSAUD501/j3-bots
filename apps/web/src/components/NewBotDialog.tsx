@@ -3,6 +3,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { useId } from "react";
 import { useI18n } from "../app/context";
 import { NewBotForm } from "./NewBotForm";
+import { alertDialog, dialogBackdrop, dialogTitle } from "./ui/dialog";
 
 interface NewBotDialogProps {
   readonly open: boolean;
@@ -20,12 +21,9 @@ export function NewBotDialog({ open, onOpenChange, onCreate, onUnsavedChange }: 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
-        <Dialog.Popup
-          aria-labelledby={titleId}
-          className="fixed inset-x-4 top-1/2 z-40 mx-auto flex max-w-sm -translate-y-1/2 flex-col gap-3 rounded-lg border border-border bg-surface p-5 text-foreground shadow-xl outline-none transition-[opacity,scale] duration-(--duration-slow) data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0"
-        >
-          <Dialog.Title id={titleId} className="text-lg font-medium">
+        <Dialog.Backdrop className={dialogBackdrop} />
+        <Dialog.Popup aria-labelledby={titleId} className={`${alertDialog} max-w-sm gap-3 p-5`}>
+          <Dialog.Title id={titleId} className={dialogTitle}>
             {t("newBot.title")}
           </Dialog.Title>
           <Dialog.Description className="text-sm text-muted-foreground">

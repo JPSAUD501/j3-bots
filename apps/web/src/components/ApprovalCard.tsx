@@ -227,7 +227,7 @@ export function ApprovalCard({
               />
               {t(wholeFile ? "approval.showFile" : "approval.showChange")}
             </Collapsible.Trigger>
-            <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-standard data-ending-style:h-0 data-starting-style:h-0">
+            <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-(--duration-slow) ease-out data-ending-style:h-0 data-starting-style:h-0">
               {diff("mt-2 rounded-md")}
             </Collapsible.Panel>
           </Collapsible.Root>

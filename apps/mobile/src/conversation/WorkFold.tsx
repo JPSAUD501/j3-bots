@@ -18,10 +18,10 @@ import {
   X,
 } from "lucide-react-native";
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { usePresentation } from "../presentation.tsx";
-import { monospace } from "./MessageText.tsx";
 
 const stepIcon = {
   command: Terminal,
@@ -88,11 +88,7 @@ function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
           </View>
           {/* Long commands and paths wrap: every step reads in full. */}
           {step.kind === "command" ? (
-            <Text
-              selectable
-              className="flex-1 text-2xs text-foreground"
-              style={{ fontFamily: monospace }}
-            >
+            <Text selectable className="flex-1 text-2xs text-foreground" face="mono">
               {step.label}
             </Text>
           ) : (

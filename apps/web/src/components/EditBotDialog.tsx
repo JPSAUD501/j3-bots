@@ -15,6 +15,8 @@ import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
+import { dialogBackdrop, screenDialog } from "./ui/dialog";
+import { lineField, textField } from "./ui/field";
 
 /** The props of the form, whatever frames it: the dialog in the app, a pane in the gallery. */
 export interface EditBotFormProps {
@@ -33,9 +35,6 @@ export interface EditBotFormProps {
   /** The id of the form's heading, which names the dialog. */
   readonly titleId: string;
 }
-
-const fieldClass =
-  "w-full rounded-md border border-input bg-surface px-3 text-sm placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-accent read-only:text-muted-foreground aria-invalid:border-blocked";
 
 const modes = PermissionMode.literals;
 const isMode = Schema.is(PermissionMode);
@@ -106,7 +105,7 @@ export function EditBotForm({
       }}
     >
       <header className="flex h-14 shrink-0 items-center border-b border-border ps-4 pe-2">
-        <h2 id={titleId} className="truncate text-sm font-medium">
+        <h2 id={titleId} className="display-type truncate text-lg">
           {t("editBot.title", { name: bot.profile.name })}
         </h2>
         <Button
@@ -132,7 +131,7 @@ export function EditBotForm({
             readOnly={saving}
             autoComplete="off"
             onChange={(event) => form.editText("name", event.currentTarget.value)}
-            className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
+            className={lineField}
             {...errorProps("name")}
           />
           {fieldError("name")}
@@ -150,7 +149,7 @@ export function EditBotForm({
             autoComplete="off"
             placeholder={t("editBot.titleField.placeholder")}
             onChange={(event) => form.editText("title", event.currentTarget.value)}
-            className={cn(fieldClass, "h-9 pointer-coarse:h-11")}
+            className={lineField}
             {...errorProps("title")}
           />
           {fieldError("title")}
@@ -171,7 +170,7 @@ export function EditBotForm({
               form.fieldProblem("job") === null ? ids.jobHint : `${ids.jobHint} ${errorIds.job}`
             }
             aria-invalid={form.fieldProblem("job") !== null || undefined}
-            className={cn(fieldClass, "field-sizing-content min-h-24 resize-none py-2")}
+            className={cn(textField, "field-sizing-content min-h-24 resize-none py-2")}
           />
           <p id={ids.jobHint} className="text-2xs text-muted-foreground">
             {t("editBot.job.hint", { name: bot.profile.name })}
@@ -197,7 +196,7 @@ export function EditBotForm({
               ].find((choice) => keyOf(choice) === key);
               form.edit({ model: picked ?? bot.model });
             }}
-            className={cn(fieldClass, "h-9 pointer-coarse:h-11 disabled:text-muted-foreground")}
+            className={cn(lineField, "disabled:text-muted-foreground")}
           >
             {choices.unoffered.map((choice) => (
               <option key={keyOf(choice)} value={keyOf(choice)}>
@@ -327,10 +326,10 @@ export function EditBotDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-40 bg-scrim transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0" />
+        <Dialog.Backdrop className={dialogBackdrop} />
         <Dialog.Popup
           aria-labelledby={titleId}
-          className="fixed inset-0 z-40 flex flex-col bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] text-foreground outline-none transition-opacity duration-(--duration-slow) data-ending-style:opacity-0 data-starting-style:opacity-0 tablet:inset-x-4 tablet:top-12 tablet:bottom-12 tablet:mx-auto tablet:max-w-lg tablet:rounded-lg tablet:border tablet:border-border tablet:shadow-xl"
+          className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-lg`}
         >
           {/* Mounted afresh with each opening, so it starts from the bot as saved. */}
           {held !== null && (

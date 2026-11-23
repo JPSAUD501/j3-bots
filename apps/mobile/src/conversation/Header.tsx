@@ -4,7 +4,8 @@ import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runti
 import type { Bot, EntryId, RosterItem } from "@j3-bots/contracts";
 import { ChevronLeft, ChevronRight, CornerDownRight, Square } from "lucide-react-native";
 import { useEffect, useEffectEvent, useRef } from "react";
-import { AccessibilityInfo, Alert, Pressable, Text, View } from "react-native";
+import { AccessibilityInfo, Alert, Pressable, View } from "react-native";
+import { Text } from "../text.tsx";
 import { BotAvatar, RoomAvatar } from "../components/Avatar.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";

@@ -1,32 +1,74 @@
 /* Generated from packages/design-tokens/src by `pnpm --filter @j3-bots/design-tokens generate`. Do not edit. */
 
+@font-face {
+  font-family: "Bricolage Grotesque";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/BricolageGrotesque-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Instrument Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/InstrumentSans-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Instrument Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/InstrumentSans-Medium.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Instrument Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../fonts/InstrumentSans-SemiBold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("../fonts/JetBrainsMono-Regular.woff2") format("woff2");
+}
+
 :root,
 .light {
   color-scheme: light;
-  --background: #fcfcfc;
+  --background: #ffffff;
   --surface: #ffffff;
-  --sidebar: #f5f5f5;
-  --muted: #ebebed;
-  --border: #e4e4e7;
-  --input: #d4d4d8;
-  --foreground: #18181b;
-  --muted-foreground: #67676f;
-  --bubble-operator: #18181b;
-  --bubble-operator-foreground: #fafafa;
+  --sidebar: #f6f6f7;
+  --muted: #f0f0f2;
+  --muted-strong: #e5e5e9;
+  --border: #e8e8ec;
+  --input: #d4d4da;
+  --foreground: #101012;
+  --muted-foreground: #5f5f69;
+  --bubble-operator: #101012;
+  --bubble-operator-foreground: #ffffff;
   --bubble-bot: #f0f0f2;
-  --bubble-bot-foreground: #18181b;
-  --code-background: oklch(0 0 0 / 0.06);
-  --accent: oklch(0.49 0.22 264);
+  --bubble-bot-foreground: #101012;
+  --code-background: oklch(0 0 0 / 0.055);
+  --accent: #101012;
   --accent-foreground: #ffffff;
   --waiting: oklch(0.52 0.12 65);
   --waiting-surface: oklch(0.975 0.03 85);
   --blocked: oklch(0.53 0.2 27);
   --blocked-surface: oklch(0.975 0.015 20);
   --success: oklch(0.52 0.12 160);
+  --control-on: oklch(0.52 0.12 160);
   --control-off: #82828a;
   --control-thumb: #ffffff;
   --avatar-ink: #ffffff;
-  --scrim: oklch(0 0 0 / 0.32);
+  --scrim: oklch(0 0 0 / 0.3);
   --bot-red: oklch(0.441 0.179 29);
   --bot-orange: oklch(0.535 0.11 72);
   --bot-yellow: oklch(0.621 0.125 86);
@@ -37,34 +79,39 @@
   --bot-violet: oklch(0.622 0.183 295);
   --bot-pink: oklch(0.451 0.136 336);
   --bot-gray: oklch(0.532 0 0);
+  --elevation-raised: 0 1px 2px oklch(0 0 0 / 0.04);
+  --elevation-overlay: 0 12px 32px -8px oklch(0 0 0 / 0.18), 0 2px 6px oklch(0 0 0 / 0.06);
+  --elevation-thumb: 0 1px 3px oklch(0 0 0 / 0.2), 0 0 0 0.5px oklch(0 0 0 / 0.06);
 }
 
 .dark {
   color-scheme: dark;
   --background: #000000;
-  --surface: #0e0e0f;
-  --sidebar: #070707;
-  --muted: #18181a;
+  --surface: #101012;
+  --sidebar: #09090a;
+  --muted: #19191c;
+  --muted-strong: #242428;
   --border: oklch(1 0 0 / 0.09);
-  --input: oklch(1 0 0 / 0.14);
-  --foreground: #f4f4f5;
-  --muted-foreground: #a1a1aa;
-  --bubble-operator: #f4f4f5;
-  --bubble-operator-foreground: #09090b;
-  --bubble-bot: #18181b;
-  --bubble-bot-foreground: #f4f4f5;
-  --code-background: oklch(1 0 0 / 0.08);
-  --accent: oklch(0.72 0.15 264);
-  --accent-foreground: #09090b;
+  --input: oklch(1 0 0 / 0.15);
+  --foreground: #f5f5f6;
+  --muted-foreground: #a3a3ad;
+  --bubble-operator: #2a2a30;
+  --bubble-operator-foreground: #f5f5f6;
+  --bubble-bot: #19191c;
+  --bubble-bot-foreground: #f5f5f6;
+  --code-background: oklch(1 0 0 / 0.07);
+  --accent: #f5f5f6;
+  --accent-foreground: #0a0a0b;
   --waiting: oklch(0.82 0.15 80);
   --waiting-surface: oklch(0.21 0.045 70);
   --blocked: oklch(0.71 0.17 25);
   --blocked-surface: oklch(0.2 0.05 25);
   --success: oklch(0.78 0.14 160);
+  --control-on: oklch(0.6 0.13 160);
   --control-off: #6b6b73;
-  --control-thumb: #f4f4f5;
+  --control-thumb: #f5f5f6;
   --avatar-ink: #0b0b0c;
-  --scrim: oklch(0 0 0 / 0.6);
+  --scrim: oklch(0 0 0 / 0.62);
   --bot-red: oklch(0.555 0.193 33);
   --bot-orange: oklch(0.682 0.132 57);
   --bot-yellow: oklch(0.79 0.162 94);
@@ -75,12 +122,23 @@
   --bot-violet: oklch(0.523 0.148 298);
   --bot-pink: oklch(0.584 0.094 349);
   --bot-gray: oklch(0.93 0 0);
+  --elevation-raised: none;
+  --elevation-overlay: 0 12px 32px -8px oklch(0 0 0 / 0.8), 0 0 0 1px oklch(1 0 0 / 0.07);
+  --elevation-thumb: 0 1px 3px oklch(0 0 0 / 0.5);
 }
 
 :root {
-  --duration-fast: 120ms;
-  --duration-state: 160ms;
-  --duration-slow: 200ms;
+  --duration-fast: 150ms;
+  --duration-state: 200ms;
+  --duration-slow: 300ms;
+  --duration-pop: 571ms;
+  --duration-soft: 562ms;
+  --duration-slide: 392ms;
+  --duration-press: 70ms;
+  --press-scale: 0.955;
+  --press-scale-round: 0.88;
+  --press-scale-row: 0.975;
+  --display-tracking: -0.035em;
   --avatar-breathe-period: 2400ms;
   --avatar-breathe-steps: 12;
   --avatar-spin-period: 1600ms;
@@ -88,7 +146,7 @@
   --layout-roster-width: 17.5rem;
   --layout-details-width: 20rem;
   --layout-text-column: 45rem;
-  --layout-row-pointer: 3.25rem;
+  --layout-row-pointer: 3.5rem;
   --layout-row-touch: 4rem;
   --layout-touch-target: 2.75rem;
   --layout-bubble-width: min(36rem, 85%);
@@ -101,10 +159,15 @@
   --color-*: initial;
   --text-*: initial;
   --radius-*: initial;
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, "Inter Variable", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --shadow-*: initial;
+  --font-sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Bricolage Grotesque", "Instrument Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --spacing: 0.25rem;
-  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-pop: linear(0, 0.087, 0.259, 0.467, 0.672, 0.85, 0.987, 1.08, 1.132, 1.15, 1.143, 1.121, 1.091, 1.059, 1.031, 1.008, 0.992, 0.982, 0.978, 0.978, 0.981, 0.985, 0.99, 0.994, 0.998, 1.001, 1.002, 1.003, 1.003, 1.003, 1.003, 1.002, 1.001, 1.001, 1);
+  --ease-soft: linear(0, 0.035, 0.108, 0.204, 0.311, 0.42, 0.525, 0.622, 0.708, 0.783, 0.846, 0.897, 0.938, 0.969, 0.993, 1.009, 1.02, 1.027, 1.03, 1.031, 1.03, 1.028, 1.025, 1.021, 1.018, 1.015, 1.012, 1.009, 1.007, 1.005, 1.003, 1.002, 1.001, 1, 1);
+  --ease-slide: linear(0, 0.043, 0.127, 0.231, 0.341, 0.448, 0.546, 0.633, 0.709, 0.772, 0.824, 0.867, 0.901, 0.927, 0.948, 0.963, 0.975, 0.984, 0.99, 0.994, 0.997, 0.999, 1.001, 1);
   --breakpoint-tablet: 48rem;
   --breakpoint-wide: 75rem;
   --container-tablet: 48rem;
@@ -117,14 +180,24 @@
   --text-sm--line-height: 1.125rem;
   --text-base: 0.875rem;
   --text-base--line-height: 1.25rem;
+  --text-md: 0.9375rem;
+  --text-md--line-height: 1.25rem;
   --text-lg: 1rem;
   --text-lg--line-height: 1.5rem;
   --text-xl: 1.25rem;
-  --text-xl--line-height: 1.75rem;
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-bubble: 1rem;
+  --text-xl--line-height: 1.625rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.75rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.125rem;
+  --text-4xl: 2.5rem;
+  --text-4xl--line-height: 2.625rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
+  --radius-sheet: 1.75rem;
+  --radius-bubble: 1.25rem;
   --radius-pill: 9999px;
 }
 
@@ -133,6 +206,7 @@
   --color-surface: var(--surface);
   --color-sidebar: var(--sidebar);
   --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-foreground: var(--foreground);
@@ -149,6 +223,7 @@
   --color-blocked: var(--blocked);
   --color-blocked-surface: var(--blocked-surface);
   --color-success: var(--success);
+  --color-control-on: var(--control-on);
   --color-control-off: var(--control-off);
   --color-control-thumb: var(--control-thumb);
   --color-avatar-ink: var(--avatar-ink);
@@ -163,4 +238,7 @@
   --color-bot-violet: var(--bot-violet);
   --color-bot-pink: var(--bot-pink);
   --color-bot-gray: var(--bot-gray);
+  --shadow-raised: var(--elevation-raised);
+  --shadow-overlay: var(--elevation-overlay);
+  --shadow-thumb: var(--elevation-thumb);
 }

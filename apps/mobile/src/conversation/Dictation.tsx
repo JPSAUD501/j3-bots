@@ -6,7 +6,8 @@ import {
 } from "expo-speech-recognition";
 import { Mic, Square } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { AccessibilityInfo, Linking, Platform, Pressable, Text, View } from "react-native";
+import { AccessibilityInfo, Linking, Platform, Pressable, View } from "react-native";
+import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import {

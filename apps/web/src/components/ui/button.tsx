@@ -9,15 +9,18 @@ import { touchTarget } from "../../lib/touchTarget";
 
 const buttonVariants = cva(
   [
-    "inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md border font-medium text-sm transition-[background-color,border-color,color] duration-(--duration-fast) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+    "pressable inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-pill border font-semibold text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
     touchTarget,
   ],
   {
-    defaultVariants: { variant: "outline", size: "default" },
+    defaultVariants: { variant: "secondary", size: "default" },
     variants: {
       variant: {
         /** The one action a card or dialog exists for. */
         primary: "border-foreground bg-foreground text-background hover:bg-foreground/85",
+        /** Every other action: quiet and filled. */
+        secondary: "border-transparent bg-muted text-foreground hover:bg-muted-strong",
+        /** Only where an action needs a boundary, such as one that sits among filled fields. */
         outline: "border-input bg-surface text-foreground hover:bg-muted",
         ghost: "border-transparent text-foreground hover:bg-muted",
         "ghost-muted":
@@ -27,11 +30,11 @@ const buttonVariants = cva(
           "border-input bg-surface text-blocked hover:border-blocked/40 hover:bg-blocked-surface",
       },
       size: {
-        default: "h-8 px-3",
-        sm: "h-7 px-2.5 text-xs",
-        icon: "size-8",
-        "icon-sm": "size-7",
-        "icon-pill": "size-8 rounded-pill",
+        default: "h-9 px-4",
+        sm: "h-8 px-3 text-xs",
+        icon: "pressable-round size-9",
+        "icon-sm": "pressable-round size-8",
+        "icon-pill": "pressable-round size-8",
       },
     },
   },

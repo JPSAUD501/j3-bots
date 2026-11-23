@@ -19,7 +19,9 @@
     },
     "./web.css": "./generated/web.css",
     "./uniwind.css": "./generated/uniwind.css",
-    "./icons/*": "./generated/icons/*"
+    "./fonts.json": "./generated/fonts.json",
+    "./icons/*": "./generated/icons/*",
+    "./fonts/*": "./fonts/*"
   },
   "scripts": {
     "generate": "node scripts/generate.ts",

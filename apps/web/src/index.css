@@ -40,6 +40,12 @@
     outline-offset: 2px;
   }
 
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
   ::selection {
     background: color-mix(in oklab, var(--accent) 24%, transparent);
   }
@@ -71,11 +77,11 @@
   }
 
   .avatar-mark-in {
-    animation: avatar-mark-in var(--duration-state) var(--ease-standard);
+    animation: avatar-mark-in var(--duration-state) var(--ease-out);
   }
 
   .avatar-nudge {
-    animation: avatar-nudge var(--duration-slow) var(--ease-standard);
+    animation: avatar-nudge var(--duration-slow) var(--ease-out);
   }
 
   .avatar[data-still] * {
@@ -116,6 +122,50 @@
   50% {
     transform: scale(1.08);
   }
+}
+
+/*
+ * Press feedback: a control goes down quickly when pressed and springs back
+ * with `pop` when let go. Colors still change on the plain fast ease. A round
+ * icon button takes the deeper press, a list row the shallower one. Reduced motion keeps the colors and drops
+ * the scale.
+ */
+@utility pressable {
+  transition-property: transform, background-color, border-color, color, opacity, box-shadow;
+  transition-duration:
+    var(--duration-pop), var(--duration-fast), var(--duration-fast), var(--duration-fast),
+    var(--duration-fast), var(--duration-fast);
+  transition-timing-function:
+    var(--ease-pop), var(--ease-out), var(--ease-out), var(--ease-out), var(--ease-out),
+    var(--ease-out);
+  -webkit-tap-highlight-color: transparent;
+
+  &:active:not(:disabled, [aria-disabled="true"], [data-disabled]) {
+    transform: scale(var(--pressable-scale, var(--press-scale)));
+    transition-duration: var(--duration-press);
+    transition-timing-function: var(--ease-out);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &:active:not(:disabled, [aria-disabled="true"], [data-disabled]) {
+      transform: none;
+    }
+  }
+}
+
+@utility pressable-round {
+  --pressable-scale: var(--press-scale-round);
+}
+
+@utility pressable-row {
+  --pressable-scale: var(--press-scale-row);
+}
+
+/* Headings and names set in the display face: bold and tight. */
+@utility display-type {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: var(--display-tracking);
 }
 
 @media (prefers-reduced-motion: reduce) {

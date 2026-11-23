@@ -4,7 +4,8 @@ import type { EntryId } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import type { LucideIcon } from "lucide-react-native";
 import { type ComponentRef, type ReactNode, use, useEffect, useRef } from "react";
-import { AccessibilityInfo, Text, View } from "react-native";
+import { AccessibilityInfo, View } from "react-native";
+import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { EntryWidths } from "./widths.ts";
 

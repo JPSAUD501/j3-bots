@@ -10,7 +10,8 @@ import {
 import { deviceZoneOffer, timeZoneHint } from "@j3-bots/client-runtime/wording";
 import type { NotificationSettingsChange, Settings } from "@j3-bots/contracts";
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
+import { Text } from "../text.tsx";
 import { Problem, Quiet, Section, SwitchRow, TextField } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { phoneTimeZone } from "../platform/timeZone.ts";

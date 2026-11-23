@@ -1,0 +1,7 @@
+{
+  "name": "bundled-fonts",
+  "version": "06bfe0d",
+  "private": true,
+  "description": "Bricolage Grotesque, Instrument Sans and JetBrains Mono, instanced and subset from google/fonts at commit 06bfe0d62a98375cb09c942fa18e68bd32cff057. Not a workspace package: this manifest names the fonts and their license for the release's third-party notices.",
+  "license": "OFL-1.1"
+}

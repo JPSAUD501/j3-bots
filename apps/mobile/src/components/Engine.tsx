@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { providerLine, type ProviderTone } from "@j3-bots/client-runtime/wording";
 import type { ProviderStatus } from "@j3-bots/contracts";
-import { Text, View } from "react-native";
+import { View } from "react-native";
+import { Text } from "../text.tsx";
 import { usePresentation } from "../presentation.tsx";
 
 const toneClass = {
@@ -40,7 +41,8 @@ export function ConnectCommand(props: { readonly command: string }) {
   return (
     <Text
       selectable
-      className="rounded-md bg-code-background px-2.5 py-1.5 font-mono text-xs text-foreground"
+      face="mono"
+      className="rounded-md bg-code-background px-2.5 py-1.5 text-xs text-foreground"
     >
       {props.command}
     </Text>

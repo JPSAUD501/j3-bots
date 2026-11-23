@@ -12,7 +12,8 @@ import {
   type LucideIcon,
 } from "lucide-react-native";
 import { useLayoutEffect } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { ScrollView, View } from "react-native";
+import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Quiet, Section } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
@@ -107,7 +108,7 @@ export function RoutineRunsScreen({
       {lines !== null && (
         <Section>
           <View className="gap-0.5">
-            <Text className={`text-base text-foreground ${lines.expression ? "font-mono" : ""}`}>
+            <Text face={lines.expression ? "mono" : "text"} className="text-base text-foreground">
               {lines.schedule}
             </Text>
             {lines.status !== null && (

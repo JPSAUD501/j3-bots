@@ -91,7 +91,7 @@ export function AppShell({
               aria-modal
               initialFocus={detailsHeadingRef}
               finalFocus={returnFocusRef}
-              className="absolute inset-0 z-20 flex flex-col bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-xl"
+              className="absolute inset-0 z-20 flex flex-col bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-overlay"
             >
               {details}
             </Dialog.Popup>

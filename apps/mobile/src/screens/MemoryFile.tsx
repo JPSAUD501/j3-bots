@@ -11,7 +11,8 @@ import { memoryEditProblemText, memoryFileName } from "@j3-bots/client-runtime/w
 import type { MemoryScope } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ScrollView, Text, TextInput, View } from "react-native";
+import { ScrollView, View } from "react-native";
+import { Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FormScreen, Problem, useDiscardGuard } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
@@ -119,7 +120,7 @@ export function MemoryFileScreen({ navigation, route }: Props) {
         ) : (
           <View className="items-start gap-3">
             <Button label={t("memory.edit")} onPress={edit.startEdit} />
-            <Text selectable className="font-mono text-sm text-foreground">
+            <Text selectable face="mono" className="text-sm text-foreground">
               {reading.document.text}
             </Text>
           </View>
@@ -169,6 +170,7 @@ export function MemoryFileScreen({ navigation, route }: Props) {
       <TextInput
         accessibilityLabel={t("memory.text", { file: title })}
         aria-invalid={edit.tooLong}
+        face="mono"
         value={text}
         autoFocus
         multiline
@@ -177,7 +179,7 @@ export function MemoryFileScreen({ navigation, route }: Props) {
         autoCapitalize="none"
         textAlignVertical="top"
         onChangeText={edit.changeText}
-        className={`min-h-64 rounded-md border bg-surface p-3 font-mono text-sm ${edit.tooLong ? "border-blocked" : "border-input"} ${saving || reloading ? "text-muted-foreground" : "text-foreground"}`}
+        className={`min-h-64 rounded-md border bg-muted p-3 text-sm ${edit.tooLong ? "border-blocked" : "border-transparent"} ${saving || reloading ? "text-muted-foreground" : "text-foreground"}`}
       />
     </FormScreen>
   );

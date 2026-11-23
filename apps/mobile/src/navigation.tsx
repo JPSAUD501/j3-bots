@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId, MemoryPath, RoomId, RosterItemKey, RoutineId } from "@j3-bots/contracts";
 import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
+import { fontFamilies } from "@j3-bots/design-tokens";
 import {
   DarkTheme,
   DefaultTheme,
@@ -13,6 +14,7 @@ import {
 import {
   createNativeStackNavigator,
   type NativeStackNavigationProp,
+  type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
 import { useState } from "react";
 import { useColorScheme } from "react-native";
@@ -136,6 +138,20 @@ function useNavigationTheme(): Theme {
   };
 }
 
+/**
+ * Every screen's header in the display face, flat on the canvas. A screen
+ * pushed from another slides in over it as the one under it drifts back; one
+ * that is a task of its own (a form, Settings, a routine's runs) rises from the
+ * bottom like a sheet.
+ */
+const screenOptions = {
+  headerTitleStyle: { fontFamily: fontFamilies.display, fontWeight: "700" },
+  headerShadowVisible: false,
+  animation: "ios_from_right",
+} as const satisfies NativeStackNavigationOptions;
+
+const sheet = { animation: "slide_from_bottom" } as const satisfies NativeStackNavigationOptions;
+
 /** What a paired device shows. */
 export function Main() {
   const { t } = useI18n();
@@ -147,7 +163,7 @@ export function Main() {
       <PresentationProvider>
         <Toasts>
           <NavigationContainer ref={navigation} onReady={() => setReady(true)} theme={theme}>
-            <Stack.Navigator>
+            <Stack.Navigator screenOptions={screenOptions}>
               {/* The roster and the conversation draw their own headers, which hold more than a title. */}
               <Stack.Screen
                 name="roster"
@@ -166,19 +182,19 @@ export function Main() {
                 options={{ title: t("share.title"), presentation: "modal" }}
               />
               {/* The forms, the memory file and a routine's runs set their own titles. */}
-              <Stack.Screen name="editBot" component={EditBotScreen} />
-              <Stack.Screen name="memoryFile" component={MemoryFileScreen} />
-              <Stack.Screen name="routineRuns" component={RoutineRunsScreen} />
-              <Stack.Screen name="roomForm" component={RoomFormScreen} />
+              <Stack.Screen name="editBot" options={sheet} component={EditBotScreen} />
+              <Stack.Screen name="memoryFile" options={sheet} component={MemoryFileScreen} />
+              <Stack.Screen name="routineRuns" options={sheet} component={RoutineRunsScreen} />
+              <Stack.Screen name="roomForm" options={sheet} component={RoomFormScreen} />
               <Stack.Screen
                 name="newBot"
                 component={NewBotScreen}
-                options={{ title: t("newBot.title") }}
+                options={{ ...sheet, title: t("newBot.title") }}
               />
               <Stack.Screen
                 name="settings"
                 component={SettingsScreen}
-                options={{ title: t("settings.title") }}
+                options={{ ...sheet, title: t("settings.title") }}
               />
             </Stack.Navigator>
           </NavigationContainer>
