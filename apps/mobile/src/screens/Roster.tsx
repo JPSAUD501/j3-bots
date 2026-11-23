@@ -23,7 +23,14 @@ import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { StateMark } from "../components/States.tsx";
 import { Menu, type MenuAnchor, type MenuEntry } from "../components/Menu.tsx";
-import { ReorderCell, RowLift, RowMoves, useRowMotion } from "../components/Reorder.tsx";
+import {
+  ReorderCell,
+  ROW_HEIGHT,
+  RowLift,
+  RowMoves,
+  useKeptPlace,
+  useRowMotion,
+} from "../components/Reorder.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
@@ -148,9 +155,9 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   );
   // The avatars hold while the list scrolls, from the drag through its glide.
   const scrolling = useSharedValue(false);
-  // Scrolled down, the rows in view stay where they are as rows move above them; at the top,
-  // the list stays at the top, where a row that rises comes into view.
-  const [scrolledDown, setScrolledDown] = useState(false);
+  const list = useRef<FlatList<RosterItem>>(null);
+  // How far the list is scrolled, which keeps the rows in view where they are as rows move.
+  const scrolled = useSharedValue(0);
   const searched = query.trim();
   const searching = searched !== "";
   // A search finds hidden bots too, in the order the web lists what it finds.
@@ -165,6 +172,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       ? null
       : { keys: rows.map((item) => rosterKeyText(rosterKeyOf(item))), query: searched },
   );
+  useKeptPlace(list, motion, scrolled);
   if (rows === null) return <Connecting />;
   const newEntries: ReadonlyArray<MenuEntry> = [
     { label: t("roster.newBot"), icon: Bot, onPress: () => navigation.navigate("newBot") },
@@ -247,8 +255,9 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       </View>
       <ConnectionLine loaded />
       <AvatarHold held={scrolling}>
-        <RowMoves motion={motion}>
+        <RowMoves motion={motion} scrolled={scrolled}>
           <FlatList
+            ref={list}
             className="flex-1"
             contentContainerStyle={{ paddingBottom: insets.bottom }}
             keyboardShouldPersistTaps="handled"
@@ -264,6 +273,11 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
               </View>
             }
             CellRendererComponent={ReorderCell}
+            getItemLayout={(_, index) => ({
+              length: ROW_HEIGHT,
+              offset: ROW_HEIGHT * index,
+              index,
+            })}
             renderItem={({ item }) => {
               const key = rosterKeyOf(item);
               const text = rosterKeyText(key);
@@ -283,12 +297,8 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                 </AvatarRow>
               );
             }}
-            {...(scrolledDown ? { maintainVisibleContentPosition: { minIndexForVisible: 0 } } : {})}
-            scrollEventThrottle={64}
-            onScroll={(event) => {
-              const down = event.nativeEvent.contentOffset.y > 0;
-              if (down !== scrolledDown) setScrolledDown(down);
-            }}
+            scrollEventThrottle={16}
+            onScroll={(event) => scrolled.set(event.nativeEvent.contentOffset.y)}
             onViewableItemsChanged={onViewable}
             viewabilityConfig={ON_SCREEN}
             extraData={selectedText}
