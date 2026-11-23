@@ -289,7 +289,7 @@ In the server these are typed records: every token, secret and value is a redact
 
 ## Filling a login
 
-A bot signs in to a site with a saved login without ever holding its values: it asks, and the server types them into the bot's browser tab while it holds the tab ([decision NNNN](../decisions/NNNN-the-server-types-a-saved-login-into-the-bots-tab.md)). There is no confirmation for each fill: the operator decides ahead of time, per bot and per login.
+A bot signs in to a site with a saved login without being handed its values: it asks, and the server types them into the bot's browser tab while it holds the tab ([decision NNNN](../decisions/NNNN-the-server-types-a-saved-login-into-the-bots-tab.md)). There is no confirmation for each fill: the operator decides ahead of time, per bot and per login.
 
 **Who may.** A bot may fill a login only when all of these hold:
 
@@ -325,7 +325,7 @@ The viewer is released when the fill ends however it ends, refused, failed or in
 
 **What is kept.** Each fill, typed or not, is a step of the bot's running turn in its work fold: tool `login`, the login's name and id, the field, the page's origin as checked, and the outcome (`CredentialFill` in the contract). A fill outside a running turn is not recorded there. The server's log gets one line per fill with the bot, the login's id, the field and the outcome. No value reaches a step, an entry, a log line, a tool result or an error. A test drives `list_credentials` and three fills through the bot tools and checks every step, answer, conversation entry and captured log line for the values and the one-time code.
 
-**Reading the value back.** The fill keeps the value from the bot's tools; it does not keep it from the page. What the server cannot rule out, and what stands against it, is in [Security: filling a login](security.md#filling-a-login).
+**Reading the value back.** The fill keeps the value from the bot's tools; it does not keep it from the page, and every bot keeps the engine's `preview_evaluate`, so a bot can read a value it filled back with a script. The owner accepted that to keep page scripts. What the server cannot rule out, and what stands against it, is in [Security: filling a login](security.md#filling-a-login).
 
 ## Attachments
 

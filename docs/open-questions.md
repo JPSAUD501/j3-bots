@@ -72,9 +72,7 @@ The server fills a saved login through the engine's viewer channel ([Server: fil
 
 - the engine queues a viewer's input messages in the order they arrived, so a `probe` answered means the typing before it ran;
 - a form submission answered with no new document shows as loading, then loaded again at the same address, or stays loading; either way the fill clears the field;
-- Claude Code drops the engine's `preview_evaluate` when it is given to `--disallowedTools`, as it drops its own tools;
 - a password field shows dots in a snapshot, as on screen;
-- after a password the page stays on, one Backspace per character empties the field, because typing leaves the caret at the end;
-- Codex keeps `preview_evaluate`: its `disabled_tools` for the engine's server would be lost or kept when the engine adds that server to the file.
+- after a password the page stays on, one Backspace per character empties the field, because typing leaves the caret at the end.
 
-**Matters because** each is part of what keeps a filled value from the bot ([Security: filling a login](architecture/security.md#filling-a-login)). **Settled by** a real-engine conformance case with the scripted agent: a local sign-in page, a fill of each field, the page's received value and the field after a failed sign-in; and one Claude Code and one Codex session on the pin, listing their tools.
+**Matters because** each is part of what keeps a filled value from the bot ([Security: filling a login](architecture/security.md#filling-a-login)). **Settled by** a real-engine conformance case with the scripted agent: a local sign-in page, a fill of each field, the page's received value and the field after a failed sign-in.
