@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { RoutineId, type RosterItem, type RosterItemKey } from "@j3-bots/contracts";
+import { BrowserTabRef, RoutineId, type RosterItem, type RosterItemKey } from "@j3-bots/contracts";
 import { Link, Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { lazy } from "react";
@@ -19,13 +19,16 @@ const SourceProvider =
     : LiveSourceProvider;
 
 /**
- * What shows over the conversation: its details, and over a bot's details the
- * runs of one of its routines. In the address, so Back closes them and they
- * close when the conversation changes.
+ * What shows over the conversation: its details, over a bot's details the
+ * runs of one of its routines, and the bot's browser on one of its tabs, or
+ * on the tab it works in (`front`). In the address, so Back closes them and
+ * they close when the conversation changes.
  */
 const Search = Schema.Struct({
   details: Schema.optionalKey(Schema.Boolean),
   routine: Schema.optionalKey(RoutineId),
+  // "front" first: a ref is any non-empty string, which would take "front" too.
+  browser: Schema.optionalKey(Schema.Union([Schema.Literal("front"), BrowserTabRef])),
 });
 
 /** The app: one shell for every conversation, so the roster keeps its place between them. */

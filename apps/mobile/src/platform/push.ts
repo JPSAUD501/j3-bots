@@ -74,6 +74,7 @@ const CHANNEL_NAMES = {
   question: "notification.channel.question",
   approval: "notification.channel.approval",
   "secret-request": "notification.channel.secret",
+  "browser-help": "notification.channel.browserHelp",
   handoff: "notification.channel.handoff",
 } as const satisfies Record<NotificationKind, KeyWith>;
 

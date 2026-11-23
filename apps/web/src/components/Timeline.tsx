@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   Attachment,
   BotId,
+  BrowserTabRef,
   CommandId,
   Mentions,
   Entry,
@@ -33,6 +34,7 @@ import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
 import { RoutineChangeCard } from "./RoutineChangeCard";
+import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimeDivider } from "./TimeDivider";
 import { type TurnBot, WorkFold } from "./WorkFold";
@@ -44,6 +46,10 @@ export interface TimelineIntents {
   readonly decideApproval: (entryId: EntryId, decision: ApprovalDecision) => void;
   readonly provideSecret: (entryId: EntryId, value: Redacted.Redacted<string>) => void;
   readonly declineSecret: (entryId: EntryId) => void;
+  /** The operator did the step a bot asked for in its browser, or could not. */
+  readonly answerBrowserHelp: (entryId: EntryId, outcome: "done" | "declined") => void;
+  /** Opens the bot's browser on `tab`, or on its front tab once that one closed. */
+  readonly openBrowser: (botId: BotId, tab: BrowserTabRef | "front") => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
   /**
@@ -263,6 +269,16 @@ function Card({
           entry={entry}
           onProvide={(value) => intents.provideSecret(entry.id, value)}
           onDecline={() => intents.declineSecret(entry.id)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "browser-help":
+      return (
+        <BrowserHelpCard
+          entry={entry}
+          onOpen={() => intents.openBrowser(entry.author.botId, entry.tab)}
+          onDone={() => intents.answerBrowserHelp(entry.id, "done")}
+          onDecline={() => intents.answerBrowserHelp(entry.id, "declined")}
           submitting={submitting(entry.id)}
         />
       );

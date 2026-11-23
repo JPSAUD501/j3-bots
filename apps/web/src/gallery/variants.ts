@@ -6,6 +6,7 @@
 import type { OutgoingMessage } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
+  BrowserTabRef,
   CommandId,
   EntryId,
   EntryOrder,
@@ -14,6 +15,7 @@ import {
   type ApprovalEntry,
   type Author,
   type BotId,
+  type BrowserHelpEntry,
   type HandoffEntry,
   type MessageEntry,
   type NoticeEntry,
@@ -369,6 +371,42 @@ export function galleryVariants(now: DateTime.Utc) {
     secret("secret-expired", "expired"),
   ];
 
+  const browserHelp = (
+    name: string,
+    status: BrowserHelpEntry["status"],
+    extra: Partial<Pick<BrowserHelpEntry, "reason" | "note" | "site">> = {},
+  ): BrowserHelpEntry => ({
+    _tag: "browser-help",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    reason: extra.reason ?? "login",
+    note: extra.note ?? "Sign in to the shop, so I can check whether your headphones have shipped.",
+    site: extra.site ?? "shop.example.com",
+    tab: BrowserTabRef.make(`variant-${name}`),
+    status,
+  });
+  const browserHelps: ReadonlyArray<BrowserHelpEntry> = [
+    browserHelp(
+      "browser-check",
+      { _tag: "pending" },
+      {
+        reason: "captcha",
+        note: "The ticket site wants to know a person is there before it shows prices.",
+        site: "tickets.example.com",
+      },
+    ),
+    browserHelp("browser-login", { _tag: "pending" }),
+    browserHelp(
+      "browser-other",
+      { _tag: "pending" },
+      { reason: "other", note: "The page asks to confirm the order from your phone.", site: "" },
+    ),
+    browserHelp("browser-done", { _tag: "done" }),
+    browserHelp("browser-declined", { _tag: "declined" }),
+    browserHelp("browser-tab-closed", { _tag: "expired", cause: "tab-closed" }),
+    browserHelp("browser-timed-out", { _tag: "expired", cause: "timed-out" }),
+  ];
+
   const fold = (
     name: string,
     status: WorkFoldEntry["status"],
@@ -635,6 +673,7 @@ export function galleryVariants(now: DateTime.Utc) {
     approvals,
     approvalBecomingExact,
     secrets,
+    browserHelps,
     folds,
     notices,
     handoffs,

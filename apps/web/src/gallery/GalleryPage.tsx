@@ -104,6 +104,7 @@ import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
+import { BrowserHelpCard } from "../components/BrowserHelpCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
@@ -686,6 +687,7 @@ const sampleNotifications: ReadonlyArray<Notification> = [
   sampleNotification("question", ids.otto),
   sampleNotification("approval", ids.atlas),
   sampleNotification("secret-request", ids.iris),
+  sampleNotification("browser-help", ids.otto),
   sampleNotification("message", ids.ledger),
   sampleNotification("message", ids.wren, { _tag: "room", roomId: ids.newsletter }),
 ];
@@ -881,6 +883,8 @@ const timelineIntents: TimelineIntents = {
   decideApproval: nothing,
   provideSecret: nothing,
   declineSecret: nothing,
+  answerBrowserHelp: nothing,
+  openBrowser: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
   openWorkFold: nothing,
@@ -1040,6 +1044,19 @@ function CardsSection() {
               key={entry.id}
               entry={entry}
               onProvide={nothing}
+              onDecline={nothing}
+            />
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="Help in the browser: a check, a sign-in, a step on no site; done, declined, the tab closed, expired">
+        <div className="flex flex-col gap-3">
+          {variants.browserHelps.map((entry) => (
+            <BrowserHelpCard
+              key={entry.id}
+              entry={entry}
+              onOpen={nothing}
+              onDone={nothing}
               onDecline={nothing}
             />
           ))}

@@ -37,6 +37,7 @@ import {
 import type {
   Bot,
   BotId,
+  BrowserHelpEntry,
   EntryId,
   EntryOrder,
   EntryTarget,
@@ -215,6 +216,8 @@ export function ConversationView({
   // Mounted per conversation: the target stays the one it opened with.
   const [target] = useState(() => rosterTarget(rosterKeyOf(item)));
   /** A routine's runs, over its bot's details, which list it with the bot's other routines. */
+  const openBrowser = (card: BrowserHelpEntry) =>
+    navigation.push("browser", { botId: card.author.botId, ref: card.tab, help: card.id });
   const openRoutine = (routineId: RoutineId) => {
     onOpenDetails();
     if (target._tag === "conversation") {
@@ -356,6 +359,7 @@ export function ConversationView({
                       openingHold={openingHold}
                       onOpenBot={onOpenBot}
                       onOpenRoutine={openRoutine}
+                      onOpenBrowser={openBrowser}
                     />
                   </View>
                 )}
@@ -543,6 +547,7 @@ function Row({
   openingHold,
   onOpenBot,
   onOpenRoutine,
+  onOpenBrowser,
 }: {
   readonly row: TimelineItem;
   /** In a room, its members and host now; null in a bot's conversation. */
@@ -555,6 +560,7 @@ function Row({
   readonly openingHold: OpeningHold | null;
   readonly onOpenBot: (botId: BotId) => void;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
+  readonly onOpenBrowser: (card: BrowserHelpEntry) => void;
 }) {
   const ctx = usePresentation();
   const client = useJ3Client();
@@ -604,7 +610,12 @@ function Row({
               }}
             />
           ) : (
-            <Card entry={entry} onOpenBot={onOpenBot} onOpenRoutine={onOpenRoutine} />
+            <Card
+              entry={entry}
+              onOpenBot={onOpenBot}
+              onOpenRoutine={onOpenRoutine}
+              onOpenBrowser={onOpenBrowser}
+            />
           )}
         </AnimatedView>
       );

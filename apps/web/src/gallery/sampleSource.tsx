@@ -349,6 +349,16 @@ function sampleIntents({ get, update }: Store): ShellIntents {
         (e) => (e._tag === "secret-request" ? { ...e, status: "declined" } : e),
         "No problem. I’ll use the timetables the rail operators publish instead.",
       ),
+    answerBrowserHelp: (entryId, outcome) =>
+      answer(
+        entryId,
+        (e) => (e._tag === "browser-help" ? { ...e, status: { _tag: outcome } } : e),
+        outcome === "done"
+          ? "Thanks, I’m in. The inspection is booked for Thursday at 3:30."
+          : "No problem. I’ll call the garage to book it instead.",
+      ),
+    // The sample has no browser to open.
+    openBrowser: nothing,
     retryNotice: (entryId) =>
       update((s) =>
         updateEntry(s, entryId, (e) => (e._tag === "notice" ? { ...e, retryable: false } : e)),

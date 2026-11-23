@@ -7,6 +7,7 @@ import type { RecentTurns } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
   BotId,
+  BrowserTabRef,
   DeviceId,
   EntryId,
   MemoryPath,
@@ -533,6 +534,17 @@ export function sampleTeam(now: DateTime.Utc) {
   ];
 
   const ottoEntries: DraftEntry[] = [
+    {
+      _tag: "browser-help",
+      id: EntryId.make("otto-b1"),
+      author: by(ids.otto),
+      createdAt: ago(60 * 5 + 6),
+      reason: "login",
+      note: "Sign in to the garage’s booking page, so I can move the car inspection.",
+      site: "booking.example.com",
+      tab: BrowserTabRef.make("otto-tab"),
+      status: { _tag: "done" },
+    },
     message(
       by(ids.otto),
       ago(60 * 5),
