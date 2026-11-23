@@ -16,7 +16,7 @@ const Secret = Schema.Redacted(Schema.String);
  * The OAuth client J3 Bots signs in as at one authorization server: the one
  * registered there (dynamic registration) or the one the operator gave.
  */
-export const OAuthClient = Schema.Struct({
+const OAuthClient = Schema.Struct({
   /** The authorization server's issuer, as its metadata names it. */
   issuer: Schema.String,
   /**
@@ -33,10 +33,9 @@ export const OAuthClient = Schema.Struct({
   /** The redirect URIs it is registered with. */
   redirectUris: Schema.Array(Schema.String),
 });
-export type OAuthClient = typeof OAuthClient.Type;
 
 /** What a sign-in at the authorization server gave, kept to call the connector and refresh. */
-export const OAuthTokens = Schema.Struct({
+const OAuthTokens = Schema.Struct({
   accessToken: Secret,
   /** Null when the server gave none; a rotated one replaces the old in the same write. */
   refreshToken: Schema.NullOr(Secret),
@@ -46,7 +45,6 @@ export const OAuthTokens = Schema.Struct({
   /** The connector's canonical URI, which the tokens were issued for (RFC 8707). */
   resource: Schema.String,
 });
-export type OAuthTokens = typeof OAuthTokens.Type;
 
 /** A header or environment variable, with its value. */
 export const NamedSecret = Schema.Struct({ name: Schema.String, value: Secret });

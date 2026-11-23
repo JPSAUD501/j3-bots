@@ -159,7 +159,7 @@ export function SetupVaultForm({
 }
 
 /** Unlocks the vault with its master password, saying while too many wrong ones make it wait. */
-export function UnlockVaultForm({
+function UnlockVaultForm({
   status,
   vault,
 }: {

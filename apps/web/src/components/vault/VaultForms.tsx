@@ -24,7 +24,7 @@ export interface VaultAccess {
 const decodePassword = Schema.decodeUnknownOption(MasterPassword);
 
 /** The password typed, as the contract takes it; none while it is too short or too long. */
-export const masterPassword = (typed: string): Option.Option<MasterPassword> =>
+const masterPassword = (typed: string): Option.Option<MasterPassword> =>
   decodePassword(Redacted.make(typed));
 
 /** Why a request to the vault failed, in a sentence. */
@@ -187,7 +187,7 @@ export function SetupVaultForm({
 }
 
 /** Unlocks the vault with its master password, saying while too many wrong ones make it wait. */
-export function UnlockVaultForm({
+function UnlockVaultForm({
   status,
   intents,
   className,
