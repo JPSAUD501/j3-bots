@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { CuratedKey, RegistryName } from "@j3-bots/contracts";
+import {
+  ConnectorListing,
+  ConnectorListingDetails,
+  CuratedKey,
+  MAX_CONNECTOR_DESCRIPTION_LENGTH,
+  MAX_LABEL_LENGTH,
+  RegistryName,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -8,6 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
@@ -163,6 +171,26 @@ describe("the registry search", () => {
     }).pipe(Effect.provide(registryLayer)),
   );
 
+  it.effect("ends a search queued behind others within the time of one request", () =>
+    Effect.gen(function* () {
+      yield* answering(() => "never");
+      const registry = yield* Registry.McpRegistry;
+      const searches = yield* Effect.forkChild(
+        Effect.forEach(["a", "b", "c"], (query) => registry.search(query).pipe(Effect.exit), {
+          concurrency: "unbounded",
+        }),
+      );
+      // Only two requests go out at once; the third search waits for a slot,
+      // and that wait counts against its time.
+      yield* TestClock.adjust(Registry.REQUEST_TIMEOUT);
+      // Every search has ended: none is still waiting.
+      const ended = searches.pollUnsafe();
+      assert.isTrue(
+        ended !== undefined && Exit.isSuccess(ended) && ended.value.every(Exit.isFailure),
+      );
+    }).pipe(Effect.provide(registryLayer)),
+  );
+
   it.effect("keeps what it read when a later page is larger than it reads", () =>
     Effect.gen(function* () {
       const huge = "x".repeat(Registry.MAX_ANSWER_BYTES);
@@ -247,6 +275,35 @@ describe("the gallery's sources", () => {
       const all = yield* sources.search({ query: "notion", language: "en", all: true });
       assert.deepStrictEqual(all.listings.at(-1)?.connect, "unsupported");
     }).pipe(Effect.provide(sourcesLayer)),
+  );
+
+  it.effect(
+    "show a publisher's title and description as plain text, within the contract's limits",
+    () =>
+      Effect.gen(function* () {
+        const tracker = server("com.example/tracker", "https://mcp.example.com/mcp", {
+          server: {
+            name: "com.example/tracker",
+            title: `\u202eTracker ${"\u{1F600}".repeat(MAX_LABEL_LENGTH)}`,
+            description: `Tracks\u200f\u0007 ${"\u{1F600}".repeat(MAX_CONNECTOR_DESCRIPTION_LENGTH)}`,
+            remotes: [{ type: "streamable-http", url: "https://mcp.example.com/mcp" }],
+          },
+        });
+        yield* answering((url) =>
+          url.pathname.endsWith("/versions/latest") ? json(tracker) : page([tracker]),
+        );
+        const sources = yield* Sources.ConnectorSources;
+        const found = yield* sources.search({ query: "tracker", language: "en", all: false });
+        const [listing] = found.listings;
+        assert.isTrue(listing !== undefined && Schema.is(ConnectorListing)(listing));
+        assert.isTrue(listing?.name.startsWith("Tracker \u{1F600}"));
+        const details = yield* sources.get(
+          { _tag: "registry", name: RegistryName.make("com.example/tracker") },
+          "en",
+        );
+        assert.isTrue(Schema.is(ConnectorListingDetails)(details));
+        assert.isTrue(details.description.startsWith("Tracks \u{1F600}"));
+      }).pipe(Effect.provide(sourcesLayer)),
   );
 
   it.effect("answer from the curated list alone when the registry does not answer", () =>

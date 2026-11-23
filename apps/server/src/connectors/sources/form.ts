@@ -146,9 +146,15 @@ export const plainText = (text: string | undefined, max: number): string | null 
   return `${cut.trimEnd()}…`;
 };
 
-/** A value the publisher fixed, kept only when it could be sent as it is. */
+/** Control and format characters, such as those that reverse the text's direction. */
+const UNSHOWABLE = /[\p{Cc}\p{Cf}]/u;
+
+/**
+ * A value the publisher fixed, kept only when it could be sent as it is and
+ * shown as it is sent.
+ */
 const plainValue = (text: string | undefined): string | null =>
-  text === undefined || text === "" || CONTROL.test(text) || text.length > MAX_FIELD_TEXT
+  text === undefined || text === "" || UNSHOWABLE.test(text) || text.length > MAX_FIELD_TEXT
     ? null
     : text;
 

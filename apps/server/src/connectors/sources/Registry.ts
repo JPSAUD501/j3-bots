@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { RegistryName } from "@j3-bots/contracts";
+import { MAX_LABEL_LENGTH, RegistryName } from "@j3-bots/contracts";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import { readText } from "../../body.ts";
-import { type ConnectForm, connectForm } from "./form.ts";
+import { type ConnectForm, connectForm, plainText } from "./form.ts";
 import { owningDomain, rank } from "./ranking.ts";
 import {
   decodeServerResponse,
@@ -75,9 +75,6 @@ const DETAILS_CAPACITY = 128;
 /** Requests to the registry at once, across every search. */
 const CONCURRENT_REQUESTS = 2;
 
-/** The longest title kept. */
-const MAX_TITLE = 200;
-
 /** The longest description kept: more than any card or page shows. */
 const MAX_DESCRIPTION = 1000;
 
@@ -99,15 +96,6 @@ export interface RegistryEntry {
   readonly owner: string | null;
 }
 
-/** Publisher text as one paragraph within `max` characters, or null. */
-const cap = (text: string | undefined, max: number): string | null => {
-  if (text === undefined) return null;
-  const plain = text.replace(/\s+/g, " ").trim();
-  if (plain === "") return null;
-  const characters = Array.from(plain);
-  return characters.length <= max ? plain : `${characters.slice(0, max - 1).join("")}…`;
-};
-
 const isRegistryName = Schema.is(RegistryName);
 
 /**
@@ -127,8 +115,8 @@ const entryOf = (response: ServerResponse): RegistryEntry | null => {
   const own = server.name.slice(server.name.indexOf("/") + 1);
   return {
     name: server.name,
-    title: cap(server.title, MAX_TITLE) ?? own,
-    description: cap(server.description, MAX_DESCRIPTION),
+    title: plainText(server.title, MAX_LABEL_LENGTH) ?? own,
+    description: plainText(server.description, MAX_DESCRIPTION),
     form,
     owner: form === null ? null : owningDomain(server.name, form.urlTemplate),
   };
@@ -171,10 +159,15 @@ export const layer = Layer.effect(
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
     const permits = yield* Semaphore.make(CONCURRENT_REQUESTS);
 
-    /** The body of one answer, within the size cap, or why there is none. */
+    /**
+     * The body of one answer, within the size cap, or why there is none. The
+     * time limit counts the wait for a request slot too, so a search queued
+     * behind others still ends within its budget.
+     */
     const fetch = (url: URL, timeout: Duration.Duration) =>
       client.get(url, { acceptJson: true }).pipe(
         Effect.flatMap((response) => readText(response, MAX_ANSWER_BYTES)),
+        permits.withPermits(1),
         Effect.timeoutOrElse({
           duration: timeout,
           orElse: () => Effect.fail(new RegistryUnavailable()),
@@ -186,7 +179,6 @@ export const layer = Layer.effect(
               : Effect.fail(new RegistryUnavailable()),
           BodyTooLarge: () => Effect.fail(new RegistryUnavailable()),
         }),
-        permits.withPermits(1),
       );
 
     const page = Effect.fn("McpRegistry.page")(function* (
