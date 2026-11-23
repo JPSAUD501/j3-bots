@@ -6,7 +6,7 @@
 
 J3 Bots keeps two kinds of secret it did not keep before.
 
-- **Logins** the operator saves for sites a bot uses in its browser. They live in the vault: its own database, `<J3_HOME>/vault/vault.sqlite`, sealed under a key that comes from a master password the server holds in memory only. After every start the vault is locked until a client unlocks it, and a forgotten password loses it. The vault is outside the snapshot an update keeps to roll back to ([decision 0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md)), with a schema version of its own that only moves forward.
+- **Logins** the operator saves for sites a bot uses in its browser. They live in the vault: its own database, `<J3_HOME>/vault/vault.sqlite`, sealed under a key that comes from a master password the server holds in memory only ([decision 0029](0029-the-vault-key-comes-from-a-master-password-held-in-memory.md)). After every start the vault is locked until a client unlocks it, and a forgotten password loses it. The vault is outside the snapshot an update keeps to roll back to ([decision 0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md)), with a schema version of its own that only moves forward.
 - **Connector secrets**, which the server holds so that no bot does ([decision 0026](0026-a-bot-uses-connected-services-through-j3-bots.md)): an OAuth client's secret, access and refresh tokens, the values of headers a connector is called with, the environment of a server started by command, and the address or command arguments the operator typed, either of which can carry a key.
 
 The connector secrets could have a store of their own, with a key of its own, or sit in J3 Bots' database.
@@ -22,7 +22,7 @@ The connector secrets could have a store of their own, with a key of its own, or
 
 ## What it costs
 
-- **After a restart, connectors wait for the operator.** A routine that runs overnight after a reboot finds its connectors unavailable until someone unlocks the vault from a client. That is the price of a key the disk does not hold, and the owner chose it for logins; connectors share it rather than keeping their tokens under a weaker key.
+- **After a restart, connectors wait for the operator.** A routine that runs overnight after a reboot finds its connectors unavailable until someone unlocks the vault from a client. That is the price of a key the disk does not hold, and the owner chose it for logins ([decision 0029](0029-the-vault-key-comes-from-a-master-password-held-in-memory.md)); connectors share it rather than keeping their tokens under a weaker key.
 - **The same trust boundary as the logins.** The key is in the server's memory while the vault is unlocked, and any process of the server's user, a bot's shell in full access included, can reach that process ([Security: trust model](../architecture/security.md#trust-model)). The store keeps tokens out of prompts, transcripts, harness configuration, logs and backups in the clear; it is not a wall against a misled bot with a shell.
 - A connector's secrets are lost with a forgotten master password, as the logins are. The operator signs in to each connector again after setting a new vault up.
 
