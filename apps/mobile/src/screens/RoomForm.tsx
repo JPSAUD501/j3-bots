@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { IntentFailure } from "@j3-bots/client-runtime";
 import {
+  hopLimitSteps,
   ROOM_NAME_MAX,
   type RoomFormMode,
   roomFormTarget,
@@ -299,6 +300,11 @@ function RoomForm({
             ? t("roomForm.hopLimit.hint")
             : `${t("roomForm.hopLimit.hint")} ${t("roomForm.hopLimit.default", { count: defaultHopLimit })}`
         }
+        steps={{
+          ...hopLimitSteps(values.hopLimit, defaultHopLimit),
+          fewerLabel: t("roomForm.hopLimit.fewer"),
+          moreLabel: t("roomForm.hopLimit.more"),
+        }}
         onChange={(text) => form.change({ ...values, hopLimit: text })}
         error={problems.has("hop-limit") ? t("roomForm.hopLimit.invalid") : null}
       />

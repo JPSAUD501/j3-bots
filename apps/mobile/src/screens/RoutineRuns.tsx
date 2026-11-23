@@ -15,7 +15,7 @@ import { useLayoutEffect } from "react";
 import { ScrollView, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Quiet, Section } from "../components/form.tsx";
+import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Screens } from "../navigation.tsx";
 import { usePresentation } from "../presentation.tsx";
@@ -120,7 +120,7 @@ export function RoutineRunsScreen({
       {/* Until the routine is known, the screen's title already says what this is. */}
       <Section title={routine === null ? undefined : t("routine.runs.title")}>
         {runs === null || runs._tag === "loading" ? (
-          <Quiet>{t("details.loading")}</Quiet>
+          <SkeletonRows />
         ) : runs.value.runs.length === 0 ? (
           <Quiet>{t("routine.runs.empty")}</Quiet>
         ) : (

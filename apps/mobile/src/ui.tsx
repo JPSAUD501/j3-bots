@@ -38,12 +38,14 @@ const buttonLook = {
   primary: { box: "bg-accent", text: "text-accent-foreground" },
   /** An action beside the content it acts on, such as Try now. */
   plain: { box: "", text: "text-foreground" },
+  /** One of a screen's actions that is not the one it exists for: quiet and filled, as on the web. */
+  secondary: { box: "bg-muted", text: "text-foreground" },
   /** One of several actions of the same weight, such as Deny beside Allow for session. */
   outline: { box: "border border-input bg-surface", text: "text-foreground" },
   /** An action that says no, such as Dismiss, quieter than the rest. */
   quiet: { box: "", text: "text-muted-foreground" },
   /** An action that cannot be undone, such as Delete. Its callers ask before they act. */
-  destructive: { box: "border border-blocked", text: "text-blocked" },
+  destructive: { box: "border border-input bg-surface", text: "text-blocked" },
 } as const;
 
 /**

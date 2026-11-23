@@ -2,6 +2,7 @@
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import { connectCommand, openingHeld } from "@j3-bots/client-runtime/presentation";
 import { avatarEnsemble } from "@j3-bots/design-tokens";
+import { type LucideIcon, SearchXIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -43,6 +44,33 @@ export function Centered({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * A state's mark above its heading, where the screen is about something that
+ * went wrong or is gone rather than about the bots: an icon in a quiet disc.
+ */
+export function StateMark({ icon: Icon }: { icon: LucideIcon }) {
+  return (
+    <span className="appear flex size-14 items-center justify-center rounded-pill bg-muted text-muted-foreground">
+      <Icon aria-hidden className="size-6" />
+    </span>
+  );
+}
+
+/** Three dots that pulse in turn: something is under way and will take a moment. */
+function Working() {
+  return (
+    <span aria-hidden className="flex items-center gap-1.5">
+      {[0, 1, 2].map((dot) => (
+        <span
+          key={dot}
+          className="size-1.5 animate-[dot-pulse_1.2s_ease-in-out_infinite] rounded-pill bg-muted-foreground motion-reduce:animate-none"
+          style={{ animationDelay: `${dot * 160}ms` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 export function Heading({ title, body }: { title: string; body: ReactNode }) {
   return (
     <div className="flex max-w-sm flex-col gap-1.5">
@@ -63,6 +91,7 @@ export function Connecting() {
       {!explained && (
         <Heading title={t("firstRun.connecting.title")} body={t("firstRun.connecting.body")} />
       )}
+      <Working />
     </Centered>
   );
 }
@@ -72,6 +101,7 @@ export function ConversationGone({ onBack }: { onBack: () => void }) {
   const { t } = useI18n();
   return (
     <Centered>
+      <StateMark icon={SearchXIcon} />
       <Heading title={t("empty.gone.title")} body={t("empty.gone.body")} />
       <Button onClick={onBack}>{t("empty.gone.back")}</Button>
     </Centered>

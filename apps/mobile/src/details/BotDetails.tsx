@@ -21,16 +21,20 @@ import {
   CalendarClock,
   ChevronRight,
   CirclePause,
+  Cpu,
   FileText,
   NotebookText,
+  ShieldCheck,
   Webhook,
 } from "lucide-react-native";
 import { type ReactElement, useMemo } from "react";
-import { Pressable, ScrollView, Switch, useWindowDimensions, View } from "react-native";
+import { ScrollView, Switch, useWindowDimensions, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
-import { confirm, DeleteButton, Quiet, Section } from "../components/form.tsx";
+import { confirm, DeleteButton, Quiet, Section, SkeletonRows } from "../components/form.tsx";
+import { PressScale } from "../press.tsx";
+import { Apart, Profile } from "./Profile.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { usePresentation } from "../presentation.tsx";
@@ -54,8 +58,8 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const insets = useSafeAreaInsets();
-  // The details take the window's width; a section is inset 16 px on each side.
-  const column = useWindowDimensions().width - 32;
+  // The details take the window's width; a section is inset 20 px on each side.
+  const column = useWindowDimensions().width - 40;
   const fileWidths = useMemo(
     () => ({ bubble: column, card: column, compactCard: column, column }),
     [column],
@@ -69,39 +73,28 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const { name, title, job } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, ctx.i18n);
   const modelName = botModelName(engine._tag === "ready" ? engine.value : null, bot);
-  const loading = <Quiet>{t("details.loading")}</Quiet>;
+  const skeleton = (count: number) => <SkeletonRows count={count} />;
   return (
     <ScrollView
       className="flex-1 bg-background"
-      contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
     >
-      <View className="items-start gap-3 border-b border-border px-4 py-5">
-        <LiveBotAvatar bot={bot} size={96} />
-        <View>
-          <View className="flex-row items-center gap-2">
-            <Text accessibilityRole="header" className="text-xl font-medium text-foreground">
-              {name}
-            </Text>
-            {bot.primary && (
-              <Text className="rounded-sm bg-muted px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
-                {t("details.primary")}
-              </Text>
-            )}
-          </View>
-          {title !== "" && <Text className="text-sm text-muted-foreground">{title}</Text>}
-        </View>
-        <Text className="text-sm text-foreground">
-          {job === "" ? t("details.noJob", { name }) : job}
-        </Text>
+      <Profile
+        picture={<LiveBotAvatar bot={bot} size={96} />}
+        name={name}
+        badge={bot.primary ? t("details.primary") : null}
+        lines={[title, job === "" ? t("details.noJob", { name }) : job]}
+      >
         <Button
+          variant="secondary"
           label={t("details.editProfile", { name })}
           onPress={() => navigation.navigate("editBot", { botId: bot.id })}
         />
-      </View>
+      </Profile>
 
-      <Section title={t("details.routines")}>
+      <Section open title={t("details.routines")}>
         {routines === null ? (
-          loading
+          skeleton(2)
         ) : routines.length === 0 ? (
           <Quiet>{t("details.noRoutines", { name })}</Quiet>
         ) : (
@@ -117,9 +110,9 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         )}
       </Section>
 
-      <Section title={t("details.files")}>
+      <Section open title={t("details.files")}>
         {files === null ? (
-          loading
+          skeleton(1)
         ) : files.length === 0 ? (
           <Quiet>{t("details.noFiles", { name })}</Quiet>
         ) : (
@@ -132,9 +125,9 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         )}
       </Section>
 
-      <Section title={t("details.memory")}>
+      <Section open title={t("details.memory")}>
         {memory === null ? (
-          loading
+          skeleton(1)
         ) : memory.length === 0 ? (
           <Quiet>{t("details.noMemory", { name })}</Quiet>
         ) : (
@@ -148,26 +141,36 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         )}
       </Section>
 
-      <Section title={t("details.model")}>
-        <View>
-          <Text className="text-xs text-muted-foreground">{t("details.runsOn")}</Text>
-          <Text className="text-sm text-foreground">
+      <Section open title={t("details.model")}>
+        <View className="flex-row items-start gap-3">
+          <Icon icon={Cpu} color="accent-muted-foreground" />
+          <Text
+            accessibilityLabel={`${t("details.runsOn")}: ${modelName ?? t("details.modelUnavailable")}`}
+            className="min-w-0 flex-1 text-base text-foreground"
+          >
             {modelName ?? t("details.modelUnavailable")}
           </Text>
         </View>
-        <View>
-          <Text className="text-xs text-muted-foreground">{t("details.permissionMode")}</Text>
-          <Text className="text-sm text-foreground">{mode.name}</Text>
-          <Text className="text-xs text-muted-foreground">{mode.description}</Text>
+        <View className="flex-row items-start gap-3">
+          <Icon icon={ShieldCheck} color="accent-muted-foreground" />
+          <View
+            accessible
+            accessibilityLabel={`${t("details.permissionMode")}: ${mode.name}. ${mode.description}`}
+            className="min-w-0 flex-1"
+          >
+            <Text className="text-base text-foreground">{mode.name}</Text>
+            <Text className="text-sm text-muted-foreground">{mode.description}</Text>
+          </View>
         </View>
       </Section>
 
-      <Section title={t("details.workingContext")}>
+      <Section open title={t("details.workingContext")}>
         <Quiet>
           {t("details.freshStartHint", { name })} {t("details.freshStartStops", { name })}
         </Quiet>
         <View className="items-start">
           <Button
+            variant="secondary"
             label={t("details.freshStart")}
             onPress={() =>
               confirm({
@@ -183,7 +186,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
       </Section>
 
       {/* Last and on its own, so the one action that cannot be undone is never next to another. */}
-      <View className="items-start px-4 py-4">
+      <Apart>
         <DeleteButton
           label={t("details.delete", { name })}
           title={t("details.delete.title", { name })}
@@ -191,7 +194,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
           cancel={t("details.delete.cancel", { name })}
           onDelete={() => actions.remove(bot)}
         />
-      </View>
+      </Apart>
     </ScrollView>
   );
 }
@@ -211,7 +214,7 @@ function RoutineRow({
   const { t } = ctx.i18n;
   const client = useJ3Client();
   const say = useSay();
-  const on = useColor("accent-accent");
+  const on = useColor("accent-control-on");
   const off = useColor("accent-control-off");
   const thumb = useColor("accent-control-thumb");
   const lines = routineLines(routine, ctx);
@@ -226,11 +229,13 @@ function RoutineRow({
       <View className="pt-0.5">
         <Icon icon={icon} color={routine.enabled ? "accent-success" : "accent-muted-foreground"} />
       </View>
-      <Pressable
+      <PressScale
+        depth="row"
+        frame={{ flex: 1, minWidth: 0 }}
         accessibilityRole="button"
         accessibilityHint={t("routine.runs.hint")}
         onPress={onOpen}
-        className="-my-1 min-w-0 flex-1 gap-0.5 rounded-md py-1 active:bg-muted"
+        className="-my-1 gap-0.5 rounded-md py-1 active:bg-muted"
       >
         <Text numberOfLines={1} className="text-base text-foreground">
           {routine.name}
@@ -257,7 +262,7 @@ function RoutineRow({
             )}
           </Text>
         )}
-      </Pressable>
+      </PressScale>
       <Switch
         accessibilityLabel={routine.name}
         value={routine.enabled}
@@ -286,7 +291,8 @@ function MemoryRow({ file, onOpen }: { readonly file: MemoryFile; readonly onOpe
     time: activityTime(file.updatedAt, ctx),
   });
   return (
-    <Pressable
+    <PressScale
+      depth="row"
       accessibilityRole="button"
       accessibilityLabel={name}
       accessibilityHint={detail}
@@ -302,6 +308,6 @@ function MemoryRow({ file, onOpen }: { readonly file: MemoryFile; readonly onOpe
       </Text>
       <Text className="text-xs text-muted-foreground">{detail}</Text>
       <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />
-    </Pressable>
+    </PressScale>
   );
 }

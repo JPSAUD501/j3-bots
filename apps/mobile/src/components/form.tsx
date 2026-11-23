@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useNavigation, usePreventRemove } from "@react-navigation/native";
-import { Check } from "lucide-react-native";
+import { Check, type LucideIcon, Minus, Plus } from "lucide-react-native";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Alert, Switch, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
+import Animated, {
+  cancelAnimation,
+  FadeIn,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+} from "react-native-reanimated";
+import { useReducedMotion } from "../motion.ts";
 import { useColor } from "../theme.ts";
 import { PressScale } from "../press.tsx";
 import { Button } from "../ui.tsx";
@@ -15,16 +24,22 @@ import { Icon } from "./Icon.tsx";
 // The parts the details, the forms and Settings are built from. Each owns its
 // look: callers pick what to show, they do not restyle.
 
-/** A titled part of a screen, ruled off from the next. */
+/**
+ * A titled part of a screen, ruled off from the next; an `open` one, as in the
+ * details, is set apart by space alone.
+ */
 export function Section(props: {
   /** None, or undefined, for a section the screen's own title names. */
   readonly title?: string | undefined;
   /** Beside the title, at its end. */
   readonly action?: ReactNode;
+  readonly open?: boolean;
   readonly children: ReactNode;
 }) {
   return (
-    <View className="gap-3 border-b border-border px-4 py-4">
+    <View
+      className={props.open === true ? "gap-2 px-5 pt-6" : "gap-3 border-b border-border px-4 py-4"}
+    >
       {props.title !== undefined && (
         <View className="flex-row items-center justify-between gap-2">
           <Text accessibilityRole="header" className="text-xs font-medium text-muted-foreground">
@@ -41,6 +56,44 @@ export function Section(props: {
 /** A quiet sentence, as for what a list holds when it is empty. */
 export function Quiet(props: { readonly children: ReactNode }) {
   return <Text className="text-sm text-muted-foreground">{props.children}</Text>;
+}
+
+/**
+ * The shape of rows still loading, as tall as the rows that replace them, so
+ * the screen does not shift while it is read. They breathe slowly; reduced
+ * motion keeps them still. Screen readers hear "Loading…".
+ */
+export function SkeletonRows(props: { readonly count?: number }) {
+  const { t } = useI18n();
+  const reduced = useReducedMotion();
+  const opacity = useSharedValue(1);
+  useEffect(() => {
+    if (reduced) {
+      opacity.set(1);
+      return;
+    }
+    opacity.set(withRepeat(withTiming(0.5, { duration: 1400 }), -1, true));
+    return () => cancelAnimation(opacity);
+  }, [reduced, opacity]);
+  const breathing = useAnimatedStyle(() => ({ opacity: opacity.get() }));
+  return (
+    <Animated.View
+      accessible
+      accessibilityLabel={t("details.loading")}
+      entering={FadeIn.delay(150)}
+      style={breathing}
+    >
+      {Array.from({ length: props.count ?? 2 }, (_, index) => (
+        <View key={index} className="min-h-11 flex-row items-center gap-3 py-2">
+          <View className="size-5 rounded-sm bg-muted" />
+          <View className="flex-1 gap-2">
+            <View className="h-3 w-2/3 rounded-sm bg-muted" />
+            <View className="h-2.5 w-1/3 rounded-sm bg-muted" />
+          </View>
+        </View>
+      ))}
+    </Animated.View>
+  );
 }
 
 /** What went wrong, read out as it appears. Nothing shows while `children` is null. */
@@ -68,37 +121,92 @@ export function TextField(props: {
   readonly readOnly?: boolean;
   readonly multiline?: boolean;
   readonly numeric?: boolean;
+  /**
+   * A number one less and one more, each `null` where there is none: the
+   * field sits between a minus and a plus that type it.
+   */
+  readonly steps?: {
+    readonly fewer: number | null;
+    readonly more: number | null;
+    readonly fewerLabel: string;
+    readonly moreLabel: string;
+  };
   readonly autoCapitalize?: "none" | "sentences" | "words";
   readonly onBlur?: () => void;
 }) {
   const placeholderColor = useColor("accent-muted-foreground");
   const error = props.error ?? null;
+  const input = (
+    <TextInput
+      accessibilityLabel={props.label}
+      accessibilityHint={props.hint}
+      aria-invalid={error !== null}
+      value={props.value}
+      onChangeText={props.onChange}
+      onBlur={props.onBlur}
+      editable={props.readOnly !== true}
+      placeholder={props.placeholder}
+      placeholderTextColor={placeholderColor}
+      maxLength={props.maxLength}
+      multiline={props.multiline === true}
+      keyboardType={props.numeric === true ? "number-pad" : "default"}
+      autoCapitalize={props.autoCapitalize ?? "sentences"}
+      autoCorrect={props.multiline === true}
+      textAlignVertical={props.multiline === true ? "top" : "center"}
+      className={`${fieldClass} ${error === null ? "border-transparent" : "border-blocked"} ${props.readOnly === true ? "text-muted-foreground" : "text-foreground"} ${props.multiline === true ? "min-h-28 py-2" : ""} ${props.steps === undefined ? "" : "text-center"}`}
+    />
+  );
   return (
     <View className="gap-1">
       <Text className="text-sm text-foreground">{props.label}</Text>
-      <TextInput
-        accessibilityLabel={props.label}
-        accessibilityHint={props.hint}
-        aria-invalid={error !== null}
-        value={props.value}
-        onChangeText={props.onChange}
-        onBlur={props.onBlur}
-        editable={props.readOnly !== true}
-        placeholder={props.placeholder}
-        placeholderTextColor={placeholderColor}
-        maxLength={props.maxLength}
-        multiline={props.multiline === true}
-        keyboardType={props.numeric === true ? "number-pad" : "default"}
-        autoCapitalize={props.autoCapitalize ?? "sentences"}
-        autoCorrect={props.multiline === true}
-        textAlignVertical={props.multiline === true ? "top" : "center"}
-        className={`${fieldClass} ${error === null ? "border-transparent" : "border-blocked"} ${props.readOnly === true ? "text-muted-foreground" : "text-foreground"} ${props.multiline === true ? "min-h-28 py-2" : ""}`}
-      />
+      {props.steps === undefined ? (
+        input
+      ) : (
+        <View className="flex-row items-center gap-2">
+          <StepButton
+            icon={Minus}
+            label={props.steps.fewerLabel}
+            to={props.readOnly === true ? null : props.steps.fewer}
+            onChange={props.onChange}
+          />
+          <View className="w-20">{input}</View>
+          <StepButton
+            icon={Plus}
+            label={props.steps.moreLabel}
+            to={props.readOnly === true ? null : props.steps.more}
+            onChange={props.onChange}
+          />
+        </View>
+      )}
       {props.hint !== undefined && (
         <Text className="text-xs text-muted-foreground">{props.hint}</Text>
       )}
       <Problem>{error}</Problem>
     </View>
+  );
+}
+
+/** A round minus or plus beside a number field, which types the number it leads to. */
+function StepButton(props: {
+  readonly icon: LucideIcon;
+  readonly label: string;
+  readonly to: number | null;
+  readonly onChange: (text: string) => void;
+}) {
+  const { to } = props;
+  return (
+    <PressScale
+      depth="round"
+      accessibilityRole="button"
+      accessibilityLabel={props.label}
+      disabled={to === null}
+      onPress={() => {
+        if (to !== null) props.onChange(String(to));
+      }}
+      className={`size-11 items-center justify-center rounded-pill bg-muted ${to === null ? "opacity-40" : ""}`}
+    >
+      <Icon icon={props.icon} size={18} color="accent-foreground" />
+    </PressScale>
   );
 }
 
@@ -157,6 +265,49 @@ export function ChoiceRow(props: {
         )}
       </View>
     </PressScale>
+  );
+}
+
+/**
+ * A few choices side by side in one pill, one of them picked: the picked one
+ * a raised `surface` segment, the others quiet text on `muted`, as on the web.
+ * For two to four short choices; more, or long ones, are `ChoiceRow`s.
+ */
+export function Segmented<T extends string>(props: {
+  readonly value: T;
+  readonly options: ReadonlyArray<{ readonly value: T; readonly label: string }>;
+  readonly onChange: (value: T) => void;
+  /** Names the group for screen readers. */
+  readonly label: string;
+}) {
+  return (
+    <View
+      accessibilityRole="radiogroup"
+      accessibilityLabel={props.label}
+      className="flex-row gap-1 rounded-pill bg-muted p-1"
+    >
+      {props.options.map((option) => {
+        const selected = option.value === props.value;
+        return (
+          <PressScale
+            key={option.value}
+            frame={{ flex: 1 }}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: selected }}
+            accessibilityLabel={option.label}
+            onPress={() => props.onChange(option.value)}
+            className={`min-h-10 items-center justify-center rounded-pill px-3 ${selected ? "bg-surface" : ""}`}
+          >
+            <Text
+              numberOfLines={1}
+              className={`text-sm font-medium ${selected ? "text-foreground" : "text-muted-foreground"}`}
+            >
+              {option.label}
+            </Text>
+          </PressScale>
+        );
+      })}
+    </View>
   );
 }
 
@@ -244,6 +395,7 @@ export function PendingButton(props: {
   const [pending, setPending] = useState(false);
   return (
     <Button
+      variant="secondary"
       label={props.label}
       disabled={pending}
       onPress={() => {

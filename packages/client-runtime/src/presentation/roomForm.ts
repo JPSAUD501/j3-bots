@@ -166,6 +166,25 @@ function hopLimitOf(typed: string): number | null | "invalid" {
 }
 
 /**
+ * Where the hop limit's fewer and more buttons take it: one less and one more
+ * than the number typed, or than the default while the field is empty. Null
+ * where a button has nowhere to go: below one, or from a field that holds no
+ * number with no default to count from.
+ */
+export function hopLimitSteps(
+  typed: string,
+  defaultHopLimit: number | null,
+): { readonly fewer: number | null; readonly more: number | null } {
+  const limit = hopLimitOf(typed);
+  const from = limit === "invalid" ? null : (limit ?? defaultHopLimit);
+  if (from === null) return { fewer: null, more: null };
+  return {
+    fewer: from > 1 ? from - 1 : null,
+    more: Number.isSafeInteger(from + 1) ? from + 1 : null,
+  };
+}
+
+/**
  * What stops the form from being sent. A room the server has without a host
  * needs one picked, as the server does. An empty hop limit takes the default,
  * so it is a problem only where no default is known to set it back to.

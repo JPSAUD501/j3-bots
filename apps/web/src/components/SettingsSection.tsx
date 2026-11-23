@@ -12,8 +12,17 @@ export function Section({ title, children }: { title: string; children: ReactNod
   );
 }
 
-/** What a section shows until its first read answers. */
+/**
+ * What a section shows until its first read answers: the shape of a row or
+ * two, about as tall as what replaces it. Screen readers hear "Loading…".
+ */
 export function Loading() {
   const { t } = useI18n();
-  return <p className="text-xs text-muted-foreground">{t("details.loading")}</p>;
+  return (
+    <div role="status" className="flex flex-col gap-2">
+      <span className="sr-only">{t("details.loading")}</span>
+      <span aria-hidden className="skeleton h-10 w-full rounded-md" />
+      <span aria-hidden className="skeleton h-10 w-full rounded-md" />
+    </div>
+  );
 }

@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type ReactElement,
+  type ReactNode,
 } from "react";
 import {
   addressed,
@@ -308,7 +309,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         {data.roster === null ? (
           <>
             <Connecting />
-            <div className="shrink-0 px-4 pb-3">{ways}</div>
+            <WayOut>{ways}</WayOut>
           </>
         ) : (
           <Onboarding
@@ -568,4 +569,22 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
       </span>
     </BotsProvider>
   );
+}
+
+/** How long the screen waits on the server before it offers a way out. */
+const WAY_OUT_AFTER = 8000;
+
+/**
+ * The way out while the server has yet to answer: signing out, and in the
+ * desktop app another server. It shows only once the wait has gone on a while,
+ * so a load that is merely slow does not invite signing out.
+ */
+function WayOut({ children }: { children: ReactNode }) {
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setWaited(true), WAY_OUT_AFTER);
+    return () => window.clearTimeout(timer);
+  }, []);
+  if (!waited) return null;
+  return <div className="arrive shrink-0 px-4 pb-3">{children}</div>;
 }

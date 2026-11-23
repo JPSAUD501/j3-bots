@@ -4,6 +4,7 @@ import { useNavigation } from "@react-navigation/native";
 import { ScrollView, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { RoomAvatar } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { DeleteButton, PendingButton, Quiet, Section } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
@@ -11,6 +12,7 @@ import type { Navigation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 import { useRoomActions } from "./actions.ts";
+import { Apart, Profile } from "./Profile.tsx";
 
 /**
  * A room's details: who is in it, who hosts, how long bots may talk among
@@ -31,32 +33,39 @@ export function RoomDetails({ room }: { readonly room: Room }) {
   return (
     <ScrollView
       className="flex-1 bg-background"
-      contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
     >
-      <Section>
-        {archived ? (
-          <Quiet>{t("room.archivedLine")}</Quiet>
-        ) : (
-          <View className="items-start">
-            <Button
-              label={t("room.edit", { name })}
-              onPress={() =>
-                navigation.navigate("roomForm", { form: { _tag: "edit", roomId: room.id } })
-              }
-            />
-          </View>
+      <Profile
+        picture={
+          <RoomAvatar
+            members={members.map((bot) => ({ id: bot.id, avatar: bot.profile.avatar }))}
+            size={96}
+          />
+        }
+        name={name}
+        badge={archived ? t("room.archivedBadge") : null}
+        lines={[archived ? t("room.archivedLine") : plural("room.memberCount", members.length)]}
+      >
+        {!archived && (
+          <Button
+            variant="secondary"
+            label={t("room.edit", { name })}
+            onPress={() =>
+              navigation.navigate("roomForm", { form: { _tag: "edit", roomId: room.id } })
+            }
+          />
         )}
-      </Section>
+      </Profile>
 
-      <Section title={t("room.membersTitle")}>
+      <Section open title={t("room.membersTitle")}>
         {members.length === 0 ? (
           <Quiet>{t("room.noMembers")}</Quiet>
         ) : (
           members.map((bot) => (
-            <View key={bot.id} className="min-h-9 flex-row items-center gap-2.5">
-              <LiveBotAvatar bot={bot} size={28} />
+            <View key={bot.id} className="min-h-12 flex-row items-center gap-3">
+              <LiveBotAvatar bot={bot} size={32} />
               <View className="min-w-0 flex-1">
-                <Text numberOfLines={1} className="text-base text-foreground">
+                <Text numberOfLines={1} className="text-base font-medium text-foreground">
                   {bot.profile.name}
                 </Text>
                 {bot.profile.title !== "" && (
@@ -66,7 +75,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
                 )}
               </View>
               {bot.id === room.hostId && (
-                <Text className="rounded-sm bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">
+                <Text className="rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
                   {t("room.host")}
                 </Text>
               )}
@@ -75,11 +84,11 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         )}
       </Section>
 
-      <Section title={t("room.budget")}>
+      <Section open title={t("room.budget")}>
         <Text className="text-sm text-foreground">{plural("room.hopLimit", room.hopLimit)}</Text>
       </Section>
 
-      <Section>
+      <Section open title={t("room.archiveSection")}>
         <View className="items-start gap-3">
           {archived ? (
             <PendingButton
@@ -99,7 +108,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
       </Section>
 
       {/* Last and on its own, so the one action that cannot be undone is never next to another. */}
-      <View className="items-start px-4 py-4">
+      <Apart>
         <DeleteButton
           label={t("room.delete", { name })}
           title={t("room.delete.title", { name })}
@@ -107,7 +116,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
           cancel={t("room.delete.cancel", { name })}
           onDelete={() => actions.remove(room)}
         />
-      </View>
+      </Apart>
     </ScrollView>
   );
 }

@@ -50,6 +50,13 @@
     background: color-mix(in oklab, var(--accent) 24%, transparent);
   }
 
+  /* Thin scroll bars in the text's own grey, with no track or arrows: the
+     desktop app and a browser draw the same quiet bar, in either theme. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--foreground) 22%, transparent) transparent;
+  }
+
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
@@ -283,6 +290,78 @@
   }
 }
 
+/*
+ * The shape of what is still loading, where it will be: a quiet block that
+ * breathes slowly, so a list that arrives fills its place instead of pushing
+ * what is under it. It shows only after a moment, so a quick read never
+ * flashes it. Reduced motion keeps it still.
+ */
+@utility skeleton {
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+  animation:
+    skeleton-in var(--duration-state) var(--ease-out) 150ms backwards,
+    skeleton-breathe 1.4s ease-in-out 350ms infinite alternate;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}
+
+@keyframes skeleton-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes skeleton-breathe {
+  to {
+    opacity: 0.5;
+  }
+}
+
+/* Something that arrives in place: it pops in from a little smaller. */
+@utility appear {
+  animation: appear var(--duration-pop) var(--ease-pop) backwards;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+
+/* A toast drops in from above and lifts away. */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    translate: 0 -0.75rem;
+    scale: 0.96;
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    translate: 0 -0.5rem;
+    scale: 0.98;
+  }
+}
+
+/* The details pane beside the conversation slides open and closed. */
+@keyframes pane-open {
+  from {
+    width: 0;
+  }
+}
+
+@keyframes pane-close {
+  to {
+    width: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,
@@ -312,4 +391,18 @@
     radial-gradient(farthest-side at 50% 100%, var(--shade), transparent) bottom / 100% 0.625rem
       no-repeat scroll,
     var(--code-background);
+}
+
+/* One dot of the three that say something is under way. */
+@keyframes dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    scale: 0.8;
+  }
+  40% {
+    opacity: 1;
+    scale: 1;
+  }
 }

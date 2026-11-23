@@ -36,23 +36,43 @@ export function MenuPopup({
   );
 }
 
-/** A menu row. `hint`, when given, says more on a quieter second line. */
+/**
+ * A menu row. `icon`, when given, leads it in the quiet text color; `hint`
+ * says more on a quieter second line.
+ */
 export function MenuItem({
   onClick,
   children,
   hint,
+  icon,
 }: {
   onClick: () => void;
   children: ReactNode;
   hint?: ReactNode;
+  icon?: ReactNode;
 }) {
   return (
     <MenuPrimitive.Item
       onClick={onClick}
-      className={cn(item, hint !== undefined && "h-auto flex-col items-start gap-0 py-1.5")}
+      className={cn(item, hint !== undefined && "h-auto items-start py-1.5")}
     >
-      {children}
-      {hint !== undefined && <span className="max-w-56 text-xs text-muted-foreground">{hint}</span>}
+      {icon !== undefined && (
+        <span
+          aria-hidden
+          className={cn(
+            "flex shrink-0 text-muted-foreground [&_svg]:size-4",
+            hint !== undefined && "pt-0.5",
+          )}
+        >
+          {icon}
+        </span>
+      )}
+      <span className="flex min-w-0 flex-col">
+        {children}
+        {hint !== undefined && (
+          <span className="max-w-56 text-xs text-muted-foreground">{hint}</span>
+        )}
+      </span>
     </MenuPrimitive.Item>
   );
 }

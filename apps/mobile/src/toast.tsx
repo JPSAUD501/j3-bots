@@ -8,9 +8,13 @@ import {
   useRef,
   useState,
 } from "react";
-import { AccessibilityInfo, View } from "react-native";
+import { motion, reanimatedSpring, springs } from "@j3-bots/design-tokens";
+import { AccessibilityInfo } from "react-native";
+import Animated, { FadeInUp, FadeOutUp } from "react-native-reanimated";
 import { Text } from "./text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+const pop = reanimatedSpring(springs.pop);
 
 /** How long a toast stays: long enough to read twice. */
 const SHOWN_FOR = 6000;
@@ -41,18 +45,28 @@ export function Toasts({ children }: { readonly children: ReactNode }) {
     <SayContext value={say}>
       {children}
       {shown !== null && (
-        <View
+        <Animated.View
+          key={shown.id}
+          entering={FadeInUp.springify()
+            .mass(pop.mass)
+            .stiffness(pop.stiffness)
+            .damping(pop.damping)}
+          exiting={FadeOutUp.duration(motion.state)}
           pointerEvents="none"
           className="absolute inset-x-4 items-center"
-          style={{ bottom: insets.bottom + 80 }}
+          // At the top, clear of the composer and the keyboard at the bottom.
+          style={{ top: insets.top + 8 }}
           // Announced as it came; the visible copy is not read again.
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
         >
-          <Text className="max-w-sm rounded-md bg-foreground px-3 py-2 text-sm text-background">
+          <Text
+            className="max-w-sm rounded-lg bg-foreground px-4 py-2.5 text-sm text-background"
+            style={{ elevation: 6 }}
+          >
             {shown.text}
           </Text>
-        </View>
+        </Animated.View>
       )}
     </SayContext>
   );

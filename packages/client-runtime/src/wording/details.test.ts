@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
+  MemoryPath,
   ModelId,
   type ProviderStatus,
   ProviderId,
@@ -11,7 +12,8 @@ import {
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { routineLines, routineRunLines } from "./details.ts";
+import { createI18n } from "@j3-bots/i18n";
+import { memoryFileName, routineLines, routineRunLines } from "./details.ts";
 import { providerLine } from "./engine.ts";
 
 const en = context("2026-11-20T17:40:00Z");
@@ -145,5 +147,21 @@ describe("providerLine", () => {
     expect(providerLine(provider({ status: { _tag: "unavailable", checking: true } }), en)).toEqual(
       { text: "Checking…", tone: "waiting" },
     );
+  });
+});
+
+describe("memoryFileName", () => {
+  const name = (path: string, language: "en" | "pt-BR" = "en") =>
+    memoryFileName(MemoryPath.make(path), createI18n(language));
+
+  it("names a month's log by the month in words, in the operator's language", () => {
+    expect(name("log/2026-11.md")).toBe("Notes from November 2026");
+    expect(name("log/2026-01.md", "pt-BR")).toBe("Anotações de janeiro de 2026");
+  });
+
+  it("names the profile, and shows any other file by its path", () => {
+    expect(name("profile.md")).toBe("Profile");
+    expect(name("log/2026-13.md")).toBe("log/2026-13.md");
+    expect(name("notes/ideas.md")).toBe("notes/ideas.md");
   });
 });
