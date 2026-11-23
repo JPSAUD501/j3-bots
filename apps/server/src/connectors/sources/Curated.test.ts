@@ -91,6 +91,22 @@ describe("the curated list", () => {
     );
   });
 
+  it("refuses an app whose parameters would replace the sign-in's own", () => {
+    for (const parameter of ["redirect_uri", "state", "code_challenge", "resource", "scope"]) {
+      assert.isTrue(
+        refused(
+          changed((list) => {
+            list.apps.google.authorizationParameters = {
+              ...list.apps.google.authorizationParameters,
+              [parameter]: "https://elsewhere.example",
+            };
+          }),
+        ),
+        parameter,
+      );
+    }
+  });
+
   it("guides an own-app setup with the connector's scopes, and says Google's servers are a preview", () => {
     const slack = curatedDetails(CURATED, entry("slack"), "en");
     assert.strictEqual(slack.connect, "own-app");
@@ -101,6 +117,8 @@ describe("the curated list", () => {
     const gmail = curatedDetails(CURATED, entry("google-gmail"), "pt-BR");
     assert.include(gmail.description, "prévia para desenvolvedores");
     assert.include(gmail.setup?.url ?? "", "https://console.cloud.google.com/");
+    // The form fills in the server the app is registered at.
+    assert.strictEqual(gmail.setup?.issuer, "https://accounts.google.com");
     assert.deepStrictEqual(gmail.fields, []);
   });
 

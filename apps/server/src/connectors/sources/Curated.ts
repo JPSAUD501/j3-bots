@@ -101,12 +101,17 @@ const SIGN_IN_PARAMETERS = new Set([
   "scope",
 ]);
 
-/** A parameter an app adds to each authorization request: one J3 Bots does not set itself. */
-const AppParameter = Schema.String.check(
-  Schema.isPattern(/^[a-z_]{1,64}$/),
-  Schema.makeFilter(
-    (name: string) => !SIGN_IN_PARAMETERS.has(name) || `a parameter other than ${name}`,
-  ),
+/** Parameters an app adds to each authorization request: none of those J3 Bots sets itself. */
+const AppParameters = Schema.Record(
+  Schema.String,
+  Schema.String.check(Schema.isMaxLength(200)),
+).check(
+  Schema.makeFilter((parameters: Readonly<Record<string, string>>) => {
+    const own = Object.keys(parameters).find(
+      (name) => SIGN_IN_PARAMETERS.has(name) || !/^[a-z_]{1,64}$/.test(name),
+    );
+    return own === undefined || `no parameter named ${own}`;
+  }),
 );
 
 /** An OAuth client the operator registers once, which serves every connector that names it. */
@@ -121,10 +126,7 @@ const App = Schema.Struct({
   /** In order. `{scopes}` stands for the scopes of the connector being set up. */
   steps: Schema.NonEmptyArray(Localized),
   /** Sent with every sign-in through it, such as Google's request for a lasting sign-in. */
-  authorizationParameters: Schema.Record(
-    AppParameter,
-    Schema.String.check(Schema.isMaxLength(200)),
-  ),
+  authorizationParameters: AppParameters,
 });
 
 const Entry = Schema.Struct({

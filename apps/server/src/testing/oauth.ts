@@ -30,6 +30,8 @@ export const AS_ORIGIN = "https://auth.example.test";
 
 /** How the fake behaves; each test changes what it needs. */
 export interface FakeOptions {
+  /** The MCP server it guards, as a connector names it. */
+  readonly server: string;
   /** Where its protected resource metadata is: named in the challenge, at the path-inserted address, or only at the root. */
   readonly resourceMetadata: "challenge" | "path" | "root";
   /** The `resource` the metadata names. */
@@ -62,6 +64,7 @@ export interface FakeOptions {
 }
 
 const defaultOptions: FakeOptions = {
+  server: MCP_URL,
   resourceMetadata: "challenge",
   resource: MCP_URL,
   issuerPath: "",
@@ -95,6 +98,20 @@ interface Code {
   readonly resource: string | null;
   readonly scope: string | null;
 }
+
+/** Whether a redirect matches a registered one: exactly, or on loopback with any port. */
+const sameRedirect = (registered: string, requested: string) => {
+  if (registered === requested) return true;
+  const a = new URL(registered);
+  const b = new URL(requested);
+  return (
+    a.protocol === "http:" &&
+    a.hostname === "127.0.0.1" &&
+    b.protocol === "http:" &&
+    b.hostname === "127.0.0.1" &&
+    a.pathname === b.pathname
+  );
+};
 
 const s256 = (verifier: string) =>
   NodeCrypto.createHash("sha256").update(verifier).digest("base64url");
@@ -156,6 +173,11 @@ export class FakeAuthorizationServer {
     this.options = { ...defaultOptions, ...options };
   }
 
+  /** Guards `server` from now on, which its metadata names as the resource. */
+  guard(server: string) {
+    this.options = { ...this.options, server, resource: server };
+  }
+
   get issuer() {
     return `${AS_ORIGIN}${this.options.issuerPath}`;
   }
@@ -194,6 +216,13 @@ export class FakeAuthorizationServer {
     const url = new URL(address);
     const params = url.searchParams;
     const redirectUri = params.get("redirect_uri") ?? "";
+    // A client registered with redirects returns only to one of them, on
+    // loopback to any port (RFC 8252 §7.3); a provider shows an error page
+    // otherwise, and the browser never comes back.
+    const registered = this.clients.get(params.get("client_id") ?? "")?.redirectUris ?? [];
+    if (registered.length > 0 && !registered.some((uri) => sameRedirect(uri, redirectUri))) {
+      throw new Error(`The provider refuses the redirect ${redirectUri}`);
+    }
     const back = new URL(redirectUri);
     back.searchParams.set("state", params.get("state") ?? "");
     if (this.options.issParameter) back.searchParams.set("iss", this.issuer);
@@ -282,16 +311,18 @@ export class FakeAuthorizationServer {
     if (url.origin === AS_ORIGIN && this.options.failing.includes(url.pathname)) {
       return new Response(null, { status: 501 });
     }
-    const mcpMetadata = `https://mcp.example.test/.well-known/oauth-protected-resource`;
-    if (method === "POST" && at === MCP_URL) {
+    const server = new URL(this.options.server);
+    const mcpMetadata = `${server.origin}/.well-known/oauth-protected-resource`;
+    if (method === "POST" && at === this.options.server) {
       const pointer =
         this.options.resourceMetadata === "challenge"
-          ? `Bearer resource_metadata="${mcpMetadata}/mcp", scope="read write"`
+          ? `Bearer resource_metadata="${mcpMetadata}${server.pathname}", scope="read write"`
           : `Bearer realm="mcp"`;
       return new Response(null, { status: 401, headers: { "www-authenticate": pointer } });
     }
-    if (method === "GET" && url.origin === "https://mcp.example.test") {
-      const served = this.options.resourceMetadata === "root" ? mcpMetadata : `${mcpMetadata}/mcp`;
+    if (method === "GET" && url.origin === server.origin) {
+      const served =
+        this.options.resourceMetadata === "root" ? mcpMetadata : `${mcpMetadata}${server.pathname}`;
       if (at !== served) return new Response(null, { status: 404 });
       return json({
         resource: this.options.resource,
