@@ -6,7 +6,7 @@
 
 An operator writes "compare this one with this one" and attaches two images. Until now a message's files followed its text, in the order they were attached, so the words lost what "this one" pointed at, on screen and for the bot. T3 Code's composer lets files stand in the text: its prompt editor is Tiptap (ProseMirror), whose inline nodes are its chips (**Read** at `c1464d67`, `apps/web/src/components/ComposerPromptEditor.tsx`).
 
-Where a file stands has to survive everything a draft goes through: typing on two windows, a restart, mentions whose positions are offsets into the same text, the outbox, and an older client that knows nothing of places. Each harness receives a turn's files as a list, in the order the engine hands them over, apart from the text.
+Where a file stands has to survive everything a draft goes through: typing on two windows, a restart, mentions whose positions are offsets into the same text, the outbox, and an older client that knows nothing of places. Each harness receives a turn's files apart from the text: Claude Code and Codex as a line per file after it and as image blocks, in the order of the turn's files (**Read** at `59651c1`; details in [Wake envelopes](../prompts/architecture.md#wake-envelopes)). That the engine keeps a dispatch's order up to its adapter, and an ACP agent's order, is **Assumed**.
 
 ## Decision
 
