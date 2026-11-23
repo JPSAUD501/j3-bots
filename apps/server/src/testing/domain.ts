@@ -15,6 +15,7 @@ import * as Listener from "../listener.ts";
 import type { PushSender } from "../push/PushSender.ts";
 import * as BasePrompt from "../settings/BasePrompt.ts";
 import * as SettingsStore from "../settings/SettingsStore.ts";
+import * as TestConnectors from "./connectors.ts";
 import * as TestDatabase from "./database.ts";
 import * as TestPush from "./push.ts";
 
@@ -141,7 +142,7 @@ const listener = Layer.effect(
  * it. A restart test builds this once and `Domain.layer` over it twice.
  */
 export const machineWith = <A, R>(push: Layer.Layer<A | PushSender, never, R>) =>
-  Layer.mergeAll(stores, listener, push);
+  Layer.mergeAll(stores, listener, push, TestConnectors.layer);
 
 /** What outlives a server restart, with the in-memory push service. */
 export const machine = machineWith(TestPush.layer);
@@ -159,7 +160,14 @@ export const layer = Domain.layer.pipe(Layer.provideMerge(machine));
  */
 export const layerOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
   Domain.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(storesOver(database, starting), listener, TestPush.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        storesOver(database, starting),
+        listener,
+        TestPush.layer,
+        TestConnectors.layer,
+      ),
+    ),
   );
 
 /**
@@ -167,5 +175,7 @@ export const layerOver = (database: typeof TestDatabase.layer, starting: Startin
  * (`Listener.layer`), which reports where it bound.
  */
 export const servedLayer = Domain.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(stores, Listener.unbound, TestPush.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(stores, Listener.unbound, TestPush.layer, TestConnectors.layer),
+  ),
 );

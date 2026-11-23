@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, it } from "@effect/vitest";
-import { CommandId } from "@j3-bots/contracts";
+import { CommandId, ConnectorId } from "@j3-bots/contracts";
 import { SessionId } from "@j3-bots/engine-t3";
+import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
@@ -14,20 +18,30 @@ import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpServer from "effect/http/HttpServer";
+import * as NetAddress from "effect/net/NetAddress";
 import * as SqlClient from "effect/sql/SqlClient";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
+import type { OfferedTool } from "../connectors/Connectors.ts";
 import * as Ports from "../system/Ports.ts";
+import { TestConnectors } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
+import { createBot, engineSession, nextTurn, sendToBot } from "../testing/turns.ts";
 import * as ToolEndpoint from "../tools/ToolEndpoint.ts";
 import { serve } from "./Bridge.ts";
 
-const endpoint = Ports.serve(ToolEndpoint.routes, NodeHttpServer.layerTest, {
-  logAddress: false,
-}).pipe(Layer.provideMerge(TestDomain.layer));
+/** The endpoint over the whole domain, and Node's own HTTP client, which the bridge runs with. */
+const endpoint = Layer.merge(
+  Ports.serve(ToolEndpoint.routes, NodeHttpServer.layerTest, {
+    logAddress: false,
+  }).pipe(Layer.provideMerge(TestDomain.layer)),
+  NodeHttpClient.layerNodeHttp,
+);
 
-const Reply = Schema.Struct({
-  id: Schema.Number,
+const Line = Schema.Struct({
+  id: Schema.optionalKey(Schema.Number),
+  method: Schema.optionalKey(Schema.String),
   result: Schema.optionalKey(
     Schema.Struct({
       tools: Schema.optionalKey(Schema.Array(Schema.Struct({ name: Schema.String }))),
@@ -36,39 +50,74 @@ const Reply = Schema.Struct({
     }),
   ),
 });
-const decodeReply = Schema.decodeUnknownSync(Schema.fromJsonString(Reply));
+const decodeLine = Schema.decodeUnknownSync(Schema.fromJsonString(Line));
 
-/** Runs the bridge over `requests` as its standard input, and answers what it wrote, by id. */
-const runBridge = (session: Option.Option<SessionId>, requests: ReadonlyArray<object>) =>
+/** What the bridge wrote so far, as its standard input can wait on it. */
+interface Output {
+  /** Waits until the bridge has written `text`. */
+  readonly shows: (text: string) => Effect.Effect<void>;
+}
+
+/**
+ * Runs the bridge with what `input` gives as its standard input, which may
+ * wait on what the bridge wrote, and answers what it wrote: the replies by
+ * id, and the notifications' methods in order.
+ */
+const runBridgeWith = (
+  session: Option.Option<SessionId>,
+  input: (output: Output) => Stream.Stream<object>,
+) =>
   Effect.gen(function* () {
-    const written = yield* Ref.make("");
+    const written = yield* SubscriptionRef.make("");
     const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    const output: Output = {
+      shows: (text) =>
+        SubscriptionRef.changes(written).pipe(
+          Stream.filter((all) => all.includes(text)),
+          Stream.runHead,
+          Effect.asVoid,
+        ),
+    };
     const stdio = Stdio.make({
       args: Effect.succeed([]),
-      stdin: Stream.make(
-        new TextEncoder().encode(
-          requests.map((request) => `${JSON.stringify(request)}\n`).join(""),
-        ),
-      ),
+      stdin: input(output).pipe(Stream.map((line) => encoder.encode(`${JSON.stringify(line)}\n`))),
       stdout: () =>
         Sink.forEach((chunk: string | Uint8Array) =>
-          Ref.update(
+          SubscriptionRef.update(
             written,
             (text) => text + (typeof chunk === "string" ? chunk : decoder.decode(chunk)),
           ),
         ),
       stderr: () => Sink.drain,
     });
-    yield* serve({ server: "", session, version: "test" }).pipe(
+    const { address } = yield* HttpServer.HttpServer;
+    if (!NetAddress.isInetAddress(address)) {
+      return yield* Effect.die("The endpoint listens on TCP");
+    }
+    yield* serve({ server: `http://127.0.0.1:${address.port}`, session, version: "test" }).pipe(
       Effect.provideService(Stdio.Stdio, stdio),
       Effect.provide(SecureRandom.layerWebCrypto),
     );
-    const replies = (yield* Ref.get(written))
-      .trim()
+    const lines = (yield* SubscriptionRef.get(written))
       .split("\n")
-      .map((line) => decodeReply(line));
-    return new Map(replies.map((reply) => [reply.id, reply.result]));
+      .filter((line) => line.length > 0)
+      .map((line) => decodeLine(line));
+    return {
+      replies: new Map(
+        lines.flatMap((line) => (line.id === undefined ? [] : [[line.id, line.result]])),
+      ),
+      notifications: lines.flatMap((line) =>
+        line.id === undefined && line.method !== undefined ? [line.method] : [],
+      ),
+    };
   });
+
+/** Runs the bridge over `requests` as its standard input, and answers what it wrote, by id. */
+const runBridge = (session: Option.Option<SessionId>, requests: ReadonlyArray<object>) =>
+  runBridgeWith(session, () => Stream.fromIterable(requests)).pipe(
+    Effect.map(({ replies }) => replies),
+  );
 
 const call = (id: number, name: string, args: object) => ({
   jsonrpc: "2.0",
@@ -76,6 +125,14 @@ const call = (id: number, name: string, args: object) => ({
   method: "tools/call",
   params: { name, arguments: args },
 });
+
+const search: OfferedTool = {
+  name: "notion__search",
+  connectorId: ConnectorId.make("conn_0123456789abcdef"),
+  upstreamName: "search",
+  description: "Search the workspace's pages.",
+  inputSchema: { type: "object", properties: { query: { type: "string" } } },
+};
 
 const sessionOf = (botId: string) =>
   Effect.gen(function* () {
@@ -147,6 +204,85 @@ it.layer(endpoint, { excludeTestServices: true })("j3 bridge", (it) => {
     Effect.gen(function* () {
       const replies = yield* runBridge(Option.none(), [call(1, "recall", { query: "anything" })]);
       assert.isTrue(replies.get(1)?.isError);
+    }),
+  );
+});
+
+// The test clock: what the bridge waits on, it waits for in the test.
+it.layer(endpoint)("j3 bridge with connectors", (it) => {
+  it.effect("tells the harness to list again once the bot is offered a connector's tool", () =>
+    Effect.gen(function* () {
+      const bot = yield* createBot("Cleo");
+      const session = yield* engineSession(bot.id);
+      const connectors = yield* TestConnectors;
+
+      const { replies, notifications } = yield* runBridgeWith(Option.some(session), (output) =>
+        Stream.concat(
+          Stream.make(
+            { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+            { jsonrpc: "2.0", method: "notifications/initialized" },
+            { jsonrpc: "2.0", id: 2, method: "tools/list" },
+          ),
+          Stream.fromEffect(
+            output
+              .shows('"id":2')
+              .pipe(
+                Effect.andThen(connectors.offer(bot.id, [search])),
+                Effect.andThen(output.shows("notifications/tools/list_changed")),
+                Effect.as({ jsonrpc: "2.0", id: 3, method: "tools/list" }),
+              ),
+          ),
+        ),
+      );
+
+      assert.deepStrictEqual(notifications, ["notifications/tools/list_changed"]);
+      assert.notInclude(replies.get(2)?.tools?.map((tool) => tool.name) ?? [], "notion__search");
+      assert.include(replies.get(3)?.tools?.map((tool) => tool.name) ?? [], "notion__search");
+    }),
+  );
+
+  it.effect("abandons a connector's call the harness cancels, and does not answer it", () =>
+    Effect.gen(function* () {
+      const bot = yield* createBot("Dov");
+      const session = yield* engineSession(bot.id);
+      const connectors = yield* TestConnectors;
+      yield* connectors.offer(bot.id, [search]);
+      yield* sendToBot(bot.id, "Find the roadmap.");
+      const turnId = yield* nextTurn(bot.id);
+      const args = { query: "roadmap" };
+      yield* (yield* TestEngineControl).toolCall({
+        sessionId: session,
+        turnId,
+        tool: "notion__search",
+        input: args,
+        recorded: "now",
+      });
+      const started = yield* Deferred.make<void>();
+      const abandoned = yield* Deferred.make<void>();
+      yield* connectors.answerWith(() =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Deferred.succeed(abandoned, undefined)),
+        ),
+      );
+
+      const { replies } = yield* runBridgeWith(Option.some(session), () =>
+        Stream.concat(
+          Stream.make(call(1, "notion__search", args)),
+          Stream.fromEffect(
+            Deferred.await(started).pipe(
+              Effect.as({
+                jsonrpc: "2.0",
+                method: "notifications/cancelled",
+                params: { requestId: 1 },
+              }),
+            ),
+          ),
+        ),
+      );
+
+      yield* Deferred.await(abandoned);
+      assert.strictEqual(replies.size, 0);
     }),
   );
 });

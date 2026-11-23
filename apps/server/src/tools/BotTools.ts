@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, CommandId, Profile, Routine } from "@j3-bots/contracts";
-import { DECODE_OPTIONS, type ToolName, tools } from "@j3-bots/prompts";
+import {
+  DECODE_OPTIONS,
+  inputCapRefusal,
+  isConnectorTool,
+  type ToolName,
+  tools,
+} from "@j3-bots/prompts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,6 +15,7 @@ import * as Schema from "effect/Schema";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
 import { type BotSession, EngineSessions } from "../bots/EngineSessions.ts";
+import { Connectors } from "../connectors/Connectors.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
@@ -21,12 +28,16 @@ class Refused extends Schema.TaggedError<Refused>()("Refused", { reason: Schema.
 const encodeJson = <S extends Schema.Top>(schema: S) =>
   Schema.encodeEffect(Schema.toCodecJson(schema));
 
+const isJsonObject = Schema.is(Schema.JsonObject);
+
 /**
  * The `j3` tools' server side. A call is accepted only from a live session of
  * a bot, with arguments that decode under the tool's own schema. The tools
- * that act for a turn go to `TurnTools`; the rest are answered here. A call
- * that could not be matched to its turn yet fails with `TurnToolRetry`, for
- * the bridge to forward again.
+ * that act for a turn go to `TurnTools`; the rest are answered here. A
+ * connector tool's call is made only for a bot it is offered to, once it is
+ * claimed for the bot's running turn, and what the connector answers goes
+ * back as it is (`Connectors` frames it). A call that could not be matched to
+ * its turn yet fails with `TurnToolRetry`, for the bridge to forward again.
  */
 export class BotTools extends Context.Service<
   BotTools,
@@ -43,6 +54,7 @@ export const layer = Layer.effect(
     const rooms = yield* Rooms;
     const routines = yield* Routines;
     const turnTools = yield* TurnTools;
+    const connectors = yield* Connectors;
 
     /** A command id for a tool call, the same on every retry of its forward. */
     const commandIdOf = (requestId: string) => CommandId.make(`tool:${requestId}`);
@@ -199,20 +211,58 @@ export const layer = Layer.effect(
 
     const isToolName = (name: string): name is ToolName => Object.hasOwn(handlers, name);
 
+    /**
+     * A connector tool's call. Its arguments are checked before anything is
+     * claimed, and the call is claimed for its turn before it is made, so it
+     * is made once and only for a running turn; `Connectors` decides whether
+     * the bot is offered the tool. Interrupting the call (the bridge's
+     * harness gave up on it) abandons it at the connector.
+     */
+    const connectorCall = Effect.fn("BotTools.connectorCall")(function* (tool: string, call: Call) {
+      const input = call.arguments;
+      if (!isJsonObject(input)) {
+        return yield* new Refused({ reason: "The arguments must be an object." });
+      }
+      const tooLarge = inputCapRefusal(input);
+      if (tooLarge !== undefined) return yield* new Refused({ reason: tooLarge });
+      yield* turnTools
+        .claim({ tool, requestId: call.requestId, caller: call.caller, arguments: input })
+        .pipe(
+          Effect.catchTags({
+            TurnEnded: (error) => new Refused({ reason: error.message }),
+            CallCutOff: (error) => new Refused({ reason: error.message }),
+          }),
+        );
+      return yield* connectors
+        .call({ botId: call.caller.botId, name: tool, arguments: input })
+        .pipe(Effect.catchTag("ToolNotOffered", (error) => new Refused({ reason: error.message })));
+    });
+
+    const answer = (
+      tool: string,
+      call: Call,
+    ): Effect.Effect<ToolCallResponse, Refused | TurnToolRetry> => {
+      if (isToolName(tool)) {
+        return handlers[tool](call).pipe(Effect.map((value) => ({ _tag: "result", value })));
+      }
+      if (isConnectorTool(tool)) {
+        return connectorCall(tool, call).pipe(
+          Effect.map(({ text, isError }) => ({ _tag: "text", text, isError })),
+        );
+      }
+      return Effect.fail(new Refused({ reason: `There is no tool named ${tool}.` }));
+    };
+
     const call = Effect.fn("BotTools.call")(function* (request: ToolCallRequest) {
       const caller = yield* sessions.ofEngineSession(request.sessionId);
       if (Option.isNone(caller)) {
         return { _tag: "refused", message: "This is not a J3 Bots session." } as const;
       }
-      if (!isToolName(request.tool)) {
-        return { _tag: "refused", message: `There is no tool named ${request.tool}.` } as const;
-      }
-      return yield* handlers[request.tool]({
+      return yield* answer(request.tool, {
         requestId: request.requestId,
         caller: caller.value,
         arguments: request.arguments,
       }).pipe(
-        Effect.map((value): ToolCallResponse => ({ _tag: "result", value })),
         Effect.catchTag("Refused", (refused) =>
           Effect.succeed<ToolCallResponse>({ _tag: "refused", message: refused.reason }),
         ),

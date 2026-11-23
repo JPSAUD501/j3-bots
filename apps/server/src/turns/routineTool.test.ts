@@ -26,7 +26,7 @@ const decodeRoutine = Schema.decodeUnknownSync(Schema.toCodecJson(Routine));
 
 /** The routine a call returned. */
 const savedBy = (reply: ToolCallResponse) => {
-  if (reply._tag === "refused") throw new Error(`Refused: ${reply.message}`);
+  if (reply._tag !== "result") throw new Error(`Not a result: ${JSON.stringify(reply)}`);
   return decodeRoutine(reply.value);
 };
 

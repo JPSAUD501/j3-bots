@@ -39,6 +39,8 @@ import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import {
+  CallCutOff,
+  type ClaimedCall,
   TurnEnded,
   type TurnToolCall,
   TurnToolRefused,
@@ -164,7 +166,15 @@ type Matched =
   | { readonly _tag: "pin"; readonly pin: Pin }
   | { readonly _tag: "stored"; readonly result: Schema.Json };
 
-const keyOf = (call: TurnToolCall) => ({
+/** What a request is matched and looked up by: a turn tool's call or a connector tool's. */
+interface Request {
+  readonly tool: string;
+  readonly requestId: string;
+  readonly caller: BotSession;
+  readonly arguments: Schema.Json;
+}
+
+const keyOf = (call: Request) => ({
   requestId: call.requestId,
   sessionId: call.caller.id,
   tool: call.tool,
@@ -258,7 +268,7 @@ export const layer = Layer.effect(
      * the engine no longer has the session.
      */
     const match = Effect.fn("Speech.match")(function* (
-      call: TurnToolCall,
+      call: Request,
       caller: BotSession,
     ): Effect.fn.Return<Matched, TurnEnded | TurnToolRetry> {
       const sessionId = caller.id;
@@ -345,15 +355,27 @@ export const layer = Layer.effect(
       if (Option.isSome(stored)) {
         return { _tag: "stored", result: stored.value.result_json } as const;
       }
-      // The call is another request's, or the id is: one used by another
-      // session or tool is not this request's to take.
+      yield* requireUnclaimed(found);
+      yield* requireTarget(found.botId, found.audience);
+      yield* insertPin(tool, found);
+      return { _tag: "pinned" } as const;
+    });
+
+    /**
+     * The call is no other request's, nor is the id (one used by another
+     * session or tool is not this request's to take), and the call is still
+     * open in the running admitted turn with the arguments it was matched by.
+     */
+    const requireUnclaimed = Effect.fn("Speech.requireUnclaimed")(function* (found: Pin) {
       const claimed = yield* sql`
         SELECT 1 FROM tool_calls
         WHERE (session_id = ${found.sessionId} AND engine_call_id = ${found.callId})
           OR id = ${found.requestId}
       `.pipe(Effect.orDie);
       if (claimed.length > 0 || !(yield* stillAdmitted(found))) return yield* new TurnEnded();
-      yield* requireTarget(found.botId, found.audience);
+    });
+
+    const insertPin = Effect.fn("Speech.insertPin")(function* (tool: string, found: Pin) {
       const columns = audienceColumns(found.audience);
       yield* sql`
         INSERT INTO tool_calls (
@@ -364,7 +386,6 @@ export const layer = Layer.effect(
           ${columns.audience}, ${columns.roomId}, ${tool}, ${timeText(yield* DateTime.now)}
         )
       `.pipe(Effect.orDie);
-      return { _tag: "pinned" } as const;
     });
 
     /**
@@ -1126,6 +1147,46 @@ export const layer = Layer.effect(
         }),
       );
 
-    return TurnTools.of({ call: admitted });
+    /** Whether the request was claimed before, under its id, for its caller and its tool. */
+    const claimedBefore = (call: ClaimedCall) =>
+      sql`
+        SELECT 1 FROM tool_calls
+        WHERE id = ${call.requestId} AND session_id = ${call.caller.id} AND tool = ${call.tool}
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
+
+    /**
+     * A connector tool's call: matched as a turn tool's is, then claimed in a
+     * transaction of its own, which commits before the connector is called,
+     * so the call is made there once. Its answer is not stored (the operator's
+     * data stays at the connector), so a forward of a request claimed before
+     * cannot be answered again, and is cut off.
+     */
+    const claimCall = Effect.fn("TurnTools.claim")(function* (call: ClaimedCall) {
+      if (yield* claimedBefore(call)) return yield* new CallCutOff();
+      const matched = yield* match(call, call.caller);
+      // Nothing is stored for a connector's call: only a claim made meanwhile.
+      if (matched._tag === "stored") return yield* new CallCutOff();
+      yield* transaction(
+        Effect.gen(function* () {
+          if (yield* claimedBefore(call)) return yield* new CallCutOff();
+          yield* requireUnclaimed(matched.pin);
+          yield* insertPin(call.tool, matched.pin);
+        }),
+      );
+    });
+
+    /** As `admitted`: past the deadline nothing was claimed, and the bridge forwards the request again. */
+    const claim = (call: ClaimedCall) =>
+      claimCall(call).pipe(
+        Effect.timeoutOrElse({
+          duration: ADMISSION_DEADLINE,
+          orElse: () => Effect.fail(new TurnToolRetry()),
+        }),
+      );
+
+    return TurnTools.of({ call: admitted, claim });
   }),
 );

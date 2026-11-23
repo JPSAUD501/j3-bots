@@ -54,6 +54,8 @@ export {
 export {
   DECODE_OPTIONS,
   MAX_TOOL_INPUT_BYTES,
+  inputCapRefusal,
+  isConnectorTool,
   type McpTool,
   NO_TURN_REFUSAL,
   type ToolDefinition,

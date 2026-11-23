@@ -1150,6 +1150,41 @@ describe("a `j3` call recorded before its arguments", () => {
   );
 });
 
+describe("a connector's `j3` call", () => {
+  it.effect(
+    "is a call the server matches and a step of the bot's work, named without its input",
+    () =>
+      Effect.gen(function* () {
+        const args = { query: "the operator's private roadmap" };
+        const mirror = emptyMirror();
+        applyEvent(mirror, run("running", 1));
+        const { view } = replacement(mirror, false, at);
+        for (const [id, toolName, input] of [
+          ["item-say", "j3.say", { text: "Looking." }],
+          ["item-search", "j3.notion__search", args],
+        ] as const) {
+          applyEvent(
+            mirror,
+            item({ id, type: "dynamic_tool", toolName, input, status: "running" }),
+          );
+        }
+        yield* digestToolCalls(mirror);
+        const events = diff(mirror, view, at);
+
+        assert.deepStrictEqual(
+          events.flatMap((event) => (event._tag === "tool-call" ? [event.call.tool] : [])),
+          ["say", "notion__search"],
+        );
+        const steps = events.flatMap((event) => (event._tag === "step" ? [event.step] : []));
+        assert.deepStrictEqual(
+          steps.map(({ kind, tool, label }) => ({ kind, tool, label })),
+          [{ kind: "tool", tool: "connector", label: "Notion: search" }],
+        );
+        assert.notInclude(JSON.stringify(steps), "roadmap");
+      }),
+  );
+});
+
 describe("a turn the engine ran on recovered context", () => {
   // The engine records a `handoff` item in the run when the provider could not
   // resume its own conversation (**Read** at `db51b67`,

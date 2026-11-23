@@ -57,6 +57,27 @@ export type TurnToolCall = {
 }[TurnToolName];
 
 /**
+ * A connector call whose request was claimed for its turn before, and which
+ * has no answer to give again: the server stopped while it ran, or its answer
+ * was lost. Whether it took effect at the connector is not known.
+ */
+export class CallCutOff extends Schema.TaggedError<CallCutOff>()("CallCutOff", {}) {
+  override get message(): string {
+    return "J3 Bots lost track of this call while it ran, so it may or may not have taken effect. Check before you make it again.";
+  }
+}
+
+/** A connector tool's call to claim for its turn: who made it, under which id, and its arguments. */
+export interface ClaimedCall {
+  /** The tool's name in the `j3` namespace, `<connector>__<tool>`. */
+  readonly tool: string;
+  readonly requestId: string;
+  readonly caller: BotSession;
+  /** As the bridge received them: what the engine's record of the call is digested from. */
+  readonly arguments: Schema.Json;
+}
+
+/**
  * Where the tools that act for a turn go: `say` and `ask` deliver to the
  * turn's audience, `message_bot` wakes or holds for a teammate,
  * `set_routine` changes a routine on the bot's behalf, and
@@ -73,5 +94,15 @@ export class TurnTools extends Context.Service<
     readonly call: (
       call: TurnToolCall,
     ) => Effect.Effect<Schema.Json, TurnEnded | TurnToolRefused | TurnToolRetry | Conflict>;
+    /**
+     * Matches a connector tool's call to the engine's record of it in the
+     * session's running admitted turn, as the turn tools are, and claims that
+     * record for the request, committed before it returns, so the call is
+     * made at the connector once. What the connector answers is not kept: a
+     * request claimed before fails with `CallCutOff`.
+     */
+    readonly claim: (
+      call: ClaimedCall,
+    ) => Effect.Effect<void, TurnEnded | TurnToolRetry | CallCutOff>;
   }
 >()("@j3-bots/server/tools/TurnTools") {}
