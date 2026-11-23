@@ -129,6 +129,8 @@ It says when the snapshot was taken and what is lost, and asks first (`--yes` an
 
 A release refuses a database a newer release migrated, naming the migration it does not know, so starting an older release by hand on newer data fails: roll back instead.
 
+Each time an update or a rollback sees the service's server become ready, it records that release in `~/.j3-bots/state/runtime.json`, and after a rollback the release it rolled back from. The service does not read it: the unit names the release it runs. If writing it fails, the update says so and carries on, with the new release running.
+
 ### From a checkout
 
 A checkout keeps no snapshot: [back up](#back-up) first.

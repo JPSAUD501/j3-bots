@@ -47,6 +47,7 @@ import { launchedRelease, startedRelease, VERSIONS } from "../src/install/layout
 import { listSnapshots, UPDATE_LOCK } from "../src/install/snapshot.ts";
 import { RELEASE_MANIFEST, ReleaseManifest } from "../src/installation.ts";
 import { execStartOf } from "../src/service/unit.ts";
+import { readRuntimeRecord } from "../src/transition/record.ts";
 
 // The upgrade check: two release archives, A and B, as an operator moves
 // between them (docs/operations/releasing.md, "The upgrade check").
@@ -467,6 +468,22 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
             Effect.map((names) => [...names].sort()),
           );
 
+        /** The home's record names `version` as the release that became ready, by a rollback from `rollbackFrom`. */
+        const recorded = Effect.fn("upgradeCheck.recorded")(function* (
+          version: string,
+          rollbackFrom?: string,
+        ) {
+          const read = yield* readRuntimeRecord(data);
+          assert.strictEqual(read._tag, "recorded", "state/runtime.json");
+          if (read._tag !== "recorded") return;
+          assert.strictEqual(read.record.version, version, "the recorded release");
+          assert.deepStrictEqual(
+            read.record.rollback,
+            rollbackFrom === undefined ? undefined : { from: rollbackFrom },
+            "the recorded rollback",
+          );
+        });
+
         /**
          * What an update or a rollback leaves once it has finished: the
          * releases and engines it keeps, at most two snapshots, none of them
@@ -832,6 +849,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
         yield* j3(["update", "--yes"]);
         yield* runningRelease(to.version, STARTED_WITHIN);
         yield* settled(to.version, true);
+        yield* recorded(to.version);
         assert.deepStrictEqual((yield* view(made.bots, made.room)).encoded, onA.view.encoded);
         const firstSnapshot = yield* newSnapshot;
         yield* secondKept;
@@ -845,6 +863,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
         yield* j3(["update", "--rollback", "--yes"]);
         yield* runningRelease(from.version, STARTED_WITHIN);
         yield* settled(from.version, true);
+        yield* recorded(from.version, to.version);
         assert.deepStrictEqual((yield* view(made.bots, made.room)).encoded, onA.view.encoded);
         assert.strictEqual(yield* engineMigration, onA.migration);
         yield* secondKept;
@@ -857,6 +876,7 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
         yield* j3(["update", "--yes"]);
         yield* runningRelease(to.version, STARTED_WITHIN);
         yield* settled(to.version, true);
+        yield* recorded(to.version);
         assert.deepStrictEqual((yield* view(made.bots, made.room)).encoded, onA2.view.encoded);
         assert.notStrictEqual(
           yield* newSnapshot,

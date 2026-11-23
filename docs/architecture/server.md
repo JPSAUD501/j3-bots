@@ -62,9 +62,10 @@ providers/
     skills/          the same
 state/
   shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
+  runtime.json       the last release whose server became ready on this home, and whether by a rollback
 backups/
-  <snapshot>/        the databases and settings `j3-bots update` copied before it changed release
-  update.lock        held by the one `j3-bots update` or `--rollback` running
+  <snapshot>/        the databases and settings a version transition copied before it changed release
+  update.lock        held by the one version transition or rollback running
 ```
 
 Generated files are written by the server from the database and the memory files. A bot never edits them by hand, and the server rewrites them whenever their inputs change.

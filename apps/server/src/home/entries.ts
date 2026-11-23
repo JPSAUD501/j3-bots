@@ -62,6 +62,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * shared/memory/         user.md and log/<yyyy-mm>.md, every bot's to read
  * shared/skills/
  * state/shipped-skills.json  which texts in shared/skills the server installed
+ * state/runtime.json     the last release whose server became ready here
  * attachments/           file bytes, by digest
  * backups/<snapshot>/    the databases and settings an update copied first
  * providers/<provider>/  the configuration folder of an engine provider instance
