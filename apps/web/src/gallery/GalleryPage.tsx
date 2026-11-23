@@ -2976,6 +2976,7 @@ const localBots = (serverUpdate?: ServerUpdate): DesktopLocal => ({
   showUpdateDetails: nothing,
   startWithSystem: false,
   setStartWithSystem: (on) => Promise.resolve(on),
+  phone: galleryPhone(PHONE_OFF, "linux"),
 });
 
 const desktopServer = {
