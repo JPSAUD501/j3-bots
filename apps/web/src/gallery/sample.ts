@@ -180,7 +180,8 @@ export function sampleTeam(now: DateTime.Utc) {
     moss: bot(ids.moss, "Moss", "", "hex", "rose", { _tag: "idle" }),
   } satisfies Record<string, Bot>;
 
-  const room: Room = {
+  // Active, so it can stand wherever a room someone can write in is wanted.
+  const room: Extract<Room, { readonly status: "active" }> = {
     id: ids.newsletter,
     name: "Spring newsletter",
     status: "active",

@@ -41,7 +41,6 @@ export function NewBotDialog({
           {/* Mounted with the popup, so each opening starts empty. */}
           <NewBotForm
             bots={bots}
-            primaryAtFirst={false}
             onCreate={onCreate}
             onCancel={() => onOpenChange(false)}
             onUnsavedChange={onUnsavedChange}

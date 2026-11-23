@@ -19,7 +19,7 @@ import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
-import { RoomAvatar } from "./avatar/BotAvatar";
+import { RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { toneClass } from "./RosterRow";
 import { Kbd } from "./ui/kbd";
@@ -137,13 +137,7 @@ export function ConversationHeader({
         {subject._tag === "bot" ? (
           <LiveBotAvatar bot={subject.bot} size={32} />
         ) : (
-          <RoomAvatar
-            size={32}
-            members={subject.room.members.flatMap((id) => {
-              const bot = bots.get(id);
-              return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
-            })}
-          />
+          <RoomAvatar size={32} members={roomAvatarMembers(subject.room, bots)} />
         )}
         <span className="flex min-w-0 flex-col items-start">
           <button

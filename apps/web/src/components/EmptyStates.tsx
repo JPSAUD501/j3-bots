@@ -12,7 +12,7 @@ import {
   heldHelloText,
   quietConversationText,
 } from "@j3-bots/client-runtime/wording";
-import { BotAvatar, RoomAvatar } from "./avatar/BotAvatar";
+import { BotAvatar, RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
 import { CommandLine } from "./CommandLine";
 import { useConnectionLineShown } from "./ConnectionBanner";
@@ -194,21 +194,22 @@ export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineSta
 }
 
 /** A room nothing has been said in yet: its members, and who answers what is written there. */
-export function QuietRoom({ room }: { room: Room }) {
+export function QuietRoom({ room }: { room: Extract<Room, { readonly status: "active" }> }) {
   const { t } = useI18n();
   const bots = useBots();
+  const host = bots.get(room.hostId);
   return (
     <Centered>
       <span className="pop-in">
-        <RoomAvatar
-          size={96}
-          members={room.members.flatMap((id) => {
-            const bot = bots.get(id);
-            return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
-          })}
-        />
+        <RoomAvatar size={96} members={roomAvatarMembers(room, bots)} />
       </span>
-      <Heading title={room.name} body={t("empty.quiet.room")} />
+      <Heading
+        title={room.name}
+        body={
+          // The host bot may arrive after the room does.
+          host ? t("empty.quiet.room", { host: host.profile.name }) : t("empty.quiet.roomAnyHost")
+        }
+      />
     </Centered>
   );
 }

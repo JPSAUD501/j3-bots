@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Avatar } from "@j3-bots/contracts";
+import type { Avatar, Bot, BotId, Room } from "@j3-bots/contracts";
 import {
   avatarFace,
   avatarSeed,
@@ -402,12 +402,28 @@ export function BotAvatar({
   );
 }
 
+interface RoomAvatarMember {
+  readonly id: string;
+  readonly avatar: Avatar;
+}
+
+/** The room's members as its avatar draws them, leaving out any bot not known yet. */
+export function roomAvatarMembers(
+  room: Room,
+  bots: ReadonlyMap<BotId, Bot>,
+): ReadonlyArray<RoomAvatarMember> {
+  return room.members.flatMap((id) => {
+    const bot = bots.get(id);
+    return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
+  });
+}
+
 /** Two members overlapping and still: a room, idle, or asleep with the bots while offline. */
 export function RoomAvatar({
   members,
   size,
 }: {
-  readonly members: ReadonlyArray<{ readonly id: string; readonly avatar: Avatar }>;
+  readonly members: ReadonlyArray<RoomAvatarMember>;
   readonly size: number;
 }) {
   const [back, front] = members;

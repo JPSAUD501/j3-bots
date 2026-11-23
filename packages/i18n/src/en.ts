@@ -543,7 +543,9 @@ export const en = {
   "empty.quiet.waitingForReset": "{name} says hello when the usage limit resets.",
   "empty.quiet.waitingForResetAt": "{name} says hello when the usage limit resets {when}.",
   "empty.quiet.room":
-    "No messages yet. The host answers what you write here, and @ asks any member.",
+    "No messages yet. {host} answers what you write here, and an @ brings in any other member.",
+  "empty.quiet.roomAnyHost":
+    "No messages yet. The host answers what you write here, and an @ brings in any other member.",
   "empty.quiet.connectHint": "To connect one, run this on the machine where J3 Bots is installed.",
 
   "message.sending": "Sending…",
