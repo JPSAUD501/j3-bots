@@ -15,6 +15,7 @@ A self-hosted product that turns the subscriptions you already pay for into a sm
 - A **bot** is a teammate with a name, a job, one ongoing conversation and its own memory.
 - Bots **work while you are away**: on a schedule, when an event arrives, or when another bot hands them something.
 - Bots **talk to each other**, one to one and in group chats, and bring you in only when a decision needs you.
+- Bots **use the web and your services**: a browser on your machine that you can watch and take over, and the MCP servers you connect from a gallery, signed in once on your server.
 - You reach them from **your phone, your desktop and the browser**, with the same conversation everywhere.
 - Everything runs on **your machine**. Memory is plain files you can read, edit and back up.
 
@@ -38,8 +39,8 @@ A self-hosted product that turns the subscriptions you already pay for into a sm
 
 - **A hosted service.** J3 Bots is software you run.
 - **A general coding interface.** T3 Code is already that. A bot can do coding work, but J3 Bots' clients do not show diffs, worktrees or pull requests.
-- **A marketplace of connectors.** Bots get the tools the underlying harness already has, plus whatever MCP servers and skills the operator installs. J3 Bots does not build integrations for third-party services.
-- **A hosted computer with a browser the user watches.** Bots work on the machine J3 Bots runs on. A managed desktop per bot is out of scope.
+- **A computer in the cloud.** Bots work on the machine J3 Bots runs on, and so does their browser. A managed desktop per bot is out of scope.
+- **Integrations of its own for third-party services.** Bots reach other services through MCP servers: those the harness already has, and those the operator connects. J3 Bots builds none of its own.
 - **Multi-tenant teams.** One operator, their bots. Sharing a bot with other people is not planned for the first versions.
 - **Hiding the technology.** J3 Bots does not pretend the bot is a person or conceal the model behind it.
 
