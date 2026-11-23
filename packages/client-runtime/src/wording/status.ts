@@ -5,6 +5,7 @@ import {
   type Entry,
   type EntryPreview,
   entryText,
+  foldEnding,
   type FailureClass,
   type MessageEntry,
   type Room,
@@ -91,7 +92,10 @@ function failureText(
  * received.
  */
 function previewSummary(
-  preview: Pick<EntryPreview, "kind" | "author" | "text" | "recipientId" | "step" | "notice">,
+  preview: Pick<
+    EntryPreview,
+    "kind" | "author" | "text" | "recipientId" | "step" | "ending" | "notice"
+  >,
   ctx: PresentationContext,
   { owner, current }: { readonly owner: BotId | null; readonly current: boolean },
 ): string {
@@ -115,7 +119,7 @@ function previewSummary(
     case "secret-request":
       return t(current ? "summary.needsSecret" : "summary.askedSecret", { label: text });
     case "work-fold":
-      return workDoneText(preview.step, ctx.i18n);
+      return workDoneText(preview.step, preview.ending, ctx.i18n);
     case "notice":
       if (preview.notice === null) return t("summary.notice");
       return preview.notice._tag === "unknown"
@@ -217,6 +221,7 @@ export function entrySummary(
       text: entryText(entry),
       recipientId: entry._tag === "handoff" ? entry.recipientId : null,
       step: null,
+      ending: foldEnding(entry),
       notice: entry._tag === "notice" ? entry.notice : null,
     },
     ctx,

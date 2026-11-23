@@ -74,6 +74,8 @@ const sentences = {
   "summary.needsSecret": "Precisa de uma credencial: {label}",
   "summary.askedSecret": "Pediu uma credencial: {label}",
   "summary.workFold": "Trabalhou um pouco",
+  "summary.workStopped": "Parou",
+  "summary.workFailed": "Falhou",
   "summary.notice": "Deixou um aviso",
   "summary.ran": "Rodou {label}",
   "summary.edited": "Editou {label}",

@@ -56,6 +56,7 @@ export function preview(
     text,
     recipientId,
     step: null,
+    ending: null,
     notice: null,
     createdAt: at(createdAt),
   };

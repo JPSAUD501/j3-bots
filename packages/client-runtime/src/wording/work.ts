@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { StepSummary, StepTool, WorkFoldEntry, WorkStep, WorkTool } from "@j3-bots/contracts";
+import type {
+  StepSummary,
+  StepTool,
+  TurnEnding,
+  WorkFoldEntry,
+  WorkStep,
+  WorkTool,
+} from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { firstLine } from "../presentation/roster.ts";
@@ -52,10 +59,21 @@ export function activityText(activity: string | null, tool: StepTool, i18n: I18n
   return activity ?? i18n.t("presence.working");
 }
 
-/** What a turn's work did, from the step that says it best, as the roster says it. */
-export function workDoneText(step: StepSummary | null, i18n: I18n): string {
+/**
+ * What a turn's work did, from the step that says it best, as the roster says
+ * it. With no step, a turn stopped or failed before its first says only that.
+ */
+export function workDoneText(
+  step: StepSummary | null,
+  ending: TurnEnding | null,
+  i18n: I18n,
+): string {
   const { t } = i18n;
-  if (step === null) return t("summary.workFold");
+  if (step === null) {
+    if (ending === "interrupted") return t("summary.workStopped");
+    if (ending === "failed") return t("summary.workFailed");
+    return t("summary.workFold");
+  }
   const words = wordsOf(step.tool);
   if (words !== null) return t(words.did);
   const label = firstLine(step.label);

@@ -2,7 +2,7 @@
 import { EntryId, EntryOrder, type WorkFoldEntry } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { workFoldTitle } from "./work.ts";
+import { workDoneText, workFoldTitle } from "./work.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", {});
 
@@ -97,5 +97,15 @@ describe("workFoldTitle", () => {
     expect(ended("completed")).toBe("Worked for 1m 12s");
     expect(ended("interrupted")).toBe("Stopped after 1m 12s");
     expect(ended("failed")).toBe("Failed after 1m 12s");
+  });
+});
+
+describe("workDoneText", () => {
+  it("says a turn stopped or failed before its first step did only that", () => {
+    expect(workDoneText(null, "interrupted", ctx.i18n)).toBe("Stopped");
+    expect(workDoneText(null, "failed", ctx.i18n)).toBe("Failed");
+    expect(workDoneText(null, null, ctx.i18n)).toBe("Did some work");
+    const ran = { kind: "command", tool: null, label: "git status" } as const;
+    expect(plain(workDoneText(ran, "interrupted", ctx.i18n))).toBe("Ran git status");
   });
 });

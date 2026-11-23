@@ -630,6 +630,10 @@ export const entryText = (entry: Entry): string => {
   }
 };
 
+/** How a work fold's turn ended, once it has; null for a fold still running and every other entry. */
+export const foldEnding = (entry: Entry): TurnEnding | null =>
+  entry._tag === "work-fold" && entry.status._tag === "finished" ? entry.status.ending : null;
+
 /**
  * What the roster shows under a name: the latest entry, cut short. `text` is
  * the message, the question or the action, at most `PREVIEW_LENGTH` characters,
@@ -648,6 +652,12 @@ export const EntryPreview = Schema.Struct({
    * with none, for every other entry, and from a server that predates it.
    */
   step: Schema.NullOr(StepSummary).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * How a work fold's turn ended, once it has (`foldEnding`), so a fold of no
+   * steps, a turn stopped or failed before its first, says so; `null` while
+   * it runs, for every other entry, and from a server that predates it.
+   */
+  ending: Schema.NullOr(TurnEnding).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   /**
    * A notice's own words, of any kind; `null` for every other entry, and
    * from a server that predates it.

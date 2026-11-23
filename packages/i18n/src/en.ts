@@ -76,6 +76,8 @@ export const en = {
   "summary.needsSecret": "Needs a credential: {label}",
   "summary.askedSecret": "Asked for a credential: {label}",
   "summary.workFold": "Did some work",
+  "summary.workStopped": "Stopped",
+  "summary.workFailed": "Failed",
   "summary.notice": "Left a notice",
   "summary.ran": "Ran {label}",
   "summary.edited": "Edited {label}",

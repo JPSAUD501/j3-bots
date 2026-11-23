@@ -3,6 +3,7 @@ import {
   type Entry,
   type EntryPreview,
   entryText,
+  foldEnding,
   PREVIEW_LENGTH,
   type WorkStep,
 } from "@j3-bots/contracts";
@@ -26,7 +27,8 @@ const cut = (text: string, length: number): string => {
 
 /**
  * What the roster shows of an entry: its text, cut short; a notice's own
- * words; and for a work fold, `step`, the step that says what it did.
+ * words; and for a work fold, `step`, the step that says what it did, and
+ * how its turn ended.
  */
 export const previewOf = (entry: Entry, step: WorkStep | null): EntryPreview => ({
   entryId: entry.id,
@@ -38,6 +40,7 @@ export const previewOf = (entry: Entry, step: WorkStep | null): EntryPreview => 
     entry._tag === "work-fold" && step !== null
       ? { kind: step.kind, tool: step.tool, label: step.label }
       : null,
+  ending: foldEnding(entry),
   notice: entry._tag === "notice" ? entry.notice : null,
   createdAt: entry.createdAt,
 });

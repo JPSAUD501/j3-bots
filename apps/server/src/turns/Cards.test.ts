@@ -29,6 +29,7 @@ import {
   turnEnded,
   until,
 } from "../testing/turns.ts";
+import { Roster } from "../roster/Roster.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { BotStates } from "./BotStates.ts";
 import { Cards } from "./Cards.ts";
@@ -753,6 +754,14 @@ it.effect("says a turn the operator stopped before its first step was stopped, a
       "interrupted",
     );
     assert.strictEqual(yield* workedMs(bot.id), Duration.toMillis(Duration.seconds(64)));
+    // The roster says it stopped, not that it worked.
+    const item = (yield* (yield* Roster).items).find(
+      (found) => found._tag === "bot" && found.bot.id === bot.id,
+    );
+    assert.deepStrictEqual(
+      [item?.lastEntry?.kind, item?.lastEntry?.step, item?.lastEntry?.ending],
+      ["work-fold", null, "interrupted"],
+    );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
