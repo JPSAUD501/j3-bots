@@ -26,9 +26,13 @@ import { Routines } from "../routines/Routines.ts";
 import { Roster } from "../roster/Roster.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { Presence } from "../presence/Presence.ts";
+import { connectProviders } from "../providers/connect.ts";
+import { SignIns } from "../providers/SignIns.ts";
 import { Network, reachableOrigins } from "../system/Network.ts";
 import { Cards } from "../turns/Cards.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
+import { RunningWork } from "../turns/RunningWork.ts";
+import { SendPause } from "../turns/SendPause.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
@@ -63,6 +67,8 @@ export const handlers = ServedRpcs.toLayer(
     const listener = yield* Listener;
     const network = yield* Network;
     const { publicOrigin } = yield* ServerConfig;
+    const signIns = yield* SignIns;
+    const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
 
     /**
      * A code, and the origins `j3-bots pair` lists, read when asked since
@@ -147,6 +153,12 @@ export const handlers = ServedRpcs.toLayer(
         devices.registerPush({ commandId, deviceId: device.id, registration }),
       "push.unregister": ({ commandId }) =>
         devices.unregisterPush({ commandId, deviceId: device.id }),
+      "provider.harnesses": () => signIns.locations,
+      "provider.signIn": ({ harness }) => signIns.follow(harness),
+      "provider.cancelSignIn": ({ harness }) => signIns.cancel(harness),
+      // The request carries the key: it is never logged, and has no receipt.
+      "provider.connect": (request) =>
+        connectProviders(request).pipe(Effect.provideContext(connectContext)),
     };
   }),
 );

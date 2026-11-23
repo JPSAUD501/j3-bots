@@ -4,6 +4,7 @@ import {
   type FailureClass,
   type ModelChoice,
   PermissionMode,
+  type ProviderId,
   type WorkStep,
   type WorkStepId,
 } from "@j3-bots/contracts";
@@ -134,6 +135,8 @@ export class TestEngineControl extends Context.Service<
     readonly setReachable: (reachable: boolean) => Effect.Effect<void>;
     /** The base URL of the provider connection last set; never its key. */
     readonly providerConnection: Effect.Effect<Option.Option<string>>;
+    /** The providers `recheckProvider` was asked to check again, in order. */
+    readonly recheckedProviders: Effect.Effect<ReadonlyArray<ProviderId>>;
     /**
      * The next command is applied, and then its reply is lost: it fails with
      * `EngineIndeterminate`.
@@ -582,6 +585,7 @@ const make = Effect.gen(function* () {
   let reachable = true;
   /** The base URL of the provider connection, once one is set. */
   let connection = Option.none<string>();
+  const rechecked: Array<ProviderId> = [];
   let loseReply = false;
   let rejectDispatch = false;
   let rejectAnswer = false;
@@ -1217,6 +1221,11 @@ const make = Effect.gen(function* () {
         return { _tag: "applied", baseUrl: input.baseUrl } as const;
       }),
 
+    connectedEndpoint: Effect.sync(() => Option.getOrNull(connection)),
+
+    recheckProvider: (providerId) =>
+      command(Effect.sync(() => void rechecked.push(providerId))),
+
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 
     ensureProject: ({ workspacePath }) =>
@@ -1636,6 +1645,7 @@ const make = Effect.gen(function* () {
 
   const control = TestEngineControl.of({
     providerConnection: Effect.sync(() => connection),
+    recheckedProviders: Effect.sync(() => [...rechecked]),
 
     setReachable: (value) =>
       Effect.gen(function* () {

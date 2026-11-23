@@ -42,6 +42,13 @@ import {
 } from "./memory.ts";
 import { Room, RoomHopLimit, RoomMembers, RoomName } from "./room.ts";
 import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
+import {
+  HarnessLocation,
+  ProviderConnectionOutcome,
+  ProviderConnectionRequest,
+  ProviderSignInStatus,
+  SignInHarness,
+} from "./provider.ts";
 import { Budgets, NotificationSettingsChange, Settings, TimeZone } from "./settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -583,6 +590,44 @@ export const ClientRpcs = RpcGroup.make(
   Rpc.make("push.unregister", { payload: command, error: CommandError }),
 );
 
+/**
+ * Setting up the providers from a client, as `j3-bots provider` does on the
+ * server's machine. A sign-in opens a page that returns to the harness on the
+ * server's machine, so a client offers it only where it runs the server
+ * itself: the desktop app hosting it (docs/architecture/engine.md, "Signing
+ * in from the app"). Each is new in 0.3.0, at protocol 7: a client calls them
+ * only on a server it runs itself, of its own release, and a server from
+ * before answers each with a defect, which the client shows as the command
+ * to run instead.
+ */
+export const ProviderRpcs = RpcGroup.make(
+  /** Where the server finds each harness, looked up again on every call. */
+  Rpc.make("provider.harnesses", { success: Schema.Array(HarnessLocation) }),
+  /**
+   * Runs the harness's own sign-in, without a terminal, for J3 Bots' home for
+   * it, and follows it: where it stands, then each change, ending once it
+   * ended. One runs at a time for each harness: calling this while one runs,
+   * from this client or another, follows that one. It keeps running while no
+   * client follows it, until it ends, is cancelled or times out.
+   */
+  Rpc.make("provider.signIn", {
+    payload: { harness: SignInHarness },
+    success: ProviderSignInStatus,
+    stream: true,
+  }),
+  /** Stops the harness's sign-in under way, if any. Its home is as it was. */
+  Rpc.make("provider.cancelSignIn", { payload: { harness: SignInHarness } }),
+  /**
+   * Connects Claude Code and Codex to an endpoint, as `j3-bots provider
+   * connect` does, restarting the engine. It has no command id: a receipt
+   * would keep the key. Sending it again stores the same connection again.
+   */
+  Rpc.make("provider.connect", {
+    payload: ProviderConnectionRequest,
+    success: ProviderConnectionOutcome,
+  }),
+);
+
 /** Every RPC a paired client can make, on the socket at `HTTP_PATHS.rpc`. */
 export const J3Rpcs = RosterRpcs.merge(
   EntryRpcs,
@@ -593,4 +638,5 @@ export const J3Rpcs = RosterRpcs.merge(
   EngineRpcs,
   SettingsRpcs,
   ClientRpcs,
+  ProviderRpcs,
 );
