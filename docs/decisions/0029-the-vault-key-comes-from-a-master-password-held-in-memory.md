@@ -1,4 +1,4 @@
-# 0025: The vault's key comes from a master password, held in memory
+# 0029: The vault's key comes from a master password, held in memory
 
 **Status:** Proposed
 
@@ -15,7 +15,7 @@ J3 Bots therefore keeps logins on the server: the **vault**. Whatever it seals t
 - **Nothing on disk opens it.** scrypt derives a key-encryption key from the password. That key wraps a random data key, and the data key seals each value with AES-256-GCM, bound to its record and field. The disk holds the salt, the parameters and the wrapped data key, never a key ([Server: the vault](../architecture/server.md#the-vault)).
 - **Locked at every start.** The server starts with the vault locked. Any paired client can unlock it, and it stays unlocked until a client presses Lock now or the server stops. There is no automatic lock: the operator decides when it closes.
 - **A file of its own, outside the snapshots.** The vault is `<J3_HOME>/vault/vault.sqlite`, with migrations of its own that only move forward. An update never copies it and a rollback never puts an older one back ([decision 0016](0016-an-update-keeps-a-snapshot-to-roll-back-to.md)). A release that finds a newer vault leaves it alone and says so.
-- **Wrong passwords make unlocking wait.** After five wrong passwords in a row, each further one doubles the wait, from 30 seconds up to an hour.
+- **Wrong passwords make unlocking wait.** After five wrong passwords in a row, each further one doubles the wait, from 30 seconds up to an hour. The vault's file keeps the count and the wait, so a restart does not end them; a day with no wrong password starts the count over.
 - **Connectors share it.** The secrets connectors need are a second kind of record in the same vault, under the same key. A locked vault therefore stops every connector that needs a secret until a client unlocks it.
 - **No way back without the password.** There is no recovery key and no reset. Setup, onboarding and every password change say that saved logins cannot be recovered without the password.
 

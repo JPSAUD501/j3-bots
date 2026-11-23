@@ -30,9 +30,9 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0022](0022-the-operator-arranges-the-roster-in-sections.md) | The operator arranges the roster in sections the server keeps | Proposed |
 | [0023](0023-a-bot-template-is-a-file.md) | A bot template is a file, built and imported by the server | Accepted |
 | [0024](0024-the-local-server-is-a-supervised-child-of-the-app.md) | The local-mode server is a supervised child of the app | Proposed |
-| [0025](0025-the-vault-key-comes-from-a-master-password-held-in-memory.md) | The vault's key comes from a master password, held in memory | Proposed |
 | [0026](0026-a-bot-uses-connected-services-through-j3-bots.md) | A bot uses connected services through J3 Bots, which holds the sign-in | Accepted |
 | [0027](0027-connector-tools-reach-a-bot-through-the-j3-bridge.md) | Connector tools reach a bot through the `j3` bridge, under the bot's permission mode | Proposed |
 | [0028](0028-one-secret-store-for-logins-and-connector-secrets.md) | One secret store for logins and connector secrets | Proposed |
+| [0029](0029-the-vault-key-comes-from-a-master-password-held-in-memory.md) | The vault's key comes from a master password, held in memory | Proposed |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.
