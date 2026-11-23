@@ -86,6 +86,14 @@ Done when a conversation started on one device continues on the others with noth
 - **Built:** the one-command install, `j3-bots doctor`, `j3-bots update` with a snapshot to roll back to, the contribution policy and license, and the [operator documentation](operations/install.md).
 - **Not yet:** the upgrade path is exercised on two engine versions, not three ([Releasing: the upgrade check](operations/releasing.md#the-upgrade-check)). The tool bridge, pairing and webhooks were each reviewed and hardened in a pull request of their own, but no one outside the project has reviewed them. The name is chosen, and whether it is free to use is [open question 10](open-questions.md#10-is-the-name-free-to-use).
 
+## Next
+
+Decided by the owner on 2026-11-23, after 0.3.0. Each is planned in lanes of its own; none is built yet.
+
+- **The bot's browser, in the clients.** A live view of the tab a bot is using, and taking control of it from any client: the bot waits and goes on when control is handed back. A bot that meets a check, a login, a second factor, a QR code or a passkey asks the operator on a card instead of getting around it. One browser profile keeps the operator's logins. The browser is the engine's own, on the machine J3 Bots runs on.
+- **A credential vault.** Logins saved per site, encrypted and the operator's only, typed into a page by the server so the model never reads them, and one-time codes.
+- **A connector gallery.** MCP servers to find and connect, from the MCP Registry and a curated list, for one bot, some or all. The server signs in, OAuth included, keeps the tokens encrypted and renews them, and bots use the tools through it without ever holding a token.
+
 ## Out of scope for now
 
 - An iOS build of the mobile app. The app is written for both platforms, but only Android is built and released.

@@ -37,8 +37,8 @@ The clearest existing design for persistent AI teammates. What follows comes fro
 | --- | --- |
 | Hosted, with its own subscription | Self-hosted, on subscriptions the operator already has |
 | The model is not selectable | A model per bot |
-| A shared cloud computer with a browser the user can watch | The operator's own machine; no managed desktop |
-| A catalog of connected apps | The harness's own tools, plus what the operator installs |
+| A shared cloud computer with a browser the user can watch | A browser on the operator's own machine, watched and taken over from the clients (planned); no managed desktop |
+| A catalog of connected apps | A gallery of MCP servers that the server signs in to and bridges, so bots never hold the tokens (planned) |
 | In a group, bots decide among themselves who answers | A host answers unaddressed messages, so one bot wakes per message |
 | Memory stored by the service | Memory as files the operator owns |
 
