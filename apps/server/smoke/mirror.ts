@@ -56,10 +56,10 @@ export const MIRROR_PUBLIC_KEY = mirrorKey.publicKey
 const signature = (sums: Uint8Array) =>
   encoded(`${NodeCrypto.sign(null, sums, mirrorKey.privateKey).toString("base64")}\n`);
 
-export const sha256 = (bytes: Uint8Array) =>
+const sha256 = (bytes: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
-export const encoded = (text: string) => new TextEncoder().encode(text);
+const encoded = (text: string) => new TextEncoder().encode(text);
 
 /** A release archive `pnpm release` built, named in `variable`, and the version its name says. */
 export const releaseArchive = Effect.fn("releaseArchive")(function* (variable: string) {
