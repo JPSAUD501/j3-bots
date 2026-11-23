@@ -17,7 +17,9 @@
 //   the same files without web/ or the launcher, which electron-builder.yml
 //   takes into each package.
 //
-// --server-runtime builds only the runtime, as the desktop packages need.
+// --server-runtime builds only the runtime, as the desktop packages need. On a
+// machine with no runtime of its own (an Intel Mac, Linux on arm64), it builds
+// nothing and says so: a desktop package built there carries none.
 //
 // Needs the network, to reach nodejs.org. The archive needs GNU tar, and Node
 // for Linux or macOS tar and xz; Node for Windows is unpacked in-process.
@@ -327,114 +329,137 @@ const options = NodeUtil.parseArgs({
   },
   strict: true,
 }).values;
-const platform = options.platform ?? hostPlatform();
-if (platform === undefined || !isPlatform(platform)) {
-  const named = platform ?? `this machine (${process.platform}-${process.arch})`;
+const carried = PLATFORMS.filter((each) => platformBuild(each).serverRuntime);
+
+/** Builds what a release holds for `platform`, or only its server runtime. */
+const buildRelease = async (platform: Platform, runtimeOnly: boolean) => {
+  const build = platformBuild(platform);
+  if (runtimeOnly && !build.serverRuntime) {
+    throw new Error(
+      `No desktop package carries a server runtime for ${platform}, only for ${carried.join(", ")}.`,
+    );
+  }
+  const withArchive = build.archive && !runtimeOnly;
+  const withRuntime = build.serverRuntime;
+  const parts: ReadonlyArray<Part> = withArchive ? ["server", "web"] : ["server"];
+
+  const out = NodePath.resolve(options.out ?? NodePath.join(ROOT, "dist", "release"));
+  const version = required(
+    text(readJson(NodePath.join(SERVER, "package.json")), "version"),
+    "The version in apps/server/package.json",
+  );
+  const engine = required(
+    text(readJson(NodePath.join(ROOT, "engine.json")), "version"),
+    "The engine version in engine.json",
+  );
+
+  const work = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j3-release-"));
+  try {
+    const inputs = NodePath.join(work, "inputs");
+    const withInputs = { ...process.env, [BUNDLE_INPUTS_FOLDER]: inputs };
+    if (parts.includes("web")) vp("build", WEB, withInputs);
+    vp("pack", SERVER, withInputs);
+    const packages = thirdParties([...recordedInputs(inputs, parts), ...compiledIn(parts)]);
+    const pin = nodePin(platform, readJson(NodePath.join(ROOT, "package.json")));
+    const node = unpackNode(platform, pin, await downloadNode(pin), work);
+    const stageInto = (stage: string, holder: "archive" | "folder") =>
+      stageServer({
+        stage,
+        manifest: { version, platform, node: node.version, engine },
+        node,
+        serverBundle: NodePath.join(SERVER, "dist"),
+        root: ROOT,
+        notices: notices(
+          { version, platform },
+          node,
+          within(packages, holder === "archive" ? ["server", "web"] : ["server"]),
+          holder,
+        ),
+      });
+    NodeFS.mkdirSync(out, { recursive: true });
+    const report: Array<string> = [];
+
+    if (withArchive) {
+      const name = `j3-bots-${version}-${platform}`;
+      const stage = NodePath.join(work, "stage", name);
+      NodeFS.mkdirSync(NodePath.dirname(stage));
+      stageInto(stage, "archive");
+      NodeFS.mkdirSync(NodePath.join(stage, "bin"));
+      NodeFS.writeFileSync(NodePath.join(stage, "bin", "j3-bots"), LAUNCHER, { mode: 0o755 });
+      NodeFS.cpSync(NodePath.join(WEB, "dist"), NodePath.join(stage, "web"), {
+        recursive: true,
+        filter: (source) => !source.endsWith(".map"),
+      });
+      const archive = NodePath.join(out, `${name}.tar.gz`);
+      run(
+        "tar",
+        [
+          "--sort=name",
+          "--owner=0",
+          "--group=0",
+          "--numeric-owner",
+          "-czf",
+          archive,
+          "-C",
+          NodePath.dirname(stage),
+          name,
+        ],
+        work,
+      );
+      const bytes = NodeFS.readFileSync(archive);
+      report.push(archive, `  ${megabytes(bytes.byteLength)}, SHA-256 ${sha256(bytes)}`);
+    }
+
+    if (withRuntime) {
+      // Staged beside where it goes, so it replaces an earlier build in one rename.
+      const runtimes = NodePath.join(out, "server-runtime");
+      NodeFS.mkdirSync(runtimes, { recursive: true });
+      const folder = NodePath.join(runtimes, platform);
+      const stage = NodeFS.mkdtempSync(NodePath.join(runtimes, `.${platform}-`));
+      NodeFS.rmdirSync(stage);
+      try {
+        stageInto(stage, "folder");
+        NodeFS.rmSync(folder, { recursive: true, force: true });
+        NodeFS.renameSync(stage, folder);
+      } finally {
+        NodeFS.rmSync(stage, { recursive: true, force: true });
+      }
+      report.push(folder, `  ${megabytes(folderSize(folder))} on disk`);
+    }
+
+    console.log(
+      [
+        ...report,
+        `  Node.js ${pin.version} and ${within(packages, parts).length} third-party packages in THIRD_PARTY_NOTICES`,
+      ].join("\n"),
+    );
+  } finally {
+    NodeFS.rmSync(work, { recursive: true, force: true });
+  }
+};
+
+const runtimeOnly = options["server-runtime"];
+const named = options.platform;
+if (named !== undefined && !isPlatform(named)) {
   throw new Error(
     `J3 Bots builds nothing for ${named}. Name a platform with --platform: ${PLATFORMS.join(", ")}.`,
   );
 }
-const build = platformBuild(platform);
-if (options["server-runtime"] && !build.serverRuntime) {
-  const carried = PLATFORMS.filter((each) => platformBuild(each).serverRuntime);
-  throw new Error(
-    `No desktop package carries a server runtime for ${platform}, only for ${carried.join(", ")}.`,
-  );
-}
-const withArchive = build.archive && !options["server-runtime"];
-const withRuntime = build.serverRuntime;
-const parts: ReadonlyArray<Part> = withArchive ? ["server", "web"] : ["server"];
-
-const out = NodePath.resolve(options.out ?? NodePath.join(ROOT, "dist", "release"));
-const version = required(
-  text(readJson(NodePath.join(SERVER, "package.json")), "version"),
-  "The version in apps/server/package.json",
-);
-const engine = required(
-  text(readJson(NodePath.join(ROOT, "engine.json")), "version"),
-  "The engine version in engine.json",
-);
-
-const work = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j3-release-"));
-try {
-  const inputs = NodePath.join(work, "inputs");
-  const withInputs = { ...process.env, [BUNDLE_INPUTS_FOLDER]: inputs };
-  if (parts.includes("web")) vp("build", WEB, withInputs);
-  vp("pack", SERVER, withInputs);
-  const packages = thirdParties([...recordedInputs(inputs, parts), ...compiledIn(parts)]);
-  const pin = nodePin(platform, readJson(NodePath.join(ROOT, "package.json")));
-  const node = unpackNode(platform, pin, await downloadNode(pin), work);
-  const stageInto = (stage: string, holder: "archive" | "folder") =>
-    stageServer({
-      stage,
-      manifest: { version, platform, node: node.version, engine },
-      node,
-      serverBundle: NodePath.join(SERVER, "dist"),
-      root: ROOT,
-      notices: notices(
-        { version, platform },
-        node,
-        within(packages, holder === "archive" ? ["server", "web"] : ["server"]),
-        holder,
-      ),
-    });
-  NodeFS.mkdirSync(out, { recursive: true });
-  const report: Array<string> = [];
-
-  if (withArchive) {
-    const name = `j3-bots-${version}-${platform}`;
-    const stage = NodePath.join(work, "stage", name);
-    NodeFS.mkdirSync(NodePath.dirname(stage));
-    stageInto(stage, "archive");
-    NodeFS.mkdirSync(NodePath.join(stage, "bin"));
-    NodeFS.writeFileSync(NodePath.join(stage, "bin", "j3-bots"), LAUNCHER, { mode: 0o755 });
-    NodeFS.cpSync(NodePath.join(WEB, "dist"), NodePath.join(stage, "web"), {
-      recursive: true,
-      filter: (source) => !source.endsWith(".map"),
-    });
-    const archive = NodePath.join(out, `${name}.tar.gz`);
-    run(
-      "tar",
-      [
-        "--sort=name",
-        "--owner=0",
-        "--group=0",
-        "--numeric-owner",
-        "-czf",
-        archive,
-        "-C",
-        NodePath.dirname(stage),
-        name,
-      ],
-      work,
-    );
-    const bytes = NodeFS.readFileSync(archive);
-    report.push(archive, `  ${megabytes(bytes.byteLength)}, SHA-256 ${sha256(bytes)}`);
-  }
-
-  if (withRuntime) {
-    // Staged beside where it goes, so it replaces an earlier build in one rename.
-    const runtimes = NodePath.join(out, "server-runtime");
-    NodeFS.mkdirSync(runtimes, { recursive: true });
-    const folder = NodePath.join(runtimes, platform);
-    const stage = NodeFS.mkdtempSync(NodePath.join(runtimes, `.${platform}-`));
-    NodeFS.rmdirSync(stage);
-    try {
-      stageInto(stage, "folder");
-      NodeFS.rmSync(folder, { recursive: true, force: true });
-      NodeFS.renameSync(stage, folder);
-    } finally {
-      NodeFS.rmSync(stage, { recursive: true, force: true });
-    }
-    report.push(folder, `  ${megabytes(folderSize(folder))} on disk`);
-  }
-
+const target = named ?? hostPlatform();
+if (
+  runtimeOnly &&
+  named === undefined &&
+  !(target !== undefined && platformBuild(target).serverRuntime)
+) {
+  // The desktop's own build asks for this machine's runtime. A package built
+  // here, such as on an Intel Mac, carries none, and its packaging hook expects none.
   console.log(
-    [
-      ...report,
-      `  Node.js ${pin.version} and ${within(packages, parts).length} third-party packages in THIRD_PARTY_NOTICES`,
-    ].join("\n"),
+    `No server runtime for this machine (${process.platform}-${process.arch}): local mode runs on ${carried.join(", ")}, so a desktop package built here carries none.`,
   );
-} finally {
-  NodeFS.rmSync(work, { recursive: true, force: true });
+} else if (target === undefined) {
+  throw new Error(
+    `J3 Bots builds nothing for this machine (${process.platform}-${process.arch}). Name a platform with --platform: ${PLATFORMS.join(", ")}.`,
+  );
+} else {
+  await buildRelease(target, runtimeOnly);
 }

@@ -118,17 +118,14 @@ jobs:
             os: ubuntu-24.04
             targets: --linux --x64
             runtime: linux-unpacked/resources/server-runtime
-            node: node/bin/node
           - name: mac
             os: macos-15
             targets: --mac --x64 --arm64
             runtime: mac-arm64/J3 Bots.app/Contents/Resources/server-runtime
-            node: node/bin/node
           - name: windows
             os: windows-2025
             targets: --win --x64
             runtime: win-unpacked/resources/server-runtime
-            node: node/node.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
@@ -180,20 +177,13 @@ jobs:
         run: vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
 
       # The runtime as packaged (and, on macOS, signed) runs on this runner:
-      # its Node, and the server on it, which prints the tag's version.
-      - name: Run the packaged server runtime
-        working-directory: apps/desktop/release
+      # its release.json and files are right for the tag, its Node is the
+      # pinned one, its server prints `j3-bots v<tag's version>` and starts.
+      - name: Check the packaged server runtime
         env:
-          RUNTIME: ${{ matrix.runtime }}
-          NODE: ${{ matrix.node }}
+          RUNTIME: apps/desktop/release/${{ matrix.runtime }}
           VERSION: ${{ needs.draft.outputs.version }}
-        run: |
-          "$RUNTIME/$NODE" --version
-          printed="$("$RUNTIME/$NODE" "$RUNTIME/server/bin.mjs" --version)"
-          if [[ "$printed" != "$VERSION" ]]; then
-            echo "::error::The packaged server runtime printed '$printed' for --version, not $VERSION."
-            exit 1
-          fi
+        run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION"
 
       # The packages, their block maps and the feed files (latest-linux.yml,
       # latest-mac.yml, latest.yml, or the pre-release channel's), not

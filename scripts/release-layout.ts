@@ -111,7 +111,7 @@ export const hostPlatform = (): Platform | undefined => {
 };
 
 /** Where Node's executable is in a server runtime or an archive's folder, for `platform`. */
-const nodeExecutable = (folder: string, platform: Platform) =>
+export const nodeExecutable = (folder: string, platform: Platform) =>
   NodePath.join(folder, "node", ...platformBuild(platform).nodeExecutable.split("/"));
 
 // ---------------------------------------------------------------------------

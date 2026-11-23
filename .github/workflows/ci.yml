@@ -120,19 +120,18 @@ jobs:
             os: ubuntu-24.04
             targets: --linux --x64
             runtime: linux-unpacked/resources/server-runtime
-            node: node/bin/node
           - name: mac
             os: macos-15
             targets: --mac --x64 --arm64
             runtime: mac-arm64/J3 Bots.app/Contents/Resources/server-runtime
-            node: node/bin/node
           - name: windows
             os: windows-2025
             targets: --win --x64
             runtime: win-unpacked/resources/server-runtime
-            node: node/node.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      VERSION: 0.0.0-ci.${{ github.run_number }}
     defaults:
       run:
         shell: bash
@@ -148,6 +147,12 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+
+      # A version of its own, set as the release sets the tag's, so that the
+      # check below proves the runtime and the app carry the version given.
+      - name: Version
+        working-directory: apps/server
+        run: npm pkg set version="$VERSION"
 
       - name: Build the server runtime
         run: node scripts/build-release.ts --server-runtime
@@ -166,16 +171,12 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
           CSC_FOR_PULL_REQUEST: "true"
           TARGETS: ${{ matrix.targets }}
-        run: vp exec -- electron-builder $TARGETS --publish never
+        run: vp exec -- electron-builder $TARGETS --publish never -c.extraMetadata.version="$VERSION"
 
-      - name: Run the packaged server runtime
-        working-directory: apps/desktop/release
+      - name: Check the packaged server runtime
         env:
-          RUNTIME: ${{ matrix.runtime }}
-          NODE: ${{ matrix.node }}
-        run: |
-          "$RUNTIME/$NODE" --version
-          "$RUNTIME/$NODE" "$RUNTIME/server/bin.mjs" --version
+          RUNTIME: apps/desktop/release/${{ matrix.runtime }}
+        run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION"
 
       - name: Package sizes
         working-directory: apps/desktop/release
