@@ -14,8 +14,9 @@
  * - {@link sharedSkills}: the skills J3 Bots ships, which the server installs
  *   for every bot.
  * - {@link renderConnectorResult}: what a bot reads back from a connector's
- *   tool, framed as untrusted data; {@link defuseTags}, for other remote text
- *   a bot reads, such as a connector tool's description.
+ *   tool, framed as untrusted data; {@link connectorToolDescription}: a
+ *   connector tool's description, after a line saying whose it is;
+ *   {@link defuseTags}, for other remote text a bot reads.
  * - {@link PROMPT_VERSION}: one identifier for all of the above.
  *
  * Every function here is pure. `renderWake` and `renderConnectorResult` draw their nonce from `SecureRandom`.
@@ -71,6 +72,7 @@ export {
 export {
   type ConnectorResult,
   type ConnectorUnavailable,
+  connectorToolDescription,
   renderConnectorResult,
 } from "./connectorResult.ts";
 export { type SharedSkill, sharedSkills } from "./skills.ts";

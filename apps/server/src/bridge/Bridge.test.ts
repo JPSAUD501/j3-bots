@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import { CommandId } from "@j3-bots/contracts";
 import { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import { toolList } from "@j3-bots/prompts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -188,7 +189,7 @@ it.layer(endpoint, { excludeTestServices: true })("j3 bridge", (it) => {
         call(5, "create_bot", { name: "Scout" }),
       ]);
 
-      assert.strictEqual(replies.get(2)?.tools?.length, 14);
+      assert.strictEqual(replies.get(2)?.tools?.length, toolList.length);
       assert.deepStrictEqual(replies.get(3)?.content?.[0]?.text, '{"recorded":true}');
       assert.isTrue(replies.get(4)?.isError);
       // Only the primary bot creates teammates.

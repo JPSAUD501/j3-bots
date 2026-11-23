@@ -43,6 +43,7 @@ import {
 import {
   type ConnectorResult,
   type ConnectorUnavailable,
+  connectorToolDescription,
   renderConnectorResult,
 } from "@j3-bots/prompts";
 import * as Cause from "effect/Cause";
@@ -85,7 +86,7 @@ export interface OfferedTool {
   readonly connectorId: ConnectorId;
   /** Its name at the connector's server. */
   readonly upstreamName: string;
-  /** Cleaned and capped, as the operator accepted it. */
+  /** As the operator accepted it, cleaned and capped, after J3 Bots' line saying whose it is. */
   readonly description: string;
   readonly inputSchema: Schema.JsonObject;
 }
@@ -650,7 +651,7 @@ export const layer = Layer.effect(
           name: toolName(connector.slug, tool.name),
           connectorId: connector.id,
           upstreamName: tool.name,
-          description: tool.description,
+          description: connectorToolDescription(connector.name, tool.description),
           inputSchema: tool.inputSchema,
         })),
       );

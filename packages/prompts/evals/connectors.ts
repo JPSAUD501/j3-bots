@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import {
-  DECODE_OPTIONS,
+  connectorToolDescription,
   renderConnectorResultWithNonce,
-  SUGGESTION_REFUSED,
-  SUGGESTION_SHOWN,
-  tools,
-} from "../src/index.ts";
+} from "../src/connectorResult.ts";
+import { DECODE_OPTIONS, SUGGESTION_REFUSED, SUGGESTION_SHOWN, tools } from "../src/index.ts";
 import type { FunctionTool } from "./model.ts";
 
 /**
@@ -60,8 +58,7 @@ export interface ConnectorStage {
  */
 const GALLERY = ["Notion", "Linear", "GitHub", "Slack", "Gmail", "Google Calendar", "Google Drive"];
 
-const fold = (value: string) =>
-  value.trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const fold = (value: string) => value.trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 /** The gallery's name for what the bot asked for, matched as the server matches a curated entry's name. */
 const galleryName = (service: string): string | undefined =>
@@ -74,16 +71,14 @@ const toolName = (connector: Connector, tool: ConnectorTool): string =>
 /** The connector tools a bot is offered, in the shape the model takes. */
 export const connectorTools = (stage: ConnectorStage): ReadonlyArray<FunctionTool> =>
   stage.connected.flatMap((connector) =>
-    connector.tools.map(
-      (tool): FunctionTool => ({
-        type: "function",
-        function: {
-          name: toolName(connector, tool),
-          description: tool.description,
-          parameters: tool.parameters,
-        },
-      }),
-    ),
+    connector.tools.map((tool): FunctionTool => ({
+      type: "function",
+      function: {
+        name: toolName(connector, tool),
+        description: connectorToolDescription(connector.name, tool.description),
+        parameters: tool.parameters,
+      },
+    })),
   );
 
 const nonce = (): string =>

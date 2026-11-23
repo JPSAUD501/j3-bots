@@ -301,8 +301,7 @@ export const curatedFind = (list: CuratedList, service: string): CuratedEntry | 
   if (wanted === "") return undefined;
   const named = list.connectors.find(
     (entry) =>
-      entry.id === wanted ||
-      LANGUAGES.some((language) => fold(nameOf(entry, language)) === wanted),
+      entry.id === wanted || LANGUAGES.some((language) => fold(nameOf(entry, language)) === wanted),
   );
   return named ?? list.connectors.find((entry) => curatedMatches(list, entry, service));
 };

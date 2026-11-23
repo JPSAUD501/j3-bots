@@ -496,19 +496,23 @@ export const layer = Layer.effect(
     const latest = (target: EntryTarget, limit: number) =>
       Effect.map(newest(target, null, limit), (page) => page.entries);
 
+    const allOfKind = Effect.fn("Entries.ofKind")(function* (
+      target: EntryTarget,
+      kind: Entry["_tag"],
+    ) {
+      const rows = yield* sql`
+        SELECT ${sql.literal(ENTRY_COLUMNS)} FROM entries
+        WHERE ${targetColumn(target)} AND kind = ${kind}
+        ORDER BY position
+      `;
+      const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(EntryRow))(rows);
+      return yield* Effect.forEach(decoded, toEntry);
+    }, Effect.orDie);
+
     const ofKind = <K extends Entry["_tag"]>(target: EntryTarget, kind: K) =>
-      Effect.gen(function* () {
-        const rows = yield* sql`
-          SELECT ${sql.literal(ENTRY_COLUMNS)} FROM entries
-          WHERE ${targetColumn(target)} AND kind = ${kind}
-          ORDER BY position
-        `;
-        const decoded = yield* Schema.decodeUnknownEffect(Schema.Array(EntryRow))(rows);
-        const found = yield* Effect.forEach(decoded, toEntry);
-        return found.filter((entry): entry is Extract<Entry, { readonly _tag: K }> =>
-          entry._tag === kind,
-        );
-      }).pipe(Effect.orDie, Effect.withSpan("Entries.ofKind"));
+      Effect.map(allOfKind(target, kind), (found) =>
+        found.filter((entry): entry is Extract<Entry, { readonly _tag: K }> => entry._tag === kind),
+      );
 
     return Entries.of({
       append,

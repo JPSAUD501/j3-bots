@@ -25,7 +25,13 @@ const SLOW = 20_000;
 /** A connector the operator added, whose server lists one tool. */
 const notion = fakeConnector({
   name: "Notion",
-  tools: [{ name: "search", description: "Search the workspace's pages.", inputSchema: { type: "object", properties: { query: { type: "string" } } } }],
+  tools: [
+    {
+      name: "search",
+      description: "Search the workspace's pages.",
+      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+    },
+  ],
 });
 
 /** A bot working on a message from the operator. */
@@ -92,10 +98,16 @@ it.effect("shows one card for a gallery connector, and none again after its Not 
     );
 
     // While the card waits, by its name in other words too.
-    assert.deepStrictEqual(yield* suggest(ana, " NOTION ", "call-2"), refused(SUGGESTION_REFUSED.pending("Notion")));
+    assert.deepStrictEqual(
+      yield* suggest(ana, " NOTION ", "call-2"),
+      refused(SUGGESTION_REFUSED.pending("Notion")),
+    );
 
     yield* notNow(card);
-    assert.deepStrictEqual(yield* suggest(ana, "Notion", "call-3"), refused(SUGGESTION_REFUSED.declined("Notion")));
+    assert.deepStrictEqual(
+      yield* suggest(ana, "Notion", "call-3"),
+      refused(SUGGESTION_REFUSED.declined("Notion")),
+    );
     const cards = yield* suggestionCards(ana.bot.id);
     assert.deepStrictEqual(
       cards.map((each) => each.status),

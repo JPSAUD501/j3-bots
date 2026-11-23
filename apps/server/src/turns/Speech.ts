@@ -19,11 +19,7 @@ import {
   toolInputDigest,
   ToolInputDigest,
 } from "@j3-bots/engine-t3";
-import {
-  SUGGESTION_REFUSED,
-  SUGGESTION_SHOWN,
-  type ToolInput,
-} from "@j3-bots/prompts";
+import { SUGGESTION_REFUSED, SUGGESTION_SHOWN, type ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -161,8 +157,7 @@ const answer = (result: Schema.Json) =>
   });
 
 /** Text folded for matching a service's name: lower case, without accents or surrounding spaces. */
-const fold = (value: string) =>
-  value.trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const fold = (value: string) => value.trim().normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 const sameListing = (a: ListingRef, b: ListingRef) =>
   a._tag === "curated"
@@ -1197,8 +1192,7 @@ export const layer = Layer.effect(
         found,
       )(
         Effect.gen(function* () {
-          const refused = (reason: string) =>
-            ({ _tag: "refused", reason }) satisfies Schema.Json;
+          const refused = (reason: string) => ({ _tag: "refused", reason }) satisfies Schema.Json;
           // The card keeps a gallery entry's name as the service gives it,
           // which no shipped entry words apart from its English one.
           const listing = gallery.find(input.connector, "en");
