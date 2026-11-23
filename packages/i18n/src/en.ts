@@ -1301,4 +1301,7 @@ export const en = {
   "settings.signOut.body.mobile":
     "This phone loses access, and pairing it again takes a new code. Drafts and unsent messages are discarded. Your bots and conversations stay on the server.",
   "settings.signOut.cancel": "Stay signed in",
+  "oauthCallback.title": "J3 Bots",
+  "oauthCallback.signedIn": "Connected. You can close this tab and go back to J3 Bots.",
+  "oauthCallback.failed": "This connection didn't finish. Go back to J3 Bots and try again.",
 } as const;

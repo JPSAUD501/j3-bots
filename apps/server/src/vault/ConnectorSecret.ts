@@ -33,6 +33,7 @@ const OAuthClient = Schema.Struct({
   /** The redirect URIs it is registered with. */
   redirectUris: Schema.Array(Schema.String),
 });
+export type OAuthClient = typeof OAuthClient.Type;
 
 /** What a sign-in at the authorization server gave, kept to call the connector and refresh. */
 const OAuthTokens = Schema.Struct({
@@ -44,7 +45,10 @@ const OAuthTokens = Schema.Struct({
   scopes: Schema.Array(Schema.String),
   /** The connector's canonical URI, which the tokens were issued for (RFC 8707). */
   resource: Schema.String,
+  /** When the operator signed in, which a refresh keeps. */
+  signedInAt: Schema.DateTimeUtc,
 });
+export type OAuthTokens = typeof OAuthTokens.Type;
 
 /** A header or environment variable, with its value. */
 export const NamedSecret = Schema.Struct({ name: Schema.String, value: Secret });

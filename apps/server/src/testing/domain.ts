@@ -16,6 +16,7 @@ import type { PushSender } from "../push/PushSender.ts";
 import * as BasePrompt from "../settings/BasePrompt.ts";
 import * as SettingsStore from "../settings/SettingsStore.ts";
 import * as TestDatabase from "./database.ts";
+import * as TestOAuth from "./oauth.ts";
 import * as TestPush from "./push.ts";
 
 /** The model a bot gets by default: the first the test engine offers. */
@@ -114,11 +115,15 @@ const engineWith = (starting: StartingStatuses) =>
     }),
   ).pipe(Layer.provideMerge(Layer.merge(TestEngine.layer, testProviders(starting))));
 
-/** The database `database` gives, the home and the engine, its providers as `starting` says. */
+/**
+ * The database `database` gives, the home, the engine, its providers as
+ * `starting` says, and a fake authorization server for connectors' sign-ins.
+ */
 const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
   Layer.mergeAll(
     engineWith(starting),
     BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
+    TestOAuth.layer,
   ).pipe(Layer.provideMerge(database));
 
 const stores = storesOver(TestDatabase.layer, new Map());

@@ -10,6 +10,7 @@ import {
 } from "@j3-bots/contracts";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -74,6 +75,7 @@ const connectorSecret: ConnectorSecret = {
       expiresAt: null,
       scopes: ["read"],
       resource: "https://mcp.example/mcp",
+      signedInAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
     },
   },
   headers: [{ name: "X-Api-Key", value: Redacted.make("header-value") }],

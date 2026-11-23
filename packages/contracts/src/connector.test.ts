@@ -104,7 +104,11 @@ describe("what a client sends to add a connector", () => {
     name: "Tracker",
     url: "https://mcp.example.com/mcp",
     headers: [{ name: "Authorization", value: `Bearer ${value}` }],
-    oauthClient: { clientId: "client-id", clientSecret: value },
+    oauthClient: {
+      issuer: "https://accounts.google.com",
+      clientId: "client-id",
+      clientSecret: value,
+    },
     privateNetwork: false,
   });
 

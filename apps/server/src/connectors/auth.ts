@@ -1,20 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { AuthFailure, CredentialsUnavailable, VaultLocked } from "@j3-bots/connectors";
-import { NeedsSignIn } from "@j3-bots/connectors";
-import {
-  type BotId,
-  type CommandError,
-  type ConnectorId,
-  Invalid,
-  type OAuthClientInput,
-} from "@j3-bots/contracts";
+import type { BotId, CommandError, ConnectorId, OAuthClientInput } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import type * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import type * as DateTime from "effect/DateTime";
 import type * as Redacted from "effect/Redacted";
-import * as Stream from "effect/Stream";
+import type * as Stream from "effect/Stream";
 
 /**
  * Where an OAuth connector's sign-in stands, as its sign-in reports it. That
@@ -74,22 +66,3 @@ export class ConnectorSignIns extends Context.Service<
     readonly states: Stream.Stream<ReadonlyMap<ConnectorId, SignInState>>;
   }
 >()("@j3-bots/server/connectors/auth/ConnectorSignIns") {}
-
-/**
- * For a server that signs in to no OAuth connector: each one needs a sign-in
- * it cannot have, and the operator's own client is refused.
- */
-export const layerNone = Layer.succeed(ConnectorSignIns, {
-  accessToken: Effect.fn("ConnectorSignIns.accessToken")(function* () {
-    return yield* new NeedsSignIn();
-  }),
-  rejected: Effect.fn("ConnectorSignIns.rejected")(function* () {
-    return yield* new NeedsSignIn();
-  }),
-  needed: Effect.fn("ConnectorSignIns.needed")(function* () {}),
-  disconnect: Effect.fn("ConnectorSignIns.disconnect")(function* () {}),
-  useOperatorClient: Effect.fn("ConnectorSignIns.useOperatorClient")(function* () {
-    return yield* new Invalid({ reason: "connector-unsupported" });
-  }),
-  states: Stream.make(new Map()),
-});
