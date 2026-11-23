@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- A command connector runs in the home folder, and how many may run depends on the memory, which node:os gives.
+import * as NodeOs from "node:os";
 import {
   type Activity,
   answerChanges,
@@ -7,22 +9,27 @@ import {
   compareCatalog,
   type ConnectorFailure,
   DEFAULT_SESSION_LIMITS,
+  makeSupervisor,
   type McpSession,
   NeedsSignIn,
   nextFailing,
   type Observation,
   observe,
+  openCommandSession,
   openSession,
+  pinRefusal,
+  processCapacity,
   type SecretHeader,
   type SessionLimits,
   type ToolAnswer,
   toolName,
   type UrlPolicy,
-  type Withdrawn,
+  Withdrawn,
 } from "@j3-bots/connectors";
 import {
   BotId,
   type CommandError,
+  type CommandLine,
   type CommandId,
   Conflict,
   Connector,
@@ -68,7 +75,7 @@ import { Entries } from "../entries/Entries.ts";
 import { Vault } from "../vault/Vault.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
-import { addressOf, credentialsOf, usesVault, vaultIdOf } from "./credentials.ts";
+import { addressOf, commandOf, credentialsOf, usesVault, vaultIdOf } from "./credentials.ts";
 import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
 
 /**
@@ -130,6 +137,7 @@ export class Connectors extends Context.Service<
       readonly connectorId: ConnectorId;
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
+      readonly command?: CommandLine;
     }) => Effect.Effect<Connector, CommandError>;
     readonly remove: (input: {
       readonly commandId: CommandId;
@@ -198,6 +206,74 @@ export class ConnectorReach extends Context.Reference<ConnectorReachSettings>(
   { defaultValue: () => ({ limits: DEFAULT_SESSION_LIMITS, loopback: "refuse" }) },
 ) {}
 
+/** How this server runs command connectors' processes. */
+interface CommandReachSettings {
+  readonly platform: NodeJS.Platform;
+  /** The server's environment, of which a command gets only a few variables (`commandEnvironment`). */
+  readonly environment: Readonly<Record<string, string | undefined>>;
+  /** The folder a command runs in: the home folder of the server's user. */
+  readonly cwd: string;
+  /** How many may run at once: on a small computer, such as a Raspberry Pi, only a few. */
+  readonly capacity: number;
+  /** A process stops after this long unused. */
+  readonly idle: Duration.Duration;
+  readonly backoff: {
+    readonly initial: Duration.Duration;
+    readonly max: Duration.Duration;
+    readonly stable: Duration.Duration;
+  };
+  /** How many times in a row a process may end by itself and still be started again without a use. */
+  readonly restarts: number;
+}
+
+/** Production's settings, which a test replaces to give the server an environment of its own and shorter waits. */
+export class CommandReach extends Context.Reference<CommandReachSettings>(
+  "@j3-bots/server/connectors/CommandReach",
+  {
+    defaultValue: () => ({
+      platform: process.platform,
+      environment: process.env,
+      cwd: NodeOs.homedir(),
+      capacity: processCapacity(NodeOs.totalmem()),
+      idle: IDLE_CLOSE,
+      backoff: {
+        initial: Duration.seconds(1),
+        max: Duration.minutes(1),
+        stable: Duration.minutes(1),
+      },
+      restarts: 5,
+    }),
+  },
+) {}
+
+const isCommand = (connector: StoredConnector) => connector.transport._tag === "command";
+
+/** The fields a command's environment becomes: each value is asked for again, never shown. */
+const envFieldsOf = (command: CommandLine): ReadonlyArray<ConnectorField> =>
+  command.env.map((variable) => ({
+    key: FieldKey.make(variable.name),
+    label: variable.name,
+    description: null,
+    secret: true,
+    required: false,
+    placeholder: null,
+  }));
+
+/**
+ * Whether the server takes a command line: every package it runs through
+ * `npx` or `uvx` at an exact version, and no variable named twice, in any
+ * case, since Windows reads names without it.
+ */
+const checkCommand = (command: CommandLine): Effect.Effect<void, Invalid> => {
+  if (Option.isSome(pinRefusal(command.command, command.args.map(Redacted.value)))) {
+    return Effect.fail(new Invalid({ reason: "command-unpinned" }));
+  }
+  const names = command.env.map((variable) => variable.name.toUpperCase());
+  return new Set(names).size === names.length
+    ? Effect.void
+    : Effect.fail(new Invalid({ reason: "connector-fields" }));
+};
+
 /** What the bot is told when a connector gave no answer; a withdrawn call is not one it may make. */
 const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): ConnectorUnavailable => {
   switch (failure._tag) {
@@ -217,12 +293,21 @@ const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): Connector
     case "ServerError":
     case "NotMcp":
       return "failed";
+    case "CommandFailed":
+      return "unreachable";
   }
 };
 
 /** A failure after which the session is not used again: the next call opens another. */
 const breaksSession = (failure: ConnectorFailure) =>
   failure._tag === "Unreachable" || failure._tag === "NotMcp" || failure._tag === "ServerError";
+
+/**
+ * A failure after which a command connector's process is stopped: the next
+ * call starts another. One that ended by itself is the supervisor's to see.
+ */
+const breaksProcess = (failure: ConnectorFailure) =>
+  breaksSession(failure) || failure._tag === "ResponseTooLarge";
 
 /** The fingerprint of a set of tools: names and digests, to tell whether what bots get changed. */
 const fingerprint = (tools: ReadonlyArray<CatalogTool>) =>
@@ -267,6 +352,7 @@ export const layer = Layer.effect(
     const receipts = yield* CommandReceipts;
     const random = yield* SecureRandom.SecureRandom;
     const reach = yield* ConnectorReach;
+    const commandReach = yield* CommandReach;
     const policyOf = (privateNetwork: boolean): UrlPolicy => ({
       loopback: reach.loopback,
       privateNetwork: privateNetwork ? "allow" : "refuse",
@@ -439,10 +525,56 @@ export const layer = Layer.effect(
       capacity: MAX_SESSIONS,
     });
 
+    /**
+     * Starts a command connector's process and lists its tools. One the
+     * operator removed, or turned into another kind, is withdrawn.
+     */
+    const startCommand = Effect.fn("Connectors.startCommand")(function* (id: ConnectorId) {
+      const connector = yield* store.get(id);
+      if (Option.isNone(connector) || connector.value.transport._tag !== "command") {
+        return yield* new Withdrawn();
+      }
+      const command = yield* commandOf(vault, connector.value);
+      const ready = yield* Deferred.make<McpSession, ConnectorGone>();
+      const started = yield* openCommandSession({
+        platform: commandReach.platform,
+        program: connector.value.transport.program,
+        args: command.args,
+        variables: command.env,
+        serverEnvironment: commandReach.environment,
+        cwd: commandReach.cwd,
+        limits: reach.limits,
+        client: CLIENT,
+        onToolsChanged: inFlight(
+          id,
+          Deferred.await(ready).pipe(
+            Effect.flatMap((opened) => opened.listTools),
+            Effect.flatMap((listed) => recordListing(id, listed)),
+            Effect.ignore,
+          ),
+        ),
+      }).pipe(Effect.tapError(() => Deferred.fail(ready, new ConnectorGone())));
+      yield* Deferred.succeed(ready, started.session);
+      yield* recordListing(id, yield* started.session.listTools);
+      return started;
+    });
+
+    /** The command connectors' processes, one each, shared by every bot. */
+    const processes = yield* makeSupervisor<ConnectorId>({
+      start: startCommand,
+      onFailure: (id, failure) => record(id, observe(failure, "connect")),
+      idle: commandReach.idle,
+      capacity: commandReach.capacity,
+      backoff: commandReach.backoff,
+      restarts: commandReach.restarts,
+    });
+
     const closeSessions = Effect.fn("Connectors.closeSessions")(function* (
       id: ConnectorId,
       holder?: Holder,
     ) {
+      // A command connector's one process serves every bot: it stops only for the connector as a whole.
+      if (holder === undefined) yield* processes.stop(id);
       for (const key of yield* RcMap.keys(sessions)) {
         const own =
           holder === undefined
@@ -453,17 +585,27 @@ export const layer = Layer.effect(
     });
 
     /**
-     * A session that failed to open is not kept: `RcMap` would answer every
-     * later use with the same failure until it went idle.
+     * A session with the connector, for `holder`: a remote connector's own to
+     * it, a command connector's process, shared. A session that failed to
+     * open is not kept: `RcMap` would answer every later use with the same
+     * failure until it went idle.
      */
-    const openFor = (id: ConnectorId, holder: Holder) =>
-      RcMap.get(sessions, sessionKey(id, holder)).pipe(
-        Effect.tapError(() => RcMap.invalidate(sessions, sessionKey(id, holder))),
-      );
+    const openFor = (connector: StoredConnector, holder: Holder) =>
+      isCommand(connector)
+        ? processes.use(connector.id)
+        : RcMap.get(sessions, sessionKey(connector.id, holder)).pipe(
+            Effect.tapError(() => RcMap.invalidate(sessions, sessionKey(connector.id, holder))),
+          );
 
     /** Lists the connector's tools again, through the server's own session. */
     const relist = (id: ConnectorId) =>
-      Effect.scoped(openFor(id, "catalog")).pipe(
+      Effect.scoped(
+        Effect.flatMap(store.get(id), (connector) =>
+          Option.isNone(connector)
+            ? Effect.fail(new ConnectorGone())
+            : openFor(connector.value, "catalog"),
+        ),
+      ).pipe(
         Effect.tapError((failure) =>
           failure._tag === "ConnectorGone" || failure._tag === "ExceededCapacityError"
             ? Effect.void
@@ -529,9 +671,17 @@ export const layer = Layer.effect(
      * did not answer when it was added gets its tools. Asked again while a
      * listing runs, it tries once more after it if the connector is still not
      * listed, since what it was signed with may have changed since it began.
+     *
+     * A command connector whose tools the operator accepted is not: listing
+     * would start its process, which waits for a bot to use it. That start
+     * lists its tools, before the call goes out.
      */
     const ensureListed = Effect.fn("Connectors.ensureListed")(function* (id: ConnectorId) {
-      const unlisted = Effect.map(seenOf(id), (seen) => Option.isNone(seen.listed));
+      const unlisted = Effect.gen(function* () {
+        const connector = yield* store.get(id);
+        if (Option.exists(connector, (c) => isCommand(c) && c.accepted !== null)) return false;
+        return Option.isNone((yield* seenOf(id)).listed);
+      });
       if (!(yield* unlisted)) return;
       yield* inFlight(
         id,
@@ -689,7 +839,7 @@ export const layer = Layer.effect(
       const key = sessionKey(connector.id, input.botId);
       const outcome = yield* Effect.scoped(
         Effect.gen(function* () {
-          const session = yield* openFor(connector.id, input.botId).pipe(
+          const session = yield* openFor(connector, input.botId).pipe(
             Effect.mapError((failure) =>
               failure._tag === "ConnectorGone" || failure._tag === "ExceededCapacityError"
                 ? failure
@@ -720,7 +870,11 @@ export const layer = Layer.effect(
           return yield* new ToolNotOffered();
         }
         yield* record(connector.id, observe(stumble.failure, stumble.activity));
-        if (breaksSession(stumble.failure)) yield* RcMap.invalidate(sessions, key);
+        if (isCommand(connector)) {
+          if (breaksProcess(stumble.failure)) yield* processes.stop(connector.id);
+        } else if (breaksSession(stumble.failure)) {
+          yield* RcMap.invalidate(sessions, key);
+        }
         if (stumble.failure._tag === "NeedsSignIn") {
           yield* signIns.needed({ botId: input.botId, connectorId: connector.id });
         }
@@ -837,7 +991,8 @@ export const layer = Layer.effect(
       const existing = yield* store.get(input.id);
       if (Option.isSome(existing)) return yield* render(existing.value);
       const { source } = input;
-      // A gallery entry is connected through its listing, and a command through a started server: neither is wired yet.
+      if (source._tag === "command") return yield* addCommand({ ...input, source });
+      // A gallery entry is connected through its listing, which is not wired yet.
       if (source._tag !== "remote") return yield* new Invalid({ reason: "connector-unsupported" });
       const policy = policyOf(source.privateNetwork);
       const headers = source.headers.map((header): SecretHeader => ({
@@ -872,6 +1027,7 @@ export const layer = Layer.effect(
         address: source.url,
         oauth: null,
         headers: headers.map((header) => ({ name: header.name, value: header.value })),
+        args: [],
         env: [],
       });
       const now = yield* DateTime.now;
@@ -924,6 +1080,59 @@ export const layer = Layer.effect(
     });
 
     /**
+     * Adds a connector started by command, the command line as the operator
+     * confirmed it. Its process starts, in the background, to list its tools,
+     * which become the ones the operator accepted.
+     */
+    const addCommand = Effect.fn("Connectors.addCommand")(function* (input: {
+      readonly id: ConnectorId;
+      readonly source: Extract<ConnectorSource, { readonly _tag: "command" }>;
+      readonly grant?: ConnectorGrant;
+      readonly suggestion: EntryId | null;
+    }) {
+      const { source } = input;
+      yield* checkCommand(source);
+      // A retry of the same add seals the same values under the same id.
+      yield* vault.connectorSecrets.put({
+        connectorId: vaultIdOf(input.id),
+        address: null,
+        oauth: null,
+        headers: [],
+        args: source.args,
+        env: source.env.map((variable) => ({ name: variable.name, value: variable.value })),
+      });
+      const now = yield* DateTime.now;
+      const fields = envFieldsOf(source);
+      const inserted = yield* store
+        .insert({
+          id: input.id,
+          name: source.name,
+          glyph: null,
+          publisher: { _tag: "operator" },
+          listing: null,
+          transport: displayTransport(source),
+          signIn: fields.length > 0 ? "fields" : "none",
+          fields,
+          privateNetwork: false,
+          grant: input.grant ?? (yield* defaultGrant(input.suggestion)),
+          signedInAt: fields.length > 0 ? now : null,
+          accepted: null,
+          keptRevision: null,
+          createdAt: now,
+        })
+        .pipe(
+          Effect.onError(() =>
+            vault.connectorSecrets.remove(vaultIdOf(input.id)).pipe(Effect.ignore),
+          ),
+        );
+      if (Option.isNone(inserted)) return yield* render(yield* require(input.id));
+      yield* closeSuggestion(input.suggestion, inserted.value);
+      yield* touch(input.id);
+      yield* ensureListed(input.id);
+      return yield* render(inserted.value);
+    });
+
+    /**
      * What follows a connector's row out of the server: its sessions, what was
      * seen of it, then its sign-in and secrets, now or once the vault opens.
      */
@@ -941,9 +1150,13 @@ export const layer = Layer.effect(
       readonly connectorId: ConnectorId;
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
+      readonly command?: CommandLine;
     }) {
-      const connector = yield* require(input.connectorId);
       const now = yield* DateTime.now;
+      if (input.command !== undefined) {
+        yield* replaceCommand(yield* require(input.connectorId), input.command, now);
+      }
+      const connector = yield* require(input.connectorId);
       if (input.values !== undefined) yield* replaceValues(connector, input.values, now);
       if (input.name !== undefined) yield* store.update(connector.id, { name: input.name }, now);
       yield* touch(connector.id);
@@ -969,17 +1182,66 @@ export const layer = Layer.effect(
       const given = new Map<string, Redacted.Redacted<string>>(
         values.map((value) => [value.key, value.value]),
       );
+      // A remote connector's fields are its headers, a command's its environment.
       yield* vault.connectorSecrets.put({
         ...secret.value,
         headers: secret.value.headers.map((header) => ({
           name: header.name,
           value: given.get(header.name) ?? header.value,
         })),
+        env: secret.value.env.map((variable) => ({
+          name: variable.name,
+          value: given.get(variable.name) ?? variable.value,
+        })),
       });
       yield* store.update(connector.id, { signedInAt: now }, now);
       yield* updateSeen(connector.id, (seen) => ({ ...seen, refused: false }));
       // Sessions signed with the old values close; the next call opens one with the new.
       yield* closeSessions(connector.id);
+      // A command's process started with the old ones: the new one starts now, which lists its
+      // tools and clears a failure the old values caused.
+      if (isCommand(connector)) yield* inFlight(connector.id, relist(connector.id));
+    });
+
+    /**
+     * Replaces a command connector's command line with one the operator
+     * confirmed. Its process stops, what was seen of it is forgotten, and the
+     * new one starts to list its tools: a tool that is new or changed waits
+     * on the operator's review, as for any connector.
+     */
+    const replaceCommand = Effect.fn("Connectors.replaceCommand")(function* (
+      connector: StoredConnector,
+      command: CommandLine,
+      now: DateTime.Utc,
+    ) {
+      if (!isCommand(connector)) return yield* new Invalid({ reason: "connector-unsupported" });
+      yield* checkCommand(command);
+      const secret = yield* vault.connectorSecrets.get(vaultIdOf(connector.id));
+      if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
+      yield* vault.connectorSecrets.put({
+        ...secret.value,
+        args: command.args,
+        env: command.env.map((variable) => ({ name: variable.name, value: variable.value })),
+      });
+      const fields = envFieldsOf(command);
+      yield* changing(
+        connector.id,
+        Effect.gen(function* () {
+          yield* store.update(
+            connector.id,
+            {
+              transport: { _tag: "command", program: command.command },
+              fields,
+              signIn: fields.length > 0 ? "fields" : "none",
+              signedInAt: fields.length > 0 ? now : null,
+            },
+            now,
+          );
+          yield* closeSessions(connector.id);
+          yield* updateSeen(connector.id, () => NOTHING_SEEN);
+        }),
+      );
+      yield* inFlight(connector.id, relist(connector.id));
     });
 
     const remove = Effect.fn("Connectors.remove")(function* (input: {

@@ -406,13 +406,14 @@ export const layer = Layer.effect(
     ) {
       const current = yield* secretOf(id);
       const kept = Option.match(current, {
-        onNone: () => ({ address: null, headers: [], env: [] }),
-        onSome: ({ address, headers, env }) => ({ address, headers, env }),
+        onNone: () => ({ address: null, headers: [], args: [], env: [] }),
+        onSome: ({ address, headers, args, env }) => ({ address, headers, args, env }),
       });
       if (
         oauth === null &&
         kept.address === null &&
         kept.headers.length === 0 &&
+        kept.args.length === 0 &&
         kept.env.length === 0
       ) {
         return yield* fromVault(vault.connectorSecrets.remove(id));

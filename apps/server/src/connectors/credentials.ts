@@ -63,6 +63,20 @@ export const addressOf = (
   });
 
 /**
+ * A command connector's arguments and environment, from the vault, as its
+ * process is started with them.
+ */
+export const commandOf = (
+  vault: typeof Vault.Service,
+  connector: StoredConnector,
+): Effect.Effect<Pick<ConnectorSecret, "args" | "env">, CredentialsUnavailable> =>
+  Effect.gen(function* () {
+    const secret = yield* secretOf(vault, connector);
+    if (Option.isNone(secret)) return yield* new AuthFailing({ reason: "secret-unusable" });
+    return { args: secret.value.args, env: secret.value.env };
+  });
+
+/**
  * Signs the connector's requests from the vault and, for an OAuth connector,
  * its sign-in. `allowed` is asked first, right before each request goes out:
  * a request it refuses is withdrawn unsigned.

@@ -449,6 +449,7 @@ export const addOAuthConnector = Effect.gen(function* () {
     address: Redacted.make(MCP_URL),
     oauth: null,
     headers: [],
+    args: [],
     env: [],
   });
   yield* store.insert({

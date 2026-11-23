@@ -575,6 +575,9 @@ importers:
       '@j3-bots/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@j3-bots/processes':
+        specifier: workspace:*
+        version: link:../processes
       '@j3-bots/prompts':
         specifier: workspace:*
         version: link:../prompts
@@ -648,6 +651,9 @@ importers:
       '@j3-bots/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@j3-bots/processes':
+        specifier: workspace:*
+        version: link:../processes
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:vendor/t3-contracts
@@ -677,6 +683,18 @@ importers:
         specifier: workspace:*
         version: link:../contracts
     devDependencies:
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      vite-plus:
+        specifier: 1.4.0
+        version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(terser@5.51.4)(yaml@2.9.1)
+
+  packages/processes:
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.1.2
+        version: 4.1.2(patch_hash=299510b71c36537a832a67e9d160a5f112a5f326a29e95c41cb45fc8234e47c7)(@types/node@24.12.4)(@vitest/ui@5.0.5)(effect@4.1.3)(jiti@2.7.0)(terser@5.51.4)(yaml@2.9.1)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4

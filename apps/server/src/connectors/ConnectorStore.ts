@@ -37,7 +37,7 @@ export interface StoredConnector {
   readonly glyph: ConnectorGlyph | null;
   readonly publisher: ConnectorPublisher;
   readonly listing: ListingRef | null;
-  /** For a remote connector, its URL exactly as the operator added it. */
+  /** What a client is shown of how it is reached: a remote one's origin, a command's program. */
   readonly transport: ConnectorTransport;
   readonly signIn: ConnectorSignIn;
   readonly fields: ReadonlyArray<ConnectorField>;
@@ -62,9 +62,23 @@ export interface PendingRemoval {
   readonly secrets: boolean;
 }
 
-/** What may change of a stored connector after it was added. */
+/**
+ * What may change of a stored connector after it was added. A command
+ * connector's program, the fields its environment takes, and so whether it
+ * signs in by them, change with its command.
+ */
 export type ConnectorChanges = Partial<
-  Pick<StoredConnector, "name" | "grant" | "signedInAt" | "accepted" | "keptRevision">
+  Pick<
+    StoredConnector,
+    | "name"
+    | "grant"
+    | "signedInAt"
+    | "accepted"
+    | "keptRevision"
+    | "transport"
+    | "fields"
+    | "signIn"
+  >
 >;
 
 const Row = Schema.Struct({
@@ -271,6 +285,9 @@ export const layer = Layer.effect(
         yield* sql`
           UPDATE connectors SET
             name = ${next.name},
+            transport_json = ${encodeTransport(next.transport)},
+            sign_in = ${next.signIn},
+            fields_json = ${encodeFields(next.fields)},
             all_bots = ${next.grant._tag === "all-bots" ? 1 : 0},
             signed_in_at = ${next.signedInAt === null ? null : timeText(next.signedInAt)},
             tools_json = ${next.accepted === null ? null : encodeTools(next.accepted)},
