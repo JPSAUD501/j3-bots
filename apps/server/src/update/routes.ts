@@ -152,13 +152,19 @@ const startRoute = HttpRouter.add(
     Effect.gen(function* () {
       const body = yield* jsonBody(UpdateStartRequest);
       if (body._tag === "refused") return body.response;
-      const { available } = yield* (yield* ReleaseFeed).status;
+      const feed = yield* (yield* ReleaseFeed).status;
+      // The feed hears of a channel change after it committed: until then, its offer is the old channel's.
+      const { updateChannel } = yield* (yield* SettingsService).get;
+      const available = Option.filter(
+        Option.fromNullishOr(feed.available),
+        () => feed.channel === updateChannel,
+      );
       return yield* (yield* UpdateRuns)
         .start({
           version: body.value.version,
           stopWork: body.value.stopWork,
           device,
-          available: Option.map(Option.fromNullishOr(available), ({ version }) => version),
+          available: Option.map(available, ({ version }) => version),
         })
         .pipe(
           Effect.andThen(status),

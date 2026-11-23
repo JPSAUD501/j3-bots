@@ -124,6 +124,15 @@ it.layer(
         409,
         "not-available",
       ]);
+      // Right after the channel changed, the feed's offer is still the old channel's.
+      const channel = (to: string) =>
+        send(post(UPDATE_HTTP_PATHS.channel, JSON.stringify({ channel: to })), token);
+      yield* channel("nightly");
+      assert.deepStrictEqual(yield* Effect.flatMap(start(OFFERED), refusal), [
+        409,
+        "not-available",
+      ]);
+      yield* channel("stable");
       const started = yield* start(OFFERED);
       assert.strictEqual(started.status, 202);
       const status = yield* HttpClientResponse.schemaBodyJson(UpdateStatus)(started);

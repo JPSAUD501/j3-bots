@@ -55,11 +55,13 @@ describe("the update's transient unit", () => {
     assert.include(args, "--property=NoNewPrivileges=yes");
   });
 
-  it("keeps a `$` in the command's path literal, which systemd would expand", () => {
-    const args = systemdRunArgs({ ...plan, command: "/opt/j3$HOME/${X}/bin/j3-bots" });
-    assert.strictEqual(args[args.indexOf("--") + 1], "/opt/j3$$HOME/$${X}/bin/j3-bots");
-    // The environment is not expanded, so it is passed as it is.
-    const home = systemdRunArgs({ ...plan, home: "/srv/$j3" });
-    assert.deepStrictEqual(option(home, "setenv")[0], "J3_HOME=/srv/$j3");
+  it("passes a `$` in the command's path and the environment as it is, which systemd does not expand", () => {
+    const args = systemdRunArgs({
+      ...plan,
+      command: "/opt/j3$HOME/${X}/bin/j3-bots",
+      home: "/srv/$j3",
+    });
+    assert.strictEqual(args[args.indexOf("--") + 1], "/opt/j3$HOME/${X}/bin/j3-bots");
+    assert.deepStrictEqual(option(args, "setenv")[0], "J3_HOME=/srv/$j3");
   });
 });

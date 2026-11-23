@@ -55,9 +55,11 @@ export const RELEASE_VARIABLES = ["J3_RELEASE_BASE_URL", "J3_RELEASE_PUBLIC_KEY"
  * `NoNewPrivileges` keeps anything it runs from gaining a privilege through a
  * set-user-id program: an update needs none.
  *
- * systemd expands `$NAME` and `${NAME}` in a transient unit's command, as in
- * a unit file's `ExecStart=` (and not `%` specifiers), so each word has its
- * `$` doubled. The environment it sets is taken as it is.
+ * systemd expands `$NAME` and `${NAME}` in a transient unit's arguments, as in
+ * a unit file's `ExecStart=`, but not in the program's path, nor `%`
+ * specifiers anywhere (docs/architecture/server.md, "Updating from a
+ * client"). The path is passed as it is, and the arguments, a version and a
+ * run id, have no `$` to expand. The environment it sets is not expanded.
  */
 export const systemdRunArgs = (plan: UpdateUnitPlan): ReadonlyArray<string> => [
   "--user",
@@ -74,9 +76,12 @@ export const systemdRunArgs = (plan: UpdateUnitPlan): ReadonlyArray<string> => [
   `--working-directory=${plan.home}`,
   `--description=J3 Bots update to ${plan.version}`,
   "--",
-  ...[plan.command, "update", "--version", plan.version, "--run", plan.id].map((word) =>
-    word.replaceAll("$", () => "$$"),
-  ),
+  plan.command,
+  "update",
+  "--version",
+  plan.version,
+  "--run",
+  plan.id,
 ];
 
 /** `systemd-run` did not start the update. */

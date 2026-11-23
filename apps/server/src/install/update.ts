@@ -88,11 +88,14 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
     "restore-unfinished",
     "busy",
     "backups-elsewhere",
+    "moved",
   ]),
   detail: Schema.String,
 }) {
   override get message(): string {
     switch (this.reason) {
+      case "moved":
+        return `Another update ran first: J3 Bots ${this.detail} runs now, not the release this update was asked from, so nothing was changed. Ask for an update again if one is still wanted.`;
       case "checkout":
         return "This j3-bots runs from a checkout, which updates with Git: `git pull`, `pnpm install --frozen-lockfile`, `pnpm build`, then `j3-bots service install`.";
       case "unpacked":
@@ -487,11 +490,19 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   readonly progress: (stage: UpdateStage) => Effect.Effect<void, never, R>;
   /** What a release's signature must pass: the release keys this install trusts. */
   readonly check: SignatureCheck;
+  /**
+   * The release the update must start from: the one that ran when a client
+   * asked for it. Another update may have run before this one took the lock.
+   */
+  readonly from: Option.Option<string>;
 }) {
   const { installed, lock } = yield* lockedInstall;
   const path = yield* Path.Path;
   yield* checkNoUnfinishedRollback(installed.home);
   const from = installed.release;
+  if (Option.isSome(options.from) && options.from.value !== from.version) {
+    return yield* new UpdateRefused({ reason: "moved", detail: from.version });
+  }
   const version = yield* targetVersion(options.version);
   // An update cut off after its snapshot is carried on, even to the release that runs.
   const recorded = yield* readRuntimeRecord(installed.home);
@@ -522,6 +533,8 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
     platform: from.platform,
     check: options.check,
     progress: options.progress,
+    // A client's update installs only what is proven signed, whatever this install holds.
+    provenOnly: Option.isSome(options.from),
   });
   yield* options.say(
     fetched.alreadyThere

@@ -352,7 +352,7 @@ const clientRun = Effect.fn("update.clientRun")(function* (
       `The update ${id} installs J3 Bots ${run.to}; --version must name it. Nothing was changed.`,
     );
   }
-  return { home, id, stopWork: run.stopWork };
+  return { home, id, stopWork: run.stopWork, from: run.from };
 });
 
 /**
@@ -416,6 +416,7 @@ const runUpdate = Effect.fn("update.run")(function* (
     say: (line) => Console.log(line),
     progress,
     check,
+    from: Option.map(tracked, ({ from }) => from),
   }).pipe(
     // Nothing was changed: the release before runs, on the data as it was.
     Effect.tapError((error) =>

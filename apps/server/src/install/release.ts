@@ -182,12 +182,25 @@ export type FetchStage =
  * told each stage, and the bytes as they come. Answers the release's folder,
  * and whether it was there already.
  */
+/**
+ * In a release unpacked here, the SHA-256 of the archive it was unpacked
+ * from, once that archive matched the verified `SHA256SUMS`.
+ */
+const ARCHIVE_PROOF = ".archive-sha256";
+
 export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(options: {
   readonly install: string;
   readonly version: string;
   readonly platform: string;
   readonly check: SignatureCheck;
   readonly progress: (stage: FetchStage) => Effect.Effect<void, never, R>;
+  /**
+   * Whether a release already in `versions/` is taken only once it is proven
+   * to be the signed one: unpacked from the archive the verified `SHA256SUMS`
+   * names. One that is not is downloaded again and replaces it. A client's
+   * update sets it; an operator's own folder is otherwise theirs.
+   */
+  readonly provenOnly: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -202,12 +215,14 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(opti
   yield* fs.makeDirectory(versions, { recursive: true });
   yield* checkOwnFolder(versions);
   const target = path.join(versions, version);
-  if (yield* isRelease(target)) {
+  const cached = yield* isRelease(target);
+  if (cached) {
     yield* checkOwnFolder(target);
-    yield* options.progress({ _tag: "installing" });
-    return { root: target, alreadyThere: true };
-  }
-  if (Option.isSome(yield* fs.lstat(target).pipe(Effect.option))) {
+    if (!options.provenOnly) {
+      yield* options.progress({ _tag: "installing" });
+      return { root: target, alreadyThere: true };
+    }
+  } else if (Option.isSome(yield* fs.lstat(target).pipe(Effect.option))) {
     return yield* failed("occupied", target);
   }
 
@@ -243,8 +258,20 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(opti
     );
   const verified = verifySums({ version, sums, signature, check: options.check });
   if (Result.isFailure(verified)) return yield* unsigned(verified.failure);
-  if (Result.isFailure(expectedDigest(verified.success, archive))) {
-    return yield* failed("no-archive");
+  const expected = expectedDigest(verified.success, archive);
+  if (Result.isFailure(expected)) return yield* failed("no-archive");
+  const proof = path.join(target, ARCHIVE_PROOF);
+  if (cached) {
+    const unpackedFrom = yield* fs.readFileString(proof).pipe(Effect.option);
+    if (
+      Option.contains(
+        Option.map(unpackedFrom, (text) => text.trim()),
+        expected.success,
+      )
+    ) {
+      yield* options.progress({ _tag: "installing" });
+      return { root: target, alreadyThere: true };
+    }
   }
 
   // Unpacked beside the versions, so the move into place is a rename; gone
@@ -313,6 +340,11 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(opti
       )
       .pipe(Effect.orElseSucceed(() => -1));
     if (runs !== 0) return yield* failed("does-not-run");
+    yield* fs.writeFileString(path.join(unpacked, ARCHIVE_PROOF), `${expected.success}\n`, {
+      mode: 0o600,
+    });
+    // A release there that nothing proved signed goes with the staging folder.
+    if (cached) yield* fs.rename(target, path.join(staging, "replaced"));
     yield* fs.rename(unpacked, target);
     return { root: target, alreadyThere: false };
   }).pipe(

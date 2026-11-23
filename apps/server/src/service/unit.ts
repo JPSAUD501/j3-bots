@@ -82,7 +82,9 @@ export const execStartOf = (unit: string): ReadonlyArray<string> => {
   const line = unit.split("\n").find((each) => each.startsWith("ExecStart="));
   return line === undefined
     ? []
-    : unquote(line.slice("ExecStart=".length)).map((word) => word.replaceAll("$$", "$"));
+    : unquote(line.slice("ExecStart=".length)).map((word, index) =>
+        index === 0 ? word : word.replaceAll("$$", "$"),
+      );
 };
 
 /** The words of one setting's value, the inverse of `quote`. */
@@ -201,7 +203,11 @@ const MIB = 1024 * 1024;
 /** systemd expands `%` specifiers in these settings. */
 const escapeSpecifiers = (value: string) => value.replaceAll("%", "%%");
 
-/** `ExecStart=` also expands `$NAME` and `${NAME}` from the environment. */
+/**
+ * `ExecStart=` also expands `$NAME` and `${NAME}` from the environment in its
+ * arguments, though not in the program's path, which is taken as it is
+ * (**Verified** with systemd 255: a `$$` there is looked up as two `$`).
+ */
 // A replacement string would read `$$` as one `$`: a function's result is taken as it is.
 const escapeVariables = (value: string) => value.replaceAll("$", () => "$$");
 
@@ -249,7 +255,7 @@ export const render = Effect.fn("service.render")(function* (plan: UnitPlan) {
     // set-environment`, a desktop session's import). An override there would
     // replace the settings `service install` checked.
     `UnsetEnvironment=${SHELL_OVERRIDES.join(" ")}`,
-    `ExecStart=${[plan.node, plan.entryPoint, "serve"].map((word) => quote(escapeVariables(word))).join(" ")}`,
+    `ExecStart=${[quote(plan.node), ...[plan.entryPoint, "serve"].map((word) => quote(escapeVariables(word)))].join(" ")}`,
     // The server stops the engine and its harnesses itself; systemd ends what
     // is left once the stop times out. A stop takes at most the HTTP grace
     // (5 s), the WebSocket close (2 s) and the engine's (10 s), well inside it.
