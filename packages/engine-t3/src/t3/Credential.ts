@@ -20,8 +20,17 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 // engine's own CLI against the engine's data directory, so no pairing step and
 // no person is involved, and it is kept next to that data with mode 0600.
 
-/** The scopes the adapter needs: read threads and projects, and operate them. */
-const CREDENTIAL_SCOPES = ["orchestration:read", "orchestration:operate"] as const;
+/**
+ * The scopes the adapter needs: read threads and projects, and operate them,
+ * and act on a bot's browser tab for a person who took control of it (without
+ * `preview:operate` the engine silently drops a viewer's input; **Read** at
+ * `59651c1`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77).
+ */
+const CREDENTIAL_SCOPES = [
+  "orchestration:read",
+  "orchestration:operate",
+  "preview:operate",
+] as const;
 
 /** Renew this long before the token expires, so a running engine never sees an expired one. */
 const RENEW_BEFORE = Duration.days(2);
@@ -34,9 +43,14 @@ const IssuedSession = Schema.Struct({
   expiresAt: Schema.DateTimeUtcFromString,
 });
 
+/**
+ * What `credential.json` holds. `scopes` is what the token was minted with; a
+ * file written before it was recorded has none, and its token is minted again.
+ */
 const StoredCredential = Schema.Struct({
   token: Schema.String.check(Schema.isNonEmpty()),
   expiresAt: Schema.DateTimeUtcFromString,
+  scopes: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 const decodeSession = HttpClientResponse.schemaBodyJson(AuthSessionState);
@@ -107,7 +121,7 @@ export const issueCredential = Effect.fn("engine.issueCredential")(function* (in
 }) {
   const path = yield* Path.Path;
   const issued = yield* mint(input.executable, input.home);
-  const text = yield* encodeStored(issued).pipe(Effect.orDie);
+  const text = yield* encodeStored({ ...issued, scopes: CREDENTIAL_SCOPES }).pipe(Effect.orDie);
   yield* input.files
     .write(credentialFile(path, input.home), text)
     .pipe(Effect.mapError(() => new CredentialMintFailed({ stage: "store" })));
@@ -118,9 +132,11 @@ export const issueCredential = Effect.fn("engine.issueCredential")(function* (in
 });
 
 /**
- * A token that is valid for at least `RENEW_BEFORE`: the stored one, or a new
- * one minted and stored. The engine's data directory must exist; the engine
- * does not have to be running.
+ * A token that is valid for at least `RENEW_BEFORE` and carries every scope
+ * of `CREDENTIAL_SCOPES`: the stored one, or a new one minted and stored. A
+ * stored token minted with fewer scopes, by an older J3 Bots, is replaced
+ * before the engine ever sees it. The engine's data directory must exist; the
+ * engine does not have to be running.
  */
 export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (input: {
   readonly executable: string;
@@ -136,6 +152,7 @@ export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (
   );
   if (
     Option.isSome(stored) &&
+    CREDENTIAL_SCOPES.every((scope) => stored.value.scopes?.includes(scope) === true) &&
     DateTime.isGreaterThan(stored.value.expiresAt, DateTime.addDuration(now, RENEW_BEFORE))
   ) {
     return {
@@ -150,7 +167,7 @@ export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (
 export type Access = "granted" | "refused" | "unreachable";
 
 /**
- * Whether the engine accepts `token` with both scopes the adapter needs. It
+ * Whether the engine accepts `token` with every scope the adapter needs. It
  * answers `GET /api/auth/session` for any caller, with `authenticated: false`
  * for a token it does not accept, so a refusal is definitive and a failed
  * request only says the engine was not reached. **Read** at `db51b67`,

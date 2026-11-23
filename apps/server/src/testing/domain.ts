@@ -95,8 +95,8 @@ const testProviders = (starting: StartingStatuses) =>
   );
 
 /**
- * The in-memory engine, offering a Claude Code and a Codex provider, both
- * ready until a test says otherwise. The test engine reports no providers of
+ * The in-memory engine and its browser, offering a Claude Code and a Codex
+ * provider, both ready until a test says otherwise. The test engine reports no providers of
  * its own, and a bot needs a model to exist.
  */
 const engineWith = (starting: StartingStatuses) =>
@@ -112,7 +112,11 @@ const engineWith = (starting: StartingStatuses) =>
         ),
       });
     }),
-  ).pipe(Layer.provideMerge(Layer.merge(TestEngine.layer, testProviders(starting))));
+  ).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(TestEngine.layer, TestEngine.browserLayer, testProviders(starting)),
+    ),
+  );
 
 /** The database `database` gives, the home and the engine, its providers as `starting` says. */
 const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>

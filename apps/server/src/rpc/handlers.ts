@@ -15,6 +15,7 @@ import type * as Stream from "effect/Stream";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
 import { BotStore } from "../bots/BotStore.ts";
+import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import { Bots } from "../bots/Bots.ts";
 import { Devices } from "../devices/Devices.ts";
 import { Entries, type EntryFrame } from "../entries/Entries.ts";
@@ -70,6 +71,7 @@ export const handlers = ServedRpcs.toLayer(
     const network = yield* Network;
     const { publicOrigin } = yield* ServerConfig;
     const signIns = yield* SignIns;
+    const browserTabs = yield* BrowserTabs;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
 
     /**
@@ -166,6 +168,7 @@ export const handlers = ServedRpcs.toLayer(
       // The request carries the key: it is never logged, and has no receipt.
       "provider.connect": (request) =>
         connectProviders(request).pipe(Effect.provideContext(connectContext)),
+      "browser.subscribe": ({ botId }) => browserTabs.subscribe(botId, device.id),
     };
   }),
 );
