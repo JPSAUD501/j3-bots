@@ -68,7 +68,11 @@ export type ServerUpdateView =
       readonly to: ReleaseVersion | null;
       readonly last: ReceivedUpdateStatus;
     }
-  | { readonly _tag: "lost"; readonly to: ReleaseVersion | null; readonly last: ReceivedUpdateStatus };
+  | {
+      readonly _tag: "lost";
+      readonly to: ReleaseVersion | null;
+      readonly last: ReceivedUpdateStatus;
+    };
 
 /** The last update's result, as the server reports it. */
 export type UpdateResult = NonNullable<ReceivedUpdateStatus["lastResult"]>;
@@ -277,7 +281,9 @@ export const make = Effect.fnUntraced(function* (deps: ServerUpdateDeps) {
       case "status": {
         view.set({ _tag: "status", status: answer.status });
         if (isRunning(answer.status.state)) {
-          yield* ensureFollowing(to ?? answer.status.available?.version ?? null);
+          yield* ensureFollowing(
+            to ?? answer.status.run?.to ?? answer.status.available?.version ?? null,
+          );
         }
         return;
       }
@@ -294,7 +300,11 @@ export const make = Effect.fnUntraced(function* (deps: ServerUpdateDeps) {
   });
 
   const result = (answer: Answer): RequestResult =>
-    answer._tag === "status" ? "done" : answer._tag === "unsupported" ? "unsupported" : "unreachable";
+    answer._tag === "status"
+      ? "done"
+      : answer._tag === "unsupported"
+        ? "unsupported"
+        : "unreachable";
 
   const refresh = send(HttpClientRequest.get(url(UPDATE_HTTP_PATHS.status))).pipe(
     Effect.flatMap((answer) => apply(answer)),

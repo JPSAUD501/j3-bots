@@ -1309,11 +1309,10 @@ const sentences = {
     "O serviço do servidor pode parar quando o usuário dele sai da sessão, e a atualização junto. Deixe-o continuar rodando e tente de novo:",
   "serverUpdate.unable.rollbackUnfinished":
     "Uma volta de versão não terminou neste servidor. Termine na máquina dele:",
-  "serverUpdate.unable.unknown":
-    "Este servidor não atualiza por aqui. Atualize na máquina dele.",
+  "serverUpdate.unable.unknown": "Este servidor não atualiza por aqui. Atualize na máquina dele.",
   "serverUpdate.result.done": "Seus bots rodam a {version}.",
   "serverUpdate.result.rolledBack":
-    "A atualização para a {to} não iniciou, então seus bots voltaram para a {from}, com os dados como estavam.",
+    "A atualização para a {to} não deu certo, então seus bots voltaram para a {from}, com os dados como estavam.",
   "serverUpdate.result.failed":
     "A atualização para a {to} falhou, e voltar para a {from} também. Na máquina do servidor, rode:",
   "serverUpdate.result.unknown": "A atualização para a {version} terminou.",

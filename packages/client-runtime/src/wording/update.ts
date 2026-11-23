@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ReceivedUpdateRefused, ReceivedUpdateStatus, ReleaseVersion } from "@j3-bots/contracts";
+import type {
+  ReceivedUpdateRefused,
+  ReceivedUpdateStatus,
+  ReleaseVersion,
+} from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import { isRunning, type ServerUpdateView, type UpdateResult } from "../update/ServerUpdate.ts";
 
@@ -52,7 +56,8 @@ const UNABLE = {
 /** An update under way, in words: how far it has come. */
 const runningLine = (status: ReceivedUpdateStatus, i18n: I18n): ServerUpdateLine => {
   const { t } = i18n;
-  const version = status.available?.version ?? null;
+  // The run's target outlives the restart; the offer may be newer by then.
+  const version = status.run?.to ?? status.available?.version ?? null;
   const { state } = status;
   switch (state._tag) {
     case "downloading": {
@@ -81,7 +86,9 @@ const runningLine = (status: ReceivedUpdateStatus, i18n: I18n): ServerUpdateLine
 };
 
 const restartingText = (version: ReleaseVersion | null, { t }: I18n) =>
-  version === null ? t("serverUpdate.restartingNoVersion") : t("serverUpdate.restarting", { version });
+  version === null
+    ? t("serverUpdate.restartingNoVersion")
+    : t("serverUpdate.restarting", { version });
 
 /** What the server is offered, and whether it can take it from here, when no update is under way. */
 const restingLine = (status: ReceivedUpdateStatus, i18n: I18n): ServerUpdateLine => {
@@ -154,14 +161,22 @@ export function updateResultLine(result: UpdateResult, i18n: I18n): ServerUpdate
     case "done":
       return line(t("serverUpdate.result.done", { version: result.to }), "quiet");
     case "rolled-back":
-      return line(t("serverUpdate.result.rolledBack", { from: result.from, to: result.to }), "blocked", {
-        hint: reason,
-      });
+      return line(
+        t("serverUpdate.result.rolledBack", { from: result.from, to: result.to }),
+        "blocked",
+        {
+          hint: reason,
+        },
+      );
     case "failed":
-      return line(t("serverUpdate.result.failed", { from: result.from, to: result.to }), "blocked", {
-        hint: reason,
-        command: "j3-bots update --rollback",
-      });
+      return line(
+        t("serverUpdate.result.failed", { from: result.from, to: result.to }),
+        "blocked",
+        {
+          hint: reason,
+          command: "j3-bots update --rollback",
+        },
+      );
     case "unknown":
       return line(t("serverUpdate.result.unknown", { version: result.to }), "quiet");
   }

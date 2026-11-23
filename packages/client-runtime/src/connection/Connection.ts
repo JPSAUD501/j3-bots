@@ -78,7 +78,11 @@ export type ConnectionState =
    * outside the protocol, can still bring the server forward. Nothing is
    * retried until `reconnectNow`.
    */
-  | { readonly _tag: "incompatible"; readonly serverProtocol: number; readonly serverVersion: string }
+  | {
+      readonly _tag: "incompatible";
+      readonly serverProtocol: number;
+      readonly serverVersion: string;
+    }
   /** The credential storage failed. Nothing is retried until `reconnectNow`. */
   | { readonly _tag: "storage-failed" };
 
@@ -198,7 +202,11 @@ type AttemptOutcome =
   | { readonly _tag: "unreachable" }
   | { readonly _tag: "dropped" }
   | { readonly _tag: "revoked" }
-  | { readonly _tag: "incompatible"; readonly serverProtocol: number; readonly serverVersion: string }
+  | {
+      readonly _tag: "incompatible";
+      readonly serverProtocol: number;
+      readonly serverVersion: string;
+    }
   | { readonly _tag: "credential-changed" }
   /** The platform reported the network gone. */
   | { readonly _tag: "offline" }

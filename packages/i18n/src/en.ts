@@ -1291,7 +1291,7 @@ export const en = {
   "serverUpdate.unable.unknown": "This server can’t update from here. Update it on its machine.",
   "serverUpdate.result.done": "Your bots run {version}.",
   "serverUpdate.result.rolledBack":
-    "The update to {to} didn’t start, so your bots are back on {from}, with their data as it was.",
+    "The update to {to} didn’t go through, so your bots are back on {from}, with their data as it was.",
   "serverUpdate.result.failed":
     "The update to {to} failed, and so did going back to {from}. On the server’s machine, run:",
   "serverUpdate.result.unknown": "The update to {version} has ended.",
@@ -1303,7 +1303,8 @@ export const en = {
   "serverUpdate.failure.disk": "There wasn’t room for it on the server.",
   "serverUpdate.failure.interrupted": "A restart of the server’s machine cut it off.",
   "serverUpdate.failure.unknown": "Something went wrong.",
-  "serverUpdate.refusal.notAvailable": "That version isn’t offered anymore. Check for updates again.",
+  "serverUpdate.refusal.notAvailable":
+    "That version isn’t offered anymore. Check for updates again.",
   "serverUpdate.refusal.busy": "An update is already running.",
   "serverUpdate.refusal.workRunning": "Bots have work running. Stop it to update.",
   "serverUpdate.refusal.unable": "This server can’t update from here.",

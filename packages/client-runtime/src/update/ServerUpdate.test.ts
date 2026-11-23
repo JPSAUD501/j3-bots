@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { DeviceToken, UPDATE_API_VERSION, UPDATE_HTTP_PATHS, UpdateStatus } from "@j3-bots/contracts";
+import {
+  DeviceToken,
+  UPDATE_API_VERSION,
+  UPDATE_HTTP_PATHS,
+  UpdateStatus,
+} from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -21,6 +26,7 @@ const TOKEN = DeviceToken.make("t".repeat(43));
 const status = (
   state: UpdateStatus["state"],
   lastResult: UpdateStatus["lastResult"] = null,
+  more: Partial<UpdateStatus> = {},
 ): unknown =>
   encodeStatus({
     api: UPDATE_API_VERSION,
@@ -40,6 +46,7 @@ const status = (
     state,
     run: null,
     lastResult,
+    ...more,
   });
 
 /** What one request to a route gets: an answer, or no answer at all, as from a server restarting. */
@@ -144,12 +151,21 @@ describe("updating the server from a client", () => {
 
   it.effect("stops saying the server is restarting after ten minutes without an answer", () =>
     Effect.gen(function* () {
+      // Read mid-run, from another device's start: the offer is gone, the run's target stays.
+      const midRun = status({ _tag: "restarting" }, null, {
+        available: null,
+        run: { from: "0.3.1", to: "0.3.2", by: null, startedAt: at },
+      });
       const { update, reconnects } = yield* setUp({
-        [UPDATE_HTTP_PATHS.status]: [{ status: 200, body: status({ _tag: "restarting" }) }, "no-answer"],
+        [UPDATE_HTTP_PATHS.status]: [{ status: 200, body: midRun }, "no-answer"],
       });
       yield* update.refresh;
       yield* TestClock.adjust(Duration.minutes(9));
-      assert.strictEqual(update.view.get()._tag, "restarting");
+      const restarting = update.view.get();
+      assert.deepStrictEqual(
+        restarting._tag === "restarting" ? restarting.to : restarting._tag,
+        "0.3.2",
+      );
       yield* TestClock.adjust(Duration.minutes(1));
       assert.strictEqual(update.view.get()._tag, "lost");
       assert.strictEqual(reconnects(), 0);
