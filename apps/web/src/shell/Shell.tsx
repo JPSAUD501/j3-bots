@@ -420,13 +420,8 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           detailsOpen={detailsOpen}
           onToggleDetails={toggleDetails}
           onBack={() => navigation.select(null)}
-          onStop={() => {
-            if (item._tag === "bot") intents.stopBot(item.bot.id);
-            else intents.stopRoom(item.room.id);
-          }}
           onGoToWaiting={goToEntry}
           folds={folds}
-          stopShortcut={shortcuts.stop}
           titleRef={titleRef}
           onAnnounce={(text) =>
             setAnnouncement((previous) => ({
@@ -549,10 +544,12 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             memory={data.memory(bot.id)}
             files={data.files(bot.id)}
             modelName={botModelName(data.engine, bot)}
+            stopShortcut={shortcuts.stop}
             onClose={close}
             headingRef={detailsHeadingRef}
             headingId={detailsHeadingId}
             intents={{
+              stop: () => intents.stopBot(bot.id),
               setRoutineEnabled: intents.setRoutineEnabled,
               openRoutine: intents.openRoutine,
               openAttachment: intents.openAttachment,
@@ -570,6 +567,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
             room={item.room}
             intents={{
               editRoom: () => intents.editRoom(room.id),
+              stop: () => intents.stopRoom(room.id),
               archiveRoom: () => intents.archiveRoom(room.id),
               unarchiveRoom: () => intents.unarchiveRoom(room.id),
               deleteRoom: () => intents.deleteRoom(room.id),

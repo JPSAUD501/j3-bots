@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { roomStop } from "@j3-bots/client-runtime/presentation";
 import type { Room } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { ScrollView, View } from "react-native";
@@ -7,16 +8,19 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RoomAvatar } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { DeleteButton, PendingButton, Quiet, Section } from "../components/form.tsx";
+import { useConfirm } from "../confirm.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 import { useRoomActions } from "./actions.ts";
 import { Apart, Profile, ProfileLine } from "./Profile.tsx";
+import { StopRow } from "./StopRow.tsx";
 
 /**
  * A room's details: who is in it, who hosts, how long bots may talk among
- * themselves, and what the operator does to the room itself.
+ * themselves, and what the operator does to the room itself. While the room's
+ * work is under way, Stop comes first under its profile, and asks first.
  */
 export function RoomDetails({ room }: { readonly room: Room }) {
   const { t, plural } = useI18n();
@@ -24,6 +28,8 @@ export function RoomDetails({ room }: { readonly room: Room }) {
   const navigation = useNavigation<Navigation>();
   const bots = useBots();
   const actions = useRoomActions();
+  const confirm = useConfirm();
+  const stopping = roomStop(room);
   const { name } = room;
   const archived = room.status === "archived";
   const members = room.members.flatMap((id) => {
@@ -60,6 +66,24 @@ export function RoomDetails({ room }: { readonly room: Room }) {
           />
         )}
       </Profile>
+
+      {stopping !== "hidden" && (
+        <StopRow
+          label={stopping === "stopping" ? t("room.stopping") : t("room.stop")}
+          onPress={
+            stopping === "stopping"
+              ? null
+              : () =>
+                  confirm({
+                    title: t("room.stop.title", { name }),
+                    body: t("room.stop.body", { name }),
+                    cancel: t("room.stop.cancel"),
+                    confirm: t("room.stop"),
+                    onConfirm: () => actions.stop(room),
+                  })
+          }
+        />
+      )}
 
       <Section open title={t("room.membersTitle")}>
         {members.length === 0 ? (

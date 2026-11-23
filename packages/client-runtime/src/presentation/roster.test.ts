@@ -17,6 +17,7 @@ import type { IntentResult } from "../intents/Actions.ts";
 import {
   arrangedOrder,
   arrangeRoster,
+  canStop,
   filterRoster,
   orderRoster,
   roomStop,
@@ -144,6 +145,25 @@ describe("filterRoster", () => {
   it("matches names and titles regardless of case and accents", () => {
     expect(names(filterRoster(items, " joao "))).toEqual(["João"]);
     expect(names(filterRoster(items, "RESEARCH"))).toEqual(["João"]);
+  });
+});
+
+describe("canStop", () => {
+  const since = { since: at("2026-11-20T15:00:00Z"), stalled: false, quietSince: null };
+
+  it("offers Stop while a turn runs", () => {
+    expect(canStop(bot("Scout", { _tag: "thinking", ...since }))).toBe(true);
+    expect(canStop(bot("Scout", { _tag: "working", ...since, activity: null, tool: null }))).toBe(
+      true,
+    );
+  });
+
+  it("offers Stop to a bot at rest whose background work holds a change of its settings", () => {
+    expect(canStop(bot("Scout", { _tag: "idle" }, { settingsHeld: true }))).toBe(true);
+  });
+
+  it("offers nothing to a bot at rest with nothing held", () => {
+    expect(canStop(bot("Scout"))).toBe(false);
   });
 });
 

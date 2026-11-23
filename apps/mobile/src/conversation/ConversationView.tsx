@@ -11,7 +11,6 @@ import {
   openingHeld,
   type OpeningHold,
   readThrough,
-  roomStopFailed,
   rosterKeyOf,
   rosterKeyText,
   rosterTarget,
@@ -301,16 +300,6 @@ export function ConversationView({
       if (result === "not-kept") say(t("composer.notKept"));
     });
 
-  const stop = () => {
-    if (item._tag === "bot") {
-      void client.stopBot(item.bot.id);
-      return;
-    }
-    const { name } = item.room;
-    void client.stopRoom(item.room.id).then((result) => {
-      if (roomStopFailed(result)) say(t("room.stopFailed", { name }));
-    });
-  };
   const goTo = (entryId: EntryId) => {
     const index = rows.findIndex((row) => row.kind === "card" && row.entry.id === entryId);
     if (index !== -1)
@@ -328,7 +317,6 @@ export function ConversationView({
           onBack={onBack}
           onOpenDetails={onOpenDetails}
           onGoToWaiting={goTo}
-          onStop={stop}
           folds={folds}
         />
       </View>
