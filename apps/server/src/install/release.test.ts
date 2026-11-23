@@ -105,28 +105,33 @@ const markIn = (install: string) =>
   });
 
 it.layer(NodeServices.layer)("a release fetched for an update", (it) => {
-  it.effect("is installed only once its checksums carry a trusted signature", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const files = yield* publish;
-      const unsigned = new Map(files);
-      unsigned.delete(`${DOWNLOADS}/SHA256SUMS.sig`);
-      const install = yield* fs.makeTempDirectoryScoped({ prefix: "j3-install-" });
-      const refused = yield* fetchInto(install, unsigned, true).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(refused));
-      assert.deepInclude(Option.getOrUndefined(Exit.findErrorOption(refused)), {
-        reason: "unsigned",
-      });
-      assert.isFalse(yield* fs.exists(path.join(install, "versions", VERSION)));
+  // A release is a Linux archive, which a fetch checks by running its command,
+  // a shell script. Not on Windows, which cannot run it and never fetches one:
+  // the desktop app brings the server it runs there.
+  it.effect.skipIf(process.platform === "win32")(
+    "is installed only once its checksums carry a trusted signature",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const files = yield* publish;
+        const unsigned = new Map(files);
+        unsigned.delete(`${DOWNLOADS}/SHA256SUMS.sig`);
+        const install = yield* fs.makeTempDirectoryScoped({ prefix: "j3-install-" });
+        const refused = yield* fetchInto(install, unsigned, true).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(refused));
+        assert.deepInclude(Option.getOrUndefined(Exit.findErrorOption(refused)), {
+          reason: "unsigned",
+        });
+        assert.isFalse(yield* fs.exists(path.join(install, "versions", VERSION)));
 
-      const installed = yield* fetchInto(install, files, true);
-      assert.isFalse(installed.alreadyThere);
-      assert.strictEqual(yield* markIn(install), "signed");
-    }),
+        const installed = yield* fetchInto(install, files, true);
+        assert.isFalse(installed.alreadyThere);
+        assert.strictEqual(yield* markIn(install), "signed");
+      }),
   );
 
-  it.effect(
+  it.effect.skipIf(process.platform === "win32")(
     "for a client takes a release already there only when it is proven the signed one",
     () =>
       Effect.gen(function* () {
