@@ -23,7 +23,7 @@ Android installs an APK over an installed app only when both carry the same appl
 - The separate jobs protect the key, not what it signs. A compromised build dependency still gets its APK signed with the release key, and the signed APK can be downloaded as an Actions artifact before the release is published. The maintainer's review of the draft is the gate for it, as for every other file of the release; the sign job asks for no approval.
 - A tag must be `x.y.z` or `x.y.z-rc.n`, with a minor and a patch up to 99, a release candidate up to `rc.98` and, from `0.3.1`, a major up to 20. Only the nightly names `x.y.z-nightly.YYYYMMDD.run`. The release workflow's first job refuses any other version before anything is built.
 - No push notifications in this APK: they need an Expo project and a Firebase project.
-- The operator installs from the browser and allows installs from it once; the phone does not update the app on its own.
+- The operator installs the first APK from the browser and allows installs from it once. From 0.3.1 the app installs later releases itself, after checking them against the release's signed `SHA256SUMS` ([decision 0035](0035-the-android-app-installs-its-update-through-a-session.md)).
 
 ## Rejected
 
