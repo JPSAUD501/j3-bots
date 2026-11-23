@@ -43,6 +43,7 @@ const recordLogs = Layer.merge(
 const connectors = Layer.succeed(ConnectorAuth.OAuthConnectors, {
   signInOf: (id) => Effect.succeed(id === NOTION ? Option.some("oauth") : Option.none()),
   all: Effect.succeed([NOTION]),
+  authorizationOf: () => Effect.succeed({ scopes: [], parameters: {} }),
 });
 
 const listenerAt = (address: string) =>

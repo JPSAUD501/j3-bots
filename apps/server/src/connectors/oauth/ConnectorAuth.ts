@@ -5,7 +5,13 @@ import {
   NeedsSignIn,
   VaultLocked,
 } from "@j3-bots/connectors";
-import type { Conflict, ConnectorSignIn, DeviceId, SignInRedirect } from "@j3-bots/contracts";
+import {
+  type Conflict,
+  type ConnectorSignIn,
+  type DeviceId,
+  type SignInRedirect,
+  signInCallbackPath,
+} from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -41,6 +47,7 @@ import {
   canonicalResource,
   chooseAuthMethod,
   parseBearerChallenge,
+  redirectMatches,
   resourceCovers,
   resourceMetadataUrls,
   sameIssuer,
@@ -62,21 +69,6 @@ export type SignInReturn =
       readonly path: string;
       readonly query: Redacted.Redacted<string>;
     };
-
-/** Where every redirect returns, under a path of its authorization server's own. */
-export const CALLBACK_PATH = "/oauth/callback";
-
-/**
- * The path a sign-in at `issuer` returns to: the callback's, then the
- * issuer's host and its path exactly as written, trailing slashes included,
- * as `/oauth/callback/accounts.google.com` or
- * `/oauth/callback/auth.example/tenant/`. Two issuers that differ share a
- * redirect only when they are one URL spelled two ways, on one host. So an
- * answer one authorization server gave cannot be taken for another's (mix-up,
- * RFC 9700 §4.4.2), even from one that does not name itself in it.
- */
-const callbackPathOf = (issuer: URL) =>
-  `${CALLBACK_PATH}/${issuer.host}${issuer.pathname === "/" ? "" : issuer.pathname}`;
 
 /** A path as a URL parser reads it, for comparing two spellings of one. */
 const normalPath = (path: string) => new URL(path, "http://path.invalid").pathname;
@@ -118,8 +110,21 @@ export class OAuthConnectors extends Context.Service<
     readonly signInOf: (id: ConnectorId) => Effect.Effect<Option.Option<ConnectorSignIn>>;
     /** Every connector that signs in with OAuth. */
     readonly all: Effect.Effect<ReadonlyArray<ConnectorId>>;
+    /**
+     * What a sign-in to the connector asks for beyond what its server names:
+     * the scopes and authorization request parameters of the gallery entry
+     * it was added from, as an own app's. Nothing for another connector.
+     */
+    readonly authorizationOf: (id: ConnectorId) => Effect.Effect<AuthorizationExtras>;
   }
 >()("@j3-bots/server/connectors/oauth/ConnectorAuth/OAuthConnectors") {}
+
+/** What a sign-in asks for beyond what the connector's server names. */
+export interface AuthorizationExtras {
+  readonly scopes: ReadonlyArray<string>;
+  /** Added to the authorization request, never in place of one J3 Bots sets. */
+  readonly parameters: Readonly<Record<string, string>>;
+}
 
 /** A client the operator registered at a provider, as they paste it. */
 export interface OperatorClient {
@@ -327,10 +332,10 @@ export const layer = Layer.effect(
       const signIn = yield* connectors.signInOf(id);
       if (Option.isNone(signIn)) return yield* fail("unknown-connector");
       if (signIn.value !== "oauth") return yield* fail("not-oauth");
+      // Sealed when the connector was added: typed, or given by its gallery entry's form.
       const address = Option.flatMap(yield* secretOf(id), ({ address }) =>
         Option.fromNullOr(address),
       );
-      // A gallery entry's address is not in the vault: the gallery gives it.
       if (Option.isNone(address)) return yield* fail("no-address");
       const found = secureUrl(Redacted.value(address.value));
       if (Option.isNone(found)) return yield* fail("insecure-endpoint");
@@ -375,7 +380,7 @@ export const layer = Layer.effect(
       redirect: SignInRedirect,
       issuer: string,
     ) {
-      const path = callbackPathOf(new URL(issuer));
+      const path = signInCallbackPath(new URL(issuer));
       switch (redirect._tag) {
         case "server": {
           const origin = yield* serverOrigin;
@@ -638,9 +643,11 @@ export const layer = Layer.effect(
 
     /**
      * The client to sign in with: the one saved when it belongs to this
-     * authorization server and returns to `redirectUri`, else a new
-     * registration. The operator's client is used as it is; a provider that
-     * refuses its redirect says so in the browser.
+     * authorization server and may return to `redirectUri`, else a new
+     * registration, which is saved with the sign-in for the next. A client
+     * registered for loopback serves every loopback port. The operator's
+     * client is used as it is; a provider that refuses its redirect says so
+     * in the browser.
      */
     const clientFor = Effect.fn("ConnectorAuth.clientFor")(function* (
       id: ConnectorId,
@@ -658,7 +665,10 @@ export const layer = Layer.effect(
         if (client.registration === "operator") {
           return sameIssuer(client.issuer, found.issuer) ? client : yield* fail("client-mismatch");
         }
-        if (sameIssuer(client.issuer, found.issuer) && client.redirectUris.includes(redirectUri)) {
+        if (
+          sameIssuer(client.issuer, found.issuer) &&
+          client.redirectUris.some((registered) => redirectMatches(registered, redirectUri))
+        ) {
           return client;
         }
       }
@@ -706,15 +716,22 @@ export const layer = Layer.effect(
         onNone: () => [],
         onSome: ({ oauth }) => oauth?.tokens?.scopes ?? [],
       });
+      const extras = yield* connectors.authorizationOf(input.connectorId);
       const verifier = yield* randomText(32);
       const challenge = Base64Url.encode(
         yield* digest.digest(Digest.sha256, new TextEncoder().encode(verifier)),
       );
       const state = yield* randomText(16);
-      // What the server asks for, what was granted before, and what a call
-      // was refused for: a new sign-in loses none of them.
+      // What the server asks for, what its gallery entry adds, what was
+      // granted before, and what a call was refused for: a new sign-in loses
+      // none of them.
       const scopes = [
-        ...new Set([...found.scopes, ...granted, ...(stepUp.get(input.connectorId) ?? [])]),
+        ...new Set([
+          ...found.scopes,
+          ...extras.scopes,
+          ...granted,
+          ...(stepUp.get(input.connectorId) ?? []),
+        ]),
       ];
       const now = yield* DateTime.now;
       prune(now);
@@ -744,6 +761,9 @@ export const layer = Layer.effect(
       url.searchParams.set("state", state);
       url.searchParams.set("resource", found.resource);
       if (scopes.length > 0) url.searchParams.set("scope", scopes.join(" "));
+      for (const [name, value] of Object.entries(extras.parameters)) {
+        if (!url.searchParams.has(name)) url.searchParams.set(name, value);
+      }
       return { authorizationUrl: url.href, expiresAt };
     });
 

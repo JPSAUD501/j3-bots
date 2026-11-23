@@ -8,12 +8,14 @@ import {
   CuratedKey,
   type Language,
   LANGUAGES,
+  OAuthIssuer,
   RegistryName,
   SetupPageUrl,
 } from "@j3-bots/contracts";
 import { isConnectorGlyphName } from "@j3-bots/design-tokens";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type { AuthorizationExtras } from "../oauth/ConnectorAuth.ts";
 import shipped from "./curated.json" with { type: "json" };
 import { type ConnectForm, connectForm, contractFields } from "./form.ts";
 
@@ -84,9 +86,34 @@ const Connect = Schema.Union([
   }),
 ]);
 
+/**
+ * The parameters of an authorization request that J3 Bots sets itself, for
+ * PKCE, `state`, the redirect and the resource: an app never replaces them.
+ */
+const SIGN_IN_PARAMETERS = new Set([
+  "response_type",
+  "client_id",
+  "redirect_uri",
+  "code_challenge",
+  "code_challenge_method",
+  "state",
+  "resource",
+  "scope",
+]);
+
+/** A parameter an app adds to each authorization request: one J3 Bots does not set itself. */
+const AppParameter = Schema.String.check(
+  Schema.isPattern(/^[a-z_]{1,64}$/),
+  Schema.makeFilter(
+    (name: string) => !SIGN_IN_PARAMETERS.has(name) || `a parameter other than ${name}`,
+  ),
+);
+
 /** An OAuth client the operator registers once, which serves every connector that names it. */
 const App = Schema.Struct({
   name: Schema.String.check(Schema.isMinLength(1)),
+  /** The authorization server the operator registers it at, as its metadata names it. */
+  issuer: OAuthIssuer,
   /** Where its setup starts. */
   setupUrl: HttpsUrl,
   /** What the operator must know before starting, such as a preview's terms. */
@@ -94,7 +121,10 @@ const App = Schema.Struct({
   /** In order. `{scopes}` stands for the scopes of the connector being set up. */
   steps: Schema.NonEmptyArray(Localized),
   /** Sent with every sign-in through it, such as Google's request for a lasting sign-in. */
-  authorizationParameters: Schema.Record(Schema.String, Schema.String),
+  authorizationParameters: Schema.Record(
+    AppParameter,
+    Schema.String.check(Schema.isMaxLength(200)),
+  ),
 });
 
 const Entry = Schema.Struct({
@@ -224,6 +254,7 @@ const setupOf = (
       return {
         steps: entry.connect.steps.map((step) => text(step, language)),
         url: SetupPageUrl.make(entry.connect.page),
+        issuer: null,
       };
     case "own-app": {
       const app = list.apps[entry.connect.app];
@@ -232,6 +263,7 @@ const setupOf = (
       return {
         steps: app.steps.map((step) => text(step, language).replaceAll(SCOPES, scopes)),
         url: SetupPageUrl.make(app.setupUrl),
+        issuer: app.issuer,
       };
     }
   }
@@ -295,3 +327,23 @@ export const curatedEntry = (list: CuratedList, key: string) =>
 /** Whether a registry entry is one the list already has: by its name, or by its address. */
 export const curatedCovers = (list: CuratedList, name: string, urls: ReadonlyArray<string>) =>
   list.connectors.some((entry) => entry.registryName === name || urls.includes(entry.remote.url));
+
+/** What a sign-in asks for when its entry adds nothing. */
+export const NO_AUTHORIZATION: AuthorizationExtras = { scopes: [], parameters: {} };
+
+/**
+ * What a sign-in to the entry asks for beyond what its server names: an
+ * `own-app` entry's scopes, and the parameters its app adds to each
+ * authorization request, such as Google's for a sign-in that lasts. Nothing
+ * for any other entry.
+ */
+export const curatedAuthorization = (
+  list: CuratedList,
+  entry: CuratedEntry,
+): AuthorizationExtras => {
+  if (entry.connect.kind !== "own-app") return NO_AUTHORIZATION;
+  return {
+    scopes: entry.connect.scopes,
+    parameters: list.apps[entry.connect.app]?.authorizationParameters ?? {},
+  };
+};

@@ -32,6 +32,7 @@
   "apps": {
     "google": {
       "name": "Google Cloud",
+      "issuer": "https://accounts.google.com",
       "setupUrl": "https://console.cloud.google.com/auth/overview/personal?apis=ws,wsmcp,tasksmcp&clientType=desktop&isAgent=true",
       "note": {
         "en": "Google's servers for Workspace are a Developer Preview. They answer only accounts that have joined Google's Workspace Developer Preview Program.",
@@ -62,6 +63,7 @@
     },
     "slack": {
       "name": "Slack",
+      "issuer": "https://slack.com",
       "setupUrl": "https://api.slack.com/apps",
       "note": null,
       "steps": [

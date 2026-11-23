@@ -298,14 +298,14 @@ export const connectForm = (remote: Remote): Result.Result<ConnectForm, Unusable
 };
 
 /** What is wrong with one field of a filled form. */
-type FieldProblem =
+export type FieldProblem =
   | { readonly _tag: "missing"; readonly key: string }
   | { readonly _tag: "not-a-choice"; readonly key: string }
   | { readonly _tag: "invalid"; readonly key: string }
   | { readonly _tag: "unknown"; readonly key: string };
 
 /** A filled form: where to connect and what to send. */
-interface ResolvedRemote {
+export interface ResolvedRemote {
   /** Redacted: a secret variable may be part of the address. */
   readonly url: Redacted.Redacted<string>;
   /** The address to show: secret variables stay as `{name}`. */
@@ -322,16 +322,24 @@ interface ResolvedRemote {
  * without one takes its default. A header whose fields all end up without a
  * value is left out, when none of them is required.
  */
-export const resolve = (
-  form: ConnectForm,
+/**
+ * The values `fields` take from `values`, each one checked, and every
+ * problem with them, for a key `values` gives that is not one of `fields` too.
+ * An empty value counts as none, and a field left without one takes its
+ * default.
+ */
+const fill = (
+  fields: ReadonlyArray<ConnectField>,
   values: ReadonlyMap<string, Redacted.Redacted<string>>,
-): Result.Result<ResolvedRemote, ReadonlyArray<FieldProblem>> => {
+): {
+  readonly filled: ReadonlyMap<string, string>;
+  readonly problems: ReadonlyArray<FieldProblem>;
+} => {
   const problems: Array<FieldProblem> = [];
-  const known = new Set(form.fields.map((field) => field.key));
+  const known = new Set(fields.map((field) => field.key));
   for (const key of values.keys()) if (!known.has(key)) problems.push({ _tag: "unknown", key });
-
   const filled = new Map<string, string>();
-  for (const field of form.fields) {
+  for (const field of fields) {
     const given = values.get(field.key);
     const value = given === undefined ? "" : Redacted.value(given);
     const chosen = value === "" ? (field.default ?? "") : value;
@@ -347,7 +355,26 @@ export const resolve = (
       filled.set(field.key, chosen);
     }
   }
-  if (problems.length > 0) return Result.fail(problems);
+  return { filled, problems };
+};
+
+/** A header's value, rendered from the fields `filled` has. */
+const renderHeader = (
+  header: ConnectForm["headers"][number],
+  filled: ReadonlyMap<string, string>,
+) => Redacted.make(render(header.value, (key) => filled.get(key) ?? ""));
+
+/** The keys of a header's fields. */
+const keysOf = (header: ConnectForm["headers"][number]) =>
+  header.value.flatMap((part) => (part._tag === "field" ? [part.key] : []));
+
+export const resolve = (
+  form: ConnectForm,
+  values: ReadonlyMap<string, Redacted.Redacted<string>>,
+): Result.Result<ResolvedRemote, ReadonlyArray<FieldProblem>> => {
+  const { filled, problems: given } = fill(form.fields, values);
+  if (given.length > 0) return Result.fail(given);
+  const problems: Array<FieldProblem> = [];
 
   const secret = new Set(form.fields.filter((field) => field.secret).map((field) => field.key));
   const encoded = (key: string) => encodeURIComponent(filled.get(key) ?? "");
@@ -367,17 +394,14 @@ export const resolve = (
 
   const headers: Array<ResolvedRemote["headers"][number]> = [];
   for (const header of form.headers) {
-    const keys = header.value.flatMap((part) => (part._tag === "field" ? [part.key] : []));
+    const keys = keysOf(header);
     if (keys.length > 0 && keys.every((key) => !filled.has(key))) continue;
     const missing = keys.filter((key) => !filled.has(key));
     if (missing.length > 0) {
       problems.push(...missing.map((key): FieldProblem => ({ _tag: "missing", key })));
       continue;
     }
-    headers.push({
-      name: header.name,
-      value: Redacted.make(render(header.value, (key) => filled.get(key) ?? "")),
-    });
+    headers.push({ name: header.name, value: renderHeader(header, filled) });
   }
   if (problems.length > 0) return Result.fail(problems);
 
@@ -388,6 +412,51 @@ export const resolve = (
     ),
     headers,
   });
+};
+
+/** Whether a field's value goes in a header: one the operator can give again once the connector is added. */
+const inHeader = (field: ConnectField) => field.target._tag !== "url-variable";
+
+/**
+ * The keys of the form's fields that go in a header. A field of the address
+ * is not given again: another address is another connector.
+ */
+export const headerFieldKeys = (form: ConnectForm): ReadonlySet<string> =>
+  new Set(form.fields.filter(inHeader).map((field) => field.key));
+
+/**
+ * The headers `values` gives anew, as for a token the service refused: each
+ * header one of whose fields `values` names, rendered from `values` and,
+ * for its other fields, their defaults: each needs one or the other. A
+ * header `values` does not touch keeps the value it has. Only a header's
+ * fields can be given again: a key of the address's is unknown here.
+ */
+export const refill = (
+  form: ConnectForm,
+  values: ReadonlyMap<string, Redacted.Redacted<string>>,
+): Result.Result<
+  ReadonlyArray<{ readonly name: string; readonly value: Redacted.Redacted<string> }>,
+  ReadonlyArray<FieldProblem>
+> => {
+  const touched = form.headers.filter((header) => keysOf(header).some((key) => values.has(key)));
+  const keys = new Set(touched.flatMap(keysOf));
+  const { filled, problems } = fill(
+    form.fields.filter((field) => inHeader(field) && keys.has(field.key)),
+    values,
+  );
+  const missing = touched.flatMap((header) =>
+    keysOf(header)
+      .filter((key) => !filled.has(key))
+      .map((key): FieldProblem => ({ _tag: "missing", key })),
+  );
+  const all = [
+    ...problems,
+    ...missing.filter((one) => !problems.some((problem) => problem.key === one.key)),
+  ];
+  if (all.length > 0) return Result.fail(all);
+  return Result.succeed(
+    touched.map((header) => ({ name: header.name, value: renderHeader(header, filled) })),
+  );
 };
 
 /**

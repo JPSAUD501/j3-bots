@@ -27,28 +27,24 @@ import type { StoredConnector } from "./ConnectorStore.ts";
 /** The vault files a connector's secrets under the connector's own id. */
 export const vaultIdOf: (id: ConnectorId) => VaultConnectorId = Schema.decodeSync(VaultConnectorId);
 
-/** Whether the connector keeps anything in the vault: an address, headers or a sign-in. */
-export const usesVault = (connector: StoredConnector): boolean =>
-  connector.signIn !== "none" || connector.listing === null;
-
 const unavailable = (conflict: Conflict): CredentialsUnavailable =>
   conflict.reason === "vault-locked"
     ? new VaultLocked()
     : new AuthFailing({ reason: "secret-unusable" });
 
-/** The connector's vault record; none for a connector that keeps nothing there. */
+/**
+ * The connector's vault record. Every connector has one: its address is
+ * there, since a key can be part of it.
+ */
 const secretOf = (
   vault: typeof Vault.Service,
   connector: StoredConnector,
 ): Effect.Effect<Option.Option<ConnectorSecret>, CredentialsUnavailable> =>
-  usesVault(connector)
-    ? vault.connectorSecrets.get(vaultIdOf(connector.id)).pipe(Effect.mapError(unavailable))
-    : Effect.succeedNone;
+  vault.connectorSecrets.get(vaultIdOf(connector.id)).pipe(Effect.mapError(unavailable));
 
 /**
- * The URL to reach the connector at: for one added by address, the one the
- * operator typed, from the vault. A gallery entry's comes from the gallery,
- * which this server cannot connect yet.
+ * The URL to reach the connector at, from the vault: the one the operator
+ * typed, or the one a gallery entry's form gave when it was added.
  */
 export const addressOf = (
   vault: typeof Vault.Service,

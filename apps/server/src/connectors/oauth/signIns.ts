@@ -11,11 +11,14 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Entries } from "../../entries/Entries.ts";
 import { ConnectorSignIns } from "../auth.ts";
 import { ConnectorStore } from "../ConnectorStore.ts";
+import { NO_AUTHORIZATION } from "../sources/Curated.ts";
+import { ConnectorSources } from "../sources/Sources.ts";
 import { ConnectorAuth, OAuthConnectors } from "./ConnectorAuth.ts";
 import { toCommandError } from "./errors.ts";
 
 // Where the rest of the server meets OAuth sign-ins: the connectors' store
-// tells `ConnectorAuth` which connectors sign in with OAuth and where, and
+// tells `ConnectorAuth` which connectors sign in with OAuth, and the gallery
+// what an entry's sign-in asks for, and
 // `ConnectorAuth` answers the connectors' sign-in port, with the
 // `connector-auth` card a bot's call raises when it needs a sign-in.
 
@@ -24,14 +27,26 @@ export const connectorsLayer = Layer.effect(
   OAuthConnectors,
   Effect.gen(function* () {
     const store = yield* ConnectorStore;
+    const sources = yield* ConnectorSources;
     const signInOf = Effect.fn("OAuthConnectors.signInOf")(function* (id: ConnectorId) {
       return Option.map(yield* store.get(id), ({ signIn }) => signIn);
+    });
+    const authorizationOf = Effect.fn("OAuthConnectors.authorizationOf")(function* (
+      id: ConnectorId,
+    ) {
+      const connector = yield* store.get(id);
+      const listing = Option.flatMapNullishOr(connector, ({ listing }) => listing);
+      return Option.match(listing, {
+        onNone: () => NO_AUTHORIZATION,
+        onSome: (ref) => sources.authorization(ref),
+      });
     });
     return OAuthConnectors.of({
       signInOf,
       all: Effect.map(store.all, (connectors) =>
         connectors.filter(({ signIn }) => signIn === "oauth").map(({ id }) => id),
       ),
+      authorizationOf,
     });
   }),
 );
