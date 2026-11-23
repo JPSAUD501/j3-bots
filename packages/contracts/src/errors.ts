@@ -98,6 +98,12 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      * `https:`.
      */
     "sign-in-unsupported",
+    /**
+     * The service did not answer while J3 Bots signed in (its metadata, its
+     * registration or its token endpoint): a network error, a timeout or an
+     * error of its own. Trying again may work.
+     */
+    "sign-in-unreachable",
     /** The service refused to register J3 Bots as a client. */
     "registration-refused",
     /** The service answered the sign-in with an error, or refused its code. */

@@ -878,7 +878,8 @@ export const ConnectorRpcs = RpcGroup.make(
    * a new one. Fails with `Conflict("no-server-redirect")` for `server` where
    * the server cannot be returned to, `Conflict("sign-in-unsupported")` or
    * `Conflict("registration-refused")` when the service does not sign in as
-   * J3 Bots requires, and `Invalid` for a connector that signs in no other way
+   * J3 Bots requires, `Conflict("sign-in-unreachable")` when it does not
+   * answer, and `Invalid` for a connector that signs in no other way
    * than its form.
    */
   Rpc.make("connector.beginSignIn", {
@@ -892,7 +893,8 @@ export const ConnectorRpcs = RpcGroup.make(
    * the connector is signed in; its status follows on `connectors.subscribe`.
    * Fails with `Invalid("sign-in-url")` for an address this sign-in does not
    * expect, `NotFound("sign-in")` for one that ended or expired, and
-   * `Conflict("sign-in-refused")` when the service refused it.
+   * `Conflict("sign-in-refused")` when the service refused it, and
+   * `Conflict("sign-in-unreachable")` when its token endpoint did not answer.
    */
   Rpc.make("connector.completeSignIn", {
     payload: { url: SignInCallback },
