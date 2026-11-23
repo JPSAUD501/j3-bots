@@ -110,12 +110,29 @@ const groupNames = (table: string) => {
 
 const REACHABLE_WITHIN = "15 seconds";
 
+/**
+ * The file names a command `name` is found as. On Windows, `name` with each
+ * extension `PATHEXT` lists, `.COM;.EXE;.BAT;.CMD` when it lists none: a
+ * harness is `claude.exe`, or the `.cmd` shim npm installs. Elsewhere, `name`.
+ */
+export const executableNames =
+  (platform: string, pathExtensions: string) =>
+  (name: string): ReadonlyArray<string> => {
+    if (platform !== "win32") return [name];
+    const listed = pathExtensions.split(";").filter((extension) => extension.startsWith("."));
+    return (listed.length > 0 ? listed : [".COM", ".EXE", ".BAT", ".CMD"]).map(
+      (extension) => `${name}${extension.toLowerCase()}`,
+    );
+  };
+
 export const layer = Layer.effect(
   Host,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const searchPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+    const pathExtensions = yield* Config.String("PATHEXT").pipe(Config.withDefault(""));
+    const candidates = executableNames(process.platform, pathExtensions);
     const client = (yield* HttpClient.HttpClient).pipe(HttpClient.followRedirects(5));
     const user = NodeOs.userInfo();
 
@@ -150,14 +167,17 @@ export const layer = Layer.effect(
       findExecutable: Effect.fn("Host.findExecutable")(function* (name: string, folders: string) {
         for (const folder of folders.split(NodePath.delimiter)) {
           if (folder === "") continue;
-          const candidate = path.join(folder, name);
-          const info = yield* fs.stat(candidate).pipe(Effect.option);
-          if (
-            Option.isSome(info) &&
-            info.value.type === "File" &&
-            (info.value.mode & 0o111) !== 0
-          ) {
-            return Option.some(candidate);
+          for (const file of candidates(name)) {
+            const candidate = path.join(folder, file);
+            const info = yield* fs.stat(candidate).pipe(Effect.option);
+            if (
+              Option.isSome(info) &&
+              info.value.type === "File" &&
+              // Windows has no execute bit: what runs is said by the extension.
+              (process.platform === "win32" || (info.value.mode & 0o111) !== 0)
+            ) {
+              return Option.some(candidate);
+            }
           }
         }
         return Option.none();

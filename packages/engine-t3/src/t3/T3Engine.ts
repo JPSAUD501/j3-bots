@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EngineStatus, type ModelChoice, PermissionMode } from "@j3-bots/contracts";
+import {
+  EngineStatus,
+  type ModelChoice,
+  PermissionMode,
+  type ProviderId,
+} from "@j3-bots/contracts";
 import {
   AttachmentCreateUploadUrlInput,
   CommandId,
@@ -1773,6 +1778,33 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     },
   ).pipe(Stream.changesWith(sameStatus));
 
+  /**
+   * The engine's own refresh of one instance, bypassing what it cached, as
+   * its web interface's Refresh does (**Read** at `59651c1`,
+   * `server.refreshProviders` in `contracts/src/rpc.ts`). Its answer is not
+   * read: what the check finds arrives on the config stream like any other.
+   */
+  const recheckProvider = Effect.fn("Engine.recheckProvider")(function* (providerId: ProviderId) {
+    yield* ready;
+    yield* rpc["server.refreshProviders"]({
+      instanceId: ProviderInstanceId.make(instanceIdFor(providerId)),
+      fresh: true,
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: COMMAND_TIMEOUT,
+        orElse: () => Effect.fail(new EngineUnavailable()),
+      }),
+      Effect.catchTags({
+        RpcClientError: () => Effect.fail(new EngineUnavailable()),
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        ProviderSetupError: (error) =>
+          Effect.logWarning("The engine refused to check a provider again", error).pipe(
+            Effect.annotateLogs({ providerId }),
+          ),
+      }),
+    );
+  });
+
   const consoleLink = Effect.gen(function* () {
     yield* ready;
     const executable = yield* Deferred.await(installed);
@@ -1799,6 +1831,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   return Engine.of({
     status,
     connectProviders,
+    connectedEndpoint: connectedNow,
+    recheckProvider,
     consoleLink,
     ensureProject,
     removeProject,

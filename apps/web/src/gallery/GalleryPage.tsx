@@ -30,6 +30,8 @@ import {
   type RosterItemKey,
   type RoutineRun,
   RoutineRunId,
+  type HarnessLocation,
+  type SignInHarness,
   type UsageWindow,
 } from "@j3-bots/contracts";
 import {
@@ -58,6 +60,7 @@ import {
   type PairingFailure,
   type RecentTurns,
   type RecentTurnsState,
+  type SignInView,
 } from "@j3-bots/client-runtime";
 import {
   addressed,
@@ -95,6 +98,7 @@ import { RoutineRunList } from "../components/RoutineRuns";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { EngineSection } from "../components/SettingsDialog";
+import type { LocalProviderSetup } from "../components/ProviderSetup";
 import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { Button } from "../components/ui/button";
@@ -183,6 +187,7 @@ export default function GalleryPage() {
                 <EngineSettingsSection />
                 <UsageGallerySection />
                 <FirstRunSection />
+                <LocalFirstRunSection />
                 <FirstRunWideSection />
                 <EmptyStatesSection />
                 <ConnectionSection />
@@ -1917,15 +1922,18 @@ const waitingFirst = { ...team.bots.moss, opening: true } as const;
 function FirstRunAt({
   step,
   engine = team.engine,
+  providerSetup,
 }: {
   step: OnboardingStep;
   engine?: EngineStatus | null;
+  providerSetup?: LocalProviderSetup;
 }) {
   return (
     <Onboarding
       engine={engine}
       initialStep={step}
       initialName="Nova"
+      {...(providerSetup === undefined ? {} : { providerSetup })}
       onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
     />
@@ -1979,6 +1987,120 @@ function FirstRunSection() {
         </Frame>
         <Frame label="The whole first run, live, with no provider" width={390} height={760}>
           <ShellFrame initial={null} firstRun engine={engines.connect} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
+/** Where the sample server finds each harness. */
+const harnessesFound = {
+  both: [
+    { harness: "claude-code", path: "/usr/local/bin/claude" },
+    { harness: "codex", path: "/usr/local/bin/codex" },
+  ],
+  claudeOnly: [
+    { harness: "claude-code", path: "/usr/local/bin/claude" },
+    { harness: "codex", path: null },
+  ],
+  none: [
+    { harness: "claude-code", path: null },
+    { harness: "codex", path: null },
+  ],
+} as const satisfies Record<string, ReadonlyArray<HarnessLocation>>;
+
+/** The providers set up from the app on this computer, with the harnesses `found` and each sign-in as `signIns`. */
+const localSetup = (
+  found: ReadonlyArray<HarnessLocation>,
+  signIns: ReadonlyArray<readonly [SignInHarness, SignInView]> = [],
+): LocalProviderSetup => ({
+  signIns: new Map(signIns),
+  signIn: () => {},
+  cancelSignIn: () => {},
+  harnesses: () => Promise.resolve(found),
+  connectEndpoint: () => Promise.resolve({ _tag: "work-running", bots: 2 } as const),
+});
+
+const signInPage = "https://example.com/oauth/authorize";
+
+function LocalFirstRunSection() {
+  return (
+    <Section title="First run on this computer">
+      <div className="flex flex-wrap gap-4">
+        <Frame label="Both harnesses found: sign in with either" width={390} height={760}>
+          <FirstRunAt
+            step="connect"
+            engine={engines.connect}
+            providerSetup={localSetup(harnessesFound.both)}
+          />
+        </Frame>
+        <Frame label="Only Claude Code found" width={390} height={760}>
+          <FirstRunAt
+            step="connect"
+            engine={engines.connect}
+            providerSetup={localSetup(harnessesFound.claudeOnly)}
+          />
+        </Frame>
+        <Frame label="Waiting for the browser" width={390} height={760}>
+          <FirstRunAt
+            step="connect"
+            engine={engines.connect}
+            providerSetup={localSetup(harnessesFound.both, [
+              ["claude-code", { _tag: "waiting-for-browser", url: signInPage, opened: false }],
+            ])}
+          />
+        </Frame>
+        <Frame
+          label="A harness that needs a terminal: an endpoint instead"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt
+            step="connect"
+            engine={engines.connect}
+            providerSetup={localSetup(harnessesFound.both, [
+              ["claude-code", { _tag: "failed", reason: "needs-terminal" }],
+            ])}
+          />
+        </Frame>
+        <Frame label="Signed in, while an endpoint stays connected" width={390} height={760}>
+          <FirstRunAt
+            step="connect"
+            engine={engines.connect}
+            providerSetup={localSetup(harnessesFound.both, [
+              ["claude-code", { _tag: "succeeded", endpoint: "https://proxy.example.com" }],
+            ])}
+          />
+        </Frame>
+        <Frame label="Timed out, with the other still to try" width={390} height={760}>
+          <FirstRunAt
+            step="connect"
+            engine={engines.connect}
+            providerSetup={localSetup(harnessesFound.both, [
+              ["codex", { _tag: "failed", reason: "timed-out" }],
+            ])}
+          />
+        </Frame>
+        <Frame label="Neither harness installed" width={390} height={760}>
+          <FirstRunAt
+            step="connect"
+            engine={engines.connect}
+            providerSetup={localSetup(harnessesFound.none)}
+          />
+        </Frame>
+        <Frame label="Settings: where the harnesses are, and signing in" width={420} height={420}>
+          <EngineSection
+            engine={engines.connect}
+            stale={false}
+            providerSetup={localSetup(harnessesFound.claudeOnly)}
+          />
+        </Frame>
+        <Frame label="Settings: one provider ready, the other to sign in" width={420} height={420}>
+          <EngineSection
+            engine={team.engine}
+            stale={false}
+            providerSetup={localSetup(harnessesFound.both)}
+          />
         </Frame>
       </div>
     </Section>

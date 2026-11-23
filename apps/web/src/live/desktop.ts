@@ -5,6 +5,7 @@ import {
   AppLink,
   BRIDGE_KEY,
   ConnectResult,
+  type DesktopMode,
   ForgetResult,
   HostedBridge,
   NetworkState,
@@ -38,6 +39,8 @@ export interface Desktop {
    * pairing screen to start with, or `null`.
    */
   readonly pairingCode: PairingCode | null;
+  /** Where the bots live, or `null` until the operator has chosen. */
+  readonly mode: DesktopMode | null;
   /**
    * Checks the address the operator typed and keeps it if a J3 Bots server
    * answers there. `pairing` is the pairing link that filled the address in:
@@ -141,6 +144,7 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
   onSome: (bridge) => ({
     server: bridge.state.server === null ? null : new URL(bridge.state.server),
     pairingCode: bridge.state.pairingCode,
+    mode: bridge.state.mode,
     connect: (address, pairing) =>
       ask(
         () => bridge.connect(pairing === null ? { address } : { address, pairing }),

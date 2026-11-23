@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Attachments from "./attachments/Attachments.ts";
 import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Bots from "./bots/Bots.ts";
@@ -16,6 +17,7 @@ import * as Memory from "./memory/Memory.ts";
 import * as MemoryFiles from "./memory/MemoryFiles.ts";
 import * as ChangeLog from "./persistence/ChangeLog.ts";
 import * as Presence from "./presence/Presence.ts";
+import * as SignIns from "./providers/SignIns.ts";
 import * as PushDeliveries from "./push/PushDeliveries.ts";
 import * as PushWorker from "./push/PushWorker.ts";
 import * as RoomRouting from "./rooms/RoomRouting.ts";
@@ -27,6 +29,7 @@ import * as Routines from "./routines/Routines.ts";
 import * as Scheduler from "./routines/Scheduler.ts";
 import * as SettingsService from "./settings/SettingsService.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
+import * as Host from "./system/Host.ts";
 import * as BotTools from "./tools/BotTools.ts";
 import * as BotStates from "./turns/BotStates.ts";
 import * as Cards from "./turns/Cards.ts";
@@ -67,6 +70,8 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
       Rotations.layer,
       RunningWork.layer,
       RoutineRunner.layer,
+      // The machine as the sign-ins see it: the `PATH` the server runs harnesses with.
+      SignIns.layer.pipe(Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer)))),
     ),
   ),
   Layer.provideMerge(

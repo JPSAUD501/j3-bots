@@ -273,7 +273,12 @@ const program = Effect.gen(function* () {
           return;
         }
         const { server } = runSync(settings.get);
-        event.returnValue = encodeState({ server, pairingCode: links.takeCarriedCode(server) });
+        event.returnValue = encodeState({
+          server,
+          pairingCode: links.takeCarriedCode(server),
+          // This app runs no server of its own yet: the bots live on the one the operator named.
+          mode: server === null ? null : "remote",
+        });
       });
       ipcMain.handle(IPC_CHANNELS.connect, (event, request: unknown) =>
         runPromise(connect(event, request)),

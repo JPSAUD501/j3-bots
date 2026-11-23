@@ -162,7 +162,7 @@ Settings left out of `config.json` take their defaults ([Configuration](operatin
 
 ## Connect the providers
 
-Bots run on Claude Code and Codex, each with a home of its own in `~/.j3-bots/providers`, so they use none of your own setup or sign-ins. Until one of them reaches a model, the app's first run shows the command below with a button that copies it, and a first bot created meanwhile says hello once a model is connected; `doctor` says what is missing too. There are two ways.
+Bots run on Claude Code and Codex, each with a home of its own in `~/.j3-bots/providers`, so they use none of your own setup or sign-ins. Until one of them reaches a model, the app's first run shows how to connect one, and a first bot created meanwhile says hello once a model is connected; `doctor` says what is missing too. In the desktop app running the bots on its own computer, the first run signs the harnesses in itself ([From the app](#from-the-app-on-the-same-computer)); everywhere else it shows the command below, with a button that copies it. There are two ways.
 
 **An endpoint in front of your subscriptions.** An endpoint that speaks Anthropic's Messages API and OpenAI's Responses API, such as CLIProxyAPI, serves both harnesses. With the service running:
 
@@ -191,6 +191,26 @@ Each runs the harness's own sign-in in your terminal, with the harness's home in
 The engine notices a new sign-in when it checks its providers again. `j3-bots doctor` shows what it reports; `systemctl --user restart j3-bots` makes it check now, and stops the work bots have running.
 
 While a provider connection is stored, J3 Bots sets the harnesses up to use it, so a sign-in is not expected to be used then, and `provider login` says so. No command removes a stored connection yet. Each sign-in has been started on a test machine, where Claude Code printed its sign-in page and Codex 0.171.0 a page and a code, and stopped there; none has been completed with a real account ([open question 2](../open-questions.md#2-does-a-subscription-sign-in-work-inside-a-j3-owned-provider-home)).
+
+### From the app, on the same computer
+
+When the desktop app runs the bots on its own computer, its first run, and Settings → Engine, show a button for each harness the server finds there: **Sign in with Claude** and **Sign in with ChatGPT (Codex)**. The server runs that harness's own sign-in for J3 Bots' home for it, as `provider login` does, and the app opens the sign-in page in your browser; once you finish there, the harness is signed in and the engine checks it again at once. Bots use your own plan, so their usage counts toward your limits. While a sign-in waits, the app can open its page again or cancel it, and it gives up after 10 minutes. Settings → Engine also says where the server finds each harness, or that it does not.
+
+**Advanced: use an endpoint** opens a form for an endpoint's base URL and key, which does what `provider connect` does, restart included: when bots have work running, it says so and restarts only once you confirm.
+
+In the app on another computer, in a browser or on a phone, the first run shows the command instead, since the sign-in page has to open on the computer the server runs on.
+
+### When J3 Bots can't use your sign-in
+
+J3 Bots signs each harness in anew, in its own home. It never reads, copies or signs out your own sign-in, it reuses nothing of your own setup, and no harness the engine runs uses your own `~/.claude` or `~/.codex` ([Engine: isolation](../architecture/engine.md#isolation)). A sign-in from the app or `provider login` cannot help:
+
+- **When the harness is not installed, or the server does not find it.** The app lists where to install each one; once you have, **Look again** asks the server to look again in the folders on its `PATH`, so a harness installed into one of them is found with no restart. One installed in a folder the server's `PATH` does not have needs the server started again with it; for the service, the fix is [below](#a-harness-the-service-does-not-find).
+- **When the browser is not on the computer the server runs on.** The page returns to the harness through a server it listens on at `localhost`, which only a browser on that computer reaches. On a machine you reach over SSH, use `j3-bots provider login codex --device-auth`, which shows a code to enter on any device, or an endpoint; Claude Code has no such option.
+- **When the harness can only sign in from a terminal.** One that gives the app no page within 30 seconds, or ends saying it needs a terminal, is reported as such, and the app offers an endpoint instead. `provider login`, in a terminal on that computer, still works.
+- **For an account with only an API key.** A sign-in needs an account the harness's maker signs in; use an endpoint that takes the key.
+- **When Codex keeps its sign-in in the system's keyring.** Set so, it writes no `auth.json`, which is where J3 Bots finds a Codex sign-in, so the sign-in reports that nothing was left to use. Use an endpoint, or keep Codex's default.
+- **When the computer is managed.** A policy installed for T3 Code on this computer (`/etc/t3code/policy.json` on Linux) applies to the engine too and can refuse what J3 Bots asks of it, and one installed for Claude Code or Codex themselves applies to J3 Bots' harnesses as it does to yours.
+- **While a provider connection is stored.** The endpoint still serves the models, and the app says so after a sign-in. No command removes a stored connection yet.
 
 ### A harness the service does not find
 

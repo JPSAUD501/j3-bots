@@ -75,6 +75,7 @@ import { useI18n } from "../app/context";
 import { ConnectionBanner } from "../components/ConnectionBanner";
 import { EditBotDialog } from "../components/EditBotDialog";
 import { MemoryViewer } from "../components/MemoryViewer";
+import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import { NewBotDialog } from "../components/NewBotDialog";
 import { RoomDialog } from "../components/RoomDialog";
 import { RoutineRunsDialog } from "../components/RoutineRuns";
@@ -664,9 +665,27 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
 
   const storedUnencrypted = useReadable(signInUnencrypted);
+
+  // While the bots live on this computer, the providers sign in from here. The page a sign-in
+  // waits on opens in the system's browser: the desktop app hands it a page `window.open` names.
+  const signIns = useReadable(j3.signIns);
+  const providerSetup: ProviderSetupIntents | undefined =
+    desktop?.mode === "local"
+      ? {
+          signIn: (harness) =>
+            j3.signIn(harness, (url) => {
+              window.open(url, "_blank", "noopener");
+            }),
+          cancelSignIn: j3.cancelSignIn,
+          harnesses: j3.harnessLocations,
+          connectEndpoint: j3.connectEndpoint,
+        }
+      : undefined;
+
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
+    signIns,
     roster,
     conversation: (asked) =>
       viewKey !== null && targetKey(asked) === viewKey ? view : loadingView,
@@ -1019,6 +1038,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     ...(desktopServer === undefined ? {} : { server: desktopServer }),
     ...(update === undefined ? {} : { update }),
     ...(shortcut === undefined ? {} : { shortcut }),
+    ...(providerSetup === undefined ? {} : { providerSetup }),
   };
 
   return (

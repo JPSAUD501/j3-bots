@@ -540,6 +540,63 @@ const sentences = {
   "onboarding.connect.status.connecting": "Esperando o servidor…",
   "onboarding.connect.status.starting": "Iniciando…",
   "onboarding.connect.status.engineOut": "Parado",
+  "onboarding.connect.local.body":
+    "Os bots pensam com modelos de IA como o Claude ou o GPT. Entre com uma conta que você já tem: o J3 Bots guarda um login só dele, e o seu Claude Code e o seu Codex ficam como estão.",
+  "providers.signIn.claude-code": "Entrar com Claude",
+  "providers.signIn.codex": "Entrar com ChatGPT (Codex)",
+  "providers.signIn.plan": "Os bots usam o seu próprio plano: o uso deles conta nos seus limites.",
+  "providers.signIn.starting": "Iniciando o login do {harness}…",
+  "providers.signIn.waiting": "Termine de entrar no {harness} pelo navegador.",
+  "providers.signIn.openAgain": "Abrir a página de novo",
+  "providers.signIn.cancel": "Cancelar",
+  "providers.signIn.succeeded": "O {harness} entrou. Verificando…",
+  "providers.signIn.succeededEndpoint":
+    "O {harness} entrou, mas o endpoint em {endpoint} continua conectado, e os bots acessam os modelos por ele enquanto ele estiver.",
+  "providers.signIn.tryAgain": "Tentar de novo",
+  "providers.signIn.failed.notInstalled":
+    "O {harness} não está mais neste computador. Procure de novo depois de instalá-lo.",
+  "providers.signIn.failed.needsTerminal":
+    "O {harness} só consegue entrar por um terminal neste computador, e o app não tem um. Use um endpoint.",
+  "providers.signIn.failed.ended": "O login do {harness} parou antes de terminar. Tente de novo.",
+  "providers.signIn.failed.noCredential":
+    "O {harness} terminou sem deixar um login que o J3 Bots consiga usar. Se ele guarda o login no chaveiro do sistema, use um endpoint.",
+  "providers.signIn.failed.linkedHome":
+    "A pasta do J3 Bots para o {harness} é um link para outra pasta, então nada foi feito nela. Remova o link e tente de novo.",
+  "providers.signIn.failed.homeRefused":
+    "O J3 Bots não conseguiu usar a pasta dele para o {harness}: outros usuários podem abri-la, ou ela não aceita escrita. O log do servidor diz qual é.",
+  "providers.signIn.failed.timedOut":
+    "O login esperou 10 minutos pelo navegador e parou. Tente de novo.",
+  "providers.signIn.failed.other": "O login do {harness} não deu certo. Tente de novo.",
+  "providers.signIn.unsupported":
+    "Este servidor só faz o login dos harnesses por um terminal na máquina dele.",
+  "providers.notFound":
+    "Nem o Claude Code nem o Codex estão instalados neste computador. Instale um deles e procure de novo.",
+  "providers.notFound.install": "Instalar o {harness}",
+  "providers.notFound.lookAgain": "Procurar de novo",
+  "providers.notFound.looking": "Procurando…",
+  "providers.endpoint.open": "Avançado: usar um endpoint",
+  "providers.endpoint.use": "Usar um endpoint",
+  "providers.endpoint.body":
+    "Um endpoint serve os modelos do Claude Code e do Codex de outro lugar, como um proxy na frente das suas assinaturas. Ele precisa falar a Messages API da Anthropic e a Responses API da OpenAI.",
+  "providers.endpoint.url": "URL base",
+  "providers.endpoint.key": "Chave",
+  "providers.endpoint.badUrl":
+    "Use o endereço https do endpoint, como https://proxy.example.com, ou http só para este computador (localhost ou 127.0.0.1), sem usuário, query ou fragmento.",
+  "providers.endpoint.connect": "Conectar",
+  "providers.endpoint.connecting": "Conectando…",
+  "providers.endpoint.applied": "Conectado: os bots acessam os modelos por {baseUrl}.",
+  "providers.endpoint.stored": "A conexão com {baseUrl} foi salva. O motor está iniciando com ela.",
+  "providers.endpoint.workRunning.one":
+    "{count} bot tem trabalho em andamento, e conectar reinicia o motor, o que interrompe esse trabalho.",
+  "providers.endpoint.workRunning.other":
+    "{count} bots têm trabalho em andamento, e conectar reinicia o motor, o que interrompe esse trabalho.",
+  "providers.endpoint.restartAnyway": "Reiniciar mesmo assim",
+  "providers.endpoint.refused":
+    "Os dados do motor recusaram a conexão, então ela não foi salva. O log do servidor diz por quê.",
+  "providers.endpoint.refusedActive":
+    "Os dados do motor recusaram a conexão, então ela não foi salva, e os bots continuam usando {active}. O log do servidor diz por quê.",
+  "providers.endpoint.failed":
+    "Não deu para falar com o servidor, então nada mudou. Tente de novo.",
   "onboarding.arrival.title": "{name} chegou",
   "onboarding.arrival.hello": "Dando oi…",
   "onboarding.arrival.waiting": "{name} dá oi assim que um modelo for conectado.",
@@ -832,6 +889,8 @@ const sentences = {
   "settings.engine.ready": "Rodando, versão {version}",
   "settings.engine.lastKnown":
     "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",
+  "settings.engine.harness.found": "{harness}: encontrado em {path}",
+  "settings.engine.harness.missing": "{harness}: não encontrado",
   "settings.usage": "Uso",
   "usage.engineNotRunning": "O uso aparece enquanto o motor está rodando.",
   "usage.noProviders": "Nenhum provedor pode rodar bots ainda.",
