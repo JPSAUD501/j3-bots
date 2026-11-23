@@ -9,6 +9,7 @@ import {
   Profile,
   RoutineInstruction,
 } from "@j3-bots/contracts";
+import { visualVariables } from "@j3-bots/design-tokens";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -77,14 +78,19 @@ const NoInput = Schema.Record(Schema.String, Schema.Never);
 
 const MemoryScope = Schema.Literals(["bot", "shared"]);
 
+/** The CSS variables a visual is given, as the bot reads them. */
+const VISUAL_VARIABLE_NAMES = Object.keys(visualVariables("light"))
+  .map((name) => `--${name}`)
+  .join(", ");
+
 const SayVisual = Schema.Struct({
   path: described(
     text(1, 1_024),
-    `An .html file in your workspace, usually under files/, at most ${MAX_VISUAL_BYTES / 1024} KB. Self-contained: inline <style> and <script>, images as data: URLs. It runs with no network, so remote scripts, fonts, images and fetches fail.`,
+    `An .html file in your workspace, usually under files/, at most ${MAX_VISUAL_BYTES / 1024} KB. Self-contained: inline <style> and <script>, images as data: URLs. It runs with no network, so remote scripts, fonts, images and fetches fail, and it cannot embed another page (no iframe, frame, object or embed). It is shown in your user's light or dark theme: color it with these CSS variables, set on its :root, so it matches either: ${VISUAL_VARIABLE_NAMES}.`,
   ),
   title: described(
     text(1, MAX_VISUAL_TITLE_LENGTH),
-    "What it shows, in a few words. Notifications and screen readers say only this.",
+    "What it shows, in a few words: its caption, and its name for screen readers.",
   ),
   height: Schema.optionalKey(
     described(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { botPalette } from "./botPalette.ts";
 import { hexColor, over, parseColor } from "./color.ts";
-import { colors, type Themed } from "./tokens.ts";
+import { colors, fonts, radii, type Themed } from "./tokens.ts";
 
 /**
  * The colors a visual's page is given, as CSS variables on its `:root`
@@ -39,3 +39,16 @@ export const visualColors = (theme: keyof Themed): Readonly<Record<VisualColor, 
   const background = parseColor(colors.surface[theme]);
   return visualRoles((value) => hexColor(over(parseColor(value[theme]), background)));
 };
+
+/**
+ * Every CSS variable a visual's page is given on its `:root`, without the
+ * leading `--`: the colors of one theme, the app's sans and mono font stacks
+ * (the stacks only: a visual has none of the app's font files) and the
+ * corner radius. Clients set exactly these, and the bot is told their names.
+ */
+export const visualVariables = (theme: keyof Themed): Readonly<Record<string, string>> => ({
+  ...visualColors(theme),
+  "font-sans": fonts.sans,
+  "font-mono": fonts.mono,
+  radius: `${radii.md}px`,
+});
