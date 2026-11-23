@@ -202,7 +202,7 @@ In the app on another computer, in a browser or on a phone, the first run shows 
 
 ### When J3 Bots can't use your sign-in
 
-J3 Bots signs each harness in anew, in its own home. It never reads, copies or signs out your own sign-in, and it reuses nothing of your own setup. A sign-in from the app or `provider login` cannot help:
+J3 Bots signs each harness in anew, in its own home. It never reads, copies or signs out your own sign-in, it reuses nothing of your own setup, and no harness the engine runs uses your own `~/.claude` or `~/.codex` ([Engine: isolation](../architecture/engine.md#isolation)). A sign-in from the app or `provider login` cannot help:
 
 - **When the harness is not installed, or the server does not find it.** The app lists where to install each one; once you have, **Look again** asks the server to look again in the folders on its `PATH`, so a harness installed into one of them is found with no restart. One installed in a folder the server's `PATH` does not have needs the server started again with it; for the service, the fix is [below](#a-harness-the-service-does-not-find).
 - **When the browser is not on the computer the server runs on.** The page returns to the harness through a server it listens on at `localhost`, which only a browser on that computer reaches. On a machine you reach over SSH, use `j3-bots provider login codex --device-auth`, which shows a code to enter on any device, or an endpoint; Claude Code has no such option.
@@ -211,8 +211,6 @@ J3 Bots signs each harness in anew, in its own home. It never reads, copies or s
 - **When Codex keeps its sign-in in the system's keyring.** Set so, it writes no `auth.json`, which is where J3 Bots finds a Codex sign-in, so the sign-in reports that nothing was left to use. Use an endpoint, or keep Codex's default.
 - **When the computer is managed.** A policy installed for T3 Code on this computer (`/etc/t3code/policy.json` on Linux) applies to the engine too and can refuse what J3 Bots asks of it, and one installed for Claude Code or Codex themselves applies to J3 Bots' harnesses as it does to yours.
 - **While a provider connection is stored.** The endpoint still serves the models, and the app says so after a sign-in. No command removes a stored connection yet.
-
-One gap is known: the engine itself can still write into your own `~/.claude` and `~/.codex` as it starts ([#86](https://github.com/JPSAUD501/j3-bots/issues/86)).
 
 ### A harness the service does not find
 
