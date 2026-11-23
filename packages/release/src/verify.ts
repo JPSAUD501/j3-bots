@@ -5,7 +5,8 @@ import * as Result from "effect/Result";
 
 // Checking a release before anything of it is trusted. A release publishes
 // `SHA256SUMS`, one `<sha256>  <name>` line per file, and `SHA256SUMS.sig`,
-// the release key's Ed25519 signature over those exact bytes, base64. Order:
+// the release key's Ed25519 signature over those exact bytes, base64, both as
+// the release workflow writes them, and nothing else is taken. Order:
 // the signature over `SHA256SUMS` first; then that the signed list is this
 // release's; only then a file's digest from it, against the file's own.
 // Nothing here reads a digest from a list whose signature did not verify:
@@ -28,11 +29,14 @@ export const SIGNATURE_FILE = "SHA256SUMS.sig";
 const ED25519_SIGNATURE_BYTES = 64;
 
 /**
- * One line of `sha256sum`'s output: 64 lowercase hex digits, a space, ` ` or
- * `*` (binary mode), and a name with no folder, no control character and no
- * space at either end.
+ * One line as the release writes it, `sha256sum`'s text mode: 64 lowercase
+ * hex digits, two spaces, and a name with no folder, no control character and
+ * no space at either end. Binary mode's `*` is not one.
  */
-const SUMS_LINE = /^([0-9a-f]{64}) [ *]([^\s/\\\p{Cc}](?:[^/\\\p{Cc}]*[^\s/\\\p{Cc}])?)$/u;
+const SUMS_LINE = /^([0-9a-f]{64}) {2}([^\s/\\\p{Cc}](?:[^/\\\p{Cc}]*[^\s/\\\p{Cc}])?)$/u;
+
+/** Names that are a folder, never a release's file. */
+const FOLDER_NAMES = new Set([".", ".."]);
 
 /** `SHA256SUMS.sig` as the release writes it: the 64 bytes in base64, 88 characters, and maybe one line feed. */
 const SIGNATURE_TEXT = /^([A-Za-z0-9+/]{86}==)\n?$/;
@@ -40,15 +44,23 @@ const SIGNATURE_TEXT = /^([A-Za-z0-9+/]{86}==)\n?$/;
 /** Held only by this module: what `VerifiedSums`' constructor asks for. */
 const VERIFIED = Symbol("VerifiedSums");
 
-/** A release's `SHA256SUMS` whose signature verified and which names that release. */
+/**
+ * A release's `SHA256SUMS` whose signature verified and which names that
+ * release. Its digests are a private field, so no object made another way
+ * has its type, and none is read but through it.
+ */
 export class VerifiedSums {
   readonly version: string;
   /** Each file's SHA-256, lowercase hex, by name. */
-  readonly digests: ReadonlyMap<string, string>;
+  readonly #digests: ReadonlyMap<string, string>;
   constructor(token: typeof VERIFIED, version: string, digests: ReadonlyMap<string, string>) {
     if (token !== VERIFIED) throw new TypeError("Only verifySums makes a VerifiedSums.");
     this.version = version;
-    this.digests = digests;
+    this.#digests = digests;
+  }
+  /** The SHA-256 the list gives `file`, lowercase hex; undefined when it names no such file. */
+  digestOf(file: string): string | undefined {
+    return this.#digests.get(file);
   }
 }
 
@@ -64,19 +76,19 @@ export const releaseAnchors = (version: string): ReadonlyArray<string> => [
 ];
 
 /**
- * Each line's digest by name: lines that end with a line feed, the last one
- * maybe without. A failure for a blank line, a line that is not one, a name
- * given twice, or no line at all.
+ * Each line's digest by name: lines that each end with a line feed, the last
+ * one too. A failure for a blank line, a line that is not one, a folder's
+ * name, a name given twice, a last line without its line feed, or no line.
  */
 const parseSums = (
   text: string,
 ): Result.Result<ReadonlyMap<string, string>, VerificationFailure> => {
+  if (!text.endsWith("\n")) return Result.fail("checksums-malformed");
   const digests = new Map<string, string>();
-  const lines = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
-  for (const line of lines) {
+  for (const line of text.slice(0, -1).split("\n")) {
     const parsed = SUMS_LINE.exec(line);
     const [digest, name] = [parsed?.[1], parsed?.[2]];
-    if (digest === undefined || name === undefined || digests.has(name)) {
+    if (digest === undefined || name === undefined || FOLDER_NAMES.has(name) || digests.has(name)) {
       return Result.fail("checksums-malformed");
     }
     digests.set(name, digest);
@@ -131,7 +143,7 @@ export const expectedDigest = (
   sums: VerifiedSums,
   file: string,
 ): Result.Result<string, "entry-missing"> => {
-  const digest = sums.digests.get(file);
+  const digest = sums.digestOf(file);
   return digest === undefined ? Result.fail("entry-missing") : Result.succeed(digest);
 };
 

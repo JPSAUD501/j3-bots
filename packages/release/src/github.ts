@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { UpdateChannel } from "@j3-bots/contracts";
+import { ReleaseNotesUrl, type UpdateChannel } from "@j3-bots/contracts";
 import * as Arr from "effect/Array";
 import type * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -26,24 +26,27 @@ export type GitHubRelease = typeof GitHubRelease.Type;
 export const GitHubReleases = Schema.Array(GitHubRelease);
 
 const decodeTime = Schema.decodeUnknownOption(Schema.DateTimeUtcFromString);
+const isNotesUrl = Schema.is(ReleaseNotesUrl);
 
 /** A published release the feed may offer. */
 export interface Candidate {
   readonly version: string;
   readonly channel: UpdateChannel;
   readonly publishedAt: DateTime.Utc;
-  readonly notesUrl: string;
+  readonly notesUrl: ReleaseNotesUrl;
+  /** The tag it is published under, which names its folder on the releases page. */
+  readonly tag: string;
 }
 
 /**
  * The release `release` is, when it is one a channel may offer: published
  * under its version's tag (`releaseTag`), a stable release that is not marked
  * pre-release or a nightly build that is. Anything else is passed over: a
- * draft, a release candidate, a tag of another shape, or a flag that
- * contradicts the tag.
+ * draft, a release candidate, a tag of another shape, a flag that
+ * contradicts the tag, or a page that is not `https:`.
  */
 export const candidateOf = (release: GitHubRelease): Option.Option<Candidate> => {
-  if (release.draft) return Option.none();
+  if (release.draft || !isNotesUrl(release.html_url)) return Option.none();
   const tag = release.tag_name;
   const version = tag.startsWith("v") ? tag.slice(1) : tag;
   return Option.flatMap(channelOf(version), (channel) =>
@@ -54,6 +57,7 @@ export const candidateOf = (release: GitHubRelease): Option.Option<Candidate> =>
           channel,
           publishedAt,
           notesUrl: release.html_url,
+          tag,
         })),
   );
 };

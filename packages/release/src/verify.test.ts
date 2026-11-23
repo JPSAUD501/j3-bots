@@ -6,7 +6,7 @@ import * as Result from "effect/Result";
 import { TEST_PUBLIC_KEY, VERIFICATION_CASES } from "../testing/vectors.ts";
 import { RELEASE_KEYS, rawPublicKey } from "./keys.ts";
 import { sha256, signatureCheck } from "./node.ts";
-import { checkDigest, verifySums } from "./verify.ts";
+import { checkDigest, VerifiedSums, verifySums } from "./verify.ts";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const digest = (text: string) => {
@@ -79,10 +79,8 @@ describe("a signed list's lines", () => {
   const line = (name: string) => `${"a".repeat(64)}  ${name}\n`;
   const anchor = line("j3-bots-0.3.1-linux-x64.tar.gz");
 
-  it("takes the lines sha256sum writes, the last one with or without its line feed", () => {
+  it("takes the lines the release writes, each ending with a line feed", () => {
     assert.isTrue(Result.isSuccess(signed(anchor + line("install.sh"))));
-    assert.isTrue(Result.isSuccess(signed((anchor + line("install.sh")).trimEnd())));
-    assert.isTrue(Result.isSuccess(signed(anchor.replace("  ", " *"))));
   });
 
   for (const [name, sums] of [
@@ -91,6 +89,10 @@ describe("a signed list's lines", () => {
     ["a space after the name", anchor.replace("\n", " \n")],
     ["an uppercase digest", anchor.replace("a".repeat(64), "A".repeat(64))],
     ["a name in a folder", anchor + line("bin/j3-bots")],
+    ["the parent folder's name", anchor + line("..")],
+    ["the folder's own name", anchor + line(".")],
+    ["a line in binary mode", anchor.replace("  ", " *")],
+    ["a last line without its line feed", (anchor + line("install.sh")).trimEnd()],
     ["a name given twice", anchor + anchor],
     ["no line at all", ""],
   ] as const) {
@@ -98,6 +100,14 @@ describe("a signed list's lines", () => {
       assert.deepStrictEqual(signed(sums), Result.fail("checksums-malformed"));
     });
   }
+
+  it("is made only by verifying", () => {
+    const verified = signed(anchor);
+    assert.isTrue(Result.isSuccess(verified) && verified.success instanceof VerifiedSums);
+    // @ts-expect-error -- an object shaped like it is not one: its digests are a private field.
+    const forged: VerifiedSums = { version: "0.3.1", digestOf: () => "a".repeat(64) };
+    assert.isFalse(forged instanceof VerifiedSums);
+  });
 
   it("refuses a signature file with anything around the signature", () => {
     const crlf = (signature: Uint8Array) =>

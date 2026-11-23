@@ -96,6 +96,17 @@ const VERIFICATION_FAILURES = [
 export const VerificationFailure = Schema.Literals(VERIFICATION_FAILURES);
 export type VerificationFailure = typeof VerificationFailure.Type;
 
+/**
+ * A release's page, which a client opens: an absolute `https:` URL, with a
+ * host and no credentials in it. Checked without `URL`, which not every
+ * client's runtime has.
+ */
+export const ReleaseNotesUrl = Schema.String.check(
+  Schema.isMaxLength(2048),
+  Schema.isPattern(/^https:\/\/[^\s/?#@]+(?:[/?#][^\s]*)?$/),
+);
+export type ReleaseNotesUrl = typeof ReleaseNotesUrl.Type;
+
 /** A release the feed found on the server's channel. */
 export const ReleaseInfo = Schema.Struct({
   version: ReleaseVersion,
@@ -103,7 +114,7 @@ export const ReleaseInfo = Schema.Struct({
   /** When it was published, as the releases page says. */
   publishedAt: Schema.DateTimeUtc,
   /** Its page, with its notes: what a client opens for "What's new". */
-  notesUrl: Schema.String,
+  notesUrl: ReleaseNotesUrl,
   /**
    * Whether its `SHA256SUMS` carries the release key's signature. A server
    * offers only a verified release as `available`, so it is true there.

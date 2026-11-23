@@ -33,9 +33,10 @@ describe("the release a channel offers", () => {
     // A tag that does not name its version as releases are tagged.
     release("v0.4.0-nightly.20261124.1", true),
     release("0.4.0", false),
+    release("v0.5.0", false, { html_url: "http://example.test/releases/tag/v0.5.0" }),
   ];
 
-  it("offers nightly the newest published nightly or stable release, passing over drafts, candidates, other tags and contradictions", () => {
+  it("offers nightly the newest published nightly or stable release, passing over drafts, candidates, other tags, contradictions and pages not on https", () => {
     assert.strictEqual(versionOf(newestOn(listed, "nightly")), "0.3.2-nightly.20261125.1");
     assert.strictEqual(
       versionOf(newestOn([...listed, release("v0.3.2", false)], "nightly")),

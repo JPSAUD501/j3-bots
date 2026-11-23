@@ -8,7 +8,7 @@ import type { VerificationFailure } from "@j3-bots/contracts";
 
 /** The throwaway key's public half, which signed every signature here. */
 export const TEST_PUBLIC_KEY =
-  "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAPGT95uUdeQFbkcLpW77fpVAYSh1LYrgBVSgn2+iBKx4=\n-----END PUBLIC KEY-----";
+  "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAGYWUXVzOetxZ+qN76K9gWKN2vvVlC0tIY3Ul3Cj/JPc=\n-----END PUBLIC KEY-----";
 
 /** The release the vectors are of. */
 export const TEST_VERSION = "0.3.1";
@@ -29,17 +29,30 @@ const OLDER_SUMS =
 const MALFORMED_SUMS =
   "722646c61e1967ad9ef030a60996aed97541291127d75d509742ca865fd678be  j3-bots-0.3.1-linux-x64.tar.gz\nc88fd55d16dde2942b0fb236f6a6a883522fed27ec85f174477b30eb605b9f0b  j3-bots-0.3.1-linux-arm64.tar.gz\n5bd1accaf05b620913b4450ef0e81f7be7d76dac0dd49289c716062d3f1f109d  j3-bots-0.3.1-android-arm64.apk\nbfb73792e7f4e15a63fcc69c2168633243166182d030c3c3fa1fa4d89327fb3c  J3-Bots-x64.AppImage\na8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf  install.sh\nnot a digest  j3-bots-0.3.1-linux-x64.tar.gz\n";
 
+const BINARY_SUMS =
+  "722646c61e1967ad9ef030a60996aed97541291127d75d509742ca865fd678be *j3-bots-0.3.1-linux-x64.tar.gz\nc88fd55d16dde2942b0fb236f6a6a883522fed27ec85f174477b30eb605b9f0b  j3-bots-0.3.1-linux-arm64.tar.gz\n5bd1accaf05b620913b4450ef0e81f7be7d76dac0dd49289c716062d3f1f109d  j3-bots-0.3.1-android-arm64.apk\nbfb73792e7f4e15a63fcc69c2168633243166182d030c3c3fa1fa4d89327fb3c  J3-Bots-x64.AppImage\na8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf  install.sh\n";
+const DOT_DOT_SUMS =
+  "722646c61e1967ad9ef030a60996aed97541291127d75d509742ca865fd678be  j3-bots-0.3.1-linux-x64.tar.gz\nc88fd55d16dde2942b0fb236f6a6a883522fed27ec85f174477b30eb605b9f0b  j3-bots-0.3.1-linux-arm64.tar.gz\n5bd1accaf05b620913b4450ef0e81f7be7d76dac0dd49289c716062d3f1f109d  j3-bots-0.3.1-android-arm64.apk\nbfb73792e7f4e15a63fcc69c2168633243166182d030c3c3fa1fa4d89327fb3c  J3-Bots-x64.AppImage\na8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf  install.sh\na8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf  ..\n";
+const UNTERMINATED_SUMS =
+  "722646c61e1967ad9ef030a60996aed97541291127d75d509742ca865fd678be  j3-bots-0.3.1-linux-x64.tar.gz\nc88fd55d16dde2942b0fb236f6a6a883522fed27ec85f174477b30eb605b9f0b  j3-bots-0.3.1-linux-arm64.tar.gz\n5bd1accaf05b620913b4450ef0e81f7be7d76dac0dd49289c716062d3f1f109d  j3-bots-0.3.1-android-arm64.apk\nbfb73792e7f4e15a63fcc69c2168633243166182d030c3c3fa1fa4d89327fb3c  J3-Bots-x64.AppImage\na8076d3d28d21e02012b20eaf7dbf75409a6277134439025f282e368e3305abf  install.sh";
+
 /** `SHA256SUMS.sig` files, base64 with a line break as `base64` writes it. */
 const SIGNATURES = {
-  good: "0Hn6ic3KmESEuVKVXct7FP0/EMrBgddK4TFSugbRfEx8cAffRMMFf+nQLJjkyAit4cp4q1brmKaV4Ir0rWobAA==\n",
+  good: "X1Nk8VwvIppnEDBYO+H8hCOricLYB8slx18sT+71Q4701Ueztop8mu0IPp9KCcYeacCG4naEPQX5zLZrjumgDw==\n",
   anotherKey:
-    "Waw2id6XET2Q5I9yVhhr5vFpfE6pAawUFp1p83KiOM1vOSy2amvThGZ9J/I6TJBpUgAijlL7+i7xSg+OjMR2DQ==\n",
+    "YbegANxHR69HOqN3iZdYONplKwGBd5AMCLdOXeFPhw8jWCSmoOZJyoLB9MTjjMQ8bTuIn7PUZojJc/VOO/5jDg==\n",
   otherBytes:
-    "SWelNjA8Xb/veldM1tSIl8jQ0x93ZK2l8tdo8oY0tDdQ7EqKHppA75BzB8VL6VrfNPZ/u77Qw7UrDMpcne5WBw==\n",
+    "tc8krQhxcrnlOzAnyH8CWk6LnNQX2yoUJq5tacdU9ApAyXQ+2nNlhm+r60kRjZ+o3HrB/k4YuxQqiuy55CwKAg==\n",
   older:
-    "JMMpKed8WuHZn7KPoUBeRNo1YZ5Nh+KV3fZBOTxAnyfz9sS01sSSwdB6W4iQxhHY+5+UP+l+3jfmWhpIAsgGBA==\n",
+    "UDg2Wr5s6BTx0V2rmmbpKJ7ljC148HuVPOCUSp8whoIEjVOCRwSGCH1Qk8jN6NCoU+dfaNXRAGKdE0lRxxE4Dw==\n",
   malformed:
-    "54BlxwNyYX4tOkJFwZfsD79nLtZmkyxopyohMZsrXu05eBYfOyhGroGYMxr5GWOrOH3FA/7TEn2gSXhmLSqgBg==\n",
+    "qz5/JHnSJQ5sU/Z3ZUnHWeQuJV7gPsp8rMAr42Qu0910Y8kP0SIJ0pdGGkrHcJaC1+2/Z/qEBKopnK3zkxcYCA==\n",
+  binary:
+    "s6YL2299r2aFpobMA5HEtc/2PVrfcHBBO/vyWLVdyV0Rs8mV9nza75vtoxBbUShzljBerNBTrk9VBdDqkBlRDw==\n",
+  dotDot:
+    "OPXUwvf+A/ww4Cg0zRSG1gF3iX9MzgQoGSMGBMpTIrnugxlGixd2uBKw16fuH4Es/4DamBz0HbkCqmAxD6Z5Ag==\n",
+  unterminated:
+    "ts8yRBEubmkHHHfES4A4mZDAEhExnG8Wwzxn+fF3npf0K82VV8hEbnn+3ug0VgdbNoAWJsLAFwpl+KRbucbMBg==\n",
 };
 
 /** One check of a release's `SHA256SUMS`, and of a file against it. */
@@ -123,6 +136,30 @@ export const VERIFICATION_CASES: ReadonlyArray<VerificationCase> = [
     version: TEST_VERSION,
     sums: MALFORMED_SUMS,
     signature: SIGNATURES.malformed,
+    file: file(x64),
+    expect: "checksums-malformed",
+  },
+  {
+    name: "a signed list with a line in binary mode",
+    version: TEST_VERSION,
+    sums: BINARY_SUMS,
+    signature: SIGNATURES.binary,
+    file: file(x64),
+    expect: "checksums-malformed",
+  },
+  {
+    name: "a signed list that names the parent folder",
+    version: TEST_VERSION,
+    sums: DOT_DOT_SUMS,
+    signature: SIGNATURES.dotDot,
+    file: file(x64),
+    expect: "checksums-malformed",
+  },
+  {
+    name: "a signed list whose last line has no line feed",
+    version: TEST_VERSION,
+    sums: UNTERMINATED_SUMS,
+    signature: SIGNATURES.unterminated,
     file: file(x64),
     expect: "checksums-malformed",
   },
