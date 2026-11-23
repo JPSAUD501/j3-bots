@@ -3,7 +3,6 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { BotId, DeviceId, Label, NonNegativeInt } from "./base.ts";
-import { parseUrl } from "./link.ts";
 
 // ---------------------------------------------------------------------------
 // The vault: the operator's saved logins, sealed under a key that comes from
@@ -20,6 +19,11 @@ export const CredentialId = Schema.String.check(Schema.isPattern(/^cred_[0-9a-z]
   Schema.brand("CredentialId"),
 );
 export type CredentialId = typeof CredentialId.Type;
+
+// Not `link.ts`'s parser: that module reaches the entries, which reach this one.
+const parseUrl: (text: string) => Option.Option<URL> = Option.liftThrowable(
+  (text: string) => new URL(text),
+);
 
 const isHttp = (url: URL) => url.protocol === "http:" || url.protocol === "https:";
 
