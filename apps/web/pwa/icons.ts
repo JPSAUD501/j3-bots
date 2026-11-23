@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * The web app's icons, drawn from the ensemble the first-run and pairing
- * screens show (`ensemble`), as every platform's icon is: no art of its own,
- * so changing the avatars or the canvas changes them all.
+ * The web app's icons, drawn from the icon art (`iconArt`) as every
+ * platform's icon is, on the canvas color.
  */
 import {
-  avatarMarks,
-  avatarShapes,
-  botPalette,
   colors,
-  ensemble,
-  layOutRow,
+  ICON_DOT,
+  iconArt,
+  iconInk,
+  layOutIcon,
   type Themed,
 } from "@j3-bots/design-tokens";
 import { hexColor, renderAppIcon } from "@j3-bots/design-tokens/raster";
@@ -32,19 +30,15 @@ export const iconPng = (size: number, width: number) =>
  * theme the browser is in: a tab strip is drawn in it, not in the page's.
  */
 export function iconSvg(): string {
-  const row = layOutRow(ensemble.members, ensemble.gap);
-  const [dot] = avatarMarks.dot;
-  const groups = row.placed.map(({ member, left, top }, i) => {
-    const shape = avatarShapes[member.shape];
-    const k = member.size / 100;
-    return `<g transform="translate(${left} ${top}) scale(${k})"><path class="b${i}" d="${shape.path}"/><circle class="ink" cx="${shape.mark.x}" cy="${shape.mark.y}" r="${dot.r}"/></g>`;
+  const row = layOutIcon(iconArt.bots, iconArt.gap);
+  const groups = row.placed.map(({ bot, left, top }, i) => {
+    const k = bot.size / 100;
+    return `<g transform="translate(${left} ${top}) scale(${k})"><path class="b${i}" d="${bot.path}"/><circle class="ink" cx="${bot.mark.x}" cy="${bot.mark.y}" r="${ICON_DOT}"/></g>`;
   });
   const fills = (theme: keyof Themed) =>
     [
-      ...row.placed.map(
-        ({ member }, i) => `.b${i}{fill:${hexColor(botPalette[member.color][theme])}}`,
-      ),
-      `.ink{fill:${hexColor(colors["avatar-ink"][theme])}}`,
+      ...row.placed.map(({ bot }, i) => `.b${i}{fill:${hexColor(bot.color[theme])}}`),
+      `.ink{fill:${hexColor(iconInk[theme])}}`,
     ].join("");
   const style = `<style>${fills("light")}@media (prefers-color-scheme:dark){${fills("dark")}}</style>`;
   // A square viewBox, so the browser does not stretch the row to fill the tab.

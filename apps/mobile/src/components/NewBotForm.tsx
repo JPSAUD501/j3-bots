@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import { type BotId, PROFILE_LIMITS } from "@j3-bots/contracts";
+import { freeAvatar } from "@j3-bots/design-tokens";
 import { type ReactNode, useState } from "react";
 import { View } from "react-native";
 import { useI18n } from "../i18n.ts";
+import { useBots } from "../presentation.tsx";
+import { AvatarPicker } from "./avatar/AvatarPicker.tsx";
 import { Button } from "../ui.tsx";
 import { Problem, SwitchRow, TextField } from "./form.tsx";
 
 /**
- * A name, and whether the bot becomes the primary one; the bot asks the rest
- * itself. `onCreated` gets the new bot once it exists.
+ * A name, a look, and whether the bot becomes the primary one; the bot asks
+ * the rest itself. The look starts as the one the server would give it, which
+ * sits apart from the bots there are. `onCreated` gets the new bot once it exists.
  */
 export function NewBotForm(props: {
   readonly onCreated: (botId: BotId) => void;
@@ -22,6 +26,10 @@ export function NewBotForm(props: {
   const client = useJ3Client();
   const [name, setName] = useState("");
   const [primary, setPrimary] = useState(false);
+  const bots = useBots();
+  const [avatar, setAvatar] = useState(() =>
+    freeAvatar([...bots.values()].map((bot) => bot.profile.avatar)),
+  );
   const [state, setState] = useState<"editing" | "creating" | "failed">("editing");
   const trimmed = name.trim();
   const ready = trimmed !== "" && state !== "creating";
@@ -39,6 +47,13 @@ export function NewBotForm(props: {
           props.onNameChange?.(text.trim() !== "");
         }}
       />
+      <AvatarPicker
+        value={avatar}
+        onChange={setAvatar}
+        name={name}
+        seed="new-bot"
+        readOnly={state === "creating"}
+      />
       <SwitchRow
         label={t("firstRun.create.primary")}
         value={primary}
@@ -55,7 +70,7 @@ export function NewBotForm(props: {
           onPress={() => {
             if (!ready) return;
             setState("creating");
-            void client.createBot({ name: trimmed, primary }).then((result) => {
+            void client.createBot({ name: trimmed, primary, avatar }).then((result) => {
               // A created bot opens, which takes the form off the screen: until then it stays
               // creating, so Create cannot make a second bot.
               if (result._tag === "done") {

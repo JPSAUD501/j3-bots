@@ -5,7 +5,13 @@
  * with its own renderer never loads the PNG encoder.
  */
 export { hexColor, parseColor, toSrgb8, type LinearRgb } from "../color.ts";
-export { desktopIcon, renderAppIcon, type AppIcon, type AppIconPlate } from "./appIcon.ts";
+export {
+  desktopIcon,
+  renderAppIcon,
+  renderTrayIcon,
+  type AppIcon,
+  type AppIconPlate,
+} from "./appIcon.ts";
 export {
   drawAvatar,
   renderStillAvatar,

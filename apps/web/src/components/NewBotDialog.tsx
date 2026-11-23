@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
+import type { BotDraft } from "@j3-bots/client-runtime";
 import { useId } from "react";
 import { useI18n } from "../app/context";
 import { NewBotForm } from "./NewBotForm";
@@ -9,12 +10,12 @@ interface NewBotDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   /** Resolves once the bot exists; the dialog then closes and its conversation opens. */
-  readonly onCreate: (name: string, primary: boolean) => Promise<void>;
+  readonly onCreate: (draft: BotDraft) => Promise<void>;
   /** Whether a name is typed and not created yet. Held by the owner, which keeps such a form open. */
   readonly onUnsavedChange: (unsaved: boolean) => void;
 }
 
-/** A name, and whether the bot becomes the primary one. The bot asks the rest itself. */
+/** A name, a look, and whether the bot becomes the primary one. The bot asks the rest itself. */
 export function NewBotDialog({ open, onOpenChange, onCreate, onUnsavedChange }: NewBotDialogProps) {
   const { t } = useI18n();
   const titleId = useId();
@@ -22,7 +23,7 @@ export function NewBotDialog({ open, onOpenChange, onCreate, onUnsavedChange }: 
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className={dialogBackdrop} />
-        <Dialog.Popup aria-labelledby={titleId} className={`${alertDialog} max-w-sm gap-3 p-5`}>
+        <Dialog.Popup aria-labelledby={titleId} className={`${alertDialog} max-w-md gap-3 p-5`}>
           <Dialog.Title id={titleId} className={dialogTitle}>
             {t("newBot.title")}
           </Dialog.Title>

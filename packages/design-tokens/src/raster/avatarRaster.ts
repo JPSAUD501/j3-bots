@@ -1,33 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * Avatars as pixels: the still form of `avatar.ts` drawn onto a `Canvas`, for
- * images that cannot be SVG, such as app icons and notification images.
+ * Avatars as pixels: one face of `avatar.ts` drawn onto a `Canvas`, for
+ * images that cannot be SVG, such as notification images. The face is the
+ * caller's: a still form from the client runtime (`stillFace`).
  */
 import {
-  avatarBadges,
-  avatarMarks,
-  avatarMarkStroke,
-  avatarProportions,
-  avatarShapeCutout,
+  AVATAR_EYE,
+  avatarFrame,
+  avatarSignals,
+  avatarViewBox,
   resolveAvatar,
   roomAvatarShare,
-  type AvatarLook,
-  type AvatarMarkPart,
+  type AvatarFace,
+  type AvatarMatrix,
 } from "../avatar.ts";
 import { avatarShapes } from "../avatarShapes.ts";
-import { parseColor, toSrgb8 } from "../color.ts";
+import { avatarEye, botPalette } from "../botPalette.ts";
+import { parseColor, toSrgb8, type LinearRgb, washedOut } from "../color.ts";
+import { colors, type Themed } from "../tokens.ts";
 import {
   Canvas,
-  circlePath,
   flattenPath,
   isPixelCount,
   mapSubpaths,
   type Point,
   type Rgb,
+  type Subpath,
 } from "./canvas.ts";
-import { botPalette, colors, type Themed } from "../tokens.ts";
-
-const srgb = (value: string): Rgb => toSrgb8(parseColor(value));
 
 /** An avatar's tokens: its shape and its color. */
 interface AvatarTokens {
@@ -42,61 +41,116 @@ export interface AvatarBox {
   readonly size: number;
 }
 
+const srgb = (color: LinearRgb): Rgb => toSrgb8(color);
+
+const apply = (m: AvatarMatrix, p: Point): Point => ({
+  x: m[0] * p.x + m[2] * p.y + m[4],
+  y: m[1] * p.x + m[3] * p.y + m[5],
+});
+
+const ellipse = (cx: number, cy: number, rx: number, ry: number) =>
+  `M${cx - rx} ${cy}A${rx} ${ry} 0 1 1 ${cx + rx} ${cy}A${rx} ${ry} 0 1 1 ${cx - rx} ${cy}Z`;
+
+const circle = (x: number, y: number, r: number) => ellipse(x, y, r, r);
+
 /**
- * Draws a still avatar into `box` on `canvas`, in `theme`'s colors. The
- * badge's cutout clears what is under it, so on a clear canvas the badge
- * stands apart from the shape as it does on any page.
+ * Draws `face` into `box` on `canvas`, in `theme`'s colors. A still image has
+ * nothing to fade into, so an offline bot keeps its parts opaque and only
+ * loses its color.
  */
 export function drawAvatar(
   canvas: Canvas,
   avatar: AvatarTokens,
-  look: AvatarLook,
+  face: AvatarFace,
   theme: keyof Themed,
   box: AvatarBox,
 ) {
   const { shape: shapeName, color } = resolveAvatar(avatar);
   const shape = avatarShapes[shapeName];
-  const unit = box.size / 100;
-  const { markScale, badge } = avatarProportions(box.size);
-  const toCanvas = (p: Point): Point => ({ x: box.x + p.x * unit, y: box.y + p.y * unit });
-  canvas.fill(mapSubpaths(flattenPath(shape.path), toCanvas), srgb(botPalette[color][theme]));
+  const frame = avatarFrame(shapeName, face, box.size);
+  const unit = box.size / avatarViewBox.size;
+  const toBox = (p: Point): Point => ({
+    x: box.x + (p.x - avatarViewBox.x) * unit,
+    y: box.y + (p.y - avatarViewBox.y) * unit,
+  });
+  const onBody = (d: string): ReadonlyArray<Subpath> =>
+    mapSubpaths(flattenPath(d), (p) => toBox(apply(frame.body, p)));
+  const onEye = (d: string): ReadonlyArray<Subpath> =>
+    mapSubpaths(flattenPath(d), (p) => toBox(apply(frame.body, apply(frame.eye, p))));
+  const onSignal = (d: string, turn?: AvatarMatrix): ReadonlyArray<Subpath> =>
+    mapSubpaths(flattenPath(d), (p) =>
+      toBox(apply(frame.body, apply(frame.signal, turn === undefined ? p : apply(turn, p)))),
+    );
+  const tone = (value: string): Rgb => {
+    const parsed = parseColor(value);
+    return srgb(face.asleep ? washedOut(parsed) : parsed);
+  };
+  const bodyColor = tone(botPalette[color][theme]);
+  const lens = tone(avatarEye.lens);
+  const pupil = tone(avatarEye.pupil);
+  // The eye scales with the body's frame: strokes on it are as wide as the box draws them.
+  const eyeUnit = unit * frame.eye[0];
 
-  const ink = srgb(colors["avatar-ink"][theme]);
-  const markCenter = toCanvas(shape.mark);
-  const markUnit = markScale * unit;
-  const parts: ReadonlyArray<AvatarMarkPart> = avatarMarks[look.mark];
-  for (const part of parts) {
-    switch (part.kind) {
-      case "disc":
-        canvas.fill(circlePath(markCenter, part.r * markUnit), ink);
-        break;
-      case "circle":
-        canvas.stroke(circlePath(markCenter, part.r * markUnit), avatarMarkStroke * markUnit, ink, {
-          ...(part.opacity === undefined ? {} : { opacity: part.opacity }),
-          ...(part.dash === undefined
-            ? {}
-            : { dash: [part.dash[0] * markUnit, part.dash[1] * markUnit] }),
-        });
-        break;
-      case "path": {
-        const toMark = (p: Point): Point => ({
-          x: markCenter.x + p.x * markUnit,
-          y: markCenter.y + p.y * markUnit,
-        });
-        canvas.stroke(mapSubpaths(flattenPath(part.d), toMark), avatarMarkStroke * markUnit, ink);
-        break;
-      }
+  canvas.stroke(onBody(frame.stalk), frame.stalkWidth * unit, bodyColor);
+  const body = onBody(shape.path);
+  canvas.fill(body, bodyColor);
+  canvas.stroke(body, shape.outline * unit, bodyColor);
+
+  if (frame.open) {
+    canvas.fill(onEye(circle(0, 0, AVATAR_EYE)), lens);
+    canvas.fill(onEye(circle(frame.pupil.x, frame.pupil.y, frame.pupil.r)), pupil);
+    if (frame.glint !== null) {
+      canvas.fill(onEye(circle(frame.glint.x, frame.glint.y, frame.glint.r)), lens);
+    }
+    for (const cover of [frame.cheek, frame.upperLid, frame.lowerLid]) {
+      if (cover !== "") canvas.fill(onEye(cover), bodyColor);
     }
   }
-
-  if (look.badge !== null) {
-    const center = toCanvas({ x: badge.center, y: badge.center });
-    canvas.clear(circlePath(center, (badge.r + badge.cutout / 2) * unit));
-    canvas.fill(
-      circlePath(center, (badge.r - badge.cutout / 2) * unit),
-      srgb(colors[avatarBadges[look.badge]][theme]),
-    );
+  if (frame.arcOpacity > 0) {
+    canvas.stroke(onEye(frame.arc), frame.arcWidth * eyeUnit, lens, { opacity: frame.arcOpacity });
   }
+  if (frame.mouth.ry > 0) {
+    const { cx, cy, rx, ry } = frame.mouth;
+    canvas.fill(onBody(ellipse(cx, cy, rx, ry)), pupil);
+  }
+
+  const signalWidth = avatarSignals.stroke * unit * frame.signal[0];
+  switch (face.signal) {
+    case "ring":
+      canvas.stroke(
+        onSignal(circle(0, 0, avatarSignals.ring.r), frame.ring),
+        signalWidth,
+        bodyColor,
+        {
+          dash: [avatarSignals.ring.dash[0] * unit, avatarSignals.ring.dash[1] * unit],
+        },
+      );
+      break;
+    case "ping":
+      canvas.stroke(
+        onSignal(circle(0, 0, avatarSignals.ping.from + face.ping * avatarSignals.ping.spread)),
+        signalWidth,
+        tone(colors.waiting[theme]),
+        { opacity: face.pingOpacity },
+      );
+      break;
+    case "arcs":
+      avatarSignals.arcs.forEach((d, i) => {
+        canvas.stroke(onSignal(d), signalWidth, bodyColor, { opacity: face.arcs[i] ?? 1 });
+      });
+      break;
+    case "dots":
+      avatarSignals.dots.forEach((dot, i) => {
+        canvas.fill(onSignal(circle(dot.x, dot.y, dot.r * (face.dots[i] ?? 1))), bodyColor);
+      });
+      break;
+    case null:
+      break;
+  }
+
+  const { x, y, r } = frame.light;
+  const light = face.light === "body" ? bodyColor : tone(colors[face.light][theme]);
+  canvas.fill(onBody(circle(x, y, r)), light);
 }
 
 /**
@@ -117,44 +171,45 @@ function stillCanvas(size: number): Canvas {
  */
 export function renderStillAvatar(
   avatar: AvatarTokens,
-  look: AvatarLook,
+  face: AvatarFace,
   theme: keyof Themed,
   size: number,
 ): Uint8Array<ArrayBuffer> {
   const canvas = stillCanvas(size);
-  drawAvatar(canvas, avatar, look, theme, { x: 0, y: 0, size });
+  drawAvatar(canvas, avatar, face, theme, { x: 0, y: 0, size });
   return canvas.png();
 }
 
-/** A shape alone, with no mark, cut out of what it overlaps. */
-function drawShape(canvas: Canvas, avatar: AvatarTokens, theme: keyof Themed, box: AvatarBox) {
-  const { shape, color } = resolveAvatar(avatar);
-  const unit = box.size / 100;
-  const outline = mapSubpaths(flattenPath(avatarShapes[shape].path), (p) => ({
-    x: box.x + p.x * unit,
-    y: box.y + p.y * unit,
-  }));
-  canvas.clear(outline, avatarShapeCutout * unit);
-  canvas.fill(outline, srgb(botPalette[color][theme]));
-}
+/** How wide a clear band cuts a room's front member out of the one behind, in the 100-unit box. */
+const ROOM_CUTOUT = 8;
 
 /**
  * A still room avatar as a PNG `size` px square on a clear background, in
- * `theme`'s colors: its first two members' shapes, overlapping, with no mark,
- * as a room shows anywhere. A member missing leaves its place clear. `size`
- * is a whole number of px, at least 1; anything else throws a `RangeError`.
+ * `theme`'s colors: its first two members, overlapping, each in `face`, as a
+ * room shows anywhere. The front one is cut out of the one behind by a clear
+ * band. A member missing leaves its place clear. `size` is a whole number of
+ * px, at least 1; anything else throws a `RangeError`.
  */
 export function renderStillRoomAvatar(
   members: ReadonlyArray<AvatarTokens>,
+  face: AvatarFace,
   theme: keyof Themed,
   size: number,
 ): Uint8Array<ArrayBuffer> {
   const canvas = stillCanvas(size);
   const part = size * roomAvatarShare;
   const [back, front] = members;
-  if (back !== undefined) drawShape(canvas, back, theme, { x: 0, y: 0, size: part });
+  if (back !== undefined) drawAvatar(canvas, back, face, theme, { x: 0, y: 0, size: part });
   if (front !== undefined) {
-    drawShape(canvas, front, theme, { x: size - part, y: size - part, size: part });
+    const box = { x: size - part, y: size - part, size: part };
+    const shape = avatarShapes[resolveAvatar(front).shape];
+    const unit = part / avatarViewBox.size;
+    const outline = mapSubpaths(flattenPath(shape.path), (p) => ({
+      x: box.x + (p.x - avatarViewBox.x) * unit,
+      y: box.y + (p.y - avatarViewBox.y) * unit,
+    }));
+    canvas.clear(outline, (shape.outline + ROOM_CUTOUT) * unit);
+    drawAvatar(canvas, front, face, theme, box);
   }
   return canvas.png();
 }

@@ -11,14 +11,13 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { BotAvatar } from "../components/Avatar.tsx";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { popIn, useReducedMotion } from "../motion.ts";
 import { PressScale } from "../press.tsx";
 import { displaySpacing, Text } from "../text.tsx";
 
 // What the screens before the first bot share: pairing, and the steps that make it.
 
-const idle = { _tag: "idle" } as const;
 
 /**
  * The app's filled text field, at the larger height of the screens before the
@@ -131,7 +130,12 @@ export function Cast({ compact = false }: { readonly compact?: boolean }) {
           >
             <Animated.View entering={popIn(90 * index)}>
               <Float period={member.float} still={reduced}>
-                <BotAvatar avatar={member.look} state={idle} size={size} />
+                <BotAvatar
+                  avatar={member.look}
+                  seed={`cast-${member.look.shape}`}
+                  state="idle"
+                  size={size}
+                />
               </Float>
             </Animated.View>
           </View>

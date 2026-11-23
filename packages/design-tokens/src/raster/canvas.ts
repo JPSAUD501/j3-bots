@@ -2,7 +2,7 @@
 /**
  * Just enough vector rasterizing to turn avatars into PNG images, with no
  * image library, in Node and in a browser alike: SVG path data in the subset
- * the avatars use (absolute M, L, Q, A and Z), filled with the nonzero rule or
+ * the avatars use (absolute M, L, C, Q, A and Z), filled with the nonzero rule or
  * outlined with round caps and joins, anti-aliased, and an RGBA PNG encoder.
  */
 import { zlibSync } from "fflate";
@@ -63,6 +63,30 @@ export function flattenPath(d: string): ReadonlyArray<Subpath> {
           points.push({
             x: u * u * start.x + 2 * u * t * control.x + t * t * end.x,
             y: u * u * start.y + 2 * u * t * control.y + t * t * end.y,
+          });
+        }
+        current = end;
+        break;
+      }
+      case "C": {
+        const first = { x: number(), y: number() };
+        const second = { x: number(), y: number() };
+        const end = { x: number(), y: number() };
+        const start = current;
+        for (let step = 1; step <= CURVE_STEPS; step++) {
+          const t = step / CURVE_STEPS;
+          const u = 1 - t;
+          points.push({
+            x:
+              u * u * u * start.x +
+              3 * u * u * t * first.x +
+              3 * u * t * t * second.x +
+              t * t * t * end.x,
+            y:
+              u * u * u * start.y +
+              3 * u * u * t * first.y +
+              3 * u * t * t * second.y +
+              t * t * t * end.y,
           });
         }
         current = end;

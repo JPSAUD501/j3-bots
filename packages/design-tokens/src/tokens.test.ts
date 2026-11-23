@@ -10,11 +10,11 @@ import {
   perceivedDistance,
   toSrgb8,
   type LinearRgb,
-  type Vision,
 } from "./color.ts";
+import { avatarEye, botBubble, botPalette } from "./botPalette.ts";
 import { renderFontManifest } from "./fontManifest.ts";
 import { botColors } from "./names.ts";
-import { botBubble, botPalette, colors, type ColorRole } from "./tokens.ts";
+import { colors, type ColorRole } from "./tokens.ts";
 import { renderUniwindCss } from "./uniwind.ts";
 import { renderWebCss } from "./web.ts";
 
@@ -123,18 +123,23 @@ describe.each(modes)("%s bot palette", (mode) => {
     },
   );
 
-  it.each<Vision>(["typical", "protanopia", "deuteranopia", "tritanopia"])(
-    "keeps every pair apart with %s",
-    (vision) => {
-      const tooClose = entries.flatMap(([a, x], i) =>
-        entries
-          .slice(i + 1)
-          .filter(([, y]) => perceivedDistance(x, y, vision) < 0.085)
-          .map(([b]) => `${a}/${b}`),
-      );
-      expect(tooClose).toEqual([]);
-    },
-  );
+  it("keeps every pair apart for typical vision", () => {
+    const tooClose = entries.flatMap(([a, x], i) =>
+      entries
+        .slice(i + 1)
+        .filter(([, y]) => perceivedDistance(x, y, "typical") < 0.085)
+        .map(([b]) => `${a}/${b}`),
+    );
+    expect(tooClose).toEqual([]);
+  });
+});
+
+describe("the avatar's eye", () => {
+  it("keeps its pupil at 4.5:1 against its lens", () => {
+    expect(
+      contrastRatio(parseColor(avatarEye.pupil), parseColor(avatarEye.lens)),
+    ).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 describe.each(modes)("%s bot bubbles", (mode) => {

@@ -7,7 +7,7 @@
  * holds it when a notification arrives.
  */
 import type { BotId, Notification, RosterItem } from "@j3-bots/contracts";
-import { notificationLook } from "@j3-bots/client-runtime/presentation";
+import { notificationState, stillFace } from "@j3-bots/client-runtime/presentation";
 import type { Themed } from "@j3-bots/design-tokens";
 
 /** The app's icon, for a notification whose avatar cannot be drawn. */
@@ -19,7 +19,7 @@ const APP_ICON = "/icon-192.png";
  * systems that show it themselves give it about as much or less, so 192 px
  * stays sharp up to about two and a half device pixels per px there, and on
  * phones, whose slot is smaller. No slot is as small as 28 px, below which an
- * avatar draws its mark larger: the proportions drawn for 192 px are the ones
+ * avatar draws its eye larger: the proportions drawn for 192 px are the ones
  * the slot needs.
  */
 const ICON_SIZE = 192;
@@ -48,9 +48,9 @@ export const iconUrl = (png: Uint8Array | null) => {
 
 /**
  * The icon of `notification`, in `theme`, as a PNG. A bot's conversation
- * shows the bot that wrote, in the look the notification gives it
- * (`notificationLook`); a room shows its first two members' shapes, as the
- * roster does. `null`, for the app's icon, when there is no avatar to draw,
+ * shows the bot that wrote, still, in the state the notification gives it
+ * (`notificationState`); a room shows its first two members, as the roster
+ * does. `null`, for the app's icon, when there is no avatar to draw,
  * as for a room whose members are all gone from the roster, or when the
  * rasterizer could not be fetched.
  */
@@ -67,13 +67,13 @@ export async function notificationIcon(
   if (target._tag === "conversation") {
     const writer = bot(notification.botId);
     if (writer === undefined) return null;
-    const look = notificationLook(notification, writer.state);
-    return draw.renderStillAvatar(writer.profile.avatar, look, theme, ICON_SIZE);
+    const face = stillFace(notificationState(notification, writer.state));
+    return draw.renderStillAvatar(writer.profile.avatar, face, theme, ICON_SIZE);
   }
   const room = roster.flatMap((row) =>
     row._tag === "room" && row.room.id === target.roomId ? [row.room] : [],
   )[0];
   const members = (room?.members ?? []).flatMap((id) => bot(id)?.profile.avatar ?? []);
   if (members.length === 0) return null;
-  return draw.renderStillRoomAvatar(members, theme, ICON_SIZE);
+  return draw.renderStillRoomAvatar(members, stillFace("idle"), theme, ICON_SIZE);
 }

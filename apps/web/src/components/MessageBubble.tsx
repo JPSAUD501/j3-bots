@@ -15,7 +15,7 @@ import { tintOf } from "../lib/botTint";
 import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
-import { AvatarShape } from "./BotAvatar";
+import { BotAvatar } from "./avatar/BotAvatar";
 import { FileCard } from "./FileCard";
 import { MessageText } from "./MessageText";
 import { Button } from "./ui/button";
@@ -174,7 +174,13 @@ export function MessageBubble({
     >
       {speaker && startsGroup && (
         <div className="flex items-center gap-1.5 ps-1 pt-1">
-          <AvatarShape avatar={speaker.profile.avatar} size={20} />
+          <BotAvatar
+            avatar={speaker.profile.avatar}
+            seed={speaker.id}
+            state="idle"
+            size={24}
+            still
+          />
           <span className="text-xs font-medium">{speaker.profile.name}</span>
         </div>
       )}

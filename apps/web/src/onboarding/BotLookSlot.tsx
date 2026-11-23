@@ -2,10 +2,8 @@
 import { firstLooks } from "@j3-bots/client-runtime/presentation";
 import type { AvatarChoice } from "@j3-bots/contracts";
 import { useI18n } from "../app/context";
-import { BotAvatar } from "../components/BotAvatar";
+import { BotAvatar } from "../components/avatar/BotAvatar";
 import { cn } from "../lib/cn";
-
-const idle = { _tag: "idle" } as const;
 
 /**
  * Where the first run lets the operator choose the first bot's look. The
@@ -47,7 +45,7 @@ export function BotLookSlot({
               chosen && "border-foreground",
             )}
           >
-            <BotAvatar avatar={option} state={idle} size={40} still />
+            <BotAvatar avatar={option} seed={option.shape} state="idle" size={40} still />
           </button>
         );
       })}

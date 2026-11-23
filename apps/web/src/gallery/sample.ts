@@ -138,8 +138,8 @@ export function sampleTeam(now: DateTime.Utc) {
       ids.scout,
       "Scout",
       "Research",
-      "hexagon",
-      "teal",
+      "dome",
+      "tangerine",
       {
         _tag: "working",
         since: ago(3),
@@ -149,35 +149,35 @@ export function sampleTeam(now: DateTime.Utc) {
       },
       { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
     ),
-    juniper: bot(ids.juniper, "Juniper", "Inbox", "circle", "violet", {
+    juniper: bot(ids.juniper, "Juniper", "Inbox", "ears", "cobalt", {
       _tag: "waiting",
       entryId: EntryId.make("juniper-q1"),
     }),
-    atlas: bot(ids.atlas, "Atlas", "Deploys", "square", "blue", {
+    atlas: bot(ids.atlas, "Atlas", "Deploys", "drop", "mint", {
       _tag: "waiting",
       entryId: EntryId.make("atlas-a1"),
     }),
     // Idle with a reply not yet read: the roster shows Wren as done.
-    wren: bot(ids.wren, "Wren", "Writing", "leaf", "pink", { _tag: "idle" }),
-    ledger: bot(ids.ledger, "Ledger", "Receipts", "diamond", "yellow", {
+    wren: bot(ids.wren, "Wren", "Writing", "horns", "orchid", { _tag: "idle" }),
+    ledger: bot(ids.ledger, "Ledger", "Receipts", "ghost", "honey", {
       _tag: "blocked",
       failure: "usage-limit",
       retryAt: ahead(95),
     }),
-    otto: bot(ids.otto, "Otto", "Calendar", "arch", "green", { _tag: "idle" }),
-    maple: bot(ids.maple, "Maple", "Groceries", "clover", "orange", {
+    otto: bot(ids.otto, "Otto", "Calendar", "block", "iris", { _tag: "idle" }),
+    maple: bot(ids.maple, "Maple", "Groceries", "toes", "tomato", {
       _tag: "working",
       since: ago(14),
       stalled: true,
       activity: "Comparing prices",
       tool: null,
     }),
-    iris: bot(ids.iris, "Iris", "Travel", "burst", "indigo", {
+    iris: bot(ids.iris, "Iris", "Travel", "bean", "sky", {
       _tag: "waiting",
       entryId: EntryId.make("iris-s1"),
     }),
-    pip: bot(ids.pip, "Pip", "Home", "triangle", "red", { _tag: "idle" }, { hidden: true }),
-    moss: bot(ids.moss, "Moss", "", "plus", "gray", { _tag: "idle" }),
+    pip: bot(ids.pip, "Pip", "Home", "pear", "lime", { _tag: "idle" }, { hidden: true }),
+    moss: bot(ids.moss, "Moss", "", "hex", "rose", { _tag: "idle" }),
   } satisfies Record<string, Bot>;
 
   const room: Room = {

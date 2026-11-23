@@ -69,16 +69,16 @@ export const defaultBotName = (seed: number): string =>
 
 /**
  * Looks that suit a first bot, the first one its default: bright, and never
- * the red that reads as an error. Today's avatars; the avatar picker replaces
- * this list with its own defaults.
+ * the red that reads as an error. The cast's first looks, tomato left out;
+ * the avatar picker replaces this list with its own defaults.
  */
 export const firstLooks: readonly [AvatarChoice, ...AvatarChoice[]] = [
-  { shape: "arch", color: "blue" },
-  { shape: "clover", color: "green" },
-  { shape: "burst", color: "orange" },
-  { shape: "hexagon", color: "violet" },
-  { shape: "leaf", color: "teal" },
-  { shape: "circle", color: "pink" },
-  { shape: "diamond", color: "indigo" },
-  { shape: "square", color: "yellow" },
+  { shape: "dome", color: "tangerine" },
+  { shape: "ears", color: "cobalt" },
+  { shape: "drop", color: "mint" },
+  { shape: "horns", color: "orchid" },
+  { shape: "ghost", color: "honey" },
+  { shape: "block", color: "iris" },
+  { shape: "bean", color: "sky" },
+  { shape: "pear", color: "lime" },
 ];

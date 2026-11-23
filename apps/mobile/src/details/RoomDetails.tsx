@@ -4,7 +4,7 @@ import { useNavigation } from "@react-navigation/native";
 import { ScrollView, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { BotAvatar } from "../components/Avatar.tsx";
+import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { DeleteButton, PendingButton, Quiet, Section } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
@@ -54,7 +54,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         ) : (
           members.map((bot) => (
             <View key={bot.id} className="min-h-9 flex-row items-center gap-2.5">
-              <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={28} />
+              <LiveBotAvatar bot={bot} size={28} />
               <View className="min-w-0 flex-1">
                 <Text numberOfLines={1} className="text-base text-foreground">
                   {bot.profile.name}

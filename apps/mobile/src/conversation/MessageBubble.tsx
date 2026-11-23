@@ -18,7 +18,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { Text } from "../text.tsx";
-import { AvatarShape } from "../components/Avatar.tsx";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { usePresentation } from "../presentation.tsx";
 
 import { FileCard } from "./FileCard.tsx";
@@ -180,7 +180,13 @@ export function MessageBubble({
     >
       {speaker !== null && startsGroup && (
         <View className="flex-row items-center gap-1.5 ps-1 pt-1">
-          <AvatarShape avatar={speaker.profile.avatar} size={20} />
+          <BotAvatar
+            avatar={speaker.profile.avatar}
+            seed={speaker.id}
+            state="idle"
+            size={24}
+            still
+          />
           <Text className="text-xs font-medium text-foreground">{speaker.profile.name}</Text>
         </View>
       )}

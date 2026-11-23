@@ -4,7 +4,7 @@ import { useState } from "react";
 import { handoffPeer } from "@j3-bots/client-runtime/presentation";
 import { useBot, useI18n } from "../app/context";
 import { cn } from "../lib/cn";
-import { AvatarShape } from "./BotAvatar";
+import { BotAvatar } from "./avatar/BotAvatar";
 
 const focusRing = "rounded-sm focus-visible:outline-2 focus-visible:outline-accent";
 
@@ -34,8 +34,10 @@ export function HandoffCard({ entry, onOpen }: { entry: HandoffEntry; onOpen: ()
   );
   return (
     <div className="mt-3 flex w-full max-w-(--layout-compact-card-width) items-start gap-2.5 self-start rounded-bubble border border-border bg-surface p-3.5 shadow-raised">
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted [--avatar-cutout:var(--muted)]">
-        {other && <AvatarShape avatar={other.profile.avatar} size={18} />}
+      <span className="mt-0.5 shrink-0">
+        {other && (
+          <BotAvatar avatar={other.profile.avatar} seed={other.id} state="idle" size={24} still />
+        )}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex min-h-7 flex-wrap items-center gap-1.5 text-sm">

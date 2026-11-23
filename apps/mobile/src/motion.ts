@@ -27,7 +27,7 @@ interface Ticker {
   timer: ReturnType<typeof setInterval> | null;
 }
 
-/** One timer per interval, shared by everything that steps at it, so busy avatars step together. */
+/** One timer per interval, shared by everything that steps at it, so they step together. */
 const tickers = new Map<number, Ticker>();
 
 const tickerFor = (interval: number): Ticker => {

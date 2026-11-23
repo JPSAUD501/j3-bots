@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { firstLooks } from "@j3-bots/client-runtime/presentation";
 import type { AvatarChoice } from "@j3-bots/contracts";
-import { BotAvatar } from "../components/BotAvatar";
+import { BotAvatar } from "../components/avatar/BotAvatar";
 import { cn } from "../lib/cn";
 import { springAnimation } from "./motion";
-
-const idle = { _tag: "idle" } as const;
 
 interface Member {
   readonly look: AvatarChoice;
@@ -60,7 +58,12 @@ export function Cast({ compact = false }: { readonly compact?: boolean }) {
                 animation: `onboarding-float ${member.float}ms ease-in-out calc(var(--duration-pop) + ${90 * index}ms) infinite`,
               }}
             >
-              <BotAvatar avatar={member.look} state={idle} size={Math.round(member.size * scale)} />
+              <BotAvatar
+                avatar={member.look}
+                seed={`cast-${member.look.shape}`}
+                state="idle"
+                size={Math.round(member.size * scale)}
+              />
             </span>
           </span>
         </span>

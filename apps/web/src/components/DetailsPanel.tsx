@@ -28,7 +28,7 @@ import {
   permissionModeText,
   routineLines,
 } from "@j3-bots/client-runtime/wording";
-import { BotAvatar } from "./BotAvatar";
+import { LiveBotAvatar } from "./avatar/mood";
 import { FileCard } from "./FileCard";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
@@ -142,7 +142,7 @@ export function BotDetails({
 }: BotDetailsProps) {
   const i18n = useI18n();
   const { t } = i18n;
-  const { name, title, job, avatar } = bot.profile;
+  const { name, title, job } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, i18n);
   return (
     <PanelFrame
@@ -152,9 +152,7 @@ export function BotDetails({
       headingId={headingId}
     >
       <section className="flex flex-col items-start gap-3 border-b border-border px-4 py-5">
-        <span className="[--avatar-cutout:var(--background)]">
-          <BotAvatar avatar={avatar} state={bot.state} size={72} />
-        </span>
+        <LiveBotAvatar bot={bot} size={96} />
         <div className="flex flex-col">
           <span className="flex items-center gap-2 text-xl font-medium">
             {name}
@@ -447,11 +445,8 @@ export function RoomDetails({
               const bot = bots.get(id);
               if (!bot) return null;
               return (
-                <li
-                  key={id}
-                  className="flex items-center gap-2.5 [--avatar-cutout:var(--background)]"
-                >
-                  <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={24} />
+                <li key={id} className="flex items-center gap-2.5">
+                  <LiveBotAvatar bot={bot} size={24} />
                   <span className="text-sm">{bot.profile.name}</span>
                   {bot.profile.title !== "" && (
                     <span className="text-xs text-muted-foreground">{bot.profile.title}</span>

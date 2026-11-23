@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { crc32, inflateSync } from "node:zlib";
 import { describe, expect, it } from "vite-plus/test";
-import { avatarShapes } from "../avatarShapes.ts";
 import { Canvas, coverage, flattenPath } from "./canvas.ts";
 
 const sum = (values: Float32Array) => values.reduce((total, v) => total + v, 0);
@@ -14,14 +13,25 @@ describe("coverage", () => {
   });
 
   it("fills the circle an arc path draws", () => {
-    // The avatar circle: two half arcs of radius 46.
-    const area = sum(coverage(flattenPath(avatarShapes.circle.path), 100, 100));
+    // Two half arcs of radius 46.
+    const area = sum(coverage(flattenPath("M50 4A46 46 0 1 1 50 96A46 46 0 1 1 50 4Z"), 100, 100));
     expect(area / (Math.PI * 46 * 46)).toBeCloseTo(1, 2);
   });
 
   it("fills an outline drawn inside another the same way round, as SVG's nonzero rule does", () => {
     const covered = coverage(flattenPath("M0 0L4 0L4 4L0 4ZM1 1L3 1L3 3L1 3Z"), 4, 4);
     expect(sum(covered)).toBe(16);
+  });
+});
+
+describe("flattenPath", () => {
+  it("follows a cubic curve through its end points, inside its control polygon", () => {
+    const [curve] = flattenPath("M0 0C0 10 10 10 10 0");
+    const points = curve?.points ?? [];
+    expect(points[0]).toEqual({ x: 0, y: 0 });
+    expect(points.at(-1)).toEqual({ x: 10, y: 0 });
+    // Halfway along, a cubic with these control points reaches 3/4 of their height.
+    expect(points[points.length >> 1]?.y).toBeCloseTo(7.5, 5);
   });
 });
 

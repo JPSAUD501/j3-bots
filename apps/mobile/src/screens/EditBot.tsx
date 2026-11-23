@@ -14,6 +14,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
+import { AvatarPicker } from "../components/avatar/AvatarPicker.tsx";
 import { Connecting } from "../components/ConnectionLine.tsx";
 import { ChoiceRow, FormScreen, TextField, useDiscardGuard } from "../components/form.tsx";
 import { Gone } from "../conversation/ConversationView.tsx";
@@ -75,7 +76,7 @@ export function EditBotScreen({ navigation, route }: Props) {
 }
 
 /**
- * The form: name, title and job, the model and the permission mode. Save
+ * The form: name, title, look and job, the model and the permission mode. Save
  * sends only what changed. While a save is under way the form shows what it
  * sends and takes no edit; a save that fails leaves the edits in place and
  * says why, beside the field when one field is the reason.
@@ -152,6 +153,13 @@ function EditBotForm({
         placeholder={t("editBot.titleField.placeholder")}
         onChange={(value) => form.editText("title", value)}
         error={fieldError("title")}
+      />
+      <AvatarPicker
+        value={form.avatar}
+        onChange={(avatar) => form.edit({ avatar })}
+        name={form.name}
+        seed={bot.id}
+        readOnly={saving}
       />
       <TextField
         label={t("editBot.job")}

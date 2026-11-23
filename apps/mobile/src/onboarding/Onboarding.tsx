@@ -48,7 +48,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { BotAvatar } from "../components/Avatar.tsx";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { ProviderRow } from "../components/Engine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
@@ -64,7 +64,6 @@ const pop = reanimatedSpring(springs.pop);
 const soft = reanimatedSpring(springs.soft);
 const slide = reanimatedSpring(springs.slide);
 
-const idle = { _tag: "idle" } as const;
 
 /** How long the arrival stays at least, so the bot is seen arriving before its conversation opens. */
 const ARRIVAL_MS = 1600;
@@ -350,7 +349,7 @@ function Hero({
           {arrived &&
             !reduced &&
             [0, 1, 2].map((ring) => <Ring key={ring} index={ring} color={look.color} />)}
-          <BotAvatar avatar={look} state={idle} size={96} />
+          <BotAvatar avatar={look} seed="first-bot" state="idle" size={96} />
         </Animated.View>
       </Animated.View>
     </View>
@@ -529,7 +528,14 @@ function BotLookSlot({
             onPress={() => onLook(option)}
             className={`size-16 items-center justify-center rounded-lg border-2 bg-surface active:bg-muted ${chosen ? "border-foreground" : "border-transparent"}`}
           >
-            <BotAvatar avatar={option} state={idle} size={40} ground="surface" />
+            <BotAvatar
+              avatar={option}
+              seed={option.shape}
+              state="idle"
+              size={40}
+              ground="surface"
+              still
+            />
           </PressScale>
         );
       })}

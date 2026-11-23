@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EngineStatus, ModelChoice, PermissionMode } from "@j3-bots/contracts";
+import type { Avatar, Bot, EngineStatus, ModelChoice, PermissionMode } from "@j3-bots/contracts";
 import { useState } from "react";
 import type { BotChanges, Save } from "../stores/Details.ts";
 import {
@@ -24,6 +24,7 @@ export interface BotEdit {
   readonly name: string;
   readonly title: string;
   readonly job: string;
+  readonly avatar: Avatar;
   readonly model: ModelChoice;
   readonly permissionMode: PermissionMode;
   /** Whether a save is under way; the form then shows what it sends and takes no edit. */
@@ -43,11 +44,11 @@ export interface BotEdit {
   /** What Save sends, or null while it cannot. */
   readonly changes: BotChanges | null;
   readonly editText: (field: ProfileField, value: string) => void;
-  readonly edit: (change: Partial<Pick<BotEdits, "model" | "permissionMode">>) => void;
+  readonly edit: (change: Partial<Pick<BotEdits, "avatar" | "model" | "permissionMode">>) => void;
 }
 
 /**
- * The edit of a bot's name, title and job, its model and its permission mode,
+ * The edit of a bot's name, title, avatar and job, its model and its permission mode,
  * as a form holds it. Save sends only what changed. A save that fails leaves
  * the edits in place, and its problem shows until the operator edits again.
  * Fields the operator left alone follow the bot as the server has it.
@@ -97,6 +98,7 @@ export function useBotEdit(options: {
     name,
     title: edits.title ?? shown.profile.title,
     job: edits.job ?? shown.profile.job,
+    avatar: edits.avatar ?? shown.profile.avatar,
     model,
     permissionMode,
     saving,

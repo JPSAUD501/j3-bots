@@ -14,7 +14,7 @@ import { type RoomSubmission, useRoomForm } from "@j3-bots/client-runtime/react"
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
-import { AvatarShape } from "./BotAvatar";
+import { BotAvatar } from "./avatar/BotAvatar";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
@@ -216,7 +216,13 @@ export function RoomForm({
                     <ChoiceIndicator shape="square">
                       {picked && <CheckIcon className="size-3" strokeWidth={3} />}
                     </ChoiceIndicator>
-                    <AvatarShape avatar={bot.profile.avatar} size={20} />
+                    <BotAvatar
+                      avatar={bot.profile.avatar}
+                      seed={bot.id}
+                      state="idle"
+                      size={24}
+                      still
+                    />
                     <span className="min-w-0 truncate">{bot.profile.name}</span>
                     {bot.profile.title !== "" && (
                       <span className="min-w-0 truncate text-xs text-muted-foreground">

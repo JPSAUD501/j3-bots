@@ -10,6 +10,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 // The tokens' theme and the utilities every className names.
 import "../global.css";
 import { I18nContext, useI18n } from "./i18n.ts";
+import { AvatarConnection } from "./components/avatar/mood.tsx";
 import { ChangeServer, ForgetSignIn } from "./Leave.tsx";
 import { Main } from "./navigation.tsx";
 import { PairingScreen } from "./screens/Pairing.tsx";
@@ -129,7 +130,9 @@ function Root() {
     case "main":
       return (
         <J3ClientProvider key={shown.server.origin} client={shown.client}>
-          <Main />
+          <AvatarConnection>
+            <Main />
+          </AvatarConnection>
         </J3ClientProvider>
       );
   }

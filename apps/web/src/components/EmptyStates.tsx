@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import { connectCommand, openingHeld } from "@j3-bots/client-runtime/presentation";
-import { ensemble } from "@j3-bots/design-tokens";
+import { avatarEnsemble } from "@j3-bots/design-tokens";
 import type { ReactNode } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -11,24 +11,25 @@ import {
   heldHelloText,
   quietConversationText,
 } from "@j3-bots/client-runtime/wording";
-import { BotAvatar } from "./BotAvatar";
+import { BotAvatar } from "./avatar/BotAvatar";
+import { LiveBotAvatar } from "./avatar/mood";
 import { CommandLine } from "./CommandLine";
 import { useConnectionLineShown } from "./ConnectionBanner";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 
-const idle = { _tag: "idle" } as const;
-
 /** Three idle bots: the picture for screens where the team is still to come. */
 function Ensemble() {
   return (
-    <span
-      className="flex items-end [--avatar-cutout:var(--background)]"
-      style={{ gap: ensemble.gap }}
-      aria-hidden
-    >
-      {ensemble.members.map(({ shape, color, size }) => (
-        <BotAvatar key={shape} avatar={{ shape, color }} state={idle} size={size} />
+    <span className="flex items-end gap-2" aria-hidden>
+      {avatarEnsemble.map(({ avatar, size }) => (
+        <BotAvatar
+          key={avatar.shape}
+          avatar={avatar}
+          seed={`welcome-${avatar.shape}`}
+          state="idle"
+          size={size}
+        />
       ))}
     </span>
   );
@@ -143,8 +144,8 @@ export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineSta
   const held = openingHeld(bot, engine);
   return (
     <Centered>
-      <span className="pop-in [--avatar-cutout:var(--background)]">
-        <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
+      <span className="pop-in">
+        <LiveBotAvatar bot={bot} size={96} />
       </span>
       <Heading
         title={name}

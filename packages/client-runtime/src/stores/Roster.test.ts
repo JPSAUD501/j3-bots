@@ -26,7 +26,7 @@ const bot = (
   _tag: "bot",
   bot: {
     id: BotId.make(name),
-    profile: { name, title: "", avatar: { shape: "circle", color: "blue" }, job: "" },
+    profile: { name, title: "", avatar: { shape: "dome", color: "cobalt" }, job: "" },
     model: { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") },
     permissionMode: "auto",
     primary: false,

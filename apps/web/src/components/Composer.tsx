@@ -36,7 +36,7 @@ import { springs } from "@j3-bots/design-tokens";
 import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
-import { AvatarShape } from "./BotAvatar";
+import { BotAvatar } from "./avatar/BotAvatar";
 import { Button } from "./ui/button";
 
 /**
@@ -730,7 +730,9 @@ export function MentionList({
           >
             {option._tag === "bot" ? (
               <>
-                {avatar && <AvatarShape avatar={avatar} size={20} />}
+                {avatar && (
+                  <BotAvatar avatar={avatar} seed={option.id} state="idle" size={20} still />
+                )}
                 <span className="min-w-0 truncate">{option.name}</span>
               </>
             ) : (

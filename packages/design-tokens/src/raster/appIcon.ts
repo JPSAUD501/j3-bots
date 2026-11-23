@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * The app's icons, drawn from the ensemble (`ensemble`): the three idle bots
- * the first-run and pairing screens show, on the canvas color, or its lead
- * alone where the row would be too small to read. No art of its own: change
- * the avatars or the canvas and every icon follows. Each platform's icon is
- * one of the forms below; which one, at what size, is the caller's.
+ * The app's icons and the tray's, drawn from the icon art (`iconArt`): three
+ * bots on the canvas color, or the largest alone where the row would be too
+ * small to read. Each platform's icon is one of the forms below; which one,
+ * at what size, is the caller's.
  */
 import {
-  avatarMarks,
-  avatarProportions,
-  ensemble,
-  ensembleLead,
-  layOutRow,
-  type EnsembleLayout,
-} from "../avatar.ts";
-import { avatarShapes } from "../avatarShapes.ts";
+  ICON_DOT,
+  iconArt,
+  iconBadge,
+  iconDotScale,
+  iconInk,
+  iconLead,
+  layOutIcon,
+  type IconBot,
+  type IconLayout,
+} from "../appIconArt.ts";
 import { parseColor, toSrgb8 } from "../color.ts";
 import { colors, type Themed } from "../tokens.ts";
-import { drawAvatar } from "./avatarRaster.ts";
 import {
   Canvas,
   circlePath,
@@ -46,7 +46,7 @@ export interface AppIcon {
   /** The bots' palette, and the canvas color of a plate. */
   readonly theme: keyof Themed;
   readonly plate: AppIconPlate;
-  /** The whole ensemble, or only its lead (`ensembleLead`). */
+  /** The whole row, or only its lead (`iconLead`). */
   readonly art: "ensemble" | "lead";
   /** The art's width, as a share of the image's side. */
   readonly width: number;
@@ -94,11 +94,58 @@ const PLATE_RADIUS = 0.2237;
 
 const WHITE: Rgb = [255, 255, 255];
 
-const layouts: Readonly<Record<AppIcon["art"], EnsembleLayout>> = {
-  ensemble: layOutRow(ensemble.members, ensemble.gap),
-  lead: layOutRow([ensembleLead], 0),
+const layouts: Readonly<Record<AppIcon["art"], IconLayout>> = {
+  ensemble: layOutIcon(iconArt.bots, iconArt.gap),
+  lead: layOutIcon([iconLead], 0),
 };
-const IDLE = { mark: "dot", badge: null } as const;
+
+const srgb = (value: string): Rgb => toSrgb8(parseColor(value));
+
+/** Where a bot lands on a canvas: its box's top left corner and its side, in px. */
+interface IconBox {
+  readonly x: number;
+  readonly y: number;
+  readonly size: number;
+}
+
+/**
+ * One bot of the art in `box`: its silhouette, its dot, and with `badge` the
+ * tray's waiting badge, cut out of the bot by a clear outline.
+ */
+function drawIconBot(
+  canvas: Canvas,
+  bot: IconBot,
+  theme: keyof Themed,
+  box: IconBox,
+  badge: boolean,
+) {
+  const unit = box.size / 100;
+  const toCanvas = (p: Point): Point => ({ x: box.x + p.x * unit, y: box.y + p.y * unit });
+  canvas.fill(mapSubpaths(flattenPath(bot.path), toCanvas), srgb(bot.color[theme]));
+  canvas.fill(
+    circlePath(toCanvas(bot.mark), ICON_DOT * iconDotScale(box.size) * unit),
+    srgb(iconInk[theme]),
+  );
+  if (!badge) return;
+  const { center, r, cutout } = iconBadge(box.size);
+  const at = toCanvas({ x: center, y: center });
+  canvas.clear(circlePath(at, (r + cutout / 2) * unit));
+  canvas.fill(circlePath(at, (r - cutout / 2) * unit), srgb(colors.waiting[theme]));
+}
+
+/**
+ * The tray's icon as a PNG `size` px square on a clear background: the art's
+ * lead, with a badge when something waits on the operator. A `size` that is
+ * not a whole number of px, at least 1, throws a `RangeError`.
+ */
+export function renderTrayIcon(attention: boolean, theme: keyof Themed, size: number) {
+  if (!isPixelCount(size)) {
+    throw new RangeError(`An icon's size is a whole number of px, at least 1, not ${size}.`);
+  }
+  const canvas = new Canvas(size, size);
+  drawIconBot(canvas, iconLead, theme, { x: 0, y: 0, size }, attention);
+  return canvas.png();
+}
 
 /** The subpaths of a square from `low` to `high` on both axes, its corners rounded by `r`. */
 function roundedSquare(low: number, high: number, r: number) {
@@ -139,23 +186,20 @@ export function renderAppIcon(icon: AppIcon): Uint8Array<ArrayBuffer> {
     x: (size - layout.width * scale) / 2,
     y: (size - layout.height * scale) / 2,
   };
-  for (const { member, left, top } of layout.placed) {
+  for (const { bot, left, top } of layout.placed) {
     const box = {
       x: origin.x + left * scale,
       y: origin.y + top * scale,
-      size: member.size * scale,
+      size: bot.size * scale,
     };
     if (!silhouette) {
-      drawAvatar(canvas, member, IDLE, theme, box);
+      drawIconBot(canvas, bot, theme, box, false);
       continue;
     }
     const unit = box.size / 100;
     const toCanvas = (p: Point): Point => ({ x: box.x + p.x * unit, y: box.y + p.y * unit });
-    const shape = avatarShapes[member.shape];
-    canvas.fill(mapSubpaths(flattenPath(shape.path), toCanvas), WHITE);
-    const [dot] = avatarMarks.dot;
-    const { markScale } = avatarProportions(box.size);
-    canvas.clear(circlePath(toCanvas(shape.mark), dot.r * markScale * unit));
+    canvas.fill(mapSubpaths(flattenPath(bot.path), toCanvas), WHITE);
+    canvas.clear(circlePath(toCanvas(bot.mark), ICON_DOT * iconDotScale(box.size) * unit));
   }
   return canvas.png();
 }

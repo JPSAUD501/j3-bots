@@ -13,6 +13,7 @@ import { permissionModeText } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
+import { AvatarPicker } from "./avatar/AvatarPicker";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
@@ -43,8 +44,8 @@ const isMode = Schema.is(PermissionMode);
 const keyOf = (choice: Bot["model"]) => JSON.stringify([choice.providerId, choice.modelId]);
 
 /**
- * Everything the operator changes about a bot itself: its name, title and
- * job, the model it runs on and how much it may do without asking. Save sends
+ * Everything the operator changes about a bot itself: its name, title, look
+ * and job, the model it runs on and how much it may do without asking. Save sends
  * only what changed. While a save is under way the form shows what it sends
  * and takes no edit; a save that fails leaves the edits in place and says
  * why, beside the field when one field is the reason.
@@ -154,6 +155,14 @@ export function EditBotForm({
           />
           {fieldError("title")}
         </div>
+
+        <AvatarPicker
+          value={form.avatar}
+          onChange={(avatar) => form.edit({ avatar })}
+          name={name}
+          seed={bot.id}
+          readOnly={saving}
+        />
 
         <div className="flex flex-col gap-1">
           <label htmlFor={ids.job} className="text-xs">

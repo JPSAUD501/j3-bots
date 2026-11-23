@@ -6,6 +6,7 @@
  */
 import {
   AttachmentId,
+  type AvatarChoice,
   type BotId,
   Conflict,
   type EngineStatus,
@@ -31,12 +32,14 @@ import {
   type UsageWindow,
 } from "@j3-bots/contracts";
 import {
+  avatarCast,
   avatarShapeNames,
   botColors,
   colors,
   fontFamilies,
   press,
   radii,
+  resolveAvatar,
   shadows,
   springs,
   typeScale,
@@ -57,6 +60,8 @@ import {
 import {
   addressed,
   addresseeOf,
+  avatarSeed,
+  avatarStates,
   buildTimeline,
   mentionOptions,
   type OnboardingStep,
@@ -64,7 +69,8 @@ import {
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { BotsProvider, I18nProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
-import { BotAvatar, RoomAvatar } from "../components/BotAvatar";
+import { AvatarPicker } from "../components/avatar/AvatarPicker";
+import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
 import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
@@ -318,7 +324,31 @@ function TokensSection() {
   );
 }
 
-const scoutAvatar = team.bots.scout.profile.avatar;
+/** An avatar the gallery shows in every state: the scout, until Generate draws another. */
+interface Subject {
+  readonly avatar: AvatarChoice;
+  readonly seed: string;
+}
+
+const scout: Subject = {
+  avatar: resolveAvatar(team.bots.scout.profile.avatar),
+  seed: team.bots.scout.id,
+};
+
+/** The `count`th generated avatar: a shape, a color and a seed, drawn from a hash of the count. */
+const generated = (count: number): Subject => {
+  const seed = `generated-${count}`;
+  const hash = avatarSeed(seed);
+  return {
+    avatar: {
+      shape: avatarShapeNames[hash % avatarShapeNames.length] ?? "dome",
+      color: botColors[(hash >>> 8) % botColors.length] ?? "slate",
+    },
+    seed,
+  };
+};
+
+const AVATAR_SIZES = [24, 40, 96] as const;
 
 function PrimitivesSection() {
   const { t } = useI18n();
@@ -472,67 +502,103 @@ function MotionSection() {
 }
 
 function AvatarsSection() {
+  const [subject, setSubject] = useState(scout);
+  const [count, setCount] = useState(0);
+  const [picked, setPicked] = useState<AvatarChoice>(avatarCast[0] ?? scout.avatar);
+  const [name, setName] = useState("Scout");
+  const subjectName = `${subject.avatar.shape} · ${subject.avatar.color}`;
   return (
     <Section title="Avatars">
-      <Labeled label="Shapes">
-        <div className="flex flex-wrap gap-4">
-          {avatarShapeNames.map((shape, index) => (
-            <div key={shape} className="flex w-14 flex-col items-center gap-1">
-              <BotAvatar
-                avatar={{ shape, color: botColors[index] ?? "gray" }}
-                state={{ _tag: "idle" }}
-                size={44}
-              />
-              <span className="font-mono text-2xs text-muted-foreground">{shape}</span>
-            </div>
-          ))}
-        </div>
-      </Labeled>
-      <Labeled label="States, at 24, 36 and 72 px">
+      <Labeled label={`Every state at 24, 40 and 96 px: ${subjectName}`}>
         <div className="flex flex-col gap-3">
-          {[24, 36, 72].map((size) => (
-            <div key={size} className="flex flex-wrap items-end gap-4">
-              {variants.states.map(([name, state, unread]) => (
-                <div key={name} className="flex w-16 flex-col items-center gap-1">
-                  <BotAvatar avatar={scoutAvatar} state={state} unread={unread} size={size} />
-                  {size === 72 && (
-                    <span className="font-mono text-2xs text-muted-foreground">{name}</span>
+          {AVATAR_SIZES.map((size) => (
+            <div key={size} className="flex flex-wrap items-end gap-3">
+              {avatarStates.map((state) => (
+                <div key={state} className="flex min-w-16 flex-col items-center gap-1">
+                  <BotAvatar
+                    avatar={subject.avatar}
+                    seed={subject.seed}
+                    state={state}
+                    size={size}
+                  />
+                  {size === 96 && (
+                    <span className="font-mono text-2xs text-muted-foreground">{state}</span>
                   )}
                 </div>
               ))}
+              <div className="flex min-w-16 flex-col items-center gap-1">
+                <BotAvatar
+                  avatar={subject.avatar}
+                  seed={subject.seed}
+                  state="working"
+                  stalled
+                  size={size}
+                />
+                {size === 96 && (
+                  <span className="font-mono text-2xs text-muted-foreground">stalled</span>
+                )}
+              </div>
             </div>
           ))}
-        </div>
-      </Labeled>
-      <Labeled label="Still: no motion, as with reduced motion and in notifications">
-        <div className="flex flex-wrap items-end gap-4">
-          {variants.states.map(([name, state, unread]) => (
-            <div key={name} className="flex w-16 flex-col items-center">
-              <BotAvatar avatar={scoutAvatar} state={state} unread={unread} size={36} still />
-            </div>
-          ))}
-        </div>
-      </Labeled>
-      <Labeled label="Every color working, and a room">
-        <div className="flex flex-wrap items-center gap-3">
-          {botColors.map((color) => (
-            <BotAvatar
-              key={color}
-              avatar={{ shape: "circle", color }}
-              state={{
-                _tag: "working",
-                since: SAMPLE_NOW,
-                stalled: false,
-                activity: null,
-                tool: null,
+          <div className="flex gap-2">
+            <Button
+              onClick={() => {
+                setSubject(generated(count + 1));
+                setCount(count + 1);
               }}
-              size={36}
+            >
+              Generate
+            </Button>
+            <Button variant="ghost" onClick={() => setSubject(scout)}>
+              Scout
+            </Button>
+          </div>
+        </div>
+      </Labeled>
+      <Labeled label="Still: as under reduced motion and in notifications, at 40 px">
+        <div className="flex flex-wrap items-end gap-3">
+          {avatarStates.map((state) => (
+            <BotAvatar
+              key={state}
+              avatar={subject.avatar}
+              seed={subject.seed}
+              state={state}
+              size={40}
+              still
             />
           ))}
+        </div>
+      </Labeled>
+      <Labeled label="The cast, in the order new bots take it, and a room">
+        <div className="flex flex-wrap items-end gap-3">
+          {avatarCast.map((avatar) => (
+            <div key={avatar.shape} className="flex w-16 flex-col items-center gap-1">
+              <BotAvatar avatar={avatar} seed={`cast-${avatar.shape}`} state="idle" size={40} />
+              <span className="font-mono text-2xs text-muted-foreground">
+                {avatar.shape}
+                <br />
+                {avatar.color}
+              </span>
+            </div>
+          ))}
           <RoomAvatar
-            members={[team.bots.atlas.profile.avatar, team.bots.wren.profile.avatar]}
-            size={36}
+            members={[team.bots.atlas, team.bots.wren].map((bot) => ({
+              id: bot.id,
+              avatar: bot.profile.avatar,
+            }))}
+            size={40}
           />
+        </div>
+      </Labeled>
+      <Labeled label="Picker, with a name to type">
+        <div className="flex max-w-md flex-col gap-3">
+          <input
+            aria-label="Name"
+            value={name}
+            onChange={(event) => setName(event.currentTarget.value)}
+            className={lineField}
+          />
+          <AvatarPicker value={picked} onChange={setPicked} name={name} seed="gallery-picker" />
         </div>
       </Labeled>
     </Section>
@@ -632,7 +698,7 @@ function NotificationsSection() {
 const memberAvatars = (item: RosterItem) =>
   item._tag === "room"
     ? item.room.members.flatMap((id) =>
-        bots.filter((b) => b.id === id).map((b) => b.profile.avatar),
+        bots.filter((b) => b.id === id).map((b) => ({ id: b.id, avatar: b.profile.avatar })),
       )
     : [];
 

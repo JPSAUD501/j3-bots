@@ -25,7 +25,7 @@ import {
   useState,
 } from "react";
 import { useI18n, usePresentation } from "../app/context";
-import { BotAvatar } from "../components/BotAvatar";
+import { BotAvatar } from "../components/avatar/BotAvatar";
 import { CommandLine } from "../components/CommandLine";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/cn";
@@ -33,8 +33,6 @@ import { BotLookSlot } from "./BotLookSlot";
 import { Cast } from "./Cast";
 import { BigButton, bigFieldClass, StepTitle } from "./parts";
 import { springAnimation, useReducedMotion } from "./motion";
-
-const idle = { _tag: "idle" } as const;
 
 /** How long the arrival stays at least, so the bot is seen arriving before its conversation opens. */
 const ARRIVAL_MS = 1600;
@@ -365,7 +363,7 @@ function Hero({
             className="block"
             style={{ animation: springAnimation("onboarding-hop", "pop") }}
           >
-            <BotAvatar avatar={look} state={idle} size={96} />
+            <BotAvatar avatar={look} seed="first-bot" state="idle" size={96} />
           </span>
         </span>
       </span>

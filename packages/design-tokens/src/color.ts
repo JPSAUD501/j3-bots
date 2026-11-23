@@ -74,17 +74,35 @@ function linearToOklab({ r, g, b }: Omit<LinearRgb, "alpha">): Lab {
 /**
  * `share` (0 to 1) of opaque `a` mixed into opaque `b` in OKLab, as CSS
  * `color-mix(in oklab, a share, b)` mixes them, written as `oklch(L C H)`.
+ *
+ * A mix in OKLab can leave sRGB even when both colors are in it, as a
+ * saturated red does on its way to white. Such a mix is brought back the way
+ * CSS Color 4 maps a color for display: its chroma is reduced, at the same
+ * lightness and hue, until sRGB can show it.
  */
 export function mixOklab(a: string, b: string, share: number): string {
   const x = linearToOklab(parseColor(a));
   const y = linearToOklab(parseColor(b));
   const at = (p: number, q: number) => p * share + q * (1 - share);
-  const l = at(x.l, y.l);
   const ab = { a: at(x.a, y.a), b: at(x.b, y.b) };
   const c = Math.hypot(ab.a, ab.b);
-  const h = c < 1e-4 ? 0 : ((Math.atan2(ab.b, ab.a) * 180) / Math.PI + 360) % 360;
-  const fixed = (n: number, digits: number) => Number(n.toFixed(digits));
-  return `oklch(${fixed(l, 3)} ${fixed(c, 3)} ${fixed(h, 1)})`;
+  const l = Number(at(x.l, y.l).toFixed(3));
+  const h =
+    c < 1e-4 ? 0 : Number((((Math.atan2(ab.b, ab.a) * 180) / Math.PI + 360) % 360).toFixed(1));
+  const fits = (chroma: number) => inSrgbGamut(parseColor(`oklch(${l} ${chroma} ${h})`));
+  let chroma = Number(c.toFixed(3));
+  if (!fits(chroma)) {
+    // The chromas sRGB shows at one lightness and hue run from 0 to a limit: find the limit.
+    let low = 0;
+    let high = chroma;
+    for (let step = 0; step < 24; step++) {
+      const middle = (low + high) / 2;
+      if (fits(middle)) low = middle;
+      else high = middle;
+    }
+    chroma = Math.floor(low * 1000) / 1000;
+  }
+  return `oklch(${l} ${chroma} ${h})`;
 }
 
 /** Whether the color can be shown on an sRGB display without clipping. */
@@ -106,9 +124,21 @@ export function toSrgb8(color: LinearRgb): readonly [number, number, number] {
  * An opaque color as `#rrggbb` in 8-bit sRGB, for what takes no other form:
  * a native window's background, an app's splash screen. Alpha is dropped.
  */
-export function hexColor(value: string): string {
-  const hex = toSrgb8(parseColor(value)).map((c) => c.toString(16).padStart(2, "0"));
+export function hexColor(value: string | LinearRgb): string {
+  const color = typeof value === "string" ? parseColor(value) : value;
+  const hex = toSrgb8(color).map((c) => c.toString(16).padStart(2, "0"));
   return `#${hex.join("")}`;
+}
+
+/**
+ * `color` with most of its saturation gone, as an offline bot's avatar is
+ * drawn, and as the web's `saturate(0.12)` takes it: each channel drawn
+ * toward the color's luminance.
+ */
+export function washedOut(color: LinearRgb): LinearRgb {
+  const gray = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+  const toward = (c: number) => gray + (c - gray) * 0.12;
+  return { r: toward(color.r), g: toward(color.g), b: toward(color.b), alpha: color.alpha };
 }
 
 /** Composites `top` over an opaque `bottom`. */

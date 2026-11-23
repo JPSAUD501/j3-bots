@@ -23,7 +23,7 @@ import { ArrowUp, File, Plus, Users, X } from "lucide-react-native";
 import { type ComponentRef, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Alert, ScrollView, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
-import { AvatarShape } from "../components/Avatar.tsx";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { type PickedFile, pickDocuments, pickPhotos } from "../platform/pick.ts";
@@ -476,7 +476,9 @@ function MentionList({
           >
             {option._tag === "bot" ? (
               <>
-                {avatar !== undefined && <AvatarShape avatar={avatar} size={20} />}
+                {avatar !== undefined && (
+                  <BotAvatar avatar={avatar} seed={option.id} state="idle" size={24} still />
+                )}
                 <Text numberOfLines={1} className="shrink text-base text-foreground">
                   {option.name}
                 </Text>

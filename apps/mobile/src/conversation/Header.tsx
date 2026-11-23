@@ -6,7 +6,8 @@ import { ChevronLeft, ChevronRight, CornerDownRight, Square } from "lucide-react
 import { useEffect, useEffectEvent, useRef } from "react";
 import { AccessibilityInfo, Alert, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
-import { BotAvatar, RoomAvatar } from "../components/Avatar.tsx";
+import { RoomAvatar } from "../components/avatar/BotAvatar.tsx";
+import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
@@ -89,13 +90,13 @@ export function ConversationHeader({
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2.5 rounded-md px-1.5 active:bg-muted"
       >
         {item._tag === "bot" ? (
-          <BotAvatar avatar={item.bot.profile.avatar} state={item.bot.state} size={28} />
+          <LiveBotAvatar bot={item.bot} lastEntry={item.lastEntry} size={32} />
         ) : (
           <RoomAvatar
-            size={28}
+            size={32}
             members={item.room.members.flatMap((id) => {
               const bot = bots.get(id);
-              return bot === undefined ? [] : [bot.profile.avatar];
+              return bot === undefined ? [] : [{ id, avatar: bot.profile.avatar }];
             })}
           />
         )}

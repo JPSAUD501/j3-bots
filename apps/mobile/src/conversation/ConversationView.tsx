@@ -67,7 +67,7 @@ import Animated from "react-native-reanimated";
 import { Text } from "../text.tsx";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { BotAvatar } from "../components/Avatar.tsx";
+import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { CommandLine } from "../components/CommandLine.tsx";
 import { PendingButton } from "../components/form.tsx";
 import type { Navigation } from "../navigation.tsx";
@@ -470,7 +470,7 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
       style={{ paddingBottom: bottom }}
     >
       <Animated.View entering={popIn()}>
-        <BotAvatar avatar={bot.profile.avatar} state={bot.state} size={72} />
+        <LiveBotAvatar bot={bot} size={96} />
       </Animated.View>
       <Title>{name}</Title>
       <Body>

@@ -137,7 +137,7 @@ export function Roster({
                     item._tag === "room"
                       ? item.room.members.flatMap((id) => {
                           const bot = bots.get(id);
-                          return bot ? [bot.profile.avatar] : [];
+                          return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
                         })
                       : []
                   }
