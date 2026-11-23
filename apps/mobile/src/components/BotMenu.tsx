@@ -10,6 +10,7 @@ import {
   Ellipsis,
   Eye,
   EyeOff,
+  FileOutput,
   Folder,
   FolderInput,
   FolderMinus,
@@ -30,6 +31,7 @@ import type { Navigation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
 import { useFolded } from "../screens/folded.ts";
 import { useBotPlacing } from "../screens/placing.ts";
+import { useShareBotTemplate } from "../template/share.ts";
 import { Menu, type MenuAnchor, type MenuEntry } from "./Menu.tsx";
 import { PinnedBot } from "./PinnedBots.tsx";
 import { RosterRow } from "./RosterRow.tsx";
@@ -53,8 +55,8 @@ type Page = "main" | "sections" | "more";
  * What the operator can do to a bot from the roster, opened by a long press
  * on its row or its pinned avatar: mark its conversation read or unread, pin
  * or unpin it, put it in a section, make it the primary bot, hide it, and
- * under More what its details offer (the details, its profile, a fresh start
- * and deleting it). A hidden bot, which a search finds, offers Unhide in
+ * under More what its details offer (the details, its profile, sharing it as
+ * a template, a fresh start and deleting it). A hidden bot, which a search finds, offers Unhide in
  * place of Pin and Hide. The system's Back on a page a row opened goes back
  * to the first page. Sections and Mark as unread are offered only by a server
  * that has them, which says so with its sections; Mark as read, only with
@@ -76,6 +78,7 @@ export function BotMenu({
   const placing = useBotPlacing();
   const actions = useBotActions();
   const confirm = useConfirm();
+  const shareTemplate = useShareBotTemplate();
   const sections = useReadable(useJ3Client().sections);
   const folded = useFolded();
   const bots = useBots();
@@ -222,6 +225,11 @@ export function BotMenu({
       label: t("details.editProfile", { name }),
       icon: Pencil,
       onPress: () => navigation.navigate("editBot", { botId: bot.id }),
+    },
+    {
+      label: t("details.shareTemplate"),
+      icon: FileOutput,
+      onPress: () => shareTemplate(bot.id),
     },
     {
       label: t("details.freshStart"),
