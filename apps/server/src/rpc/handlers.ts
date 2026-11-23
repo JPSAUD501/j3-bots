@@ -109,7 +109,7 @@ export const handlers = ServedRpcs.toLayer(
         NotFound
       > => entries.history(input),
       "entries.markRead": ({ target, through }) => entries.markRead(target, through),
-      "entries.markUnread": ({ target }) => entries.markUnread(target),
+      "entries.markUnread": (input) => entries.markUnread(input),
       "entries.workSteps": ({ entryId }) => workSteps.follow(entryId),
       "message.send": (input) => pipeline.sendMessage(input),
       "message.retry": (input) => pipeline.retryMessage(input),

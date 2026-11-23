@@ -190,11 +190,12 @@ export const EntryRpcs = RpcGroup.make(
    * the last entry a bot or J3 Bots wrote, so that entry and everything after
    * it read as new, and the next `entries.markRead` past it clears it. A
    * target with no such entry stays as it is. Calling it again changes
-   * nothing more.
+   * nothing more. A command, unlike `entries.markRead`: it moves the mark
+   * back, so a retry of one already applied must not undo a read made since.
    */
   Rpc.make("entries.markUnread", {
-    payload: { target: EntryTarget },
-    error: NotFound,
+    payload: { ...command, target: EntryTarget },
+    error: CommandError,
   }),
   /**
    * Returns the new message entry. `attachments` are uploaded first with

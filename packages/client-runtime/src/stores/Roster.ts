@@ -23,6 +23,7 @@ import {
   stopAction,
 } from "../intents/Actions.ts";
 import { Cell, type Readable } from "../Store.ts";
+import { Conversations } from "./Conversations.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
 
 const keyOf = (item: RosterItem | RosterItemKey) =>
@@ -111,11 +112,18 @@ export class Roster extends Context.Service<
   }
 >()("@j3-bots/client-runtime/stores/Roster") {}
 
+/** The conversation or room a roster item is. */
+const targetOf = (item: RosterItem): EntryTarget =>
+  item._tag === "bot"
+    ? { _tag: "conversation", botId: item.bot.id }
+    : { _tag: "room", roomId: item.room.id };
+
 export const layer = Layer.effect(
   Roster,
   Effect.gen(function* () {
     const connection = yield* Connection;
     const actions = yield* Actions;
+    const conversations = yield* Conversations;
     const state = new Cell<Synced<ReadonlyArray<RosterItem>>>(loading);
     const sections = new Cell<ReadonlyArray<Section> | null>(null);
 
@@ -123,20 +131,34 @@ export const layer = Layer.effect(
       .eachSession((client) =>
         client["roster.subscribe"]().pipe(
           Stream.runForEach((frame) =>
-            Effect.sync(() => {
-              if (frame._tag === "snapshot") {
-                // A server that predates sections sends none: this one has them.
-                sections.set(frame.sections ?? null);
-                return state.set(ready(frame.items));
-              }
-              if (frame.sections !== undefined) sections.set(frame.sections);
-              const current = state.get();
-              if (current._tag === "loading") return;
-              const byKey = new Map(current.value.map((item) => [keyOf(item), item]));
-              for (const key of frame.remove) byKey.delete(keyOf(key));
-              for (const item of frame.upsert) byKey.set(keyOf(item), item);
-              state.set({ ...current, value: [...byKey.values()] });
-            }),
+            // What the server counts unread may be what an open conversation
+            // read before and another device marked unread since: its next
+            // read goes out again. Before the roster shows it, so a read the
+            // operator makes on seeing it is never dropped.
+            Effect.forEach(
+              (frame._tag === "snapshot" ? frame.items : frame.upsert).filter(
+                (item) => item.unread,
+              ),
+              (item) => conversations.unreadOnServer(targetOf(item)),
+              { discard: true },
+            ).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  if (frame._tag === "snapshot") {
+                    // A server that predates sections sends none: this one has them.
+                    sections.set(frame.sections ?? null);
+                    return state.set(ready(frame.items));
+                  }
+                  if (frame.sections !== undefined) sections.set(frame.sections);
+                  const current = state.get();
+                  if (current._tag === "loading") return;
+                  const byKey = new Map(current.value.map((item) => [keyOf(item), item]));
+                  for (const key of frame.remove) byKey.delete(keyOf(key));
+                  for (const item of frame.upsert) byKey.set(keyOf(item), item);
+                  state.set({ ...current, value: [...byKey.values()] });
+                }),
+              ),
+            ),
           ),
           Effect.ensuring(Effect.sync(() => state.update(markStale))),
         ),
@@ -181,8 +203,9 @@ export const layer = Layer.effect(
     });
 
     const markUnread = Effect.fn("Roster.markUnread")(function* (target: EntryTarget) {
+      const commandId = yield* actions.commandId;
       return yield* connection
-        .call((client) => client["entries.markUnread"]({ target }))
+        .call((client) => client["entries.markUnread"]({ commandId, target }))
         .pipe(Effect.exit, Effect.map(intentResult));
     });
 

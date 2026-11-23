@@ -6,6 +6,7 @@ import {
   EntryId,
   EntryOrder,
   type EntryTarget,
+  type Conflict,
   NotFound,
   RoomId,
   type Sequence,
@@ -20,6 +21,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog, type ChangeScope, scopeKey } from "../persistence/ChangeLog.ts";
 import { Time, timeText } from "../persistence/columns.ts";
@@ -143,7 +145,10 @@ export class Entries extends Context.Service<
      * or J3 Bots wrote, which makes the target unread; a target with none
      * stays as it is.
      */
-    readonly markUnread: (target: EntryTarget) => Effect.Effect<void, NotFound>;
+    readonly markUnread: (input: {
+      readonly commandId: CommandId;
+      readonly target: EntryTarget;
+    }) => Effect.Effect<void, NotFound | Conflict>;
     readonly summary: (target: EntryTarget) => Effect.Effect<TargetSummary>;
     /**
      * The latest entries, then every change after them. With `after`, only the
@@ -165,6 +170,7 @@ export const layer = Layer.effect(
     const presence = yield* Presence;
     const pushes = yield* PushDeliveries;
     const ids = yield* Ids;
+    const receipts = yield* CommandReceipts;
     const transaction = transactional(sql);
 
     const targetColumn = (target: EntryTarget) =>
@@ -360,8 +366,11 @@ export const layer = Layer.effect(
       ).pipe(Effect.orDie);
     });
 
-    const markUnread = Effect.fn("Entries.markUnread")(function* (target: EntryTarget) {
-      yield* requireTarget(target);
+    const markUnread = Effect.fn("Entries.markUnread")(function* (input: {
+      readonly commandId: CommandId;
+      readonly target: EntryTarget;
+    }) {
+      const { target } = input;
       // The last entry `summary` counts once the mark is before it. The mark
       // moves only back, and only from past it: a target never read, or
       // already unread there, or with no such entry (a comparison with null
@@ -374,17 +383,26 @@ export const layer = Layer.effect(
         SET read_through_order = CASE WHEN ${last} = 0 THEN NULL ELSE ${last} - 1 END
         WHERE read_through_order >= ${last}
       `;
-      yield* transaction(
-        Effect.gen(function* () {
+      // Its receipt commits with the move: a retry of a command already
+      // applied must not move the mark back again past a read made since.
+      yield* receipts.once({
+        commandId: input.commandId,
+        method: "entries.markUnread",
+        payload: input,
+        result: Schema.Void,
+        apply: Effect.gen(function* () {
+          yield* requireTarget(target);
           if (target._tag === "conversation") {
-            yield* sql`UPDATE conversations ${moveBack} AND bot_id = ${target.botId}`;
+            yield* sql`UPDATE conversations ${moveBack} AND bot_id = ${target.botId}`.pipe(
+              Effect.orDie,
+            );
             yield* changes.touch({ _tag: "bot", botId: target.botId });
           } else {
-            yield* sql`UPDATE rooms ${moveBack} AND id = ${target.roomId}`;
+            yield* sql`UPDATE rooms ${moveBack} AND id = ${target.roomId}`.pipe(Effect.orDie);
             yield* changes.touch({ _tag: "room", roomId: target.roomId });
           }
         }),
-      ).pipe(Effect.orDie);
+      });
     });
 
     const summary = Effect.fn("Entries.summary")(function* (target: EntryTarget) {

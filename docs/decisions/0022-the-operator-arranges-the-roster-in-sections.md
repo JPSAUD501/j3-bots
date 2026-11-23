@@ -19,7 +19,7 @@ The protocol is at version 7, and the installed Android app does not update itse
 - **Sections only arrange the roster.** Pinning, hiding and unread work as before: a pinned bot shows at the top whatever its section, and a hidden one stays hidden in it. Nothing a bot does, and nothing a bot is told, depends on its section.
 - **No version bump.** Every field is new and optional: an older client drops `sections` and `sectionId` and lists every bot as before. A roster snapshot that carries `sections` tells a newer client the server has sections, and the client offers them only then, so it never calls the new commands on an older server.
 
-The same change adds **Mark as unread** (`entries.markUnread`), behind the same signal. It moves the read mark back to just before the last entry a bot wrote, rather than storing an "unread" flag beside the mark: unread keeps one source of truth, and the read that opening the conversation sends clears it with no new rule.
+The same change adds **Mark as unread** (`entries.markUnread`), behind the same signal. It moves the read mark back to just before the last entry a bot wrote, rather than storing an "unread" flag beside the mark: unread keeps one source of truth, and the read that opening the conversation sends clears it with no new rule. Unlike `entries.markRead`, which only moves the mark forward and so is safe to send twice, it is a command with a receipt: a retry of one already applied would otherwise undo a read made since. And a client that keeps from sending the same read twice forgets the read it sent once the roster says the target is unread, so a conversation marked unread on another device is read again when the operator returns to it.
 
 ## What it costs
 

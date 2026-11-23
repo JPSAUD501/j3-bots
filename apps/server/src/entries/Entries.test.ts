@@ -103,8 +103,8 @@ it.effect(
       yield* entries.markRead(conversation, reply.order);
       const before = yield* unread(ana.id);
 
-      yield* entries.markUnread(conversation);
-      yield* entries.markUnread(conversation);
+      yield* entries.markUnread({ commandId: CommandId.make("unread-1"), target: conversation });
+      yield* entries.markUnread({ commandId: CommandId.make("unread-2"), target: conversation });
       const marked = yield* unread(ana.id);
       yield* entries.markRead(conversation, reply.order);
       const readAgain = yield* unread(ana.id);
@@ -112,9 +112,34 @@ it.effect(
       // Only the operator wrote here: there is nothing a bot said to read again.
       const own = yield* say(bia.id, "Hello?", "operator");
       yield* entries.markRead({ _tag: "conversation", botId: bia.id }, own.order);
-      yield* entries.markUnread({ _tag: "conversation", botId: bia.id });
+      yield* entries.markUnread({
+        commandId: CommandId.make("unread-3"),
+        target: { _tag: "conversation", botId: bia.id },
+      });
 
       assert.deepStrictEqual([before, marked, readAgain], [false, true, false]);
       assert.isFalse(yield* unread(bia.id));
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("applies a mark as unread once: sent again after a later read, it leaves the read", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const entries = yield* Entries;
+    const ana = yield* bots.create({ commandId: CommandId.make("ana"), draft: { name: "Ana" } });
+    const target = { _tag: "conversation", botId: ana.id } as const;
+    const said = yield* say(ana.id, "Here is the report.");
+    const unread = entries.summary(target).pipe(Effect.map((summary) => summary.unread));
+    yield* entries.markRead(target, said.order);
+    const command = { commandId: CommandId.make("unread"), target };
+
+    yield* entries.markUnread(command);
+    const marked = yield* unread;
+    // Read on another device; then the first command arrives again, as a connection replays it.
+    yield* entries.markRead(target, said.order);
+    yield* entries.markUnread(command);
+
+    assert.isTrue(marked);
+    assert.isFalse(yield* unread);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

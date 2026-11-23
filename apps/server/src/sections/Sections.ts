@@ -156,7 +156,11 @@ export const layer = Layer.effect(
         payload: input,
         result: Section,
         apply: Effect.gen(function* () {
-          yield* require(input.sectionId);
+          const found = yield* require(input.sectionId);
+          const { before } = input;
+          const moves = before !== undefined && before !== input.sectionId;
+          // Nothing to change: no write, and no frame to every roster.
+          if (input.name === undefined && !moves) return found;
           const at = timeText(yield* DateTime.now);
           if (input.name !== undefined) {
             yield* sql`
@@ -164,8 +168,7 @@ export const layer = Layer.effect(
               WHERE id = ${input.sectionId}
             `.pipe(Effect.orDie);
           }
-          const { before } = input;
-          if (before !== undefined && before !== input.sectionId) {
+          if (moves) {
             if (before !== null) yield* require(before);
             const others = (yield* list)
               .map((section) => section.id)
