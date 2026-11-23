@@ -428,7 +428,7 @@ const sentences = {
   "details.browser": "Navegador",
   "details.browser.use": "Usar o navegador deste computador",
   "details.browser.hint":
-    "{name} age nos sites com as sessões em que você entrou nesse navegador. Vale a partir do próximo turno de {name}.",
+    "{name} age nos sites com as sessões em que você entrou nesse navegador. Ligar vale a partir do próximo turno de {name}; desligar vale na hora (um turno em andamento é parado).",
   "details.browser.setup":
     "Este computador precisa de uma configuração para o navegador funcionar. Rode `j3-bots doctor` nele para ver como.",
   "details.browser.failed": "A configuração do navegador de {name} não foi salva. Tente de novo.",

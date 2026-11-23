@@ -130,7 +130,7 @@ j3-bots update --rollback
 
 It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
 
-The browser bots use keeps its profile, with the sites you signed in to, outside the snapshot, so a rollback leaves it as it is. The release you go back to may run an older version of that browser, which may not open a profile a newer version wrote; it then starts with an empty one, signed out of every site, and you sign in again.
+The browser bots use keeps its profile, with the sites you signed in to, outside the snapshot, so a rollback leaves it as it is. The release you go back to may run an older version of that browser, which may not open a profile a newer version wrote; it then starts with an empty one, signed out of every site, and you sign in again. Rolling back to 0.3, from before each bot had a browser switch, gives every bot the browser again: the engine's settings go back to 0.3's, which leave it allowed everywhere.
 
 **Keep `~/.j3-bots/backups/` on the data directory's filesystem**, not as a link to another disk, such as a USB drive on a Raspberry Pi. A rollback moves the data directory's files into it by renaming them, which cannot cross filesystems. An update and `--rollback` check this before they stop anything, refuse when it is elsewhere, and give the commands that put it back.
 
@@ -167,17 +167,20 @@ The server migrates its database when it starts, and downloads the engine its co
 
 ## The browser
 
-A bot uses the engine's browser only once you turn on **Browser: use this computer's browser** in its details. It applies from the bot's next turn: a turn already running keeps the access it started with, and background work the bot left running, such as a delegated task, holds the change until it ends or you stop it. The engine downloads the browser, about 130 MB, the first time a bot uses it.
+A bot uses the engine's browser only once you turn on **Browser: use this computer's browser** in its details. Turning it on applies from the bot's next turn. Turning it off takes effect now: the bot's work is stopped, as **Stop** stops it, and the browser is taken from every thread of the bot's project, its delegated tasks and any other agent's thread there included, so nothing that runs there afterwards has it. The engine downloads the browser, about 130 MB, the first time a bot uses it.
 
-On Linux the browser needs three things from the system: a sandbox the system allows (on Ubuntu 23.10 and later, AppArmor blocks it until a profile allows it), the shared libraries it loads, and fonts. `j3-bots doctor` checks them once the engine is installed, under Browser, and the bot's details say when this computer still needs setting up. The fix is one command, which `doctor` prints with the paths of your install, run once by someone who can use `sudo`:
+On Linux the browser needs three things from the system: a sandbox the system allows (on Ubuntu 23.10 and later, AppArmor blocks it until a profile allows it), the shared libraries it loads, and fonts. `j3-bots doctor` checks them under Browser, and the bot's details say when this computer still needs setting up. `doctor` prints the commands that fix what is missing, for someone who can use `sudo` to run once. On Ubuntu with everything missing, they are:
 
 ```sh
-sudo ~/.j3-bots/engine/j3/runtime/<version>/t3 browser setup --base-dir ~/.j3-bots/engine
+printf '%s\n' '# Lets the J3 Bots engine'\''s headless browser use Chrome'\''s sandbox.' … | sudo tee /etc/apparmor.d/t3-chrome-headless-shell > /dev/null
+sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends libnss3 libglib2.0-0t64 … fontconfig fonts-liberation
 ```
 
-It writes and loads the AppArmor profile and installs the missing libraries and fonts with `apt-get`. J3 Bots never runs `sudo` itself. The libraries are known only once the browser is downloaded, so run `doctor` again after a bot first used it. Chrome refuses its sandbox to root: run J3 Bots as a [user of its own](install.md#choose-the-user-it-runs-as), not as root.
+The first writes the AppArmor profile that lets the browser J3 Bots' engine downloads make the user namespace its sandbox needs, and nothing more; `doctor` prints it in full, to read before you run it. On Fedora, the libraries and fonts come from `dnf` instead, and on a system with neither `apt-get` nor `dnf`, `doctor` names what to install with its package manager. As root, these commands run only the system's own tools, from folders only root can change: `tee`, `apparmor_parser` and the package manager. Nothing that the account J3 Bots runs as can change runs as root, which is why the fix is not the engine's own `browser setup` command: it does the same, but it is a file in J3 Bots' data directory. J3 Bots never runs `sudo` itself. The libraries are known only once the browser is downloaded, so run `doctor` again after a bot first used it. Chrome refuses its sandbox to root: run J3 Bots as a [user of its own](install.md#choose-the-user-it-runs-as), not as root.
 
-**Sign out of all sites**, in Settings under Bots' browser, deletes the browser's profile: you are signed out everywhere, for every bot, and its open tabs close.
+**Sign out of all sites**, in Settings under Bots' browser, deletes the engine's `default` browser profile, the one every bot's browser uses: you are signed out everywhere, for every bot, and its open tabs close. A profile made in the engine's own console is left alone.
 
 ## Back up
 

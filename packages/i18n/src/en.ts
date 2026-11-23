@@ -429,7 +429,7 @@ export const en = {
   "details.browser": "Browser",
   "details.browser.use": "Use this computer’s browser",
   "details.browser.hint":
-    "{name} acts on sites with the sessions you’re signed in to in that browser. It applies from {name}’s next turn.",
+    "{name} acts on sites with the sessions you’re signed in to in that browser. Turning it on applies from {name}’s next turn; turning it off takes effect now (a running turn is stopped).",
   "details.browser.setup":
     "This computer needs setting up before the browser can run. Run `j3-bots doctor` on it to see how.",
   "details.browser.failed": "{name}’s browser setting wasn’t saved. Try again.",

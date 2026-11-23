@@ -9,17 +9,72 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // What the engine's headless browser needs from a Linux host, found the way
 // the engine's own `t3 browser setup` finds it (**Read** at `59651c1`,
 // `apps/server/src/preview/PreviewBrowserHost.ts` and
-// `apps/server/src/cli/browser.ts`). Nothing here changes the host: the fix is
-// that setup command, run once as root.
+// `apps/server/src/cli/browser.ts`). Nothing here changes the host. The fix is
+// not that command: run as root, it would run the engine's executable, which
+// the service account can replace. It is the same steps written as plain
+// commands that run, as root, only system tools.
 
 /** Set on Ubuntu 23.10 and later: unprivileged user namespaces, which Chrome's sandbox uses, need an AppArmor profile. */
 const USERNS_RESTRICTION = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 
-/** The profile the engine's setup writes for its browser. */
+/**
+ * The profile the engine's setup writes for its browser, by path and name:
+ * the engine counts the sandbox as allowed once this file is on disk.
+ */
 const APPARMOR_PROFILE = "/etc/apparmor.d/t3-chrome-headless-shell";
+
+/**
+ * Its content, as the engine's setup writes it (the engine's is under the MIT
+ * license, as is its source): only the browser the engine downloads may make
+ * the user namespace its sandbox needs, which any program may on a host
+ * without the restriction. It gives no other right, and runs nothing as root.
+ */
+const APPARMOR_PROFILE_LINES = [
+  "# Lets the J3 Bots engine's headless browser use Chrome's sandbox.",
+  "abi <abi/4.0>,",
+  "include <tunables/global>",
+  "profile t3-chrome-headless-shell /**/tools/chrome-headless-shell/*/*/chrome-headless-shell flags=(unconfined) {",
+  "  userns,",
+  "  include if exists <local/t3-chrome-headless-shell>",
+  "}",
+];
+
+/**
+ * The Debian and Ubuntu packages the browser loads, as the engine's setup
+ * installs them: of each, the first name apt offers, since Ubuntu 24.04 and
+ * Debian 13 renamed some (`t64`).
+ */
+const DEBIAN_PACKAGES: ReadonlyArray<readonly [string, ...Array<string>]> = [
+  ["libnss3"],
+  ["libglib2.0-0t64", "libglib2.0-0"],
+  ["libatk1.0-0t64", "libatk1.0-0"],
+  ["libatk-bridge2.0-0t64", "libatk-bridge2.0-0"],
+  ["libatspi2.0-0t64", "libatspi2.0-0"],
+  ["libdbus-1-3"],
+  ["libx11-6"],
+  ["libxcb1"],
+  ["libxcomposite1"],
+  ["libxdamage1"],
+  ["libxext6"],
+  ["libxfixes3"],
+  ["libxrandr2"],
+  ["libxkbcommon0"],
+  ["libgbm1"],
+  ["libasound2t64", "libasound2"],
+  ["libexpat1"],
+];
+
+const DEBIAN_FONTS = ["fontconfig", "fonts-liberation"];
+const FEDORA_FONTS = ["fontconfig", "liberation-sans-fonts"];
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
 const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
+/**
+ * A library's file name. The browser is a file the service account can
+ * replace, so a name it asks for is shown, or put in a command, only if it
+ * has this shape.
+ */
+const LIBRARY_NAME = /^[A-Za-z0-9_+-][A-Za-z0-9._+-]*\.so(\.[0-9]+)*$/;
 
 /** What stands between this host and the engine's browser, on Linux. */
 export interface BrowserHostNeeds {
@@ -39,11 +94,92 @@ export interface BrowserHostNeeds {
   /** Fontconfig finds no font, so pages render without text. */
   readonly noFonts: boolean;
   /**
-   * The command, by word, that allows the sandbox and installs the libraries
-   * and fonts. It runs as root, and changes nothing that is already in place.
+   * The commands that fix it, one shell line each, for an administrator to
+   * run once. Each runs as root, through sudo, only a system tool: `tee` and
+   * `apparmor_parser` for the sandbox, apt-get or dnf for the libraries and
+   * fonts. Nothing the service account can write runs as root. Empty when
+   * nothing is missing.
    */
   readonly setup: ReadonlyArray<string>;
+  /**
+   * Libraries or fonts are missing on a host with neither apt-get nor dnf,
+   * which `setup` cannot install: the administrator installs them with the
+   * system's own package manager.
+   */
+  readonly packagesByHand: boolean;
 }
+
+/** One shell word, single-quoted unless it is plain. */
+const word = (value: string) =>
+  /^[A-Za-z0-9_./:=+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+const line = (words: ReadonlyArray<string>) => words.map(word).join(" ");
+
+/** How the host installs packages: apt-get, with the packages apt offers; dnf; or neither. */
+type PackageManager =
+  | { readonly _tag: "apt-get"; readonly libraries: ReadonlyArray<string> }
+  | { readonly _tag: "dnf" }
+  | { readonly _tag: "none" };
+
+/** The library names a failed start of the browser reports: of `ldd`'s list, or else the loader's one. */
+export const missingLibrariesOf = (loaderError: string, lddOutput: string) => {
+  const listed = [...lddOutput.matchAll(MISSING_LIBRARY)].flatMap((match) =>
+    match[1] === undefined ? [] : [match[1]],
+  );
+  return (listed.length > 0 ? listed : [loaderError]).filter((name) => LIBRARY_NAME.test(name));
+};
+
+/** The commands that fix what is missing (`BrowserHostNeeds.setup`). */
+export const setupOf = (input: {
+  readonly sandboxBlocked: boolean;
+  readonly missingLibraries: ReadonlyArray<string>;
+  readonly noFonts: boolean;
+  readonly packageManager: PackageManager;
+}): Pick<BrowserHostNeeds, "setup" | "packagesByHand"> => {
+  const setup: Array<string> = [];
+  if (input.sandboxBlocked) {
+    setup.push(
+      `printf '%s\\n' ${APPARMOR_PROFILE_LINES.map(word).join(" ")} | ${line(["sudo", "tee", APPARMOR_PROFILE])} > /dev/null`,
+      line(["sudo", "apparmor_parser", "-r", APPARMOR_PROFILE]),
+    );
+  }
+  const libraries = input.missingLibraries.length > 0;
+  if (!libraries && !input.noFonts) return { setup, packagesByHand: false };
+  switch (input.packageManager._tag) {
+    case "apt-get":
+      setup.push(
+        line(["sudo", "apt-get", "update"]),
+        line([
+          "sudo",
+          "apt-get",
+          "install",
+          "-y",
+          "--no-install-recommends",
+          ...(libraries ? input.packageManager.libraries : []),
+          ...(input.noFonts ? DEBIAN_FONTS : []),
+        ]),
+      );
+      return { setup, packagesByHand: false };
+    case "dnf":
+      // dnf installs a library by the file name a package provides; the
+      // engine's browser is built for 64-bit only.
+      setup.push(
+        line([
+          "sudo",
+          "dnf",
+          "install",
+          "-y",
+          ...input.missingLibraries.map((name) => `${name}()(64bit)`),
+          ...(input.noFonts ? FEDORA_FONTS : []),
+        ]),
+      );
+      return { setup, packagesByHand: false };
+    case "none":
+      return { setup, packagesByHand: true };
+  }
+};
+
+/** The profile `setupOf` writes, line by line. */
+export const apparmorProfile = APPARMOR_PROFILE_LINES;
 
 /** The downloaded browser, if any: `tools/chrome-headless-shell/<platform>/<version>/` under the engine's data directory. */
 const installedBrowser = Effect.fn("engine.installedBrowser")(function* (home: string) {
@@ -63,13 +199,9 @@ const installedBrowser = Effect.fn("engine.installedBrowser")(function* (home: s
   return Option.none<string>();
 });
 
-/**
- * What the engine's browser needs from this Linux host, for the engine
- * executable `executable` and its data directory `home`.
- */
+/** What the engine's browser needs from this Linux host, for the engine's data directory `home`. */
 export const inspectBrowserHost = Effect.fn("engine.inspectBrowserHost")(function* (input: {
   readonly home: string;
-  readonly executable: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -83,6 +215,7 @@ export const inspectBrowserHost = Effect.fn("engine.inspectBrowserHost")(functio
     Effect.map((value) => value.trim() === "1"),
     Effect.orElseSucceed(() => false),
   );
+  const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
   const browser = yield* installedBrowser(input.home);
   const missingLibraries = yield* Option.match(browser, {
     onNone: () => Effect.succeed<ReadonlyArray<string>>([]),
@@ -91,20 +224,39 @@ export const inspectBrowserHost = Effect.fn("engine.inspectBrowserHost")(functio
       // finds, as NixOS's nix-ld provides.
       const loaderError = LOADER_ERROR.exec(yield* output(executable, ["--version"], true))?.[1];
       if (loaderError === undefined) return [];
-      const listed = [
-        ...(yield* output("ldd", [executable], true)).matchAll(MISSING_LIBRARY),
-      ].flatMap((match) => (match[1] === undefined ? [] : [match[1]]));
-      return listed.length > 0 ? listed : [loaderError];
+      return missingLibrariesOf(loaderError, yield* output("ldd", [executable], true));
     }),
   });
   // Without fontconfig there is no `fc-match`, which counts as no font.
-  const font = yield* output("fc-match", ["--format=%{file}", "sans-serif"], false);
+  const noFonts =
+    (yield* output("fc-match", ["--format=%{file}", "sans-serif"], false)).trim() === "";
+  const sandboxBlocked = restricted && !(yield* exists(APPARMOR_PROFILE));
+  // apt-cache reads the package lists without root.
+  const offered = (name: string) =>
+    output("apt-cache", ["policy", name], false).pipe(
+      Effect.map((policy) => {
+        const candidate = /Candidate:\s*(\S+)/.exec(policy)?.[1];
+        return candidate !== undefined && candidate !== "(none)";
+      }),
+    );
+  const packageManager: PackageManager = (yield* exists("/usr/bin/apt-get"))
+    ? {
+        _tag: "apt-get",
+        libraries:
+          missingLibraries.length === 0
+            ? []
+            : yield* Effect.forEach(DEBIAN_PACKAGES, (names) =>
+                Effect.findFirst(names, offered).pipe(Effect.map(Option.getOrElse(() => names[0]))),
+              ),
+      }
+    : (yield* exists("/usr/bin/dnf"))
+      ? { _tag: "dnf" }
+      : { _tag: "none" };
   return {
-    sandboxBlocked:
-      restricted && !(yield* fs.exists(APPARMOR_PROFILE).pipe(Effect.orElseSucceed(() => false))),
+    sandboxBlocked,
     downloaded: Option.isSome(browser),
     missingLibraries,
-    noFonts: font.trim() === "",
-    setup: [input.executable, "browser", "setup", "--base-dir", input.home],
+    noFonts,
+    ...setupOf({ sandboxBlocked, missingLibraries, noFonts, packageManager }),
   } satisfies BrowserHostNeeds;
 });

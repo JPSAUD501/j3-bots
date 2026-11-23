@@ -1276,6 +1276,21 @@ const make = Effect.gen(function* () {
         }),
       ),
 
+    withdrawBrowserAccess: (projectId) =>
+      command(
+        Effect.gen(function* () {
+          const at = yield* DateTime.now;
+          browserProjects.delete(projectId);
+          for (const session of sessions.values()) {
+            if (session.projectId !== projectId || session.retired) continue;
+            // The engine's stop, with no turn cancelled, then the provider
+            // session released: its next one starts without the browser.
+            if (session.running !== null) stopSession(session, at, []);
+            session.browserTools = null;
+          }
+        }),
+      ),
+
     clearBrowserProfile: command(Effect.sync(() => void browserProfileClears++)),
 
     openSession: ({ key, projectId, model, permissionMode }) =>

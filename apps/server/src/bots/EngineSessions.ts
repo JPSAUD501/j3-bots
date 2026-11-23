@@ -489,16 +489,36 @@ export const layer = Layer.effect(
      * has the latest: a caller that read an older one meanwhile has a change
      * pending, which the next alignment brings its session to. It waits on no
      * session's gate, so a session held by a turn never holds it up.
+     *
+     * A browser the bot lost is withdrawn from every thread of its project
+     * (`Engine.withdrawBrowserAccess`), the main session's, its delegates' and
+     * any other: a thread keeps the access it was given until its provider
+     * session is released, and the engine may start a turn there on its own.
+     * Until the withdrawal is done, every write tries it again; one that
+     * finds the browser given back has nothing to withdraw.
      */
     const writeBrowserAccess = Effect.fn("EngineSessions.writeBrowserAccess")(function* (
       botId: BotId,
     ) {
       const found = yield* bots.find(botId);
       if (Option.isNone(found) || Option.isNone(found.value.engineProjectId)) return;
-      yield* engine.setBrowserAccess({
-        projectId: found.value.engineProjectId.value,
-        enabled: found.value.bot.browser,
-      });
+      const { bot, engineProjectId } = found.value;
+      const [row] = yield* sql<{ readonly browser_withdrawals: number }>`
+        SELECT browser_withdrawals FROM bots WHERE id = ${botId}
+      `.pipe(Effect.orDie);
+      const withdrawals = row?.browser_withdrawals ?? 0;
+      if (withdrawals > 0 && !bot.browser) {
+        yield* engine.withdrawBrowserAccess(engineProjectId.value);
+      } else {
+        yield* engine.setBrowserAccess({ projectId: engineProjectId.value, enabled: bot.browser });
+      }
+      if (withdrawals > 0) {
+        // Not one counted since: that one is withdrawn by the next write.
+        yield* sql`
+          UPDATE bots SET browser_withdrawals = 0
+          WHERE id = ${botId} AND browser_withdrawals = ${withdrawals}
+        `.pipe(Effect.orDie);
+      }
     }, accessWrites.withPermits(1));
 
     /**
@@ -525,11 +545,11 @@ export const layer = Layer.effect(
             // Asked again only once the bot's settings change, or the engine
             // becomes ready again.
             if (due === "mode-refused") return due;
-            // The project first, also while a turn runs, whose tools stay as
-            // they started: a side session opened from now on starts with
-            // what the bot has, and the session's own, reloaded or not, too.
-            // Sent with every alignment, so a project that lost it gets it
-            // back.
+            // The project first, also while a turn runs: a side session
+            // opened from now on starts with what the bot has, and the
+            // session's own, reloaded or not, too. A browser the bot lost is
+            // withdrawn from the whole project now, stopping a turn that runs
+            // with it; one it was given waits for the session's next turn.
             yield* writeBrowserAccess(botId);
             const work = yield* workOf(rowId);
             if (work.admitted !== null || work.runningTurns > 0) {

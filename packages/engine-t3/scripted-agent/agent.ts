@@ -254,7 +254,9 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  * - `delegate`: hands a task to a child agent through the engine's
  *   `delegate_task` tool, then ends; the engine wakes the session when the
  *   child's task ends. The child runs `plain`, or with `child=slow`, `slow`
- *   for two minutes.
+ *   for two minutes, or with `child=browser`, `browser`.
+ * - `send`: sends the thread `to` a message through the engine's
+ *   `t3_thread_send` tool, which has it run `browser`, then ends.
  * - `browser`: calls the engine's `t3_preview_list`, which only a session
  *   given the browser may call, then speaks, as `speak` does, `allowed` or
  *   `refused`.
@@ -397,13 +399,25 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
     return turn.signal.aborted ? "cancelled" : "end_turn";
   },
   delegate: async (turn) => {
+    const named = turn.args.get("child");
     const child =
-      turn.args.get("child") === "slow"
+      named === "slow"
         ? "[[script:slow every=500 for=120000]]"
-        : "[[script:plain]]";
+        : named === "browser"
+          ? "[[script:browser]]"
+          : "[[script:plain]]";
     await callHostTool(turn, "delegate_task", {
       task: child,
       title: "Scripted delegate",
+    });
+    reportUsage(turn);
+    return turn.signal.aborted ? "cancelled" : "end_turn";
+  },
+  send: async (turn) => {
+    await callHostTool(turn, "t3_thread_send", {
+      threadId: turn.args.get("to") ?? "",
+      message: "[[script:browser]]",
+      mode: "auto",
     });
     reportUsage(turn);
     return turn.signal.aborted ? "cancelled" : "end_turn";

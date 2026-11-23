@@ -359,7 +359,11 @@ export class Engine extends Context.Service<
 
     /**
      * Removes the project and every session in it, stopping what runs there.
-     * The workspace folder is left alone. Succeeds if the project is already gone.
+     * The workspace folder is left alone. Succeeds if the project is already
+     * gone. The engine drops the project's settings overrides, its browser
+     * access with them, and at its start any a failed removal left (**Read**
+     * at `59651c1`: `ProjectService.ts`, `clearProjectSettingsOverrides`;
+     * `ProjectSettingsOverrideSweep.ts`).
      */
     readonly removeProject: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
 
@@ -375,6 +379,19 @@ export class Engine extends Context.Service<
       readonly projectId: EngineProjectId;
       readonly enabled: boolean;
     }) => Effect.Effect<void, EngineDown>;
+
+    /**
+     * Takes the browser from the project at once: it disallows it, as
+     * `setBrowserAccess` does, then ends what still has it. A thread of the
+     * project keeps the browser tools its provider session started with,
+     * whoever started it: a session, a delegated child, a thread another agent
+     * launched there. So in every thread of the project, a turn running is
+     * stopped as `stop` stops one, with its delegated tasks, which holds the
+     * thread's queue, and every provider session still running is released.
+     * The thread's next turn starts a provider session without the browser.
+     * Each call sends keys of its own; one that failed can be made again.
+     */
+    readonly withdrawBrowserAccess: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
 
     /**
      * Signs the engine's browser out of every site: deletes the cookies and

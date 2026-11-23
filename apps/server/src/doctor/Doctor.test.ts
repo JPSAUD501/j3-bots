@@ -104,7 +104,7 @@ interface World {
    */
   readonly engineBinary: boolean;
   /** What the engine's browser needs from this host. */
-  readonly browser: Omit<BrowserHostNeeds, "setup">;
+  readonly browser: BrowserHostNeeds;
 }
 
 const HEALTHY: World = {
@@ -134,7 +134,14 @@ const HEALTHY: World = {
   socketBlocked: false,
   rollbackUnfinished: false,
   engineBinary: false,
-  browser: { sandboxBlocked: false, downloaded: true, missingLibraries: [], noFonts: false },
+  browser: {
+    sandboxBlocked: false,
+    downloaded: true,
+    missingLibraries: [],
+    noFonts: false,
+    setup: [],
+    packagesByHand: false,
+  },
 };
 
 const diagnoseIn = (changes: Partial<World> = {}) =>
@@ -209,11 +216,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
               requests.push(url);
               return world.reachable;
             }),
-          browserNeeds: ({ home, executable }) =>
-            Effect.succeed({
-              ...world.browser,
-              setup: [executable, "browser", "setup", "--base-dir", home],
-            }),
+          browserNeeds: () => Effect.succeed(world.browser),
           findExecutable: (name, searchPath) =>
             Effect.succeed(
               Option.fromNullishOr(
@@ -446,39 +449,47 @@ it.layer(NodeServices.layer)("doctor", (it) => {
     }),
   );
 
-  it.effect("checks what the browser needs once the engine is installed, and how to fix it", () =>
+  it.effect("checks what the browser needs, and how an administrator fixes it", () =>
     Effect.gen(function* () {
-      // A server started from this shell, with an engine of its own.
-      const installed = { engineBinary: true, unitInstalled: false } as const;
-      const ready = yield* diagnoseIn(installed);
+      const ready = yield* diagnoseIn();
       assert.strictEqual(named(ready.checks, "Browser").status, "ok");
+      const missing = {
+        sandboxBlocked: true,
+        downloaded: true,
+        missingLibraries: ["libnss3.so", "libgbm.so.1"],
+        noFonts: true,
+      };
       const blocked = yield* diagnoseIn({
-        ...installed,
         browser: {
-          sandboxBlocked: true,
-          downloaded: true,
-          missingLibraries: ["libnss3.so", "libgbm.so.1"],
-          noFonts: true,
+          ...missing,
+          setup: ["sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell"],
+          packagesByHand: false,
         },
       });
       const browser = named(blocked.checks, "Browser");
       assertFlagged(browser, "warning", "AppArmor blocks the sandbox");
       assert.include(browser.summary, "libnss3.so, libgbm.so.1");
       assert.include(browser.summary, "no font");
-      assert.match(
+      assert.include(
         Option.getOrElse(browser.fix, () => ""),
-        /`sudo \S+\/t3 browser setup --base-dir \S+\/engine`/,
+        "\n  sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell",
       );
 
-      // Before the engine is installed, its setup cannot run, and off Linux the browser needs nothing.
-      const needsSetup = { ...HEALTHY.browser, sandboxBlocked: true };
-      for (const changes of [
-        { browser: needsSetup },
-        { ...installed, browser: needsSetup, platform: "darwin" },
-      ]) {
-        const { checks } = yield* diagnoseIn(changes);
-        assert.isUndefined(checks.find((check) => check.name === "Browser"));
-      }
+      // On a system with neither apt-get nor dnf, the libraries and fonts are the administrator's to install.
+      const byHand = yield* diagnoseIn({
+        browser: { ...missing, sandboxBlocked: false, setup: [], packagesByHand: true },
+      });
+      assert.strictEqual(
+        Option.getOrElse(named(byHand.checks, "Browser").fix, () => ""),
+        "Install libnss3.so, libgbm.so.1, fontconfig and a font with this system's package manager.",
+      );
+
+      // Off Linux the browser needs nothing.
+      const { checks } = yield* diagnoseIn({
+        browser: { ...HEALTHY.browser, sandboxBlocked: true },
+        platform: "darwin",
+      });
+      assert.isUndefined(checks.find((check) => check.name === "Browser"));
     }),
   );
 

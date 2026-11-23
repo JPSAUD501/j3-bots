@@ -399,30 +399,18 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
 });
 
 /**
- * What the engine's headless browser needs from this Linux host, once the
- * engine is installed: a sandbox AppArmor allows, the libraries it loads, and
- * fonts. A warning, not a problem: only a bot the operator gives the browser
- * uses it (docs/operations/operating.md#the-browser). `None` off Linux, where
- * it needs nothing, and before the engine is installed, since the fix runs it.
+ * What the engine's headless browser needs from this Linux host: a sandbox
+ * AppArmor allows, the libraries it loads, and fonts. A warning, not a
+ * problem: only a bot the operator gives the browser uses it
+ * (docs/operations/operating.md#the-browser). `None` off Linux, where it
+ * needs nothing.
  */
 const browserCheck = Effect.fn("doctor.browser")(function* (
   config: ServerConfig.ServerConfigShape,
 ) {
   const host = yield* Host;
   if (host.platform !== "linux") return Option.none<Check>();
-  const executable = Option.isSome(config.engineBinary)
-    ? config.engineBinary
-    : yield* EngineLive.inspectInstall({
-        home: config.engineHome,
-        platform: host.platform,
-        arch: host.arch,
-      }).pipe(
-        Effect.map((install) =>
-          install._tag === "installed" ? Option.some(install.executable) : Option.none(),
-        ),
-      );
-  if (Option.isNone(executable)) return Option.none<Check>();
-  const needs = yield* host.browserNeeds({ home: config.engineHome, executable: executable.value });
+  const needs = yield* host.browserNeeds({ home: config.engineHome });
   const missing = [
     ...(needs.sandboxBlocked ? ["AppArmor blocks the sandbox it runs in"] : []),
     ...(needs.missingLibraries.length > 0
@@ -441,12 +429,27 @@ const browserCheck = Effect.fn("doctor.browser")(function* (
           ),
     );
   }
+  const byHand = needs.packagesByHand
+    ? [
+        `Install ${[
+          ...needs.missingLibraries,
+          ...(needs.noFonts ? ["fontconfig and a font"] : []),
+        ].join(", ")} with this system's package manager.`,
+      ]
+    : [];
+  const commands =
+    needs.setup.length > 0
+      ? [
+          "Have an administrator run, once (as root they run only system tools):",
+          ...needs.setup.map((command) => `  ${command}`),
+        ]
+      : [];
   return Option.some(
     check(
       "Browser",
       "warning",
       `A bot given the browser cannot use it: ${missing.join("; ")}.`,
-      `Have an administrator run \`sudo ${needs.setup.map(Home.shellWord).join(" ")}\` once. It allows the sandbox and installs the missing libraries and fonts.`,
+      [...commands, ...byHand].join("\n"),
     ),
   );
 });

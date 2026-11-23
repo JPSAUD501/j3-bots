@@ -216,6 +216,18 @@ const APPROVAL_DECISIONS = {
 
 const decodeProjects = HttpClientResponse.schemaBodyJson(ProjectSnapshot);
 
+/** A thread of the engine's shell, as far as J3 Bots reads it: which project it is in. */
+const ShellThread = Schema.Struct({ id: ThreadId, projectId: ProjectId });
+
+/**
+ * The engine's shell, live and archived threads alike, with every subagent:
+ * a thread archived or idle can still hold a provider session (**Read** at
+ * `59651c1`, `environmentHttp.ts`, `shellSnapshot`).
+ */
+const decodeShellThreads = HttpClientResponse.schemaBodyJson(
+  Schema.Struct({ threads: Schema.Array(ShellThread), archivedThreads: Schema.Array(ShellThread) }),
+);
+
 const isEngineDown = Schema.is(Schema.Union([EngineUnavailable, EngineIncompatible]));
 
 /**
@@ -854,7 +866,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         ProjectMutationError: () => Effect.void,
       }),
     );
-    yield* afterSending(forgetOverrides(projectId));
   });
 
   // ---------------------------------------------------------------------------
@@ -922,8 +933,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     if (process.platform !== "linux") {
       return yield* SubscriptionRef.set(browserHost, Option.some({ _tag: "ready" }));
     }
-    const executable = yield* Deferred.await(installed);
-    const needs = yield* platformServices(inspectBrowserHost({ home: options.home, executable }));
+    const needs = yield* platformServices(inspectBrowserHost({ home: options.home }));
     yield* SubscriptionRef.set(browserHost, Option.some(browserHostStatus(needs)));
   });
   yield* Stream.merge(
@@ -944,14 +954,100 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     if (input.enabled) yield* Queue.offer(browserHostChecks, undefined);
   }, overridesLock.withPermits(1));
 
-  /** The project's overrides go with it, so the settings keep none of a project that is gone. */
-  const forgetOverrides = Effect.fn("Engine.forgetOverrides")(function* (
+  /** Every thread of the project the engine has, archived ones and other agents' children included. */
+  const projectThreads = Effect.fn("Engine.projectThreads")(function* (projectId: EngineProjectId) {
+    yield* ready;
+    const token = yield* currentToken;
+    const shell = yield* http
+      .execute(
+        HttpClientRequest.get(`${baseUrl(options.port)}/api/orchestration/shell`).pipe(
+          HttpClientRequest.bearerToken(Redacted.value(token)),
+          HttpClientRequest.setHeader(
+            ORCHESTRATION_PROTOCOL_HEADER,
+            String(ORCHESTRATION_PROTOCOL),
+          ),
+        ),
+      )
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(decodeShellThreads),
+        Effect.timeout(COMMAND_TIMEOUT),
+        Effect.mapError(() => new EngineUnavailable()),
+      );
+    return [...shell.threads, ...shell.archivedThreads]
+      .filter((thread) => thread.projectId === ProjectId.make(projectId))
+      .map((thread) => SessionId.make(thread.id));
+  });
+
+  /**
+   * Sends one step of a withdrawal, under a key of its own. A refusal counts
+   * as done once a read of the thread shows the step moot (`isMoot`); a
+   * thread gone is moot too. Anything else leaves the withdrawal to be tried
+   * again.
+   */
+  const sendWithdrawalStep = Effect.fnUntraced(function* (
+    threadId: SessionId,
+    input: OrchestrationV2Command,
+    isMoot: (mirror: Mirror) => boolean,
+  ) {
+    yield* command(input).pipe(
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: () =>
+          afterSending(projection(threadId)).pipe(
+            Effect.catchTag("SessionNotFound", () => Effect.succeed(null)),
+            Effect.flatMap((mirror) =>
+              mirror === null || isMoot(mirror)
+                ? Effect.void
+                : Effect.fail(new EngineIndeterminate()),
+            ),
+          ),
+      }),
+    );
+  });
+
+  const withdrawBrowserAccess = Effect.fn("Engine.withdrawBrowserAccess")(function* (
     projectId: EngineProjectId,
   ) {
-    if ((yield* projectOverrides)[projectId] !== undefined) {
-      yield* writeOverrides(projectId, null);
+    // First, so a provider session started from here on has no browser.
+    yield* setBrowserAccess({ projectId, enabled: false });
+    for (const threadId of yield* projectThreads(projectId)) {
+      const mirror = yield* projection(threadId).pipe(
+        Effect.asSome,
+        Effect.catchTag("SessionNotFound", () => Effect.succeedNone),
+      );
+      if (Option.isNone(mirror)) continue;
+      const thread = ThreadId.make(threadId);
+      // The engine's stop holds the thread's queue, so no turn waiting in it
+      // starts in the provider session about to be released, and stops the
+      // thread's delegated tasks.
+      if (Option.isSome(startedTurn(mirror.value))) {
+        yield* sendWithdrawalStep(
+          threadId,
+          {
+            type: "thread.stop",
+            commandId: commandId("browser-stop", `${threadId}:${yield* uniqueKey}`),
+            threadId: thread,
+            stopDelegatedTasks: true,
+          },
+          (now) => Option.isNone(startedTurn(now)),
+        );
+      }
+      for (const providerSessionId of liveProviderSessions(mirror.value)) {
+        yield* sendWithdrawalStep(
+          threadId,
+          {
+            type: "provider-session.detach",
+            commandId: commandId("browser-detach", `${threadId}:${yield* uniqueKey}`),
+            threadId: thread,
+            providerSessionId: ProviderSessionId.make(providerSessionId),
+            reason: "Browser access withdrawn.",
+          },
+          (now) => !liveProviderSessions(now).includes(providerSessionId),
+        );
+      }
     }
-  }, overridesLock.withPermits(1));
+  });
 
   /**
    * The engine closes the profile's browser context, which closes its tabs,
@@ -2014,6 +2110,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     ensureProject,
     removeProject,
     setBrowserAccess,
+    withdrawBrowserAccess,
     clearBrowserProfile,
     openSession,
     configureSession,

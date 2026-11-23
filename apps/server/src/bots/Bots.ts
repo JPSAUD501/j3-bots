@@ -348,14 +348,23 @@ export const layer = Layer.effect(
             // session is replaced, but leaves a hello the bot has not sent yet,
             // and the operator's messages waiting behind it, to run on the new
             // one. Moving back before that keeps the session.
+            let stopped = false;
             if (change.model !== undefined) {
               const live = yield* liveMainProvider(input.botId);
               if (Option.isSome(live) && live.value !== change.model.providerId) {
                 yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
+                stopped = true;
                 yield* requestBotRotation(input.botId, "provider-changed");
               } else if (Option.isSome(live)) {
                 yield* providerRestored(input.botId);
               }
+            }
+            // Taking the browser away stops the work in progress the same way,
+            // so no turn goes on with it, nor one the engine would start
+            // behind it on the same credential; the alignment then withdraws
+            // it from every thread of the bot's project.
+            if (change.browser === false && before.bot.browser && !stopped) {
+              yield* stops.record(input.botId, { _tag: "bot" }, { keepOpening: true });
             }
             yield* changes.touch({ _tag: "bot", botId: input.botId });
             return (yield* require(input.botId).pipe(Effect.orDie)).bot;

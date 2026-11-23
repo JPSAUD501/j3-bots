@@ -68,13 +68,12 @@ export class Host extends Context.Service<
     readonly reachable: (url: string) => Effect.Effect<boolean>;
     /**
      * What the engine's headless browser needs from this Linux host, for the
-     * engine executable `executable` and its data directory `home`: it reads
-     * the AppArmor settings, and runs the downloaded browser, `ldd` and
-     * `fc-match` to ask about libraries and fonts.
+     * engine's data directory `home`: it reads the AppArmor settings, and
+     * runs the downloaded browser, `ldd`, `fc-match` and `apt-cache` to ask
+     * about libraries, fonts and packages.
      */
     readonly browserNeeds: (input: {
       readonly home: string;
-      readonly executable: string;
     }) => Effect.Effect<EngineLive.BrowserHostNeeds>;
   }
 >()("@j3-bots/server/system/Host") {}
@@ -215,8 +214,7 @@ export const layer = Layer.effect(
         ),
       ),
       browserNeeds: Effect.fn("Host.browserNeeds")(
-        (input: { readonly home: string; readonly executable: string }) =>
-          EngineLive.inspectBrowserHost(input),
+        (input: { readonly home: string }) => EngineLive.inspectBrowserHost(input),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
