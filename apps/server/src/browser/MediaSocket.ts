@@ -33,7 +33,7 @@ import {
  * socket, it is dropped. One picture is in flight at a time, so only a client
  * that stopped reading gets here.
  */
-export const MAX_SOCKET_BUFFER_BYTES = 2 * 1024 * 1024;
+const MAX_SOCKET_BUFFER_BYTES = 2 * 1024 * 1024;
 
 /** A WebSocket frame's header, at most. */
 const FRAME_OVERHEAD = 14;

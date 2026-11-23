@@ -43,7 +43,7 @@ import { BrowserTabs } from "./BrowserTabs.ts";
 /** How long a device keeps a tab it holds after its socket drops. */
 export const CONTROL_GRACE = Duration.seconds(60);
 /** How often the server pings a socket, and how long a silent socket lasts. */
-export const PING_EVERY = Duration.seconds(15);
+const PING_EVERY = Duration.seconds(15);
 export const SILENT_LIMIT = Duration.seconds(45);
 
 /** The client's socket stopped taking messages, or was closed. */
@@ -59,7 +59,7 @@ export interface ClientLink {
 }
 
 /** The size and quality a socket asks for. */
-export interface ViewSize {
+interface ViewSize {
   readonly maxWidth: number;
   readonly maxHeight: number;
   readonly quality: number;
