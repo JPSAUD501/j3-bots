@@ -123,6 +123,7 @@ export const en = {
   "summary.askedApproval": "Asked for approval: {action}",
   "summary.needsSecret": "Needs a credential: {label}",
   "summary.askedSecret": "Asked for a credential: {label}",
+  "summary.askedLogin": "Asked to save a login for {origin}",
   "summary.workFold": "Did some work",
   "summary.workStopped": "Stopped",
   "summary.workFailed": "Failed",

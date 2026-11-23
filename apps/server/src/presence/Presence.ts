@@ -53,6 +53,10 @@ const kindOf = (
     case "approval":
     case "secret-request":
       return { kind: entry._tag, botId };
+    // A save-login card asks for a credential too: it shows where the
+    // engine's secret requests do, Android's channel for them included.
+    case "credential-request":
+      return { kind: "secret-request", botId };
     case "handoff":
       // One notification for an urgent message: the sender's card.
       return entry.urgent && entry.direction === "sent" ? { kind: entry._tag, botId } : null;

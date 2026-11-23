@@ -24,6 +24,8 @@ export const HOME_ENTRIES = {
   attachments: "attachments",
   /** What `j3-bots update` copied before it changed release, one folder per update. */
   backups: "backups",
+  /** The vault's own database, which no update copies or rolls back. */
+  vault: "vault",
   adminSocket: "admin.sock",
   /** Held by the one server running for the home. */
   lock: "server.lock",
@@ -65,6 +67,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * state/runtime.json     the release whose data this home holds, and a transition under way
  * attachments/           file bytes, by digest
  * backups/<snapshot>/    the databases and settings an update copied first
+ * vault/vault.sqlite     the vault's sealed logins; in no snapshot
  * providers/<provider>/  the configuration folder of an engine provider instance
  * web/                   where the operator may put a built web client; public
  * ```
@@ -100,6 +103,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
         state,
         attachments,
         backups,
+        vault,
         adminSocket,
         lock,
       } = HOME_ENTRIES;
@@ -117,6 +121,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
           state,
           attachments,
           backups,
+          vault,
           adminSocket,
           lock,
         ].map((entry) => path.join(home, entry)),
