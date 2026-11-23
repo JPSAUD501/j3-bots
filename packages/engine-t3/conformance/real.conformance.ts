@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- the harness finds and kills the engine process it started.
+import * as NodeHttp from "node:http";
 import * as NodeProcess from "node:process";
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -19,6 +20,7 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { BrowserBridge, type ViewerOutput } from "../src/Browser.ts";
 import { Engine, type EngineOptions } from "../src/Engine.ts";
 import { EngineUnavailable } from "../src/errors.ts";
 import { isBackgroundWorkPending, type SessionEvent } from "../src/events.ts";
@@ -284,6 +286,48 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
   const first = yield* until(queue, "replaced");
   return { sessionId, queue, start: first.cursor };
 });
+
+/**
+ * A page for the engine's browser, on a loopback port: one text field across
+ * its top left corner, which reports each change of its text back here.
+ */
+const testPage = Effect.acquireRelease(
+  Effect.callback<{
+    readonly url: string;
+    readonly typed: () => string;
+    readonly server: NodeHttp.Server;
+  }>((resume) => {
+    let typed = "";
+    const server = NodeHttp.createServer((request, response) => {
+      if (request.method === "POST" && request.url === "/typed") {
+        let body = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => {
+          body += chunk;
+        });
+        request.on("end", () => {
+          typed = body;
+          response.writeHead(204).end();
+        });
+        return;
+      }
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(
+        `<!doctype html><title>Conformance page</title>
+<input id="field" style="position:absolute;left:0;top:0;width:600px;height:200px;font-size:40px">
+<script>
+  const field = document.getElementById("field");
+  field.addEventListener("input", () => fetch("/typed", { method: "POST", body: field.value }));
+</script>`,
+      );
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      resume(Effect.succeed({ url: `http://127.0.0.1:${port}/`, typed: () => typed, server }));
+    });
+  }),
+  ({ server }) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
+);
 
 describe("Engine conformance, real engine only", () => {
   it.live(
@@ -723,5 +767,102 @@ describe("Engine conformance, real engine only", () => {
         );
       }),
     { timeout: 240_000 },
+  );
+
+  it.live(
+    "streams a bot's tab to a viewer, which takes it from the agent, uses it and gives it back",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const browser = yield* BrowserBridge;
+        const page = yield* testPage;
+        const { sessionId, queue } = yield* openWatched("browser");
+        const tabs = yield* browser
+          .tabs(Effect.succeed([sessionId]))
+          .pipe(Stream.toQueue({ capacity: "unbounded" }));
+        const browsing = yield* engine.dispatch({
+          key: bench.key("browse"),
+          sessionId,
+          text: `[[script:browse url=${page.url} every=1000 for=120000]]`,
+          attachments: [],
+          delivery: { _tag: "start", freshContext: false },
+        });
+
+        // The agent says why when it cannot open the page.
+        const failed = until(queue, "host-speech", (event) =>
+          event.text.startsWith("Browser failed"),
+        ).pipe(Effect.flatMap((event) => Effect.die(new Error(event.text))));
+        const shown = Effect.gen(function* () {
+          let found = yield* Queue.take(tabs);
+          while (!found.some((tab) => tab.sessionId === sessionId && tab.url === page.url)) {
+            found = yield* Queue.take(tabs);
+          }
+          return found;
+        });
+        const listed = yield* Effect.raceFirst(shown, failed);
+        const tab = listed.find((tab) => tab.sessionId === sessionId);
+        assert.isDefined(tab);
+        if (tab === undefined) return;
+
+        const viewer = yield* browser.openViewer({
+          tab: tab.id,
+          maxWidth: 800,
+          maxHeight: 600,
+          quality: 60,
+        });
+        const outputs = yield* viewer.output.pipe(
+          Stream.orDie,
+          Stream.toQueue({ capacity: "unbounded" }),
+        );
+        let pictures = 0;
+        /** Takes outputs, drawing each picture, until one matches. */
+        const next = Effect.fnUntraced(function* (match: (output: ViewerOutput) => boolean) {
+          while (true) {
+            const output = yield* Queue.take(outputs).pipe(Effect.orDie);
+            if (output._tag === "frame") {
+              assert.deepStrictEqual([...output.jpeg.subarray(0, 2)], [0xff, 0xd8]);
+              pictures++;
+              yield* viewer.ack;
+            }
+            if (match(output)) return output;
+          }
+        });
+        const controlledBy = (controller: string) => (output: ViewerOutput) =>
+          output._tag === "control" && output.controller === controller;
+
+        yield* next(controlledBy("bot"));
+        yield* next((output) => output._tag === "frame");
+        yield* viewer.send({ type: "take" });
+        yield* next(controlledBy("this-viewer"));
+        const refused = yield* until(queue, "host-speech", (event) =>
+          event.text.startsWith("Browser refused"),
+        );
+
+        const click = { x: 100, y: 50, buttons: 1, clickCount: 1, modifiers: 0 } as const;
+        yield* viewer.send({ type: "pointer", action: "down", button: "left", ...click });
+        yield* viewer.send({ type: "pointer", action: "up", button: "left", ...click, buttons: 0 });
+        yield* viewer.send({ type: "text", text: "typed by a viewer" });
+        for (let tries = 0; page.typed() !== "typed by a viewer" && tries < 100; tries++) {
+          yield* Effect.sleep("100 millis");
+        }
+        const typed = page.typed();
+
+        yield* viewer.send({ type: "release" });
+        yield* next(controlledBy("bot"));
+        const resumed = yield* until(queue, "host-speech", (event) =>
+          event.text.startsWith("Browser acted again"),
+        );
+        yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(browsing));
+
+        assert.isAbove(pictures, 0);
+        assert.include(refused.text, "A human controls this browser tab");
+        assert.strictEqual(typed, "typed by a viewer");
+        assert.strictEqual(resumed.text, "Browser acted again.");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 180_000 },
   );
 });

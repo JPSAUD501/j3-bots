@@ -157,7 +157,7 @@ const TabKey = Schema.Tuple([Schema.String, Schema.String]);
 const decodeTabKey = Schema.decodeUnknownOption(Schema.fromJsonString(TabKey));
 
 /** The id J3 Bots holds for the engine's tab `tabId` of thread `threadId`. */
-export const tabIdOf = (threadId: string, tabId: string): EngineTabId =>
+const tabIdOf = (threadId: string, tabId: string): EngineTabId =>
   EngineTabId.make(JSON.stringify([threadId, tabId]));
 
 /** The thread and tab an id names, or none for an id this package did not make. */
