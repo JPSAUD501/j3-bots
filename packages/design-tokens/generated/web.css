@@ -97,6 +97,7 @@
   --bot-bubble-slate: oklch(0.945 0.003 262);
   --elevation-raised: 0 1px 2px oklch(0 0 0 / 0.04);
   --elevation-overlay: 0 12px 32px -8px oklch(0 0 0 / 0.18), 0 2px 6px oklch(0 0 0 / 0.06);
+  --elevation-lift: 0px 6px 16px -6px rgba(0, 0, 0, 0.22), 0px 1px 3px 0px rgba(0, 0, 0, 0.08);
   --elevation-thumb: 0 1px 3px oklch(0 0 0 / 0.2), 0 0 0 0.5px oklch(0 0 0 / 0.06);
 }
 
@@ -156,6 +157,7 @@
   --bot-bubble-slate: oklch(0.167 0.01 262);
   --elevation-raised: none;
   --elevation-overlay: 0 12px 32px -8px oklch(0 0 0 / 0.8), 0 0 0 1px oklch(1 0 0 / 0.07);
+  --elevation-lift: 0px 6px 16px -6px rgba(0, 0, 0, 0.9), 0px 0px 0px 1px rgba(255, 255, 255, 0.09);
   --elevation-thumb: 0 1px 3px oklch(0 0 0 / 0.5);
 }
 
@@ -170,6 +172,7 @@
   --press-scale: 0.955;
   --press-scale-round: 0.88;
   --press-scale-row: 0.975;
+  --lift-scale: 1.02;
   --display-tracking: -0.035em;
   --layout-roster-width: 17.5rem;
   --layout-details-width: 20rem;
@@ -285,5 +288,6 @@
   --color-bot-bubble-slate: var(--bot-bubble-slate);
   --shadow-raised: var(--elevation-raised);
   --shadow-overlay: var(--elevation-overlay);
+  --shadow-lift: var(--elevation-lift);
   --shadow-thumb: var(--elevation-thumb);
 }

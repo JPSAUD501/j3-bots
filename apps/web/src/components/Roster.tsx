@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { BotIcon, PlusIcon, SearchIcon, SearchXIcon, UsersIcon, XIcon } from "lucide-react";
-import { useState, type KeyboardEvent, type ReactElement, type ReactNode, type Ref } from "react";
+import {
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactElement,
+  type ReactNode,
+  type Ref,
+} from "react";
 import {
   filterRoster,
   orderRoster,
@@ -10,6 +17,8 @@ import {
   rosterKeyText,
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
+import type { AvatarHandle } from "./avatar/BotAvatar";
+import { ReorderList, ReorderRow } from "./ReorderList";
 import { RosterRow } from "./RosterRow";
 import { Button } from "./ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
@@ -82,6 +91,10 @@ export function Roster({
   const bots = useBots();
   const [query, setQuery] = useState("");
   const rows = orderRoster(filterRoster(items, query));
+  const keys = rows.map((item) => rosterKeyText(rosterKeyOf(item)));
+  const scroller = useRef<HTMLDivElement>(null);
+  // Each bot row's avatar, by row key, so a row that rises can make its bot hop.
+  const avatars = useRef(new Map<string, AvatarHandle>());
   return (
     <nav
       ref={ref}
@@ -142,31 +155,47 @@ export function Roster({
           </MenuPopup>
         </Menu>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      {/* The list keeps its own place as rows move (`ReorderList`), so the browser's anchoring stays out. */}
+      <div
+        ref={scroller}
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 [overflow-anchor:none]"
+      >
         {rows.length === 0 ? (
           <RosterEmpty query={query.trim()} />
         ) : (
-          // Rows are keyed by bot or room, so a row that moves keeps its element: where the
-          // roster's order changes, a layout animation can slide each row to its place.
-          <ul className="flex flex-col gap-px">
-            {rows.map((item) => (
-              <li key={rosterKeyText(rosterKeyOf(item))}>
-                <RosterRow
-                  item={item}
-                  selected={sameKey(item, selected)}
-                  render={rowLink(item)}
-                  memberAvatars={
-                    item._tag === "room"
-                      ? item.room.members.flatMap((id) => {
-                          const bot = bots.get(id);
-                          return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
-                        })
-                      : []
-                  }
-                />
-              </li>
-            ))}
-          </ul>
+          <ReorderList
+            view={{ keys, query: query.trim() }}
+            scroller={scroller}
+            onRise={(key) => avatars.current.get(key)?.poke("hop")}
+          >
+            {rows.map((item) => {
+              const key = rosterKeyText(rosterKeyOf(item));
+              return (
+                <ReorderRow key={key} rowKey={key}>
+                  <RosterRow
+                    item={item}
+                    avatarRef={(handle) => {
+                      if (handle === null) return;
+                      avatars.current.set(key, handle);
+                      return () => {
+                        avatars.current.delete(key);
+                      };
+                    }}
+                    selected={sameKey(item, selected)}
+                    render={rowLink(item)}
+                    memberAvatars={
+                      item._tag === "room"
+                        ? item.room.members.flatMap((id) => {
+                            const bot = bots.get(id);
+                            return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
+                          })
+                        : []
+                    }
+                  />
+                </ReorderRow>
+              );
+            })}
+          </ReorderList>
         )}
       </div>
       {footer}

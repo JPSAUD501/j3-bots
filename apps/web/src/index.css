@@ -90,6 +90,42 @@
 }
 
 /*
+ * A roster row that changes place (components/ReorderList.tsx) lifts while it travels: a little
+ * larger, over an opaque ground with the lift shadow, above the rows it passes. Its travel is a
+ * transform the list plays; the lift is `scale` and an opacity, so neither lays anything out.
+ * Under reduced motion no row is ever lifted.
+ */
+@layer components {
+  .reorder-row {
+    position: relative;
+    isolation: isolate;
+    transition: scale var(--duration-soft) var(--ease-soft);
+  }
+
+  .reorder-row::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: var(--radius-lg);
+    background: var(--sidebar);
+    box-shadow: var(--elevation-lift);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--duration-soft) var(--ease-out);
+  }
+
+  .reorder-row[data-lifted] {
+    z-index: 1;
+    scale: var(--lift-scale);
+  }
+
+  .reorder-row[data-lifted]::before {
+    opacity: 1;
+  }
+}
+
+/*
  * Press feedback: a control goes down quickly when pressed and springs back
  * with `pop` when let go. Colors still change on the plain fast ease. A round
  * icon button takes the deeper press, a list row the shallower one. Reduced motion keeps the colors and drops

@@ -130,3 +130,14 @@ export const press = {
   /** ms */
   duration: 70,
 } as const;
+
+/**
+ * A roster row that changes place lifts off the list while it travels: a
+ * little larger, over a soft shadow (`shadows.lift`). The rows it passes
+ * step aside `stepDelay` ms after it sets off. Both travel on `slide`.
+ */
+export const lift = {
+  scale: 1.02,
+  /** ms */
+  stepDelay: 40,
+} as const;

@@ -2,14 +2,14 @@
 import { needsOperator } from "@j3-bots/client-runtime";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import type { RosterItem } from "@j3-bots/contracts";
-import { useState } from "react";
+import { type Ref, useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
 import { PressScale } from "../press.tsx";
-import { RoomAvatar } from "./avatar/BotAvatar.tsx";
+import { type AvatarHandle, RoomAvatar } from "./avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "./avatar/mood.tsx";
 
 export const toneClass = {
@@ -29,11 +29,14 @@ export const toneClass = {
 export function RosterRow({
   item,
   selected,
+  avatarRef,
   onOpen,
 }: {
   readonly item: RosterItem;
   /** Its conversation is open beside the roster. */
   readonly selected: boolean;
+  /** A bot row's avatar, to make it move: a row that rises makes its bot hop. */
+  readonly avatarRef?: Ref<AvatarHandle>;
   readonly onOpen: () => void;
 }) {
   const ctx = usePresentation();
@@ -67,6 +70,7 @@ export function RosterRow({
           lastEntry={item.lastEntry}
           size={40}
           ground={ground}
+          {...(avatarRef === undefined ? {} : { ref: avatarRef })}
         />
       ) : (
         <RoomAvatar

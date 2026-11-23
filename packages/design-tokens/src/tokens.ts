@@ -92,6 +92,14 @@ export const shadows = {
     "0 12px 32px -8px oklch(0 0 0 / 0.18), 0 2px 6px oklch(0 0 0 / 0.06)",
     "0 12px 32px -8px oklch(0 0 0 / 0.8), 0 0 0 1px oklch(1 0 0 / 0.07)",
   ),
+  /**
+   * A roster row lifted off the list while it travels to its new place. In
+   * `rgba()` with units on every length, so Android's `boxShadow` draws the same.
+   */
+  lift: themed(
+    "0px 6px 16px -6px rgba(0, 0, 0, 0.22), 0px 1px 3px 0px rgba(0, 0, 0, 0.08)",
+    "0px 6px 16px -6px rgba(0, 0, 0, 0.9), 0px 0px 0px 1px rgba(255, 255, 255, 0.09)",
+  ),
   /** A switch's thumb, lifted off its track. */
   thumb: themed(
     "0 1px 3px oklch(0 0 0 / 0.2), 0 0 0 0.5px oklch(0 0 0 / 0.06)",

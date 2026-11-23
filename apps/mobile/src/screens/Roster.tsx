@@ -23,6 +23,7 @@ import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { StateMark } from "../components/States.tsx";
 import { Menu, type MenuAnchor, type MenuEntry } from "../components/Menu.tsx";
+import { ReorderCell, RowLift, RowMoves, useRowMoves } from "../components/Reorder.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
@@ -147,12 +148,24 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   );
   // The avatars hold while the list scrolls, from the drag through its glide.
   const scrolling = useSharedValue(false);
-  if (roster._tag === "loading") return <Connecting />;
-  const searching = query.trim() !== "";
+  // Scrolled down, the rows in view stay where they are as rows move above them; at the top,
+  // the list stays at the top, where a row that rises comes into view.
+  const [scrolledDown, setScrolledDown] = useState(false);
+  const searched = query.trim();
+  const searching = searched !== "";
   // A search finds hidden bots too, in the order the web lists what it finds.
-  const rows = searching
-    ? orderRoster(filterRoster(roster.value, query))
-    : rosterRows(roster.value);
+  const rows =
+    roster._tag === "loading"
+      ? null
+      : searching
+        ? orderRoster(filterRoster(roster.value, query))
+        : rosterRows(roster.value);
+  const moves = useRowMoves(
+    rows === null
+      ? null
+      : { keys: rows.map((item) => rosterKeyText(rosterKeyOf(item))), query: searched },
+  );
+  if (rows === null) return <Connecting />;
   const newEntries: ReadonlyArray<MenuEntry> = [
     { label: t("roster.newBot"), icon: Bot, onPress: () => navigation.navigate("newBot") },
     // A room needs two bots: with fewer, the row says so and makes a bot instead.
@@ -234,42 +247,57 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       </View>
       <ConnectionLine loaded />
       <AvatarHold held={scrolling}>
-        <FlatList
-          className="flex-1"
-          contentContainerStyle={{ paddingBottom: insets.bottom }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          data={rows}
-          keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
-          ListEmptyComponent={
-            <View className="items-center gap-3 px-6 py-12">
-              <StateMark icon={searching ? SearchX : Bot} />
-              <Body>
-                {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
-              </Body>
-            </View>
-          }
-          renderItem={({ item }) => {
-            const key = rosterKeyOf(item);
-            const text = rosterKeyText(key);
-            return (
-              <AvatarRow rows={onScreen} rowKey={text}>
-                <RosterRow
-                  item={item}
-                  selected={text === selectedText}
-                  onOpen={() => openConversation(key)}
-                />
-              </AvatarRow>
-            );
-          }}
-          onViewableItemsChanged={onViewable}
-          viewabilityConfig={ON_SCREEN}
-          extraData={selectedText}
-          onScrollBeginDrag={() => scrolling.set(true)}
-          onScrollEndDrag={() => scrolling.set(false)}
-          onMomentumScrollBegin={() => scrolling.set(true)}
-          onMomentumScrollEnd={() => scrolling.set(false)}
-        />
+        <RowMoves moves={moves}>
+          <FlatList
+            className="flex-1"
+            contentContainerStyle={{ paddingBottom: insets.bottom }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            data={rows}
+            keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
+            ListEmptyComponent={
+              <View className="items-center gap-3 px-6 py-12">
+                <StateMark icon={searching ? SearchX : Bot} />
+                <Body>
+                  {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
+                </Body>
+              </View>
+            }
+            CellRendererComponent={ReorderCell}
+            renderItem={({ item }) => {
+              const key = rosterKeyOf(item);
+              const text = rosterKeyText(key);
+              const selected = text === selectedText;
+              return (
+                <AvatarRow rows={onScreen} rowKey={text}>
+                  <RowLift rowKey={text} selected={selected}>
+                    {(avatar) => (
+                      <RosterRow
+                        item={item}
+                        selected={selected}
+                        avatarRef={avatar}
+                        onOpen={() => openConversation(key)}
+                      />
+                    )}
+                  </RowLift>
+                </AvatarRow>
+              );
+            }}
+            {...(scrolledDown ? { maintainVisibleContentPosition: { minIndexForVisible: 0 } } : {})}
+            scrollEventThrottle={64}
+            onScroll={(event) => {
+              const down = event.nativeEvent.contentOffset.y > 0;
+              if (down !== scrolledDown) setScrolledDown(down);
+            }}
+            onViewableItemsChanged={onViewable}
+            viewabilityConfig={ON_SCREEN}
+            extraData={selectedText}
+            onScrollBeginDrag={() => scrolling.set(true)}
+            onScrollEndDrag={() => scrolling.set(false)}
+            onMomentumScrollBegin={() => scrolling.set(true)}
+            onMomentumScrollEnd={() => scrolling.set(false)}
+          />
+        </RowMoves>
       </AvatarHold>
     </View>
   );
