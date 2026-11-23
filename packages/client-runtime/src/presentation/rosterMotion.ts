@@ -101,6 +101,32 @@ export const rosterMotion = (
 export const lifts = (move: RowMove): boolean => move !== "step";
 
 /**
+ * Where a scrolled list keeps its place as its rows go from `before` to
+ * `after`: for each place in `before`, how many places the first row from
+ * there on that stays listed and does not lift moved. The row first in view
+ * keeps where it is on screen by the list scrolling that far, so rows moving
+ * above the view do not push what the operator is looking at, and a row that
+ * lifts away does not carry the view with it.
+ */
+export function keptPlaces(
+  before: ReadonlyArray<string>,
+  after: ReadonlyArray<string>,
+  moves: ReadonlyMap<string, RowMove>,
+): ReadonlyArray<number> {
+  const now = new Map(after.map((key, index) => [key, index]));
+  const kept: number[] = [];
+  let anchored = 0;
+  for (let index = before.length - 1; index >= 0; index--) {
+    const key = before[index] ?? "";
+    const at = now.get(key);
+    const move = moves.get(key);
+    if (at !== undefined && (move === undefined || !lifts(move))) anchored = at - index;
+    kept[index] = anchored;
+  }
+  return kept;
+}
+
+/**
  * How long a row waits before it travels, in ms: the rows a lifted row passes
  * follow it `stepDelay` later; with no row lifted, every row goes at once.
  */

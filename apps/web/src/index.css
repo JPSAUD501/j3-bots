@@ -126,8 +126,16 @@
   }
 
   .reorder-row[data-lifted] {
-    z-index: 1;
     scale: var(--lift-scale);
+  }
+
+  /* The row the latest move lifted passes over one still up from a move before it. */
+  .reorder-row[data-lifted="now"] {
+    z-index: 2;
+  }
+
+  .reorder-row[data-lifted="earlier"] {
+    z-index: 1;
   }
 
   .reorder-row[data-lifted]::before {

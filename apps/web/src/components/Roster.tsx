@@ -8,6 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
   type Ref,
+  type RefCallback,
 } from "react";
 import {
   filterRoster,
@@ -35,6 +36,31 @@ const sameKey = (item: RosterItem, key: RosterItemKey | null) =>
  * Only unmodified keys: `Alt+↑` and `Alt+↓` belong to the shell, which moves
  * between conversations with them.
  */
+/** The bot rows' avatars, by row key, so a row that rises can make its bot hop. */
+class RowAvatars {
+  private readonly handles = new Map<string, AvatarHandle>();
+  private readonly refs = new Map<string, RefCallback<AvatarHandle>>();
+
+  /** The row's avatar ref, the same from render to render, so React keeps it attached. */
+  ref(key: string): RefCallback<AvatarHandle> {
+    const known = this.refs.get(key);
+    if (known !== undefined) return known;
+    const ref: RefCallback<AvatarHandle> = (handle) => {
+      if (handle === null) return;
+      this.handles.set(key, handle);
+      return () => {
+        if (this.handles.get(key) === handle) this.handles.delete(key);
+      };
+    };
+    this.refs.set(key, ref);
+    return ref;
+  }
+
+  hop(key: string): void {
+    this.handles.get(key)?.poke("hop");
+  }
+}
+
 function moveFocus(event: KeyboardEvent<HTMLElement>) {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const rows = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-roster-row]")];
@@ -93,8 +119,7 @@ export function Roster({
   const rows = orderRoster(filterRoster(items, query));
   const keys = rows.map((item) => rosterKeyText(rosterKeyOf(item)));
   const scroller = useRef<HTMLDivElement>(null);
-  // Each bot row's avatar, by row key, so a row that rises can make its bot hop.
-  const avatars = useRef(new Map<string, AvatarHandle>());
+  const [avatars] = useState(() => new RowAvatars());
   return (
     <nav
       ref={ref}
@@ -166,7 +191,7 @@ export function Roster({
           <ReorderList
             view={{ keys, query: query.trim() }}
             scroller={scroller}
-            onRise={(key) => avatars.current.get(key)?.poke("hop")}
+            onRise={(key) => avatars.hop(key)}
           >
             {rows.map((item) => {
               const key = rosterKeyText(rosterKeyOf(item));
@@ -174,13 +199,7 @@ export function Roster({
                 <ReorderRow key={key} rowKey={key}>
                   <RosterRow
                     item={item}
-                    avatarRef={(handle) => {
-                      if (handle === null) return;
-                      avatars.current.set(key, handle);
-                      return () => {
-                        avatars.current.delete(key);
-                      };
-                    }}
+                    avatarRef={avatars.ref(key)}
                     selected={sameKey(item, selected)}
                     render={rowLink(item)}
                     memberAvatars={

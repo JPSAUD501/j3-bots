@@ -113,7 +113,14 @@ export {
   rosterKeyText,
   rosterTarget,
 } from "./roster.ts";
-export { lifts, moveDelay, rosterMotion, type RosterView, type RowMove } from "./rosterMotion.ts";
+export {
+  keptPlaces,
+  lifts,
+  moveDelay,
+  rosterMotion,
+  type RosterView,
+  type RowMove,
+} from "./rosterMotion.ts";
 export { shownSaveProblem } from "./saves.ts";
 export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";

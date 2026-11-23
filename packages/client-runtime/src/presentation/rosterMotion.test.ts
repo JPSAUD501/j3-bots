@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { moveDelay, rosterMotion, rosterMoves } from "./rosterMotion.ts";
+import { keptPlaces, moveDelay, rosterMotion, rosterMoves } from "./rosterMotion.ts";
 
 const moves = (before: string, after: string) =>
   Object.fromEntries(rosterMoves([...before], [...after]));
@@ -55,6 +55,26 @@ describe("rosterMotion", () => {
       B: "rise",
       A: "step",
     });
+  });
+});
+
+describe("keptPlaces", () => {
+  const kept = (before: string, after: string) =>
+    keptPlaces([...before], [...after], rosterMoves([...before], [...after]));
+
+  it("keeps the rows in view where they are as a row in view rises above it", () => {
+    // From C on, the first row in view moved one place down: the list scrolls one place with it.
+    // From E on, the first row in view is F, still in its place.
+    expect(kept("ABCDEF", "EABCDF")).toEqual([1, 1, 1, 1, 0, 0]);
+  });
+
+  it("keeps the rows in view where they are as a row above the view sinks below it", () => {
+    expect(kept("ABCDEF", "BCDEAF")).toEqual([-1, -1, -1, -1, -1, 0]);
+  });
+
+  it("never keeps the place of a row that lifts away, nor of one that left", () => {
+    expect(keptPlaces([..."ABC"], [..."BC"], new Map())).toEqual([-1, -1, -1]);
+    expect(kept("ABC", "CAB")).toEqual([1, 1, 0]);
   });
 });
 

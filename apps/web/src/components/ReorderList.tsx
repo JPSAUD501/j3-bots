@@ -35,7 +35,11 @@ interface Snapshot {
 }
 
 const KEY = "reorderKey";
-/** Marks a row lifted off the list while it travels; `index.css` draws it. */
+/**
+ * Marks a row lifted off the list while it travels, `index.css` draws it:
+ * `now` for a row the latest move lifted, over `earlier`, a row still up
+ * from a move before it.
+ */
 const LIFTED = "data-lifted";
 
 const sameKeys = (a: ReadonlyArray<string>, b: ReadonlyArray<string>) =>
@@ -111,6 +115,10 @@ export class ReorderList extends Component<ReorderListProps> {
     }
     const moves = rosterMotion(previous.view, this.props.view);
     const rows = this.rows();
+    for (const key of this.flights.keys()) {
+      // A row that left has nothing more to travel.
+      if (!rows.has(key)) this.land(key, undefined);
+    }
     if (previous.view.query !== this.props.view.query) {
       // What a search lists just appears: nothing still moving goes on.
       for (const key of this.flights.keys()) this.land(key, rows.get(key));
@@ -156,29 +164,40 @@ export class ReorderList extends Component<ReorderListProps> {
     scroller.scrollTop = scrollTop + (row.offsetTop - top);
   }
 
-  /** Sets each moved row, and each row still travelling, off from where it was drawn. */
+  /**
+   * Sets every row off from where it was drawn toward its new place: a row
+   * the order moved, one still travelling, and one the list's own scroll
+   * moved on screen. A row new to the list fades in as the others make room.
+   */
   private travel(
     moves: ReadonlyMap<string, RowMove>,
     rows: ReadonlyMap<string, HTMLElement>,
     drawn: ReadonlyMap<string, number>,
   ): void {
     const travelling = new Set(this.flights.keys());
-    const going = [...new Set([...moves.keys(), ...travelling])].flatMap((key) => {
-      const row = rows.get(key);
-      return row === undefined ? [] : [{ key, row, move: moves.get(key) }];
+    const going = [...rows].flatMap(([key, row]) => {
+      const was = drawn.get(key);
+      return was === undefined ? [] : [{ key, row, was }];
     });
     // Every row in its place first, then every measure, then every motion: one layout in all.
     for (const { key } of going) this.flights.get(key)?.cancel();
-    const offsets = going.map(({ key, row }) => (drawn.get(key) ?? middle(row)) - middle(row));
-    going.forEach(({ key, row, move }, index) => {
+    const offsets = going.map(({ row, was }) => was - middle(row));
+    // A row the last move lifted that is still up now passes under the rows this one lifts.
+    for (const row of rows.values()) {
+      if (row.getAttribute(LIFTED) === "now") row.setAttribute(LIFTED, "earlier");
+    }
+    let moving = false;
+    going.forEach(({ key, row }, index) => {
       const offset = offsets[index] ?? 0;
       if (Math.abs(offset) < 1) {
         this.land(key, row);
         return;
       }
-      // A row already on its way goes on at once, toward its new place.
-      const delay =
-        move === undefined || travelling.has(key) ? 0 : moveDelay(move, moves, lift.stepDelay);
+      moving = true;
+      const move = moves.get(key);
+      // A row already on its way goes on at once, toward its new place; a row only the
+      // list's scroll moved follows the rows that lift, like the rows they pass.
+      const delay = travelling.has(key) ? 0 : moveDelay(move ?? "step", moves, lift.stepDelay);
       const flight = row.animate(
         [{ transform: `translateY(${offset}px)` }, { transform: "none" }],
         {
@@ -192,12 +211,21 @@ export class ReorderList extends Component<ReorderListProps> {
       flight.addEventListener("finish", () => {
         if (this.flights.get(key) === flight) this.land(key, row);
       });
-      if (move !== undefined && lifts(move) && !row.hasAttribute(LIFTED)) {
+      if (move !== undefined && lifts(move)) {
         // Lifted once for its whole way: a row a burst moves again stays up and does not hop again.
-        row.setAttribute(LIFTED, "");
-        if (move === "rise") this.props.onRise(key);
+        if (move === "rise" && !row.hasAttribute(LIFTED)) this.props.onRise(key);
+        row.setAttribute(LIFTED, "now");
       }
     });
+    if (!moving) return;
+    for (const [key, row] of rows) {
+      if (!drawn.has(key)) {
+        row.animate([{ opacity: 0 }, { opacity: 1 }], {
+          duration: springs.soft.duration,
+          easing: springs.soft.easing,
+        });
+      }
+    }
   }
 
   /** A row at rest in its place: no motion left, and set down. */
