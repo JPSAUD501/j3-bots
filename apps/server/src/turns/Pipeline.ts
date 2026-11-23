@@ -2,6 +2,7 @@
 import {
   type Attachment,
   type AttachmentId,
+  attachmentOffsetsFit,
   BotId,
   type CommandId,
   Conflict,
@@ -280,6 +281,8 @@ export class Pipeline extends Context.Service<
       readonly target: EntryTarget;
       readonly text: string;
       readonly attachments: ReadonlyArray<AttachmentId>;
+      /** Where the operator placed each file in `text`; left out, they follow it. */
+      readonly attachmentOffsets?: ReadonlyArray<number>;
       readonly mentions?: Mentions;
     }) => Effect.Effect<EntryId, NotFound | Conflict | Invalid>;
     /** Sends a failed message again, as new wakes, to the recipients it failed for. */
@@ -476,6 +479,7 @@ export const layer = Layer.effect(
       readonly target: EntryTarget;
       readonly text: string;
       readonly attachments: ReadonlyArray<AttachmentId>;
+      readonly attachmentOffsets?: ReadonlyArray<number>;
       readonly mentions?: Mentions;
     }) {
       const { commandId, ...payload } = input;
@@ -492,13 +496,19 @@ export const layer = Layer.effect(
           }
           const room = yield* checkMentions(input.target, input.mentions);
           const files = yield* filesOf(input.attachments);
+          const offsets = input.attachmentOffsets;
+          if (offsets !== undefined && !attachmentOffsetsFit(input.text, files.length, offsets)) {
+            return yield* new Invalid({ reason: "attachment" });
+          }
+          // A message without files places none.
+          const placed = offsets !== undefined && files.length > 0 ? offsets : undefined;
           // A message is dispatched in one envelope at the least: it must fit
           // the engine's input limit alone, as it renders now, with room for
           // what renders longer later. A room's message is checked in the
           // room at its widest, which it may be by then.
           const at = yield* DateTime.now;
           const base = { at, timeZone: yield* zoneOf };
-          const message = operatorMessage(at, input.text, files);
+          const message = operatorMessage(at, input.text, files, placed);
           const alone: Wake | null =
             room === undefined
               ? userWake(base, [], [{ _tag: "message", message }])
@@ -541,6 +551,7 @@ export const layer = Layer.effect(
               author: { _tag: "operator" },
               text: input.text,
               attachments: files,
+              ...(placed === undefined ? {} : { attachmentOffsets: placed }),
               mentions: input.mentions ?? { _tag: "bots", ids: [] },
               delivery:
                 behind?.unsent === true
@@ -1118,7 +1129,12 @@ export const layer = Layer.effect(
       const found = yield* entries.find(entryId);
       if (Option.isNone(found) || found.value.entry._tag !== "message") return null;
       const message: MessageEntry = found.value.entry;
-      return operatorMessage(message.createdAt, message.text, message.attachments);
+      return operatorMessage(
+        message.createdAt,
+        message.text,
+        message.attachments,
+        message.attachmentOffsets,
+      );
     });
 
     const askCardOf = SqlSchema.findOneOption({
@@ -1337,6 +1353,7 @@ export const layer = Layer.effect(
           at: message.createdAt,
           text: message.text,
           mentions,
+          files: message.attachments.map((file) => file.name),
         } satisfies RoomEntry;
       }
       return {
@@ -1344,8 +1361,12 @@ export const layer = Layer.effect(
         at: message.createdAt,
         text: message.text,
         mentions,
-        attachments: operatorMessage(message.createdAt, message.text, message.attachments)
-          .attachments,
+        attachments: operatorMessage(
+          message.createdAt,
+          message.text,
+          message.attachments,
+          message.attachmentOffsets,
+        ).attachments,
       } satisfies RoomEntry;
     });
 

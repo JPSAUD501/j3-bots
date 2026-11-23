@@ -49,7 +49,16 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       response: { type: "answered", chosen: [{ label: "label", value: "value" }], text: "text" },
     },
     messages: [
-      { at, text: "text", attachments: [{ name: "a.pdf", path: "files/a.pdf", mediaType: "x" }] },
+      {
+        at,
+        text: "text",
+        attachments: [{ name: "a.pdf", path: "files/a.pdf", mediaType: "x", offset: null }],
+      },
+      {
+        at,
+        text: "text text",
+        attachments: [{ name: "a.png", path: "files/a.png", mediaType: "x", offset: 4 }],
+      },
     ],
   },
   {
@@ -72,7 +81,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     omitted: 1,
     entries: [
       { author: "user", at, text: "text", mentions: "everyone", attachments: [] },
-      { author: teammate, at, text: "text", mentions: ["Bot"] },
+      { author: teammate, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
     ],
   },
   ...(["mentioned", "everyone"] as const).map((reason): Wake => ({
@@ -86,7 +95,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     },
     reason,
     omitted: 0,
-    entries: [{ author: teammate, at, text: "text", mentions: [] }],
+    entries: [{ author: teammate, at, text: "text", mentions: [], files: [] }],
   })),
   { ...base, kind: "bot", messages: [message] },
   {
