@@ -202,7 +202,8 @@ const MIB = 1024 * 1024;
 const escapeSpecifiers = (value: string) => value.replaceAll("%", "%%");
 
 /** `ExecStart=` also expands `$NAME` and `${NAME}` from the environment. */
-const escapeVariables = (value: string) => value.replaceAll("$", "$$");
+// A replacement string would read `$$` as one `$`: a function's result is taken as it is.
+const escapeVariables = (value: string) => value.replaceAll("$", () => "$$");
 
 /** One word of a command line or an environment assignment, quoted when it needs to be. */
 const quote = (value: string) => {

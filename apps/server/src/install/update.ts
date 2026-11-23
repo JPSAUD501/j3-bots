@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type { SignatureCheck } from "@j3-bots/release";
 import { AdminClient } from "../admin/AdminClient.ts";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
@@ -28,7 +29,7 @@ import {
   VERSIONS,
   writeLauncher,
 } from "./layout.ts";
-import { fetchRelease, isRelease, targetVersion } from "./release.ts";
+import { type FetchStage, fetchRelease, isRelease, targetVersion } from "./release.ts";
 import { type ServerProbe } from "../transition/readiness.ts";
 import { readRuntimeRecord } from "../transition/record.ts";
 import { type Side, StepFailed } from "../transition/switch.ts";
@@ -409,7 +410,10 @@ const releaseOf = Effect.fn("update.releaseOf")(function* (root: string) {
     );
 });
 
-type UpdateResult =
+/** The stages of an update a client follows. */
+export type UpdateStage = FetchStage | { readonly _tag: "restarting" };
+
+export type UpdateResult =
   | { readonly _tag: "current"; readonly version: string }
   /** The service ran `version` already; the command now runs it too. */
   | { readonly _tag: "repointed"; readonly version: string }
@@ -479,6 +483,10 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   readonly version: Option.Option<string>;
   readonly confirm: (bots: Option.Option<number>) => Effect.Effect<boolean, never, R>;
   readonly say: (line: string) => Effect.Effect<void, never, R>;
+  /** Told as the update reaches each stage, for a client that asked for it (`--run`). */
+  readonly progress: (stage: UpdateStage) => Effect.Effect<void, never, R>;
+  /** What a release's signature must pass: the release keys this install trusts. */
+  readonly check: SignatureCheck;
 }) {
   const { installed, lock } = yield* lockedInstall;
   const path = yield* Path.Path;
@@ -512,6 +520,8 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
     install: installed.install,
     version,
     platform: from.platform,
+    check: options.check,
+    progress: options.progress,
   });
   yield* options.say(
     fetched.alreadyThere
@@ -534,6 +544,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
     }
   }
 
+  yield* options.progress({ _tag: "restarting" });
   const fromRelease: SnapshotRelease = { version: from.version, ...engineOf(from) };
   const toRelease: SnapshotRelease = { version, ...(to === undefined ? {} : engineOf(to)) };
   yield* options.say(

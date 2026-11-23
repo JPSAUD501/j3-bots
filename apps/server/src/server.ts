@@ -23,8 +23,12 @@ import * as ExpoPushSender from "./push/ExpoPushSender.ts";
 import * as BasePrompt from "./settings/BasePrompt.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as SharedSkills from "./skills/SharedSkills.ts";
+import * as Host from "./system/Host.ts";
 import * as Network from "./system/Network.ts";
+import * as Systemd from "./system/Systemd.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
+import * as UpdateLauncher from "./update/UpdateLauncher.ts";
+import * as UpdateRuns from "./update/UpdateRuns.ts";
 import * as WebClient from "./web/WebClient.ts";
 
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
@@ -88,6 +92,13 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     Layer.provide(Http.serve(Listener.layer, { logAddress: true })),
     // Checks for newer releases for as long as the server runs.
     Layer.provideMerge(ReleaseFeed.layer),
+    Layer.provide(
+      UpdateRuns.layer.pipe(
+        // The desktop app runs its own server with `--admin-fd`, and updates it with itself.
+        Layer.provide(UpdateLauncher.layer(Option.isSome(options.adminFd) ? "desktop" : "cli")),
+        Layer.provide(Layer.merge(Systemd.layer, Host.layer)),
+      ),
+    ),
     // One decision for the client routes and the admin socket's report.
     Layer.provide(WebClient.statusLayer),
     Layer.provide(Domain.layer),

@@ -107,6 +107,8 @@ it.effect("keeps paths with spaces, quotes, percent and dollar signs intact", ()
       plan.entryPoint,
       "serve",
     ]);
+    // systemd expands `$NAME` and `${NAME}` in `ExecStart=`; `$$` is a `$`.
+    assert.include(single(unit, "ExecStart"), "/$$HOME/$${USER}/");
     // What `doctor` reads back from the installed unit.
     assert.strictEqual(environmentOf(text).get("PATH"), plan.searchPath);
     assert.strictEqual(single(unit, "WorkingDirectory").replaceAll("%%", "%"), plan.home);

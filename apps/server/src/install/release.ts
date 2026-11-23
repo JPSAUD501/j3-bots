@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- SHA-256 of a 50 MB archive needs an incremental hash; Effect has none.
-import * as NodeCrypto from "node:crypto";
-import { releaseTag } from "@j3-bots/release";
+import {
+  checkDigest,
+  expectedDigest,
+  releaseTag,
+  SIGNATURE_FILE,
+  type SignatureCheck,
+  SUMS_FILE,
+  verifySums,
+} from "@j3-bots/release";
+import { sha256 } from "@j3-bots/release/node";
+import { VerificationFailure } from "@j3-bots/contracts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
@@ -21,16 +30,19 @@ import { checkOwnFolder, VERSIONS } from "./layout.ts";
 // as `scripts/install.sh` does (docs/decisions/0015-a-release-is-a-self-contained-archive.md),
 // into `<install>/versions/<version>/`: the latest stable release, or the one
 // named; its archive for this platform, checked against the release's
-// SHA256SUMS; unpacked into a staging folder beside the versions, and renamed
-// into place only once it runs.
+// SHA256SUMS once the release key's signature over that file verified
+// (`@j3-bots/release`); unpacked into a staging folder beside the versions,
+// and renamed into place only once it runs. A release with no signature, or
+// one that does not verify, is refused before its archive is downloaded.
 
 const RELEASES = "https://github.com/JPSAUD501/j3-bots/releases";
 
 /**
  * The releases page, or a mirror of it that serves `<base>/latest` and
  * `<base>/download/<tag>/<file>`, the tag as `releaseTag` names it:
- * `J3_RELEASE_BASE_URL`, as install.sh reads it. The mirror is trusted as the publisher, since it serves the
- * SHA256SUMS an archive is checked against.
+ * `J3_RELEASE_BASE_URL`, as install.sh reads it. A mirror is trusted for
+ * nothing: what it serves must carry the release key's signature, as the
+ * releases page's does.
  */
 export const releaseBase = Config.String("J3_RELEASE_BASE_URL").pipe(
   Config.withDefault(RELEASES),
@@ -55,6 +67,7 @@ export class ReleaseNotFetched extends Schema.TaggedError<ReleaseNotFetched>()(
       "latest-unreadable",
       "latest-not-stable",
       "checksums-unreadable",
+      "unsigned",
       "no-archive",
       "download",
       "checksum",
@@ -65,6 +78,8 @@ export class ReleaseNotFetched extends Schema.TaggedError<ReleaseNotFetched>()(
     ]),
     /** The version, or for `latest-*` the releases page. */
     subject: Schema.String,
+    /** With `unsigned`, why its SHA256SUMS did not verify. */
+    failure: Schema.optionalKey(VerificationFailure),
   },
 ) {
   override get message(): string {
@@ -77,6 +92,8 @@ export class ReleaseNotFetched extends Schema.TaggedError<ReleaseNotFetched>()(
         return `The latest release at ${this.subject}/latest is not a stable version. Name the one to install with --version.`;
       case "checksums-unreadable":
         return `Could not download the SHA256SUMS of J3 Bots ${this.subject}. Check the version (a pre-release by its full name, such as 0.1.0-rc.1) and the network.`;
+      case "unsigned":
+        return `The SHA256SUMS of J3 Bots ${this.subject} does not carry the release key's signature (${this.failure ?? "unverified"}), so nothing of it was installed. If you got it from a mirror, the mirror changed it or did not copy SHA256SUMS.sig; the releases page has both.`;
       case "no-archive":
         return `J3 Bots ${this.subject} has no archive for this machine.`;
       case "download":
@@ -94,17 +111,6 @@ export class ReleaseNotFetched extends Schema.TaggedError<ReleaseNotFetched>()(
     }
   }
 }
-
-/** The SHA-256 SUMS line for `archive`: `<digest>  <name>`, or `<digest> *<name>`. */
-const digestOf = (sums: string, archive: string) => {
-  for (const line of sums.split("\n")) {
-    const [digest, name] = line.trim().split(/\s+/);
-    if (digest !== undefined && (name === archive || name === `*${archive}`)) {
-      return Option.some(digest.toLowerCase());
-    }
-  }
-  return Option.none<string>();
-};
 
 /** The latest stable release on the releases page at `base`. */
 const latestVersion = Effect.fn("release.latestVersion")(function* (base: string) {
@@ -153,26 +159,42 @@ export const isRelease = Effect.fn("release.isRelease")(function* (folder: strin
   );
 });
 
+/** Where fetching a release is, for whoever follows it. */
+export type FetchStage =
+  | {
+      readonly _tag: "downloading";
+      readonly receivedBytes: number;
+      /** The archive's size, once the download says it. */
+      readonly totalBytes: number | null;
+    }
+  | { readonly _tag: "verifying" }
+  | { readonly _tag: "installing" };
+
 /**
  * J3 Bots `version` for `platform` (such as `linux-x64`) in
  * `<install>/versions/<version>/`: used as it is when a release is there
- * already, otherwise downloaded with its SHA256SUMS, checked, unpacked into a
- * staging folder in `versions/`, run once, and renamed into place. A folder
- * there that is not a release is refused and kept. The install folder, its
- * `versions/` and a release already there must be this user's alone to
- * change. Answers the release's
- * folder, and whether it was there already.
+ * already, otherwise downloaded with its SHA256SUMS and their signature,
+ * which `check` must accept, checked, unpacked into a staging folder in
+ * `versions/`, run once, and renamed into place. A folder there that is not a
+ * release is refused and kept. The install folder, its `versions/` and a
+ * release already there must be this user's alone to change. `progress` is
+ * told each stage, and the bytes as they come. Answers the release's folder,
+ * and whether it was there already.
  */
-export const fetchRelease = Effect.fn("release.fetchRelease")(function* (options: {
+export const fetchRelease = Effect.fn("release.fetchRelease")(function* <R>(options: {
   readonly install: string;
   readonly version: string;
   readonly platform: string;
+  readonly check: SignatureCheck;
+  readonly progress: (stage: FetchStage) => Effect.Effect<void, never, R>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { version, platform } = options;
   const failed = (reason: ReleaseNotFetched["reason"], subject = version) =>
     new ReleaseNotFetched({ reason, subject });
+  const unsigned = (failure: VerificationFailure) =>
+    new ReleaseNotFetched({ reason: "unsigned", subject: version, failure });
 
   const versions = path.join(options.install, VERSIONS);
   yield* checkOwnFolder(options.install);
@@ -181,6 +203,7 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* (options
   const target = path.join(versions, version);
   if (yield* isRelease(target)) {
     yield* checkOwnFolder(target);
+    yield* options.progress({ _tag: "installing" });
     return { root: target, alreadyThere: true };
   }
   if (Option.isSome(yield* fs.lstat(target).pipe(Effect.option))) {
@@ -197,29 +220,59 @@ export const fetchRelease = Effect.fn("release.fetchRelease")(function* (options
       .execute(HttpClientRequest.get(`${download}/${file}`))
       .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
 
-  const sums = yield* get("SHA256SUMS").pipe(
-    Effect.flatMap((response) => response.text),
+  const sums = yield* get(SUMS_FILE).pipe(
+    Effect.flatMap((response) => response.arrayBuffer),
+    Effect.map((buffer) => new Uint8Array(buffer)),
     Effect.mapError(() => failed("checksums-unreadable")),
   );
-  const expected = digestOf(sums, archive);
-  if (Option.isNone(expected)) return yield* failed("no-archive");
+  // A release with no signature is answered 404; anything else that fails is not knowing.
+  const signature = yield* client.execute(HttpClientRequest.get(`${download}/${SIGNATURE_FILE}`)).pipe(
+    Effect.flatMap((response) =>
+      response.status === 404
+        ? Effect.succeed(null)
+        : HttpClientResponse.filterStatusOk(response).pipe(
+            Effect.flatMap((ok) => ok.arrayBuffer),
+            Effect.map((buffer) => new Uint8Array(buffer)),
+          ),
+    ),
+    Effect.mapError(() => failed("checksums-unreadable")),
+  );
+  const verified = verifySums({ version, sums, signature, check: options.check });
+  if (Result.isFailure(verified)) return yield* unsigned(verified.failure);
+  if (Result.isFailure(expectedDigest(verified.success, archive))) {
+    return yield* failed("no-archive");
+  }
 
   // Unpacked beside the versions, so the move into place is a rename; gone
   // afterwards whatever happened, unless it was moved.
   const staging = yield* fs.makeTempDirectory({ directory: versions, prefix: ".staging-" });
   return yield* Effect.gen(function* () {
     const downloaded = path.join(staging, archive);
-    const hash = NodeCrypto.createHash("sha256");
+    const hash = sha256();
+    yield* options.progress({ _tag: "downloading", receivedBytes: 0, totalBytes: null });
     yield* get(archive).pipe(
-      Effect.flatMap((response) =>
-        response.stream.pipe(
-          Stream.tap((chunk) => Effect.sync(() => hash.update(chunk))),
+      Effect.flatMap((response) => {
+        const length = Number(response.headers["content-length"]);
+        const totalBytes = Number.isSafeInteger(length) && length >= 0 ? length : null;
+        let receivedBytes = 0;
+        return response.stream.pipe(
+          Stream.tap((chunk) =>
+            Effect.suspend(() => {
+              hash.update(chunk);
+              receivedBytes += chunk.byteLength;
+              return options.progress({ _tag: "downloading", receivedBytes, totalBytes });
+            }),
+          ),
           Stream.run(fs.sink(downloaded, { flag: "wx", mode: 0o600 })),
-        ),
-      ),
+        );
+      }),
       Effect.mapError(() => failed("download")),
     );
-    if (hash.digest("hex") !== expected.value) return yield* failed("checksum");
+    yield* options.progress({ _tag: "verifying" });
+    if (Result.isFailure(checkDigest(verified.success, archive, hash.hex()))) {
+      return yield* failed("checksum");
+    }
+    yield* options.progress({ _tag: "installing" });
 
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const untar = yield* spawner
