@@ -28,6 +28,7 @@ Both need `REQUEST_INSTALL_PACKAGES` and the operator's "Install unknown apps" p
 - One small native module of the app's own (`apps/mobile/modules/app-update`), in Kotlin, beside the JavaScript that checks the release.
 - The app knows how an install ended, so its words and its cleanup are exact.
 - A session for an update of the app itself ends the app's process when it succeeds, so "installed" is seldom heard: the app learns it at its next start, from its own version.
+- The session asks for the operator's confirmation when it is committed, which may be while the operator is in another app, and Android does not let an app in the background open a dialog. The module keeps that confirmation and shows it when the app comes back.
 - No `FileProvider` and no provider paths to keep narrow: no other app is given a URI into the app's files.
 - The operator still allows "Install unknown apps" for J3 Bots once, in Android's settings. The app explains it before sending them there, and goes on with the install when they come back.
 

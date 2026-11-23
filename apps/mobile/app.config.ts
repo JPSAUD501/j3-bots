@@ -96,8 +96,9 @@ const googleServicesFile = fromEnvironment(process.env.GOOGLE_SERVICES_JSON);
  * build reads the project's releases and trusts only the release key it
  * carries. A preview or development build updates itself only when it is
  * built for a release server of its own, with that server's public key: the
- * device checks of the update do so. The release build refuses both, so no
- * build that installs as J3 Bots trusts another key.
+ * device checks of the update do so. The release build refuses both, and
+ * the app that installs as J3 Bots ignores a test feed whatever its config
+ * says (src/update/appUpdate.ts), so it trusts no other key.
  */
 const testFeed = fromEnvironment(process.env.J3_APP_UPDATE_FEED);
 const testKey = fromEnvironment(process.env.J3_APP_UPDATE_KEY);

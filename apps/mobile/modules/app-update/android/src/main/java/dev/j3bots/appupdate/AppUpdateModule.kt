@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package dev.j3bots.appupdate
 
+import android.app.ActivityManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -38,10 +39,17 @@ import java.security.MessageDigest
  *
  * Only files in the app's update folder are read, so nothing else on the
  * phone can be handed to the installer through this module.
+ *
+ * Android does not let an app in the background open an activity, so a
+ * confirmation the session asks for while the operator is in another app is
+ * kept, and shown once when the app comes back.
  */
 class AppUpdateModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+
+  /** Android's confirmation of an install, asked for while the app was in the background. */
+  private var waiting: Intent? = null
 
   /** The folder the app downloads updates into: in its cache, which no backup copies. */
   private fun folder(): File = File(context.cacheDir, FOLDER)
@@ -56,6 +64,12 @@ class AppUpdateModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("AppUpdate")
+
+    OnActivityEntersForeground {
+      val confirm = waiting
+      waiting = null
+      if (confirm != null) start(confirm)
+    }
 
     /** The update folder, as a `file:` URI ending in a slash, created when missing. */
     Function("folder") {
@@ -115,30 +129,43 @@ class AppUpdateModule : Module() {
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
     params.setAppPackageName(context.packageName)
     val sessionId = installer.createSession(params)
-    val session = installer.openSession(sessionId)
+    val session =
+      try {
+        installer.openSession(sessionId)
+      } catch (error: Exception) {
+        installer.abandonSession(sessionId)
+        throw error
+      }
+    var receiver: StatusReceiver? = null
     try {
       val digest = MessageDigest.getInstance("SHA-256")
+      // The session sets aside `length` bytes, so exactly that many are
+      // written: no byte in it is one that was not hashed.
+      val length = file.length()
+      var written = 0L
       FileInputStream(file).use { input ->
-        session.openWrite("base.apk", 0, file.length()).use { output ->
+        session.openWrite("base.apk", 0, length).use { output ->
           val buffer = ByteArray(BUFFER)
           while (true) {
             val read = input.read(buffer)
             if (read < 0) break
             digest.update(buffer, 0, read)
             output.write(buffer, 0, read)
+            written += read
           }
           session.fsync(output)
         }
       }
-      if (hex(digest.digest()) != sha256) {
+      if (written != length || hex(digest.digest()) != sha256) {
         session.abandon()
         promise.resolve(mapOf("_tag" to "digest-mismatch"))
         return
       }
       val action = "${context.packageName}.appupdate.STATUS.$sessionId"
+      receiver = StatusReceiver(promise)
       ContextCompat.registerReceiver(
         context,
-        StatusReceiver(promise),
+        receiver,
         IntentFilter(action),
         ContextCompat.RECEIVER_NOT_EXPORTED,
       )
@@ -153,12 +180,17 @@ class AppUpdateModule : Module() {
           PendingIntent.FLAG_UPDATE_CURRENT or mutable,
         )
       session.commit(status.intentSender)
-    } catch (error: IOException) {
+    } catch (error: Exception) {
+      // Nothing was committed: the session and its receiver end here.
+      if (receiver != null) context.unregisterReceiver(receiver)
       session.abandon()
-      promise.resolve(mapOf("_tag" to "failed", "code" to "io", "message" to error.message))
-    } catch (error: SecurityException) {
-      session.abandon()
-      promise.resolve(mapOf("_tag" to "failed", "code" to "security", "message" to error.message))
+      val code =
+        when (error) {
+          is IOException -> "io"
+          is SecurityException -> "security"
+          else -> "error"
+        }
+      promise.resolve(mapOf("_tag" to "failed", "code" to code, "message" to error.message))
     } finally {
       session.close()
     }
@@ -166,8 +198,9 @@ class AppUpdateModule : Module() {
 
   /**
    * Follows one session to its end: it shows Android's confirmation when the
-   * session asks for the operator, and resolves `promise` with the outcome.
-   * Updating the running app ends its process, so success is seldom heard.
+   * session asks for the operator, or keeps it for when the app comes back,
+   * and resolves `promise` with the outcome. Updating the running app ends
+   * its process, so success is seldom heard.
    */
   private inner class StatusReceiver(private val promise: Promise) : BroadcastReceiver() {
     override fun onReceive(receiver: Context, intent: Intent) {
@@ -175,11 +208,12 @@ class AppUpdateModule : Module() {
       if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
         val confirm = userAction(intent)
         if (confirm != null) {
-          start(confirm)
+          if (inForeground()) start(confirm) else waiting = confirm
           return
         }
       }
       receiver.unregisterReceiver(this)
+      waiting = null
       val tag =
         when (status) {
           PackageInstaller.STATUS_SUCCESS -> "installed"
@@ -225,6 +259,13 @@ class AppUpdateModule : Module() {
         }
       }
       return digest.digest()
+    }
+
+    /** Whether the operator is in the app, which may then open an activity. */
+    fun inForeground(): Boolean {
+      val state = ActivityManager.RunningAppProcessInfo()
+      ActivityManager.getMyMemoryState(state)
+      return state.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
     fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }

@@ -28,6 +28,8 @@ const Extra = Schema.Struct({ appUpdate: AppUpdateConfig });
 
 /** Where releases are listed and downloaded, and the check their signature must pass. */
 export interface ReleaseFeed {
+  /** The project's releases, or a release server the build was made for. */
+  readonly source: "release" | "test";
   /** The REST API's root for the repository: `<api>/releases`, `<api>/releases/latest`. */
   readonly api: string;
   /** The repository's page: `<site>/releases/download/v<version>/<file>`. */
@@ -42,7 +44,16 @@ export const releaseFeed: ReleaseFeed | null = Option.match(
     onNone: () => null,
     onSome: ({ appUpdate }) =>
       appUpdate._tag === "release"
-        ? { ...GITHUB, check: signatureCheck(RELEASE_KEYS.map((key) => key.pem)) }
-        : { api: appUpdate.feed, site: appUpdate.feed, check: signatureCheck([appUpdate.key]) },
+        ? {
+            source: "release",
+            ...GITHUB,
+            check: signatureCheck(RELEASE_KEYS.map((key) => key.pem)),
+          }
+        : {
+            source: "test",
+            api: appUpdate.feed,
+            site: appUpdate.feed,
+            check: signatureCheck([appUpdate.key]),
+          },
   },
 );

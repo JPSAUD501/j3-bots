@@ -124,29 +124,60 @@ class Unreachable {
   readonly _tag = "Unreachable";
 }
 
-const fetchOk = async (url: string, headers?: Record<string, string>): Promise<Response> => {
-  let response: Response;
+/**
+ * How long a request may go without its answer, or a download without a
+ * byte, before the feed counts as unreachable. React Native's requests have
+ * no deadline of their own, and a feed that stalls would hold a check or a
+ * download for as long as the app runs.
+ */
+const STALL_MS = 30_000;
+
+/** A signal that aborts once `STALL_MS` go by without a call to `progressed`. */
+const stallGuard = () => {
+  const controller = new AbortController();
+  let timer = setTimeout(() => controller.abort(), STALL_MS);
+  return {
+    signal: controller.signal,
+    progressed: () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(), STALL_MS);
+    },
+    end: () => clearTimeout(timer),
+  };
+};
+
+/**
+ * `url`'s answer, read in full within `STALL_MS`, or null when it is a 404.
+ * Any other failure, a stall included, is `Unreachable`.
+ */
+const fetchBody = async <A>(
+  url: string,
+  read: (response: Response) => Promise<A>,
+  headers?: Record<string, string>,
+): Promise<A | null> => {
+  const guard = stallGuard();
   try {
-    response = await fetch(url, headers === undefined ? {} : { headers });
+    const response = await fetch(url, { headers: headers ?? {}, signal: guard.signal });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Unreachable();
+    return await read(response);
   } catch {
     throw new Unreachable();
+  } finally {
+    guard.end();
   }
-  if (!response.ok) throw new Unreachable();
-  return response;
+};
+
+/** A JSON answer from the releases API. */
+const fetchJson = async (url: string): Promise<unknown> => {
+  const body = await fetchBody(url, (response) => response.json(), GITHUB_HEADERS);
+  if (body === null) throw new Unreachable();
+  return body;
 };
 
 /** A release file's bytes, or null when the release has no such file. */
-const fetchFile = async (url: string): Promise<Uint8Array | null> => {
-  let response: Response;
-  try {
-    response = await fetch(url);
-  } catch {
-    throw new Unreachable();
-  }
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Unreachable();
-  return new Uint8Array(await response.arrayBuffer());
-};
+const fetchFile = (url: string): Promise<Uint8Array | null> =>
+  fetchBody(url, async (response) => new Uint8Array(await response.arrayBuffer()));
 
 const decodeReleases = Schema.decodeUnknownSync(GitHubReleases);
 const decodeRelease = Schema.decodeUnknownSync(GitHubRelease);
@@ -157,12 +188,9 @@ const listReleases = async (
   channel: UpdateChannel,
 ): Promise<ReadonlyArray<GitHubRelease>> => {
   try {
-    if (channel === "stable") {
-      const response = await fetchOk(`${feed.api}/releases/latest`, GITHUB_HEADERS);
-      return [decodeRelease(await response.json())];
-    }
-    const response = await fetchOk(`${feed.api}/releases?per_page=30`, GITHUB_HEADERS);
-    return decodeReleases(await response.json());
+    if (channel === "stable")
+      return [decodeRelease(await fetchJson(`${feed.api}/releases/latest`))];
+    return decodeReleases(await fetchJson(`${feed.api}/releases?per_page=30`));
   } catch (error) {
     if (error instanceof Unreachable) throw error;
     // An answer that is not a list of releases.
@@ -287,24 +315,36 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
     if (running === null) return;
     busy = true;
     checkedAt = now;
+    // The channel this check reads. Should the operator change it meanwhile,
+    // what this check found is dropped and the new channel is read instead,
+    // so only the chosen channel ever offers a release.
+    const asked = channel.get();
+    const found = (next: AppUpdateState) => {
+      if (channel.get() === asked) state.set(next);
+    };
     state.set({ _tag: "checking" });
     try {
-      const releases = await listReleases(feed, channel.get());
-      const offered = appOffer({ releases, channel: channel.get(), running });
+      const releases = await listReleases(feed, asked);
+      const offered = appOffer({ releases, channel: asked, running });
       const candidate = offered.available;
       if (candidate === null) {
-        state.set({ _tag: "current", waitingForStable: offered.waitingForStable });
+        found({ _tag: "current", waitingForStable: offered.waitingForStable });
         return;
       }
       Result.match(await verifiedRelease(feed, candidate), {
-        onSuccess: (release) => state.set({ _tag: "available", release }),
+        onSuccess: (release) => found({ _tag: "available", release }),
         onFailure: (reason) =>
-          fail(null, { _tag: "unverified", version: candidate.version, reason }),
+          found({
+            _tag: "failed",
+            release: null,
+            failure: { _tag: "unverified", version: candidate.version, reason },
+          }),
       });
     } catch {
-      fail(null, { _tag: "unreachable" });
+      found({ _tag: "failed", release: null, failure: { _tag: "unreachable" } });
     } finally {
       busy = false;
+      if (channel.get() !== asked) void check();
     }
   };
 
@@ -352,21 +392,28 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
     const file = fileOf(release);
     remove(file);
     state.set({ _tag: "downloading", release, received: 0, total: null });
+    // A download may take long on a slow network, but not stall.
+    const guard = stallGuard();
     try {
       await File.downloadFileAsync(release.apk.url, file, {
         idempotent: true,
-        onProgress: ({ bytesWritten, totalBytes }) =>
+        signal: guard.signal,
+        onProgress: ({ bytesWritten, totalBytes }) => {
+          guard.progressed();
           state.set({
             _tag: "downloading",
             release,
             received: bytesWritten,
             total: totalBytes > 0 ? totalBytes : null,
-          }),
+          });
+        },
       });
     } catch {
       remove(file);
       fail(release, { _tag: "unreachable" });
       return;
+    } finally {
+      guard.end();
     }
     state.set({ _tag: "verifying", release });
     const digest = await installer.sha256(file.uri);
@@ -436,6 +483,21 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
   };
 };
 
+/** The release build's application id (app.config.ts, `VARIANTS.production`). */
+const RELEASE_PACKAGE = "dev.j3bots.mobile";
+
+/**
+ * Whether this build may take its updates from `feed`. The build refuses a
+ * test feed for the release variant, but the config is read again when the
+ * native project is assembled, so a project prebuilt as the release and
+ * assembled with a test feed would carry one. The app that installs as J3
+ * Bots trusts only the project's releases, whatever its config says.
+ */
+const trusted = (installer: AppInstaller, feed: ReleaseFeed): boolean =>
+  feed.source === "release" || installer.installedApp().packageName !== RELEASE_PACKAGE;
+
 /** The app's own update, or null in a build that does not update itself. */
 export const appUpdate: AppUpdate | null =
-  appInstaller === null || releaseFeed === null ? null : make(appInstaller, releaseFeed);
+  appInstaller === null || releaseFeed === null || !trusted(appInstaller, releaseFeed)
+    ? null
+    : make(appInstaller, releaseFeed);
