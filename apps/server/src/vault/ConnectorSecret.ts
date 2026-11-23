@@ -71,6 +71,13 @@ export const ConnectorSecret = Schema.Struct({
   oauth: Schema.NullOr(Schema.Struct({ client: OAuthClient, tokens: Schema.NullOr(OAuthTokens) })),
   headers: Schema.Array(NamedSecret),
   env: Schema.Array(NamedSecret),
+  /**
+   * The value of each secret field of a gallery entry's form, named by the
+   * field's key. The address and headers hold them rendered, as the key in
+   * `Bearer {key}`; these are never sent as they are, only taken out of what
+   * the connector's server says, and kept out of a sign-in's address.
+   */
+  formSecrets: Schema.Array(NamedSecret),
 });
 export type ConnectorSecret = typeof ConnectorSecret.Type;
 

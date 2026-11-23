@@ -92,7 +92,16 @@ describe("the curated list", () => {
   });
 
   it("refuses an app whose parameters would replace the sign-in's own", () => {
-    for (const parameter of ["redirect_uri", "state", "code_challenge", "resource", "scope"]) {
+    for (const parameter of [
+      "redirect_uri",
+      "state",
+      "code_challenge",
+      "resource",
+      "scope",
+      "request",
+      "request_uri",
+      "response_mode",
+    ]) {
       assert.isTrue(
         refused(
           changed((list) => {

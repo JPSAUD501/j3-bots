@@ -5,7 +5,6 @@ import {
   initialGrant,
   listingKey,
   listingSource,
-  ownAppRedirect,
   withoutSecrets,
 } from "@j3-bots/client-runtime/presentation";
 import { connectFailureText, publisherText } from "@j3-bots/client-runtime/wording";
@@ -167,15 +166,13 @@ function ConnectForm({
   const [values, setValues] = useState<ReadonlyMap<FieldKey, string>>(new Map());
   const [typedIssuer, setIssuer] = useState("");
   const issuer = knownIssuer ?? typedIssuer;
+  // As the server states it: its own address when the browser returns to it, else this device's loopback.
   const redirect =
-    ownApp && knownIssuer !== null
-      ? ownAppRedirect(
-          knownIssuer,
-          intents.signInRoute._tag === "server"
-            ? { _tag: "server", origin: window.location.origin }
-            : { _tag: "loopback" },
-        )
-      : null;
+    !ownApp || listing.redirects === null
+      ? null
+      : intents.signInRoute._tag === "server"
+        ? listing.redirects.server
+        : listing.redirects.loopback;
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [problems, setProblems] = useState<FormProblems | null>(null);

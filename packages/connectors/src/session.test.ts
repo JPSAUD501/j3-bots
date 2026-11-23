@@ -37,6 +37,7 @@ const fixed = (credentials: CallCredentials): ConnectorCredentials => ({
 const bearer = (token: string): CallCredentials => ({
   bearer: Option.some(Redacted.make(token)),
   headers: [{ name: "X-Api-Key", value: Redacted.make(API_KEY) }],
+  hidden: [],
 });
 
 const echo: FakeOptions["call"] = (name, args) => ({
@@ -158,6 +159,7 @@ describe("openSession", () => {
           const credentials = fixed({
             bearer: Option.none(),
             headers: [{ name: header.name, value: Redacted.make(header.value) }],
+            hidden: [],
           });
           const error = yield* Effect.flip(open(fake.url, credentials));
           assert.deepStrictEqual(

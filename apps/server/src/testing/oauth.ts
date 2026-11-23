@@ -481,6 +481,7 @@ export const addOAuthConnector = Effect.gen(function* () {
     oauth: null,
     headers: [],
     env: [],
+    formSecrets: [],
   });
   yield* store.insert({
     id: NOTION,

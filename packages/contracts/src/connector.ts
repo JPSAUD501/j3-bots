@@ -275,6 +275,18 @@ export const ConnectorTool = Schema.Struct({
 export type ConnectorTool = typeof ConnectorTool.Type;
 
 /** A listing as its page shows it, with what Connect asks for. */
+/**
+ * The addresses a sign-in at an own app's issuer returns to, for the operator
+ * to register on the app, as the server states them: to the server itself,
+ * null when no browser can return there, and to a device's loopback, which
+ * any port matches at a service that follows RFC 8252.
+ */
+export const SignInRedirects = Schema.Struct({
+  server: Schema.NullOr(Schema.String),
+  loopback: Schema.String,
+});
+export type SignInRedirects = typeof SignInRedirects.Type;
+
 export const ConnectorListingDetails = Schema.Struct({
   ...ConnectorListing.fields,
   description: Schema.String.check(Schema.isMaxLength(MAX_CONNECTOR_DESCRIPTION_LENGTH)),
@@ -285,6 +297,8 @@ export const ConnectorListingDetails = Schema.Struct({
   command: Schema.NullOr(ConnectorCommand),
   /** The tools it offers, when its server lists them without a sign-in; null when they show only once connected. */
   tools: Schema.NullOr(Schema.Array(ConnectorTool)),
+  /** Where its own app's sign-ins return, when its setup names the app's issuer; null otherwise. */
+  redirects: Schema.NullOr(SignInRedirects),
 });
 export type ConnectorListingDetails = typeof ConnectorListingDetails.Type;
 

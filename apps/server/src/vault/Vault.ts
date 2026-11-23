@@ -139,7 +139,7 @@ const ConnectorOAuthJson = json(ConnectorSecret.fields.oauth);
 const NamedSecretsJson = json(Schema.Array(NamedSecret));
 
 /** The fields a connector's record seals, one value each. */
-const CONNECTOR_FIELDS = ["address", "oauth", "headers", "env"] as const;
+const CONNECTOR_FIELDS = ["address", "oauth", "headers", "env", "formSecrets"] as const;
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const bytesOf = (text: string) => Buffer.from(text, "base64");
@@ -947,7 +947,19 @@ export const layer = Layer.effect(
             "env",
             Schema.decodeEffect(NamedSecretsJson)(yield* opened("env")),
           );
-          return Option.some<ConnectorSecret>({ connectorId: id, address, oauth, headers, env });
+          const formSecrets = yield* readBack(
+            recordId,
+            "formSecrets",
+            Schema.decodeEffect(NamedSecretsJson)(yield* opened("formSecrets")),
+          );
+          return Option.some<ConnectorSecret>({
+            connectorId: id,
+            address,
+            oauth,
+            headers,
+            env,
+            formSecrets,
+          });
         }),
       );
 
@@ -960,11 +972,13 @@ export const layer = Layer.effect(
           const oauth = yield* Schema.encodeEffect(ConnectorOAuthJson)(secret.oauth);
           const headers = yield* Schema.encodeEffect(NamedSecretsJson)(secret.headers);
           const env = yield* Schema.encodeEffect(NamedSecretsJson)(secret.env);
+          const formSecrets = yield* Schema.encodeEffect(NamedSecretsJson)(secret.formSecrets);
           const rows = [
             yield* sealedRow(key, recordId, "address", utf8(address)),
             yield* sealedRow(key, recordId, "oauth", utf8(oauth)),
             yield* sealedRow(key, recordId, "headers", utf8(headers)),
             yield* sealedRow(key, recordId, "env", utf8(env)),
+            yield* sealedRow(key, recordId, "formSecrets", utf8(formSecrets)),
           ];
           const now = timeText(yield* DateTime.now);
           yield* transactional(sql)(

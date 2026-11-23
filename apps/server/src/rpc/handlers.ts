@@ -218,7 +218,13 @@ export const handlers = ServedRpcs.toLayer(
           .pipe(Effect.asVoid, Effect.mapError(toCommandError)),
       "connectors.list": ({ language }) => Effect.succeed(connectorSources.list(language)),
       "connectors.search": (input) => connectorSources.search(input),
-      "connectors.get": ({ ref, language }) => connectorSources.get(ref, language),
+      // The page names where an own app's sign-ins return, as `begin` would send them.
+      "connectors.get": Effect.fn("connectors.get")(function* ({ ref, language }) {
+        const details = yield* connectorSources.get(ref, language);
+        const issuer = details.setup?.issuer ?? null;
+        const redirects = issuer === null ? null : yield* connectorAuth.redirectsFor(issuer);
+        return { ...details, redirects };
+      }),
     };
   }),
 );

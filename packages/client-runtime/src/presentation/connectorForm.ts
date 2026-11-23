@@ -11,7 +11,6 @@ import {
   type Language,
   type ListingRef,
   OAuthClientInput,
-  signInCallbackPath,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -306,20 +305,4 @@ export function commandSource(input: {
       env: env.decoded,
     },
   };
-}
-
-/**
- * The redirect address to register on an app made at the service, for a
- * sign-in at `issuer` from this device: the server's own `origin` when the
- * browser comes back to it, else this device's loopback with no port, which
- * any port matches at a service that follows RFC 8252. Null when `issuer` is
- * not an address.
- */
-export function ownAppRedirect(
-  issuer: string,
-  back: { readonly _tag: "server"; readonly origin: string } | { readonly _tag: "loopback" },
-): string | null {
-  if (!URL.canParse(issuer)) return null;
-  const path = signInCallbackPath(new URL(issuer));
-  return `${back._tag === "server" ? back.origin : "http://127.0.0.1"}${path}`;
 }

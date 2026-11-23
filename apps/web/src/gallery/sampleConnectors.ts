@@ -176,6 +176,13 @@ function sampleDetails(ref: ListingRef): ConnectorListingDetails | undefined {
         ? { command: "npx", args: ["-y", "@example/files-server", "~/Shared"], env: [] }
         : null,
     tools: key === "notion" ? notesTools : null,
+    redirects:
+      listing.connect === "own-app"
+        ? {
+            server: "https://bots.example.com/oauth/callback/accounts.example.com",
+            loopback: "http://127.0.0.1/oauth/callback/accounts.example.com",
+          }
+        : null,
   };
 }
 

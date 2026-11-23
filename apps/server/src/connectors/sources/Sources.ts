@@ -4,7 +4,6 @@ import {
   type ConnectKind,
   type ConnectorField,
   type ConnectorListing,
-  type ConnectorListingDetails,
   Invalid,
   type Language,
   type ListingRef,
@@ -21,6 +20,7 @@ import {
   curatedAuthorization,
   curatedCovers,
   curatedDetails,
+  type ListingDetails,
   curatedEntry,
   curatedForm,
   curatedListing,
@@ -58,7 +58,7 @@ const registryListing = (entry: RegistryEntry): ConnectorListing => ({
   connect: registryConnectKind(entry.form),
 });
 
-const registryDetails = (entry: RegistryEntry): ConnectorListingDetails => ({
+const registryDetails = (entry: RegistryEntry): ListingDetails => ({
   ...registryListing(entry),
   description: entry.description ?? "",
   fields: entry.form === null ? [] : contractFields(entry.form),
@@ -106,7 +106,7 @@ export class ConnectorSources extends Context.Service<
     readonly get: (
       ref: ListingRef,
       language: Language,
-    ) => Effect.Effect<ConnectorListingDetails, NotFound | Conflict>;
+    ) => Effect.Effect<ListingDetails, NotFound | Conflict>;
     /** What adding the listing `ref` needs: its form, and its fields in `language`. */
     readonly connection: (
       ref: ListingRef,

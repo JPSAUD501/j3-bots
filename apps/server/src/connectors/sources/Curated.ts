@@ -99,6 +99,11 @@ const SIGN_IN_PARAMETERS = new Set([
   "state",
   "resource",
   "scope",
+  // A request object, by value or by reference, could set any of them, and
+  // where the code returns is J3 Bots' to choose.
+  "request",
+  "request_uri",
+  "response_mode",
 ]);
 
 /** Parameters an app adds to each authorization request: none of those J3 Bots sets itself. */
@@ -278,11 +283,17 @@ const noteOf = (list: CuratedList, entry: CuratedEntry, language: Language) => {
   return note === null || note === undefined ? null : text(note, language);
 };
 
+/**
+ * A listing's page as its source words it. Where its own app's sign-ins
+ * return is the server's to say, which adds it before a client gets it.
+ */
+export type ListingDetails = Omit<ConnectorListingDetails, "redirects">;
+
 export const curatedDetails = (
   list: CuratedList,
   entry: CuratedEntry,
   language: Language,
-): ConnectorListingDetails => {
+): ListingDetails => {
   const note = noteOf(list, entry, language);
   const summary = text(entry.summary, language);
   const label = entry.connect.kind === "token" ? text(entry.connect.label, language) : null;

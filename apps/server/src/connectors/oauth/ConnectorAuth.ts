@@ -10,6 +10,7 @@ import {
   type ConnectorSignIn,
   type DeviceId,
   type SignInRedirect,
+  type SignInRedirects,
   signInCallbackPath,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -31,6 +32,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
 import { ServerConfig } from "../../config.ts";
 import type { SignInState } from "../auth.ts";
+import { hiddenOf } from "../credentials.ts";
 import { Listener } from "../../listener.ts";
 import type {
   ConnectorId,
@@ -158,6 +160,11 @@ export class ConnectorAuth extends Context.Service<
       { readonly authorizationUrl: string; readonly expiresAt: DateTime.Utc },
       OAuthFailure
     >;
+    /**
+     * Where a sign-in at `issuer` returns, for an operator who registers an
+     * app there: the addresses `begin` would use.
+     */
+    readonly redirectsFor: (issuer: string) => Effect.Effect<SignInRedirects>;
     /** Ends a sign-in with where the browser returned to. Answers the connector it signed in. */
     readonly complete: (by: SignInReturn) => Effect.Effect<ConnectorId, OAuthFailure>;
     /**
@@ -333,9 +340,8 @@ export const layer = Layer.effect(
       if (Option.isNone(signIn)) return yield* fail("unknown-connector");
       if (signIn.value !== "oauth") return yield* fail("not-oauth");
       // Sealed when the connector was added: typed, or given by its gallery entry's form.
-      const address = Option.flatMap(yield* secretOf(id), ({ address }) =>
-        Option.fromNullOr(address),
-      );
+      const secret = yield* secretOf(id);
+      const address = Option.flatMap(secret, ({ address }) => Option.fromNullOr(address));
       if (Option.isNone(address)) return yield* fail("no-address");
       const found = secureUrl(Redacted.value(address.value));
       if (Option.isNone(found)) return yield* fail("insecure-endpoint");
@@ -354,10 +360,21 @@ export const layer = Layer.effect(
       if (issuer === undefined) return yield* fail("no-metadata");
       const metadata = yield* metadataFor(issuer);
       const scope = Option.flatMap(challenge, (found) => found.scope);
+      // The resource the metadata names may be the server's or one above it.
+      const resourceUri = resource.resource === "" ? canonicalResource(server) : resource.resource;
+      // It goes in the browser's address and to the authorization server: never
+      // with a key the connector's form put in its address. Adding refuses
+      // such a gallery entry a sign-in; this holds whatever a server names.
+      const hidden = Option.match(secret, {
+        onNone: () => [],
+        onSome: ({ formSecrets }) => hiddenOf(formSecrets),
+      });
+      if (hidden.some((value) => resourceUri.includes(Redacted.value(value)))) {
+        return yield* fail("secret-in-resource");
+      }
       return {
         server: server,
-        // The resource the metadata names may be the server's or one above it.
-        resource: resource.resource === "" ? canonicalResource(server) : resource.resource,
+        resource: resourceUri,
         issuer,
         metadata,
         scopes: Option.isSome(scope) ? scopesOf(scope.value) : (resource.scopes_supported ?? []),
@@ -397,6 +414,15 @@ export const layer = Layer.effect(
       }
     });
 
+    const redirectsFor = Effect.fn("ConnectorAuth.redirectsFor")(function* (issuer: string) {
+      const path = signInCallbackPath(new URL(issuer));
+      const origin = yield* serverOrigin;
+      return {
+        server: Option.match(origin, { onNone: () => null, onSome: (at) => `${at}${path}` }),
+        loopback: `http://127.0.0.1${path}`,
+      } satisfies SignInRedirects;
+    });
+
     const secretOf = (id: ConnectorId) => fromVault(vault.connectorSecrets.get(id));
 
     const save = (secret: ConnectorSecret) => fromVault(vault.connectorSecrets.put(secret));
@@ -411,14 +437,20 @@ export const layer = Layer.effect(
     ) {
       const current = yield* secretOf(id);
       const kept = Option.match(current, {
-        onNone: () => ({ address: null, headers: [], env: [] }),
-        onSome: ({ address, headers, env }) => ({ address, headers, env }),
+        onNone: () => ({ address: null, headers: [], env: [], formSecrets: [] }),
+        onSome: ({ address, headers, env, formSecrets }) => ({
+          address,
+          headers,
+          env,
+          formSecrets,
+        }),
       });
       if (
         oauth === null &&
         kept.address === null &&
         kept.headers.length === 0 &&
-        kept.env.length === 0
+        kept.env.length === 0 &&
+        kept.formSecrets.length === 0
       ) {
         return yield* fromVault(vault.connectorSecrets.remove(id));
       }
@@ -1024,6 +1056,7 @@ export const layer = Layer.effect(
 
     return ConnectorAuth.of({
       begin,
+      redirectsFor,
       complete,
       useOperatorClient,
       accessToken,

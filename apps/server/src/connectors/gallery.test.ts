@@ -14,11 +14,13 @@ import {
   DeviceId,
   FieldKey,
   type OAuthClientInput,
+  RegistryName,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { Bots } from "../bots/Bots.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -28,6 +30,7 @@ import { ConnectorReach, Connectors } from "./Connectors.ts";
 import { vaultIdOf } from "./credentials.ts";
 import { ConnectorAuth } from "./oauth/ConnectorAuth.ts";
 import { CURATED, curatedEntry } from "./sources/Curated.ts";
+import { connectForm } from "./sources/form.ts";
 
 // Connecting from the gallery, from the add to the removal, for each way a
 // curated entry connects: a one-tap sign-in with dynamic registration, the
@@ -37,20 +40,58 @@ import { CURATED, curatedEntry } from "./sources/Curated.ts";
 // pointed at once discovery no longer needs it: an entry's real host is
 // never reached, since no name resolves here.
 
-const domain = TestDomain.layer.pipe(
-  Layer.provide(
-    Layer.succeed(ConnectorReach, {
-      limits: {
-        ...DEFAULT_SESSION_LIMITS,
-        guard: {
-          ...DEFAULT_SESSION_LIMITS.guard,
-          resolve: () => Promise.reject(new Error("no such host")),
-        },
-      } satisfies SessionLimits,
-      loopback: "allow-http",
-    }),
-  ),
-);
+const reach = Layer.succeed(ConnectorReach, {
+  limits: {
+    ...DEFAULT_SESSION_LIMITS,
+    guard: {
+      ...DEFAULT_SESSION_LIMITS.guard,
+      resolve: () => Promise.reject(new Error("no such host")),
+    },
+  } satisfies SessionLimits,
+  loopback: "allow-http",
+});
+
+const domain = TestDomain.layer.pipe(Layer.provide(reach));
+
+// A registry entry whose form puts a key in the address's path, a token in
+// `Bearer {token}`, and an optional key in a header of its own.
+const PATH_KEY = "pk/vault+4f3e2d1c";
+const PATH_KEY_ENCODED = encodeURIComponent(PATH_KEY);
+const VAULT_TOKEN = "vault-token-first-0001";
+const NEW_VAULT_TOKEN = "vault-token-second-0002";
+const WORKSPACE_KEY = "workspace-key-0003";
+const PATH_FIELD = FieldKey.make("url:path_key");
+const VAULT_TOKEN_FIELD = FieldKey.make("header:Authorization:token");
+const WORKSPACE_FIELD = FieldKey.make("header:X-Workspace-Key:workspace_key");
+const vaultName = RegistryName.make("io.example/vault");
+const vaultForm = connectForm({
+  type: "streamable-http",
+  url: "https://mcp.vault.example/k-{path_key}/mcp",
+  variables: { path_key: { isRequired: true, isSecret: true } },
+  headers: [
+    {
+      name: "Authorization",
+      value: "Bearer {token}",
+      isRequired: true,
+      variables: { token: { isRequired: true, isSecret: true } },
+    },
+    {
+      name: "X-Workspace-Key",
+      value: "{workspace_key}",
+      variables: { workspace_key: { isSecret: true } },
+    },
+  ],
+});
+if (Result.isFailure(vaultForm)) throw new Error(`refused: ${vaultForm.failure}`);
+const withVault = TestDomain.layerWithRegistry([
+  {
+    name: vaultName,
+    title: "Vault",
+    description: null,
+    form: vaultForm.success,
+    owner: null,
+  },
+]).pipe(Layer.provide(reach));
 
 const PASSWORD = Redacted.make("correct horse battery");
 const LAPTOP = DeviceId.make("device-laptop");
@@ -340,6 +381,112 @@ describe("connecting from the gallery", () => {
         yield* connectors.remove({ commandId: CommandId.make("remove-github"), connectorId: id });
         assert.isTrue(Option.isNone(yield* secretOf(id)));
       }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+  it.live(
+    "keeps every key of an entry's form out of what its server says, and never signs in with one in its address",
+    () =>
+      Effect.gen(function* () {
+        const ana = yield* setUp;
+        const fake = yield* TestOAuth;
+        const connectors = yield* Connectors;
+        const id = ConnectorId.make("conn_galleryvault00001");
+        const source = (oauthClient: OAuthClientInput | null) => ({
+          _tag: "listing" as const,
+          ref: { _tag: "registry" as const, name: vaultName },
+          language: "en" as const,
+          values: [value(PATH_FIELD, PATH_KEY), value(VAULT_TOKEN_FIELD, VAULT_TOKEN)],
+          oauthClient,
+        });
+        let accepted = VAULT_TOKEN;
+        const mcp = yield* fakeMcpServer({
+          // The server says the key of its path back, as given and URL-encoded.
+          tools: [{ name: "search", description: `Searches ${PATH_KEY} at ${PATH_KEY_ENCODED}` }],
+          // And every key a request carried, as it was made from them.
+          call: (_name, _args, headers) => ({
+            _tag: "result",
+            text: [
+              "found",
+              (headers.authorization ?? "").replace("Bearer ", ""),
+              headers["x-workspace-key"] ?? "",
+              PATH_KEY,
+              PATH_KEY_ENCODED,
+            ].join(" "),
+          }),
+          authorize: (authorization) => authorization === `Bearer ${accepted}`,
+        });
+
+        // A key entry signs in with its form: a client cannot make it sign in with OAuth.
+        const withClient = yield* Effect.flip(
+          connectors.add({
+            id,
+            source: source({
+              issuer: fake.issuer,
+              clientId: "client",
+              clientSecret: null,
+            }),
+            grant: { _tag: "all-bots" },
+            suggestion: null,
+          }),
+        );
+        assert.strictEqual(invalidReason(withClient), "connector-fields");
+
+        // Added with the optional workspace key left blank.
+        const added = yield* connectors.add({
+          id,
+          source: source(null),
+          grant: { _tag: "all-bots" },
+          suggestion: null,
+        });
+        assert.strictEqual(added.signIn, "fields");
+        assert.deepStrictEqual(
+          Option.getOrThrow(yield* secretOf(id)).headers.map((header) => header.name),
+          ["Authorization"],
+        );
+        // So no sign-in begins, and nothing of its address reaches an authorization server.
+        yield* Effect.flip(
+          (yield* ConnectorAuth).begin({
+            connectorId: id,
+            deviceId: LAPTOP,
+            redirect: { _tag: "paste" },
+          }),
+        );
+        assert.deepStrictEqual(fake.received, []);
+
+        yield* pointAt(id, mcp.url);
+        const search = { botId: ana, name: "vault__search", arguments: {} };
+        yield* connectors.toolsFor(ana);
+        const listed = yield* awaitConnector(id, (connector) => connector.tools.length > 0);
+        const first = yield* connectors.call(search);
+        assert.include(first.text, "found");
+        assert.include(first.text, "[redacted]");
+        for (const secret of [PATH_KEY, PATH_KEY_ENCODED, VAULT_TOKEN]) {
+          assert.notInclude(shown(listed, first, yield* connectors.toolsFor(ana)), secret);
+        }
+
+        // A new token, and the workspace key first given now: both are sent and both kept out.
+        accepted = NEW_VAULT_TOKEN;
+        mcp.setTools([
+          { name: "search", description: `Searches ${PATH_KEY} at ${PATH_KEY_ENCODED}` },
+          { name: "whoami", description: `Signed in as ${NEW_VAULT_TOKEN} in ${WORKSPACE_KEY}` },
+        ]);
+        yield* connectors.update({
+          connectorId: id,
+          values: [
+            value(VAULT_TOKEN_FIELD, NEW_VAULT_TOKEN),
+            value(WORKSPACE_FIELD, WORKSPACE_KEY),
+          ],
+        });
+        const second = yield* connectors.call(search);
+        assert.include(second.text, "found");
+        const sent = mcp.requests.at(-1)?.headers;
+        assert.strictEqual(sent?.authorization, `Bearer ${NEW_VAULT_TOKEN}`);
+        assert.strictEqual(sent?.["x-workspace-key"], WORKSPACE_KEY);
+        const reviewed = yield* awaitConnector(id, (connector) => connector.review !== null);
+        for (const secret of [PATH_KEY, PATH_KEY_ENCODED, NEW_VAULT_TOKEN, WORKSPACE_KEY]) {
+          assert.notInclude(shown(second, reviewed, yield* connectors.toolsFor(ana)), secret);
+        }
+      }).pipe(Effect.scoped, Effect.provide(withVault)),
     SLOW,
   );
 });

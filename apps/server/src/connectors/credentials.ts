@@ -13,7 +13,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { type ConnectorSecret, ConnectorId as VaultConnectorId } from "../vault/ConnectorSecret.ts";
+import {
+  type ConnectorSecret,
+  type NamedSecret,
+  ConnectorId as VaultConnectorId,
+} from "../vault/ConnectorSecret.ts";
 import type { Vault } from "../vault/Vault.ts";
 import type { ConnectorSignIns } from "./auth.ts";
 import type { StoredConnector } from "./ConnectorStore.ts";
@@ -59,6 +63,20 @@ export const addressOf = (
   });
 
 /**
+ * A gallery entry's secret values as a request can carry them, to take out
+ * of what its server says: as given, and URL-encoded, as its form puts one
+ * in the address. No form encodes a value any other way.
+ */
+export const hiddenOf = (
+  formSecrets: ReadonlyArray<NamedSecret>,
+): ReadonlyArray<Redacted.Redacted<string>> =>
+  formSecrets.flatMap(({ value }) => {
+    const raw = Redacted.value(value);
+    const encoded = encodeURIComponent(raw);
+    return encoded === raw ? [value] : [value, Redacted.make(encoded)];
+  });
+
+/**
  * Signs the connector's requests from the vault and, for an OAuth connector,
  * its sign-in. `allowed` is asked first, right before each request goes out:
  * a request it refuses is withdrawn unsigned.
@@ -73,11 +91,15 @@ export const credentialsOf = (
     if (!(yield* allowed)) return yield* new Withdrawn();
     const secret = yield* secretOf(vault, connector);
     const headers = Option.match(secret, { onNone: () => [], onSome: (s) => s.headers });
+    const hidden = Option.match(secret, {
+      onNone: () => [],
+      onSome: (s) => hiddenOf(s.formSecrets),
+    });
     const bearer =
       connector.signIn === "oauth"
         ? Option.some(yield* signIns.accessToken(connector.id))
         : Option.none();
-    return { bearer, headers } satisfies CallCredentials;
+    return { bearer, headers, hidden } satisfies CallCredentials;
   }),
   rejected: (wwwAuthenticate, sent) =>
     connector.signIn === "oauth"

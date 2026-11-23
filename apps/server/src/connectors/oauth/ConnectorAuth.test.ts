@@ -80,6 +80,7 @@ const run = <A, E>(
       oauth: null,
       headers: [],
       env: [],
+      formSecrets: [],
     });
     return yield* use;
   }).pipe(
@@ -223,6 +224,65 @@ it.effect("refuses a server without PKCE S256, another issuer or another resourc
     }
   }),
 );
+
+it.effect("states the addresses an operator's app registers as the ones sign-ins return to", () =>
+  Effect.gen(function* () {
+    for (const where of [{ publicOrigin: true }, { local: true }, {}]) {
+      const fake = new FakeAuthorizationServer();
+      const { redirects, sent } = yield* run(
+        fake,
+        Effect.gen(function* () {
+          const service = yield* auth;
+          const redirects = yield* service.redirectsFor(fake.issuer);
+          const begun = yield* Effect.exit(
+            service.begin({ connectorId: NOTION, deviceId: LAPTOP, redirect: { _tag: "server" } }),
+          );
+          const sent = Exit.isSuccess(begun)
+            ? new URL(begun.value.authorizationUrl).searchParams.get("redirect_uri")
+            : null;
+          return { redirects, sent };
+        }),
+        where,
+      );
+      // Where the browser returns to the server: as begin sends it, or none when it cannot.
+      assert.strictEqual(redirects.server, sent);
+      assert.strictEqual(redirects.server === null, !("publicOrigin" in where || "local" in where));
+      assert.strictEqual(new URL(redirects.loopback).origin, "http://127.0.0.1");
+    }
+  }),
+);
+
+it.effect("never names a resource that holds a key of the connector's form", () => {
+  const key = "path-key/5e6f7a8b";
+  const server = `https://mcp.example.test/k-${encodeURIComponent(key)}/mcp`;
+  // The resource metadata names the connector's whole address, key and all.
+  const fake = new FakeAuthorizationServer({ server, resource: server });
+  return run(
+    fake,
+    Effect.gen(function* () {
+      const vault = yield* Vault;
+      const secret = Option.getOrThrow(yield* vault.connectorSecrets.get(NOTION));
+      yield* vault.connectorSecrets.put({
+        ...secret,
+        address: Redacted.make(server),
+        formSecrets: [{ name: "url:key", value: Redacted.make(key) }],
+      });
+      const exit = yield* Effect.exit(
+        Effect.flatMap(auth, (service) =>
+          service.begin({ connectorId: NOTION, deviceId: LAPTOP, redirect: { _tag: "paste" } }),
+        ),
+      );
+      assert.strictEqual(refusal(exit), "secret-in-resource");
+      const atAuthorizationServer = fake.received.filter(({ url }) => url.startsWith(AS_ORIGIN));
+      assert.isFalse(
+        atAuthorizationServer.some(
+          ({ url }) => url.includes(key) || url.includes(encodeURIComponent(key)),
+        ),
+      );
+      assert.isFalse(atAuthorizationServer.some(({ url }) => url.includes("/register")));
+    }),
+  );
+});
 
 it.effect(
   "finishes a sign-in only from the device that began it, once, within ten minutes, at its exact address",
