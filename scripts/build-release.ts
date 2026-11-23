@@ -283,9 +283,9 @@ const notices = (
     "J3 Bots is licensed under the GNU Affero General Public License, version 3",
     "or later (LICENSE), with an additional permission for app stores",
     `(APP-STORE-PERMISSION). This ${holder} also holds the third-party software below,`,
-    "each under its own license. Each entry names the software, the folder of",
-    `this ${holder} it is in, the license it declares, and the license and notice`,
-    "files it ships, as it ships them.",
+    "each under its own license. Each entry names the software, the folder it",
+    "is in, the license it declares, and the license and notice files it ships,",
+    "as it ships them.",
     "",
     RULE,
     `Node.js ${node.version}, in node/`,
@@ -315,7 +315,10 @@ const options = NodeUtil.parseArgs({
 }).values;
 const platform = options.platform ?? hostPlatform();
 if (platform === undefined || !isPlatform(platform)) {
-  throw new Error(`Name the platform to build for with --platform: ${PLATFORMS.join(", ")}.`);
+  const named = platform ?? `this machine (${process.platform}-${process.arch})`;
+  throw new Error(
+    `J3 Bots builds nothing for ${named}. Name a platform with --platform: ${PLATFORMS.join(", ")}.`,
+  );
 }
 const build = platformBuild(platform);
 if (options["server-runtime"] && !build.serverRuntime) {

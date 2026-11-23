@@ -106,10 +106,10 @@ jobs:
           path: apps/desktop/smoke-failure.png
           if-no-files-found: ignore
 
-  # The desktop packages as the release builds them, unsigned and unpublished,
+  # The desktop packages as the release builds them, without publishing them,
   # each with the server runtime of its platform (docs/operations/releasing.md),
   # which is then run where it was packaged. It writes each package's size to
-  # the job's summary.
+  # the log and the job's summary.
   packages:
     name: Desktop packages (${{ matrix.name }})
     strategy:
@@ -157,10 +157,14 @@ jobs:
           vp run --filter @j3-bots/web build
           vp run --filter @j3-bots/desktop build
 
+      # Signed as a tag signs it: electron-builder skips signing for a pull
+      # request unless told to, and the macOS build is signed ad hoc, with no
+      # certificate and so no secret, as the runtime it carries is too.
       - name: Package
         working-directory: apps/desktop
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          CSC_FOR_PULL_REQUEST: "true"
           TARGETS: ${{ matrix.targets }}
         run: vp exec -- electron-builder $TARGETS --publish never
 
@@ -183,7 +187,7 @@ jobs:
               [[ -f "$file" ]] || continue
               echo "| \`$file\` | $(( $(wc -c < "$file") )) bytes |"
             done
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   release:
     name: Release archive (${{ matrix.platform }})
