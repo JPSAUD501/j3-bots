@@ -4,7 +4,6 @@ import type {
   Bot,
   BotFile,
   BotId,
-  BotTemplate,
   CommandId,
   Device,
   DeviceId,
@@ -291,7 +290,7 @@ export interface J3Client {
   ) => Promise<Actions.IntentResult<Routine>>;
   readonly createBot: (draft: Details.BotDraft) => Promise<Actions.IntentResult<Bot>>;
   /** The bot as a template, to share as a file. */
-  readonly botTemplate: (botId: BotId) => Promise<Actions.IntentResult<BotTemplate>>;
+  readonly botTemplate: (botId: BotId) => Promise<Details.BotTemplateResult>;
   /** Creates a bot from a template the operator has seen in full. */
   readonly createBotFromTemplate: (
     draft: Details.TemplateDraft,

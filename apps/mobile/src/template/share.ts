@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { templateFileName, templateFileText } from "@j3-bots/client-runtime/presentation";
-import { type BotId, type BotTemplate, TEMPLATE_MEDIA_TYPE } from "@j3-bots/contracts";
+import { templateFileName } from "@j3-bots/client-runtime/presentation";
+import {
+  type BotId,
+  type BotTemplate,
+  TEMPLATE_MEDIA_TYPE,
+  templateFileText,
+} from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";

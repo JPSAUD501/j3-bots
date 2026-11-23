@@ -871,7 +871,7 @@ const sentences = {
 
   "template.share.title": "Compartilhar {name} como modelo",
   "template.share.body":
-    "Quem tiver este arquivo pode criar um bot que faz o que {name} faz. A memória, a conversa e os arquivos ficam aqui.",
+    "Quem tiver este arquivo pode criar um bot que faz o que {name} faz. A função, as habilidades e as rotinas abaixo vão exatamente como estão escritas, e {name} pode ter escrito parte delas: leia procurando algo que você não compartilharia.",
   "template.share.download": "Baixar arquivo",
   "template.share.copy": "Copiar",
   "template.share.copied": "Copiado para a área de transferência.",
@@ -881,12 +881,17 @@ const sentences = {
   "template.share.loading": "Preparando o modelo…",
   "template.share.failed": "Não foi possível preparar o modelo. Tente de novo.",
   "template.share.retry": "Tentar de novo",
+  "template.share.tooLarge":
+    "{name} é grande demais para compartilhar como modelo: um arquivo de modelo comporta no máximo {limit}. A maior parte é {part}. Encurte e tente de novo.",
+  "template.part.job": "a função",
+  "template.part.skill": "a habilidade “{name}”",
+  "template.part.routine": "a rotina “{name}”",
   "template.close": "Fechar",
   "template.create.title": "Novo bot a partir de um modelo",
   "template.create.body":
     "Isto é tudo o que {name} vai ser e fazer. Nada é criado até você tocar em Criar.",
   "template.create.untrusted":
-    "Este arquivo veio de fora do J3 Bots. O que ele diz chega só ao bot novo, nunca aos seus outros bots, à sua memória ou aos seus arquivos.",
+    "Este arquivo veio de fora do J3 Bots. O que ele diz vai só para o bot novo, nunca para os seus outros bots, a sua memória ou os seus arquivos. Os seus outros bots veem o novo como qualquer colega, pelo nome, cargo e função.",
   "template.create.submit": "Criar {name}",
   "template.create.creating": "Criando…",
   "template.create.cancel": "Cancelar",
@@ -915,7 +920,7 @@ const sentences = {
   "template.permission.capped":
     "O modelo pede {mode}. Um bot criado de um modelo começa com no máximo o modo de sempre, a não ser que você escolha outro.",
   "template.leftOut":
-    "Fora do arquivo: memória, conversa, arquivos, contas conectadas e tudo o mais desta máquina.",
+    "Nunca no arquivo: memória, conversa, arquivos, contas conectadas, credenciais e tudo o mais desta máquina.",
 
   "details.loading": "Carregando…",
   "details.deleteFailed": "O bot não foi excluído. Tente de novo.",

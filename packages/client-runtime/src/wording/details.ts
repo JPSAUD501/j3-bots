@@ -2,6 +2,7 @@
 import {
   type Bot,
   type EngineStatus,
+  MAX_TEMPLATE_FILE_SIZE,
   MEMORY_TEXT_LIMIT,
   MISSED_RUNS_LIMIT,
   type MemoryPath,
@@ -10,12 +11,15 @@ import {
   type RoutineRun,
   type RoutineMissed,
   type RoutineRunFailure,
+  type TemplatePart,
+  type TemplateTooLarge,
 } from "@j3-bots/contracts";
 import type { AvatarShapeName, BotColor } from "@j3-bots/design-tokens/names";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
 import type { MemoryEditProblem } from "../presentation/saves.ts";
 import type { TemplateRead } from "../presentation/template.ts";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
+import { fileSize } from "./message.ts";
 import { scheduleInWords } from "./schedule.ts";
 import { dividerTime, timeInSentence, type TimeContext } from "./time.ts";
 
@@ -47,6 +51,26 @@ export function templateReadText(
     case "unreadable":
       return t("template.read.unreadable");
   }
+}
+
+const templatePartText = (part: TemplatePart, { t }: I18n): string => {
+  switch (part._tag) {
+    case "job":
+      return t("template.part.job");
+    case "skill":
+      return t("template.part.skill", { name: part.name });
+    case "routine":
+      return t("template.part.routine", { name: part.name });
+  }
+};
+
+/** Why `name` cannot be shared as a template: its file would be over the limit, and what to shorten. */
+export function templateTooLargeText(name: string, error: TemplateTooLarge, i18n: I18n): string {
+  return i18n.t("template.share.tooLarge", {
+    name,
+    limit: fileSize(MAX_TEMPLATE_FILE_SIZE, i18n.locale),
+    part: templatePartText(error.largest, i18n),
+  });
 }
 
 /** A permission mode's name, and what it lets a bot do. */

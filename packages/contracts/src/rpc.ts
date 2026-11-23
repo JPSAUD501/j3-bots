@@ -52,7 +52,7 @@ import {
 } from "./provider.ts";
 import { Section, SectionName } from "./section.ts";
 import { Settings, SettingsChange, TimeZone } from "./settings.ts";
-import { BotTemplate } from "./template.ts";
+import { BotTemplate, TemplateTooLarge } from "./template.ts";
 
 // ---------------------------------------------------------------------------
 // Conventions
@@ -364,15 +364,18 @@ export const BotRpcs = RpcGroup.make(
    * The bot as a template another J3 Bots can create a bot from: its profile
    * and job, its model and permission mode, the `SKILL.md` of each skill in
    * its workspace and its routines but one-time ones, built from those alone
-   * (`BotTemplate`). Its memory, conversation, files and everything else of
-   * this machine stay out. A skill whose folder or `SKILL.md` is a link, or
-   * not what it should be, or whose name or text breaks the template's
-   * limits, stays out too; so do skills and routines past the limits.
+   * (`BotTemplate`). The job, the skills and the routines' instructions go
+   * as written, whatever they hold. The bot's memory, conversation and files,
+   * and everything else of this machine, stay out. A skill whose folder or
+   * `SKILL.md` is a link, or not what it should be, or whose name or text
+   * breaks the template's limits, stays out too; so do skills and routines
+   * past the limits. Fails with `TemplateTooLarge` when the file would be
+   * over the size any J3 Bots reads.
    */
   Rpc.make("bot.template", {
     payload: { botId: BotId },
     success: BotTemplate,
-    error: NotFound,
+    error: Schema.Union([NotFound, TemplateTooLarge]),
   }),
   /**
    * Creates a bot from a template the operator has seen in full, as

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Cell } from "@j3-bots/client-runtime";
-import { openTemplateFile, type TemplateRead } from "@j3-bots/client-runtime/presentation";
+import { openTemplateChunks, type TemplateRead } from "@j3-bots/client-runtime/presentation";
 import { useReadable } from "@j3-bots/client-runtime/react";
 import * as DocumentPicker from "expo-document-picker";
-import { File } from "expo-file-system";
+import { File, type FileHandle, FileMode } from "expo-file-system";
 import { useMemo } from "react";
 import { Linking, Platform } from "react-native";
 
@@ -19,18 +19,26 @@ const opened = new Cell<TemplateRead | null>(null);
 
 /**
  * Reads the file at `uri` as a template and makes it the one waiting. `size`
- * is the system's, when it gave one; a file over the limit is never read.
+ * is the system's, when it gave one: a file it says is over the limit is
+ * never read. The size is only what the app that holds the file reports, so
+ * the read itself stops once it passes the limit (`openTemplateChunks`).
  */
 export const openTemplateAt = async (uri: string, size?: number | null): Promise<void> => {
-  const read = await (async () => {
-    try {
-      const file = new File(uri);
-      return await openTemplateFile(size ?? file.size, () => file.text());
-    } catch {
-      return UNREADABLE;
-    }
-  })();
-  opened.set(read);
+  opened.set(await readAt(uri, size ?? null));
+};
+
+const readAt = async (uri: string, size: number | null): Promise<TemplateRead> => {
+  let handle: FileHandle;
+  try {
+    handle = new File(uri).open(FileMode.ReadOnly);
+  } catch {
+    return UNREADABLE;
+  }
+  try {
+    return await openTemplateChunks(size, (length) => handle.readBytes(length));
+  } finally {
+    handle.close();
+  }
 };
 
 /**

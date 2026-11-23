@@ -5,6 +5,7 @@ import {
   type BotTemplate,
   BotTemplate as BotTemplateSchema,
   CommandId,
+  MAX_TEMPLATE_FILE_SIZE,
   ModelId,
   ProviderId,
   TEMPLATE_FORMAT,
@@ -145,6 +146,47 @@ it.effect("builds a template from what the bot is and does, and nothing it has l
     assert.notInclude(text, "Sao_Paulo");
     assert.notInclude(text, workspace);
     assert.notInclude(text, webhook.webhookUrl ?? "no address");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses to share a bot whose file would be too large, naming its largest part", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const routines = yield* Routines;
+    const layout = yield* Layout;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* TestClock.adjust("1 second");
+    const bot = yield* bots.create({ commandId: command(), draft: { name: "Lena" } });
+    // Within every limit, which count characters, but three bytes a character.
+    const skills = path.join(layout.workspace(bot.id), "skills");
+    const names = [...Array.from({ length: 15 }, (_, index) => `s${index + 10}`), "zeta"];
+    for (const name of names) {
+      yield* fs.makeDirectory(path.join(skills, name), { recursive: true });
+      const text = "€".repeat(name === "zeta" ? 20_000 : 19_000);
+      yield* fs.writeFileString(path.join(skills, name, "SKILL.md"), text);
+    }
+    for (const index of [1, 2, 3, 4, 5, 6]) {
+      yield* routines.create({
+        commandId: command(),
+        botId: bot.id,
+        draft: {
+          name: `Watch ${index}`,
+          instruction: "€".repeat(10_000),
+          trigger: { _tag: "webhook" },
+        },
+        author: { _tag: "operator" },
+      });
+    }
+
+    const refused = yield* (yield* Templates).template(bot.id).pipe(Effect.flip);
+
+    assert.deepStrictEqual(
+      refused._tag === "TemplateTooLarge"
+        ? { largest: refused.largest, over: refused.size > MAX_TEMPLATE_FILE_SIZE }
+        : refused,
+      { largest: { _tag: "skill", name: "zeta" }, over: true },
+    );
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

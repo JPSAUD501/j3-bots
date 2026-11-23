@@ -2,19 +2,24 @@
 import {
   type BotTemplate,
   type EngineStatus,
+  fileBytes,
   MAX_TEMPLATE_FILE_SIZE,
   ModelId,
   ProviderId,
   type ProviderStatus,
+  TEMPLATE_LIMITS,
+  templateFileText,
+  templateTooLarge,
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  openTemplateChunks,
   openTemplateFile,
   readTemplateFile,
   sharedTemplate,
   templateFileName,
-  templateFileText,
   templateStart,
+  templateSubmission,
 } from "./template.ts";
 
 const template: BotTemplate = {
@@ -74,12 +79,106 @@ describe("readTemplateFile", () => {
     ).toEqual({ _tag: "invalid" });
   });
 
+  it("refuses a version 1 file with a field this build does not know, and still tells a newer one", () => {
+    const file = JSON.parse(templateFileText(template));
+    expect(readTemplateFile(JSON.stringify({ ...file, notes: "Not shown" }))).toEqual({
+      _tag: "invalid",
+    });
+    expect(
+      readTemplateFile(
+        JSON.stringify({ ...file, profile: { ...file.profile, email: "ana@example.com" } }),
+      ),
+    ).toEqual({ _tag: "invalid" });
+    expect(readTemplateFile(JSON.stringify({ ...file, version: 2, notes: "New" }))).toEqual({
+      _tag: "newer",
+    });
+  });
+
   it("refuses a file over the limit before decoding it", () => {
     const padded = templateFileText({
       ...template,
       profile: { ...template.profile, job: "" },
     }).replace('"job": ""', `"job": "", "padding": "${"x".repeat(MAX_TEMPLATE_FILE_SIZE)}"`);
     expect(readTemplateFile(padded)).toEqual({ _tag: "too-large" });
+  });
+});
+
+describe("the size a template file can be", () => {
+  // Text that fits the limits, which count characters, can take three bytes a
+  // character: sixteen full skills and two full routines in "€", then a third
+  // routine and the job to reach the limit to the byte.
+  const heavy = (euros: number, padding: number): BotTemplate => ({
+    ...template,
+    profile: { ...template.profile, job: "a".repeat(padding) },
+    skills: Array.from({ length: TEMPLATE_LIMITS.skills }, (_, index) => ({
+      name: `skill-${index}`,
+      text: "€".repeat(TEMPLATE_LIMITS.skillText),
+    })),
+    routines: [
+      ...["First", "Second"].map((name) => ({
+        name,
+        instruction: "€".repeat(10_000),
+        trigger: { _tag: "webhook" } as const,
+      })),
+      { name: "Third", instruction: `x${"€".repeat(euros)}`, trigger: { _tag: "webhook" } },
+    ],
+  });
+  const gap = MAX_TEMPLATE_FILE_SIZE - fileBytes(templateFileText(heavy(0, 0)));
+  const euros = Math.floor(gap / 3);
+  const padding = gap - euros * 3;
+
+  it("is the same when it is shared and when it is read, to the byte", () => {
+    const fits = heavy(euros, padding);
+    const text = templateFileText(fits);
+    expect(fileBytes(text)).toBe(MAX_TEMPLATE_FILE_SIZE);
+    expect(templateTooLarge(fits)).toBeNull();
+    expect(readTemplateFile(text)).toEqual({ _tag: "template", template: fits });
+
+    const over = heavy(euros, padding + 1);
+    expect(templateTooLarge(over)?.largest).toEqual({ _tag: "skill", name: "skill-0" });
+    expect(readTemplateFile(templateFileText(over))).toEqual({ _tag: "too-large" });
+  });
+});
+
+describe("openTemplateChunks", () => {
+  /** A file's bytes, read as a file handle reads them: up to the bytes asked for. */
+  const handle = (bytes: Uint8Array) => {
+    let at = 0;
+    return (length: number) => {
+      const chunk = bytes.subarray(at, at + length);
+      at += chunk.length;
+      return Promise.resolve(chunk);
+    };
+  };
+
+  it("reads a template in chunks", async () => {
+    const bytes = new TextEncoder().encode(templateFileText(template));
+    expect(await openTemplateChunks(null, handle(bytes))).toEqual({ _tag: "template", template });
+  });
+
+  it("stops past the limit when a file holds more than its size said", async () => {
+    let asked = 0;
+    const endless = (length: number) => {
+      asked += length;
+      return Promise.resolve(new Uint8Array(length).fill(0x20));
+    };
+    expect(await openTemplateChunks(10, endless)).toEqual({ _tag: "too-large" });
+    expect(asked).toBe(MAX_TEMPLATE_FILE_SIZE + 1);
+  });
+
+  it("never reads a file whose size is over the limit, and says a failed read is unreadable", async () => {
+    let read = false;
+    const reading = () => {
+      read = true;
+      return Promise.resolve(new Uint8Array());
+    };
+    expect(await openTemplateChunks(MAX_TEMPLATE_FILE_SIZE + 1, reading)).toEqual({
+      _tag: "too-large",
+    });
+    expect(read).toBe(false);
+    expect(await openTemplateChunks(null, () => Promise.reject(new Error("gone")))).toEqual({
+      _tag: "unreadable",
+    });
   });
 });
 
@@ -173,6 +272,16 @@ describe("templateStart", () => {
         engine(provider("claude", "claude-code", ready, "opus")),
       ).asked,
     ).toBeNull();
+  });
+
+  it("leaves the permission mode to the server until the operator picks one", () => {
+    const start = templateStart(template, engine(provider("claude", "claude-code", ready, "opus")));
+    expect(templateSubmission(template, start, null)).toEqual({ template, model: template.model });
+    expect(templateSubmission(template, start, "full-access")).toEqual({
+      template,
+      model: template.model,
+      permissionMode: "full-access",
+    });
   });
 
   it("offers no model, and supervised, before the engine lists one", () => {

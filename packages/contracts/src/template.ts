@@ -10,9 +10,11 @@ import { RoutineInstruction } from "./routine.ts";
 // A template is how a bot travels from one J3 Bots to another: what the bot
 // is and does, never what it has lived. It holds the profile, the job, the
 // model and permission mode it ran with, its own skills and its recurring
-// routines. Memory, conversations, files, secrets, paths, devices and
-// anything else of the machine it came from stay behind: the export builds
-// the template from those fields alone, so nothing else can reach one.
+// routines. The job, the skills and the routines' instructions go as they are
+// written, which may be by the bot itself, so whoever shares one reviews them.
+// Memory, conversations, files, credentials, paths, devices and anything else
+// of the machine it came from stay behind: the export builds the template
+// from those fields alone, so nothing else can reach one.
 //
 // Whoever imports one treats it as untrusted: it is decoded with this schema,
 // within these limits, and creates a bot only after the operator has seen all
@@ -106,6 +108,68 @@ export type BotTemplate = typeof BotTemplate.Type;
 
 /** A template file's text, decoded. */
 export const BotTemplateFile = Schema.fromJsonString(BotTemplate);
+
+const encodeTemplate = Schema.encodeSync(BotTemplate);
+
+/** The template as its file holds it: indented JSON, readable in any editor. */
+export const templateFileText = (template: BotTemplate): string =>
+  `${JSON.stringify(encodeTemplate(template), null, 2)}\n`;
+
+/** How many bytes `text` takes in a file, as UTF-8: what the size limit counts. */
+export const fileBytes = (text: string): number => new TextEncoder().encode(text).length;
+
+/** A part of a template an operator can shorten: its job, or one skill or routine. */
+export const TemplatePart = Schema.Union([
+  Schema.TaggedStruct("job", {}),
+  Schema.TaggedStruct("skill", { name: SkillName }),
+  Schema.TaggedStruct("routine", { name: Label }),
+]);
+export type TemplatePart = typeof TemplatePart.Type;
+
+/**
+ * The bot's template would make a file over `MAX_TEMPLATE_FILE_SIZE`, which
+ * no J3 Bots would read. Its text fits the template's limits, which count
+ * characters, but takes more bytes than a file can hold: text in a script of
+ * several bytes a character does. `largest` is the part to shorten first.
+ */
+export class TemplateTooLarge extends Schema.TaggedError<TemplateTooLarge>()("TemplateTooLarge", {
+  /** The file's size, in bytes. */
+  size: Schema.Int,
+  largest: TemplatePart,
+}) {
+  override get message(): string {
+    return `The template file would be ${this.size} bytes, over the ${MAX_TEMPLATE_FILE_SIZE} a template file can be.`;
+  }
+}
+
+/** The bytes a part takes in the file, as JSON writes its text. */
+const partBytes = (text: string): number => fileBytes(JSON.stringify(text));
+
+/** The part of `template` that takes the most of its file. */
+const largestPart = (template: BotTemplate): TemplatePart => {
+  let largest: TemplatePart = { _tag: "job" };
+  let most = partBytes(template.profile.job);
+  for (const skill of template.skills) {
+    const bytes = partBytes(skill.text);
+    if (bytes > most) [largest, most] = [{ _tag: "skill", name: skill.name }, bytes];
+  }
+  for (const routine of template.routines) {
+    const bytes = partBytes(routine.instruction);
+    if (bytes > most) [largest, most] = [{ _tag: "routine", name: routine.name }, bytes];
+  }
+  return largest;
+};
+
+/**
+ * Why `template` cannot be shared: its file would be over the size any J3
+ * Bots reads, measured as the file is written. None when it fits.
+ */
+export const templateTooLarge = (template: BotTemplate): TemplateTooLarge | null => {
+  const size = fileBytes(templateFileText(template));
+  return size > MAX_TEMPLATE_FILE_SIZE
+    ? new TemplateTooLarge({ size, largest: largestPart(template) })
+    : null;
+};
 
 /** How much each permission mode lets a bot do without asking, least first. */
 const PERMISSIVENESS: Record<PermissionMode, number> = {

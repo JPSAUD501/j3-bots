@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type IntentResult, refusedWith, type TemplateDraft } from "@j3-bots/client-runtime";
-import { templateStart } from "@j3-bots/client-runtime/presentation";
+import { type BotTemplateResult, refusedWith, type TemplateDraft } from "@j3-bots/client-runtime";
+import { templateStart, templateSubmission } from "@j3-bots/client-runtime/presentation";
 import { useConnection, useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
-import { permissionModeText, templateReadText } from "@j3-bots/client-runtime/wording";
-import { type BotTemplate, PermissionMode } from "@j3-bots/contracts";
+import {
+  permissionModeText,
+  templateReadText,
+  templateTooLargeText,
+} from "@j3-bots/client-runtime/wording";
+import { type BotTemplate, PermissionMode, type TemplateTooLarge } from "@j3-bots/contracts";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Cpu, ShieldAlert } from "lucide-react-native";
@@ -54,12 +58,22 @@ function Lead({ children }: { readonly children: string }) {
 type Load =
   | { readonly _tag: "loading" }
   | { readonly _tag: "failed" }
+  /** Its file would be over the size any J3 Bots reads: trying again would not help. */
+  | { readonly _tag: "too-large"; readonly error: TemplateTooLarge }
   | { readonly _tag: "ready"; readonly template: BotTemplate };
 
 const LOADING: Load = { _tag: "loading" };
 
-const loaded = (result: IntentResult<BotTemplate>): Load =>
-  result._tag === "done" ? { _tag: "ready", template: result.value } : { _tag: "failed" };
+const loaded = (result: BotTemplateResult): Load => {
+  switch (result._tag) {
+    case "done":
+      return { _tag: "ready", template: result.value };
+    case "too-large":
+      return { _tag: "too-large", error: result.error };
+    case "failed":
+      return { _tag: "failed" };
+  }
+};
 
 /**
  * Sharing a bot as a template: the file is read from the server, shown in
@@ -69,7 +83,8 @@ export function ShareTemplateScreen({
   navigation,
   route,
 }: NativeStackScreenProps<Screens, "shareTemplate">) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const client = useJ3Client();
   const say = useSay();
   const { botId } = route.params;
@@ -130,6 +145,10 @@ export function ShareTemplateScreen({
               void client.botTemplate(botId).then((result) => setLoad(loaded(result)));
             }}
           />
+        </View>
+      ) : load._tag === "too-large" ? (
+        <View className="px-5 pt-4">
+          <Problem>{templateTooLargeText(name, load.error, i18n)}</Problem>
         </View>
       ) : (
         <>
@@ -197,6 +216,7 @@ function TemplateForm({
   const { name } = template.profile;
   const creating = state === "creating";
   const model = start.model._tag === "none" ? null : start.model;
+  const submission = templateSubmission(template, start, picked);
   const create = (draft: TemplateDraft) => {
     setState("creating");
     void client.createBotFromTemplate(draft).then((result) => {
@@ -226,10 +246,10 @@ function TemplateForm({
               label={
                 creating ? t("template.create.creating") : t("template.create.submit", { name })
               }
-              disabled={model === null || !connected}
+              disabled={submission === null || !connected}
               held={creating}
               onPress={() => {
-                if (model !== null) create({ template, model: model.choice, permissionMode: mode });
+                if (submission !== null) create(submission);
               }}
             />
           </View>

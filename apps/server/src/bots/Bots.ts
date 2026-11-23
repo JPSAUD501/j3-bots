@@ -27,6 +27,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -106,8 +107,8 @@ export class Bots extends Context.Service<
      * transaction as the template's routines, each created paused, and its
      * skills, written to the new workspace's `skills/<name>/SKILL.md`. The
      * template reaches nothing else: the bot is never primary, and its
-     * routines run in the operator's time zone. Skills written before the
-     * transaction failed are removed with the workspace they started.
+     * routines run in the operator's time zone. A creation that fails, at any
+     * step, removes the workspace it started, skills included.
      */
     readonly createFromTemplate: (input: {
       readonly commandId: CommandId;
@@ -461,58 +462,76 @@ export const layer = Layer.effect(
       readonly permissionModeChooser: (draft: BotDraft) => Chooser;
       readonly furnish: (botId: BotId) => Effect.Effect<void, CommandError>;
     }) {
-      const bot = yield* receipts.once({
-        commandId: input.commandId,
-        method: input.method,
-        payload: input.payload,
-        result: Bot,
-        apply: Effect.gen(function* () {
-          const status = yield* engineState.current;
-          const draft = input.draft(status);
-          const model = draft.model ?? Option.getOrNull(defaultModelIn(status));
-          if (model === null) return yield* new Invalid({ reason: "model" });
-          yield* checkModel(status, model);
-          const at = yield* DateTime.now;
-          const id = BotIdSchema.make(yield* ids.make("bot"));
-          if (draft.primary === true) yield* makePrimary(at);
-          yield* store.insert({
-            id,
-            profile: {
-              name: draft.name,
-              title: draft.title ?? "",
-              avatar: draft.avatar ?? freeAvatar(yield* store.avatars),
-              job: draft.job ?? "",
-            },
-            model,
-            modelChooser: draft.model === undefined ? "server" : "operator",
-            permissionMode: draft.permissionMode ?? input.permissionMode(status, model),
-            permissionModeChooser: input.permissionModeChooser(draft),
-            primary: draft.primary === true,
-            workspacePath: layout.workspace(id),
-            at,
-          });
-          yield* input.furnish(id);
-          // The bot opens its conversation: its first turn is this wake's,
-          // written once, with the bot, and dispatched like any other. Its
-          // cause is the operator's, as the creation is, also when the primary
-          // bot's `create_bot` carried their word: it follows from no
-          // dispatch's work, so no Stop of earlier work can drop it unwritten.
-          yield* wakes.record([
-            {
-              botId: id,
-              kind: "system",
-              audience: conversation,
-              payload: { _tag: "first-run" },
-              sourceEntryId: null,
-              hops: 0,
-              retryOf: null,
-              cause: { _tag: "operator" },
-            },
-          ]);
-          yield* changes.touch({ _tag: "bot", botId: id });
-          return (yield* require(id).pipe(Effect.orDie)).bot;
-        }),
-      });
+      // The bot being saved, once it has an id: a creation that fails leaves
+      // no workspace behind, whatever had begun to fill it.
+      const started = yield* Ref.make(Option.none<BotId>());
+      const bot = yield* receipts
+        .once({
+          commandId: input.commandId,
+          method: input.method,
+          payload: input.payload,
+          result: Bot,
+          apply: Effect.gen(function* () {
+            const status = yield* engineState.current;
+            const draft = input.draft(status);
+            const model = draft.model ?? Option.getOrNull(defaultModelIn(status));
+            if (model === null) return yield* new Invalid({ reason: "model" });
+            yield* checkModel(status, model);
+            const at = yield* DateTime.now;
+            const id = BotIdSchema.make(yield* ids.make("bot"));
+            yield* Ref.set(started, Option.some(id));
+            if (draft.primary === true) yield* makePrimary(at);
+            yield* store.insert({
+              id,
+              profile: {
+                name: draft.name,
+                title: draft.title ?? "",
+                avatar: draft.avatar ?? freeAvatar(yield* store.avatars),
+                job: draft.job ?? "",
+              },
+              model,
+              modelChooser: draft.model === undefined ? "server" : "operator",
+              permissionMode: draft.permissionMode ?? input.permissionMode(status, model),
+              permissionModeChooser: input.permissionModeChooser(draft),
+              primary: draft.primary === true,
+              workspacePath: layout.workspace(id),
+              at,
+            });
+            yield* input.furnish(id);
+            // The bot opens its conversation: its first turn is this wake's,
+            // written once, with the bot, and dispatched like any other. Its
+            // cause is the operator's, as the creation is, also when the primary
+            // bot's `create_bot` carried their word: it follows from no
+            // dispatch's work, so no Stop of earlier work can drop it unwritten.
+            yield* wakes.record([
+              {
+                botId: id,
+                kind: "system",
+                audience: conversation,
+                payload: { _tag: "first-run" },
+                sourceEntryId: null,
+                hops: 0,
+                retryOf: null,
+                cause: { _tag: "operator" },
+              },
+            ]);
+            yield* changes.touch({ _tag: "bot", botId: id });
+            return (yield* require(id).pipe(Effect.orDie)).bot;
+          }),
+        })
+        .pipe(
+          Effect.onError(() =>
+            Ref.get(started).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.void,
+                  onSome: (id) => fs.remove(layout.workspace(id), { recursive: true }),
+                }),
+              ),
+              Effect.ignore,
+            ),
+          ),
+        );
       // Also after a retry: a creation that crashed before this point finishes now.
       yield* provision(bot.id);
       // A provider may have become ready while the bot was saved, after the
@@ -548,8 +567,8 @@ export const layer = Layer.effect(
 
     /**
      * The template's routines, paused, then its skills, last, so a routine the
-     * server refuses writes none. A write that fails removes the workspace the
-     * skills started, which belongs to no bot once the transaction rolls back.
+     * server refuses writes none. A creation that fails after the skills were
+     * written removes them with the workspace (`insert`).
      */
     const furnishFrom = (template: BotTemplate) =>
       Effect.fnUntraced(function* (botId: BotId) {
@@ -577,7 +596,6 @@ export const layer = Layer.effect(
             PrivateLocationExposed: () => new Conflict({ reason: "private-location" }),
             PlatformError: Effect.die,
           }),
-          Effect.onError(() => fs.remove(workspace, { recursive: true }).pipe(Effect.ignore)),
         );
       });
 

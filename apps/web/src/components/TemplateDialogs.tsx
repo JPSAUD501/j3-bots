@@ -1,9 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import type { TemplateDraft } from "@j3-bots/client-runtime";
-import { type TemplateRead, templateStart } from "@j3-bots/client-runtime/presentation";
-import { permissionModeText, templateReadText } from "@j3-bots/client-runtime/wording";
-import type { BotTemplate, EngineStatus, PermissionMode } from "@j3-bots/contracts";
+import {
+  type TemplateRead,
+  templateStart,
+  templateSubmission,
+} from "@j3-bots/client-runtime/presentation";
+import {
+  permissionModeText,
+  templateReadText,
+  templateTooLargeText,
+} from "@j3-bots/client-runtime/wording";
+import type {
+  BotTemplate,
+  EngineStatus,
+  PermissionMode,
+  TemplateTooLarge,
+} from "@j3-bots/contracts";
 import { CopyIcon, CpuIcon, DownloadIcon, ShieldAlertIcon, XIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { useI18n } from "../app/context";
@@ -86,6 +99,8 @@ function Sheet({
 export type TemplateShare =
   | { readonly _tag: "loading"; readonly name: string }
   | { readonly _tag: "failed"; readonly name: string }
+  /** Its file would be over the size any J3 Bots reads: trying again would not help. */
+  | { readonly _tag: "too-large"; readonly name: string; readonly error: TemplateTooLarge }
   | { readonly _tag: "ready"; readonly template: BotTemplate };
 
 interface ShareActions {
@@ -109,7 +124,8 @@ export function ShareTemplateContent({
   onCopy,
   onClose,
 }: ShareActions & { readonly share: TemplateShare; readonly titleId: string }) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const [copied, setCopied] = useState<boolean | null>(null);
   const name = share._tag === "ready" ? share.template.profile.name : share.name;
   return (
@@ -131,6 +147,10 @@ export function ShareTemplateContent({
               {t("template.share.retry")}
             </Button>
           </div>
+        ) : share._tag === "too-large" ? (
+          <p role="alert" className="text-sm text-blocked">
+            {templateTooLargeText(name, share.error, i18n)}
+          </p>
         ) : (
           <>
             <p className="text-sm text-muted-foreground">{t("template.share.body", { name })}</p>
@@ -233,7 +253,8 @@ export function TemplateForm({
   const mode = picked ?? start.permissionMode;
   const { name } = template.profile;
   const creating = state === "creating";
-  const ready = start.model._tag !== "none" && connected && !creating;
+  const submission = templateSubmission(template, start, picked);
+  const ready = submission !== null && connected && !creating;
   return (
     <form
       className="flex min-h-0 flex-1 flex-col"
@@ -241,11 +262,9 @@ export function TemplateForm({
         event.preventDefault();
         if (!ready) return;
         setState("creating");
-        void onCreate({ template, model: start.model.choice, permissionMode: mode }).then(
-          (created) => {
-            if (created !== "done") setState(created);
-          },
-        );
+        void onCreate(submission).then((created) => {
+          if (created !== "done") setState(created);
+        });
       }}
     >
       <SheetHeader title={t("template.create.title")} titleId={titleId} onClose={onClose} />

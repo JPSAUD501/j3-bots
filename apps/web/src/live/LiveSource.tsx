@@ -32,7 +32,7 @@ import type {
   RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
-import { TEMPLATE_FILE_EXTENSION, TEMPLATE_MEDIA_TYPE } from "@j3-bots/contracts";
+import { TEMPLATE_FILE_EXTENSION, TEMPLATE_MEDIA_TYPE, templateFileText } from "@j3-bots/contracts";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   createContext,
@@ -70,7 +70,6 @@ import {
   type RoomFormMode,
   roomStopFailed,
   templateFileName,
-  templateFileText,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
 import type { AppLink } from "@j3-bots/desktop-bridge";
@@ -1094,7 +1093,9 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
               share:
                 result._tag === "done"
                   ? { _tag: "ready", template: result.value }
-                  : { _tag: "failed", name },
+                  : result._tag === "too-large"
+                    ? { _tag: "too-large", name, error: result.error }
+                    : { _tag: "failed", name },
             },
       ),
     );

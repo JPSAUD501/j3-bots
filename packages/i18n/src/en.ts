@@ -861,7 +861,7 @@ export const en = {
 
   "template.share.title": "Share {name} as a template",
   "template.share.body":
-    "Anyone with this file can create a bot that does what {name} does. Its memory, conversation and files stay here.",
+    "Anyone with this file can create a bot that does what {name} does. The job, skills and routines below go exactly as written, and {name} may have written some of them: read them for anything you wouldn’t share.",
   "template.share.download": "Download file",
   "template.share.copy": "Copy",
   "template.share.copied": "Copied to the clipboard.",
@@ -871,12 +871,17 @@ export const en = {
   "template.share.loading": "Preparing the template…",
   "template.share.failed": "The template couldn’t be prepared. Try again.",
   "template.share.retry": "Try again",
+  "template.share.tooLarge":
+    "{name} is too large to share as a template: a template file holds at most {limit}. The largest part is {part}. Shorten it, then try again.",
+  "template.part.job": "the job",
+  "template.part.skill": "the skill “{name}”",
+  "template.part.routine": "the routine “{name}”",
   "template.close": "Close",
   "template.create.title": "New bot from a template",
   "template.create.body":
     "This is everything {name} will be and do. Nothing is created until you choose Create.",
   "template.create.untrusted":
-    "This file came from outside J3 Bots. What it says reaches only the new bot, never your other bots, your memory or your files.",
+    "This file came from outside J3 Bots. What it says goes only into the new bot, never into your other bots, your memory or your files. Your other bots see the new one as any teammate, by its name, title and job.",
   "template.create.submit": "Create {name}",
   "template.create.creating": "Creating…",
   "template.create.cancel": "Cancel",
@@ -905,7 +910,7 @@ export const en = {
   "template.permission.capped":
     "The template asks for {mode}. A bot from a template starts with no more than the usual mode unless you choose it.",
   "template.leftOut":
-    "Not in the file: memory, the conversation, files, connected accounts and anything else on this machine.",
+    "Never in the file: memory, the conversation, files, connected accounts, credentials and anything else on this machine.",
 
   "details.loading": "Loading…",
   "details.deleteFailed": "The bot wasn’t deleted. Try again.",

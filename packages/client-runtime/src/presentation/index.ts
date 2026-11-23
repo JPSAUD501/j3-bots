@@ -131,16 +131,18 @@ export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./s
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
 export {
   isTemplateFileName,
+  openTemplateChunks,
   openTemplateFile,
   readTemplateFile,
   sharedTemplate,
   templateFileName,
-  templateFileText,
   templateFileTooLarge,
   type TemplateModel,
   type TemplateRead,
   type TemplateStart,
   templateStart,
+  type TemplateSubmission,
+  templateSubmission,
 } from "./template.ts";
 export {
   calendarDaysAgo,

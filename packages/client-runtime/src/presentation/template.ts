@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  BotTemplate,
+  type BotTemplate,
   BotTemplateFile,
   defaultPermissionMode,
   type EngineStatus,
+  fileBytes,
   MAX_TEMPLATE_FILE_SIZE,
   type ModelChoice,
   type PermissionMode,
@@ -29,7 +30,11 @@ export type TemplateRead =
   /** The platform could not read the file at all. */
   | { readonly _tag: "unreadable" };
 
-const decodeFile = Schema.decodeUnknownOption(BotTemplateFile);
+/**
+ * A field this build does not know refuses the file: the preview would not
+ * show it, so the operator could not see all that the file holds.
+ */
+const decodeFile = Schema.decodeUnknownOption(BotTemplateFile, { onExcessProperty: "error" });
 
 /** Just enough of a file to tell a later template from something else. */
 const Envelope = Schema.fromJsonString(
@@ -49,7 +54,7 @@ export const templateFileTooLarge = (size: number): boolean => size > MAX_TEMPLA
  * whole with the template's schema. Nothing is created from it here.
  */
 export const readTemplateFile = (text: string): TemplateRead => {
-  if (templateFileTooLarge(new TextEncoder().encode(text).length)) return { _tag: "too-large" };
+  if (templateFileTooLarge(fileBytes(text))) return { _tag: "too-large" };
   const decoded = decodeFile(text);
   if (Option.isSome(decoded)) return { _tag: "template", template: decoded.value };
   const envelope = decodeEnvelope(text);
@@ -70,11 +75,57 @@ export const openTemplateFile = (
     ? Promise.resolve({ _tag: "too-large" })
     : text().then(readTemplateFile, (): TemplateRead => ({ _tag: "unreadable" }));
 
-const encodeTemplate = Schema.encodeSync(BotTemplate);
+/** How much of a file is read at once. */
+const CHUNK = 65_536;
 
-/** The template as its file holds it: indented JSON, readable in any editor. */
-export const templateFileText = (template: BotTemplate): string =>
-  `${JSON.stringify(encodeTemplate(template), null, 2)}\n`;
+/**
+ * Reads a file in chunks, `read` giving up to the bytes asked for and none
+ * at its end, and stops once it holds more than `limit`: never more than
+ * `limit + 1` bytes are asked for, whatever size the file was said to have.
+ * The bytes read, or null when the file holds more than `limit`.
+ */
+const readWithin = async (
+  read: (length: number) => Promise<Uint8Array>,
+  limit: number,
+): Promise<Uint8Array | null> => {
+  const chunks: Array<Uint8Array> = [];
+  let total = 0;
+  for (;;) {
+    const chunk = await read(Math.min(CHUNK, limit + 1 - total));
+    if (chunk.length === 0) break;
+    chunks.push(chunk);
+    total += chunk.length;
+    if (total > limit) return null;
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.length;
+  }
+  return bytes;
+};
+
+/**
+ * Opens a file as a template by reading it in chunks (`readWithin`): one the
+ * system says is over the limit is refused unread, and one that turns out
+ * longer than it said is refused once the read passes the limit, so a file
+ * of any size is never held whole. One that cannot be read says so.
+ */
+export const openTemplateChunks = async (
+  size: number | null,
+  read: (length: number) => Promise<Uint8Array>,
+): Promise<TemplateRead> => {
+  if (size !== null && templateFileTooLarge(size)) return { _tag: "too-large" };
+  try {
+    const bytes = await readWithin(read, MAX_TEMPLATE_FILE_SIZE);
+    return bytes === null
+      ? { _tag: "too-large" }
+      : readTemplateFile(new TextDecoder().decode(bytes));
+  } catch {
+    return { _tag: "unreadable" };
+  }
+};
 
 /** The file's name: the bot's name in plain lowercase letters and digits, "ana-inbox.j3bot". */
 export const templateFileName = (botName: string): string => {
@@ -142,8 +193,9 @@ const modelName = (engine: EngineStatus, choice: ModelChoice): string | null => 
 };
 
 /**
- * The model and permission mode the preview shows for `template`, which the
- * client then sends as chosen, so the server creates what was shown. The
+ * The model and permission mode the preview shows for `template`. The client
+ * sends the model as chosen, so the server creates the bot on what was shown,
+ * and the mode only if the operator changes it (`templateSubmission`). The
  * template's model when the engine offers it; otherwise the first model of
  * the first provider that is ready, or with none ready, of one that lists
  * models.
@@ -166,6 +218,33 @@ export const templateStart = (
     template,
   );
 };
+
+/** What creating a bot from a template sends. */
+export interface TemplateSubmission {
+  readonly template: BotTemplate;
+  readonly model: ModelChoice;
+  readonly permissionMode?: PermissionMode;
+}
+
+/**
+ * What Create sends from the preview: the model it showed, and the permission
+ * mode only when the operator picked one. Left untouched, the mode is the
+ * server's to decide as the preview did (`templatePermissionMode`), from the
+ * model's default when the bot is made, never a copy of what the preview
+ * worked out before. Null while there is no model to make the bot on.
+ */
+export const templateSubmission = (
+  template: BotTemplate,
+  start: TemplateStart,
+  picked: PermissionMode | null,
+): TemplateSubmission | null =>
+  start.model._tag === "none"
+    ? null
+    : {
+        template,
+        model: start.model.choice,
+        ...(picked === null ? {} : { permissionMode: picked }),
+      };
 
 const startWith = (
   model: TemplateModel,

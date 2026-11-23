@@ -9,6 +9,8 @@ import {
   TEMPLATE_VERSION,
   TemplateSkill,
   type TemplateRoutine,
+  type TemplateTooLarge,
+  templateTooLarge,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -61,8 +63,11 @@ export class Templates extends Context.Service<
      * order, that is a real folder holding a `SKILL.md` that is a regular file
      * within the limits. A link is never followed, and what cannot be read is
      * passed over. Skills and routines past the template's limits stay out.
+     * The job, the skills and the routines' instructions go as written. A
+     * template whose file would be over the size a client reads is refused,
+     * naming its largest part, rather than shared and then refused unread.
      */
-    readonly template: (botId: BotId) => Effect.Effect<BotTemplate, NotFound>;
+    readonly template: (botId: BotId) => Effect.Effect<BotTemplate, NotFound | TemplateTooLarge>;
   }
 >()("@j3-bots/server/bots/Templates") {}
 
@@ -111,7 +116,7 @@ export const layer = Layer.effect(
       const kept = (yield* routines.list(botId))
         .flatMap((routine) => Option.toArray(templateRoutine(routine)))
         .slice(0, TEMPLATE_LIMITS.routines);
-      return {
+      const built: BotTemplate = {
         format: TEMPLATE_FORMAT,
         version: TEMPLATE_VERSION,
         profile: {
@@ -124,7 +129,10 @@ export const layer = Layer.effect(
         permissionMode: bot.permissionMode,
         skills: yield* readSkills(workspaceRoot),
         routines: kept,
-      } satisfies BotTemplate;
+      };
+      const tooLarge = templateTooLarge(built);
+      if (tooLarge !== null) return yield* tooLarge;
+      return built;
     });
 
     return Templates.of({ template });

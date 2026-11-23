@@ -32,6 +32,7 @@ import {
   type RoutineRun,
   TEMPLATE_FORMAT,
   TEMPLATE_VERSION,
+  TemplateTooLarge,
   RoutineRunId,
   type HarnessLocation,
   type SignInHarness,
@@ -790,6 +791,7 @@ function RosterFrame() {
         selected={selected}
         rowLink={(item) => rowButton(() => setSelected(rowKey(item)))}
         onNewBot={nothing}
+        onNewFromTemplate={nothing}
         onNewRoom={nothing}
         intents={rosterIntents(source.intents, {
           selected,
@@ -1674,6 +1676,22 @@ function TemplatesSection() {
           {(titleId) => (
             <ShareTemplateContent
               share={{ _tag: "failed", name: "Scout" }}
+              titleId={titleId}
+              {...shareActions}
+            />
+          )}
+        </TemplateFrame>
+        <TemplateFrame label="Share: the file would be too large to read">
+          {(titleId) => (
+            <ShareTemplateContent
+              share={{
+                _tag: "too-large",
+                name: "Scout",
+                error: new TemplateTooLarge({
+                  size: 1_210_000,
+                  largest: { _tag: "skill", name: "source-review" },
+                }),
+              }}
               titleId={titleId}
               {...shareActions}
             />
