@@ -60,7 +60,7 @@ export const retryDelay = (n: number): Duration.Duration => Duration.minutes(2 *
  * are told when it was due, and so is the bot. The scheduler records a run
  * within seconds of its time while the server runs.
  */
-export const LATE_AFTER = Duration.minutes(1);
+const LATE_AFTER = Duration.minutes(1);
 
 /** Whether a run due at `due` that starts at `start` is late. */
 export const isLate = (due: DateTime.Utc, start: DateTime.Utc): boolean =>
