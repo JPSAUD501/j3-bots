@@ -2,9 +2,7 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as Probe from "./probe.ts";
 
 // The PATH a new terminal of the operator's would have, for the server the
 // app runs, so it finds `claude` and `codex` where the operator installed
@@ -97,24 +95,8 @@ export const knownFolders = (
 };
 
 /** What a shell printed, or nothing when it did not start, failed or took too long. */
-const outputOf = Effect.fn("ShellPath.outputOf")(
-  function* (command: string, args: ReadonlyArray<string>, env: Record<string, string>) {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const handle = yield* spawner.spawn(
-      ChildProcess.make(command, [...args], {
-        env,
-        extendEnv: false,
-        stdin: "ignore",
-        stderr: "ignore",
-        windowsHide: true,
-      }),
-    );
-    return yield* handle.stdout.pipe(Stream.decodeText, Stream.mkString);
-  },
-  Effect.scoped,
-  Effect.timeoutOption(PROBE_DEADLINE),
-  Effect.orElseSucceed(() => Option.none<string>()),
-);
+const outputOf = (command: string, args: ReadonlyArray<string>, env: Record<string, string>) =>
+  Probe.outputOf(command, args, { deadline: PROBE_DEADLINE, env });
 
 const unixProbe = `printf '%s' '${START}'; printf '%s' "$PATH"; printf '%s' '${END}'`;
 const windowsProbe = `Write-Output '${START}'; Write-Output $env:PATH; Write-Output '${END}'`;

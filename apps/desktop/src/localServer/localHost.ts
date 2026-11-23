@@ -46,15 +46,23 @@ export interface LocalHostOptions {
   readonly windowsPrivacy: Home.WindowsPrivacy;
 }
 
+/**
+ * Node variables the server keeps: the certificates the operator trusts
+ * beyond Node's own (a company proxy's), which its harnesses and engine
+ * download through.
+ */
+const NODE_KEPT = new Set(["NODE_EXTRA_CA_CERTS"]);
+
 /** Variables of the app's environment the server must not inherit. */
 const isAppOnly = (name: string) =>
-  /^(ELECTRON_|J3_|NODE_|npm_)/.test(name) ||
+  (/^(ELECTRON_|J3_|NODE_|npm_)/.test(name) && !NODE_KEPT.has(name)) ||
   ["APPIMAGE", "APPDIR", "ARGV0", "OWD"].includes(name) ||
   name.toUpperCase() === "PATH";
 
 /**
  * The server's environment: the app's, without what belongs to Electron, an
- * AppImage, Node or a J3 Bots setting in the operator's shell (the server's
+ * AppImage, Node (but the certificates it trusts) or a J3 Bots setting in
+ * the operator's shell (the server's
  * settings come from its home's `config.json`), with the operator's PATH,
  * its home and the address it listens on.
  */
@@ -157,7 +165,11 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     if (!trusted || !(yield* fs.exists(adminSocket).pipe(Effect.orElseSucceed(() => false)))) {
       return Option.none<Supervisor.RunningServer>();
     }
-    return yield* Orphans.takeOverOnSocket(AdminChannel.overSocket(adminSocket), version.value);
+    return yield* Orphans.takeOverOnSocket(
+      AdminChannel.overSocket(adminSocket),
+      version.value,
+      yield* Orphans.systemProcesses(options.platform),
+    );
   }).pipe(Effect.provideContext(context));
 
   const supervisor = yield* Supervisor.make({ launch, adopt });

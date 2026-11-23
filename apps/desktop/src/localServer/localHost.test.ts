@@ -9,15 +9,21 @@ describe("the environment the server runs with", () => {
     host: "127.0.0.1",
   };
 
-  it("keeps the operator's own variables, and sets its PATH, home and address", () => {
+  it("keeps the operator's own variables and trusted certificates, and sets its PATH, home and address", () => {
     const env = serverEnvironment(
-      { HOME: "/home/ana", LANG: "pt_BR.UTF-8", ANTHROPIC_LOG: "debug" },
+      {
+        HOME: "/home/ana",
+        LANG: "pt_BR.UTF-8",
+        ANTHROPIC_LOG: "debug",
+        NODE_EXTRA_CA_CERTS: "/etc/ssl/company-proxy.pem",
+      },
       options,
     );
     assert.deepStrictEqual(env, {
       HOME: "/home/ana",
       LANG: "pt_BR.UTF-8",
       ANTHROPIC_LOG: "debug",
+      NODE_EXTRA_CA_CERTS: "/etc/ssl/company-proxy.pem",
       PATH: "/home/ana/.local/bin:/usr/bin",
       J3_HOME: "/data/server/home",
       J3_HOST: "127.0.0.1",
