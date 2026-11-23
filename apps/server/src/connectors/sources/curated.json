@@ -1,0 +1,544 @@
+{
+  "categories": {
+    "work": {
+      "en": "Notes and projects",
+      "pt-BR": "Notas e projetos"
+    },
+    "code": {
+      "en": "Code and hosting",
+      "pt-BR": "Código e hospedagem"
+    },
+    "design": {
+      "en": "Design",
+      "pt-BR": "Design"
+    },
+    "payments": {
+      "en": "Payments",
+      "pt-BR": "Pagamentos"
+    },
+    "mail": {
+      "en": "Email and calendar",
+      "pt-BR": "E-mail e agenda"
+    },
+    "files": {
+      "en": "Files and documents",
+      "pt-BR": "Arquivos e documentos"
+    },
+    "chat": {
+      "en": "Chat and contacts",
+      "pt-BR": "Conversas e contatos"
+    }
+  },
+  "apps": {
+    "google": {
+      "name": "Google Cloud",
+      "setupUrl": "https://console.cloud.google.com/auth/overview/personal?apis=ws,wsmcp,tasksmcp&clientType=desktop&isAgent=true",
+      "note": {
+        "en": "Google's servers for Workspace are a Developer Preview. They answer only accounts that have joined Google's Workspace Developer Preview Program.",
+        "pt-BR": "Os servidores do Google para o Workspace são uma prévia para desenvolvedores. Eles só atendem contas que entraram no programa de prévia para desenvolvedores do Workspace do Google."
+      },
+      "steps": [
+        {
+          "en": "Join the Google Workspace Developer Preview Program with the Google account you will connect.",
+          "pt-BR": "Entre no programa de prévia para desenvolvedores do Google Workspace com a conta do Google que você vai conectar."
+        },
+        {
+          "en": "Open the personal setup link in the Google Cloud console. It creates a project, turns on the Workspace APIs and their servers for agents, and makes an OAuth client marked for an AI agent.",
+          "pt-BR": "Abra o link de configuração pessoal no console do Google Cloud. Ele cria um projeto, ativa as APIs do Workspace e os servidores delas para agentes, e cria um cliente OAuth marcado para um agente de IA."
+        },
+        {
+          "en": "Keep the Desktop app client type. If your J3 Bots server has its own https address, you can pick Web application instead and add the redirect address this form shows.",
+          "pt-BR": "Mantenha o tipo de cliente App para computador. Se o seu servidor do J3 Bots tem um endereço https próprio, você pode escolher Aplicativo da Web e adicionar o endereço de retorno que este formulário mostra."
+        },
+        {
+          "en": "Copy the client ID and the client secret into this form. Every Google connector uses the same client, so you do this once.",
+          "pt-BR": "Copie o ID do cliente e a chave secreta do cliente para este formulário. Todos os conectores do Google usam o mesmo cliente, então isso é feito uma vez só."
+        }
+      ],
+      "authorizationParameters": {
+        "access_type": "offline",
+        "prompt": "consent"
+      }
+    },
+    "slack": {
+      "name": "Slack",
+      "setupUrl": "https://api.slack.com/apps",
+      "note": null,
+      "steps": [
+        {
+          "en": "Create a Slack app from scratch in a workspace you administer. Slack lets only its directory's apps and a workspace's own internal apps use its server for agents, and an app you keep in your workspace is internal.",
+          "pt-BR": "Crie um app do Slack do zero em um workspace que você administra. O Slack só deixa os apps do diretório dele e os apps internos de cada workspace usarem o servidor dele para agentes, e um app que fica no seu workspace é interno."
+        },
+        {
+          "en": "Under OAuth & Permissions, add the redirect address this form shows, and add these user token scopes: {scopes}.",
+          "pt-BR": "Em OAuth & Permissions, adicione o endereço de retorno que este formulário mostra, e adicione estes escopos de token de usuário: {scopes}."
+        },
+        {
+          "en": "Copy the client ID and the client secret from the app's Basic Information page into this form.",
+          "pt-BR": "Copie o ID do cliente e a chave secreta do cliente da página Basic Information do app para este formulário."
+        }
+      ],
+      "authorizationParameters": {}
+    }
+  },
+  "connectors": [
+    {
+      "id": "notion",
+      "name": "Notion",
+      "registryName": "com.notion/mcp",
+      "publisher": "notion.com",
+      "category": "work",
+      "glyph": "notebook",
+      "summary": {
+        "en": "Search, read and write the pages and databases of a Notion workspace.",
+        "pt-BR": "Pesquisa, lê e escreve as páginas e os bancos de dados de um workspace do Notion."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.notion.com/mcp"
+      },
+      "connect": {
+        "kind": "sign-in"
+      }
+    },
+    {
+      "id": "linear",
+      "name": "Linear",
+      "registryName": "app.linear/linear",
+      "publisher": "linear.app",
+      "category": "work",
+      "glyph": "check-circle",
+      "summary": {
+        "en": "Find, open and update issues, projects and documents in a Linear workspace.",
+        "pt-BR": "Encontra, abre e atualiza issues, projetos e documentos em um workspace do Linear."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.linear.app/mcp"
+      },
+      "connect": {
+        "kind": "sign-in"
+      }
+    },
+    {
+      "id": "linear-key",
+      "name": {
+        "en": "Linear (API key)",
+        "pt-BR": "Linear (chave de API)"
+      },
+      "registryName": null,
+      "publisher": "linear.app",
+      "category": "work",
+      "glyph": "check-circle",
+      "summary": {
+        "en": "Linear through a personal API key instead of a sign-in. A key with only the Read permission lets bots look without changing anything.",
+        "pt-BR": "O Linear por uma chave de API pessoal em vez de um login. Uma chave só com a permissão Read deixa os bots olharem sem mudar nada."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.linear.app/mcp"
+      },
+      "connect": {
+        "kind": "token",
+        "header": "Authorization",
+        "value": "Bearer {token}",
+        "label": {
+          "en": "API key",
+          "pt-BR": "Chave de API"
+        },
+        "page": "https://linear.app/settings/account/security",
+        "steps": [
+          {
+            "en": "In Linear, open Settings, then Security & access, and create a personal API key.",
+            "pt-BR": "No Linear, abra Settings e depois Security & access, e crie uma chave de API pessoal."
+          },
+          {
+            "en": "Give it the Read permission, and Write too if bots may change issues and projects.",
+            "pt-BR": "Dê a ela a permissão Read, e também Write se os bots puderem mudar issues e projetos."
+          },
+          {
+            "en": "Paste the key here.",
+            "pt-BR": "Cole a chave aqui."
+          }
+        ]
+      }
+    },
+    {
+      "id": "atlassian",
+      "name": "Atlassian",
+      "registryName": "com.atlassian/atlassian-mcp-server",
+      "publisher": "atlassian.com",
+      "category": "work",
+      "glyph": "board",
+      "summary": {
+        "en": "Work with Jira issues and Confluence pages on an Atlassian Cloud site.",
+        "pt-BR": "Trabalha com issues do Jira e páginas do Confluence em um site do Atlassian Cloud."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.atlassian.com/v2/mcp"
+      },
+      "connect": {
+        "kind": "sign-in"
+      }
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "registryName": "io.github.github/github-mcp-server",
+      "publisher": "github.com",
+      "category": "code",
+      "glyph": "branch",
+      "summary": {
+        "en": "Read code, and open and review issues and pull requests in the repositories a token allows.",
+        "pt-BR": "Lê código, e abre e revisa issues e pull requests nos repositórios que um token permite."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://api.githubcopilot.com/mcp/"
+      },
+      "connect": {
+        "kind": "token",
+        "header": "Authorization",
+        "value": "Bearer {token}",
+        "label": {
+          "en": "Fine-grained personal access token",
+          "pt-BR": "Token de acesso pessoal refinado"
+        },
+        "page": "https://github.com/settings/personal-access-tokens/new",
+        "steps": [
+          {
+            "en": "Create a fine-grained personal access token on GitHub, and choose only the repositories your bots may reach.",
+            "pt-BR": "Crie um token de acesso pessoal refinado no GitHub e escolha só os repositórios que os seus bots podem acessar."
+          },
+          {
+            "en": "Give it these repository permissions: Contents, read-only; Issues, read and write; Pull requests, read and write. Metadata, read-only, comes with them.",
+            "pt-BR": "Dê a ele estas permissões de repositório: Contents, só leitura; Issues, leitura e escrita; Pull requests, leitura e escrita. Metadata, só leitura, vem junto."
+          },
+          {
+            "en": "Paste the token here. GitHub shows it only once.",
+            "pt-BR": "Cole o token aqui. O GitHub mostra ele só uma vez."
+          }
+        ]
+      }
+    },
+    {
+      "id": "vercel",
+      "name": "Vercel",
+      "registryName": "com.vercel/vercel-mcp",
+      "publisher": "vercel.com",
+      "category": "code",
+      "glyph": "upload",
+      "summary": {
+        "en": "Look at Vercel projects, deployments and their logs.",
+        "pt-BR": "Consulta projetos, deploys e os logs deles na Vercel."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.vercel.com"
+      },
+      "connect": {
+        "kind": "sign-in"
+      }
+    },
+    {
+      "id": "supabase",
+      "name": "Supabase",
+      "registryName": "com.supabase/mcp",
+      "publisher": "supabase.com",
+      "category": "code",
+      "glyph": "database",
+      "summary": {
+        "en": "Manage Supabase projects: tables, queries, migrations and logs.",
+        "pt-BR": "Gerencia projetos do Supabase: tabelas, consultas, migrações e logs."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.supabase.com/mcp"
+      },
+      "connect": {
+        "kind": "sign-in"
+      }
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "registryName": "com.figma.mcp/mcp",
+      "publisher": "figma.com",
+      "category": "design",
+      "glyph": "vector",
+      "summary": {
+        "en": "Read Figma designs: frames, components, variables and their layout.",
+        "pt-BR": "Lê designs do Figma: frames, componentes, variáveis e o layout deles."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.figma.com/mcp"
+      },
+      "connect": {
+        "kind": "sign-in"
+      }
+    },
+    {
+      "id": "stripe",
+      "name": "Stripe",
+      "registryName": "com.stripe/mcp",
+      "publisher": "stripe.com",
+      "category": "payments",
+      "glyph": "card",
+      "summary": {
+        "en": "Look up and manage Stripe customers, products, payments and invoices.",
+        "pt-BR": "Consulta e gerencia clientes, produtos, pagamentos e faturas na Stripe."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.stripe.com"
+      },
+      "connect": {
+        "kind": "sign-in"
+      }
+    },
+    {
+      "id": "google-gmail",
+      "name": "Gmail",
+      "registryName": null,
+      "publisher": "google.com",
+      "category": "mail",
+      "glyph": "envelope",
+      "summary": {
+        "en": "Search and read email, write drafts and change labels in a Gmail account.",
+        "pt-BR": "Pesquisa e lê e-mails, escreve rascunhos e muda marcadores em uma conta do Gmail."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://gmailmcp.googleapis.com/mcp/v1"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "google",
+        "scopes": [
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.compose",
+          "https://www.googleapis.com/auth/gmail.modify"
+        ]
+      }
+    },
+    {
+      "id": "google-calendar",
+      "name": "Google Calendar",
+      "registryName": null,
+      "publisher": "google.com",
+      "category": "mail",
+      "glyph": "calendar",
+      "summary": {
+        "en": "See calendars and free time, and read and create events.",
+        "pt-BR": "Vê agendas e horários livres, e lê e cria eventos."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://calendarmcp.googleapis.com/mcp/v1"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "google",
+        "scopes": [
+          "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+          "https://www.googleapis.com/auth/calendar.events.freebusy",
+          "https://www.googleapis.com/auth/calendar.events.readonly",
+          "https://www.googleapis.com/auth/calendar.events"
+        ]
+      }
+    },
+    {
+      "id": "google-drive",
+      "name": "Google Drive",
+      "registryName": null,
+      "publisher": "google.com",
+      "category": "files",
+      "glyph": "folder",
+      "summary": {
+        "en": "Search and read files in Google Drive, and work with the files a bot creates.",
+        "pt-BR": "Pesquisa e lê arquivos no Google Drive, e trabalha com os arquivos que um bot cria."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://drivemcp.googleapis.com/mcp/v1"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "google",
+        "scopes": [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file"
+        ]
+      }
+    },
+    {
+      "id": "google-docs",
+      "name": "Google Docs",
+      "registryName": null,
+      "publisher": "google.com",
+      "category": "files",
+      "glyph": "document",
+      "summary": {
+        "en": "Read and edit documents in Google Docs.",
+        "pt-BR": "Lê e edita documentos no Google Docs."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://docsmcp.googleapis.com/mcp/v1"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "google",
+        "scopes": [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file",
+          "https://www.googleapis.com/auth/documents.readonly",
+          "https://www.googleapis.com/auth/documents"
+        ]
+      }
+    },
+    {
+      "id": "google-sheets",
+      "name": "Google Sheets",
+      "registryName": null,
+      "publisher": "google.com",
+      "category": "files",
+      "glyph": "grid",
+      "summary": {
+        "en": "Read and edit spreadsheets in Google Sheets.",
+        "pt-BR": "Lê e edita planilhas no Google Sheets."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://sheetsmcp.googleapis.com/mcp/v1"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "google",
+        "scopes": [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file",
+          "https://www.googleapis.com/auth/spreadsheets.readonly",
+          "https://www.googleapis.com/auth/spreadsheets"
+        ]
+      }
+    },
+    {
+      "id": "google-slides",
+      "name": "Google Slides",
+      "registryName": null,
+      "publisher": "google.com",
+      "category": "files",
+      "glyph": "presentation",
+      "summary": {
+        "en": "Read and edit presentations in Google Slides.",
+        "pt-BR": "Lê e edita apresentações no Google Slides."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://slidesmcp.googleapis.com/mcp/v1"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "google",
+        "scopes": [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "https://www.googleapis.com/auth/drive.file",
+          "https://www.googleapis.com/auth/presentations.readonly",
+          "https://www.googleapis.com/auth/presentations"
+        ]
+      }
+    },
+    {
+      "id": "google-chat",
+      "name": "Google Chat",
+      "registryName": null,
+      "publisher": "google.com",
+      "category": "chat",
+      "glyph": "bubble",
+      "summary": {
+        "en": "Read spaces and messages in Google Chat. Sending messages also needs a Chat app in the same Cloud project.",
+        "pt-BR": "Lê espaços e mensagens no Google Chat. Para enviar mensagens, também é preciso um app do Chat no mesmo projeto do Cloud."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://chatmcp.googleapis.com/mcp/v1"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "google",
+        "scopes": [
+          "https://www.googleapis.com/auth/chat.spaces.readonly",
+          "https://www.googleapis.com/auth/chat.memberships.readonly",
+          "https://www.googleapis.com/auth/chat.messages.readonly",
+          "https://www.googleapis.com/auth/chat.messages.create",
+          "https://www.googleapis.com/auth/chat.users.readstate",
+          "https://www.googleapis.com/auth/chat.users.spacesettings"
+        ]
+      }
+    },
+    {
+      "id": "google-contacts",
+      "name": "Google Contacts",
+      "registryName": null,
+      "publisher": "google.com",
+      "category": "chat",
+      "glyph": "person",
+      "summary": {
+        "en": "Look up contacts and the people in a Google Workspace directory.",
+        "pt-BR": "Consulta contatos e as pessoas do diretório de um Google Workspace."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://people.googleapis.com/mcp/v1"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "google",
+        "scopes": [
+          "https://www.googleapis.com/auth/directory.readonly",
+          "https://www.googleapis.com/auth/userinfo.profile",
+          "https://www.googleapis.com/auth/contacts.readonly"
+        ]
+      }
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "registryName": null,
+      "publisher": "slack.com",
+      "category": "chat",
+      "glyph": "bubbles",
+      "summary": {
+        "en": "Search and read channels and messages, and send messages as you, in a Slack workspace.",
+        "pt-BR": "Pesquisa e lê canais e mensagens, e envia mensagens em seu nome, em um workspace do Slack."
+      },
+      "remote": {
+        "type": "streamable-http",
+        "url": "https://mcp.slack.com/mcp"
+      },
+      "connect": {
+        "kind": "own-app",
+        "app": "slack",
+        "scopes": [
+          "search:read.public",
+          "search:read.private",
+          "search:read.mpim",
+          "search:read.im",
+          "search:read.files",
+          "search:read.users",
+          "files:read",
+          "chat:write",
+          "users:read",
+          "users:read.email",
+          "channels:read",
+          "groups:read",
+          "im:read",
+          "mpim:read"
+        ]
+      }
+    }
+  ]
+}

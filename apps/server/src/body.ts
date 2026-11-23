@@ -2,29 +2,30 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+import type * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
-// Request bodies are read here, against a limit each route sets, so no route
-// buffers more than it can use, declared or chunked.
+// Bodies are read here, against a limit each route or call sets, so nothing
+// buffers more than it can use, declared or chunked: a request's, and an
+// answer the server reads from a remote server.
 
-/** A request body over its route's limit, refused before the rest of it is read. */
+/** A body over its limit, refused before the rest of it is read. */
 class BodyTooLarge extends Schema.TaggedError<BodyTooLarge>()("BodyTooLarge", {}) {}
 
-/** The length a request declares, if it declares a valid one. */
-const declaredLength = (request: HttpServerRequest.HttpServerRequest) => {
-  const header = request.headers["content-length"];
+/** The length a message declares, if it declares a valid one. */
+const declaredLength = <E>(message: HttpIncomingMessage.HttpIncomingMessage<E>) => {
+  const header = message.headers["content-length"];
   return header !== undefined && /^\d+$/.test(header) ? Number(header) : undefined;
 };
 
 /**
- * The request body, refused as soon as it declares or reaches more than
+ * The message's body, refused as soon as it declares or reaches more than
  * `limit` bytes: a declared length is refused before anything is read, and a
  * chunked body as the chunk that passes the limit arrives.
  */
-export const readBody = (request: HttpServerRequest.HttpServerRequest, limit: number) => {
-  const declared = declaredLength(request);
+export const readBody = <E>(message: HttpIncomingMessage.HttpIncomingMessage<E>, limit: number) => {
+  const declared = declaredLength(message);
   if (declared !== undefined && declared > limit) return Effect.fail(new BodyTooLarge());
-  return request.stream.pipe(
+  return message.stream.pipe(
     Stream.runFoldEffect(
       () => ({ chunks: new Array<Uint8Array>(), size: 0 }),
       (read, chunk) => {
@@ -46,6 +47,6 @@ export const readBody = (request: HttpServerRequest.HttpServerRequest, limit: nu
   );
 };
 
-/** The request body as text, within `limit` bytes. */
-export const readText = (request: HttpServerRequest.HttpServerRequest, limit: number) =>
-  readBody(request, limit).pipe(Effect.map((bytes) => new TextDecoder().decode(bytes)));
+/** The message's body as text, within `limit` bytes. */
+export const readText = <E>(message: HttpIncomingMessage.HttpIncomingMessage<E>, limit: number) =>
+  readBody(message, limit).pipe(Effect.map((bytes) => new TextDecoder().decode(bytes)));

@@ -188,7 +188,14 @@ export const FieldKey = Schema.String.check(
 ).pipe(Schema.brand("FieldKey"));
 export type FieldKey = typeof FieldKey.Type;
 
-/** One field the connect form asks for. A `secret` field is masked, and its value is never shown again. */
+/** The most choices a connect form's field offers. */
+export const MAX_FIELD_CHOICES = 32;
+
+/**
+ * One field the connect form asks for. A `secret` field is masked, and its
+ * value is never shown again. A field with `choices` takes one of them and
+ * nothing else; one without takes any text.
+ */
 export const ConnectorField = Schema.Struct({
   key: FieldKey,
   label: Label,
@@ -196,6 +203,7 @@ export const ConnectorField = Schema.Struct({
   secret: Schema.Boolean,
   required: Schema.Boolean,
   placeholder: Schema.NullOr(Label),
+  choices: Schema.Array(Label).check(Schema.isMaxLength(MAX_FIELD_CHOICES)),
 });
 export type ConnectorField = typeof ConnectorField.Type;
 
@@ -457,10 +465,18 @@ export const EnvName = Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-
 export type EnvName = typeof EnvName.Type;
 
 /**
- * An OAuth client the operator registered at the service and pastes: its id,
- * and its secret when the service gave one.
+ * An OAuth client the operator registered at the service and pastes: the
+ * authorization server it is registered at (its issuer, as the service
+ * documents it, such as `https://accounts.google.com`), its id, and its
+ * secret when the service gave one. The server uses it with that issuer
+ * only, so a connector that names another never gets its secret.
  */
 export const OAuthClientInput = Schema.Struct({
+  issuer: Schema.String.check(
+    Schema.makeFilter(
+      (text: string) => isHttpsAddress(text, MAX_CONNECTOR_URL_LENGTH, true) || BARE_HTTPS,
+    ),
+  ),
   clientId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   clientSecret: Schema.NullOr(secretValue(1, 2_000)),
 });

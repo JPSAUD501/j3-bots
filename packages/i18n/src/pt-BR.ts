@@ -1320,6 +1320,9 @@ const sentences = {
   "settings.signOut.body.mobile":
     "Este celular perde o acesso, e parear de novo exige um código novo. Rascunhos e mensagens não enviadas são descartados. Seus bots e conversas continuam no servidor.",
   "settings.signOut.cancel": "Continuar conectado",
+  "oauthCallback.title": "J3 Bots",
+  "oauthCallback.signedIn": "Conectado. Você pode fechar esta aba e voltar ao J3 Bots.",
+  "oauthCallback.failed": "Esta conexão não terminou. Volte ao J3 Bots e tente de novo.",
 } as const satisfies Catalog;
 
 export const ptBR: AddingNone<typeof sentences> = sentences;
