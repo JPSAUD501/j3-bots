@@ -354,8 +354,8 @@ export interface RemoteServerUpdate {
   readonly dismissEnded: () => void;
   /** Reads the status again, as when the screen that shows it opens. */
   readonly refresh: () => void;
-  /** Has the server check its release feed now. */
-  readonly check: () => void;
+  /** Has the server check its release feed now; settles once the check has ended. */
+  readonly check: () => Promise<void>;
   /** Sets the server's channel; the view follows. */
   readonly setChannel: (channel: UpdateChannel) => void;
   /** Starts the update to `version`, stopping the bots' running work only with `stopWork`. */

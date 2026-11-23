@@ -2,6 +2,7 @@
 import { isRunning, type ServerUpdateView, type UpdateResult } from "@j3-bots/client-runtime";
 import {
   type ServerUpdateLine,
+  serverBehindLine,
   serverUpdateLine,
   startRefusalText,
   type UpdateTone,
@@ -9,7 +10,7 @@ import {
 } from "@j3-bots/client-runtime/wording";
 import type { ReceivedUpdateStatus } from "@j3-bots/contracts";
 import { ExternalLinkIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import type { RemoteServerUpdate } from "../shell/data";
@@ -175,15 +176,16 @@ function UpdateServerButton({
  */
 function ServerUpdateNow({
   update,
+  line,
   retry = false,
 }: {
   update: RemoteServerUpdate;
+  /** The line for `update`'s view; null before the status is read. */
+  line: ServerUpdateLine | null;
   /** The release on offer is the one that just rolled back. */
   retry?: boolean;
 }) {
-  const i18n = useI18n();
-  const { t } = i18n;
-  const line = serverUpdateLine(update.view, i18n);
+  const { t } = useI18n();
   if (line === null) {
     return (
       <p role="status" className="text-xs text-muted-foreground">
@@ -250,7 +252,8 @@ export function ServerUpdateRow({
   update: RemoteServerUpdate;
   className?: string;
 }) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const status = statusOf(update.view);
   const running = underWay(update.view);
   const standing = status === null ? null : standingResult(status);
@@ -272,9 +275,15 @@ export function ServerUpdateRow({
         )}
         {result !== null && <Result result={result} />}
         {/* A rollback that did not finish comes first, and its result already says what to run. */}
-        {standing?.outcome !== "failed" && <ServerUpdateNow update={update} retry={retry} />}
+        {standing?.outcome !== "failed" && (
+          <ServerUpdateNow
+            update={update}
+            line={serverUpdateLine(update.view, i18n)}
+            retry={retry}
+          />
+        )}
         {checkable && (
-          <Button size="sm" className="self-start" onClick={update.check}>
+          <Button size="sm" className="self-start" onClick={() => void update.check()}>
             {t("update.check")}
           </Button>
         )}
@@ -294,27 +303,29 @@ export function ServerUpdateRow({
 
 /**
  * Bringing a server that is behind this app forward, on the screen that
- * says so: how its update stands and the button, or, when its channel has
- * no newer release yet, that there is none and what else to do.
+ * says so: how its update stands and the button, what to run on its machine,
+ * or that its channel has no newer release yet. The server looks for one
+ * only every few hours, so it may not have seen the release this app came
+ * from: the screen has it check once before it says there is none.
  */
 export function ServerBehind({ update }: { update: RemoteServerUpdate }) {
-  const { t } = useI18n();
-  const { view } = update;
-  const none =
+  const i18n = useI18n();
+  const { view, check } = update;
+  const unsure =
     view._tag === "status" &&
     view.status.available === null &&
     view.status.canUpdate._tag === "able" &&
-    !isRunning(view.status.state) &&
-    view.status.state._tag !== "checking";
+    !isRunning(view.status.state);
+  const asked = useRef(false);
+  const [checked, setChecked] = useState(false);
+  useEffect(() => {
+    if (!unsure || asked.current) return;
+    asked.current = true;
+    void check().finally(() => setChecked(true));
+  }, [unsure, check]);
   return (
     <div className="flex w-full max-w-sm flex-col gap-1.5 text-start">
-      {none ? (
-        <p className="text-xs text-muted-foreground">
-          {t("gate.incompatible.serverBehindNoRelease")}
-        </p>
-      ) : (
-        <ServerUpdateNow update={update} />
-      )}
+      <ServerUpdateNow update={update} line={serverBehindLine(view, checked, i18n)} />
     </div>
   );
 }

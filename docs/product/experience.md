@@ -95,7 +95,7 @@ What a template holds and leaves out is in [Concepts](concepts.md) and [decision
 - A server that cannot update itself from a client (started by hand, run from a source checkout, run inside the desktop app elsewhere) says so, with the one command to run on its machine instead. No button is ever offered that cannot work.
 - Each side has a channel, Stable or Nightly, chosen in the same place: the server's for the server, the app's for the desktop app. Moving back to Stable never installs an older version: a nightly build stays until a stable release is newer, and Settings says so.
 - The desktop app updates itself the same way, with "Restart to update" once the download has matched the project's signature. On this computer the app carries the bots' server, so updating the app updates both.
-- When the app and the server speak different versions, the screen says which one is behind. A server behind the app offers "Update the server" right there; an app behind the server updates itself, or a browser reloads. The operator is never left on a broken screen.
+- When the app and the server speak different versions, the screen says which one is behind. A server behind the app offers "Update the server" right there, after asking it to look for a newer release once, as it may not have looked since this app's release came out; a server that cannot update from here gives the command to run on its machine; an app behind the server updates itself, or a browser reloads. The operator is never left on a broken screen.
 
 ## Screens
 

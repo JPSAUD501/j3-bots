@@ -3117,6 +3117,28 @@ function UpdatesGallerySection() {
             serverUpdate={serverUpdate(said(s.available))}
           />
         </Frame>
+        <Frame
+          label="Mismatch: the server is behind, asked to check for the release"
+          width={390}
+          height={560}
+        >
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(said(s.upToDate), null, false)}
+          />
+        </Frame>
+        <Frame
+          label="Mismatch: the server is behind, nothing newer on its channel"
+          width={390}
+          height={560}
+        >
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(said(s.upToDate))}
+          />
+        </Frame>
         <Frame label="Mismatch: the server is behind, updating" width={390} height={560}>
           <Incompatible
             server={desktopServer}
@@ -3133,6 +3155,17 @@ function UpdatesGallerySection() {
             server={desktopServer}
             mismatch={{ behind: "server", serverVersion: "0.3.1" }}
             serverUpdate={serverUpdate(said(s.startedByHand))}
+          />
+        </Frame>
+        <Frame
+          label="Mismatch: the server is behind, cannot update itself, and has nothing on offer"
+          width={390}
+          height={560}
+        >
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(said({ ...s.startedByHand, available: null }))}
           />
         </Frame>
         <Frame label="Mismatch: the server predates the update routes" width={390} height={560}>

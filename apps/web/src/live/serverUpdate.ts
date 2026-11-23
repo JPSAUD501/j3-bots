@@ -18,7 +18,7 @@ export function useRemoteServerUpdate(): RemoteServerUpdate {
       ended,
       dismissEnded: serverUpdate.dismissEnded,
       refresh: serverUpdate.refresh,
-      check: () => void serverUpdate.check(),
+      check: () => serverUpdate.check().then(() => undefined),
       setChannel: (channel) => void serverUpdate.setChannel(channel),
       start: serverUpdate.start,
     }),

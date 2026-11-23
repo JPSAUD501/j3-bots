@@ -141,16 +141,21 @@ export const serverStatuses = {
   },
 } satisfies Record<string, ReceivedUpdateStatus>;
 
-/** Updating the server from the gallery, its view `view`: nothing it asks reaches a server. */
+/**
+ * Updating the server from the gallery, its view `view`: nothing it asks
+ * reaches a server. A check ends at once and changes nothing, unless
+ * `checkEnds` is false, when it never ends.
+ */
 export const serverUpdate = (
   view: ServerUpdateView,
   ended: UpdateResult | null = null,
+  checkEnds = true,
 ): RemoteServerUpdate => ({
   view,
   ended,
   dismissEnded: nothing,
   refresh: nothing,
-  check: nothing,
+  check: () => (checkEnds ? Promise.resolve() : new Promise<void>(nothing)),
   setChannel: nothing,
   start: () => Promise.resolve({ _tag: "refused", reason: "busy", runningBots: null }),
 });
