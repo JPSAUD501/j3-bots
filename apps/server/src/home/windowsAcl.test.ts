@@ -9,10 +9,11 @@ import {
   type FolderAcl,
   judgeAcl,
   judgeWriteAcl,
+  powerShellWord,
   readFolderAcl,
   repairCommand,
 } from "./windowsAcl.ts";
-import { openToOthers, runInCommandPrompt } from "./testPrivacy.ts";
+import { openToOthers, runInPowerShell } from "./testPrivacy.ts";
 
 const USER = "S-1-5-21-1000000001-1000000002-1000000003-1001";
 const ANOTHER_USER = "S-1-5-21-1000000001-1000000002-1000000003-1002";
@@ -189,7 +190,7 @@ describe("judgeWriteAcl", () => {
 });
 
 describe("repairCommand", () => {
-  it("turns inheritance off, grants the three accounts full control and removes every other", () => {
+  it("turns inheritance off, lets the three accounts in, and removes every other", () => {
     assert.strictEqual(
       repairCommand(
         String.raw`C:\Users\sam\AppData\Roaming\J3 Bots\server\home`,
@@ -199,14 +200,24 @@ describe("repairCommand", () => {
           rule(USERS, WRITE_DATA),
         ),
       ),
-      String.raw`icacls "C:\Users\sam\AppData\Roaming\J3 Bots\server\home" /inheritance:r` +
-        ` /grant:r "*${USER}:(OI)(CI)F" /grant:r "*${SYSTEM}:(OI)(CI)F" /grant:r "*${ADMINISTRATORS}:(OI)(CI)F"` +
-        ` /remove "*${USERS}" "*${EVERYONE}"`,
+      String.raw`icacls 'C:\Users\sam\AppData\Roaming\J3 Bots\server\home' /inheritance:r` +
+        ` /remove:d '*${USER}' '*${SYSTEM}' '*${ADMINISTRATORS}'` +
+        ` /grant:r '*${USER}:(OI)(CI)F' /grant:r '*${SYSTEM}:(OI)(CI)F' /grant:r '*${ADMINISTRATORS}:(OI)(CI)F'` +
+        ` /remove '*${USERS}' '*${EVERYONE}'`,
     );
   });
 
   it("removes no one when only the three accounts have rules", () => {
-    assert.notInclude(repairCommand(String.raw`C:\home`, privateAcl), "/remove");
+    assert.notInclude(repairCommand(String.raw`C:\home`, privateAcl), "/remove ");
+  });
+
+  it("names the folder so that PowerShell expands nothing in it", () => {
+    const folder = String.raw`C:\Users\o'neil\it’s %TEMP%\$env:TEMP\a & b ^ c`;
+    assert.isTrue(
+      repairCommand(folder, privateAcl).startsWith(
+        String.raw`icacls 'C:\Users\o''neil\it’’s %TEMP%\$env:TEMP\a & b ^ c' /inheritance:r `,
+      ),
+    );
   });
 });
 
@@ -235,14 +246,34 @@ describe.runIf(process.platform === "win32")("on Windows", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const folder = path.join(yield* fs.makeTempDirectoryScoped(), "home with a space");
+      // What a Command Prompt or PowerShell would expand in double quotes.
+      const folder = path.join(yield* fs.makeTempDirectoryScoped(), "o'neil %TEMP% $HOME & ^ home");
       yield* createPrivateFolder(folder);
       yield* openToOthers(folder);
 
       const opened = yield* readFolderAcl(folder);
       assert.strictEqual(judgeAcl(opened), "open-to-others");
 
-      yield* runInCommandPrompt(repairCommand(folder, opened));
+      yield* runInPowerShell(repairCommand(folder, opened));
+      assert.strictEqual(judgeAcl(yield* readFolderAcl(folder)), "private");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("finds a folder that denies this user writing, and its repair command lets it in", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const folder = path.join(yield* fs.makeTempDirectoryScoped(), "home");
+      yield* createPrivateFolder(folder);
+      const { user } = yield* readFolderAcl(folder);
+      yield* runInPowerShell(
+        `icacls ${powerShellWord(folder)} /deny ${powerShellWord(`*${user}:(OI)(CI)W`)}`,
+      );
+
+      const closed = yield* readFolderAcl(folder);
+      assert.strictEqual(judgeAcl(closed), "closed-to-owner");
+
+      yield* runInPowerShell(repairCommand(folder, closed));
       assert.strictEqual(judgeAcl(yield* readFolderAcl(folder)), "private");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

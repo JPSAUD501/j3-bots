@@ -1181,7 +1181,7 @@ const sentences = {
   "settings.phone.restart": "Reiniciar",
   "settings.phone.restart.cancel": "Agora não",
   "settings.phone.firewall.windows":
-    "O Windows pode perguntar se o J3 Bots pode usar redes privadas. Permita, ou o celular não conecta.",
+    "O Windows pode perguntar se redes públicas e privadas podem acessar o “Node.js JavaScript Runtime”: são os seus bots. Escolha Permitir, ou o celular não conecta.",
   "settings.phone.firewall.mac":
     "O macOS pode perguntar se o J3 Bots pode aceitar conexões. Permita, ou o celular não conecta.",
   "settings.phone.firewall.linux":

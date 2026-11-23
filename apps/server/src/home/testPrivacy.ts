@@ -5,7 +5,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { judgeAcl, readFolderAcl } from "./windowsAcl.ts";
+import { runPowerShell } from "../system/PowerShell.ts";
+import { judgeAcl, powerShellWord, readFolderAcl } from "./windowsAcl.ts";
 
 // For tests that set a folder's privacy as an operator would, on the system
 // they run on: by its mode bits, or on Windows by its access control list.
@@ -31,10 +32,16 @@ export const runInCommandPrompt = Effect.fn("runInCommandPrompt")(function* (scr
   assert.strictEqual(Number(exitCode), 0, script);
 });
 
+/** Runs `command` in Windows PowerShell, as the operator would, and fails unless it succeeds. */
+export const runInPowerShell = (command: string) =>
+  runPowerShell(`${command}; exit $LASTEXITCODE`, {});
+
 /** Lets every other account on the machine open and read `folder`. */
 export const openToOthers = Effect.fn("openToOthers")(function* (folder: string) {
   if (process.platform === "win32") {
-    return yield* runInCommandPrompt(`icacls "${folder}" /grant "*${USERS}:(OI)(CI)RX"`);
+    return yield* runInPowerShell(
+      `icacls ${powerShellWord(folder)} /grant ${powerShellWord(`*${USERS}:(OI)(CI)RX`)}`,
+    );
   }
   yield* (yield* FileSystem.FileSystem).chmod(folder, 0o750);
 });

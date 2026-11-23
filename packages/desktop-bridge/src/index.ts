@@ -171,6 +171,19 @@ export const ModeChange = Schema.Literals(["changed", "failed", "unavailable"]);
 export type ModeChange = typeof ModeChange.Type;
 
 /**
+ * How choosing this computer ended: as `ModeChange` says, or `home-refused`,
+ * and nothing changed: the folder where the bots would keep their data is
+ * not one only this user can open, or the app could not tell. `reason` says
+ * why and `fix` what repairs it (English); choosing this computer again
+ * checks the folder again.
+ */
+export const UseThisComputerResult = Schema.Union([
+  ModeChange,
+  Schema.TaggedStruct("home-refused", { reason: Message, fix: Message }),
+]);
+export type UseThisComputerResult = typeof UseThisComputerResult.Type;
+
+/**
  * What the page asks for to sign this computer in to the server it runs.
  * `again`: the operator asked to sign in again, after this computer was
  * signed out. Without it, the app signs a device in only the first time after
