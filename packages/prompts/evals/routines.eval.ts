@@ -109,6 +109,7 @@ const routineWake: RoutineWake = {
   },
   recentRuns: quietRuns,
   triggerData: null,
+  dueAt: null,
 };
 
 /** The same watch, the day after a run told your user its GitHub sign-in had expired. */
@@ -147,7 +148,65 @@ const reminderWake: RoutineWake = {
   },
   recentRuns: [],
   triggerData: null,
+  dueAt: null,
 };
+
+/** Where the evening briefing reads the user's appointments, listed under each date. */
+const AGENDA_FILE = "files/agenda.md";
+const AGENDA_PATH = `${HOME}/${AGENDA_FILE}`;
+const BRIEFING = `Read ${AGENDA_FILE}, which lists your user's appointments under each date, and send your user one short message listing what is on their calendar tomorrow. If nothing is listed for tomorrow, say so.`;
+
+/**
+ * The evening briefing, due at 23:00 yesterday, runs at 01:30: J3 Bots was not
+ * running at 23:00, and the run is still nearer than the next one. The
+ * instruction's "tomorrow" is the day after the run was due, which is today.
+ */
+const briefingDue = DateTime.subtract(todayAt(23, 0), { days: 1 });
+const lateBriefingWake: RoutineWake = {
+  ...base,
+  at: todayAt(1, 30),
+  kind: "routine",
+  routine: {
+    id: Schema.decodeSync(RoutineId)("routine-5"),
+    name: "Evening briefing",
+    trigger: { type: "schedule", cron: "0 23 * * *" },
+    instruction: BRIEFING,
+  },
+  recentRuns: [
+    {
+      at: DateTime.subtract(briefingDue, { days: 1 }),
+      outcome: { type: "delivered", text: "Tomorrow: 16:00 budget review with Priya." },
+    },
+  ],
+  triggerData: null,
+  dueAt: briefingDue,
+};
+
+/** A date as the agenda heads it: `2026-11-20`. */
+const agendaDay = (when: DateTime.Utc) =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: DateTime.zoneToString(timeZone),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(DateTime.toDateUtc(when));
+
+const AGENDA = [
+  "# Agenda",
+  "",
+  `## ${agendaDay(briefingDue)}`,
+  "- 16:00 Budget review with Priya",
+  "",
+  `## ${agendaDay(lateBriefingWake.at)}`,
+  "- 10:30 Dentist, Dr. Okafor",
+  "",
+  `## ${agendaDay(DateTime.add(lateBriefingWake.at, { days: 1 }))}`,
+  "- 09:00 Team offsite at the river office",
+  "",
+].join("\n");
+
+const agendaWorkspace = () =>
+  githubWorkspace(github(lateBriefingWake.at, PASSING_RUNS), new Map([[AGENDA_FILE, AGENDA]]));
 
 /** The state file a pull-request watch keeps, and what it holds before this run. */
 const STATE_FILE = "files/docs-prs.json";
@@ -180,6 +239,7 @@ const pullRequestWake: RoutineWake = {
     { at: todayAt(8, 17), outcome: { type: "silent", note: null } },
   ],
   triggerData: null,
+  dueAt: null,
 };
 
 const pullRequestWorkspace = () =>
@@ -253,6 +313,22 @@ const REMINDED: Check = {
   reject: [
     "Your expense report was submitted this morning.",
     "Good morning! Nothing is due today.",
+  ],
+};
+
+const DAY_AFTER_DUE: Check = {
+  question:
+    "Does this message give the 10:30 dentist appointment with Dr. Okafor as what is on the calendar, and leave out the 09:00 team offsite?",
+  what: "the dentist appointment, not the offsite",
+  asked: BRIEFING,
+  accept: [
+    "Tomorrow: 10:30 dentist with Dr. Okafor.",
+    "Today at 10:30 you have the dentist (Dr. Okafor). Sorry this comes late.",
+  ],
+  reject: [
+    "Tomorrow: 09:00 team offsite at the river office.",
+    "Nothing is on your calendar tomorrow.",
+    "Tomorrow: 10:30 dentist with Dr. Okafor, and 09:00 team offsite at the river office.",
   ],
 };
 
@@ -530,6 +606,7 @@ const CHECKS: ReadonlyArray<Check> = [
   BUILD_FAILED,
   FAILURE_NAMED,
   REMINDED,
+  DAY_AFTER_DUE,
   ACCESS_LOST,
   MERGED,
   NEW_PULL_REQUESTS_REPORTED,
@@ -550,6 +627,12 @@ interface Look {
 const BUILD_LOOK: Look = {
   what: "looked at the build",
   test: (call) => did(call, (event) => event.type === "build-read"),
+};
+
+/** A `run_command` that read the agenda. */
+const AGENDA_LOOK: Look = {
+  what: "read the agenda",
+  test: (call) => did(call, (event) => event.type === "file-read" && event.path === AGENDA_PATH),
 };
 
 /** A `run_command` that ran `gh` at all: with an expired sign-in, each one meets the 401. */
@@ -776,6 +859,7 @@ const savedRunWake = (
     },
     recentRuns: recentRuns(next),
     triggerData: null,
+    dueAt: null,
   };
 };
 
@@ -937,6 +1021,7 @@ const fixedWatchWake = (
   },
   recentRuns,
   triggerData: null,
+  dueAt: null,
 });
 
 const halfHourlyQuiet = (when: DateTime.Utc): ReadonlyArray<RoutineRunSummary> =>
@@ -1272,6 +1357,12 @@ const cases: ReadonlyArray<Case> = [
     name: "sends a due reminder exactly once",
     scenario: { wake: reminderWake, workspace: buildWorkspace(reminderWake, PASSING_RUNS) },
     problems: ({ calls }) => speaksOnce(reminderWake, REMINDED)(calls),
+  },
+  {
+    name: "reads the dates in a late run's instruction against when it was due",
+    scenario: { wake: lateBriefingWake, workspace: agendaWorkspace },
+    problems: ({ calls }) =>
+      speaksOnce(lateBriefingWake, DAY_AFTER_DUE, { look: AGENDA_LOOK })(calls),
   },
   {
     name: "says once what blocked a routine run that lost its access",

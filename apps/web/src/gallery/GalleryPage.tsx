@@ -1303,11 +1303,15 @@ const sampleRuns: ReadonlyArray<RoutineRun> = [
   }),
   sampleRun(3 * 24 * 60 + 353, "failed", { attempts: 2 }),
   sampleRun(3 * 24 * 60 + 354, "skipped"),
+  // Monday's 08:47 run started at 10:47: J3 Bots wasn't running at 08:47.
+  sampleRun(4 * 24 * 60 + 233, "delivered", {
+    dueAt: DateTime.subtract(SAMPLE_NOW, { minutes: 4 * 24 * 60 + 353 }),
+  }),
   sampleRun(8 * 24 * 60 + 353, "delivered"),
 ];
 
 function DetailsSection() {
-  const { scout, moss } = team.bots;
+  const { scout, moss, atlas } = team.bots;
   const priceWatch = team.routines[scout.id]?.[0] ?? null;
   return (
     <Section title="Details panel">
@@ -1318,6 +1322,17 @@ function DetailsSection() {
             routines={team.routines[scout.id] ?? []}
             memory={team.memory[scout.id] ?? []}
             files={team.files[scout.id] ?? []}
+            modelName="Claude Code · Claude Sonnet 5.5"
+            intents={detailsIntents}
+            onClose={nothing}
+          />
+        </Pane>
+        <Pane>
+          <BotDetails
+            bot={atlas}
+            routines={team.routines[atlas.id] ?? []}
+            memory={team.memory[atlas.id] ?? []}
+            files={team.files[atlas.id] ?? []}
             modelName="Claude Code · Claude Sonnet 5.5"
             intents={detailsIntents}
             onClose={nothing}

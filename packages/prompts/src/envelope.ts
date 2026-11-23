@@ -208,6 +208,13 @@ export interface RoutineWake extends WakeBase {
   readonly recentRuns: ReadonlyArray<RoutineRunSummary>;
   /** The webhook request body, for a webhook trigger. */
   readonly triggerData: string | null;
+  /**
+   * When the run was due, when that was more than a minute before `at` or on
+   * another day in `timeZone`: J3 Bots was not running at a scheduled run's
+   * time, an attempt is tried again later, or a run due just before midnight
+   * starts after it. Dates in the instruction are read against it.
+   */
+  readonly dueAt: DateTime.Utc | null;
 }
 
 export type SystemEvent =
@@ -233,7 +240,7 @@ export const CLOSING_LINES: { readonly [K in Exclude<WakeKind, "room">]: string 
   user: "Reply with `say`; nothing else reaches them. Your last call is a `say` with `done: true` (the result, or that delegated work is underway) or an `ask`.",
   bot: "`say` reaches your user, not the sender. Answer the sender with `message_bot`, and only if you were asked something or have a result.",
   routine:
-    "Nobody is waiting: send no progress message. A message is one `say` with `done: true`, after the work; once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a `pause` the instruction asks for may follow it, by the id above; no second `say`. Read every date in the instruction against the time above, then take the first of these that applies. If the instruction pauses after a message that a recent run already sent, pause now, without a `say`. Otherwise do the work and follow the delivery line, which sends that one message or none; a question for your user, or a source you could not reach, goes inside it. When it sends none, end with no `say` at all, not even to say all is well, unless the work was blocked: then, if `recent-runs` already says what blocks it, still end with no `say`; if not, say in one sentence what blocks it and what would fix it; that `say` is the run's last call, with no pause. Never pause a one-time routine.",
+    "Nobody is waiting: send no progress message. A message is one `say` with `done: true`, after the work; once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a `pause` the instruction asks for may follow it, by the id above; no second `say`. Read every date in the instruction against the time the run was due: `due` above, or the time above when there is none. Then take the first of these that applies. If the instruction pauses after a message that a recent run already sent, pause now, without a `say`. Otherwise do the work and follow the delivery line, which sends that one message or none; a question for your user, or a source you could not reach, goes inside it. When it sends none, end with no `say` at all, not even to say all is well, unless the work was blocked: then, if `recent-runs` already says what blocks it, still end with no `say`; if not, say in one sentence what blocks it and what would fix it; that `say` is the run's last call, with no pause. Never pause a one-time routine.",
   system:
     "This is an event, not a message from your user. Respond only as your instructions say for it.",
 };
@@ -522,11 +529,14 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
     case "routine": {
       const { routine } = wake;
       const trigger = routine.trigger;
+      const due = wake.dueAt === null ? null : isoInZone(wake.dueAt, wake.timeZone);
       w.open("routine", [
         ["id", routine.id],
         ["name", routine.name],
         ["trigger", trigger.type],
         ["cron", trigger.type === "schedule" ? trigger.cron : null],
+        ["due", due?.iso ?? null],
+        ["due-weekday", due?.weekday ?? null],
       ]);
       w.block("instruction", [], routine.instruction);
       w.open("recent-runs");

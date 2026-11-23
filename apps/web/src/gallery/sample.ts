@@ -677,6 +677,21 @@ export function sampleTeam(now: DateTime.Utc) {
         lastRun: run(60 * 3, "delivered"),
         runCount: 52,
       },
+      {
+        id: RoutineId.make("nightly-backup-check"),
+        botId: ids.atlas,
+        name: "Nightly backup check",
+        instruction: "Check that last night's database backup finished and is restorable.",
+        trigger: { _tag: "schedule", cron: "0 2 * * *", timeZone: "America/Sao_Paulo" },
+        enabled: true,
+        webhookUrl: null,
+        // Today's 02:00 run came due while J3 Bots wasn't running, and it came
+        // back after 14:00, nearer to tomorrow's run than to that one.
+        nextRunAt: ahead(24 * 60 - 760),
+        lastRun: run(24 * 60 + 760, "silent"),
+        runCount: 30,
+        missed: { count: 1, since: ago(760), until: ago(760) },
+      },
     ],
   };
 

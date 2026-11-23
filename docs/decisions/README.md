@@ -26,5 +26,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0018](0018-the-interface-follows-pips.md) | The interface follows Pips: lively bots on quiet chrome | Accepted |
 | [0019](0019-codex-runs-with-a-home-of-its-own.md) | Codex runs with a home folder of its own; the commands it runs keep the user's | Accepted |
 | [0020](0020-the-local-desktop-gets-its-device-through-the-admin-channel.md) | The local desktop gets its device through the admin channel, never over TCP | Accepted |
+| [0021](0021-a-missed-routine-runs-only-while-it-is-nearer-than-the-next.md) | A missed routine runs only while it is nearer than the next run | Proposed |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

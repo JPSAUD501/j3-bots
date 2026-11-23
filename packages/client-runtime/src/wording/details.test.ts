@@ -2,6 +2,7 @@
 import {
   BotId,
   MemoryPath,
+  MISSED_RUNS_LIMIT,
   ModelId,
   type ProviderStatus,
   ProviderId,
@@ -17,6 +18,7 @@ import { memoryFileName, routineLines, routineRunLines } from "./details.ts";
 import { providerLine } from "./engine.ts";
 
 const en = context("2026-11-20T17:40:00Z");
+const pt = context("2026-11-20T17:40:00Z", "pt-BR");
 
 const routine = (change: Partial<Routine>): Routine => ({
   id: RoutineId.make("r"),
@@ -64,6 +66,36 @@ describe("routineLines", () => {
     expect(routineLines(routine({}), en).status).toBeNull();
   });
 
+  it("says how many runs it missed while J3 Bots wasn't running, before its next run", () => {
+    // 08:00 in São Paulo, today and tomorrow.
+    const missed = { since: at("2026-11-20T11:00:00Z"), until: at("2026-11-20T11:00:00Z") };
+    const once = routine({
+      nextRunAt: at("2026-11-21T11:00:00Z"),
+      missed: { ...missed, count: 1 },
+    });
+    expect(plain(routineLines(once, en).status ?? "")).toBe(
+      "Missed 1 run while J3 Bots wasn’t running · Next run tomorrow at 8:00 AM",
+    );
+    expect(plain(routineLines(once, pt).status ?? "")).toBe(
+      "Perdeu 1 execução enquanto o J3 Bots não estava rodando · Próxima execução amanhã às 08:00",
+    );
+    const three = routine({
+      nextRunAt: at("2026-11-21T11:00:00Z"),
+      missed: { ...missed, count: 3 },
+    });
+    expect(plain(routineLines(three, en).status ?? "")).toMatch(
+      /^Missed 3 runs while J3 Bots wasn’t running · Next run /,
+    );
+    const many = routine({ missed: { ...missed, count: MISSED_RUNS_LIMIT } });
+    expect(routineLines(many, en).status).toBe(
+      "Missed 1,000 or more runs while J3 Bots wasn’t running",
+    );
+    // A later server may count further; this client still says what it knows.
+    const more = routine({ missed: { ...missed, count: MISSED_RUNS_LIMIT * 4 } });
+    expect(routineLines(more, en).status).toBe(routineLines(many, en).status);
+    expect(routineLines({ ...once, enabled: false }, en).status).toBe("Paused");
+  });
+
   it("says what the last run did, and marks only a failure", () => {
     expect(routineLines(routine({}), en).lastRun).toBeNull();
     const failed = routineLines(routine({ lastRun: run("failed") }), en).lastRun;
@@ -107,6 +139,22 @@ describe("routineRunLines", () => {
       failed: false,
     });
     expect(routineRunLines(ran({}), en).reason).toBeNull();
+  });
+
+  it("says how late a run started, and that J3 Bots wasn't running when it was due", () => {
+    // Due at 08:00 in São Paulo, started at 10:00.
+    const late = ran({ dueAt: at("2026-11-20T11:00:00Z"), startedAt: at("2026-11-20T13:00:00Z") });
+    expect(plain(routineRunLines(late, en).reason ?? "")).toBe(
+      "Ran 2h late: J3 Bots wasn’t running at 8:00 AM.",
+    );
+    expect(plain(routineRunLines(late, pt).reason ?? "")).toBe(
+      "Rodou 2 h atrasada: o J3 Bots não estava rodando às 08:00.",
+    );
+    // Why it was skipped or failed says more.
+    expect(routineRunLines({ ...late, status: "skipped" }, en).reason).toBe(
+      "The run before was still going.",
+    );
+    expect(routineRunLines(late, en).failed).toBe(false);
   });
 
   it("counts the attempts only once a run took more than one", () => {

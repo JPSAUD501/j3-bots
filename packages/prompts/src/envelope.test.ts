@@ -101,6 +101,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
         { at: now, outcome: { type: "silent", note: s } },
       ],
       triggerData: s,
+      dueAt: now,
     },
     {
       ...base,
@@ -347,7 +348,7 @@ describe("renderWake", () => {
     `);
   });
 
-  it("renders a routine run with its instruction, recent runs and trigger data", () => {
+  it("renders a routine run with its instruction, recent runs, trigger data and when it was due", () => {
     const routine = {
       id: Schema.decodeSync(RoutineId)("morning"),
       name: "Morning repo check",
@@ -370,6 +371,7 @@ describe("renderWake", () => {
           { at: at("2026-11-17T11:03:00Z"), outcome: { type: "failed" } },
         ],
         triggerData: '{"action":"completed","conclusion":"failure"}',
+        dueAt: null,
       }),
     ).toMatchInlineSnapshot(`
       "<j3-wake kind="routine" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
@@ -392,7 +394,7 @@ describe("renderWake", () => {
       {"action":"completed","conclusion":"failure"}
       </data-7f3a9c01b2d4>
       </j3-wake>
-      Nobody is waiting: send no progress message. A message is one \`say\` with \`done: true\`, after the work; once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a \`pause\` the instruction asks for may follow it, by the id above; no second \`say\`. Read every date in the instruction against the time above, then take the first of these that applies. If the instruction pauses after a message that a recent run already sent, pause now, without a \`say\`. Otherwise do the work and follow the delivery line, which sends that one message or none; a question for your user, or a source you could not reach, goes inside it. When it sends none, end with no \`say\` at all, not even to say all is well, unless the work was blocked: then, if \`recent-runs\` already says what blocks it, still end with no \`say\`; if not, say in one sentence what blocks it and what would fix it; that \`say\` is the run's last call, with no pause. Never pause a one-time routine.
+      Nobody is waiting: send no progress message. A message is one \`say\` with \`done: true\`, after the work; once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a \`pause\` the instruction asks for may follow it, by the id above; no second \`say\`. Read every date in the instruction against the time the run was due: \`due\` above, or the time above when there is none. Then take the first of these that applies. If the instruction pauses after a message that a recent run already sent, pause now, without a \`say\`. Otherwise do the work and follow the delivery line, which sends that one message or none; a question for your user, or a source you could not reach, goes inside it. When it sends none, end with no \`say\` at all, not even to say all is well, unless the work was blocked: then, if \`recent-runs\` already says what blocks it, still end with no \`say\`; if not, say in one sentence what blocks it and what would fix it; that \`say\` is the run's last call, with no pause. Never pause a one-time routine.
       "
     `);
     expect(
@@ -404,10 +406,12 @@ describe("renderWake", () => {
         routine: { ...routine, trigger: { type: "schedule", cron: "3 8 * * 1-5" } },
         recentRuns: [],
         triggerData: null,
+        // J3 Bots was not running at 08:03.
+        dueAt: at("2026-11-20T11:03:00Z"),
       }),
     ).toMatchInlineSnapshot(`
       "<j3-wake kind="routine" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      <routine id="morning" name="Morning repo check" trigger="schedule" cron="3 8 * * 1-5">
+      <routine id="morning" name="Morning repo check" trigger="schedule" cron="3 8 * * 1-5" due="2026-11-20T08:03:00-03:00" due-weekday="Friday">
       <instruction>
       Check j3-bots for merged PRs and CI status.
       Tell my user only if something changed; otherwise stay quiet.
@@ -417,7 +421,7 @@ describe("renderWake", () => {
       </recent-runs>
       </routine>
       </j3-wake>
-      Nobody is waiting: send no progress message. A message is one \`say\` with \`done: true\`, after the work; once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a \`pause\` the instruction asks for may follow it, by the id above; no second \`say\`. Read every date in the instruction against the time above, then take the first of these that applies. If the instruction pauses after a message that a recent run already sent, pause now, without a \`say\`. Otherwise do the work and follow the delivery line, which sends that one message or none; a question for your user, or a source you could not reach, goes inside it. When it sends none, end with no \`say\` at all, not even to say all is well, unless the work was blocked: then, if \`recent-runs\` already says what blocks it, still end with no \`say\`; if not, say in one sentence what blocks it and what would fix it; that \`say\` is the run's last call, with no pause. Never pause a one-time routine.
+      Nobody is waiting: send no progress message. A message is one \`say\` with \`done: true\`, after the work; once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a \`pause\` the instruction asks for may follow it, by the id above; no second \`say\`. Read every date in the instruction against the time the run was due: \`due\` above, or the time above when there is none. Then take the first of these that applies. If the instruction pauses after a message that a recent run already sent, pause now, without a \`say\`. Otherwise do the work and follow the delivery line, which sends that one message or none; a question for your user, or a source you could not reach, goes inside it. When it sends none, end with no \`say\` at all, not even to say all is well, unless the work was blocked: then, if \`recent-runs\` already says what blocks it, still end with no \`say\`; if not, say in one sentence what blocks it and what would fix it; that \`say\` is the run's last call, with no pause. Never pause a one-time routine.
       "
     `);
   });

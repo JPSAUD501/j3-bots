@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, Label, RoutineId, RoutineTrigger } from "@j3-bots/contracts";
+import {
+  BotId,
+  Label,
+  MISSED_RUNS_LIMIT,
+  RoutineId,
+  RoutineMissed,
+  RoutineTrigger,
+} from "@j3-bots/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -21,7 +28,7 @@ import { conversation } from "../turns/model.ts";
 import { notices } from "../turns/notices.ts";
 import { DEFECT_RETRY, RETRY_TICK } from "../turns/reconciler.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
-import { nextRun } from "./schedule.ts";
+import { type CatchUp, catchUp } from "./schedule.ts";
 
 /**
  * How long the scheduler waits with no routine due and no nudge before it
@@ -43,9 +50,23 @@ const Due = Schema.Struct({
   bot_id: BotId,
   name: Label,
   trigger_json: Schema.String,
+  next_run_at: Time,
+  missed_json: Schema.NullOr(Schema.String),
 });
 
 const decodeTrigger = Schema.decodeResult(json(RoutineTrigger));
+const decodeMissed = Schema.decodeOption(json(RoutineMissed));
+const encodeMissed = Schema.encodeEffect(json(RoutineMissed));
+
+/** The runs missed before, with those missed now: the count stops at the limit. */
+const addMissed = (
+  before: RoutineMissed | null,
+  now: Extract<CatchUp, { readonly _tag: "skip" }>,
+): RoutineMissed => ({
+  count: Math.min(MISSED_RUNS_LIMIT, (before?.count ?? 0) + now.missed),
+  since: before?.since ?? now.since,
+  until: now.until,
+});
 
 /**
  * The routine scheduler (`docs/architecture/server.md`, Routines), a worker
@@ -53,9 +74,10 @@ const decodeTrigger = Schema.decodeResult(json(RoutineTrigger));
  * wakes ended, then records a run of every enabled routine whose next run has
  * come, in the transaction that moves it on to the run after: a schedule to
  * its next time after now, a one-time trigger, or a schedule that no longer
- * has a next run, to paused. Runs missed while the server was down are
- * therefore not replayed: a routine that missed any runs once when the server
- * is back, and goes on from there. The worker looks again
+ * has a next run, to paused. Runs that came due while the server was down are
+ * not replayed: only the latest can run, and only while it is nearer than the
+ * next one (`catchUp`); otherwise the routine counts them as missed and waits
+ * for its next run. The worker looks again
  * at the earliest next run, when a routine changes, and once a minute
  * otherwise; it does not wait for the engine, since a run only records a wake.
  */
@@ -94,7 +116,7 @@ export const layer = Layer.effect(
       Request: Schema.Struct({ id: Schema.String, now: Schema.String }),
       Result: Due,
       execute: ({ id, now }) => sql`
-        SELECT id, bot_id, name, trigger_json FROM routines
+        SELECT id, bot_id, name, trigger_json, next_run_at, missed_json FROM routines
         WHERE id = ${id} AND enabled = 1 AND next_run_at <= ${now}
       `,
     });
@@ -130,6 +152,37 @@ export const layer = Layer.effect(
     `;
 
     /**
+     * The routine skips to its next run, adding the runs that came due to
+     * those it missed. Its missed runs read as none when another version of
+     * the server wrote them in a form this one cannot read.
+     */
+    const skip = Effect.fn("Scheduler.skip")(function* (
+      routine: typeof Due.Type,
+      plan: Extract<CatchUp, { readonly _tag: "skip" }>,
+      now: DateTime.Utc,
+    ) {
+      const before =
+        routine.missed_json === null ? null : Option.getOrNull(decodeMissed(routine.missed_json));
+      const missed = addMissed(before, plan);
+      yield* sql`
+        UPDATE routines SET
+          next_run_at = ${timeText(plan.next)},
+          missed_json = ${yield* encodeMissed(missed)},
+          updated_at = ${timeText(now)}
+        WHERE id = ${routine.id}
+      `;
+      yield* changes.record({ _tag: "routines", botId: routine.bot_id }, routine.id);
+      yield* Effect.logInfo(
+        "A routine's runs came due while J3 Bots was not running; it waits for its next run",
+        {
+          routineId: routine.id,
+          missed: plan.missed,
+          nextRunAt: timeText(plan.next),
+        },
+      );
+    });
+
+    /**
      * The operator is told, in the bot's conversation, of a routine the
      * scheduler paused because it cannot read when the routine runs next.
      */
@@ -145,7 +198,9 @@ export const layer = Layer.effect(
      * Records the run of one routine that came due and moves it on, in one
      * transaction, if it is still due. The routine is read again there, so a
      * change committed since the pass read it wins: an edited trigger plans
-     * the run after, a paused routine records none.
+     * the run after, a paused routine records none. A run due long enough
+     * ago that the next one is nearer is not recorded: the routine skips to
+     * that one.
      */
     const start = Effect.fn("Scheduler.start")(function* (ref: DueRef) {
       yield* transaction(
@@ -167,21 +222,24 @@ export const layer = Layer.effect(
             yield* pausedNotice(routine);
             return;
           }
-          const next = nextRun(trigger.success, now);
-          if (Result.isFailure(next)) {
+          const plan = catchUp(trigger.success, routine.next_run_at, now);
+          if (Result.isFailure(plan)) {
             // Saved schedules have a next run; one that no longer has (a zone
             // the runtime no longer knows) runs this once and is paused, for
             // the operator to edit.
             yield* Effect.logWarning("A routine's schedule cannot be read; it is paused", {
               routineId: routine.id,
-              reason: next.failure.reason,
+              reason: plan.failure.reason,
             });
             yield* pausedNotice(routine);
           }
-          const after = Result.isSuccess(next) ? Option.getOrNull(next.success) : null;
+          const decided: CatchUp = Result.isSuccess(plan)
+            ? plan.success
+            : { _tag: "run", due: routine.next_run_at, next: Option.none() };
+          if (decided._tag === "skip") return yield* skip(routine, decided, now);
           // A routine with no run left (a one-time trigger, an unreadable schedule) is paused.
-          yield* moveOn(routine.id, after, now);
-          yield* runs.due({ id: routine.id, botId: routine.bot_id });
+          yield* moveOn(routine.id, Option.getOrNull(decided.next), now);
+          yield* runs.due({ id: routine.id, botId: routine.bot_id, dueAt: decided.due });
         }),
       ).pipe(Effect.orDie);
     });

@@ -103,6 +103,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       { at, outcome: { type: "silent", note: null } },
     ],
     triggerData: "text",
+    dueAt: at,
   },
   { ...base, kind: "system", event: { name: "first-run" } },
   {

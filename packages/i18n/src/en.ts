@@ -285,6 +285,10 @@ export const en = {
   "routine.pauseFailed": "{name} wasn’t paused. Try again.",
   "routine.resumeFailed": "{name} wasn’t resumed. Try again.",
   "routine.next": "Next run {when}",
+  "routine.missed.one": "Missed {count} run while J3 Bots wasn’t running",
+  "routine.missed.other": "Missed {count} runs while J3 Bots wasn’t running",
+  "routine.missedAtLeast": "Missed {count} or more runs while J3 Bots wasn’t running",
+  "routine.missedThenNext": "{missed}\u00a0·\u00a0{next}",
   "routine.lastRun.running": "Running now, started {when}",
   "routine.lastRun.delivered": "Last run reported back {when}",
   "routine.lastRun.silent": "Last run had nothing to report {when}",
@@ -313,6 +317,7 @@ export const en = {
   "routine.run.modeAllowed":
     "A policy on the computer running J3 Bots allows up to {allowed}, not {mode}.",
   "routine.run.skippedWhy": "The run before was still going.",
+  "routine.run.late": "Ran {duration} late: J3 Bots wasn’t running {when}.",
   "routine.run.attempts.one": "Tried once",
   "routine.run.attempts.other": "Tried {count} times",
 
