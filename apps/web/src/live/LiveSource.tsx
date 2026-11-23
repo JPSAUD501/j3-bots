@@ -435,6 +435,24 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
 }
 
 /**
+ * While the bots live on this computer, the providers sign in from here. The
+ * page a sign-in waits on opens in the system's browser: the desktop app hands
+ * it a page `window.open` names. `undefined` when the bots live elsewhere.
+ */
+const localProviderSetup = (j3: J3Client): ProviderSetupIntents | undefined =>
+  desktop?.mode === "local"
+    ? {
+        signIn: (harness) =>
+          j3.signIn(harness, (url) => {
+            window.open(url, "_blank", "noopener");
+          }),
+        cancelSignIn: j3.cancelSignIn,
+        harnesses: j3.harnessLocations,
+        connectEndpoint: j3.connectEndpoint,
+      }
+    : undefined;
+
+/**
  * In local mode, what stands between the operator and the bots on this
  * computer, before the shell: signing this computer in, with no code, the
  * first time after it was chosen, and only when asked after it was signed
@@ -451,6 +469,7 @@ function useLocalHere(origin: URL) {
   const connection = useConnection();
   const roster = useReadable(j3.roster);
   const engine = useEngineStatus();
+  const signIns = useReadable(j3.signIns);
   const view = useLocalServer();
   const [signIn, setSignIn] = useState<LocalSignInState>({ _tag: "idle" });
   // The first run on this computer: from a sign-in without a code until the
@@ -519,6 +538,8 @@ function useLocalHere(origin: URL) {
 
   if (localMode === null) return null;
   const desktopLocal = localMode;
+
+  const providerSetup = localProviderSetup(j3);
 
   const stopUsing = (): Promise<boolean> => {
     setStopping(true);
@@ -611,6 +632,7 @@ function useLocalHere(origin: URL) {
       <Onboarding
         engine={engine._tag === "ready" ? engine.value : null}
         footer={connectInstead}
+        providerSetup={providerSetup === undefined ? undefined : { ...providerSetup, signIns }}
         waiting={reached ? null : t("local.waiting")}
         onCreate={createFirst}
         onArrived={(botId) => {
@@ -1068,21 +1090,8 @@ function LiveShell({
 
   const storedUnencrypted = useReadable(signInUnencrypted);
 
-  // While the bots live on this computer, the providers sign in from here. The page a sign-in
-  // waits on opens in the system's browser: the desktop app hands it a page `window.open` names.
   const signIns = useReadable(j3.signIns);
-  const providerSetup: ProviderSetupIntents | undefined =
-    desktop?.mode === "local"
-      ? {
-          signIn: (harness) =>
-            j3.signIn(harness, (url) => {
-              window.open(url, "_blank", "noopener");
-            }),
-          cancelSignIn: j3.cancelSignIn,
-          harnesses: j3.harnessLocations,
-          connectEndpoint: j3.connectEndpoint,
-        }
-      : undefined;
+  const providerSetup = localProviderSetup(j3);
 
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,

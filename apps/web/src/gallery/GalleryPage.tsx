@@ -2216,7 +2216,7 @@ function FirstRunAt({
       engine={engine}
       initialStep={step}
       initialName="Nova"
-      {...(providerSetup === undefined ? {} : { providerSetup })}
+      providerSetup={providerSetup}
       onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
     />
@@ -2663,6 +2663,7 @@ function WhereBotsLiveSection() {
           <Onboarding
             engine={null}
             footer={<ConnectInstead onConnect={nothing} />}
+            providerSetup={localSetup(harnessesFound.both)}
             waiting={t("local.waiting")}
             onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
             onArrived={arrived}
@@ -2677,6 +2678,7 @@ function WhereBotsLiveSection() {
             engine={team.engine}
             initialStep="look"
             initialName="Nova"
+            providerSetup={localSetup(harnessesFound.both)}
             waiting={t("local.waiting")}
             onCreate={() => new Promise(() => {})}
             onArrived={arrived}

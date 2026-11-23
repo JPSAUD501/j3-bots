@@ -344,9 +344,11 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
           <Onboarding
             engine={data.engine}
             footer={ways}
-            {...(intents.providerSetup === undefined
-              ? {}
-              : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
+            providerSetup={
+              intents.providerSetup === undefined
+                ? undefined
+                : { ...intents.providerSetup, signIns: data.signIns }
+            }
             onCreate={({ name, avatar }) => {
               setOpeningFirstBot(true);
               // The first bot is the primary one: there is no other to choose.
