@@ -33,10 +33,12 @@ import kotlin.math.roundToInt
 private const val MAX_MESSAGE_LENGTH = 256
 
 /**
- * The name the height reporter of `visualDocument` looks for on `window`. It is
- * the only thing of the app a page can reach, and it takes one string.
+ * The name the height reporter of `visualDocument` looks for on `window`:
+ * `VISUAL_BRIDGE` in `@j3-bots/client-runtime/presentation`, which this must
+ * match. It is the only thing of the app a page can reach, and it takes one
+ * string.
  */
-private const val BRIDGE_NAME = "ReactNativeWebView"
+private const val BRIDGE_NAME = "J3Visual"
 
 /**
  * A bot's visual, in a WebView of its own that keeps it away from everything

@@ -175,7 +175,8 @@ The Android app draws a bot's visual in its own native view (`apps/mobile/module
 - **No network, twice.** The content security policy that `visualDocument` puts first allows none, and the WebView blocks network loads and network images as well (`blockNetworkLoads`, `blockNetworkImage`).
 - **No way out.** The WebView refuses every navigation on its own thread, with no timeout: a link, `location`, a meta refresh, `window.open` (multiple windows are off, and `onCreateWindow` refuses) and a form. Nothing reaches the system browser.
 - **Nothing else of the device.** Off: file access, content URIs, DOM storage, the database, the cache, third-party cookies, saved form data and geolocation. Permission requests (camera, microphone) are denied, the file chooser does not open, and `alert`, `confirm`, `prompt` and `beforeunload` are cancelled, so no dialog draws over the app. Nothing the page logs reaches the device's log.
-- **One string in.** The page reaches the app only through `postMessage(string)`. A string over 256 characters is dropped, and only the latest message waits for the app's main thread. The app reads only `{type: "j3-visual-height", height}` from it, clamped (`readVisualHeight`).
+- **One string in.** The page reaches the app only through `postMessage(string)` on `J3Visual` (`VISUAL_BRIDGE`). A string over 256 characters is dropped, and only the latest message waits for the app's main thread. The app reads only `{type: "j3-visual-height", height}` from it, clamped (`readVisualHeight`).
+- **WebRTC is the document's to shut.** Android's WebView has no setting that turns WebRTC off, and blocking network loads does not cover a peer connection's sockets, so on Android the guard at the head of `visualDocument` ([Visuals](#visuals)) is the only lock on it.
 - **A dead renderer, or no WebView,** shows "Couldn't show this visual" instead of taking the app down (`onRenderProcessGone`; the `AndroidRuntimeException` a WebView throws as it is made when the device has none, or is updating it).
 
 **Verified** on the Pixel 8 emulator (Android 16), with a page that tries each way out, inline and full screen:
@@ -185,10 +186,21 @@ The Android app draws a bot's visual in its own native view (`apps/mobile/module
 - `fetch` failed and the remote image fired `onerror`;
 - `window.open` returned `null`;
 - `alert` and `confirm` showed nothing;
-- the iframe failed with `net::ERR_BLOCKED_BY_CSP`;
+- a page with a frame in its markup never reached the WebView: its card showed the failure line;
 - the page recorded policy violations for `script-src`, `connect-src`, `img-src`, `form-action` and `frame-src`;
 - after a scripted `location` change, a meta refresh, a scripted link click, a form submit and a real tap on a link, the page was still there and the app was still in front;
 - messages with another `type`, with an extra field, and of 5,000 characters changed nothing.
+
+**Verified** for WebRTC on the same emulator (Android WebView 133), with a capture on the device (`tcpdump`) and a STUN listener on the host:
+- without the guard, a visual's data channel sent 257 STUN and TURN packets to an address it chose, the binding requests carrying a username it chose;
+- with it, none left:
+  - from the page's own realm, which has no RTC interface;
+  - from a `srcdoc` frame a script added, to the document or to a closed shadow root;
+  - from one added just before a 1.5-second busy loop;
+  - from a peer connection made in a new frame's `about:blank` window in the same task, even with the task held for five seconds;
+- a scripted chart in the same conversation still drew.
+
+A page that takes `attachShadow` from that `about:blank` window, which the guard never wrapped, can put a frame in a shadow root the guard does not watch. That frame's `srcdoc` document sent STUN requests: an open gap, below.
 
 That a screen reader skips the inline page is **Assumed**. The view sets `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS` on the WebView, and its React parent does the same, but the test driver's accessibility tree still lists the page's nodes, and TalkBack was not run.
 

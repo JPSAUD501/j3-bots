@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EntryId, Visual } from "@j3-bots/contracts";
+import { type EntryId, type Visual, visualEmbedsDocument } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { Maximize2, X } from "lucide-react-native";
 import { use, useEffect, useState, useSyncExternalStore } from "react";
@@ -60,7 +60,9 @@ export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visu
     () => visuals?.heights.get(id) ?? visual.height ?? UNMEASURED_HEIGHT,
   );
   const [shown, setShown] = useState<Shown>(() =>
-    canShowVisuals && visuals?.failed.has(id) !== true ? "loading" : "failed",
+    canShowVisuals && !visualEmbedsDocument(visual.html) && visuals?.failed.has(id) !== true
+      ? "loading"
+      : "failed",
   );
   const [open, setOpen] = useState(false);
   const full = widths.column < layout.breakpoints.tablet;
@@ -74,8 +76,8 @@ export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visu
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={visual.title}
-        accessibilityHint={failed ? t("visual.failed") : t("visual.open")}
+        accessibilityLabel={failed ? visual.title : t("visual.expand", { title: visual.title })}
+        accessibilityHint={failed ? t("visual.failed") : undefined}
         accessibilityState={{ busy: shown === "loading", disabled: failed }}
         onPress={failed ? undefined : () => setOpen(true)}
         style={full ? undefined : { width: widths.card }}

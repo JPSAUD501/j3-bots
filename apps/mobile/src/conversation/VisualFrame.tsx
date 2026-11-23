@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readVisualHeight, visualDocument } from "@j3-bots/client-runtime/presentation";
 import { requireNativeView, requireOptionalNativeModule } from "expo";
-import { useMemo } from "react";
+import { useEffect, useEffectEvent, useMemo } from "react";
 import {
   type NativeSyntheticEvent,
   type StyleProp,
@@ -41,7 +41,8 @@ export const canShowVisuals = NativeVisualView !== null;
 /**
  * A bot's page, wrapped by `visualDocument` in the app's current theme and
  * drawn in the isolated view: rebuilt when the theme changes. Of what the
- * page sends, only its height comes out (`readVisualHeight`), clamped.
+ * page sends, only its height comes out (`readVisualHeight`), clamped. A page
+ * that embeds another document is never drawn: it fails, as its page's doing.
  */
 export function VisualFrame({
   html,
@@ -60,7 +61,12 @@ export function VisualFrame({
 }) {
   const appearance = useColorScheme() === "dark" ? "dark" : "light";
   const document = useMemo(() => visualDocument(html, appearance), [html, appearance]);
-  if (NativeVisualView === null) return null;
+  const refused = document === null;
+  const refuse = useEffectEvent(() => onFailed("page"));
+  useEffect(() => {
+    if (refused) refuse();
+  }, [refused]);
+  if (NativeVisualView === null || document === null) return null;
   return (
     <NativeVisualView
       document={document}

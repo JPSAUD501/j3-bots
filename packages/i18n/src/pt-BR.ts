@@ -186,10 +186,6 @@ const sentences = {
   "visual.close": "Fechar",
   "visual.failed": "Não foi possível mostrar este visual.",
 
-  "visual.open": "Abre em tela cheia",
-  "visual.close": "Fechar",
-  "visual.failed": "Não foi possível mostrar este visual",
-
   "card.waiting": "Esperando por você",
 
   "question.title": "Pergunta",
