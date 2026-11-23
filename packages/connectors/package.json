@@ -8,6 +8,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/fakeMcpServer.ts",
+      "import": "./src/testing/fakeMcpServer.ts"
     }
   },
   "scripts": {

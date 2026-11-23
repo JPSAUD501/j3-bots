@@ -12,19 +12,19 @@ import * as Schema from "effect/Schema";
  * records every request's headers.
  */
 
-export interface FakeTool {
+interface FakeTool {
   readonly name: string;
   readonly description?: string;
   readonly inputSchema?: Readonly<Record<string, unknown>>;
 }
 
 /** What a call answers: a result, a raw body, or nothing at all (it hangs until the session closes). */
-export type FakeAnswer =
+type FakeAnswer =
   | { readonly _tag: "result"; readonly text: string; readonly isError?: boolean }
   | { readonly _tag: "raw"; readonly body: string }
   | { readonly _tag: "hang" };
 
-export interface FakeRequest {
+interface FakeRequest {
   readonly method: string;
   readonly rpc: string | null;
   readonly headers: NodeHttp.IncomingHttpHeaders;

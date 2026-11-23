@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 export const MAX_DESCRIPTION_CHARACTERS = 1_024;
 
 /** The longest title the operator reads, in characters: a label's. */
-export const MAX_TITLE_CHARACTERS = 200;
+const MAX_TITLE_CHARACTERS = 200;
 
 /** The largest input schema offered, as JSON. A larger one is a cost and a hiding place. */
 export const MAX_SCHEMA_BYTES = 16 * 1024;
@@ -60,7 +60,7 @@ const UNSEEN = /[\p{Cc}\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}]/gu;
 const KEPT_CONTROLS = new Set(["\n", "\t"]);
 
 /** A remote description as a bot reads it: no hidden characters, no J3 Bots tags, at most {@link MAX_DESCRIPTION_CHARACTERS}. */
-export const cleanDescription = (text: string): string => {
+const cleanDescription = (text: string): string => {
   const visible = text.replace(UNSEEN, (char) => (KEPT_CONTROLS.has(char) ? char : ""));
   return cap(defuseTags(visible.trim()), MAX_DESCRIPTION_CHARACTERS);
 };
