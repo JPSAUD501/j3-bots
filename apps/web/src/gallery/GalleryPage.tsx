@@ -38,6 +38,7 @@ import {
   type SignInHarness,
   type UsageWindow,
 } from "@j3-bots/contracts";
+import type { LocalServerState } from "@j3-bots/desktop-bridge";
 import {
   avatarCast,
   avatarShapeNames,
@@ -86,7 +87,18 @@ import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
 import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
-import { ConnectionBanner } from "../components/ConnectionBanner";
+import { ConnectionBanner, type LocalLine } from "../components/ConnectionBanner";
+import {
+  ConnectInstead,
+  LocalServerFailed,
+  LocalServerFailedBody,
+  LocalSignIn,
+  StoppingLocal,
+  StopUsingComputer,
+  WhereBotsLive,
+} from "../components/LocalMode";
+import { ServerAddress } from "../components/ServerAddress";
+import { WhereSection } from "../components/SettingsDialog";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
 import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
@@ -206,6 +218,7 @@ export default function GalleryPage() {
                 <FirstRunWideSection />
                 <EmptyStatesSection />
                 <ConnectionSection />
+                <WhereBotsLiveSection />
                 <ShellSection />
               </div>
             </div>
@@ -2513,6 +2526,191 @@ function ConnectionSection() {
         </Frame>
         <Frame label="The browser would not keep the sign-in" width={390} height={360}>
           <StorageFailed onRetry={nothing} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
+/** A server on this computer that did not start, as the app reports it: its words, its fix, its last lines. */
+const notStarted: LocalServerState = {
+  state: "failed",
+  attempt: 3,
+  reason: "J3 Bots stopped three times as it started.",
+  fix: "Free some space on this computer's disk, then try again.",
+  logTail: [
+    "starting J3 Bots 0.3.0",
+    "reading the bots kept on this computer",
+    "error: no space left on the disk to write the bots' data",
+    "stopped",
+  ].join("\n"),
+};
+
+const localLine = (server: LocalServerState): LocalLine => ({
+  server,
+  restartAt: server.state === "restarting" ? retryAt : null,
+  onRetry: nothing,
+  onDetails: nothing,
+});
+
+/** The first screen and, on its second choice, the server address screen with a way back. */
+function WhereFlow({ notice = null }: { notice?: string | null }) {
+  const [where, setWhere] = useState<"choice" | "address">("choice");
+  return where === "choice" ? (
+    <WhereBotsLive
+      notice={notice}
+      onUseThisComputer={() => Promise.resolve("failed")}
+      onConnectToServer={() => setWhere("address")}
+    />
+  ) : (
+    <ServerAddress
+      onConnect={() => Promise.resolve({ _tag: "refused", reason: "unreachable" })}
+      onBack={() => setWhere("choice")}
+    />
+  );
+}
+
+/** Settings' section for where the bots live, alone: the rest of Settings is in the shell's. */
+function WhereSettings({ local }: { local: boolean }) {
+  const [startWithSystem, setStartWithSystem] = useState(false);
+  return (
+    <div className="flex flex-col gap-4 p-4">
+      <WhereSection
+        server={
+          local
+            ? undefined
+            : {
+                address: "https://j3.example.test",
+                forget: () => Promise.resolve(false),
+                chooseThisComputer: () => Promise.resolve("failed"),
+              }
+        }
+        local={
+          local
+            ? {
+                stopUsing: () => Promise.resolve(false),
+                startWithSystem,
+                setStartWithSystem: (on) => {
+                  setStartWithSystem(on);
+                  return Promise.resolve(on);
+                },
+              }
+            : undefined
+        }
+      />
+    </div>
+  );
+}
+
+function WhereBotsLiveSection() {
+  const { t } = useI18n();
+  return (
+    <Section title="Where the bots live (desktop app)">
+      <Labeled label="The connection line on this computer: starting, stopped, restarting with a retry waiting, failed">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          {(
+            [
+              { state: "starting" },
+              { state: "stopped" },
+              { state: "restarting", attempt: 2, retryInSeconds: 30 },
+              notStarted,
+            ] satisfies ReadonlyArray<LocalServerState>
+          ).map((server) => (
+            <ConnectionBanner
+              key={server.state}
+              state={{ _tag: "connected" }}
+              local={localLine(server)}
+              everConnected
+              onRetryNow={nothing}
+            />
+          ))}
+        </div>
+      </Labeled>
+      <div className="flex flex-wrap gap-4">
+        <Frame
+          label="The first screen; Use this computer is refused here, to show how; Connect to a server leads to the address, with a way back"
+          width={390}
+          height={760}
+        >
+          <WhereFlow />
+        </Frame>
+        <Frame label="The first screen, opened from a pairing link" width={390} height={760}>
+          <WhereFlow notice={t("links.chooseFirst")} />
+        </Frame>
+        <Frame
+          label="The first run while the bots start, with a way to a server instead"
+          width={390}
+          height={760}
+        >
+          <Onboarding
+            engine={null}
+            footer={<ConnectInstead onConnect={nothing} />}
+            waiting={t("local.waiting")}
+            onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
+            onArrived={arrived}
+          />
+        </Frame>
+        <Frame
+          label="The first bot asked for before the bots run: create it to see it wait"
+          width={390}
+          height={760}
+        >
+          <Onboarding
+            engine={team.engine}
+            initialStep="look"
+            initialName="Nova"
+            waiting={t("local.waiting")}
+            onCreate={() => new Promise(() => {})}
+            onArrived={arrived}
+          />
+        </Frame>
+        <Frame label="The bots did not start, before the first bot" width={390} height={760}>
+          <LocalServerFailed
+            server={notStarted}
+            onRetry={nothing}
+            footer={<ConnectInstead onConnect={nothing} />}
+          />
+        </Frame>
+        <Frame
+          label="The bots did not start, from the connection line once there are bots"
+          width={448}
+          height={420}
+        >
+          <div className="flex flex-col gap-3 p-5">
+            <p className="text-lg font-semibold">{t("local.failed.title")}</p>
+            <LocalServerFailedBody server={notStarted} onRetry={nothing} />
+          </div>
+        </Frame>
+        <Frame label="This computer was signed out (signing in fails)" width={390} height={560}>
+          <LocalSignIn
+            reason="signed-out"
+            onSignIn={() => Promise.resolve(false)}
+            footer={<StopUsingComputer quiet onStop={() => Promise.resolve(false)} />}
+          />
+        </Frame>
+        <Frame label="This computer could not sign in" width={390} height={560}>
+          <LocalSignIn
+            reason="failed"
+            onSignIn={() => Promise.resolve(false)}
+            footer={<StopUsingComputer quiet onStop={() => Promise.resolve(false)} />}
+          />
+        </Frame>
+        <Frame label="Stopping the bots on this computer" width={390} height={360}>
+          <StoppingLocal />
+        </Frame>
+        <Frame
+          label="Settings, on this computer: Stop using this computer asks first (and fails here)"
+          width={420}
+          height={300}
+        >
+          <WhereSettings local />
+        </Frame>
+        <Frame
+          label="Settings, on a server: Use this computer asks first (and fails here)"
+          width={420}
+          height={220}
+        >
+          <WhereSettings local={false} />
         </Frame>
       </div>
     </Section>

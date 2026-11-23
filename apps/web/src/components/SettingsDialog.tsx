@@ -769,7 +769,7 @@ export function SignOutDevice({
  * whether the app starts with the system and stopping using it; on a server,
  * its address, changing it and using this computer instead.
  */
-function WhereSection({
+export function WhereSection({
   server,
   local,
 }: {

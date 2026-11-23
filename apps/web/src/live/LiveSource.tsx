@@ -86,6 +86,7 @@ import {
   LocalServerFailedBody,
   LocalSignIn,
   StoppingLocal,
+  StopUsingComputer,
   WhereBotsLive,
 } from "../components/LocalMode";
 import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
@@ -510,6 +511,8 @@ function useLocalHere(origin: URL) {
       });
   };
   const connectInstead = <ConnectInstead onConnect={() => void stopUsing()} />;
+  // Signed out, the bots this computer has are still here: leaving them asks first.
+  const stopInstead = <StopUsingComputer quiet onStop={stopUsing} />;
   const failed = view !== null && view.server.state === "failed" ? view.server : null;
 
   const intents: DesktopLocal = {
@@ -570,15 +573,11 @@ function useLocalHere(origin: URL) {
         return <StoppingLocal />;
       case "sign-in-failed":
         return (
-          <LocalSignIn reason="failed" onSignIn={() => signInHere(true)} footer={connectInstead} />
+          <LocalSignIn reason="failed" onSignIn={() => signInHere(true)} footer={stopInstead} />
         );
       case "signed-out":
         return (
-          <LocalSignIn
-            reason="signed-out"
-            onSignIn={() => signInHere(true)}
-            footer={connectInstead}
-          />
+          <LocalSignIn reason="signed-out" onSignIn={() => signInHere(true)} footer={stopInstead} />
         );
       case "first-run":
         return onboarding;
