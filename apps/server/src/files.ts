@@ -50,9 +50,28 @@ export const replaceFile = Effect.fn("files.replaceFile")(function* (
   yield* writeBeside(file, data, mode, (temporary) => fs.rename(temporary, file));
 });
 
-/** Flushes `location`, a file or a folder, to the disk: what was written or renamed there survives a power cut. */
-export const flush = (fs: FileSystem.FileSystem, location: string) =>
-  Effect.scoped(Effect.flatMap(fs.open(location, { flag: "r" }), (file) => file.sync));
+/**
+ * Flushes the file `location` to the disk: what was written to it survives a
+ * power cut. Windows flushes only a file opened for writing
+ * (`FlushFileBuffers`), so there it is opened so, though nothing is written.
+ */
+export const flushFile = Effect.fn("files.flushFile")(function* (location: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const flag = process.platform === "win32" ? "r+" : "r";
+  yield* Effect.scoped(Effect.flatMap(fs.open(location, { flag }), (file) => file.sync));
+});
+
+/**
+ * Flushes the folder `location` to the disk: the names made or moved in it
+ * survive a power cut. Not on Windows, where a folder opened as Node opens
+ * one cannot be flushed (the call fails with `EPERM`): there NTFS keeps those
+ * names in its own journal, which it writes to the disk on its own schedule.
+ */
+export const flushFolder = Effect.fn("files.flushFolder")(function* (location: string) {
+  if (process.platform === "win32") return;
+  const fs = yield* FileSystem.FileSystem;
+  yield* Effect.scoped(Effect.flatMap(fs.open(location, { flag: "r" }), (file) => file.sync));
+});
 
 /**
  * Replaces `file` with `data`, whole, as `replaceFile` does, and durably: the
@@ -68,9 +87,10 @@ export const replaceFileDurably = Effect.fn("files.replaceFileDurably")(function
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* writeBeside(file, data, mode, (temporary) =>
-    flush(fs, temporary).pipe(
+    flushFile(temporary).pipe(
       Effect.andThen(fs.rename(temporary, file)),
-      Effect.andThen(flush(fs, path.dirname(file))),
+      Effect.andThen(flushFolder(path.dirname(file))),
+      Effect.provideService(FileSystem.FileSystem, fs),
     ),
   );
 });

@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { flush, replaceFileDurably } from "../files.ts";
+import { flushFolder, replaceFileDurably } from "../files.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
 import { SnapshotRelease } from "../install/snapshot.ts";
 
@@ -177,7 +177,7 @@ export const setAsideRecord = Effect.fn("transition.setAsideRecord")(function* (
   const file = recordFile(path, home);
   const now = yield* DateTime.now;
   yield* fs.rename(file, `${file}.unreadable-${now.epochMilliseconds}`);
-  yield* flush(fs, path.dirname(file));
+  yield* flushFolder(path.dirname(file));
 });
 
 /** A version as releases are numbered: `0.3.0`, `0.3.0-rc.1`, semantic versioning's order. */
