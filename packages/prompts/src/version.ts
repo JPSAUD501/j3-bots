@@ -4,6 +4,7 @@ import { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { createHash } from "node:crypto";
+import { type ConnectorResult, renderConnectorResultWithNonce } from "./connectorResult.ts";
 import { renderWakeWithNonce, type Wake } from "./envelope.ts";
 import { BASE_TEMPLATE, BOT_TEMPLATE } from "./instructions.ts";
 import { sharedSkills } from "./skills.ts";
@@ -118,6 +119,21 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
   { ...base, kind: "system", event: { name: "undelivered" } },
 ];
 
+const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
+  {
+    type: "answer",
+    connector: "Connector",
+    tool: "tool",
+    text: "text",
+    isError: false,
+    cut: false,
+  },
+  { type: "answer", connector: "Connector", tool: "tool", text: "text", isError: true, cut: true },
+  ...(
+    ["needs-sign-in", "vault-locked", "unreachable", "timed-out", "too-large", "failed"] as const
+  ).map((reason): ConnectorResult => ({ type: "unavailable", connector: "Connector", reason })),
+];
+
 const fingerprint = (): string => {
   const hash = createHash("sha256");
   for (const part of [
@@ -126,6 +142,9 @@ const fingerprint = (): string => {
     JSON.stringify(toolList),
     ...sharedSkills.flatMap((skill) => [skill.name, skill.text]),
     ...SAMPLE_WAKES.map((wake) => renderWakeWithNonce(wake, "000000000000")),
+    ...SAMPLE_CONNECTOR_RESULTS.map((result) =>
+      renderConnectorResultWithNonce(result, "000000000000"),
+    ),
   ]) {
     // Length-prefixed, so moving text from one part to the next changes the hash.
     hash.update(`${part.length}:${part}`);

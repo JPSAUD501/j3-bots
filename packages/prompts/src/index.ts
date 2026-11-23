@@ -11,9 +11,12 @@
  *   matches no running turn, such as a subagent's, reads.
  * - {@link sharedSkills}: the skills J3 Bots ships, which the server installs
  *   for every bot.
+ * - {@link renderConnectorResult}: what a bot reads back from a connector's
+ *   tool, framed as untrusted data; {@link defuseTags}, for other remote text
+ *   a bot reads, such as a connector tool's description.
  * - {@link PROMPT_VERSION}: one identifier for all of the above.
  *
- * Every function here is pure. `renderWake` draws its nonce from `SecureRandom`.
+ * Every function here is pure. `renderWake` and `renderConnectorResult` draw their nonce from `SecureRandom`.
  */
 export {
   type AskAnswer,
@@ -59,5 +62,11 @@ export {
   toolList,
   tools,
 } from "./tools.ts";
+export {
+  type ConnectorResult,
+  type ConnectorUnavailable,
+  renderConnectorResult,
+} from "./connectorResult.ts";
 export { type SharedSkill, sharedSkills } from "./skills.ts";
+export { defuseTags } from "./text.ts";
 export { PROMPT_VERSION } from "./version.ts";
