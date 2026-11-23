@@ -193,7 +193,8 @@ export const makeBrowserBridge = (input: {
     Stream.unwrap(
       Effect.gen(function* () {
         const state = makeTabState();
-        // Subscribed before listing, so an event between the two is not lost.
+        // Subscribed before listing. The engine says nothing once the subscription
+        // holds, so an event in between is caught only if it took hold first (engine.md).
         const events = yield* Stream.toQueue(rpc["subscribePreviewEvents"]({}), {
           capacity: "unbounded",
         });
