@@ -34,6 +34,10 @@ String request ids were accepted. A bearer header on the upgrade, without a tick
 
 **A CLI-minted token does not work on `/mcp`.** The same kind of token was rejected there with `invalid_mcp_credential`. `/mcp` accepts only its own OAuth client sessions.
 
+### What an agent's engine tools show
+
+Against `4941` on x86-64, on 2026-11-23: read-only calls to the MCP tools an instance gives the agents it runs, made by an agent in an operator's own instance rather than an isolated one. `t3_environment_read` answered with the environment id, a `label` that was the machine's hostname, the server version and the platform (`os`, `arch`). `t3_project_list` listed that instance's projects, each with `id`, `title` and `workspaceRoot`, and `t3_thread_list` its threads. With the independence of an isolated instance above, an agent in J3 Bots' engine is given the machine's name as its engine's, and reaches nothing the operator keeps in another instance.
+
 ### The turn protocol
 
 Against `4941` and `4969` on x86-64, on Claude Code, Codex and the scripted agent described in [Engine](../architecture/engine.md#upgrading-the-engine).

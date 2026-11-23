@@ -126,13 +126,111 @@ const decodeSecretInput = Schema.decodeUnknownOption(
   }),
 );
 
+/**
+ * The engine instance J3 Bots runs for its bots, as its own MCP tools show it
+ * to a bot, for a scenario about what those tools reach. The engine offers a
+ * bot tools under the `t3-code` server name, which Claude Code lists as
+ * `mcp__t3-code__<tool>` (Read in this repository,
+ * `packages/engine-t3/src/t3/toolNames.ts`). The stand-in offers three read
+ * tools and answers them from {@link EngineInstance}, in the fields T3 Code's
+ * own answer with (Verified on `4941`, `docs/research/t3-code.md`): the
+ * environment's `label` is the name of the machine the engine runs on, and the
+ * projects and threads are the instance's own. That the pinned engine offers a
+ * bot the same tools is Assumed. The descriptions are this repository's own
+ * wording.
+ */
+export interface EngineInstance {
+  /** The name the instance answers with: the machine it runs on. */
+  readonly machine: string;
+  readonly projects: ReadonlyArray<{ readonly title: string; readonly workspaceRoot: string }>;
+  readonly threads: ReadonlyArray<{ readonly title: string; readonly project: string }>;
+}
+
+const ENGINE_TOOLS = {
+  environment: "mcp__t3-code__t3_environment_read",
+  projects: "mcp__t3-code__t3_project_list",
+  threads: "mcp__t3-code__t3_thread_list",
+} as const;
+
+const NO_ARGUMENTS = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+} as const;
+
+/** The stand-in engine tools, in this repository's own wording. */
+const engineTools: ReadonlyArray<FunctionTool> = [
+  {
+    type: "function",
+    function: {
+      name: ENGINE_TOOLS.environment,
+      description: "Which T3 Code server these tools reach: its environment id and its label.",
+      parameters: NO_ARGUMENTS,
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: ENGINE_TOOLS.projects,
+      description: "The projects this T3 Code server holds.",
+      parameters: NO_ARGUMENTS,
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: ENGINE_TOOLS.threads,
+      description: "The threads this T3 Code server holds, newest first.",
+      parameters: NO_ARGUMENTS,
+    },
+  },
+];
+
+/** A stand-in project's id, from its title. */
+const projectId = (title: string): string => `project-${title.toLowerCase()}`;
+
+/** What the stand-in engine tool `name` answers, or `undefined` when `name` is not one. */
+const engineAnswer = (engine: EngineInstance, name: string): Schema.Json | undefined => {
+  switch (name) {
+    case ENGINE_TOOLS.environment:
+      return {
+        environmentId: "env-local",
+        label: engine.machine,
+        platform: { os: "linux", arch: "x64" },
+      };
+    case ENGINE_TOOLS.projects:
+      return {
+        projects: engine.projects.map((project) => ({
+          id: projectId(project.title),
+          title: project.title,
+          workspaceRoot: project.workspaceRoot,
+        })),
+      };
+    case ENGINE_TOOLS.threads:
+      return {
+        threads: engine.threads.map((thread, index) => ({
+          threadId: `thread-${index + 1}`,
+          projectId: projectId(thread.project),
+          title: thread.title,
+          status: "idle",
+        })),
+      };
+    default:
+      return undefined;
+  }
+};
+
 /** What `run_command` says about the programs signed in, unless a scenario says otherwise. */
 const GH_SIGNED_IN = "The GitHub CLI, gh, is signed in.";
 
-/** The `j3` tools, and a `run_command` that names what the workspace has. */
+/**
+ * The `j3` tools, a `run_command` that names what the workspace has, and the
+ * engine's own tools when the scenario gives its instance.
+ */
 const functionTools = (
   commands: ReadonlyArray<string>,
   shell: string,
+  engine: EngineInstance | undefined,
 ): ReadonlyArray<FunctionTool> => [
   ...toolList.map((tool): FunctionTool => ({
     type: "function",
@@ -170,6 +268,7 @@ const functionTools = (
       },
     },
   },
+  ...(engine === undefined ? [] : engineTools),
 ];
 
 /** A tool the model called, with its arguments as it sent them. */
@@ -271,6 +370,8 @@ export interface Scenario {
    * words such a failure is Assumed; the stand-in returns an error.
    */
   readonly pastedSecretFails?: boolean;
+  /** The engine instance whose own tools the bot gets; none offers them. */
+  readonly engine?: EngineInstance;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -640,8 +741,11 @@ const answer = (
         ? workspace.run(input.value.command)
         : reply(json({ error: "`command` must be a string." }));
     }
-    default:
-      return reply(json({ error: `${request.name} is not available here.` }));
+    default: {
+      const engine =
+        scenario.engine === undefined ? undefined : engineAnswer(scenario.engine, request.name);
+      return reply(json(engine ?? { error: `${request.name} is not available here.` }));
+    }
   }
 };
 
@@ -688,7 +792,11 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const envelope = yield* renderWake(scenario.wake);
     const workspace = scenario.workspace();
     const routines = new HeldRoutines(scenario.wake);
-    const tools = functionTools(workspace.commands, scenario.shell ?? GH_SIGNED_IN);
+    const tools = functionTools(
+      workspace.commands,
+      scenario.shell ?? GH_SIGNED_IN,
+      scenario.engine,
+    );
     const messages: Array<Message> = [
       {
         role: "system",
