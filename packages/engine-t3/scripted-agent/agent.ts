@@ -408,7 +408,7 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   browser: async (turn) => {
     const listed = await callHostTool(turn, "t3_preview_list", {});
     await callHostTool(turn, "send_to_user", {
-      message: Option.isSome(listed) ? "allowed" : "refused",
+      message: listed.failed ? "refused" : "allowed",
     });
     reportUsage(turn);
     return turn.signal.aborted ? "cancelled" : "end_turn";
