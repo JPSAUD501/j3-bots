@@ -10,7 +10,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Profile.** What makes a bot recognizable: its name, a short title ("Research", "Inbox"), an avatar (a shape and a color), and its **job**, a few sentences in plain language saying what the bot is for and where its limits are. The job is the only per-bot instruction text. Everything else a bot learns goes to memory.
 
-**Primary bot.** The one bot the operator treats as their default contact. New requests that belong to nobody go to it. It may create other bots, hand work to them, and check in on its own. J3 Bots works without one.
+**Primary bot.** The one bot the operator treats as their default contact. New requests that belong to nobody go to it. It may create other bots, hand work to them, and check in on its own. J3 Bots works without one. Making another bot primary replaces the old one in the same change, so there are never two.
 
 **Teammate.** From one bot's point of view, any other bot of the same operator.
 
@@ -25,6 +25,18 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 **Room.** A group chat with the operator and two to six bots. A room has a name, members, a host and its own message history. Bots keep their own memory in a room; they share only what is said there.
 
 **Host.** The bot in a room that answers when the operator addresses nobody in particular, and that decides who should take a request.
+
+## The roster
+
+**Roster.** The list of the operator's bots and rooms, on every device. The operator arranges it; arranging it never changes what a bot does or who can reach it.
+
+**Pinned.** A bot or room the operator keeps at the top of the roster.
+
+**Hidden.** A bot kept out of the roster. It keeps running, and search and the list of hidden bots still reach it.
+
+**Section.** A named group of bots in the roster, which the operator creates, names, orders and folds away. A bot is in at most one section. Deleting a section never deletes its bots: they go back to the roster's main list.
+
+**Unread.** A conversation or room with something a bot or J3 Bots wrote after the operator's read mark. The operator can mark one unread again, to come back to it.
 
 ## How bots run
 

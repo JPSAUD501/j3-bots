@@ -102,6 +102,9 @@ export {
   withoutDeleted,
 } from "./roomForm.ts";
 export {
+  arrangeRoster,
+  type ArrangedRoster,
+  type BotItem,
   canStop,
   filterRoster,
   firstLine,
@@ -111,6 +114,7 @@ export {
   roomStopFailed,
   rosterKeyOf,
   rosterKeyText,
+  type RosterSectionRows,
   rosterTarget,
 } from "./roster.ts";
 export {

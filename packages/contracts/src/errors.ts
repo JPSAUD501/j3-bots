@@ -33,6 +33,8 @@ export const Resource = Schema.Literals([
   "memory-file",
   "device",
   "attachment",
+  /** Only an answer to a request about sections names it, which an older client never makes. */
+  "section",
 ]);
 export type Resource = typeof Resource.Type;
 

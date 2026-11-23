@@ -2,7 +2,7 @@
 import { avatarShapeNames, botColors } from "@j3-bots/design-tokens/names";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { BotId, EntryId, Label, ModelId, OpenLiterals, ProviderId } from "./base.ts";
+import { BotId, EntryId, Label, ModelId, OpenLiterals, ProviderId, SectionId } from "./base.ts";
 import { StepTool } from "./work.ts";
 
 const Token = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32));
@@ -150,6 +150,11 @@ export const Bot = Schema.Struct({
   pinned: Schema.Boolean,
   /** Kept out of the roster; still running and reachable through search. */
   hidden: Schema.Boolean,
+  /**
+   * The roster section the bot is in, or null for none. Null from a server
+   * that predates sections, whose roster sends no `sections`.
+   */
+  sectionId: Schema.NullOr(SectionId).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   state: BotState,
   /**
    * A change of the bot's model or permission mode waits for background work

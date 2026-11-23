@@ -24,6 +24,8 @@ import type {
   RosterItem,
   Routine,
   RoutineId,
+  Section as RosterSection,
+  SectionId,
   Settings as SettingsValue,
   SignInHarness,
 } from "@j3-bots/contracts";
@@ -166,6 +168,8 @@ export interface J3Client {
   readonly reconnectNow: () => void;
 
   readonly roster: Readable<Synced<ReadonlyArray<RosterItem>>>;
+  /** See `Roster.sections`: null while the server has not said it has sections. */
+  readonly sections: Readable<ReadonlyArray<RosterSection> | null>;
   readonly engine: Readable<Synced<EngineStatusValue>>;
   readonly settings: Readable<Synced<SettingsValue>>;
   /** Each section of Settings' latest save, under way or how it ended. */
@@ -301,6 +305,26 @@ export interface J3Client {
     changes: Details.RoomChanges,
   ) => Promise<Actions.IntentResult<Room>>;
   readonly deleteRoom: (roomId: RoomId) => Promise<Actions.IntentResult>;
+  /** See `Roster.placeBot`. */
+  readonly placeBot: (
+    botId: BotId,
+    placement: Roster.BotPlacement,
+  ) => Promise<Actions.IntentResult<Bot>>;
+  /** See `Roster.markRead`: from the roster, without opening the conversation. */
+  readonly markRosterRead: (
+    target: EntryTarget,
+    through: EntryOrder,
+  ) => Promise<Actions.IntentResult>;
+  readonly markUnread: (target: EntryTarget) => Promise<Actions.IntentResult>;
+  readonly createSection: (
+    name: string,
+    botId: BotId | null,
+  ) => Promise<Actions.IntentResult<RosterSection>>;
+  readonly updateSection: (
+    sectionId: SectionId,
+    changes: Roster.SectionChanges,
+  ) => Promise<Actions.IntentResult<RosterSection>>;
+  readonly deleteSection: (sectionId: SectionId) => Promise<Actions.IntentResult>;
   readonly retryMessage: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly retryNotice: (entryId: EntryId) => Promise<Actions.IntentResult>;
   readonly answerCard: (
@@ -433,6 +457,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     reconnectNow: () => fire(connection.reconnectNow),
 
     roster: services.roster.state,
+    sections: services.roster.sections,
     engine: services.engine.state,
     settings: services.settings.state,
     settingsSaves: services.settings.saves,
@@ -551,6 +576,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     createRoom: (draft) => run.promise(services.details.createRoom(draft)),
     updateRoom: (roomId, changes) => run.promise(services.details.updateRoom(roomId, changes)),
     deleteRoom: (roomId) => run.promise(services.details.deleteRoom(roomId)),
+    placeBot: (botId, placement) => run.promise(services.roster.placeBot(botId, placement)),
+    markRosterRead: (target, through) => run.promise(services.roster.markRead(target, through)),
+    markUnread: (target) => run.promise(services.roster.markUnread(target)),
+    createSection: (name, botId) => run.promise(services.roster.createSection(name, botId)),
+    updateSection: (sectionId, changes) =>
+      run.promise(services.roster.updateSection(sectionId, changes)),
+    deleteSection: (sectionId) => run.promise(services.roster.deleteSection(sectionId)),
     retryMessage: (entryId) => run.promise(conversations.retryMessage(entryId)),
     retryNotice: (entryId) => run.promise(conversations.retryNotice(entryId)),
     answerCard: (entryId, answer) => run.promise(conversations.answerCard(entryId, answer)),

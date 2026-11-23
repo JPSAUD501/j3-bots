@@ -288,7 +288,12 @@ export interface Conversation {
   readonly state: Readable<ConversationState>;
   /** Reads the page before the oldest entry held. Does nothing while a read runs or at the start. */
   readonly loadOlder: Effect.Effect<void>;
-  /** Moves the operator's read mark forward to `through`, the newest entry they have seen. */
+  /**
+   * Moves the operator's read mark forward to `through`, the newest entry
+   * they have seen. A mark this conversation already sent, or one before it,
+   * is not sent again, until the server says the target is unread
+   * (`unreadOnServer`).
+   */
   readonly markRead: (through: EntryOrder) => Effect.Effect<void>;
 }
 
@@ -351,6 +356,12 @@ export class Conversations extends Context.Service<
   {
     /** Opens the conversation for as long as the scope lasts. Users of one target share it. */
     readonly open: (target: EntryTarget) => Effect.Effect<Conversation, never, Scope.Scope>;
+    /**
+     * The server counts something in `target` unread, as after another
+     * device marked it unread: the next read of an open conversation is sent
+     * even when this window sent the same mark before.
+     */
+    readonly unreadOnServer: (target: EntryTarget) => Effect.Effect<void>;
     /**
      * Shows the message at once and sends it, through any disconnection,
      * exactly once. Succeeds with the new entry's id when the server has it.
@@ -445,6 +456,9 @@ export const layer = Layer.effect(
     let followed = connection.pairing.get();
     // Sent again after a reload: once accepted, their entries show where the history puts them.
     const replays = new Set<CommandId>();
+
+    // Each open conversation's way to forget the read mark it last sent, by `targetKey`.
+    const sentReads = new Map<string, () => void>();
 
     const removeOutgoing = (commandIds: ReadonlySet<CommandId>) => {
       if (!outbox.get().some((held) => commandIds.has(held.message.commandId))) return;
@@ -667,9 +681,14 @@ export const layer = Layer.effect(
         };
         const unsubscribe = outbox.subscribe(onOutbox);
         const unsubscribePairing = connection.pairing.subscribe(publish);
+        const forgetRead = () => {
+          readThrough = null;
+        };
+        sentReads.set(key, forgetRead);
         const close = () => {
           unsubscribe();
           unsubscribePairing();
+          if (sentReads.get(key) === forgetRead) sentReads.delete(key);
           // The server has these; the next open reads them with the rest.
           removeOutgoing(
             new Set(
@@ -1586,8 +1605,13 @@ export const layer = Layer.effect(
       }
     }).pipe(Effect.forkIn(scope));
 
+    const unreadOnServer = Effect.fn("Conversations.unreadOnServer")((target: EntryTarget) =>
+      Effect.sync(() => sentReads.get(targetKey(target))?.()),
+    );
+
     return Conversations.of({
       open: stores.acquire,
+      unreadOnServer,
       send,
       enqueue,
       resend,

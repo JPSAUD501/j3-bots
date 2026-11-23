@@ -650,6 +650,12 @@ export const foldEnding = (entry: Entry): TurnEnding | null =>
  */
 export const EntryPreview = Schema.Struct({
   entryId: EntryId,
+  /**
+   * The entry's place in its conversation or room: what `entries.markRead`
+   * takes to mark everything there read from the roster. `null` from a
+   * server that predates it.
+   */
+  order: Schema.NullOr(EntryOrder).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   /** The entry's kind; `unknown` for one added after this build. */
   kind: OpenLiterals(entryKinds),
   author: Author,

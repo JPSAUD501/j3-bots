@@ -37,6 +37,10 @@ export type RoutineRunId = typeof RoutineRunId.Type;
 export const AttachmentId = id.pipe(Schema.brand("AttachmentId"));
 export type AttachmentId = typeof AttachmentId.Type;
 
+/** A named group of bots in the operator's roster. */
+export const SectionId = id.pipe(Schema.brand("SectionId"));
+export type SectionId = typeof SectionId.Type;
+
 export const DeviceId = id.pipe(Schema.brand("DeviceId"));
 export type DeviceId = typeof DeviceId.Type;
 

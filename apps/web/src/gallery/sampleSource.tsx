@@ -395,6 +395,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
           primary,
           pinned: false,
           hidden: false,
+          sectionId: null,
           state: canSpeak
             ? { _tag: "thinking", since: now(), stalled: false, quietSince: null }
             : { _tag: "idle" },

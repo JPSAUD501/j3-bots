@@ -14,18 +14,31 @@ import { Flag, timeText } from "./columns.ts";
 
 /**
  * What a change belongs to. `conversation`, `room` and `routines` are recorded
- * in the `changes` table, which their subscriptions resume from; `bot` only
- * tells live subscribers that a bot itself changed (the roster does not resume).
+ * in the `changes` table, which their subscriptions resume from; `bot` and
+ * `sections` only tell live subscribers that a bot itself, or the roster's
+ * sections, changed (the roster does not resume).
  */
 export type ChangeScope =
   | { readonly _tag: "conversation"; readonly botId: BotId }
   | { readonly _tag: "room"; readonly roomId: RoomId }
   | { readonly _tag: "routines"; readonly botId: BotId }
-  | { readonly _tag: "bot"; readonly botId: BotId };
+  | { readonly _tag: "bot"; readonly botId: BotId }
+  | { readonly _tag: "sections" };
 
-/** The `scope` column's value. */
-export const scopeKey = (scope: ChangeScope): string =>
-  scope._tag === "room" ? `room:${scope.roomId}` : `${scope._tag}:${scope.botId}`;
+/** The scopes the `changes` table records. */
+type RecordedScope = Exclude<ChangeScope, { readonly _tag: "bot" | "sections" }>;
+
+/** The `scope` column's value, and what a subscriber compares scopes by. */
+export const scopeKey = (scope: ChangeScope): string => {
+  switch (scope._tag) {
+    case "room":
+      return `room:${scope.roomId}`;
+    case "sections":
+      return "sections";
+    default:
+      return `${scope._tag}:${scope.botId}`;
+  }
+};
 
 /** One recorded change: the entity, and whether it was removed. */
 interface Change {
@@ -63,7 +76,7 @@ export class ChangeLog extends Context.Service<
   {
     /** Records a change, and signals it once the surrounding transaction commits. */
     readonly record: (
-      scope: Exclude<ChangeScope, { readonly _tag: "bot" }>,
+      scope: RecordedScope,
       entityId: string,
       removed?: boolean,
     ) => Effect.Effect<void>;
@@ -74,10 +87,7 @@ export class ChangeLog extends Context.Service<
     /** The newest sequence: a snapshot read in the same transaction is current as of it. */
     readonly watermark: Effect.Effect<Sequence>;
     /** The changes in `scope` after `after`, oldest first. */
-    readonly since: (
-      scope: Exclude<ChangeScope, { readonly _tag: "bot" }>,
-      after: Sequence,
-    ) => Effect.Effect<Resume>;
+    readonly since: (scope: RecordedScope, after: Sequence) => Effect.Effect<Resume>;
   }
 >()("@j3-bots/server/persistence/ChangeLog") {}
 
@@ -91,7 +101,7 @@ export const layer = Layer.effect(
       sql.afterCommit(PubSub.publish(pubsub, scope).pipe(Effect.asVoid));
 
     const record = Effect.fn("ChangeLog.record")(function* (
-      scope: Exclude<ChangeScope, { readonly _tag: "bot" }>,
+      scope: RecordedScope,
       entityId: string,
       removed = false,
     ) {
@@ -127,10 +137,7 @@ export const layer = Layer.effect(
       `,
     });
 
-    const since = Effect.fn("ChangeLog.since")(function* (
-      scope: Exclude<ChangeScope, { readonly _tag: "bot" }>,
-      after: Sequence,
-    ) {
+    const since = Effect.fn("ChangeLog.since")(function* (scope: RecordedScope, after: Sequence) {
       const { newest, oldest } = yield* bounds;
       // A sequence this server never handed out, or one older than the oldest
       // change it keeps, cannot be resumed from.

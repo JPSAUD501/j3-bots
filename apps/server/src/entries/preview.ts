@@ -32,6 +32,7 @@ const cut = (text: string, length: number): string => {
  */
 export const previewOf = (entry: Entry, step: WorkStep | null): EntryPreview => ({
   entryId: entry.id,
+  order: entry.order,
   kind: entry._tag,
   author: entry.author,
   text: cut(entryText(entry), PREVIEW_LENGTH),

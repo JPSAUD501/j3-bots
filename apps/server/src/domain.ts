@@ -23,6 +23,7 @@ import * as PushWorker from "./push/PushWorker.ts";
 import * as RoomRouting from "./rooms/RoomRouting.ts";
 import * as Rooms from "./rooms/Rooms.ts";
 import * as Roster from "./roster/Roster.ts";
+import * as Sections from "./sections/Sections.ts";
 import * as RoutineRunner from "./routines/RoutineRunner.ts";
 import * as RoutineRuns from "./routines/RoutineRuns.ts";
 import * as Routines from "./routines/Routines.ts";
@@ -78,6 +79,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
     Layer.mergeAll(
       Memory.layer,
       Rooms.layer,
+      Sections.layer,
       RoomRouting.layer,
       EngineSessions.layer,
       SettingsService.layer,

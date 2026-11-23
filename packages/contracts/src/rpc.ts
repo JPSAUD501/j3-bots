@@ -14,6 +14,7 @@ import {
   RoomId,
   RoutineId,
   RoutineRunId,
+  SectionId,
   Sequence,
 } from "./base.ts";
 import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
@@ -49,6 +50,7 @@ import {
   ProviderSignInStatus,
   SignInHarness,
 } from "./provider.ts";
+import { Section, SectionName } from "./section.ts";
 import { Settings, SettingsChange, TimeZone } from "./settings.ts";
 
 // ---------------------------------------------------------------------------
@@ -71,6 +73,11 @@ import { Settings, SettingsChange, TimeZone } from "./settings.ts";
 // with the same id has no further effect and returns the first result, so a
 // client retries freely after a dropped connection. `secret.provide` is the one
 // exception: its value must never be stored, so it has no receipt (see there).
+//
+// A roster snapshot that carries `sections` comes from a server that organizes
+// the roster: sections, a bot's `sectionId` and `entries.markUnread`. A client
+// offers those only then, so it never calls them on a server that predates them
+// (docs/architecture/clients.md, "Protocol compatibility").
 // ---------------------------------------------------------------------------
 
 const after = { after: Schema.NullOr(Sequence) };
@@ -101,14 +108,23 @@ export type RosterItemKey = typeof RosterItemKey.Type;
 
 const HistoryLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }));
 
-/** Who the operator has, and what each is doing. */
+/**
+ * Who the operator has, and what each is doing. `sections` are every section,
+ * in the operator's order: always in a snapshot from a server that has them,
+ * and in a change only when the sections themselves changed, replacing the
+ * ones the client holds. A section's bots change as upserted bots.
+ */
 export const RosterRpcs = RpcGroup.make(
   Rpc.make("roster.subscribe", {
     success: Schema.Union([
-      Schema.TaggedStruct("snapshot", { items: Schema.Array(RosterItem) }),
+      Schema.TaggedStruct("snapshot", {
+        items: Schema.Array(RosterItem),
+        sections: Schema.optionalKey(Schema.Array(Section)),
+      }),
       Schema.TaggedStruct("changed", {
         upsert: Schema.Array(RosterItem),
         remove: Schema.Array(RosterItemKey),
+        sections: Schema.optionalKey(Schema.Array(Section)),
       }),
     ]),
     stream: true,
@@ -168,6 +184,18 @@ export const EntryRpcs = RpcGroup.make(
   Rpc.make("entries.markRead", {
     payload: { target: EntryTarget, through: EntryOrder },
     error: NotFound,
+  }),
+  /**
+   * Makes the target unread again: the read mark moves back to just before
+   * the last entry a bot or J3 Bots wrote, so that entry and everything after
+   * it read as new, and the next `entries.markRead` past it clears it. A
+   * target with no such entry stays as it is. Calling it again changes
+   * nothing more. A command, unlike `entries.markRead`: it moves the mark
+   * back, so a retry of one already applied must not undo a read made since.
+   */
+  Rpc.make("entries.markUnread", {
+    payload: { ...command, target: EntryTarget },
+    error: CommandError,
   }),
   /**
    * Returns the new message entry. `attachments` are uploaded first with
@@ -297,9 +325,15 @@ export const BotRpcs = RpcGroup.make(
       profile: Schema.optionalKey(ProfileChanges),
       model: Schema.optionalKey(ModelChoice),
       permissionMode: Schema.optionalKey(PermissionMode),
+      /**
+       * Making a bot primary makes the one that was primary before not, in the
+       * same transaction: there is never a moment with two.
+       */
       primary: Schema.optionalKey(Schema.Boolean),
       pinned: Schema.optionalKey(Schema.Boolean),
       hidden: Schema.optionalKey(Schema.Boolean),
+      /** Moves the bot into a section, or out of its section with null. */
+      sectionId: Schema.optionalKey(Schema.NullOr(SectionId)),
     },
     success: Bot,
     error: CommandError,
@@ -330,6 +364,38 @@ export const BotRpcs = RpcGroup.make(
     payload: { botId: BotId, before: Schema.NullOr(AttachmentId), limit: HistoryLimit },
     success: Schema.Struct({ files: Schema.Array(BotFile), hasOlder: Schema.Boolean }),
     error: NotFound,
+  }),
+);
+
+/**
+ * The roster's sections. Each command's change reaches every client through
+ * `roster.subscribe`.
+ */
+export const SectionRpcs = RpcGroup.make(
+  /** Adds a section after the others, and moves `botId` into it when given. */
+  Rpc.make("section.create", {
+    payload: { ...command, name: SectionName, botId: Schema.optionalKey(BotId) },
+    success: Section,
+    error: CommandError,
+  }),
+  /**
+   * Renames the section, and with `before` moves it: before that section, or
+   * after every other one with null.
+   */
+  Rpc.make("section.update", {
+    payload: {
+      ...command,
+      sectionId: SectionId,
+      name: Schema.optionalKey(SectionName),
+      before: Schema.optionalKey(Schema.NullOr(SectionId)),
+    },
+    success: Section,
+    error: CommandError,
+  }),
+  /** Deletes the section. Its bots stay, in no section. */
+  Rpc.make("section.delete", {
+    payload: { ...command, sectionId: SectionId },
+    error: CommandError,
   }),
 );
 
@@ -636,6 +702,7 @@ export const ProviderRpcs = RpcGroup.make(
 export const J3Rpcs = RosterRpcs.merge(
   EntryRpcs,
   BotRpcs,
+  SectionRpcs,
   RoomRpcs,
   RoutineRpcs,
   MemoryRpcs,

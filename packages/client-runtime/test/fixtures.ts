@@ -51,6 +51,7 @@ export function preview(
 ): EntryPreview {
   return {
     entryId: EntryId.make(`p${++next}`),
+    order: null,
     kind,
     author,
     text,
@@ -75,6 +76,7 @@ export function bot(
     primary: false,
     pinned: false,
     hidden: false,
+    sectionId: null,
     state,
     settingsHeld: false,
     opening: false,

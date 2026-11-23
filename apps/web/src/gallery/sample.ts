@@ -126,6 +126,7 @@ export function sampleTeam(now: DateTime.Utc) {
       primary: extra.primary ?? false,
       pinned: extra.pinned ?? false,
       hidden: extra.hidden ?? false,
+      sectionId: null,
       state,
       settingsHeld: false,
       opening: false,
