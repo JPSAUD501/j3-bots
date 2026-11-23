@@ -43,6 +43,8 @@ const hostOn = Effect.fn(function* (ran: string = OLD.version) {
     crashAt: Option.none<"adopt">(),
     beforeStart: (_version: string): Effect.Effect<void> => Effect.void,
     stopping: Effect.void as Effect.Effect<void>,
+    /** The free space where the home is, when the host can tell. */
+    free: Option.none<number>(),
   };
   const steps = (releases: Record<Side, { readonly version: string }>): HostSteps<never> => ({
     supervised: true,
@@ -82,6 +84,7 @@ const hostOn = Effect.fn(function* (ran: string = OLD.version) {
           answer: Option.some({ version, pid: 42, engine: { state: { _tag: "ready" } } }),
         };
       }),
+    freeSpace: () => Effect.sync(() => host.free),
     adopt: (side) =>
       Option.isSome(host.crashAt)
         ? Effect.die("the app was killed")
@@ -246,6 +249,25 @@ it.layer(NodeServices.layer)("a version transition", (it) => {
         "none",
         "nothing is recorded pending or rolled back from: the next start may try again",
       );
+    }),
+  );
+
+  it.effect("takes no snapshot without the room to put it back, and starts the old release", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { home, database, host, steps, lock } = yield* hostOn();
+      // A snapshot of the database, and its copy back, take more than a GB beyond this.
+      host.free = Option.some(1024 ** 3);
+
+      const { outcome } = yield* transition({ lock, from: OLD, to: NEW, steps });
+
+      assert.strictEqual(outcome._tag, "rolled-back");
+      if (outcome._tag !== "rolled-back") return;
+      assert.strictEqual(outcome.failed.step, "snapshot");
+      assert.include(outcome.failed.reason, `free where ${home} is`);
+      assert.deepStrictEqual(host.log, ["stop", "start 0.3.0"]);
+      assert.strictEqual(yield* fs.readFileString(database), "data of 0.3.0");
+      assert.deepStrictEqual(yield* listSnapshots(home), []);
     }),
   );
 

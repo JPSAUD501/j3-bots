@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// @effect-diagnostics nodeBuiltinImport:off -- Effect's FileSystem cannot tell free space; Node's statfs can.
 import type { ServerUpdate } from "@j3-bots/desktop-bridge";
+import * as NodeFS from "node:fs";
 import * as Transition from "@j3-bots/server/transition";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -270,6 +272,14 @@ export const make = Effect.fn("VersionTransition.make")(function* (
           exited,
         );
       }),
+      freeSpace: (location) =>
+        Effect.tryPromise({
+          try: () => NodeFS.promises.statfs(location),
+          catch: () => "unreadable" as const,
+        }).pipe(
+          Effect.map((stats) => Option.some(stats.bavail * stats.bsize)),
+          Effect.orElseSucceed(() => Option.none<number>()),
+        ),
       // The desktop runs whichever release it started: nothing to point elsewhere.
       adopt: () => Effect.void,
       pruneRuntimes: (keep) => Runtime.prune(runtimes, keep),

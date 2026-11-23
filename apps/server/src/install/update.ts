@@ -36,12 +36,13 @@ import * as Transition from "../transition/transition.ts";
 import {
   backupsElsewhere,
   backupsElsewhereReason,
+  HOME_ROOM,
   listSnapshots,
   restoreBytes,
   rollbackSnapshot,
   type Snapshot,
   type SnapshotRelease,
-  snapshotBytes,
+  transitionRoom,
   unfinishedRollback,
 } from "./snapshot.ts";
 
@@ -66,9 +67,6 @@ import {
 // holds the home's `server.lock`, which a running server holds, while it
 // copies the databases or puts them back, so no server, in or outside the
 // service, runs on them then.
-
-/** Free space an update needs where the data directory is, beyond twice the files it copies. */
-const HOME_ROOM = 1024 ** 3;
 
 /** Free space a release needs where the install is: its archive and its unpacked folder. */
 const RELEASE_ROOM = 512 * 1024 ** 2;
@@ -304,7 +302,8 @@ type SwitchServices =
   | Path.Path
   | Systemd
   | AdminClient
-  | ChildProcessSpawner.ChildProcessSpawner;
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Host;
 
 /**
  * The service's steps for the two releases of an install: stop, start,
@@ -353,6 +352,9 @@ const serviceSteps = (
       ),
     ),
   probe: () => probeService(installed),
+  freeSpace: Effect.fn("update.freeSpace")(function* (location: string) {
+    return yield* (yield* Host).freeSpace(location);
+  }),
   adopt: (side: Side) =>
     writeLauncher({
       install: installed.install,
@@ -501,7 +503,7 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   yield* checkBackupsBeside(installed.home);
   yield* roomFor(
     installed.home,
-    2 * (yield* snapshotBytes(installed.home)) + HOME_ROOM,
+    yield* transitionRoom(installed.home),
     "Copying the databases and installing the new engine",
   );
   yield* roomFor(installed.install, RELEASE_ROOM, `J3 Bots ${version}`);

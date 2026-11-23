@@ -17,6 +17,7 @@ import {
   type Snapshot,
   type SnapshotRelease,
   takeSnapshot,
+  transitionRoom,
   unmarkRestoring,
   UPDATE_LOCK,
 } from "../install/snapshot.ts";
@@ -132,6 +133,8 @@ export interface HostSteps<R> {
   readonly start: (side: Side) => Effect.Effect<void, StepFailed, R>;
   /** What the host sees of the server it started for that release, now. */
   readonly probe: (side: Side) => Effect.Effect<ServerProbe, never, R>;
+  /** The free space where `location` is, in bytes, when the host can tell. */
+  readonly freeSpace: (location: string) => Effect.Effect<Option.Option<number>, never, R>;
   /** Makes that release the one the host runs from now on, once its server is ready. */
   readonly adopt: (side: Side) => Effect.Effect<void, StepFailed, R>;
   /** Removes the host's runtimes of every release but `keep`, the two a transition moved between. */
@@ -152,6 +155,30 @@ export class PendingSnapshotGone extends Schema.TaggedError<PendingSnapshotGone>
     return `A transition from J3 Bots ${this.from} on ${this.home} was cut off after its snapshot, ${this.snapshot}, which is no longer in backups/. The data may be the newer release's already, so no other snapshot stands in for it. Nothing was changed.`;
   }
 }
+
+/** The data directory has too little room for a transition's copies. Nothing was changed. */
+class NoRoomOnHome extends Schema.TaggedError<NoRoomOnHome>()("NoRoomOnHome", {
+  home: Schema.String,
+  needed: Schema.Number,
+  free: Schema.Number,
+}) {
+  override get message(): string {
+    const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+    return `Copying the databases, and putting them back if the new release fails, needs ${gb(this.needed)} free where ${this.home} is, and ${gb(this.free)} is. Free some space, then try again. Nothing was changed.`;
+  }
+}
+
+/** Fails when the home has too little room for a transition's copies, as far as `host` can tell. */
+const requireRoom = Effect.fn("transition.requireRoom")(function* <R>(
+  home: string,
+  host: HostSteps<R>,
+) {
+  const needed = yield* transitionRoom(home);
+  const free = yield* host.freeSpace(home);
+  if (Option.isSome(free) && free.value < needed) {
+    return yield* new NoRoomOnHome({ home, needed, free: free.value });
+  }
+});
 
 /** What the steps on the home run with. */
 type HomeServices = FileSystem.FileSystem | Path.Path;
@@ -195,13 +222,14 @@ const switchSteps = <R>(
     ),
   resumed,
   // Pending once the snapshot is whole, before the new release can migrate
-  // anything; none is taken that a rollback could not put back.
+  // anything; none is taken that a rollback could not put back, or without
+  // the room to put it back.
   snapshot: withHome(
     home,
     "snapshot",
     Effect.tap(
       Effect.andThen(
-        requireBackupsBeside(home),
+        Effect.andThen(requireBackupsBeside(home), requireRoom(home, host)),
         takeSnapshot({ home, from: releases.old, to: releases.new }),
       ),
       (snapshot) =>

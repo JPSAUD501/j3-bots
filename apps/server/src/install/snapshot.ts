@@ -134,8 +134,19 @@ const bytesOf = Effect.fnUntraced(function* (folder: string, files: ReadonlyArra
 });
 
 /** How many bytes the files a snapshot copies take now. */
-export const snapshotBytes = Effect.fn("snapshot.bytes")(function* (home: string) {
+const snapshotBytes = Effect.fn("snapshot.bytes")(function* (home: string) {
   return yield* bytesOf(home, snapshotFiles(yield* Path.Path, home));
+});
+
+/** Free space a change to the data directory keeps beyond the copies it makes there. */
+export const HOME_ROOM = 1024 ** 3;
+
+/**
+ * The free space a transition needs where `home` is: the snapshot it takes,
+ * the copies a rollback would put back, and `HOME_ROOM`.
+ */
+export const transitionRoom = Effect.fn("snapshot.transitionRoom")(function* (home: string) {
+  return 2 * (yield* snapshotBytes(home)) + HOME_ROOM;
 });
 
 /** A folder of the home's whose files a restore moves aside, on another filesystem than `backups/`. */
