@@ -7,8 +7,9 @@ import type { I18n } from "@j3-bots/i18n";
 import { useI18n, usePresentation } from "../app/context";
 import type { DesktopServer, DesktopUpdate } from "../shell/data";
 import { AppUpdate } from "./AppUpdate";
+import { KeyRoundIcon, RefreshCwIcon } from "lucide-react";
 import { bigFieldClass, BigButton, FirstScreen, FormProblem } from "../onboarding/parts";
-import { Centered, Heading } from "./EmptyStates";
+import { Centered, Heading, StateMark } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { Button } from "./ui/button";
 
@@ -253,6 +254,7 @@ export function Incompatible({
   if (server !== undefined) {
     return (
       <Centered>
+        <StateMark icon={RefreshCwIcon} />
         <Heading
           title={t("gate.incompatible.appTitle")}
           body={t("gate.incompatible.appBody", { address: server.address })}
@@ -269,6 +271,7 @@ export function Incompatible({
   }
   return (
     <Centered>
+      <StateMark icon={RefreshCwIcon} />
       <Heading title={t("gate.incompatible.title")} body={t("gate.incompatible.body")} />
       <Button variant="primary" onClick={() => window.location.reload()}>
         {t("gate.reload")}
@@ -296,6 +299,7 @@ export function StorageFailed({
     const { server, restart } = desktop;
     return (
       <Centered>
+        <StateMark icon={KeyRoundIcon} />
         <Heading
           title={t("gate.storage.desktopTitle")}
           body={t("gate.storage.desktopBody", { address: server.address })}
@@ -311,6 +315,7 @@ export function StorageFailed({
   }
   return (
     <Centered>
+      <StateMark icon={KeyRoundIcon} />
       <Heading title={t("gate.storage.title")} body={t("gate.storage.body")} />
       <Button variant="primary" onClick={onRetry}>
         {t("gate.retry")}

@@ -35,6 +35,7 @@ const sentences = {
   "roster.usageLimitUntil": "Limite renova {when}",
   "roster.label": "Bots e salas",
   "roster.search": "Buscar",
+  "roster.search.clear": "Limpar busca",
   "roster.new": "Novo bot ou sala",
   "roster.newBot": "Novo bot",
   "roster.newRoom": "Nova sala",
@@ -379,12 +380,16 @@ const sentences = {
   "permission.fullAccess": "Acesso total",
   "permission.fullAccess.description": "Faz qualquer coisa sem perguntar.",
 
-  "memory.profileNote": "Nota de perfil",
-  "memory.log": "Registro {period}",
+  "memory.profileNote": "Perfil",
+  "memory.log": "Anotações de {month}",
   "memory.sizeAndDate": "{size} · {time}",
 
   "room.members": "{names}",
   "room.membersTitle": "Membros",
+  "room.memberCount.one": "Um bot",
+  "room.memberCount.other": "{count} bots",
+  "room.archivedBadge": "Arquivada",
+  "room.archiveSection": "Arquivar",
   "room.host": "Anfitrião",
   "room.budget": "Respostas entre bots",
   "room.hopLimit.one":
@@ -436,6 +441,8 @@ const sentences = {
   "roomForm.hopLimit.hint":
     "Quantas vezes os bots podem responder uns aos outros antes de a sala esperar por você.",
   "roomForm.hopLimit.default": "Deixe vazio para usar o padrão, {count}.",
+  "roomForm.hopLimit.fewer": "Uma resposta a menos",
+  "roomForm.hopLimit.more": "Uma resposta a mais",
   "roomForm.hopLimit.invalid": "Use um número inteiro a partir de 1.",
   "roomForm.cancel": "Cancelar",
   "roomForm.create": "Criar sala",
@@ -461,6 +468,7 @@ const sentences = {
   "settings.appearance": "Aparência",
   "settings.language": "Idioma",
   "settings.system": "Igual ao sistema",
+  "settings.system.short": "Sistema",
   "settings.light": "Claro",
   "settings.dark": "Escuro",
 

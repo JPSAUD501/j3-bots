@@ -12,15 +12,17 @@ import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { Plus, Search } from "lucide-react-native";
-import { useCallback, useEffect, useState } from "react";
-import { Alert, FlatList, type FlatListProps, Pressable, View } from "react-native";
+import { Bot, Plus, Search, SearchX, Users, X } from "lucide-react-native";
+import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
+import { FlatList, type FlatListProps, View } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
-import { Text, TextInput } from "../text.tsx";
+import { displaySpacing, Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AvatarHold, AvatarRow, rowsOnScreen } from "../components/avatar/BotAvatar.tsx";
 import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { StateMark } from "../components/States.tsx";
+import { Menu, type MenuAnchor, type MenuEntry } from "../components/Menu.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
@@ -29,6 +31,7 @@ import { Onboarding } from "../onboarding/Onboarding.tsx";
 import { useSideBySide } from "../layout.ts";
 import { asItWas, type Navigation, type Screens, useOpenConversation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
+import { PressScale } from "../press.tsx";
 import { useColor } from "../theme.ts";
 import { useNotificationTaps } from "../notificationTaps.ts";
 import { Body, Centered, Title } from "../ui.tsx";
@@ -131,6 +134,10 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const openConversation = useOpenConversation();
   const placeholder = useColor("accent-muted-foreground");
   const [query, setQuery] = useState("");
+  // New's menu opens under its button, measured as it opens.
+  const newButton = useRef<ComponentRef<typeof View>>(null);
+  const [newAt, setNewAt] = useState<MenuAnchor | null>(null);
+  const sideBySide = useSideBySide();
   const selectedText = selected === null ? null : rosterKeyText(selected);
   // The rows on screen, by key; the others' avatars hold still. Stable, as the list requires.
   const [onScreen] = useState(rowsOnScreen);
@@ -146,42 +153,62 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const rows = searching
     ? orderRoster(filterRoster(roster.value, query))
     : rosterRows(roster.value);
-  const offerNew = () =>
-    // A room needs two bots: with fewer, New says so and offers only a bot.
-    Alert.alert(
-      t("roster.new"),
-      bots.size >= ROOM_MEMBERS.min ? undefined : t("roster.newRoom.needsBots"),
-      [
-        { text: t("roster.new.cancel"), style: "cancel" },
-        ...(bots.size >= ROOM_MEMBERS.min
-          ? [
-              {
-                text: t("roster.newRoom"),
-                onPress: () => navigation.navigate("roomForm", { form: { _tag: "create" } }),
-              },
-            ]
-          : []),
-        { text: t("roster.newBot"), onPress: () => navigation.navigate("newBot") },
-      ],
-    );
+  const newEntries: ReadonlyArray<MenuEntry> = [
+    { label: t("roster.newBot"), icon: Bot, onPress: () => navigation.navigate("newBot") },
+    // A room needs two bots: with fewer, the row says so and makes a bot instead.
+    bots.size >= ROOM_MEMBERS.min
+      ? {
+          label: t("roster.newRoom"),
+          icon: Users,
+          onPress: () => navigation.navigate("roomForm", { form: { _tag: "create" } }),
+        }
+      : {
+          label: t("roster.newRoom"),
+          icon: Users,
+          hint: t("roster.newRoom.needsBots"),
+          onPress: () => navigation.navigate("newBot"),
+        },
+  ];
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
-      <View className="flex-row items-center gap-2 ps-4 pe-2 pt-3">
-        <Text accessibilityRole="header" className="flex-1 text-xl font-semibold text-foreground">
-          {t("roster.label")}
-        </Text>
-        <Pressable
+      <View className="flex-row items-center gap-1 ps-4 pe-2 pt-3">
+        {/* Alone on a phone the roster is titled; beside a conversation it needs no title. */}
+        {sideBySide ? (
+          <View className="flex-1" />
+        ) : (
+          <Text
+            accessibilityRole="header"
+            face="display"
+            className="flex-1 text-3xl text-foreground"
+            style={{ letterSpacing: displaySpacing(30) }}
+          >
+            {t("roster.label")}
+          </Text>
+        )}
+        <PressScale
+          depth="round"
           accessibilityRole="button"
           accessibilityLabel={t("roster.new")}
-          onPress={offerNew}
-          className="size-11 items-center justify-center rounded-md active:bg-muted"
+          ref={newButton}
+          onPress={() =>
+            newButton.current?.measureInWindow((x, y, width, height) =>
+              setNewAt({ x, y, width, height }),
+            )
+          }
+          className="size-11 items-center justify-center rounded-pill active:bg-muted"
         >
-          <Icon icon={Plus} size={20} color="accent-foreground" />
-        </Pressable>
+          <Icon icon={Plus} size={22} color="accent-foreground" />
+        </PressScale>
         <SettingsEntry />
       </View>
-      <View className="mx-4 my-2 min-h-11 flex-row items-center gap-2 rounded-md bg-muted px-3">
-        <Icon icon={Search} size={14} color="accent-muted-foreground" />
+      <Menu
+        anchor={newAt}
+        onClose={() => setNewAt(null)}
+        label={t("roster.new")}
+        entries={newEntries}
+      />
+      <View className="mx-4 mt-2 mb-3 min-h-11 flex-row items-center gap-2 rounded-md bg-muted px-3">
+        <Icon icon={Search} size={16} color="accent-muted-foreground" />
         <TextInput
           accessibilityLabel={t("roster.search")}
           value={query}
@@ -192,6 +219,18 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
           returnKeyType="search"
           className="min-h-11 flex-1 text-base text-foreground"
         />
+        {searching && (
+          <PressScale
+            depth="round"
+            accessibilityRole="button"
+            accessibilityLabel={t("roster.search.clear")}
+            onPress={() => setQuery("")}
+            hitSlop={8}
+            className="size-7 items-center justify-center rounded-pill"
+          >
+            <Icon icon={X} size={16} color="accent-muted-foreground" />
+          </PressScale>
+        )}
       </View>
       <ConnectionLine loaded />
       <AvatarHold held={scrolling}>
@@ -203,7 +242,8 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
           data={rows}
           keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
           ListEmptyComponent={
-            <View className="items-center px-6 py-12">
+            <View className="items-center gap-3 px-6 py-12">
+              <StateMark icon={searching ? SearchX : Bot} />
               <Body>
                 {searching ? t("roster.noMatch", { query: query.trim() }) : t("roster.empty")}
               </Body>

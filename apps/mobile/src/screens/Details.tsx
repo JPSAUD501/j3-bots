@@ -6,16 +6,18 @@ import { Connecting } from "../components/ConnectionLine.tsx";
 import { Gone } from "../conversation/ConversationView.tsx";
 import { BotDetails } from "../details/BotDetails.tsx";
 import { RoomDetails } from "../details/RoomDetails.tsx";
+import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
-import { itemName, useRosterItem } from "./rosterItem.ts";
+import { useRosterItem } from "./rosterItem.ts";
 
-/** A bot's or room's details, under its name. */
+/** A bot's or room's details, titled "Details": the profile under the title names who. */
 export function DetailsScreen({ navigation, route }: NativeStackScreenProps<Screens, "details">) {
+  const { t } = useI18n();
   const found = useRosterItem(route.params.item);
-  const name = found._tag === "found" ? itemName(found.item) : "";
+  const title = t("conversation.details");
   useLayoutEffect(() => {
-    navigation.setOptions({ title: name });
-  }, [navigation, name]);
+    navigation.setOptions({ title });
+  }, [navigation, title]);
   if (found._tag === "loading") return <Connecting />;
   if (found._tag === "gone") {
     return (

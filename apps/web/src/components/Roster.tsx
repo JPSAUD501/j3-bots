@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
-import { PlusIcon, SearchIcon } from "lucide-react";
+import { BotIcon, PlusIcon, SearchIcon, SearchXIcon, UsersIcon, XIcon } from "lucide-react";
 import { useState, type KeyboardEvent, type ReactElement, type ReactNode, type Ref } from "react";
 import {
   filterRoster,
@@ -90,9 +90,13 @@ export function Roster({
       className="flex min-h-0 flex-1 flex-col outline-none"
       onKeyDown={moveFocus}
     >
-      <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md bg-muted px-2.5 text-muted-foreground focus-within:outline-2 focus-within:outline-accent pointer-coarse:h-(--layout-touch-target)">
-          <SearchIcon className="size-3.5 shrink-0" aria-hidden />
+      {/* A phone shows the roster alone, so it is titled; beside a conversation it needs no title. */}
+      <h1 className="display-type hidden px-4 pt-4 pb-1 text-3xl @max-tablet:block">
+        {t("roster.label")}
+      </h1>
+      <div className="flex items-center gap-2 px-3 pt-3 pb-2 @max-tablet:pt-2">
+        <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md bg-muted px-3 text-muted-foreground transition-colors duration-(--duration-fast) ease-out focus-within:outline-2 focus-within:outline-accent hover:bg-muted-strong focus-within:hover:bg-muted pointer-coarse:h-(--layout-touch-target)">
+          <SearchIcon className="size-4 shrink-0" aria-hidden />
           <input
             type="search"
             data-roster-search=""
@@ -100,20 +104,38 @@ export function Roster({
             onChange={(e) => setQuery(e.currentTarget.value)}
             placeholder={t("roster.search")}
             aria-label={t("roster.search")}
-            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            className="min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
           />
+          {query !== "" && (
+            <button
+              type="button"
+              aria-label={t("roster.search.clear")}
+              onClick={() => setQuery("")}
+              className="pressable-round -me-1.5 flex size-6 shrink-0 pointer-coarse:-me-3 pointer-coarse:size-11 cursor-pointer items-center justify-center rounded-pill hover:bg-muted-strong hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <XIcon className="size-3.5" aria-hidden />
+            </button>
+          )}
         </label>
         <Menu>
           <MenuTrigger render={<Button variant="ghost" size="icon" aria-label={t("roster.new")} />}>
             <PlusIcon />
           </MenuTrigger>
           <MenuPopup side="bottom" align="end">
-            <MenuItem onClick={onNewBot}>{t("roster.newBot")}</MenuItem>
+            <MenuItem onClick={onNewBot} icon={<BotIcon />}>
+              {t("roster.newBot")}
+            </MenuItem>
             {/* A room needs two bots: with fewer, the row says so and makes a bot instead. */}
             {bots.size >= ROOM_MEMBERS.min ? (
-              <MenuItem onClick={onNewRoom}>{t("roster.newRoom")}</MenuItem>
+              <MenuItem onClick={onNewRoom} icon={<UsersIcon />}>
+                {t("roster.newRoom")}
+              </MenuItem>
             ) : (
-              <MenuItem onClick={onNewBot} hint={t("roster.newRoom.needsBots")}>
+              <MenuItem
+                onClick={onNewBot}
+                icon={<UsersIcon />}
+                hint={t("roster.newRoom.needsBots")}
+              >
                 {t("roster.newRoom")}
               </MenuItem>
             )}
@@ -122,10 +144,10 @@ export function Roster({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {rows.length === 0 ? (
-          <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-            {query.trim() === "" ? t("roster.empty") : t("roster.noMatch", { query: query.trim() })}
-          </p>
+          <RosterEmpty query={query.trim()} />
         ) : (
+          // Rows are keyed by bot or room, so a row that moves keeps its element: where the
+          // roster's order changes, a layout animation can slide each row to its place.
           <ul className="flex flex-col gap-px">
             {rows.map((item) => (
               <li key={rosterKeyText(rosterKeyOf(item))}>
@@ -149,5 +171,22 @@ export function Roster({
       </div>
       {footer}
     </nav>
+  );
+}
+
+/** What the roster says when it has no row to show: none yet, or none matching the search. */
+function RosterEmpty({ query }: { query: string }) {
+  const { t } = useI18n();
+  return (
+    <div className="appear flex flex-col items-center gap-2 px-6 py-10 text-center">
+      {query !== "" && (
+        <span className="flex size-10 items-center justify-center rounded-pill bg-muted text-muted-foreground">
+          <SearchXIcon aria-hidden className="size-5" />
+        </span>
+      )}
+      <p className="text-sm text-muted-foreground">
+        {query === "" ? t("roster.empty") : t("roster.noMatch", { query })}
+      </p>
+    </div>
   );
 }

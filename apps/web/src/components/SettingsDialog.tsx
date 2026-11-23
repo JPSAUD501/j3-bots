@@ -51,10 +51,12 @@ import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
 import { ChangeServer } from "./ServerAddress";
 import { PairingQr } from "./PairingQr";
-import { Loading, Section } from "./SettingsSection";
+import { Section } from "./SettingsSection";
+import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
+import { Segmented } from "./ui/segmented";
 import { Switch } from "./ui/switch";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { lineField } from "./ui/field";
@@ -148,15 +150,6 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               </Dialog.Close>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <EngineSection engine={data.engine} stale={data.engineStale} />
-              <UsageSection
-                engine={data.engine}
-                engineStale={data.engineStale}
-                recent={data.recentTurns}
-                roster={data.roster}
-                onLoadMore={intents.loadMoreTurns}
-                onRetry={intents.retryTurns}
-              />
               <YouSection
                 settings={data.settings}
                 save={data.settingsSaves.profile}
@@ -169,6 +162,15 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 save={data.settingsSaves.notifications}
                 connected={data.connected}
                 onSave={intents.updateSettings}
+              />
+              <EngineSection engine={data.engine} stale={data.engineStale} />
+              <UsageSection
+                engine={data.engine}
+                engineStale={data.engineStale}
+                recent={data.recentTurns}
+                roster={data.roster}
+                onLoadMore={intents.loadMoreTurns}
+                onRetry={intents.retryTurns}
               />
               <DevicesSection
                 devices={data.devices}
@@ -202,7 +204,7 @@ function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: 
   if (engine === null) {
     return (
       <Section title={t("settings.engine")}>
-        <Loading />
+        <SkeletonRows />
       </Section>
     );
   }
@@ -249,7 +251,7 @@ function YouSection({
   const { t } = useI18n();
   return (
     <Section title={t("settings.you")}>
-      {settings === null ? <Loading /> : <YouForm settings={settings} {...form} />}
+      {settings === null ? <SkeletonRows /> : <YouForm settings={settings} {...form} />}
     </Section>
   );
 }
@@ -396,7 +398,7 @@ function NotificationsSection({
   if (settings === null) {
     return (
       <Section title={t("settings.notifications")}>
-        <Loading />
+        <SkeletonRows />
       </Section>
     );
   }
@@ -529,7 +531,7 @@ function DevicesSection({
   return (
     <Section title={t("settings.devices")}>
       {devices === null ? (
-        <Loading />
+        <SkeletonRows />
       ) : (
         <ul className="flex flex-col gap-1.5">
           {devices.map((device) => {
@@ -764,7 +766,7 @@ function BrowserSection({
   const appearanceId = useId();
   const languageId = useId();
   const appearances: ReadonlyArray<{ value: Appearance; label: string }> = [
-    { value: "system", label: t("settings.system") },
+    { value: "system", label: t("settings.system.short") },
     { value: "light", label: t("settings.light") },
     { value: "dark", label: t("settings.dark") },
   ];
@@ -777,25 +779,16 @@ function BrowserSection({
     <Section title={t(server === undefined ? "settings.browser" : "settings.thisDevice")}>
       {update !== undefined && <AppUpdate update={update} className="items-start" />}
       {shortcut !== undefined && <ShortcutSetting shortcut={shortcut} />}
-      <div className="flex flex-col gap-1">
-        <label htmlFor={appearanceId} className="text-xs">
+      <div className="flex flex-col gap-1.5">
+        <span id={appearanceId} className="text-xs">
           {t("settings.appearance")}
-        </label>
-        <select
-          id={appearanceId}
+        </span>
+        <Segmented
           value={appearance}
-          onChange={(event) => {
-            const picked = appearances.find((a) => a.value === event.currentTarget.value);
-            if (picked) setAppearance(picked.value);
-          }}
-          className={lineField}
-        >
-          {appearances.map(({ value, label }) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+          options={appearances}
+          onChange={setAppearance}
+          labelledBy={appearanceId}
+        />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={languageId} className="text-xs">

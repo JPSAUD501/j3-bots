@@ -5,6 +5,7 @@ import { at } from "../../test/fixtures.ts";
 import {
   blankRoomForm,
   followRoom,
+  hopLimitSteps,
   hostOf,
   roomChanges,
   roomDraft,
@@ -264,5 +265,22 @@ describe("roomFormTarget", () => {
     expect(roomFormTarget(renamed)).toBe(roomFormTarget(edit));
     const targets = [{ _tag: "create" } as const, edit, unarchive, other].map(roomFormTarget);
     expect(new Set(targets).size).toBe(targets.length);
+  });
+});
+
+describe("hopLimitSteps", () => {
+  it("steps from the number typed, never below one", () => {
+    expect(hopLimitSteps("3", 4)).toEqual({ fewer: 2, more: 4 });
+    expect(hopLimitSteps(" 1 ", 4)).toEqual({ fewer: null, more: 2 });
+  });
+
+  it("steps from the default while the field is empty", () => {
+    expect(hopLimitSteps("", 4)).toEqual({ fewer: 3, more: 5 });
+    expect(hopLimitSteps("", null)).toEqual({ fewer: null, more: null });
+  });
+
+  it("does not step from what is not a whole number from one up", () => {
+    expect(hopLimitSteps("2.5", 4)).toEqual({ fewer: null, more: null });
+    expect(hopLimitSteps("0", 4)).toEqual({ fewer: null, more: null });
   });
 });

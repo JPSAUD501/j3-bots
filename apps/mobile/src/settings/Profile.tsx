@@ -12,7 +12,14 @@ import type { NotificationSettingsChange, Settings } from "@j3-bots/contracts";
 import { useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
-import { Problem, Quiet, Section, SwitchRow, TextField } from "../components/form.tsx";
+import {
+  Problem,
+  Quiet,
+  Section,
+  SkeletonRows,
+  SwitchRow,
+  TextField,
+} from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { phoneTimeZone } from "../platform/timeZone.ts";
 import { usePresentation } from "../presentation.tsx";
@@ -25,7 +32,7 @@ export function YouSection(props: { readonly connected: boolean }) {
   return (
     <Section title={t("settings.you")}>
       {settings._tag !== "ready" ? (
-        <Quiet>{t("details.loading")}</Quiet>
+        <SkeletonRows />
       ) : (
         <YouForm settings={settings.value} connected={props.connected} />
       )}
@@ -142,7 +149,7 @@ export function NotificationsSection(props: {
   if (settings._tag !== "ready") {
     return (
       <Section title={t("settings.notifications")}>
-        <Quiet>{t("details.loading")}</Quiet>
+        <SkeletonRows />
       </Section>
     );
   }

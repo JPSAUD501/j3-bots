@@ -8,6 +8,7 @@ import { memoryEditProblemText } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { Button } from "./ui/button";
+import { SkeletonRows } from "./ui/skeleton";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 import { cn } from "../lib/cn";
 import { textField } from "./ui/field";
@@ -120,7 +121,7 @@ export function MemoryFile({
             className={cn(textField, pre, "min-h-0 flex-1 resize-none p-3")}
           />
         ) : reading._tag === "reading" ? (
-          <p className="text-xs text-muted-foreground">{t("details.loading")}</p>
+          <SkeletonRows count={4} />
         ) : reading._tag === "failed" ? (
           <p role="alert" className="text-sm text-blocked">
             {t("memory.readFailed")}

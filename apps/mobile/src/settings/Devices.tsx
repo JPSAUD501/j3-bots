@@ -17,7 +17,7 @@ import { useMemo, useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
 import Svg, { Path, Rect } from "react-native-svg";
-import { ChoiceRow, confirm, Problem, Quiet, Section } from "../components/form.tsx";
+import { ChoiceRow, confirm, Problem, Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { usePresentation } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 
@@ -66,7 +66,7 @@ export function DevicesSection(props: { readonly connected: boolean }) {
   return (
     <Section title={t("settings.devices")}>
       {devices._tag !== "ready" ? (
-        <Quiet>{t("details.loading")}</Quiet>
+        <SkeletonRows />
       ) : (
         devices.value.map((device) => (
           <DeviceRow

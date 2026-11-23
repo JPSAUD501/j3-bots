@@ -47,11 +47,22 @@ export function botModelName(engine: EngineStatus | null, bot: Bot): string | nu
   return provider && model ? `${provider.name} · ${model.name}` : null;
 }
 
-/** A memory file's name as the details list it: the profile note, a period's log, or its path. */
-export function memoryFileName(path: MemoryPath, { t }: I18n): string {
+/**
+ * A memory file's name as the details list it: the profile, a month's notes
+ * with the month in words ("Notes from November 2026"), or its path.
+ */
+export function memoryFileName(path: MemoryPath, { t, locale }: I18n): string {
   if (path === "profile.md") return t("memory.profileNote");
-  const log = /^log\/(.+)\.md$/.exec(path);
-  return log?.[1] ? t("memory.log", { period: log[1] }) : path;
+  const log = /^log\/(\d{4})-(\d{2})\.md$/.exec(path);
+  if (log === null) return path;
+  const month = Number(log[2]);
+  if (month < 1 || month > 12) return path;
+  const words = new Intl.DateTimeFormat(locale, {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(Date.UTC(Number(log[1]), month - 1, 1));
+  return t("memory.log", { month: words });
 }
 
 const MEMORY_PROBLEM_TEXT = {

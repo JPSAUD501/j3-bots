@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ReactNode } from "react";
-import { useI18n } from "../app/context";
 
 /** One section of Settings, under a quiet heading. */
 export function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -10,10 +9,4 @@ export function Section({ title, children }: { title: string; children: ReactNod
       {children}
     </section>
   );
-}
-
-/** What a section shows until its first read answers. */
-export function Loading() {
-  const { t } = useI18n();
-  return <p className="text-xs text-muted-foreground">{t("details.loading")}</p>;
 }

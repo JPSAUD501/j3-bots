@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
+import { Radio } from "@base-ui/react/radio";
+import { RadioGroup } from "@base-ui/react/radio-group";
 import type { Bot } from "@j3-bots/contracts";
-import { CheckIcon, XIcon } from "lucide-react";
-import { useEffect, useId } from "react";
+import { CheckIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 import type { IntentFailure } from "@j3-bots/client-runtime";
 import {
+  hopLimitSteps,
   ROOM_NAME_MAX,
   roomFormTarget,
   type RoomFormMode,
@@ -79,6 +82,7 @@ export function RoomForm({
     host: useId(),
     hostHint: useId(),
     hostError: useId(),
+    hostLabel: useId(),
     hopLimit: useId(),
     hopLimitHint: useId(),
     hopLimitError: useId(),
@@ -130,6 +134,14 @@ export function RoomForm({
         ? t("roomForm.save")
         : t("roomForm.unarchive");
   const membersInvalid = problems.has("members") || form.membersRefused;
+  const hopSteps = hopLimitSteps(values.hopLimit, defaultHopLimit);
+  // The number a minus or plus typed, read out politely: focus stays on the button.
+  const [stepped, setStepped] = useState("");
+  const step = (to: number | null) => {
+    if (busy || to === null) return;
+    setStepped(String(to));
+    form.change({ ...values, hopLimit: String(to) });
+  };
 
   return (
     <form
@@ -254,35 +266,46 @@ export function RoomForm({
 
         {members.length > 0 && (
           <div className="flex flex-col gap-1">
-            <label htmlFor={ids.host} className="text-xs">
+            <span id={ids.hostLabel} className="text-xs">
               {t("roomForm.host")}
-            </label>
-            <select
+            </span>
+            {/* A room the server has without a host shows none picked until the operator picks one. */}
+            {hostId === null && (
+              <p className="text-2xs text-muted-foreground">{t("roomForm.host.pick")}</p>
+            )}
+            <RadioGroup
               id={ids.host}
-              value={hostId ?? ""}
-              disabled={busy}
+              value={hostId}
+              onValueChange={(id) => {
+                if (id !== null) form.pickHost(id);
+              }}
+              readOnly={busy}
+              aria-labelledby={ids.hostLabel}
               aria-invalid={problems.has("host") || undefined}
               aria-describedby={
                 problems.has("host") ? `${ids.hostHint} ${ids.hostError}` : ids.hostHint
               }
-              onChange={(event) => {
-                const picked = members.find((bot) => bot.id === event.currentTarget.value);
-                if (picked) form.pickHost(picked.id);
-              }}
-              className={cn(lineField, "disabled:text-muted-foreground")}
+              className="flex flex-wrap gap-1.5"
             >
-              {/* A room the server has without a host shows none until the operator picks one. */}
-              {hostId === null && (
-                <option value="" disabled>
-                  {t("roomForm.host.pick")}
-                </option>
-              )}
               {members.map((bot) => (
-                <option key={bot.id} value={bot.id}>
+                <Radio.Root
+                  key={bot.id}
+                  value={bot.id}
+                  className="pressable flex h-9 cursor-pointer items-center gap-2 rounded-pill border border-input ps-1.5 pe-3.5 text-sm outline-none hover:bg-muted focus-visible:outline-2 focus-visible:outline-accent data-checked:border-foreground data-checked:bg-foreground data-checked:text-background data-readonly:cursor-default pointer-coarse:h-11"
+                >
+                  <span className="flex size-6 items-center justify-center rounded-pill bg-background">
+                    <BotAvatar
+                      avatar={bot.profile.avatar}
+                      seed={bot.id}
+                      state="idle"
+                      size={20}
+                      still
+                    />
+                  </span>
                   {bot.profile.name}
-                </option>
+                </Radio.Root>
               ))}
-            </select>
+            </RadioGroup>
             <p id={ids.hostHint} className="text-2xs text-muted-foreground">
               {t("roomForm.host.hint")}
             </p>
@@ -298,23 +321,52 @@ export function RoomForm({
           <label htmlFor={ids.hopLimit} className="text-xs">
             {t("roomForm.hopLimit")}
           </label>
-          <input
-            id={ids.hopLimit}
-            type="text"
-            inputMode="numeric"
-            value={values.hopLimit}
-            readOnly={busy}
-            autoComplete="off"
-            placeholder={defaultHopLimit === null ? undefined : String(defaultHopLimit)}
-            onChange={(event) => form.change({ ...values, hopLimit: event.currentTarget.value })}
-            aria-invalid={problems.has("hop-limit") || undefined}
-            aria-describedby={
-              problems.has("hop-limit")
-                ? `${ids.hopLimitHint} ${ids.hopLimitError}`
-                : ids.hopLimitHint
-            }
-            className={cn(textField, "h-9 w-24 pointer-coarse:h-11 disabled:text-muted-foreground")}
-          />
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="icon"
+              aria-label={t("roomForm.hopLimit.fewer")}
+              aria-controls={ids.hopLimit}
+              aria-disabled={busy || hopSteps.fewer === null || undefined}
+              onClick={() => step(hopSteps.fewer)}
+            >
+              <MinusIcon />
+            </Button>
+            <input
+              id={ids.hopLimit}
+              type="text"
+              inputMode="numeric"
+              value={values.hopLimit}
+              readOnly={busy}
+              autoComplete="off"
+              placeholder={defaultHopLimit === null ? undefined : String(defaultHopLimit)}
+              onChange={(event) => {
+                setStepped("");
+                form.change({ ...values, hopLimit: event.currentTarget.value });
+              }}
+              aria-invalid={problems.has("hop-limit") || undefined}
+              aria-describedby={
+                problems.has("hop-limit")
+                  ? `${ids.hopLimitHint} ${ids.hopLimitError}`
+                  : ids.hopLimitHint
+              }
+              className={cn(
+                textField,
+                "h-9 w-16 text-center tabular-nums pointer-coarse:h-11 disabled:text-muted-foreground",
+              )}
+            />
+            <Button
+              size="icon"
+              aria-label={t("roomForm.hopLimit.more")}
+              aria-controls={ids.hopLimit}
+              aria-disabled={busy || hopSteps.more === null || undefined}
+              onClick={() => step(hopSteps.more)}
+            >
+              <PlusIcon />
+            </Button>
+            <span aria-live="polite" className="sr-only">
+              {stepped}
+            </span>
+          </div>
           <p id={ids.hopLimitHint} className="text-2xs text-muted-foreground">
             {t("roomForm.hopLimit.hint")}
             {defaultHopLimit !== null &&

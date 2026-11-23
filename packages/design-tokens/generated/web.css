@@ -47,6 +47,7 @@
   --surface: #ffffff;
   --sidebar: #f6f6f7;
   --muted: #f0f0f2;
+  --row-hover: oklch(0.964 0.002 286.4);
   --muted-strong: #e5e5e9;
   --border: #e8e8ec;
   --input: #d4d4da;
@@ -68,6 +69,7 @@
   --control-off: #82828a;
   --control-thumb: #ffffff;
   --avatar-ink: #ffffff;
+  --scrollbar: oklch(0 0 0 / 0.22);
   --scrim: oklch(0 0 0 / 0.3);
   --bot-tomato: oklch(0.615 0.2 24);
   --bot-tangerine: oklch(0.635 0.162 50);
@@ -104,6 +106,7 @@
   --surface: #101012;
   --sidebar: #09090a;
   --muted: #19191c;
+  --row-hover: oklch(0.181 0.004 285.9);
   --muted-strong: #242428;
   --border: oklch(1 0 0 / 0.09);
   --input: oklch(1 0 0 / 0.15);
@@ -125,6 +128,7 @@
   --control-off: #6b6b73;
   --control-thumb: #f5f5f6;
   --avatar-ink: #0b0b0c;
+  --scrollbar: oklch(1 0 0 / 0.22);
   --scrim: oklch(0 0 0 / 0.62);
   --bot-tomato: oklch(0.665 0.21 28);
   --bot-tangerine: oklch(0.745 0.172 52);
@@ -231,6 +235,7 @@
   --color-surface: var(--surface);
   --color-sidebar: var(--sidebar);
   --color-muted: var(--muted);
+  --color-row-hover: var(--row-hover);
   --color-muted-strong: var(--muted-strong);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -252,6 +257,7 @@
   --color-control-off: var(--control-off);
   --color-control-thumb: var(--control-thumb);
   --color-avatar-ink: var(--avatar-ink);
+  --color-scrollbar: var(--scrollbar);
   --color-scrim: var(--scrim);
   --color-bot-tomato: var(--bot-tomato);
   --color-bot-tangerine: var(--bot-tangerine);

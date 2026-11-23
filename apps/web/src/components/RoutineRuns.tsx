@@ -16,6 +16,7 @@ import { useId } from "react";
 import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
+import { SkeletonRows } from "./ui/skeleton";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
 
 const RUN_ICON: Record<RoutineRun["status"], readonly [LucideIcon, string]> = {
@@ -96,7 +97,7 @@ export function RoutineRunList({ routine, runs }: RoutineRunListProps) {
           </h3>
         )}
         {runs === null || runs._tag === "loading" ? (
-          <p className="text-xs text-muted-foreground">{t("details.loading")}</p>
+          <SkeletonRows />
         ) : runs.value.runs.length === 0 ? (
           <p className="text-xs text-muted-foreground">{t("routine.runs.empty")}</p>
         ) : (

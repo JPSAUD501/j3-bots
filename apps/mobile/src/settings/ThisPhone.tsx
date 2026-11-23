@@ -5,7 +5,7 @@ import { LANGUAGE_NAMES } from "@j3-bots/i18n";
 import { useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
-import { ChoiceRow, confirm, Problem, Quiet, Section } from "../components/form.tsx";
+import { ChoiceRow, confirm, Problem, Quiet, Section, Segmented } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { ChangeServer } from "../Leave.tsx";
 import { session } from "../platform/platform.ts";
@@ -44,7 +44,7 @@ export function ThisPhoneSection() {
   const { t } = useI18n();
   const { appearance, language } = usePreferences();
   const appearances: ReadonlyArray<{ readonly value: Appearance; readonly label: string }> = [
-    { value: "system", label: t("settings.system") },
+    { value: "system", label: t("settings.system.short") },
     { value: "light", label: t("settings.light") },
     { value: "dark", label: t("settings.dark") },
   ];
@@ -55,17 +55,14 @@ export function ThisPhoneSection() {
   ];
   return (
     <Section title={t("settings.thisDevice")}>
-      <View accessibilityRole="radiogroup" className="gap-2">
+      <View className="gap-2">
         <Text className="text-sm text-foreground">{t("settings.appearance")}</Text>
-        {appearances.map(({ value, label }) => (
-          <ChoiceRow
-            key={value}
-            kind="one"
-            label={label}
-            selected={appearance === value}
-            onPress={() => setAppearance(value)}
-          />
-        ))}
+        <Segmented
+          label={t("settings.appearance")}
+          value={appearance}
+          options={appearances}
+          onChange={setAppearance}
+        />
       </View>
       <View accessibilityRole="radiogroup" className="gap-2">
         <Text className="text-sm text-foreground">{t("settings.language")}</Text>

@@ -37,6 +37,7 @@ export const en = {
   "roster.usageLimitUntil": "Limit resets {when}",
   "roster.label": "Bots and rooms",
   "roster.search": "Search",
+  "roster.search.clear": "Clear search",
   "roster.new": "New bot or room",
   "roster.newBot": "New bot",
   "roster.newRoom": "New room",
@@ -380,12 +381,16 @@ export const en = {
   "permission.fullAccess": "Full access",
   "permission.fullAccess.description": "Does anything without asking.",
 
-  "memory.profileNote": "Profile note",
-  "memory.log": "Log {period}",
+  "memory.profileNote": "Profile",
+  "memory.log": "Notes from {month}",
   "memory.sizeAndDate": "{size} · {time}",
 
   "room.members": "{names}",
   "room.membersTitle": "Members",
+  "room.memberCount.one": "One bot",
+  "room.memberCount.other": "{count} bots",
+  "room.archivedBadge": "Archived",
+  "room.archiveSection": "Archive",
   "room.host": "Host",
   "room.budget": "Replies between bots",
   "room.hopLimit.one": "Bots may reply to each other once before the room waits for you.",
@@ -434,6 +439,8 @@ export const en = {
   "roomForm.hopLimit.hint":
     "How many times bots may reply to each other before the room waits for you.",
   "roomForm.hopLimit.default": "Leave it empty for the default, {count}.",
+  "roomForm.hopLimit.fewer": "One reply fewer",
+  "roomForm.hopLimit.more": "One reply more",
   "roomForm.hopLimit.invalid": "Use a whole number from 1 up.",
   "roomForm.cancel": "Cancel",
   "roomForm.create": "Create room",
@@ -459,6 +466,7 @@ export const en = {
   "settings.appearance": "Appearance",
   "settings.language": "Language",
   "settings.system": "Same as the system",
+  "settings.system.short": "System",
   "settings.light": "Light",
   "settings.dark": "Dark",
 

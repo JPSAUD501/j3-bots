@@ -12,7 +12,7 @@ import * as Duration from "effect/Duration";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
-import { Quiet, Section } from "../components/form.tsx";
+import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { Button } from "../ui.tsx";
 
@@ -40,7 +40,7 @@ export function UsageSection(props: {
   if (engine === null) {
     return (
       <Section title={t("settings.usage")}>
-        <Quiet>{t("details.loading")}</Quiet>
+        <SkeletonRows />
       </Section>
     );
   }
@@ -157,7 +157,7 @@ function ProviderCard(props: {
       {turns !== "failed" && (
         <View className={`gap-1.5 ${props.anyWindows ? "border-t border-border pt-2.5" : ""}`}>
           {turns === "loading" ? (
-            <Quiet>{t("details.loading")}</Quiet>
+            <SkeletonRows />
           ) : provider.bots.length === 0 ? (
             <Text className="text-xs text-muted-foreground">
               {/* Turns not read yet may have used it. */}

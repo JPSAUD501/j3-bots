@@ -14,7 +14,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { FormScreen, Problem, useDiscardGuard } from "../components/form.tsx";
+import { FormScreen, Problem, SkeletonRows, useDiscardGuard } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
 import { useSay } from "../toast.tsx";
@@ -114,7 +114,7 @@ export function MemoryFileScreen({ navigation, route }: Props) {
         contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 16 }}
       >
         {reading._tag === "reading" ? (
-          <Text className="text-sm text-muted-foreground">{t("details.loading")}</Text>
+          <SkeletonRows count={4} />
         ) : reading._tag === "failed" ? (
           <Problem>{t("memory.readFailed")}</Problem>
         ) : (

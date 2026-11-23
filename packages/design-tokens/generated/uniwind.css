@@ -7,6 +7,7 @@
       --color-surface: #ffffff;
       --color-sidebar: #f6f6f7;
       --color-muted: #f0f0f2;
+      --color-row-hover: oklch(0.964 0.002 286.4);
       --color-muted-strong: #e5e5e9;
       --color-border: #e8e8ec;
       --color-input: #d4d4da;
@@ -28,6 +29,7 @@
       --color-control-off: #82828a;
       --color-control-thumb: #ffffff;
       --color-avatar-ink: #ffffff;
+      --color-scrollbar: oklch(0 0 0 / 0.22);
       --color-scrim: oklch(0 0 0 / 0.3);
       --color-bot-tomato: oklch(0.615 0.2 24);
       --color-bot-tangerine: oklch(0.635 0.162 50);
@@ -60,6 +62,7 @@
       --color-surface: #101012;
       --color-sidebar: #09090a;
       --color-muted: #19191c;
+      --color-row-hover: oklch(0.181 0.004 285.9);
       --color-muted-strong: #242428;
       --color-border: oklch(1 0 0 / 0.09);
       --color-input: oklch(1 0 0 / 0.15);
@@ -81,6 +84,7 @@
       --color-control-off: #6b6b73;
       --color-control-thumb: #f5f5f6;
       --color-avatar-ink: #0b0b0c;
+      --color-scrollbar: oklch(1 0 0 / 0.22);
       --color-scrim: oklch(0 0 0 / 0.62);
       --color-bot-tomato: oklch(0.665 0.21 28);
       --color-bot-tangerine: oklch(0.745 0.172 52);
@@ -119,6 +123,7 @@
   --color-surface: unset;
   --color-sidebar: unset;
   --color-muted: unset;
+  --color-row-hover: unset;
   --color-muted-strong: unset;
   --color-border: unset;
   --color-input: unset;
@@ -140,6 +145,7 @@
   --color-control-off: unset;
   --color-control-thumb: unset;
   --color-avatar-ink: unset;
+  --color-scrollbar: unset;
   --color-scrim: unset;
   --color-bot-tomato: unset;
   --color-bot-tangerine: unset;

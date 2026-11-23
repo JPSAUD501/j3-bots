@@ -15,7 +15,7 @@ import { ScrollView, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ConnectCommand, ProviderRow } from "../components/Engine.tsx";
-import { Quiet, Section } from "../components/form.tsx";
+import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { DevicesSection } from "./Devices.tsx";
 import { usePhoneNotifications } from "./phoneNotifications.ts";
@@ -55,6 +55,9 @@ export function SettingsScreen() {
         paddingBottom: insets.bottom + 16,
       }}
     >
+      {/* The operator's own settings first, then the engine and what it spent, as on the web. */}
+      <YouSection connected={connected} />
+      <NotificationsSection connected={connected} thisPhone={thisPhone} />
       <EngineSection engine={engine} stale={engineStale} />
       <UsageSection
         engine={engine}
@@ -63,8 +66,6 @@ export function SettingsScreen() {
         onLoadMore={recent.loadMore}
         onRetry={recent.retry}
       />
-      <YouSection connected={connected} />
-      <NotificationsSection connected={connected} thisPhone={thisPhone} />
       <DevicesSection connected={connected} />
       <ServerSection />
       <ThisPhoneSection />
@@ -83,7 +84,7 @@ function EngineSection(props: { readonly engine: EngineStatus | null; readonly s
   if (engine === null) {
     return (
       <Section title={t("settings.engine")}>
-        <Quiet>{t("details.loading")}</Quiet>
+        <SkeletonRows />
       </Section>
     );
   }

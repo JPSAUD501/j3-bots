@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConnectionState } from "@j3-bots/client-runtime";
 import * as DateTime from "effect/DateTime";
-import { createContext, use, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, use, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { Button } from "./ui/button";
@@ -66,26 +66,37 @@ export function ConnectionBanner({
         return null;
     }
   })();
+  // The line keeps its last words while it folds away, so it never shrinks empty.
+  const [lastText, setLastText] = useState(text);
+  if (text !== null && text !== lastText) setLastText(text);
   return (
     <div className="flex h-full flex-col">
+      {/* Opens and folds on `slide`, so what lies under it moves rather than jumps. */}
       <div
         className={cn(
-          "flex shrink-0 flex-wrap items-center justify-center gap-x-2 bg-muted px-3 text-xs text-muted-foreground",
-          text === null ? "h-0 overflow-hidden" : "min-h-8 pt-(--inset-top)",
+          "grid shrink-0 transition-[grid-template-rows] duration-(--duration-slide) ease-slide",
+          text === null ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
         )}
       >
-        <span role="status">{text}</span>
-        {state._tag === "waiting" && (
-          <>
-            {/* Changes every second, so it is shown and not announced. */}
-            <span aria-hidden className="tabular-nums">
-              {seconds > 0 ? t("connection.retryIn", { seconds }) : t("connection.retrying")}
+        <div className="min-h-0 overflow-hidden">
+          <div className="flex min-h-8 flex-wrap items-center justify-center gap-x-2 bg-muted px-3 pt-(--inset-top) text-xs text-muted-foreground">
+            <span role="status" className="sr-only">
+              {text}
             </span>
-            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onRetryNow}>
-              {t("connection.retryNow")}
-            </Button>
-          </>
-        )}
+            <span aria-hidden>{text ?? lastText}</span>
+            {state._tag === "waiting" && (
+              <>
+                {/* Changes every second, so it is shown and not announced. */}
+                <span aria-hidden className="tabular-nums">
+                  {seconds > 0 ? t("connection.retryIn", { seconds }) : t("connection.retrying")}
+                </span>
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={onRetryNow}>
+                  {t("connection.retryNow")}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
       </div>
       <div className={cn("min-h-0 flex-1", text !== null && "[--inset-top:0px]")}>
         <Speaking value={text !== null}>{children}</Speaking>

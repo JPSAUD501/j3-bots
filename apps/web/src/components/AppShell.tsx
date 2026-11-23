@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import { useState, type ReactNode, type Ref, type RefObject } from "react";
+import { useKeptWhileLeaving } from "../lib/useKeptWhileLeaving";
 import type { ShellLayout } from "../shell/layout";
 
 export type Region = "roster" | "conversation" | "details";
@@ -32,7 +33,9 @@ interface AppShellProps {
  * by side from `tablet`, with the details over the conversation as a modal
  * dialog; all three side by side from `wide`, where the details are an
  * ordinary region. Each region keeps clear of the screen's safe-area insets
- * on the edges it touches.
+ * on the edges it touches. The details slide in from the end on `slide`, beside
+ * the conversation or over it, and slide back out on the quicker `out` ease,
+ * keeping what they showed until they are gone.
  */
 export function AppShell({
   roster,
@@ -51,6 +54,7 @@ export function AppShell({
   const [frame, setFrame] = useState<HTMLDivElement | null>(null);
   const modal = layout === "phone" || layout === "tablet";
   const covered = details !== null && modal;
+  const pane = useKeptWhileLeaving(details);
   return (
     <div ref={containerRef} className="@container h-full w-full">
       <div ref={setFrame} className="relative flex h-full w-full overflow-hidden bg-background">
@@ -69,12 +73,26 @@ export function AppShell({
         >
           {conversation}
         </main>
-        {details !== null && layout === "wide" && (
+        {pane.shown !== null && layout === "wide" && (
           <aside
             aria-labelledby={detailsHeadingId}
-            className="flex w-(--layout-details-width) shrink-0 flex-col border-s border-border bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)]"
+            inert={pane.leaving}
+            className="flex w-(--layout-details-width) shrink-0 overflow-hidden"
           >
-            {details}
+            {/*
+             * The pane takes its room at once, so the conversation is laid out
+             * once as it opens and once after it closes, and the details slide
+             * in and out over that room with a transform, never resizing it.
+             */}
+            <div
+              data-leaving={pane.leaving ? "" : undefined}
+              onAnimationEnd={(event) => {
+                if (event.target === event.currentTarget && pane.leaving) pane.gone();
+              }}
+              className="flex w-(--layout-details-width) shrink-0 animate-[pane-in_var(--duration-slide)_var(--ease-slide)] flex-col border-s border-border bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] [--pane-from:100%] rtl:[--pane-from:-100%] data-leaving:animate-[pane-out_var(--duration-state)_var(--ease-out)_forwards]"
+            >
+              {pane.shown}
+            </div>
           </aside>
         )}
         <Dialog.Root
@@ -82,18 +100,21 @@ export function AppShell({
           onOpenChange={(open) => {
             if (!open) onCloseDetails();
           }}
+          onOpenChangeComplete={(open) => {
+            if (!open) pane.gone();
+          }}
         >
           <Dialog.Portal container={frame}>
             {/* Beside the pane, the scrim closes it; a phone's pane covers everything. */}
-            <Dialog.Backdrop className="absolute inset-0 z-10 hidden bg-scrim @tablet:block" />
+            <Dialog.Backdrop className="absolute inset-0 z-10 hidden bg-scrim transition-opacity duration-(--duration-slow) ease-out data-ending-style:opacity-0 data-starting-style:opacity-0 @tablet:block" />
             <Dialog.Popup
               aria-labelledby={detailsHeadingId}
               aria-modal
               initialFocus={detailsHeadingRef}
               finalFocus={returnFocusRef}
-              className="absolute inset-0 z-20 flex flex-col bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-overlay"
+              className="absolute inset-0 z-20 flex flex-col bg-background pt-(--inset-top) pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] outline-none transition-transform duration-(--duration-slide) ease-slide data-ending-style:translate-x-full data-ending-style:duration-(--duration-state) data-ending-style:ease-out data-starting-style:translate-x-full rtl:data-ending-style:-translate-x-full rtl:data-starting-style:-translate-x-full @max-tablet:pl-[env(safe-area-inset-left)] @tablet:start-auto @tablet:w-(--layout-details-width) @tablet:border-s @tablet:border-border @tablet:shadow-overlay"
             >
-              {details}
+              {pane.shown}
             </Dialog.Popup>
           </Dialog.Portal>
         </Dialog.Root>
