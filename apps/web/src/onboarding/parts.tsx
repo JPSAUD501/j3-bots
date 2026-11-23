@@ -23,12 +23,15 @@ export function BigButton({
   onClick,
   type = "button",
   disabled = false,
+  describedBy,
 }: {
   readonly children: ReactNode;
   readonly onClick?: () => void;
   readonly type?: "button" | "submit";
   /** Announced as unavailable but still focusable, so its label stays readable. */
   readonly disabled?: boolean;
+  /** The ids of what says more about it, such as a line under it. */
+  readonly describedBy?: string | undefined;
 }) {
   return (
     <Button
@@ -36,6 +39,7 @@ export function BigButton({
       variant="primary"
       onClick={onClick}
       aria-disabled={disabled}
+      aria-describedby={describedBy}
       className="h-12 w-full text-lg pointer-coarse:h-13"
     >
       {children}
@@ -45,7 +49,8 @@ export function BigButton({
 
 /**
  * A screen before the first bot that is not a step of making it, as pairing
- * and naming the server: the team still to come, a title and what to do.
+ * and naming the server: the team still to come, a title, what it says
+ * (`null` when the title says it all) and what to do.
  */
 export function FirstScreen({
   title,
@@ -62,7 +67,7 @@ export function FirstScreen({
         <Cast compact />
         <div className="flex flex-col gap-2">
           <StepTitle>{title}</StepTitle>
-          <p className="text-lg text-muted-foreground">{body}</p>
+          {body !== null && <p className="text-lg text-muted-foreground">{body}</p>}
         </div>
         {children}
       </div>

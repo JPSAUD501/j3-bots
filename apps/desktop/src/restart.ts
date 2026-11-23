@@ -32,6 +32,20 @@ export const runningAppImage: string | null = (() => {
 })();
 
 /**
+ * What starts this app anew from outside it, as a link or the system's sign-in
+ * does: the AppImage it runs from, whose launcher adds what it needs, or the
+ * executable it runs as, which is the deb's or the installed app's; in
+ * development, Electron with the app's folder, without Chromium's sandbox
+ * when this run has none (`scripts/launch.ts`).
+ */
+export const launchCommand = (): ReadonlyArray<string> => {
+  if (runningAppImage !== null) return [runningAppImage];
+  if (app.isPackaged) return [process.execPath];
+  const unsandboxed = app.commandLine.hasSwitch("no-sandbox") ? ["--no-sandbox"] : [];
+  return [process.execPath, app.getAppPath(), ...unsandboxed];
+};
+
+/**
  * Closes every descriptor above standard error, waits until the process `$1`
  * is gone, then runs the rest of the arguments in its place.
  */

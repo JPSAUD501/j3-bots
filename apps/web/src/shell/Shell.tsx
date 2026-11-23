@@ -43,6 +43,7 @@ import {
 } from "../components/EmptyStates";
 import { Roster } from "../components/Roster";
 import { useFoldedSections } from "../components/RosterGroups";
+import { StopUsingComputer } from "../components/LocalMode";
 import { ChangeServer } from "../components/ServerAddress";
 import { SettingsButton, SignOutDevice } from "../components/SettingsDialog";
 import { Button } from "../components/ui/button";
@@ -87,7 +88,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
   const { t } = i18n;
   const shortcuts = shellShortcuts();
   const { dictate, editProfile } = intents;
-  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLButtonElement>(null);
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailsHeadingId = useId();
@@ -311,18 +312,25 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
 
   if (data.roster === null || data.roster.length === 0 || openingFirstBot) {
     // Settings live in the roster's footer; before there is a roster, these are the way out: in
-    // the desktop app, to another server too, as when the one it names has moved.
+    // the desktop app, to another server too, as when the one it names has moved, and while the
+    // bots live on this computer, to a server instead, which is its way of signing out.
     const ways = (
       <div className="flex flex-wrap items-start justify-center gap-2">
-        {intents.server !== undefined && (
-          <ChangeServer
-            address={intents.server.address}
-            onChange={intents.server.forget}
-            paired
-            className="items-center"
-          />
+        {intents.local !== undefined ? (
+          <StopUsingComputer onStop={intents.local.stopUsing} quiet />
+        ) : (
+          <>
+            {intents.server !== undefined && (
+              <ChangeServer
+                address={intents.server.address}
+                onChange={intents.server.forget}
+                paired
+                className="items-center"
+              />
+            )}
+            <SignOutDevice onSignOut={intents.signOut} quiet />
+          </>
         )}
-        <SignOutDevice onSignOut={intents.signOut} quiet />
       </div>
     );
     return (
@@ -335,6 +343,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
         ) : (
           <Onboarding
             engine={data.engine}
+            vault={{ view: data.vault, intents: intents.vault }}
             footer={ways}
             {...(intents.providerSetup === undefined
               ? {}
@@ -473,6 +482,7 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
                   submitting={data.submitting}
                   openingHold={item._tag === "bot" ? openingHeld(item.bot, data.engine) : null}
                   intents={intents}
+                  vault={{ view: data.vault, intents: intents.vault }}
                   arrived={arrived}
                   flyFrom={composerRef}
                   turnBot={
@@ -496,14 +506,17 @@ export function Shell({ data, intents, navigation, keyboard = true }: ShellProps
               recipient={recipient}
               value={draft.text}
               mentions={draft.mentions}
-              onValueChange={(value, picked) => intents.setDraftText(target, value, picked)}
+              onValueChange={(value, picked, order) =>
+                intents.setDraftText(target, value, picked, order)
+              }
               files={draft.files}
               sending={draft.sending}
               loading={data.draftsLoading}
               {...(data.draftsFailed ? { unread: { onRetry: intents.retryDrafts } } : {})}
               notSaved={data.draftNotSaved(target)}
-              onAttachFiles={(files) => intents.attachFiles(target, files)}
+              onAttachFiles={(files, at) => intents.attachFiles(target, files, at)}
               onDetachFile={(fileKey) => intents.detachFile(target, fileKey)}
+              onOpenFile={intents.openAttachment}
               onSend={() => intents.sendDraft(target, addressing)}
               {...(dictate ? { onDictate: () => dictate(target) } : {})}
               {...(offer === null

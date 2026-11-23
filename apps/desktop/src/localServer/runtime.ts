@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -12,17 +11,25 @@ import * as Schema from "effect/Schema";
 // mount goes as the app exits while the server would still hold it, Windows
 // will not let an update replace a running `node.exe`, and a rollback needs
 // the previous version after the package was replaced. So each version is
-// copied to `<userData>/server-runtime/<version>/` first, the previous one is
-// kept, and older ones are removed.
+// copied to `<userData>/server-runtime/<version>/` first. Which versions stay
+// is the version transition's to say (`versionTransition.ts`): it keeps the
+// two it moved between once the new one runs, and never removes the one the
+// bots' data was last handed to.
 //
 // On Windows the firewall remembers an executable by its path, so a server
 // that listens beyond loopback runs from `<userData>/server-runtime/current/`,
 // a copy of the version that runs, put in place by rename.
 
+/** A release's name, as `release.json` gives it: safe as a folder's name. */
+const Version = Schema.String.check(Schema.isPattern(/^[0-9A-Za-z.+-]{1,64}$/));
+
 /** What `scripts/build-release.ts` writes to `release.json`: the fields the app reads. */
 const RuntimeManifest = Schema.Struct({
-  version: Schema.String.check(Schema.isPattern(/^[0-9A-Za-z.+-]{1,64}$/)),
+  version: Version,
+  /** The engine release it pins, which a transition keeps the runtime of. */
+  engine: Schema.optionalKey(Version),
 });
+export type RuntimeRelease = typeof RuntimeManifest.Type;
 const decodeManifest = Schema.decodeUnknownOption(Schema.fromJsonString(RuntimeManifest));
 
 /** Where a copy of the runtime lies, and the programs in it. */
@@ -36,8 +43,8 @@ export interface Runtime {
 }
 
 /** The runtime could not be put in place, for the reason given. */
-class RuntimeNotReady extends Schema.TaggedError<RuntimeNotReady>()("RuntimeNotReady", {
-  reason: Schema.Literals(["missing", "damaged", "not-copied"]),
+export class RuntimeNotReady extends Schema.TaggedError<RuntimeNotReady>()("RuntimeNotReady", {
+  reason: Schema.Literals(["missing", "damaged", "not-copied", "not-kept"]),
   detail: Schema.String,
 }) {
   override get message(): string {
@@ -48,6 +55,8 @@ class RuntimeNotReady extends Schema.TaggedError<RuntimeNotReady>()("RuntimeNotR
         return `The server that comes with J3 Bots is damaged (${this.detail}). Install J3 Bots again.`;
       case "not-copied":
         return `The server could not be prepared to run: ${this.detail}`;
+      case "not-kept":
+        return `J3 Bots ${this.detail}, which the bots' data was last handed to, is no longer on this computer.`;
     }
   }
 }
@@ -70,8 +79,8 @@ const runtimeAt = (
   entry: path.join(root, "server", "bin.mjs"),
 });
 
-/** The version of the runtime at `root`, as its `release.json` says it. */
-export const versionOf = Effect.fn("Runtime.versionOf")(function* (root: string) {
+/** The release of the runtime at `root`, as its `release.json` says it. */
+export const releaseOf = Effect.fn("Runtime.releaseOf")(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const text = yield* fs.readFileString(path.join(root, "release.json")).pipe(Effect.option);
@@ -85,11 +94,9 @@ export const versionOf = Effect.fn("Runtime.versionOf")(function* (root: string)
       detail: path.join(root, "release.json"),
     });
   }
-  return manifest.value.version;
+  return manifest.value;
 });
 
-/** How many versions stay in `<userData>/server-runtime`: the one that runs, and the one before it. */
-const KEPT = 2;
 const CURRENT = "current";
 /** Marks a copy that is whole: written last, after every file. */
 const COMPLETE = ".complete";
@@ -99,14 +106,12 @@ export interface InstallOptions {
   readonly source: string;
   /** `<userData>/server-runtime`. */
   readonly folder: string;
-  readonly platform: NodeJS.Platform;
 }
 
 /**
- * Puts the runtime at `source` in place under `folder`, unless the same
- * version already is, whole; removes all but the `KEPT` versions most
- * recently put in place; and answers where it is. On Windows it answers the
- * stable `current` copy, swapped in by rename when the version changed.
+ * Copies the runtime at `source` to `<folder>/<version>`, unless that version
+ * is there already, whole, and removes copies other runs left cut short.
+ * Answers its release; `ready` gives what runs it.
  *
  * A copy is made in a temporary folder and renamed into place once whole, so
  * a copy cut short (the app killed, the disk full) is never run, and is made
@@ -115,15 +120,10 @@ export interface InstallOptions {
 export const install = Effect.fn("Runtime.install")(function* (options: InstallOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const version = yield* versionOf(options.source);
-  const notCopied = (error: { readonly message: string }) =>
-    new RuntimeNotReady({ reason: "not-copied", detail: error.message });
-
+  const release = yield* releaseOf(options.source);
+  const { version } = release;
   const target = path.join(options.folder, version);
-  const whole = yield* fs
-    .exists(path.join(target, COMPLETE))
-    .pipe(Effect.orElseSucceed(() => false));
-  if (!whole) {
+  if (!(yield* isWhole(target))) {
     yield* Effect.gen(function* () {
       yield* fs.makeDirectory(options.folder, { recursive: true, mode: 0o700 });
       const staging = path.join(options.folder, `.${version}.partial`);
@@ -134,48 +134,79 @@ export const install = Effect.fn("Runtime.install")(function* (options: InstallO
       yield* fs.rename(staging, target);
     }).pipe(Effect.mapError(notCopied));
   }
-  // The newest stays newest: its folder's time is when it was last chosen.
-  const now = DateTime.toDateUtc(yield* DateTime.now);
-  yield* fs.utimes(target, now, now).pipe(Effect.ignore);
-  yield* prune(options.folder, version);
-
-  if (options.platform !== "win32") return runtimeAt(path, target, version, options.platform);
-  return yield* swapCurrent(options.folder, target, version).pipe(Effect.mapError(notCopied));
+  for (const name of yield* fs.readDirectory(options.folder).pipe(Effect.orElseSucceed(() => []))) {
+    // Only a copy's own staging folder: a release's version never starts with a dot.
+    if (name.startsWith(".") && name.endsWith(".partial")) {
+      yield* fs
+        .remove(path.join(options.folder, name), { recursive: true, force: true })
+        .pipe(Effect.ignore);
+    }
+  }
+  return release;
 });
 
-/** Removes every version but `keep` and the next most recently chosen, and leftover partial copies. */
-const prune = Effect.fn("Runtime.prune")(function* (folder: string, keep: string) {
+const notCopied = (error: { readonly message: string }) =>
+  new RuntimeNotReady({ reason: "not-copied", detail: error.message });
+
+/** Whether the copy at `root` was made whole. */
+const isWhole = Effect.fnUntraced(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const names = yield* fs.readDirectory(folder).pipe(Effect.orElseSucceed(() => []));
-  const versions: Array<{ readonly name: string; readonly chosen: number }> = [];
-  for (const name of names) {
-    if (name === CURRENT || name.startsWith(".")) {
-      if (name.endsWith(".partial") && name !== `.${keep}.partial`) {
-        yield* fs
-          .remove(path.join(folder, name), { recursive: true, force: true })
-          .pipe(Effect.ignore);
-      }
-      continue;
-    }
-    const info = yield* fs.stat(path.join(folder, name)).pipe(Effect.option);
-    if (Option.isNone(info) || info.value.type !== "Directory") continue;
-    versions.push({
-      name,
-      chosen: Option.match(info.value.mtime, { onNone: () => 0, onSome: (time) => time.getTime() }),
-    });
+  return yield* fs.exists(path.join(root, COMPLETE)).pipe(Effect.orElseSucceed(() => false));
+});
+
+/** The versions whose runtime `folder` keeps whole. */
+export const kept = Effect.fn("Runtime.kept")(function* (folder: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const versions: Array<string> = [];
+  for (const name of yield* fs.readDirectory(folder).pipe(Effect.orElseSucceed(() => []))) {
+    if (name === CURRENT || name.startsWith(".")) continue;
+    if (yield* isWhole(path.join(folder, name))) versions.push(name);
   }
-  const newestFirst = versions
-    .filter((entry) => entry.name !== keep)
-    .sort((a, b) => b.chosen - a.chosen);
-  for (const old of newestFirst.slice(KEPT - 1)) {
-    yield* fs
-      .remove(path.join(folder, old.name), { recursive: true, force: true })
-      .pipe(
-        Effect.catch((error) =>
-          Effect.logWarning(`Removing the old server runtime ${old.name} failed`, error),
-        ),
-      );
+  return versions;
+});
+
+export interface ReadyOptions {
+  /** `<userData>/server-runtime`. */
+  readonly folder: string;
+  readonly version: string;
+  readonly platform: NodeJS.Platform;
+}
+
+/**
+ * The runtime of `version`, which `folder` keeps, ready to run: from its own
+ * folder, or on Windows from the stable `current` copy, swapped in by
+ * rename when it holds another version.
+ */
+export const ready = Effect.fn("Runtime.ready")(function* (options: ReadyOptions) {
+  const path = yield* Path.Path;
+  const target = path.join(options.folder, options.version);
+  if (!(yield* isWhole(target))) {
+    return yield* new RuntimeNotReady({ reason: "not-kept", detail: options.version });
+  }
+  if (options.platform !== "win32") {
+    return runtimeAt(path, target, options.version, options.platform);
+  }
+  return yield* swapCurrent(options.folder, target, options.version).pipe(
+    Effect.mapError(notCopied),
+  );
+});
+
+/**
+ * Removes the runtime of every version but `keep` from `folder`: what a
+ * version transition does once the new version runs, keeping the two it
+ * moved between.
+ */
+export const prune = Effect.fn("Runtime.prune")(function* (
+  folder: string,
+  keep: ReadonlyArray<string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const version of yield* kept(folder)) {
+    if (keep.includes(version)) continue;
+    yield* fs.remove(path.join(folder, version), { recursive: true, force: true });
   }
 });
 

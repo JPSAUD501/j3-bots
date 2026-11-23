@@ -104,6 +104,12 @@ export function MessageBubble({
   const fromOperator = message._tag === "outgoing" || message.author._tag === "operator";
   const startsGroup = position === "single" || position === "first";
   const time = clockTime(message.createdAt, ctx);
+  // Where the operator placed each file in the text. A message without text, or
+  // kept before files were placed, shows its files after it.
+  const placed =
+    message.text !== "" && message.attachmentOffsets?.length === message.attachments.length
+      ? message.attachmentOffsets
+      : null;
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
   // The device could not record what the server answered: a problem, though nothing to retry.
@@ -202,16 +208,30 @@ export function MessageBubble({
                 ],
           )}
         >
-          <MessageText text={message.text} mentionable={mentionable ?? []} />
+          <MessageText
+            text={message.text}
+            mentionable={mentionable ?? []}
+            {...(placed === null
+              ? {}
+              : {
+                  placed: {
+                    files: message.attachments,
+                    offsets: placed,
+                    onOpen: onOpenAttachment,
+                  },
+                })}
+          />
         </div>
       )}
-      {message.attachments.map((attachment) => (
-        <FileCard
-          key={attachment.id}
-          attachment={attachment}
-          onOpen={() => onOpenAttachment(attachment)}
-        />
-      ))}
+      {/* Files placed in the text stand there; others follow it. */}
+      {placed === null &&
+        message.attachments.map((attachment) => (
+          <FileCard
+            key={attachment.id}
+            attachment={attachment}
+            onOpen={() => onOpenAttachment(attachment)}
+          />
+        ))}
       {fromOperator && (
         // How the operator's message fares. Its text is a live region from the moment the message
         // is queued, so a change to it, such as a failure, is announced once, and Send again is not

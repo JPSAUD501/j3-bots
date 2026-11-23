@@ -1,15 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { parseMessageText, type Inline } from "@j3-bots/client-runtime/presentation";
+import type { Attachment } from "@j3-bots/contracts";
+import { FileChip } from "./FileChip";
 
-/** Message text with paragraphs, code and links. Plain text everywhere else; nothing is rendered as HTML. */
+/** A message's files, each drawn where it was placed in its text. */
+interface PlacedFiles {
+  readonly files: ReadonlyArray<Attachment>;
+  /** Where each stands in the text, in their order. */
+  readonly offsets: ReadonlyArray<number>;
+  readonly onOpen: (attachment: Attachment) => void;
+}
+
+/**
+ * Message text with paragraphs, code and links, and each of its files where
+ * it was placed. Plain text everywhere else; nothing is rendered as HTML.
+ */
 export function MessageText({
   text,
   mentionable,
+  placed,
 }: {
   text: string;
   mentionable?: ReadonlyArray<string>;
+  placed?: PlacedFiles;
 }) {
-  const blocks = parseMessageText(text, mentionable);
+  const blocks = parseMessageText(text, mentionable, placed?.offsets);
   return (
     <div className="flex flex-col gap-2">
       {blocks.map((block, i) =>
@@ -27,7 +42,7 @@ export function MessageText({
           <p key={i} className="whitespace-pre-wrap break-words">
             {block.inlines.map((inline, j) => (
               // oxlint-disable-next-line react/no-array-index-key -- inlines are positional
-              <InlinePart key={j} inline={inline} />
+              <InlinePart key={j} inline={inline} placed={placed} />
             ))}
           </p>
         ),
@@ -36,7 +51,7 @@ export function MessageText({
   );
 }
 
-function InlinePart({ inline }: { inline: Inline }) {
+function InlinePart({ inline, placed }: { inline: Inline; placed: PlacedFiles | undefined }) {
   switch (inline.kind) {
     case "text":
       return inline.text;
@@ -59,5 +74,11 @@ function InlinePart({ inline }: { inline: Inline }) {
       );
     case "mention":
       return <span className="font-semibold">@{inline.name}</span>;
+    case "file": {
+      const attachment = placed?.files[inline.index];
+      return attachment === undefined ? null : (
+        <FileChip attachment={attachment} onOpen={() => placed?.onOpen(attachment)} />
+      );
+    }
   }
 }

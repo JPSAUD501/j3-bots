@@ -60,9 +60,19 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 
 **Model.** What the bot runs on: a provider instance and a model slug from the engine, such as Claude Code with a specific Claude model. Chosen per bot and changeable.
 
+## Where the bots live
+
+The bots live where J3 Bots runs. The operator chooses where in the desktop app's first screen and changes it in Settings, under "Where your bots live". There are two places:
+
+**This computer.** The desktop app runs J3 Bots itself, on the computer it is open on, and signs that computer in without a code. The bots live there and sleep when it sleeps; they are back once it wakes and the app runs, which it can do by itself when it starts with the system. The interface says "Use this computer" and "Stop using this computer". Stopping keeps the bots and their data on the computer, and they come back when the operator chooses it again.
+
+**A server.** J3 Bots runs as a service on a machine that stays on, and every device pairs with it: a browser, a phone, or the desktop app connected to it. The interface says "Connect to a server" and, in Settings, "On a server".
+
+The machine J3 Bots runs on is never called a "host": a host is a room's bot.
+
 ## What bots keep
 
-**Workspace.** A folder on the host that belongs to one bot. It holds the bot's memory, its skills, and the files it produces. It is a plain directory the operator can open.
+**Workspace.** A folder on the machine J3 Bots runs on that belongs to one bot. It holds the bot's memory, its skills, and the files it produces. It is a plain directory the operator can open.
 
 **Memory.** Durable facts a bot keeps across sessions, stored as Markdown files in its workspace. Memory has two tiers:
 
@@ -84,6 +94,8 @@ Only a `user` wake carries the operator's instructions. Every other kind is labe
 **Approval.** A request from a bot to do one specific thing that its permission mode does not allow outright. Only the operator can grant one.
 
 **Question.** A bot asking the operator to choose. It arrives as a card with options, not as prose.
+
+**Vault.** Where the operator's saved logins, and the secrets connectors use, are kept on the server, sealed under a master password only the operator knows. The vault is locked whenever the server starts and stays locked until one of the operator's devices unlocks it; a locked vault also stops every connector that needs a secret. A bot can ask the operator to save a login there, with a card, but never sees what they type. Nothing recovers a forgotten master password.
 
 **Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, or one bot's room message may mention, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.
 

@@ -30,6 +30,7 @@ import {
   type MessageProblem,
   normalizeMediaType,
 } from "../files/limits.ts";
+import { fittedMarks, insertMarks, placedMessage, withoutMarks } from "../files/placed.ts";
 import { ClientStorage, type LocalRecord, type LocalStorageError } from "../ports.ts";
 import { Cell, type Readable, waitFor } from "../Store.ts";
 import { Conversations, type MentionLabel, targetKey } from "./Conversations.ts";
@@ -56,6 +57,10 @@ export type DraftMention = typeof DraftMention.Type;
 
 /** What the operator is writing to one conversation or room, and has not sent. */
 export interface Draft {
+  /**
+   * The text, with a `FILE_MARK` where each file stands, one for each of
+   * `files`, in their order.
+   */
   readonly text: string;
   /** The mentions picked in `text`, in no particular order. Always empty outside a room. */
   readonly mentions: ReadonlyArray<DraftMention>;
@@ -115,8 +120,10 @@ export interface DraftChangedElsewhere {
 
 /**
  * A draft as the device keeps it: the text, the mentions picked in it, the
- * files already on the server, and the pairing that wrote it. A record kept
- * before drafts held mentions reads as holding none. Each write gives it a new
+ * files already on the server, each placed in the text by its mark, and the
+ * pairing that wrote it. A record kept before drafts held mentions reads as
+ * holding none; one kept before drafts placed files, as placing them after
+ * its text. Each write gives it a new
  * `revision`, so a window can tell whether the draft is still the one it
  * read. The text is kept whatever its length: the limit of a message applies
  * when it is sent. A draft emptied or sent is kept too, empty, with a
@@ -164,9 +171,9 @@ interface Kept {
   readonly files: ReadonlyArray<Attachment>;
 }
 
+/** What the device keeps of a draft: only the uploaded files, and the marks that place them. */
 const keptOf = (draft: Draft): Kept => ({
-  text: draft.text,
-  mentions: draft.mentions,
+  ...withoutMarks(draft, (index) => draft.files[index]?._tag !== "ready"),
   files: draft.files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : [])),
 });
 
@@ -184,6 +191,13 @@ const sameWriting = (
   one.text === other.text &&
   one.mentions.length === other.mentions.length &&
   one.mentions.every((mention) => other.mentions.some((picked) => sameMention(mention, picked)));
+
+/**
+ * The writing of `draft` without its files' marks: what another window can
+ * displace. Its files are never displaced, as this window's own files stay on
+ * top of what another window kept.
+ */
+const writingOf = (draft: Pick<Kept, "text" | "mentions">) => withoutMarks(draft, () => true);
 
 const sameKept = (one: Kept, other: Kept) =>
   sameWriting(one, other) &&
@@ -203,10 +217,9 @@ const keptIn = (record: string | undefined, pairing: DeviceId): Kept | undefined
   return { text: decoded.text, mentions: decoded.mentions ?? [], files: decoded.files };
 };
 
-/** A draft as the device keeps it, as this window shows it. */
+/** A draft as the device keeps it, as this window shows it, its text placing each of its files. */
 const shown = (kept: Kept): Draft => ({
-  text: kept.text,
-  mentions: kept.mentions,
+  ...fittedMarks(kept, kept.files.length),
   files: kept.files.map((attachment) => ({ _tag: "ready", key: attachment.id, attachment })),
   sending: false,
 });
@@ -268,21 +281,27 @@ export class Drafts extends Context.Service<
     readonly state: Readable<ReadonlyMap<string, Draft>>;
     /**
      * Changes the draft's text, with the mentions picked in it (none when left
-     * out), unless it is `sending`.
+     * out), unless it is `sending`. `order` names, by key, the files the
+     * text's marks place, in order, as a field that draws them tells it: a
+     * file it leaves out is taken out, its upload stopped. Without it the
+     * files stay, and the text is made to place them all.
      */
     readonly setText: (
       target: EntryTarget,
       text: string,
       mentions?: ReadonlyArray<DraftMention>,
+      order?: ReadonlyArray<string>,
     ) => Effect.Effect<void>;
     /**
-     * Adds files to the draft and uploads each the contract's limits allow.
-     * A file that breaks one stays in the draft as `failed`, saying which.
-     * A draft that is `sending` takes no files.
+     * Adds files to the draft, placed together at `at` in its text, or after
+     * it, and uploads each the contract's limits allow. A file that breaks
+     * one stays in the draft as `failed`, saying which. A draft that is
+     * `sending` takes no files.
      */
     readonly attach: (
       target: EntryTarget,
       files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
+      at?: number,
     ) => Effect.Effect<void>;
     /** Takes a file out of the draft, stopping its upload. */
     readonly detach: (target: EntryTarget, key: string) => Effect.Effect<void>;
@@ -336,7 +355,8 @@ export class Drafts extends Context.Service<
     readonly saving: Readable<boolean>;
     /**
      * Puts back the text this window held when another window changed the
-     * draft, as a new change to the draft as it is now.
+     * draft, as a new change to the draft as it is now. The draft's files
+     * stay, placed after the text put back.
      */
     readonly restore: (target: EntryTarget) => Effect.Effect<void>;
     /** Lets go of the text on offer for `restore`. */
@@ -590,8 +610,12 @@ export const layer = Layer.effect(
         const stored = shown(keptIn(value, pairing) ?? keptOf(empty));
         // Writing the device never kept, which this window shows no more: the
         // same text with other mentions picked in it is other writing.
-        const offered = held.text !== "" && !sameWriting(held, stored) && !sameWriting(held, read);
-        if (offered) offer(key, held);
+        const heldWriting = writingOf(held);
+        const offered =
+          heldWriting.text !== "" &&
+          !sameWriting(heldWriting, writingOf(stored)) &&
+          !sameWriting(heldWriting, writingOf(read));
+        if (offered) offer(key, heldWriting);
         if (value === undefined) known.delete(key);
         else known.set(key, value);
 
@@ -607,18 +631,17 @@ export const layer = Layer.effect(
           const problem = problems[index] ?? null;
           if (problem !== null) refused.set(file.key, problem);
         }
-        const draft: Draft = {
-          ...stored,
-          files: [
-            ...stored.files,
-            ...own.map((file): DraftFile => {
-              const problem = refused.get(file.key);
-              if (problem === undefined) return file;
-              const { name, mediaType, size } = localFileOf(file);
-              return { _tag: "failed", key: file.key, problem, name, mediaType, size };
-            }),
-          ],
-        };
+        const merged = [
+          ...stored.files,
+          ...own.map((file): DraftFile => {
+            const problem = refused.get(file.key);
+            if (problem === undefined) return file;
+            const { name, mediaType, size } = localFileOf(file);
+            return { _tag: "failed", key: file.key, problem, name, mediaType, size };
+          }),
+        ];
+        // This window's own files follow the text another window kept.
+        const draft: Draft = { ...stored, ...fittedMarks(stored, merged.length), files: merged };
         // What is left to write is settled before the draft shows: whoever sees
         // it may change it at once.
         stale.delete(key);
@@ -765,18 +788,52 @@ export const layer = Layer.effect(
     const replaceFile = (target: EntryTarget, fileKey: string, file: DraftFile) =>
       Effect.sync(() => replaceFileNow(target, fileKey, file));
 
+    /**
+     * The draft with `text` and its `mentions`, placing the files `order`
+     * names, by key, in that order: a file it leaves out is taken out. Without
+     * `order` the files stay as they are, and the text is made to place them
+     * all (`fittedMarks`).
+     */
     const withText =
-      (text: string, mentions: ReadonlyArray<DraftMention>) =>
-      (draft: Draft): Draft =>
-        sameKept(keptOf(draft), { ...keptOf(draft), text, mentions })
+      (text: string, mentions: ReadonlyArray<DraftMention>, order?: ReadonlyArray<string>) =>
+      (draft: Draft): Draft => {
+        const files =
+          order === undefined
+            ? draft.files
+            : order.flatMap((key) => draft.files.filter((file) => file.key === key));
+        const writing = fittedMarks({ text, mentions }, files.length);
+        const next = { ...draft, ...writing, files };
+        return draft.text === next.text &&
+          sameWriting(draft, next) &&
+          draft.files.length === files.length &&
+          draft.files.every((file, index) => file === files[index])
           ? draft
-          : { ...draft, text, mentions };
+          : next;
+      };
+
+    /** Stops the uploads of the files `draft` held that `next` no longer does. */
+    const stopDropped = (before: Draft | undefined, after: Draft | undefined) => {
+      const dropped = (before?.files ?? []).flatMap((file) => {
+        if (after?.files.some((kept) => kept.key === file.key) === true) return [];
+        const upload = uploads.get(file.key);
+        uploads.delete(file.key);
+        return upload === undefined ? [] : [upload];
+      });
+      return Fiber.interruptAll(dropped);
+    };
 
     const setText = (
       target: EntryTarget,
       text: string,
       mentions: ReadonlyArray<DraftMention> = [],
-    ) => change(target, withText(text, mentions));
+      order?: ReadonlyArray<string>,
+    ) =>
+      Effect.suspend(() => {
+        const key = targetKey(target);
+        const before = state.get().get(key);
+        changeNow(target, withText(text, mentions, order));
+        return stopDropped(before, state.get().get(key));
+      });
 
     const restore = (target: EntryTarget) =>
       locked(
@@ -795,6 +852,7 @@ export const layer = Layer.effect(
     const attach = Effect.fn("Drafts.attach")(function* (
       target: EntryTarget,
       added: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
+      at?: number,
     ) {
       const key = targetKey(target);
       if (state.get().get(key)?.sending === true || closed()) return;
@@ -818,7 +876,16 @@ export const layer = Layer.effect(
           ? { _tag: "uploading", key: file.key, sent: 0, ...file.local }
           : { _tag: "failed", key: file.key, problem, ...file.local };
       });
-      yield* change(target, (draft) => ({ ...draft, files: [...draft.files, ...entries] }));
+      // Placed where the operator left the caret, or after the text.
+      yield* change(target, (draft) => {
+        const placed = insertMarks(draft, at ?? draft.text.length, entries.length);
+        return {
+          ...draft,
+          text: placed.text,
+          mentions: placed.mentions,
+          files: draft.files.toSpliced(placed.index, 0, ...entries),
+        };
+      });
 
       // Each file uploads for the pairing that took it, and stops when that pairing ends.
       const pairing = followed.get();
@@ -866,11 +933,15 @@ export const layer = Layer.effect(
       Effect.suspend(() => {
         const upload = uploads.get(fileKey);
         uploads.delete(fileKey);
-        return change(target, (draft) =>
-          draft.files.some((file) => file.key === fileKey)
-            ? { ...draft, files: draft.files.filter((file) => file.key !== fileKey) }
-            : draft,
-        ).pipe(Effect.andThen(upload === undefined ? Effect.void : Fiber.interrupt(upload)));
+        return change(target, (draft) => {
+          const index = draft.files.findIndex((file) => file.key === fileKey);
+          if (index === -1) return draft;
+          return {
+            ...draft,
+            ...withoutMarks(draft, (mark) => mark === index),
+            files: draft.files.toSpliced(index, 1),
+          };
+        }).pipe(Effect.andThen(upload === undefined ? Effect.void : Fiber.interrupt(upload)));
       });
 
     const send = Effect.fn("Drafts.send")(function* (target: EntryTarget, addressing?: Addressing) {
@@ -882,7 +953,8 @@ export const layer = Layer.effect(
       if (switching.get()) return "changed-elsewhere";
       if (unread.get()) return "not-ready";
       if (draft.files.some((file) => file._tag !== "ready")) return "not-ready";
-      const text = draft.text.trim();
+      // Every file is uploaded: each mark places one of `attachments`, in order.
+      const { text, offsets } = placedMessage(draft.text);
       const { files: attachments } = keptOf(draft);
       if (text === "" && attachments.length === 0) return "empty";
       const pressed: Draft = { ...draft, sending: true };
@@ -914,6 +986,7 @@ export const layer = Layer.effect(
                 target,
                 text,
                 attachments,
+                ...(attachments.length === 0 ? {} : { attachmentOffsets: offsets }),
                 ...addressing,
               },
               {

@@ -37,6 +37,7 @@ const server = (
         version: "0.3.0",
         pid: options.statusPid ?? PID,
         listener: { port: options.listensOn ?? 3747 },
+        engine: { state: { _tag: "ready" } },
       }),
     localDevice: (request) =>
       Effect.suspend(() => {

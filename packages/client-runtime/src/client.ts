@@ -5,8 +5,12 @@ import type {
   BotFile,
   BotId,
   CommandId,
+  Credential,
+  CredentialField,
+  CredentialId,
   Device,
   DeviceId,
+  DeviceToken,
   EngineStatus as EngineStatusValue,
   EntryId,
   EntryOrder,
@@ -17,6 +21,7 @@ import type {
   MemoryScope,
   Mentions,
   HarnessLocation,
+  MasterPassword,
   Notification,
   ProviderConnectionRequest,
   Room,
@@ -28,12 +33,14 @@ import type {
   SectionId,
   Settings as SettingsValue,
   SignInHarness,
+  TotpPreview,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
@@ -69,6 +76,7 @@ import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
 import type { Synced } from "./stores/synced.ts";
 import * as Usage from "./stores/Usage.ts";
+import * as Vault from "./stores/Vault.ts";
 import * as WorkSteps from "./stores/WorkSteps.ts";
 
 /** What a platform provides to run the client. See `ports.ts`. */
@@ -99,6 +107,7 @@ export const layer = SignOut.layer.pipe(
       Presence.layer,
       Usage.layer,
       ProviderSetup.layer,
+      Vault.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -107,6 +116,36 @@ export const layer = SignOut.layer.pipe(
   Layer.provideMerge(Connection.layer),
   Layer.provide(refuseRedirects),
 );
+
+/** The vault, with each request answered as a promise; see `Vault.Vault`. */
+export interface VaultHandle {
+  readonly view: Readable<Vault.VaultView>;
+  readonly setup: (password: MasterPassword) => Promise<Vault.VaultResult>;
+  readonly unlock: (password: MasterPassword) => Promise<Vault.VaultResult>;
+  readonly lock: () => Promise<Vault.VaultResult>;
+  readonly changePassword: (
+    current: MasterPassword,
+    next: MasterPassword,
+  ) => Promise<Vault.VaultResult>;
+  readonly save: (
+    credential: Vault.NewCredential,
+    request: EntryId | null,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly update: (
+    id: CredentialId,
+    changes: Vault.CredentialChanges,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly remove: (id: CredentialId) => Promise<Vault.VaultResult>;
+  readonly setAllowedBots: (
+    id: CredentialId,
+    bots: ReadonlyArray<BotId>,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly reveal: (
+    id: CredentialId,
+    field: CredentialField,
+  ) => Promise<Vault.VaultResult<Redacted.Redacted<string>>>;
+  readonly totpPreview: (id: CredentialId) => Promise<Vault.VaultResult<TotpPreview>>;
+}
 
 export interface ConversationHandle {
   readonly target: EntryTarget;
@@ -163,6 +202,15 @@ export interface J3Client {
     readonly code: string;
     readonly deviceName: string;
   }) => Promise<PairResult>;
+  /**
+   * Keeps a credential this device was given without a code, as the desktop
+   * app's own server gives the computer it runs on, and connects with it.
+   * Resolves `false` when the device could not keep it.
+   */
+  readonly adopt: (credential: {
+    readonly deviceId: DeviceId;
+    readonly token: DeviceToken;
+  }) => Promise<boolean>;
   /** Ends this device's access, and deletes its credential, drafts and unsent messages here. */
   readonly signOut: () => Promise<SignOut.SignOutResult>;
   readonly reconnectNow: () => void;
@@ -207,16 +255,22 @@ export interface J3Client {
 
   /** Every conversation's draft, by `targetKey`. Kept on the device. */
   readonly drafts: Readable<ReadonlyMap<string, Drafts.Draft>>;
-  /** The draft's new text, with the mentions picked in it; none when left out. */
+  /**
+   * The draft's new text, with the mentions picked in it, none when left out,
+   * and, from a field that draws the files, the keys of the files its marks
+   * place, in order (`Drafts.setText`).
+   */
   readonly setDraftText: (
     target: EntryTarget,
     text: string,
     mentions?: ReadonlyArray<Drafts.DraftMention>,
+    order?: ReadonlyArray<string>,
   ) => void;
-  /** Adds files to the draft and uploads them. */
+  /** Adds files to the draft, placed at `at` in its text or after it, and uploads them. */
   readonly attachFiles: (
     target: EntryTarget,
     files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
+    at?: number,
   ) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
@@ -369,6 +423,9 @@ export interface J3Client {
     request: ProviderConnectionRequest,
   ) => Promise<ProviderSetup.ConnectEndpointResult>;
 
+  /** The operator's vault on the server; see `Vault`. */
+  readonly vault: VaultHandle;
+
   readonly setView: (target: EntryTarget | null) => void;
   /** Calls `listener` for each notification. Returns the function that stops it. */
   readonly onNotification: (listener: (notification: Notification) => void) => () => void;
@@ -413,6 +470,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         presence: yield* Presence.Presence,
         usage: yield* Usage.Usage,
         providerSetup: yield* ProviderSetup.ProviderSetup,
+        vault: yield* Vault.Vault,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -457,6 +515,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
           Effect.catchTag("PairingFailed", (error) =>
             Effect.succeed<PairResult>({ _tag: "failed", reason: error.reason }),
           ),
+        ),
+      ),
+    adopt: ({ deviceId, token }) =>
+      run.promise(
+        connection.adopt({ deviceId, token: Redacted.make(token) }).pipe(
+          Effect.as(true),
+          Effect.catchTag("CredentialStorageError", () => Effect.succeed(false)),
         ),
       ),
     signOut: () => run.promise(services.signOut.run),
@@ -523,9 +588,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       ),
 
     drafts: services.drafts.state,
-    setDraftText: (target, text, mentions) =>
-      run.sync(services.drafts.setText(target, text, mentions)),
-    attachFiles: (target, files) => fire(services.drafts.attach(target, files)),
+    setDraftText: (target, text, mentions, order) =>
+      run.sync(services.drafts.setText(target, text, mentions, order)),
+    attachFiles: (target, files, at) => fire(services.drafts.attach(target, files, at)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     sendDraft: (target, addressing) => run.promise(services.drafts.send(target, addressing)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),
@@ -607,6 +672,19 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         services.devices.startPairing.pipe(Effect.exit, Effect.map(Actions.intentResult)),
       ),
 
+    vault: {
+      view: services.vault.view,
+      setup: (password) => run.promise(services.vault.setup(password)),
+      unlock: (password) => run.promise(services.vault.unlock(password)),
+      lock: () => run.promise(services.vault.lock),
+      changePassword: (current, next) => run.promise(services.vault.changePassword(current, next)),
+      save: (credential, request) => run.promise(services.vault.save(credential, request)),
+      update: (id, changes) => run.promise(services.vault.update(id, changes)),
+      remove: (id) => run.promise(services.vault.remove(id)),
+      setAllowedBots: (id, bots) => run.promise(services.vault.setAllowedBots(id, bots)),
+      reveal: (id, field) => run.promise(services.vault.reveal(id, field)),
+      totpPreview: (id) => run.promise(services.vault.totpPreview(id)),
+    },
     signIns: services.providerSetup.signIns,
     signIn: (harness, openPage) => fire(services.providerSetup.signIn(harness, openPage)),
     cancelSignIn: (harness) => fire(services.providerSetup.cancelSignIn(harness)),

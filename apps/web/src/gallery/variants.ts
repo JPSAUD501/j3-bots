@@ -7,13 +7,19 @@ import type { OutgoingMessage } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
   CommandId,
+  CredentialId,
+  DeviceId,
   EntryId,
   EntryOrder,
+  Label,
   RoutineId,
+  SiteOrigin,
   WorkStepId,
   type ApprovalEntry,
   type Author,
   type BotId,
+  type Credential,
+  type CredentialRequestEntry,
   type HandoffEntry,
   type MessageEntry,
   type NoticeEntry,
@@ -26,6 +32,7 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { ids } from "./sample";
+import type { SampleValues } from "./sampleVault";
 
 export function galleryVariants(now: DateTime.Utc) {
   const ago = (minutes: number) =>
@@ -369,6 +376,67 @@ export function galleryVariants(now: DateTime.Utc) {
     secret("secret-expired", "expired"),
   ];
 
+  const login = (
+    name: string,
+    status: CredentialRequestEntry["status"],
+  ): CredentialRequestEntry => ({
+    _tag: "credential-request",
+    ...base(name),
+    origin: SiteOrigin.make("https://billing.example.com"),
+    note: "The billing dashboard asks for a login to export the invoices. Save it, and next month I can export them myself.",
+    status,
+  });
+  const logins: ReadonlyArray<CredentialRequestEntry> = [
+    login("login", { _tag: "pending" }),
+    login("login-saved", {
+      _tag: "saved",
+      credentialId: CredentialId.make("cred_variantsaved00000"),
+      name: Label.make("Billing dashboard"),
+    }),
+    login("login-dismissed", { _tag: "dismissed" }),
+  ];
+
+  /** Saved logins, with the values the sample vault reveals. */
+  const credentials: ReadonlyArray<readonly [Credential, SampleValues]> = [
+    [
+      {
+        id: CredentialId.make("cred_variantgithub0000"),
+        name: Label.make("GitHub (work)"),
+        origins: [SiteOrigin.make("https://github.com")],
+        hasTotp: true,
+        allowedBots: [ids.scout],
+        createdAt: ago(60 * 24 * 9),
+        updatedAt: ago(60 * 24 * 2),
+        lastReveal: {
+          at: ago(60 * 5),
+          deviceId: DeviceId.make("variant-laptop"),
+          field: "password",
+        },
+      },
+      {
+        username: "ana@example.com",
+        password: "correct-staple-42",
+        totp: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      },
+    ],
+    [
+      {
+        id: CredentialId.make("cred_variantbilling000"),
+        name: Label.make("Billing dashboard"),
+        origins: [
+          SiteOrigin.make("https://billing.example.com"),
+          SiteOrigin.make("https://admin.billing.example.com"),
+        ],
+        hasTotp: false,
+        allowedBots: [],
+        createdAt: ago(60),
+        updatedAt: ago(60),
+        lastReveal: null,
+      },
+      { username: "finance", password: "an example password", totp: null },
+    ],
+  ];
+
   const fold = (
     name: string,
     status: WorkFoldEntry["status"],
@@ -635,6 +703,8 @@ export function galleryVariants(now: DateTime.Utc) {
     approvals,
     approvalBecomingExact,
     secrets,
+    logins,
+    credentials,
     folds,
     notices,
     handoffs,

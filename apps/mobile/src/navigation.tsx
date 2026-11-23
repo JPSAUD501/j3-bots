@@ -25,6 +25,7 @@ import { PresentationProvider } from "./presentation.tsx";
 import { ConversationScreen } from "./screens/Conversation.tsx";
 import { DetailsScreen } from "./screens/Details.tsx";
 import { EditBotScreen } from "./screens/EditBot.tsx";
+import { HiddenScreen } from "./screens/Hidden.tsx";
 import { MemoryFileScreen } from "./screens/MemoryFile.tsx";
 import { NewBotScreen } from "./screens/NewBot.tsx";
 import { RoomFormScreen } from "./screens/RoomForm.tsx";
@@ -35,12 +36,13 @@ import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
 import { useColor } from "./theme.ts";
 import { Toasts } from "./toast.tsx";
+import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
 
 /**
  * One route per screen. On a phone they stack: the roster, a bot's or room's
  * conversation, its details, and over those the forms, a memory file and a
  * routine's runs;
- * Settings opens from the roster. From the tablet width up the roster's route
+ * Settings and the hidden bots open from the roster. From the tablet width up the roster's route
  * shows the conversation `item` names beside the roster, and the
  * conversation's route is not used. Each route after the roster names the
  * bot or room by its roster key, so it shows the roster's current name.
@@ -61,6 +63,7 @@ export type Screens = {
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
   settings: undefined;
+  hidden: undefined;
 };
 
 /**
@@ -167,48 +170,56 @@ export function Main() {
     <KeyboardProvider>
       <PresentationProvider>
         <Toasts>
-          <NavigationContainer ref={navigation} onReady={() => setReady(true)} theme={theme}>
-            <Stack.Navigator screenOptions={screenOptions}>
-              {/* The roster and the conversation draw their own headers, which hold more than a title. */}
-              <Stack.Screen
-                name="roster"
-                component={RosterScreen}
-                options={{ title: t("roster.label"), headerShown: false }}
-              />
-              <Stack.Screen
-                name="conversation"
-                component={ConversationScreen}
-                options={{ headerShown: false }}
-              />
-              <Stack.Screen name="details" component={DetailsScreen} />
-              <Stack.Screen
-                name="share"
-                component={ShareScreen}
-                options={{ title: t("share.title"), presentation: "modal" }}
-              />
-              {/* The forms, the memory file and a routine's runs set their own titles. */}
-              <Stack.Screen name="editBot" options={sheet} component={EditBotScreen} />
-              <Stack.Screen name="memoryFile" options={sheet} component={MemoryFileScreen} />
-              <Stack.Screen name="routineRuns" options={sheet} component={RoutineRunsScreen} />
-              <Stack.Screen name="roomForm" options={sheet} component={RoomFormScreen} />
-              <Stack.Screen
-                name="newBot"
-                component={NewBotScreen}
-                options={{ ...sheet, title: t("newBot.title") }}
-              />
-              <Stack.Screen name="shareTemplate" options={sheet} component={ShareTemplateScreen} />
-              <Stack.Screen
-                name="newFromTemplate"
-                component={NewFromTemplateScreen}
-                options={{ ...sheet, title: t("template.create.title") }}
-              />
-              <Stack.Screen
-                name="settings"
-                component={SettingsScreen}
-                options={{ ...sheet, title: t("settings.title") }}
-              />
-            </Stack.Navigator>
-          </NavigationContainer>
+          <FileOpenerProvider>
+            <NavigationContainer ref={navigation} onReady={() => setReady(true)} theme={theme}>
+              <Stack.Navigator screenOptions={screenOptions}>
+                {/* The roster and the conversation draw their own headers, which hold more than a title. */}
+                <Stack.Screen
+                  name="roster"
+                  component={RosterScreen}
+                  options={{ title: t("roster.label"), headerShown: false }}
+                />
+                <Stack.Screen
+                  name="conversation"
+                  component={ConversationScreen}
+                  options={{ headerShown: false }}
+                />
+                <Stack.Screen name="details" component={DetailsScreen} />
+                {/* Sets its own title. */}
+                <Stack.Screen name="hidden" component={HiddenScreen} />
+                <Stack.Screen
+                  name="share"
+                  component={ShareScreen}
+                  options={{ title: t("share.title"), presentation: "modal" }}
+                />
+                {/* The forms, the memory file and a routine's runs set their own titles. */}
+                <Stack.Screen name="editBot" options={sheet} component={EditBotScreen} />
+                <Stack.Screen name="memoryFile" options={sheet} component={MemoryFileScreen} />
+                <Stack.Screen name="routineRuns" options={sheet} component={RoutineRunsScreen} />
+                <Stack.Screen name="roomForm" options={sheet} component={RoomFormScreen} />
+                <Stack.Screen
+                  name="newBot"
+                  component={NewBotScreen}
+                  options={{ ...sheet, title: t("newBot.title") }}
+                />
+                <Stack.Screen
+                  name="shareTemplate"
+                  options={sheet}
+                  component={ShareTemplateScreen}
+                />
+                <Stack.Screen
+                  name="newFromTemplate"
+                  component={NewFromTemplateScreen}
+                  options={{ ...sheet, title: t("template.create.title") }}
+                />
+                <Stack.Screen
+                  name="settings"
+                  component={SettingsScreen}
+                  options={{ ...sheet, title: t("settings.title") }}
+                />
+              </Stack.Navigator>
+            </NavigationContainer>
+          </FileOpenerProvider>
           <ShareOpener navigation={navigation} ready={ready} />
           <TemplateOpener navigation={navigation} ready={ready} />
         </Toasts>

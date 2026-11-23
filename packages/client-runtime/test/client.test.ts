@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  type BotId,
+  AttachmentId,
+  BotId,
   CommandId,
   DeviceId,
   DeviceToken,
@@ -56,6 +57,7 @@ import {
 } from "../src/connection/Connection.ts";
 import { Actions, cardAction } from "../src/intents/Actions.ts";
 import { type ClientStorage, CredentialStore, type DeviceCredential } from "../src/ports.ts";
+import { FILE_MARK } from "../src/files/placed.ts";
 import { waitFor } from "../src/Store.ts";
 import {
   type CardAnswer,
@@ -139,7 +141,7 @@ const unserved = Layer.mergeAll(
       const entries = yield* Server.Entries;
       const files = yield* Server.Attachments;
       const once = Semaphore.makeUnsafe(1);
-      return ({ commandId, target, text, attachments, mentions }) =>
+      return ({ commandId, target, text, attachments, attachmentOffsets, mentions }) =>
         Effect.gen(function* () {
           yield* Queue.offer(sends, commandId);
           yield* gate.await;
@@ -159,6 +161,7 @@ const unserved = Layer.mergeAll(
                   attachments: stored.flatMap((file) =>
                     Option.isSome(file) ? [file.value.attachment] : [],
                   ),
+                  ...(attachmentOffsets === undefined ? {} : { attachmentOffsets }),
                   mentions: mentions ?? { _tag: "bots", ids: [] },
                   delivery: { _tag: "pending" },
                   commandId,
@@ -867,6 +870,27 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           [USAGE_PAGE + 50, false, false, false],
         );
       }).pipe(Effect.scoped, Effect.provide(client())),
+  );
+
+  it.effect("keeps a credential it was given without a code, connects, and keeps it", () =>
+    Effect.gen(function* () {
+      // A credential the server issued to this device by another way than a code.
+      const given = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        return yield* savedCredential;
+      }).pipe(Effect.scoped, Effect.provide(client()));
+      if (Option.isNone(given)) return assert.fail("The pairing was not saved");
+
+      yield* Effect.gen(function* () {
+        const connection = yield* Connection;
+        yield* waitFor(connection.state, (state) => state._tag === "unpaired");
+        yield* connection.adopt(given.value);
+        yield* waitFor(connection.state, isConnected);
+        assert.strictEqual(yield* connection.deviceId, given.value.deviceId);
+        const stored = yield* savedCredential;
+        assert.isTrue(Option.isSome(stored) && stored.value.deviceId === given.value.deviceId);
+      }).pipe(Effect.scoped, Effect.provide(client()));
+    }),
   );
 
   it.effect("asks to pair again when the ticket route refuses the saved credential", () =>
@@ -2024,7 +2048,8 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
 
           const notice = yield* Fiber.join(noticed);
           const shown = two.state.get().get(key);
-          assert.strictEqual(shown?.text, "shared, from one");
+          // Its file follows the text the other tab kept.
+          assert.strictEqual(shown?.text, `shared, from one${FILE_MARK}`);
           assert.deepStrictEqual(
             shown?.files.map((file) => [file._tag, file._tag === "ready" ? null : file.name]),
             [["uploading", "slow.txt"]],
@@ -2070,7 +2095,8 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
           yield* Fiber.join(noticed);
 
           const shown = two.state.get().get(key);
-          assert.strictEqual(shown?.text, "shared, from one");
+          // Its file follows the text the other tab kept.
+          assert.strictEqual(shown?.text, `shared, from one${FILE_MARK}`);
           assert.deepStrictEqual(
             shown?.files.map((file) => (file._tag === "ready" ? file.attachment.name : file._tag)),
             ["notes.txt"],
@@ -2653,7 +2679,8 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       yield* Effect.gen(function* () {
         const drafts = yield* Drafts;
         const restored = drafts.state.get().get(targetKey(first.target));
-        assert.strictEqual(restored?.text, "notes attached");
+        // Attached with no place given, the file follows the text.
+        assert.strictEqual(restored?.text, `notes attached${FILE_MARK}`);
         assert.deepStrictEqual(
           restored?.files.map((file) => file._tag === "ready" && file.attachment.id),
           [first.attachmentId],
@@ -2683,6 +2710,98 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         assert.strictEqual(yield* Queue.size(sends), 0);
         yield* whenStored(device.storage, "drafts", targetKey(first.target), noDraft);
       }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+    }),
+  );
+
+  it.effect(
+    "keeps each file of a draft where it was placed through a reload, and sends its place",
+    () =>
+      Effect.gen(function* () {
+        const { sends } = yield* Fakes;
+        const device = TestPlatform.makeDevice();
+        const upload = (name: string) => ({ name, body: new Blob([name], { type: "text/plain" }) });
+
+        const first = yield* Effect.gen(function* () {
+          yield* pairAndConnect;
+          const botId = yield* createBot("Reader");
+          const target: EntryTarget = { _tag: "conversation", botId };
+          const key = targetKey(target);
+          const drafts = yield* Drafts;
+          yield* drafts.setText(target, "compare  with");
+          yield* drafts.attach(target, [upload("a.txt")], 8);
+          yield* drafts.attach(target, [upload("b.txt")]);
+          // The first goes where the caret was; one given no place, after the text.
+          yield* drafts.attach(target, [upload("c.txt")], 0);
+          const ready = yield* waitFor(drafts.state, (state) => {
+            const files = state.get(key)?.files ?? [];
+            return files.length === 3 && files.every((file) => file._tag === "ready");
+          });
+          const ids = (ready.get(key)?.files ?? []).flatMap((file) =>
+            file._tag === "ready" ? [file.attachment.id] : [],
+          );
+          yield* whenStored(device.storage, "drafts", key, (record) =>
+            ids.every((id) => record?.includes(id) === true),
+          );
+          return { target, ids, credential: yield* savedCredential };
+        }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+
+        yield* Effect.gen(function* () {
+          const drafts = yield* Drafts;
+          const restored = drafts.state.get().get(targetKey(first.target));
+          assert.strictEqual(restored?.text, `${FILE_MARK}compare ${FILE_MARK} with${FILE_MARK}`);
+          assert.deepStrictEqual(
+            restored?.files.map((file) => file._tag === "ready" && file.attachment.name),
+            ["c.txt", "a.txt", "b.txt"],
+          );
+
+          assert.strictEqual(yield* drafts.send(first.target), "sent");
+          const commandId = yield* Queue.take(sends);
+          const conversation = yield* (yield* Conversations).open(first.target);
+          const delivered = yield* waitFor(conversation.state, (state) =>
+            state.items.some((item) => item._tag === "message" && item.commandId === commandId),
+          );
+          const message = delivered.items.find(
+            (item) => item._tag === "message" && item.commandId === commandId,
+          );
+          if (message?._tag !== "message") return assert.fail("No message");
+          assert.strictEqual(message.text, "compare  with");
+          assert.deepStrictEqual(message.attachmentOffsets, [0, 8, 13]);
+          assert.deepStrictEqual(
+            message.attachments.map((attachment) => attachment.id),
+            first.ids,
+          );
+        }).pipe(Effect.scoped, Effect.provide(client(first.credential, device)));
+      }),
+  );
+
+  it.effect("places the files of a draft kept before drafts placed them after its text", () =>
+    Effect.gen(function* () {
+      const device = TestPlatform.makeDevice();
+      const target: EntryTarget = { _tag: "conversation", botId: BotId.make("reader") };
+      const key = targetKey(target);
+      const file = {
+        id: AttachmentId.make("notes"),
+        name: "notes.txt",
+        mediaType: "text/plain",
+        size: 5,
+      };
+
+      const credential = yield* Effect.gen(function* () {
+        yield* pairAndConnect;
+        const pairing = yield* (yield* Connection).deviceId;
+        const older = JSON.stringify({ revision: "older", pairing, text: "notes", files: [file] });
+        yield* device.storage.commit([{ table: "drafts", key, value: older }]).pipe(Effect.orDie);
+        return yield* savedCredential;
+      }).pipe(Effect.scoped, Effect.provide(client(Option.none(), device)));
+
+      yield* Effect.gen(function* () {
+        const shown = (yield* Drafts).state.get().get(key);
+        assert.strictEqual(shown?.text, `notes${FILE_MARK}`);
+        assert.deepStrictEqual(
+          shown?.files.map((one) => one.key),
+          ["notes"],
+        );
+      }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
     }),
   );
 

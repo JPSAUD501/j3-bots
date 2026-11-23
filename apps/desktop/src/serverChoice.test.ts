@@ -2,7 +2,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { type ConnectRefusal, ServerOrigin } from "@j3-bots/desktop-bridge";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -199,13 +201,53 @@ describe("running the bots on this computer", () => {
       assert.deepStrictEqual(now.localDevice, { id: DEVICE, current: false });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.live("lets a step taken while the bots run here end before they stop running here", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+      const { choice, page, done } = yield* setUp(file);
+      const entered = yield* Deferred.make<void>();
+      const go = yield* Deferred.make<void>();
+      // Try again of an update stops the server, then starts it.
+      const retry = Effect.gen(function* () {
+        done.push("retry: stop");
+        yield* Deferred.succeed(entered, undefined);
+        yield* Deferred.await(go);
+        done.push("retry: start");
+      });
+
+      const retrying = yield* Effect.forkChild(choice.whileLocal(retry));
+      yield* Deferred.await(entered);
+      const leaving = yield* Effect.forkChild(choice.connectToServerInstead(page));
+      // Time for the switch to save and stop the server, were it not kept waiting.
+      yield* Effect.sleep("200 millis");
+      yield* Deferred.succeed(go, undefined);
+      yield* Fiber.join(retrying);
+      assert.strictEqual(yield* Fiber.join(leaving), "changed");
+      // Once they run elsewhere, it does nothing.
+      yield* choice.whileLocal(retry);
+
+      assert.deepStrictEqual(done, [
+        "retry: stop",
+        "retry: start",
+        "stop local server",
+        "clear (server none)",
+        "open home (server none)",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("the settings file", () => {
-  const REMOTE = { mode: "remote", server: SERVER, localDevice: null } as const;
-  const NONE = { mode: null, server: null, localDevice: null } as const;
+  const REMOTE = {
+    mode: "remote",
+    server: SERVER,
+    localDevice: null,
+    startWithSystem: false,
+  } as const;
+  const NONE = { mode: null, server: null, localDevice: null, startWithSystem: false } as const;
 
-  it("reads the server, the window, the shortcut and the appearance each on its own", () => {
+  it("reads the server, the window, the shortcut, the appearance and starting with the system each on its own", () => {
     const window = { x: 10, y: 20, width: 800, height: 600, maximized: false };
     const shortcut = "Control+Alt+K";
     assert.deepStrictEqual(
@@ -239,6 +281,16 @@ describe("the settings file", () => {
         dropped: ["appearance"],
       },
     );
+    assert.deepStrictEqual(
+      Settings.decodeSettings(JSON.stringify({ server: SERVER, startWithSystem: "yes" })),
+      {
+        settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
+        dropped: ["startWithSystem"],
+      },
+    );
+    assert.isTrue(
+      Settings.decodeSettings(JSON.stringify({ startWithSystem: true })).settings.startWithSystem,
+    );
     assert.deepStrictEqual(Settings.decodeSettings("{ not json"), {
       settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
       dropped: [],
@@ -262,6 +314,7 @@ describe("the settings file", () => {
         window: null,
         shortcut: null,
         appearance: "system",
+        startWithSystem: false,
       },
     );
   });

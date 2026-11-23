@@ -196,5 +196,16 @@ export const make = Effect.fn("ServerChoice.make")(function* (
     );
   });
 
-  return { connect, forget, useThisComputer, connectToServerInstead } as const;
+  /**
+   * Runs `effect` while the bots run on this computer, one at a time with the
+   * changes above: a change of where they run never comes between its steps.
+   */
+  const whileLocal = <E, R>(effect: Effect.Effect<void, E, R>) =>
+    oneAtATime.withPermits(1)(
+      Effect.gen(function* () {
+        if ((yield* settings.get).mode === "local") yield* effect;
+      }),
+    );
+
+  return { connect, forget, useThisComputer, connectToServerInstead, whileLocal } as const;
 });

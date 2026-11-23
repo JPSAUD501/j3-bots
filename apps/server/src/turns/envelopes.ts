@@ -92,18 +92,23 @@ export const roomName = (rooms: Rooms["Service"], roomId: RoomId | null) =>
         Option.match({ onNone: () => null, onSome: (room) => room.name }),
       );
 
-/** An operator's message as an envelope shows it. */
+/**
+ * An operator's message as an envelope shows it: each file where `offsets`
+ * places it in the text, or, without them, after the text.
+ */
 export const operatorMessage = (
   at: DateTime.Utc,
   text: string,
   files: ReadonlyArray<Attachment>,
+  offsets?: ReadonlyArray<number>,
 ): OperatorMessage => ({
   at,
   text,
-  attachments: files.map((file) => ({
+  attachments: files.map((file, index) => ({
     name: file.name,
     path: inboxPath(file),
     mediaType: file.mediaType,
+    offset: offsets?.[index] ?? null,
   })),
 });
 

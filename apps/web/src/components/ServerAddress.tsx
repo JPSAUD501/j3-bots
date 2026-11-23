@@ -6,6 +6,7 @@ import { cn } from "../lib/cn";
 import { bigFieldClass, BigButton, FirstScreen, FormProblem } from "../onboarding/parts";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
+import { BackToWhere } from "./LocalMode";
 
 interface ServerAddressProps {
   /** Resolves with the app's answer; once connected, the page loads again on that server. */
@@ -14,16 +15,19 @@ interface ServerAddressProps {
   readonly initialAddress?: string;
   /** A sentence about a link that led here, said above the form. */
   readonly notice?: string | null;
+  /** Back to the choice of where the bots live, where this computer can run them. */
+  readonly onBack?: (() => void) | undefined;
 }
 
 /**
- * The desktop app's first screen: where the server runs. A browser never
- * shows it, since the server serves the page. Pairing comes next.
+ * The desktop app's server address screen: where the server runs. A browser
+ * never shows it, since the server serves the page. Pairing comes next.
  */
 export function ServerAddress({
   onConnect,
   initialAddress = "",
   notice = null,
+  onBack,
 }: ServerAddressProps) {
   const { t, parts } = useI18n();
   const fieldId = useId();
@@ -114,6 +118,7 @@ export function ServerAddress({
           {state._tag === "failed" ? failureText(state.reason) : null}
         </FormProblem>
       </form>
+      {onBack !== undefined && <BackToWhere onBack={onBack} />}
     </FirstScreen>
   );
 }

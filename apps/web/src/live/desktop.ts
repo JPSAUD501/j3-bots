@@ -8,12 +8,16 @@ import {
   type DesktopMode,
   ForgetResult,
   HostedBridge,
+  LocalDeviceResult,
+  LocalServerState,
+  ModeChange,
   NetworkState,
   NotificationClick,
   type NotificationRequest,
   ShellCommand,
   ShortcutChange,
   ShortcutStatus,
+  StartWithSystemChange,
   type TrayReport,
   OpenResult,
   SealResult,
@@ -109,6 +113,40 @@ export interface Desktop {
   readonly shortcutStatus: () => Promise<ShortcutStatus | null>;
   /** Changes the global shortcut; `null` when the app gave no answer the page understands. */
   readonly setShortcut: (accelerator: string) => Promise<ShortcutChange | null>;
+  /** Whether this computer can run the bots itself. */
+  readonly localAvailable: boolean;
+  /** In local mode, the server this computer runs as the page loaded; `null` otherwise. */
+  readonly localServer: LocalServerState | null;
+  /** Whether the app starts, in the tray, as the operator signs in to the system. */
+  readonly startWithSystem: boolean;
+  /**
+   * Runs the bots on this computer, forgetting any server elsewhere; once it
+   * has, the app loads the page again. `null` when the app gave no answer the
+   * page understands.
+   */
+  readonly chooseThisComputer: () => Promise<ModeChange | null>;
+  /**
+   * Stops the bots on this computer, their data kept, for a server elsewhere;
+   * once it has, the app loads the page again on the server address screen.
+   */
+  readonly connectToServerInstead: () => Promise<ModeChange | null>;
+  /** Starts the server on this computer again now, after it failed or while it waits to. */
+  readonly retryLocalServer: () => void;
+  /** Tries the update the server on this computer was rolled back from again. */
+  readonly retryServerUpdate: () => void;
+  /**
+   * Calls `listener` with the state of the server on this computer now, then
+   * each time it changes; answers a function that stops it.
+   */
+  readonly onLocalServer: (listener: (state: LocalServerState | null) => void) => () => void;
+  /**
+   * Signs this computer in to the server it runs, once that is ready. `again`:
+   * the operator asked to, after this computer was signed out. `null` when
+   * the app gave no answer the page understands.
+   */
+  readonly localDevice: (again: boolean) => Promise<LocalDeviceResult | null>;
+  /** Changes whether the app starts with the system; `null` when the app gave no answer the page understands. */
+  readonly setStartWithSystem: (on: boolean) => Promise<StartWithSystemChange | null>;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -124,6 +162,10 @@ const decodeCommand = Schema.decodeUnknownOption(ShellCommand);
 const decodeShortcut = Schema.decodeUnknownOption(ShortcutStatus);
 const decodeShortcutChange = Schema.decodeUnknownOption(ShortcutChange);
 const decodeTheme = Schema.decodeUnknownOption(Theme);
+const decodeModeChange = Schema.decodeUnknownOption(ModeChange);
+const decodeLocalServer = Schema.decodeUnknownOption(Schema.NullOr(LocalServerState));
+const decodeLocalDevice = Schema.decodeUnknownOption(LocalDeviceResult);
+const decodeStartWithSystem = Schema.decodeUnknownOption(StartWithSystemChange);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -233,5 +275,26 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     reportSaving: (saving) => {
       bridge.reportSaving(saving);
     },
+    localAvailable: bridge.state.localAvailable,
+    localServer: bridge.state.localServer,
+    startWithSystem: bridge.state.startWithSystem,
+    chooseThisComputer: () => ask(() => bridge.useThisComputer(), decodeModeChange),
+    connectToServerInstead: () => ask(() => bridge.connectToServerInstead(), decodeModeChange),
+    retryLocalServer: () => {
+      bridge.retryLocalServer();
+    },
+    retryServerUpdate: () => {
+      bridge.retryServerUpdate();
+    },
+    onLocalServer: (listener) => {
+      const stop: unknown = bridge.onLocalServer((state: unknown) =>
+        Option.map(decodeLocalServer(state), listener),
+      );
+      return () => {
+        if (typeof stop === "function") stop();
+      };
+    },
+    localDevice: (again) => ask(() => bridge.localDevice({ again }), decodeLocalDevice),
+    setStartWithSystem: (on) => ask(() => bridge.setStartWithSystem(on), decodeStartWithSystem),
   }),
 });

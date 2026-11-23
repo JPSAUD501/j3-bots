@@ -39,6 +39,7 @@ import { SendPause } from "../turns/SendPause.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
+import { Vault } from "../vault/Vault.ts";
 
 /** The RPCs this server answers: every one of `J3Rpcs`. */
 export const ServedRpcs = J3Rpcs;
@@ -74,6 +75,7 @@ export const handlers = ServedRpcs.toLayer(
     const { publicOrigin } = yield* ServerConfig;
     const signIns = yield* SignIns;
     const browserTabs = yield* BrowserTabs;
+    const vault = yield* Vault;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
 
     /**
@@ -174,6 +176,20 @@ export const handlers = ServedRpcs.toLayer(
       "provider.connect": (request) =>
         connectProviders(request).pipe(Effect.provideContext(connectContext)),
       "browser.subscribe": ({ botId }) => browserTabs.subscribe(botId, device.id),
+      // The vault's requests carry or answer values: none is logged, and none has a receipt.
+      "vault.status": () => vault.status,
+      "vault.setup": ({ password }) => vault.setup(password),
+      "vault.unlock": ({ password }) => vault.unlock(password),
+      "vault.lock": () => vault.lock,
+      "vault.changePassword": ({ current, next }) => vault.changePassword(current, next),
+      "vault.list": () => vault.list,
+      "vault.reveal": ({ id, field }) => vault.reveal({ id, field, deviceId: device.id }),
+      "vault.save": ({ id, allowedBots, request, ...draft }) =>
+        cards.saveCredential({ id, draft, allowedBots, request }),
+      "vault.update": ({ id, ...changes }) => vault.update({ id, changes }),
+      "vault.delete": ({ id }) => vault.remove(id),
+      "vault.setAllowedBots": ({ id, bots }) => vault.setAllowedBots(id, bots),
+      "vault.totpPreview": ({ id }) => vault.totpPreview(id),
     };
   }),
 );

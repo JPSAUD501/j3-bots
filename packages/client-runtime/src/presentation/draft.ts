@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { type MessageProblem, messageProblem } from "../files/limits.ts";
+import { placedMessage } from "../files/placed.ts";
 import type { DraftFile } from "../stores/Drafts.ts";
 
 /** Where a draft stands before Send: what it would take for the message to go. */
@@ -17,7 +18,8 @@ export interface DraftReadiness {
 }
 
 export function draftReadiness(text: string, files: ReadonlyArray<DraftFile>): DraftReadiness {
-  const trimmed = text.trim();
+  // As `Drafts.send` sends it: without the marks that place its files.
+  const trimmed = placedMessage(text).text;
   const attachments = files.flatMap((file) => (file._tag === "ready" ? [file.attachment] : []));
   const empty = trimmed === "" && attachments.length === 0;
   const uploading = files.some((file) => file._tag === "uploading");

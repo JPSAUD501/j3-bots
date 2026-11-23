@@ -2,7 +2,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaGetter from "effect/SchemaGetter";
-import { Attachment } from "./attachment.ts";
+import { Attachment, AttachmentOffsets } from "./attachment.ts";
 import {
   BotId,
   CommandId,
@@ -18,6 +18,7 @@ import {
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { RoutineTrigger } from "./routine.ts";
+import { CredentialId, SiteOrigin } from "./vault.ts";
 import { StepTool } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
@@ -98,6 +99,12 @@ export const MessageEntry = Schema.TaggedStruct("message", {
   ...entry,
   text: MessageText,
   attachments: Schema.Array(Attachment),
+  /**
+   * Where the operator placed each file in `text` (`AttachmentOffsets`).
+   * Left out, as for a message sent without places or written by a bot, the
+   * files follow the text.
+   */
+  attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
   mentions: Mentions,
   /** Whether it reached its recipients. Messages written by bots are always `delivered`. */
   delivery: MessageDelivery,
@@ -290,6 +297,28 @@ export const SecretRequestEntry = Schema.TaggedStruct("secret-request", {
   status: Schema.Literals(["pending", "provided", "declined", "expired"]),
 });
 export type SecretRequestEntry = typeof SecretRequestEntry.Type;
+
+/**
+ * A bot asks the operator to save a login in the vault. The client sends the
+ * values the operator types with `vault.save`, naming this card, straight to
+ * the vault: they never pass through the bot, and this entry has no field for
+ * them. It stays open until the operator saves the login or dismisses it
+ * (`card.answer` with `dismiss`); neither wakes the bot.
+ */
+export const CredentialRequestEntry = Schema.TaggedStruct("credential-request", {
+  ...entry,
+  /** Where the bot needs to sign in, which the card offers to save the login for. */
+  origin: SiteOrigin,
+  /** What the bot says the login is for, in its own words. */
+  note: Schema.String.check(Schema.isMaxLength(500)),
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    /** Saved as the login `credentialId`, under the name the operator gave it then. */
+    Schema.TaggedStruct("saved", { credentialId: CredentialId, name: Label }),
+    Schema.TaggedStruct("dismissed", {}),
+  ]),
+});
+export type CredentialRequestEntry = typeof CredentialRequestEntry.Type;
 
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
@@ -556,6 +585,7 @@ export const Entry = Schema.Union([
   QuestionEntry,
   ApprovalEntry,
   SecretRequestEntry,
+  CredentialRequestEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -604,6 +634,7 @@ export const ReceivedEntry = Schema.Union([
   QuestionEntry,
   ApprovalEntry,
   SecretRequestEntry,
+  CredentialRequestEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -617,7 +648,8 @@ export const PREVIEW_LENGTH = 200;
 
 /**
  * The text an entry leads with, which its preview carries: the message, the
- * first question, the action, what is asked for, the routine's name; empty
+ * first question, the action, what is asked for, the site a login is asked
+ * for, the routine's name; empty
  * for an entry with no text of its own.
  */
 export const entryText = (entry: Entry): string => {
@@ -631,6 +663,8 @@ export const entryText = (entry: Entry): string => {
       return entry.action;
     case "secret-request":
       return entry.label;
+    case "credential-request":
+      return entry.origin;
     case "routine-change":
       return entry.name;
     case "work-fold":

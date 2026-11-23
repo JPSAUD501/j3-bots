@@ -76,12 +76,13 @@ When the desktop app runs the bots on this computer, it runs the server itself, 
 | `<userData>/server/home` | Its data home (`J3_HOME`), with its own `config.json`, database and keys. Only this user may open it. |
 | `<userData>/server/server.log` | Everything it writes, both streams, appended at each start. Moved to `server.log.1` past 10 MB. The server writes it directly, so it is complete even when the app died first. |
 | `<userData>/server/server.pid` | Windows only: the last server started, for the next run to end if it was left behind. |
-| `<userData>/server-runtime/<version>` | The Node and server bundle it runs, copied out of the app: the version that runs and the one before it. On Windows it runs from `current`, a copy of that version. |
+| `<userData>/server-runtime/<version>` | The Node and server bundle of each release it ran, copied out of the app. Once an update of them works, the two it moved between are kept. On Windows it runs from `current`, a copy of the release that runs. |
 
 - **Logs.** Read why it stopped with `tail -n 100 "$HOME/.config/J3 Bots/server/server.log"`. The server's own lines are JSON, one per line, as in the journal; a refused start ends with its message in plain text. The app shows the last lines it wrote when it stops or is refused.
 - **Restarts.** A server that stops on its own is started again after 1 s, doubled each time up to 30 s, and counted as a first stop again after a minute of running. A start the server refuses (exit status 78) is not: the app shows the message, which says how to repair it, and **Try again** starts it once the cause is fixed.
 - **Stop.** Quitting the app stops the server: it is asked on its admin pipe, sent SIGTERM where that fails, and killed after 30 seconds. Closing the window does not: in this mode the app stays in the tray. If the app is killed, the server sees its stdin end and stops by itself.
-- **Its ports.** The first start chooses three free ports from 3747 up and writes them to the home's `config.json`, listening on loopback only. The file is not written again, so a port taken later by another program refuses the start (exit status 78) rather than move the server, and the app shows which port and where it is set. Free the port, or change `port` in that file, then choose this computer again in the app's settings, which signs it in at the new address. A `config.json` the app or the server cannot read is refused the same way, never replaced: give this user read access to it, or delete it to have the defaults written again.
+- **Updates.** An update of the app brings the next release of its server, and the first start of it moves the bots' data to it as `j3-bots update` does ([below](#update-and-roll-back)). The app stops the server that ran, copies the databases into a snapshot in `<userData>/server/home/backups/`, and starts the new release, while the connection line says `Updating your bots to <version>…`. Once the new release answers with its engine ready, the app records it and keeps two of everything: the runtimes of the two releases, the two newest snapshots and their engines. If the new release does not get ready, the app puts the snapshot back and starts the release before, from the runtime it kept. The line then says `The update to <new> didn't work. Your bots are back on <old>.`, with **Try again**, and **See details** for the new release's reason and last lines. Once it put the data back, the app does not try that release by itself again, even when it is opened again, until **Try again**; an update that failed before it moved anything, as when the snapshot could not be taken, is tried again at the next start. An app older than the release the data was last handed to runs that release, from its kept runtime, and says to update the app. Quitting waits for an update under way to end. One the system cut short, such as the app killed or a power cut, is carried on at the next start, or its rollback finished.
+- **Its ports.** Choosing this computer picks three free ports from 3747 up and writes them to the home's `config.json`, listening on loopback only. The file is not rewritten, so a port taken later by another program refuses the start (exit status 78) rather than move the server, and the app shows which port and where it is set. Free the port, or change `port` in that file; the app then refuses the start, since the page is kept on the old port, until its settings stop using this computer and choose it again, which signs it in at the new address. A `config.json` the app or the server cannot read is refused the same way, never replaced: give this user read access to it, or delete it to have it written again, on the port the app keeps.
 
 ## Update and roll back
 
@@ -127,7 +128,7 @@ The release it fetched and the snapshot stay on disk until a later update succee
 j3-bots update --rollback
 ```
 
-It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
+It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither is the vault, whose logins, connectors' secrets and master password stay as they are; a release older than the vault's file reports it as written by a newer release and leaves it alone until you update again. A save-login card you answered since the snapshot shows as waiting again while its login stays in the vault: dismiss it rather than save the login twice. Nor are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
 
 **Keep `~/.j3-bots/backups/` on the data directory's filesystem**, not as a link to another disk, such as a USB drive on a Raspberry Pi. A rollback moves the data directory's files into it by renaming them, which cannot cross filesystems. An update and `--rollback` check this before they stop anything, refuse when it is elsewhere, and give the commands that put it back.
 
@@ -162,6 +163,24 @@ j3-bots doctor
 
 The server migrates its database when it starts, and downloads the engine its code pins on its first start when that changed.
 
+## The vault
+
+The vault keeps the logins you save and what connectors need to reach their services, in `~/.j3-bots/vault/vault.sqlite`, sealed under your master password ([Server: the vault](../architecture/server.md#the-vault)). You create the password during onboarding, from the first save-login card a bot shows you, or in Settings → Vault.
+
+- **It is locked every time the server starts**, also after an update or a reboot, and stays locked until you unlock it from any of your devices: in Settings → Vault, or on a save-login card. Until then, no connector that needs a secret can reach its service, and no login can be saved or shown.
+- **Lock now** in Settings locks it for every device. Nothing locks it on a timer.
+- **After five wrong passwords**, unlocking waits, starting at 30 seconds and doubling up to an hour. The screen says until when. Restarting the server does not end the wait; the right password, or a day with no wrong one, starts the count over.
+- **If Settings says something in the vault does not open**, its file was changed or damaged. The server's log names the record. Restore the vault's folder from a backup taken under the same master password.
+- **A lost password cannot be recovered**, by you or anyone else. To start over without it, stop the service, move the vault's folder aside and start again:
+
+  ```sh
+  systemctl --user stop j3-bots
+  mv ~/.j3-bots/vault ~/.j3-bots/vault.lost-$(date +%F)
+  systemctl --user start j3-bots
+  ```
+
+  The vault is then empty and asks for a new password. Save each login again and sign in to each connector again. Keep the moved folder if you might remember the password: putting it back while the service is stopped brings everything back.
+
 ## Back up
 
 Everything J3 Bots keeps is in the data directory: the configuration, the database, the bots' memory and workspaces, attachments and the engine's own data. Stop the service while you copy it, so the database and the files match:
@@ -173,7 +192,7 @@ systemctl --user stop j3-bots
 systemctl --user start j3-bots
 ```
 
-`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, which the server downloads again. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
+`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the vault (sealed, and of no use without its master password), the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, which the server downloads again. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
 
 ## Restore
 
@@ -185,7 +204,7 @@ systemctl --user start j3-bots
 j3-bots doctor
 ```
 
-Restore onto the version the backup was taken with, or a newer one. Once `doctor` shows the server and the engine ready and your conversations are back, delete `~/.j3-bots.before-restore`.
+Restore onto the version the backup was taken with, or a newer one. The vault comes back locked, under the master password it had when the backup was taken. Once `doctor` shows the server and the engine ready and your conversations are back, delete `~/.j3-bots.before-restore`.
 
 ## Remove
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useId, useRef, useState, type ReactElement } from "react";
+import { useId, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type { PairingFailure, PairResult, UnpairedReason } from "@j3-bots/client-runtime";
 import type { PairingCode } from "@j3-bots/contracts";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
@@ -282,33 +282,56 @@ export function Incompatible({
 
 /**
  * The browser would not let the page keep this device's sign-in. In the
- * desktop app, whose server is `server`, the app could not read it, as while
- * a keyring is locked: the app sees a keyring unlocked since only once it
- * starts again, so the way on is to `restart` it. If it stays unreadable, changing servers
- * leaves the sign-in behind.
+ * desktop app the app could not read it, as while a keyring is locked: the
+ * app sees a keyring unlocked since only once it starts again, so the way on
+ * is to `restart` it. If it stays unreadable, changing servers, or stopping
+ * using this computer, leaves the sign-in behind.
  */
 export function StorageFailed({
   onRetry,
   desktop,
 }: {
   onRetry: () => void;
-  desktop?: { readonly server: DesktopServer; readonly restart: () => void } | undefined;
+  /**
+   * In the desktop app, where the sign-in is the one kept for a `server`
+   * elsewhere, or for the bots on this computer (`local`), with `leave`, the
+   * way to stop using it.
+   */
+  desktop?:
+    | {
+        readonly _tag: "server";
+        readonly server: DesktopServer;
+        readonly restart: () => void;
+      }
+    | { readonly _tag: "local"; readonly leave: ReactNode; readonly restart: () => void }
+    | undefined;
 }) {
   const { t } = useI18n();
   if (desktop !== undefined) {
-    const { server, restart } = desktop;
     return (
       <Centered>
         <StateMark icon={KeyRoundIcon} />
         <Heading
           title={t("gate.storage.desktopTitle")}
-          body={t("gate.storage.desktopBody", { address: server.address })}
+          body={
+            desktop._tag === "server"
+              ? t("gate.storage.desktopBody", { address: desktop.server.address })
+              : t("gate.storage.localBody")
+          }
         />
         <div className="flex flex-wrap items-start justify-center gap-2">
-          <Button variant="primary" onClick={restart}>
+          <Button variant="primary" onClick={desktop.restart}>
             {t("gate.restart")}
           </Button>
-          <ChangeServer address={server.address} onChange={server.forget} paired />
+          {desktop._tag === "server" ? (
+            <ChangeServer
+              address={desktop.server.address}
+              onChange={desktop.server.forget}
+              paired
+            />
+          ) : (
+            desktop.leave
+          )}
         </div>
       </Centered>
     );

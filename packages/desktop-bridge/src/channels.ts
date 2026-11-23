@@ -73,10 +73,17 @@ export const IPC_CHANNELS = {
   localServerChanged: "j3bots:local-server-changed",
   /** Starts the local server again now, after it failed or while it waits to restart. Not answered. */
   retryLocalServer: "j3bots:retry-local-server",
+  /**
+   * Tries again the update of the local server that failed and was rolled
+   * back (`LocalServerState.update` is `rolled-back`). Not answered.
+   */
+  retryServerUpdate: "j3bots:retry-server-update",
   /** `PhoneAccessRequest`, answered with the `PhoneAccess` that holds after it. */
   setPhoneAccess: "j3bots:set-phone-access",
   /** Answers `LocalPairingLink`. */
   localPairingLink: "j3bots:local-pairing-link",
+  /** `StartWithSystemRequest`, answered with `StartWithSystemChange`. */
+  setStartWithSystem: "j3bots:set-start-with-system",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -131,6 +138,8 @@ export interface DesktopBridge {
    */
   readonly onLocalServer: (listener: (state: unknown) => void) => () => void;
   readonly retryLocalServer: () => void;
+  readonly retryServerUpdate: () => void;
   readonly setPhoneAccess: (on: boolean) => Promise<unknown>;
   readonly localPairingLink: () => Promise<unknown>;
+  readonly setStartWithSystem: (on: boolean) => Promise<unknown>;
 }

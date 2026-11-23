@@ -13,6 +13,7 @@ const STATUS = JSON.stringify({
   version: "0.3.0",
   pid: 4242,
   listener: { port: 3747 },
+  engine: { state: { _tag: "ready" } },
   webClient: "not-built",
 });
 
@@ -64,7 +65,12 @@ describe("the admin channel", () => {
     Effect.gen(function* () {
       const { socketPath } = yield* listener(ok);
       const status = yield* AdminChannel.overSocket(socketPath).status();
-      assert.deepStrictEqual(status, { version: "0.3.0", pid: 4242, listener: { port: 3747 } });
+      assert.deepStrictEqual(status, {
+        version: "0.3.0",
+        pid: 4242,
+        listener: { port: 3747 },
+        engine: { state: { _tag: "ready" } },
+      });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

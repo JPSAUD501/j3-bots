@@ -219,6 +219,12 @@ export class Connection extends Context.Service<
       readonly deviceName: string;
     }) => Effect.Effect<void, PairingFailed>;
     /**
+     * Keeps a credential this device was given without a code, as the desktop
+     * app's own server signs the computer it runs on in, then follows it as
+     * after pairing.
+     */
+    readonly adopt: (credential: DeviceCredential) => Effect.Effect<void, CredentialStorageError>;
+    /**
      * The pairing this window follows: its device id, or null while the
      * credential is read and when there is none. It changes in the same step
      * as the credential this window holds. What the client keeps on the
@@ -617,6 +623,11 @@ export const layer = Layer.effect(
       yield* follow(() => ({ _tag: "paired", credential: paired }));
     });
 
+    const adopt = Effect.fn("Connection.adopt")(function* (given: DeviceCredential) {
+      yield* store.save(given);
+      yield* follow(() => ({ _tag: "paired", credential: given }));
+    });
+
     const forget = Effect.fn("Connection.forget")(function* (
       reason: Exclude<UnpairedReason, "new">,
       pairing: DeviceId | null,
@@ -731,6 +742,7 @@ export const layer = Layer.effect(
       state,
       pairing,
       pair,
+      adopt,
       forget,
       storedPairing,
       stillPaired: Effect.fn("Connection.stillPaired")((held: DeviceId) =>

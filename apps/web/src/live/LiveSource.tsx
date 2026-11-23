@@ -19,6 +19,8 @@ import {
   useWorkSteps,
 } from "@j3-bots/client-runtime/react";
 import type {
+  Attachment,
+  AvatarChoice,
   Bot,
   BotId,
   DeviceId,
@@ -33,6 +35,7 @@ import type {
   WorkStep,
 } from "@j3-bots/contracts";
 import { TEMPLATE_FILE_EXTENSION, TEMPLATE_MEDIA_TYPE, templateFileText } from "@j3-bots/contracts";
+import { Dialog } from "@base-ui/react/dialog";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   createContext,
@@ -55,6 +58,7 @@ import {
   targetKey,
   type ActionState,
   type BotChanges,
+  type ConnectionState,
   type Draft,
   type DraftChangedElsewhere,
   type IntentFailure,
@@ -69,6 +73,7 @@ import {
   type OpenedNotification,
   type RoomFormMode,
   roomStopFailed,
+  showsImage,
   templateFileName,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
@@ -76,8 +81,22 @@ import type { AppLink } from "@j3-bots/desktop-bridge";
 import { memoryFileName } from "@j3-bots/client-runtime/wording";
 import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
-import { ConnectionBanner } from "../components/ConnectionBanner";
+import { ConnectionBanner, updateHasDetails } from "../components/ConnectionBanner";
+import {
+  ConnectInstead,
+  LocalServerFailed,
+  LocalServerFailedBody,
+  LocalSignIn,
+  StoppingLocal,
+  StopUsingComputer,
+  WhereBotsLive,
+} from "../components/LocalMode";
+import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
+import { Onboarding } from "../onboarding/Onboarding";
+import { cn } from "../lib/cn";
 import { EditBotDialog } from "../components/EditBotDialog";
+import { AttachmentImagesProvider } from "../components/attachmentImages";
+import { ImageViewer } from "../components/ImageViewer";
 import { MemoryViewer } from "../components/MemoryViewer";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import { NewBotDialog } from "../components/NewBotDialog";
@@ -93,7 +112,13 @@ import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { notificationAccess } from "../preferences/notifications";
-import type { ConversationView, DesktopServer, ShellData, ShellIntents } from "../shell/data";
+import type {
+  ConversationView,
+  DesktopLocal,
+  DesktopServer,
+  ShellData,
+  ShellIntents,
+} from "../shell/data";
 import { runShellAction } from "../shell/commands";
 import { ShellSourceProvider } from "../shell/source";
 import {
@@ -114,6 +139,13 @@ import {
   useReportTray,
 } from "./desktopMenus";
 import { desktop } from "./desktop";
+import {
+  asksSilently,
+  localScreen,
+  type LocalSignIn as LocalSignInState,
+  signInAnswer,
+} from "./localGate";
+import { askLocalDevice, localMode, useLocalServer } from "./localServer";
 import { LinkedPairingCode } from "./pairingLink";
 import { makePlatform, signInUnencrypted } from "./platform";
 import { savesUnderWay } from "./savesUnderWay";
@@ -136,11 +168,18 @@ type RoomFormTarget =
  */
 const server = desktop === null ? new URL(window.location.origin) : desktop.server;
 
-/** In the desktop app, the server it talks to and a way to leave it. */
+/**
+ * In the desktop app, the server elsewhere it talks to, a way to leave it for
+ * another and, where this computer can run the bots, for this computer.
+ */
 const desktopServer: DesktopServer | undefined =
-  desktop === null || server === null
+  desktop === null || server === null || localMode !== null
     ? undefined
-    : { address: server.origin, forget: desktop.forgetServer };
+    : {
+        address: server.origin,
+        forget: desktop.forgetServer,
+        ...(desktop.localAvailable ? { chooseThisComputer: desktop.chooseThisComputer } : {}),
+      };
 
 /** One client for the page, made on first use. */
 const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)));
@@ -148,38 +187,55 @@ const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)
 /**
  * The shell's source in a build: the client runtime, connected to the server.
  * Before the shell, it answers whatever stands between the operator and their
- * bots: naming the server (in the desktop app), pairing, a server of another
- * version, storage the browser refuses.
+ * bots: choosing where they live and naming the server (in the desktop app),
+ * pairing, a server of another version, storage the browser refuses.
  */
 export function LiveSourceProvider({ children }: { children: ReactNode }) {
   useReportLanguage();
   useReportAppearance();
-  if (server === null) return <AddressScreen />;
+  if (server === null) return <FirstScreens />;
   return <Connected origin={server}>{children}</Connected>;
 }
 
 /**
- * The desktop app's server address screen. A link to the app that arrives
- * before a server is named lands here: a pairing link fills in its server,
- * for the operator to check, and once that server is kept its code starts the
- * pairing screen; a link to a conversation or a room cannot open yet, which
- * the screen says.
+ * The desktop app's first screens, before it has a server: where the bots
+ * live, where this computer can run them and the operator has not chosen,
+ * then the server address screen. A link to the app that arrives first lands
+ * here: a pairing link goes to the server address screen and fills in its
+ * server, for the operator to check, and once that server is kept its code
+ * starts the pairing screen; a link to a conversation or a room cannot open
+ * yet, which the screen says.
  */
-function AddressScreen() {
+function FirstScreens() {
   const { t } = useI18n();
   const [link, setLink] = useState<AppLink | null>(null);
+  const choosing = desktop !== null && desktop.localAvailable && desktop.mode === null;
+  const [where, setWhere] = useState<"choice" | "address">(choosing ? "choice" : "address");
   useEffect(
     () =>
       onAppLink((arrived) => {
         setLink(arrived);
+        if (arrived._tag === "pair") setWhere("address");
         return true;
       }),
     [],
   );
   const pairing = link?._tag === "pair" ? { server: link.server, code: link.code } : null;
+  if (where === "choice" && desktop !== null) {
+    return (
+      <Screen>
+        <WhereBotsLive
+          onUseThisComputer={desktop.chooseThisComputer}
+          onConnectToServer={() => setWhere("address")}
+          notice={link === null ? null : t("links.chooseFirst")}
+        />
+      </Screen>
+    );
+  }
   return (
     <Screen>
       <ServerAddress
+        onBack={desktop?.localAvailable === true ? () => setWhere("choice") : undefined}
         // The field starts over with each pairing link.
         key={pairing === null ? "" : `${pairing.server} ${pairing.code}`}
         initialAddress={pairing?.server ?? ""}
@@ -294,6 +350,13 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
     if (ended === null || ended === pairing) return;
     closeNotificationsOf(ended, desktop).catch(unlisted);
   }, [j3, pairing]);
+
+  const local = useLocalHere(origin);
+  if (local !== null) {
+    const screen = local.screen(connection);
+    if (screen !== null) return <Screen>{screen}</Screen>;
+  }
+
   switch (connection._tag) {
     case "starting":
       return null;
@@ -316,10 +379,20 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
         </Screen>
       );
     case "incompatible":
+      // An update of the server on this computer rolled back to a release the
+      // app does not speak with still says so, with its Try again and details.
       return (
-        <Screen>
-          <Incompatible server={desktopServer} update={update} />
-        </Screen>
+        <ConnectionBanner
+          state={connection}
+          local={local?.line}
+          everConnected={everConnected}
+          onRetryNow={j3.reconnectNow}
+        >
+          <Screen>
+            <Incompatible server={desktopServer} update={update} />
+          </Screen>
+          {local?.details}
+        </ConnectionBanner>
       );
     case "storage-failed":
       return (
@@ -327,9 +400,13 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
           <StorageFailed
             onRetry={j3.reconnectNow}
             desktop={
-              desktop === null || desktopServer === undefined
+              desktop === null
                 ? undefined
-                : { server: desktopServer, restart: desktop.relaunch }
+                : local !== null
+                  ? { _tag: "local", leave: local.leave, restart: desktop.relaunch }
+                  : desktopServer === undefined
+                    ? undefined
+                    : { _tag: "server", server: desktopServer, restart: desktop.relaunch }
             }
           />
         </Screen>
@@ -343,16 +420,283 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
       return (
         <ConnectionBanner
           state={connection}
+          local={local?.line}
           everConnected={everConnected}
           onRetryNow={j3.reconnectNow}
         >
           {/* Mounted afresh for each pairing: nothing open or typed under one shows under the next. */}
-          <LiveShell key={pairing ?? "none"} pairing={pairing}>
+          <LiveShell key={pairing ?? "none"} pairing={pairing} local={local?.intents}>
             {children}
           </LiveShell>
+          {local?.details}
         </ConnectionBanner>
       );
   }
+}
+
+/**
+ * In local mode, what stands between the operator and the bots on this
+ * computer, before the shell: signing this computer in, with no code, the
+ * first time after it was chosen, and only when asked after it was signed
+ * out; the first run, which goes on while the server starts, only the first
+ * bot waiting for it; a server that did not start; and stopping using this
+ * computer. Also the connection line's words for that server, and what the
+ * shell offers for it. `null` outside local mode.
+ */
+function useLocalHere(origin: URL) {
+  const j3 = useJ3Client();
+  const { t } = useI18n();
+  const say = useSay();
+  const navigate = useNavigate();
+  const connection = useConnection();
+  const roster = useReadable(j3.roster);
+  const engine = useEngineStatus();
+  const view = useLocalServer();
+  const [signIn, setSignIn] = useState<LocalSignInState>({ _tag: "idle" });
+  // The first run on this computer: from a sign-in without a code until the
+  // first bot arrives, or the bots this computer had come back.
+  const [firstRun, setFirstRun] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [startWithSystem, setStartWithSystem] = useState(localMode?.startWithSystem ?? false);
+  const ready = view?.server.state === "ready";
+  // Read when an answer comes, after the render that asked.
+  const readyNow = useRef(ready);
+  useEffect(() => {
+    readyNow.current = ready;
+  }, [ready]);
+  // A server that spoke another protocol is not asked again by itself: once
+  // the one on this computer is ready anew, as after Try again of an update
+  // that rolled back, the page tries it.
+  const wakeIncompatible = useEffectEvent(() => {
+    if (connection._tag === "incompatible") j3.reconnectNow();
+  });
+  useEffect(() => {
+    if (ready) wakeIncompatible();
+  }, [ready]);
+
+  const fresh = localMode !== null && connection._tag === "unpaired" && connection.reason === "new";
+  if (fresh && !firstRun) setFirstRun(true);
+  const hasBots = roster._tag === "ready" && roster.value.length > 0;
+  if (firstRun && hasBots && !creating && !fresh) setFirstRun(false);
+
+  /** Signs this computer in to its own server; resolves with whether it is. */
+  const signInHere = (again: boolean): Promise<boolean> =>
+    askLocalDevice(again).then((result) => {
+      const answer = signInAnswer(result, {
+        origin: origin.origin,
+        serverReady: readyNow.current,
+        again,
+      });
+      if (answer._tag !== "keep") {
+        setSignIn(answer);
+        return false;
+      }
+      return j3.adopt({ deviceId: answer.deviceId, token: answer.token }).then((kept) => {
+        setSignIn(kept ? { _tag: "idle" } : { _tag: "failed" });
+        return kept;
+      });
+    });
+  // Asked once each time it becomes due: a second ask under way shares the first's answer.
+  const askSilently = useEffectEvent(
+    () => void signInHere(signIn._tag === "waiting" && signIn.again),
+  );
+  const shouldAsk = localMode !== null && asksSilently(connection, signIn, ready);
+  useEffect(() => {
+    if (shouldAsk) askSilently();
+  }, [shouldAsk]);
+
+  // The first bot waits for the server, connected with its roster read: one
+  // asked for before then is created once it is.
+  const reached = connection._tag === "connected" && roster._tag === "ready";
+  const waitingToCreate = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!reached || waitingToCreate.current === null) return;
+    waitingToCreate.current();
+    waitingToCreate.current = null;
+  }, [reached]);
+
+  if (localMode === null) return null;
+  const desktopLocal = localMode;
+
+  const stopUsing = (): Promise<boolean> => {
+    setStopping(true);
+    // Signed out first, while the server runs, so the device it was ends there.
+    const signedOut =
+      j3.pairing.get() === null
+        ? Promise.resolve(true)
+        : j3.signOut().then((result) => result._tag !== "failed");
+    return signedOut
+      .then((out) =>
+        out
+          ? // The app starts with the system only while the bots live here: off
+            // first, and on the way to a server whatever it answered.
+            (startWithSystem ? desktopLocal.setStartWithSystem(false) : Promise.resolve(null)).then(
+              () => desktopLocal.connectToServerInstead(),
+            )
+          : null,
+      )
+      .then((answer) => {
+        // Once it changed, the app loads the page again on the server address screen.
+        if (answer === "changed") return true;
+        setStopping(false);
+        say(t("local.stop.failed"));
+        return false;
+      });
+  };
+  const connectInstead = <ConnectInstead onConnect={() => void stopUsing()} />;
+  // Signed out, the bots this computer has are still here: leaving them asks first.
+  const stopInstead = <StopUsingComputer quiet onStop={stopUsing} />;
+  const failed = view !== null && view.server.state === "failed" ? view.server : null;
+  const update = view?.server.state === "ready" ? view.server.update : undefined;
+  const rolledBack = update?._tag === "rolled-back" && updateHasDetails(update) ? update : null;
+  /** What the details dialog explains: the start that failed, or the update that was rolled back. */
+  const explained =
+    failed !== null
+      ? {
+          title: t("local.failed.title"),
+          lead: null,
+          failure: failed,
+          retry: desktopLocal.retryLocalServer,
+        }
+      : rolledBack !== null
+        ? {
+            title: t("local.update.title", { failed: rolledBack.failed }),
+            lead: t("local.update.body", { running: rolledBack.running }),
+            failure: rolledBack,
+            retry: desktopLocal.retryServerUpdate,
+          }
+        : null;
+
+  const intents: DesktopLocal = {
+    stopUsing,
+    startWithSystem,
+    setStartWithSystem: (on) =>
+      desktopLocal.setStartWithSystem(on).then((change) => {
+        const held = change?.on ?? !on;
+        setStartWithSystem(held);
+        return held;
+      }),
+  };
+
+  const createFirst = ({ name, avatar }: { name: string; avatar: AvatarChoice }) => {
+    setCreating(true);
+    const whenReached = reached
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          waitingToCreate.current = resolve;
+        });
+    return whenReached
+      .then(() => {
+        // The bots this computer had are back: there is no first bot to make.
+        const listed = j3.roster.get();
+        if (listed._tag === "ready" && listed.value.length > 0) {
+          setCreating(false);
+          return new Promise<never>(() => {});
+        }
+        // The first bot is the primary one: there is no other to choose.
+        return j3.createBot({ name, primary: true, avatar });
+      })
+      .then((result): IntentResult<BotId> => {
+        if (result._tag === "done") return { _tag: "done", value: result.value.id };
+        setCreating(false);
+        return result;
+      });
+  };
+
+  /** The screen in place of the shell, or `null` for the shell under the connection line. */
+  const screen = (state: ConnectionState): ReactNode => {
+    const onboarding = (
+      <Onboarding
+        engine={engine._tag === "ready" ? engine.value : null}
+        footer={connectInstead}
+        waiting={reached ? null : t("local.waiting")}
+        onCreate={createFirst}
+        onArrived={(botId) => {
+          setCreating(false);
+          setFirstRun(false);
+          void navigate({ to: "/bots/$botId", params: { botId } });
+        }}
+      />
+    );
+    switch (
+      localScreen({ stopping, signIn, connection: state, firstRun, serverFailed: failed !== null })
+    ) {
+      case "stopping":
+        return <StoppingLocal />;
+      case "sign-in-failed":
+        return (
+          <LocalSignIn reason="failed" onSignIn={() => signInHere(true)} footer={stopInstead} />
+        );
+      case "signed-out":
+        return (
+          <LocalSignIn reason="signed-out" onSignIn={() => signInHere(true)} footer={stopInstead} />
+        );
+      case "first-run":
+        return onboarding;
+      case "first-run-failed":
+        return (
+          <>
+            {failed !== null && (
+              <LocalServerFailed
+                server={failed}
+                onRetry={desktopLocal.retryLocalServer}
+                footer={connectInstead}
+              />
+            )}
+            {/* Kept while a failure shows, so what the operator chose so far stays. */}
+            <div className="hidden">{onboarding}</div>
+          </>
+        );
+      case "shell":
+        return null;
+    }
+  };
+
+  const details = (
+    <Dialog.Root open={detailsOpen && explained !== null} onOpenChange={setDetailsOpen}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className={dialogBackdrop} />
+        <Dialog.Popup className={cn(alertDialog, "max-w-md gap-3 p-5")}>
+          {explained !== null && (
+            <>
+              <Dialog.Title className={dialogTitle}>{explained.title}</Dialog.Title>
+              {explained.lead !== null && (
+                <Dialog.Description className="text-sm text-pretty text-muted-foreground">
+                  {explained.lead}
+                </Dialog.Description>
+              )}
+              <LocalServerFailedBody
+                server={explained.failure}
+                onRetry={() => {
+                  setDetailsOpen(false);
+                  explained.retry();
+                }}
+              />
+            </>
+          )}
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+
+  return {
+    screen,
+    leave: stopInstead,
+    line:
+      view === null
+        ? undefined
+        : {
+            server: view.server,
+            restartAt: view.restartAt,
+            onRetry: desktopLocal.retryLocalServer,
+            onDetails: () => setDetailsOpen(true),
+            onRetryUpdate: desktopLocal.retryServerUpdate,
+          },
+    intents,
+    details,
+  };
 }
 
 const loadingView: ConversationView = {
@@ -415,7 +759,16 @@ interface MemoryView {
 
 const memoryScopeOf = (view: MemoryView): MemoryScope => ({ _tag: "bot", botId: view.botId });
 
-function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: ReactNode }) {
+function LiveShell({
+  pairing,
+  local,
+  children,
+}: {
+  pairing: DeviceId | null;
+  /** In local mode, what the shell offers for the bots on this computer. */
+  local: DesktopLocal | undefined;
+  children: ReactNode;
+}) {
   const j3 = useJ3Client();
   // An answer that arrives after the pairing changed belongs to the one that ended.
   const stillPaired = () => j3.pairing.get() === pairing;
@@ -486,6 +839,8 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const [memoryEditing, setMemoryEditing] = useState(false);
   const [roomFormUnsaved, setRoomFormUnsaved] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The image a file shows over everything, opened from a conversation.
+  const [viewing, setViewing] = useState<Attachment | null>(null);
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
   // Read each time Settings opens, and on every socket while it stays open.
@@ -522,6 +877,29 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   const rosterChanged = (result: IntentResult<unknown>) => {
     if (result._tag === "failed" && stillPaired()) say(t("roster.changeFailed"));
   };
+  /** Shows `attachment` in `reserved`, or saves it, once downloaded; or says why it cannot. */
+  const deliverAttachment = (attachment: Attachment, reserved: Window | null) =>
+    void j3.download(attachment).then((result) => {
+      if (result._tag === "done") {
+        deliverFile(attachment, result.value.bytes, reserved);
+        return;
+      }
+      reserved?.close();
+      say(
+        result.reason === "not-found"
+          ? t("file.gone", { name: attachment.name })
+          : t("file.unreachable", { name: attachment.name }),
+      );
+    });
+  // Only the image types a page draws without running anything get here (`showsImage`).
+  const imageOf = (attachment: Attachment) =>
+    j3
+      .download(attachment)
+      .then((result) =>
+        result._tag === "done"
+          ? new Blob([result.value.bytes], { type: attachment.mediaType })
+          : null,
+      );
 
   const view: ConversationView =
     conversation.state === null
@@ -693,6 +1071,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
   // While the bots live on this computer, the providers sign in from here. The page a sign-in
   // waits on opens in the system's browser: the desktop app hands it a page `window.open` names.
   const signIns = useReadable(j3.signIns);
+  const vault = useReadable(j3.vault.view);
   const providerSetup: ProviderSetupIntents | undefined =
     desktop?.mode === "local"
       ? {
@@ -710,6 +1089,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
     signIns,
+    vault,
     roster,
     sections,
     conversation: (asked) =>
@@ -922,6 +1302,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
       void j3.answerCard(entryId, { _tag: "approval", decision }),
     provideSecret: (entryId, value) => void j3.provideSecret(entryId, { _tag: "provide", value }),
     declineSecret: (entryId) => void j3.provideSecret(entryId, { _tag: "decline" }),
+    dismissLogin: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
     resendMessage: (commandId, mentions) =>
@@ -935,21 +1316,10 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     openWorkFold: (entryId) => setOpenFolds((open) => new Set(open).add(entryId)),
     closeWorkFold: (entryId) =>
       setOpenFolds((open) => new Set([...open].filter((id) => id !== entryId))),
+    // An image shows here; any other file opens in its own window, or is saved.
     openAttachment: (attachment) => {
-      // Reserved now, while the click still lets the page open a window.
-      const reserved = reserveWindow(attachment);
-      j3.download(attachment).then((result) => {
-        if (result._tag === "done") {
-          deliverFile(attachment, result.value.bytes, reserved);
-          return;
-        }
-        reserved?.close();
-        say(
-          result.reason === "not-found"
-            ? t("file.gone", { name: attachment.name })
-            : t("file.unreachable", { name: attachment.name }),
-        );
-      });
+      if (showsImage(attachment)) setViewing(attachment);
+      else deliverAttachment(attachment, reserveWindow(attachment));
     },
     openHandoff: (entryId) => {
       const handoff = view.items.find((item) => item._tag === "handoff" && item.id === entryId);
@@ -964,10 +1334,11 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
     openConversation: (botId) => void goToBot(botId),
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
     setDraftText: j3.setDraftText,
-    attachFiles: (asked, picked) =>
+    attachFiles: (asked, picked, at) =>
       j3.attachFiles(
         asked,
         picked.map((file) => ({ name: file.name, body: file })),
+        at,
       ),
     detachFile: j3.detachFile,
     restoreDraft: j3.restoreDraft,
@@ -1056,6 +1427,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
+    vault: j3.vault,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,
@@ -1075,6 +1447,7 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
         return result._tag !== "failed";
       }),
     ...(desktopServer === undefined ? {} : { server: desktopServer }),
+    ...(local === undefined ? {} : { local }),
     ...(update === undefined ? {} : { update }),
     ...(shortcut === undefined ? {} : { shortcut }),
     ...(providerSetup === undefined ? {} : { providerSetup }),
@@ -1103,7 +1476,14 @@ function LiveShell({ pairing, children }: { pairing: DeviceId | null; children: 
 
   return (
     <ShellSourceProvider source={{ data, intents }}>
-      {children}
+      <AttachmentImagesProvider fetch={imageOf}>
+        {children}
+        <ImageViewer
+          attachment={viewing}
+          onClose={() => setViewing(null)}
+          onSave={(attachment) => deliverAttachment(attachment, null)}
+        />
+      </AttachmentImagesProvider>
       {[...openFolds].map((foldId) => (
         <FoldReader
           key={foldId}

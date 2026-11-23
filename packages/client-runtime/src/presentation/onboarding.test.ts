@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type EngineStatus, ModelId, ProviderId, type ProviderStatus } from "@j3-bots/contracts";
+import {
+  type EngineStatus,
+  ModelId,
+  ProviderId,
+  type ProviderStatus,
+  type VaultStatus,
+} from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../../test/fixtures.ts";
 import { hasDefaultModel, openingHeld } from "./engine.ts";
-import { makingProgress, nextStep, previousStep, showsConnect } from "./onboarding.ts";
+import type { VaultView } from "../stores/Vault.ts";
+import { makingProgress, nextStep, previousStep, showsConnect, showsVault } from "./onboarding.ts";
 
 const engine = (status: ProviderStatus["status"]): EngineStatus => ({
   state: { _tag: "ready" },
@@ -24,25 +31,27 @@ const ready = engine({ _tag: "ready" });
 const signedOut = engine({ _tag: "sign-in-required", command: "j3-bots provider connect" });
 
 describe("the first run's steps", () => {
+  const flow = (connect: boolean, vault = false) => ({ connect, vault });
+
   it("goes from the look straight to the arrival when a provider can run the bot", () => {
-    const connect = showsConnect(ready, false);
-    expect(nextStep("look", connect)).toBe("arrival");
-    expect(makingProgress("look", connect)).toEqual({ index: 1, count: 2 });
+    const steps = flow(showsConnect(ready, false));
+    expect(nextStep("look", steps)).toBe("arrival");
+    expect(makingProgress("look", steps)).toEqual({ index: 1, count: 2 });
   });
 
   it("asks to connect a provider before the arrival while none can run the bot", () => {
-    const connect = showsConnect(signedOut, false);
-    expect(nextStep("look", connect)).toBe("connect");
-    expect(nextStep("connect", connect)).toBe("arrival");
-    expect(previousStep("connect", connect)).toBe("look");
+    const steps = flow(showsConnect(signedOut, false));
+    expect(nextStep("look", steps)).toBe("connect");
+    expect(nextStep("connect", steps)).toBe("arrival");
+    expect(previousStep("connect", steps)).toBe("look");
   });
 
   it("keeps the connect step in the flow once shown, also after going back from it", () => {
     // A provider connected while the step was read, and the operator went back to the look.
-    const connect = showsConnect(ready, true);
-    expect(nextStep("connect", connect)).toBe("arrival");
-    expect(nextStep("look", connect)).toBe("connect");
-    expect(makingProgress("look", connect)).toEqual({ index: 1, count: 3 });
+    const steps = flow(showsConnect(ready, true));
+    expect(nextStep("connect", steps)).toBe("arrival");
+    expect(nextStep("look", steps)).toBe("connect");
+    expect(makingProgress("look", steps)).toEqual({ index: 1, count: 3 });
   });
 
   it("asks to connect while the engine is not running", () => {
@@ -50,10 +59,31 @@ describe("the first run's steps", () => {
     expect(showsConnect(null, false)).toBe(true);
   });
 
+  it("offers the vault's password after the look while the vault has none", () => {
+    const vault = (state: VaultStatus["state"]): VaultView => ({
+      _tag: "ready",
+      status: { state, revision: 0, retryAt: null },
+      credentials: null,
+      listFailure: null,
+      stale: false,
+    });
+    expect(showsVault(vault("uninitialized"), false)).toBe(true);
+    expect(showsVault(vault("locked"), false)).toBe(false);
+    expect(showsVault({ _tag: "unsupported" }, false)).toBe(false);
+    // Set up from the step itself: it stays for Back.
+    expect(showsVault(vault("unlocked"), true)).toBe(true);
+
+    const steps = flow(true, true);
+    expect(nextStep("look", steps)).toBe("vault");
+    expect(nextStep("vault", steps)).toBe("connect");
+    expect(previousStep("connect", steps)).toBe("vault");
+    expect(makingProgress("vault", steps)).toEqual({ index: 2, count: 4 });
+  });
+
   it("has no way back from the welcome or from an arrival under way", () => {
-    expect(previousStep("welcome", false)).toBeNull();
-    expect(previousStep("arrival", true)).toBeNull();
-    expect(previousStep("name", false)).toBe("welcome");
+    expect(previousStep("welcome", flow(false))).toBeNull();
+    expect(previousStep("arrival", flow(true))).toBeNull();
+    expect(previousStep("name", flow(false))).toBe("welcome");
   });
 });
 

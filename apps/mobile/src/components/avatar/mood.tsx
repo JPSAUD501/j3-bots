@@ -3,6 +3,7 @@ import { useAsleep, useAvatarMood, useConnection } from "@j3-bots/client-runtime
 import type { Bot, EntryPreview } from "@j3-bots/contracts";
 import { type ReactNode, type Ref, useContext } from "react";
 import { type AvatarGround, type AvatarHandle, AvatarsAsleep, BotAvatar } from "./BotAvatar.tsx";
+import { PrimaryMark } from "./PrimaryMark.tsx";
 
 /** Whether the app has lost sight of the server long enough that what it shows may be out of date. */
 export const useOffline = (): boolean => useContext(AvatarsAsleep);
@@ -18,7 +19,12 @@ export function AvatarConnection({ children }: { readonly children: ReactNode })
   return <AvatarsAsleep value={useAsleep(connected)}>{children}</AvatarsAsleep>;
 }
 
-/** A bot's avatar as it is now: its state, what is unread and what is arriving, live. */
+/**
+ * A bot's avatar as it is now: its state, what is unread and what is
+ * arriving, live. Where the bot is named by its avatar (a roster row, a
+ * pinned bot, the conversation header, the details) `markPrimary` adds the
+ * primary bot's mark; small inline avatars go without.
+ */
 export function LiveBotAvatar({
   bot,
   unread = false,
@@ -26,6 +32,7 @@ export function LiveBotAvatar({
   size,
   ground,
   label,
+  markPrimary = false,
   ref,
 }: {
   readonly bot: Bot;
@@ -34,11 +41,12 @@ export function LiveBotAvatar({
   readonly size: number;
   readonly ground?: AvatarGround;
   readonly label?: string;
+  readonly markPrimary?: boolean;
   readonly ref?: Ref<AvatarHandle>;
 }) {
   const offline = useContext(AvatarsAsleep);
   const mood = useAvatarMood(bot, { unread, lastEntry, offline });
-  return (
+  const avatar = (
     <BotAvatar
       avatar={bot.profile.avatar}
       seed={bot.id}
@@ -49,5 +57,12 @@ export function LiveBotAvatar({
       {...(label === undefined ? {} : { label })}
       {...(ref === undefined ? {} : { ref })}
     />
+  );
+  return markPrimary && bot.primary ? (
+    <PrimaryMark size={size} ground={ground}>
+      {avatar}
+    </PrimaryMark>
+  ) : (
+    avatar
   );
 }

@@ -30,6 +30,8 @@ export const StatusReply = Schema.Struct({
   listener: Schema.Struct({
     port: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 })),
   }),
+  /** Its engine's state, by name only, so a newer release's states read too. */
+  engine: Schema.Struct({ state: Schema.Struct({ _tag: Schema.String }) }),
 });
 export type StatusReply = typeof StatusReply.Type;
 

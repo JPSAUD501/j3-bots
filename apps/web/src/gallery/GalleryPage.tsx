@@ -38,6 +38,7 @@ import {
   type SignInHarness,
   type UsageWindow,
 } from "@j3-bots/contracts";
+import type { LocalServerState, ServerUpdate } from "@j3-bots/desktop-bridge";
 import {
   avatarCast,
   avatarShapeNames,
@@ -86,7 +87,18 @@ import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
 import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
-import { ConnectionBanner } from "../components/ConnectionBanner";
+import { ConnectionBanner, type LocalLine } from "../components/ConnectionBanner";
+import {
+  ConnectInstead,
+  LocalServerFailed,
+  LocalServerFailedBody,
+  LocalSignIn,
+  StoppingLocal,
+  StopUsingComputer,
+  WhereBotsLive,
+} from "../components/LocalMode";
+import { ServerAddress } from "../components/ServerAddress";
+import { WhereSection } from "../components/SettingsDialog";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
 import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
@@ -104,12 +116,14 @@ import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
+import { CredentialRequestCard } from "../components/CredentialRequestCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { EngineSection } from "../components/SettingsDialog";
 import type { LocalProviderSetup } from "../components/ProviderSetup";
 import { UsageSection } from "../components/UsageSection";
+import { VaultSection } from "../components/vault/VaultSection";
 import { WorkFold } from "../components/WorkFold";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
@@ -126,6 +140,7 @@ import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
 import { useSampleSource } from "./sampleSource";
+import { SAMPLE_VAULT_PASSWORD, useSampleVault } from "./sampleVault";
 import { galleryVariants } from "./variants";
 
 const team = sampleTeam(SAMPLE_NOW);
@@ -200,12 +215,14 @@ export default function GalleryPage() {
                 <TemplatesSection />
                 <RoomsSection />
                 <EngineSettingsSection />
+                <VaultGallerySection />
                 <UsageGallerySection />
                 <FirstRunSection />
                 <LocalFirstRunSection />
                 <FirstRunWideSection />
                 <EmptyStatesSection />
                 <ConnectionSection />
+                <WhereBotsLiveSection />
                 <ShellSection />
               </div>
             </div>
@@ -881,6 +898,7 @@ const timelineIntents: TimelineIntents = {
   decideApproval: nothing,
   provideSecret: nothing,
   declineSecret: nothing,
+  dismissLogin: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
   openWorkFold: nothing,
@@ -897,6 +915,7 @@ const workSteps = (entryId: string) => team.workSteps[entryId] ?? null;
 const notSubmitting = () => false;
 
 function BubblesSection() {
+  const galleryVault = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
   const { bubbles } = variants;
   const { t } = useI18n();
   return (
@@ -994,6 +1013,7 @@ function BubblesSection() {
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
+            vault={galleryVault}
             turnBot={{ bot: team.bots.scout, lastEntry: null }}
           />
         </div>
@@ -1006,6 +1026,7 @@ function BubblesSection() {
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
+            vault={galleryVault}
           />
         </div>
       </Labeled>
@@ -1033,6 +1054,11 @@ function CardsSection() {
       <Labeled label="Approval becoming exact while it waits: the change arrives after the summary, and focus in the summary moves to it">
         <ApprovalBecomingExact />
       </Labeled>
+      <Labeled
+        label={`Save a login: with no vault password, locked (the password is “${SAMPLE_VAULT_PASSWORD}”), unlocked, saved, dismissed`}
+      >
+        <LoginCards />
+      </Labeled>
       <Labeled label="Credential: pending with a link, provided, declined, expired">
         <div className="flex flex-col gap-3">
           {variants.secrets.map((entry) => (
@@ -1046,6 +1072,25 @@ function CardsSection() {
         </div>
       </Labeled>
     </Section>
+  );
+}
+
+/** A bot's save-login card in each state, each with a vault of its own. */
+function LoginCards() {
+  const uninitialized = useSampleVault({ state: "uninitialized", now: () => SAMPLE_NOW });
+  const locked = useSampleVault({ state: "locked", now: () => SAMPLE_NOW });
+  const unlocked = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
+  const [first, ...closed] = variants.logins;
+  if (first === undefined) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      <CredentialRequestCard entry={first} vault={uninitialized} onDismiss={nothing} />
+      <CredentialRequestCard entry={first} vault={locked} onDismiss={nothing} />
+      <CredentialRequestCard entry={first} vault={unlocked} onDismiss={nothing} />
+      {closed.map((entry) => (
+        <CredentialRequestCard key={entry.id} entry={entry} vault={unlocked} onDismiss={nothing} />
+      ))}
+    </div>
   );
 }
 
@@ -2102,6 +2147,40 @@ function EngineSettingsSection() {
   );
 }
 
+function VaultGallerySection() {
+  const now = () => SAMPLE_NOW;
+  const none = useSampleVault({ state: "uninitialized", now });
+  const locked = useSampleVault({ state: "locked", now });
+  const unlocked = useSampleVault({ state: "unlocked", now, credentials: variants.credentials });
+  const empty = useSampleVault({ state: "unlocked", now });
+  const newer = useSampleVault({ state: "newer", now });
+  return (
+    <Section title="Settings: the vault">
+      <div className="flex flex-wrap gap-4">
+        <Frame label="No password yet" width={420} height={360}>
+          <VaultSection vault={none} />
+        </Frame>
+        <Frame
+          label={`Locked (the password is “${SAMPLE_VAULT_PASSWORD}”)`}
+          width={420}
+          height={260}
+        >
+          <VaultSection vault={locked} />
+        </Frame>
+        <Frame label="Unlocked, with saved logins" width={420} height={760}>
+          <VaultSection vault={unlocked} />
+        </Frame>
+        <Frame label="Unlocked, with none saved" width={420} height={220}>
+          <VaultSection vault={empty} />
+        </Frame>
+        <Frame label="Changed by a newer release" width={420} height={140}>
+          <VaultSection vault={newer} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
 function UsageGallerySection() {
   const usage = (
     engine: EngineStatus | null,
@@ -2198,9 +2277,11 @@ function FirstRunAt({
   engine?: EngineStatus | null;
   providerSetup?: LocalProviderSetup;
 }) {
+  const vault = useSampleVault({ state: "uninitialized", now: () => SAMPLE_NOW });
   return (
     <Onboarding
       engine={engine}
+      vault={vault}
       initialStep={step}
       initialName="Nova"
       {...(providerSetup === undefined ? {} : { providerSetup })}
@@ -2222,8 +2303,15 @@ function FirstRunSection() {
         <Frame label="The first bot's name, with a default" width={390} height={760}>
           <FirstRunAt step="name" />
         </Frame>
-        <Frame label="Its look; with a provider, this step creates it" width={390} height={760}>
+        <Frame label="Its look" width={390} height={760}>
           <FirstRunAt step="look" />
+        </Frame>
+        <Frame
+          label="The vault's password, skippable; with a provider, this step creates the bot"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="vault" />
         </Frame>
         <Frame label="No provider connected: one command, live" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.connect} />
@@ -2513,6 +2601,238 @@ function ConnectionSection() {
         </Frame>
         <Frame label="The browser would not keep the sign-in" width={390} height={360}>
           <StorageFailed onRetry={nothing} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
+/** A server on this computer that did not start, as the app reports it: its words, its fix, its last lines. */
+const notStarted: LocalServerState = {
+  state: "failed",
+  attempt: 3,
+  reason: "J3 Bots stopped three times as it started.",
+  fix: "Free some space on this computer's disk, then try again.",
+  logTail: [
+    "starting J3 Bots 0.3.0",
+    "reading the bots kept on this computer",
+    "error: no space left on the disk to write the bots' data",
+    "stopped",
+  ].join("\n"),
+};
+
+const localLine = (server: LocalServerState): LocalLine => ({
+  server,
+  restartAt: server.state === "restarting" ? retryAt : null,
+  onRetry: nothing,
+  onDetails: nothing,
+  onRetryUpdate: nothing,
+});
+
+/** An update of the server on this computer that did not become ready, rolled back as the app reports it. */
+const rolledBack = {
+  _tag: "rolled-back",
+  running: "0.3.0",
+  failed: "0.3.1",
+  reason: "it stopped with exit code 1: The engine could not be started: its runtime is damaged.",
+  logTail: [
+    "starting J3 Bots 0.3.1",
+    "moving the bots' data to 0.3.1",
+    "error: the engine could not be started: its runtime is damaged",
+    "stopped",
+  ].join("\n"),
+} satisfies ServerUpdate;
+
+/** The first screen and, on its second choice, the server address screen with a way back. */
+function WhereFlow({ notice = null }: { notice?: string | null }) {
+  const [where, setWhere] = useState<"choice" | "address">("choice");
+  return where === "choice" ? (
+    <WhereBotsLive
+      notice={notice}
+      onUseThisComputer={() => Promise.resolve("failed")}
+      onConnectToServer={() => setWhere("address")}
+    />
+  ) : (
+    <ServerAddress
+      onConnect={() => Promise.resolve({ _tag: "refused", reason: "unreachable" })}
+      onBack={() => setWhere("choice")}
+    />
+  );
+}
+
+/** Settings' section for where the bots live, alone: the rest of Settings is in the shell's. */
+function WhereSettings({ local }: { local: boolean }) {
+  const [startWithSystem, setStartWithSystem] = useState(false);
+  return (
+    <div className="flex flex-col gap-4 p-4">
+      <WhereSection
+        server={
+          local
+            ? undefined
+            : {
+                address: "https://j3.example.test",
+                forget: () => Promise.resolve(false),
+                chooseThisComputer: () => Promise.resolve("failed"),
+              }
+        }
+        local={
+          local
+            ? {
+                stopUsing: () => Promise.resolve(false),
+                startWithSystem,
+                setStartWithSystem: (on) => {
+                  setStartWithSystem(on);
+                  return Promise.resolve(on);
+                },
+              }
+            : undefined
+        }
+      />
+    </div>
+  );
+}
+
+function WhereBotsLiveSection() {
+  const { t } = useI18n();
+  return (
+    <Section title="Where the bots live (desktop app)">
+      <Labeled label="The connection line on this computer: starting, stopped, restarting with a retry waiting, failed; updating, an update rolled back, a server newer than the app">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          {(
+            [
+              { state: "starting" },
+              { state: "stopped" },
+              { state: "restarting", attempt: 2, retryInSeconds: 30 },
+              notStarted,
+              { state: "starting", update: { _tag: "updating", from: "0.3.0", to: "0.3.1" } },
+              { state: "ready", update: rolledBack },
+              { state: "ready", update: { _tag: "older-app", running: "0.3.1", app: "0.3.0" } },
+            ] satisfies ReadonlyArray<LocalServerState>
+          ).map((server) => (
+            <ConnectionBanner
+              key={`${server.state}-${server.update?._tag ?? "none"}`}
+              state={{ _tag: "connected" }}
+              local={localLine(server)}
+              everConnected
+              onRetryNow={nothing}
+            />
+          ))}
+        </div>
+      </Labeled>
+      <div className="flex flex-wrap gap-4">
+        <Frame
+          label="The first screen; Use this computer is refused here, to show how; Connect to a server leads to the address, with a way back"
+          width={390}
+          height={760}
+        >
+          <WhereFlow />
+        </Frame>
+        <Frame label="The first screen, opened from a pairing link" width={390} height={760}>
+          <WhereFlow notice={t("links.chooseFirst")} />
+        </Frame>
+        <Frame
+          label="The first run while the bots start, with a way to a server instead"
+          width={390}
+          height={760}
+        >
+          <Onboarding
+            engine={null}
+            footer={<ConnectInstead onConnect={nothing} />}
+            waiting={t("local.waiting")}
+            onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
+            onArrived={arrived}
+          />
+        </Frame>
+        <Frame
+          label="The first bot asked for before the bots run: create it to see it wait"
+          width={390}
+          height={760}
+        >
+          <Onboarding
+            engine={team.engine}
+            initialStep="look"
+            initialName="Nova"
+            waiting={t("local.waiting")}
+            onCreate={() => new Promise(() => {})}
+            onArrived={arrived}
+          />
+        </Frame>
+        <Frame label="The bots did not start, before the first bot" width={390} height={760}>
+          <LocalServerFailed
+            server={notStarted}
+            onRetry={nothing}
+            footer={<ConnectInstead onConnect={nothing} />}
+          />
+        </Frame>
+        <Frame
+          label="The bots did not start, from the connection line once there are bots"
+          width={448}
+          height={420}
+        >
+          <div className="flex flex-col gap-3 p-5">
+            <p className="text-lg font-semibold">{t("local.failed.title")}</p>
+            <LocalServerFailedBody server={notStarted} onRetry={nothing} />
+          </div>
+        </Frame>
+        <Frame
+          label="An update rolled back, from the connection line: why, and Try again"
+          width={448}
+          height={460}
+        >
+          <div className="flex flex-col gap-3 p-5">
+            <p className="text-lg font-semibold">
+              {t("local.update.title", { failed: rolledBack.failed })}
+            </p>
+            <p className="text-sm text-pretty text-muted-foreground">
+              {t("local.update.body", { running: rolledBack.running })}
+            </p>
+            <LocalServerFailedBody server={rolledBack} onRetry={nothing} />
+          </div>
+        </Frame>
+        <Frame label="This computer was signed out (signing in fails)" width={390} height={560}>
+          <LocalSignIn
+            reason="signed-out"
+            onSignIn={() => Promise.resolve(false)}
+            footer={<StopUsingComputer quiet onStop={() => Promise.resolve(false)} />}
+          />
+        </Frame>
+        <Frame label="This computer could not sign in" width={390} height={560}>
+          <LocalSignIn
+            reason="failed"
+            onSignIn={() => Promise.resolve(false)}
+            footer={<StopUsingComputer quiet onStop={() => Promise.resolve(false)} />}
+          />
+        </Frame>
+        <Frame
+          label="This computer's sign-in can't be read, as while a keyring is locked"
+          width={390}
+          height={420}
+        >
+          <StorageFailed
+            onRetry={nothing}
+            desktop={{
+              _tag: "local",
+              restart: nothing,
+              leave: <StopUsingComputer quiet onStop={() => Promise.resolve(false)} />,
+            }}
+          />
+        </Frame>
+        <Frame label="Stopping the bots on this computer" width={390} height={360}>
+          <StoppingLocal />
+        </Frame>
+        <Frame
+          label="Settings, on this computer: Stop using this computer asks first (and fails here)"
+          width={420}
+          height={300}
+        >
+          <WhereSettings local />
+        </Frame>
+        <Frame
+          label="Settings, on a server: Use this computer asks first (and fails here)"
+          width={420}
+          height={220}
+        >
+          <WhereSettings local={false} />
         </Frame>
       </div>
     </Section>

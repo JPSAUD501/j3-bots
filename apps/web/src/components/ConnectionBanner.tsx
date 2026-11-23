@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConnectionState } from "@j3-bots/client-runtime";
+import type { LocalServerState, ServerUpdate } from "@j3-bots/desktop-bridge";
 import * as DateTime from "effect/DateTime";
 import { createContext, use, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useI18n } from "../app/context";
@@ -24,8 +25,30 @@ const Speaking = createContext(false);
 /** Whether the connection line above is saying why the server is out of reach. */
 export const useConnectionLineShown = (): boolean => use(Speaking);
 
+/**
+ * In local mode, the server this computer runs, which the line speaks of
+ * first while it is down, and, once it runs and the connection is up, of
+ * the update it was rolled back from or the newer release it runs.
+ */
+export interface LocalLine {
+  readonly server: LocalServerState;
+  /** While it waits to restart: when it starts again. */
+  readonly restartAt: DateTime.Utc | null;
+  /** Starts it again now. */
+  readonly onRetry: () => void;
+  /** Shows why it did not start, once it failed, or why the update it was rolled back from did not. */
+  readonly onDetails: () => void;
+  /** Tries the update it was rolled back from again. */
+  readonly onRetryUpdate: () => void;
+}
+
+/** Whether the app saw why an update was rolled back, which its details show. */
+export const updateHasDetails = (update: ServerUpdate): boolean =>
+  update._tag === "rolled-back" && (update.reason !== undefined || update.logTail !== undefined);
+
 interface ConnectionBannerProps {
   readonly state: ConnectionState;
+  readonly local?: LocalLine | undefined;
   /** Whether a connection has been made since the page loaded. */
   readonly everConnected: boolean;
   readonly onRetryNow: () => void;
@@ -35,21 +58,52 @@ interface ConnectionBannerProps {
 
 /**
  * One quiet line above the shell while the server is out of reach: what is
- * happening, and Try now when a retry is waiting. Connected, it takes no
- * room. Its text is a live region, so each change is read out once. Shown,
- * it is the top of the screen, so it takes the device's top inset and what
- * lies under it does not.
+ * happening, and Try now when a retry is waiting. In local mode, while the
+ * server on this computer moves to a new release, it says only that; while
+ * that server is not running, it says that first, with what starts it again.
+ * Once both run, it speaks only of an update of that server that was rolled
+ * back, with Try again and its details, or of a newer one than the app that
+ * runs; otherwise it takes no room. Its text is a live region, so
+ * each change is read out once. Shown, it is the top of the screen, so it
+ * takes the device's top inset and what lies under it does not.
  */
 export function ConnectionBanner({
   state,
+  local,
   everConnected,
   onRetryNow,
   children,
 }: ConnectionBannerProps) {
   const { t } = useI18n();
-  const retryAt = state._tag === "waiting" ? state.retryAt : null;
+  const down = local !== undefined && local.server.state !== "ready" ? local : null;
+  const retryAt = down !== null ? down.restartAt : state._tag === "waiting" ? state.retryAt : null;
   const seconds = useSecondsUntil(retryAt);
-  const text = ((): string | null => {
+  // An update of the server on this computer, from the stop of the one that ran to the new one's
+  // answer; a start that failed or waits to try again says so instead.
+  const updating =
+    local?.server.update?._tag === "updating" &&
+    local.server.state !== "failed" &&
+    local.server.state !== "restarting"
+      ? t("local.line.update.updating", { version: local.server.update.to })
+      : null;
+  /** The server on this computer, while it is not running. */
+  const downText = ((): string | null => {
+    switch (down?.server.state) {
+      case "starting":
+        return t("local.line.starting");
+      case "stopped":
+        return t("local.line.stopped");
+      case "restarting":
+        return t("local.line.restarting");
+      case "failed":
+        return t("local.line.failed");
+      case "ready":
+      case undefined:
+        return null;
+    }
+  })();
+  /** The connection, while it is not up. */
+  const connectionText = ((): string | null => {
     switch (state._tag) {
       case "offline":
         return t("connection.offline");
@@ -66,6 +120,23 @@ export function ConnectionBanner({
         return null;
     }
   })();
+  // The server's version, once it runs and the connection is up: each says so first otherwise.
+  const update = down === null && connectionText === null ? local?.server.update : undefined;
+  const updateText = ((): string | null => {
+    switch (update?._tag) {
+      case "rolled-back":
+        return t("local.line.update.rolledBack", {
+          failed: update.failed,
+          running: update.running,
+        });
+      case "older-app":
+        return t("local.line.update.olderApp", { running: update.running });
+      case "updating":
+      case undefined:
+        return null;
+    }
+  })();
+  const text = updating ?? downText ?? connectionText ?? updateText;
   // The line keeps its last words while it folds away, so it never shrinks empty.
   const [lastText, setLastText] = useState(text);
   if (text !== null && text !== lastText) setLastText(text);
@@ -84,7 +155,59 @@ export function ConnectionBanner({
               {text}
             </span>
             <span aria-hidden>{text ?? lastText}</span>
-            {state._tag === "waiting" && (
+            {updating === null && down?.server.state === "stopped" && (
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={down.onRetry}>
+                {t("local.line.start")}
+              </Button>
+            )}
+            {updating === null && down?.server.state === "failed" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={down.onDetails}
+              >
+                {t("local.failed.details")}
+              </Button>
+            )}
+            {updating === null && down?.server.state === "restarting" && (
+              <>
+                <span aria-hidden className="tabular-nums">
+                  {seconds > 0 ? t("connection.retryIn", { seconds }) : t("connection.retrying")}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={down.onRetry}
+                >
+                  {t("connection.retryNow")}
+                </Button>
+              </>
+            )}
+            {local !== undefined && update?._tag === "rolled-back" && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={local.onRetryUpdate}
+                >
+                  {t("local.line.update.retry")}
+                </Button>
+                {updateHasDetails(update) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={local.onDetails}
+                  >
+                    {t("local.failed.details")}
+                  </Button>
+                )}
+              </>
+            )}
+            {down === null && state._tag === "waiting" && (
               <>
                 {/* Changes every second, so it is shown and not announced. */}
                 <span aria-hidden className="tabular-nums">

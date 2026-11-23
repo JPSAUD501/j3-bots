@@ -269,6 +269,14 @@ const SetOperatorNameInput = toolInput({
   ),
 });
 
+const RequestCredentialInput = toolInput({
+  origin: described(
+    text(1, 2_000),
+    "The address of the page that asks for the login, such as https://example.com/login.",
+  ),
+  note: described(text(1, 500), "One line on what you need the login for."),
+});
+
 /** One `j3` tool: its name, its description as prompt text, and the schema its arguments decode with. */
 export interface ToolDefinition<S extends Schema.Top = Schema.Top> {
   readonly name: string;
@@ -427,6 +435,17 @@ export const tools = {
       "Returns the name as saved.",
     ],
     SetOperatorNameInput,
+  ),
+  request_credential: define(
+    "request_credential",
+    [
+      "Ask your user to save a login for a site in their vault: a card in your conversation with them, where they type the user name, the password and any one-time code setup.",
+      "What they type goes straight to the vault and never reaches you. So never ask for a password, a one-time code or a key in a message; ask with this card.",
+      "`origin` is the address of the page that asks for the login; your user can correct it on the card.",
+      "The card stays until they save the login or dismiss it, and neither wakes you. You cannot read or use a saved login yet: say so if they expect you to sign in with it.",
+      "Returns once the card is shown.",
+    ],
+    RequestCredentialInput,
   ),
 } as const;
 

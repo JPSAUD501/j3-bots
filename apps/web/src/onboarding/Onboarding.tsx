@@ -3,10 +3,12 @@ import {
   defaultBotName,
   makingProgress,
   nextStep,
+  type OnboardingFlow,
   type OnboardingStep,
   previousStep,
   providerGate,
   showsConnect,
+  showsVault,
 } from "@j3-bots/client-runtime/presentation";
 import { avatarCast, springs } from "@j3-bots/design-tokens";
 import { type IntentResult, refusedWith } from "@j3-bots/client-runtime";
@@ -29,6 +31,7 @@ import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar";
 import { CommandLine } from "../components/CommandLine";
 import { type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetup";
 import { Button } from "../components/ui/button";
+import { SetupVaultForm, type VaultAccess } from "../components/vault/VaultForms";
 import { cn } from "../lib/cn";
 import { Cast } from "./Cast";
 import { BigButton, bigFieldClass, StepTitle } from "./parts";
@@ -63,6 +66,13 @@ interface OnboardingProps {
    * computer; without it, the connect step gives the command to run there.
    */
   readonly providerSetup?: LocalProviderSetup;
+  /**
+   * What the bot's arrival waits for before the server has it, said under the
+   * bot, as while the server on this computer starts; `null` for nothing.
+   */
+  readonly waiting?: string | null;
+  /** The server's vault: while it has no password, a step offers to set one. */
+  readonly vault?: VaultAccess;
 }
 
 type Direction = "forward" | "back";
@@ -86,6 +96,8 @@ export function Onboarding({
   initialName,
   footer,
   providerSetup,
+  waiting = null,
+  vault,
 }: OnboardingProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -107,16 +119,22 @@ export function Onboarding({
   const [failure, setFailure] = useState<Failure | null>(null);
   // Whether the connect step was shown: from then on it stays in the flow (`showsConnect`).
   const [connectShown, setConnectShown] = useState(initialStep === "connect");
+  // Likewise for the vault's step, which setting the password there must not take away.
+  const [vaultShown, setVaultShown] = useState(initialStep === "vault");
   // Whether the bot exists: the arrival names it only then.
   const [created, setCreated] = useState(initialStep === "arrival");
   // Counts what the operator does to the bot, so it answers each with a hop.
   const [pokes, setPokes] = useState(0);
   const { step } = view;
   const botName = name.trim() === "" ? fallbackName : name.trim();
-  const connect = showsConnect(engine, connectShown);
+  const flow: OnboardingFlow = {
+    connect: showsConnect(engine, connectShown),
+    vault: vault !== undefined && showsVault(vault.view, vaultShown),
+  };
 
   const go = (to: OnboardingStep, direction: Direction) => {
     if (to === "connect") setConnectShown(true);
+    if (to === "vault") setVaultShown(true);
     setView((now) => ({
       step: to,
       direction,
@@ -145,7 +163,7 @@ export function Onboarding({
   }, [view.leaving]);
 
   const forward = () => {
-    const to = nextStep(step, connect);
+    const to = nextStep(step, flow);
     if (to === null) return;
     if (to === "arrival") {
       create();
@@ -154,7 +172,7 @@ export function Onboarding({
     go(to, "forward");
   };
   const back = () => {
-    const to = previousStep(step, connect);
+    const to = previousStep(step, flow);
     if (to !== null) go(to, "back");
   };
 
@@ -180,8 +198,8 @@ export function Onboarding({
     );
   };
 
-  const progress = makingProgress(step, connect);
-  const canGoBack = previousStep(step, connect) !== null;
+  const progress = makingProgress(step, flow);
+  const canGoBack = previousStep(step, flow) !== null;
   const style: CSSProperties & Record<"--onboarding-bot", string> = {
     "--onboarding-bot": `var(--bot-${look.color})`,
   };
@@ -212,7 +230,17 @@ export function Onboarding({
               setLook(next);
               setPokes((count) => count + 1);
             }}
-            ready={!connect}
+            ready={nextStep("look", flow) === "arrival"}
+            failure={failure}
+            onContinue={forward}
+          />
+        );
+      case "vault":
+        return vault === undefined ? null : (
+          <VaultStep
+            vault={vault}
+            name={botName}
+            creates={nextStep("vault", flow) === "arrival"}
             failure={failure}
             onContinue={forward}
           />
@@ -228,7 +256,7 @@ export function Onboarding({
           />
         );
       case "arrival":
-        return <Arrival engine={engine} name={botName} created={created} />;
+        return <Arrival engine={engine} name={botName} created={created} waiting={waiting} />;
     }
   };
 
@@ -653,18 +681,75 @@ function ConnectStep({
 }
 
 /**
+ * The vault's master password, which the operator may set now or skip: a
+ * password set here stays set, and the step only moves on. Once it is set,
+ * Back and forth through it shows that, and Continue.
+ */
+function VaultStep({
+  vault,
+  name,
+  creates,
+  failure,
+  onContinue,
+}: {
+  readonly vault: VaultAccess;
+  readonly name: string;
+  /** Whether the next step is the arrival, so moving on creates the bot. */
+  readonly creates: boolean;
+  readonly failure: Failure | null;
+  readonly onContinue: () => void;
+}) {
+  const { t } = useI18n();
+  const set = vault.view._tag === "ready" && vault.view.status.state !== "uninitialized";
+  const next = creates ? t("onboarding.create", { name }) : t("onboarding.continue");
+  return (
+    <StepFrame
+      actions={
+        <>
+          {creates && <FailureLine failure={failure} name={name} />}
+          {set && <BigButton onClick={onContinue}>{next}</BigButton>}
+        </>
+      }
+    >
+      <StepTitle>{t("onboarding.vault.title")}</StepTitle>
+      <p className="text-lg text-pretty text-muted-foreground">{t("onboarding.vault.body")}</p>
+      {set ? (
+        <p role="status" className="flex items-center gap-2 text-sm font-medium text-success">
+          <span aria-hidden className="size-2 rounded-full bg-current" />
+          {t("onboarding.vault.done")}
+        </p>
+      ) : (
+        <SetupVaultForm
+          intents={vault.intents}
+          onDone={onContinue}
+          className="w-full"
+          actions={
+            <Button variant="ghost-muted" size="sm" onClick={onContinue}>
+              {t("onboarding.vault.skip")}
+            </Button>
+          }
+        />
+      )}
+    </StepFrame>
+  );
+}
+
+/**
  * The bot arriving. Until the server has created it, only the bot above says
- * something is happening; then it grows, its name pops in, and a line says
- * whether it is saying hello or waits for a model.
+ * something is happening, and a line what it waits for, if anything; then it
+ * grows, its name pops in, and a line says whether it is saying hello or
+ * waits for a model.
  */
 function Arrival({
   engine,
   name,
   created,
+  waiting,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
   readonly created: boolean;
+  readonly waiting: string | null;
 }) {
   const { t } = useI18n();
   const ready =
@@ -690,6 +775,7 @@ function Arrival({
               {ready ? t("onboarding.arrival.hello") : t("onboarding.arrival.waiting", { name })}
             </span>
           )}
+          {!created && waiting !== null && <span className="block arrive">{waiting}</span>}
         </p>
       </div>
     </StepFrame>

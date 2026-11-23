@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
-import { BotFile, MessageAttachments } from "./attachment.ts";
+import { AttachmentOffsets, BotFile, MessageAttachments } from "./attachment.ts";
 import {
   AttachmentId,
   BotId,
@@ -32,7 +32,7 @@ import {
   ReceivedEntry,
   WorkStep,
 } from "./entry.ts";
-import { CommandError, NotFound } from "./errors.ts";
+import { CommandError, NotFound, VaultError } from "./errors.ts";
 import { ServerOrigin } from "./link.ts";
 import {
   MemoryDocument,
@@ -54,6 +54,19 @@ import {
 import { Section, SectionName } from "./section.ts";
 import { Settings, SettingsChange, TimeZone } from "./settings.ts";
 import { BotTemplate, TemplateTooLarge } from "./template.ts";
+import {
+  Credential,
+  CredentialDraft,
+  CredentialField,
+  CredentialId,
+  CredentialOrigins,
+  CredentialPassword,
+  CredentialUsername,
+  MasterPassword,
+  TotpPreview,
+  TotpSetup,
+  VaultStatus,
+} from "./vault.ts";
 
 // ---------------------------------------------------------------------------
 // Conventions
@@ -73,8 +86,9 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 //
 // Commands carry a client-generated `commandId`. Sending the same command again
 // with the same id has no further effect and returns the first result, so a
-// client retries freely after a dropped connection. `secret.provide` is the one
-// exception: its value must never be stored, so it has no receipt (see there).
+// client retries freely after a dropped connection. `secret.provide`,
+// `provider.connect` and the vault's requests are the exceptions: their values
+// must never be stored, so they have no receipt (see there).
 //
 // A roster snapshot that carries `sections` comes from a server that organizes
 // the roster: sections, a bot's `sectionId` and `entries.markUnread`. A client
@@ -216,6 +230,12 @@ export const EntryRpcs = RpcGroup.make(
       target: EntryTarget,
       text: MessageText,
       attachments: MessageAttachments,
+      /**
+       * Where the operator placed each file in `text` (`AttachmentOffsets`).
+       * Left out, the files follow the text. Offsets that do not fit the
+       * text and the files fail with `Invalid("attachment")`.
+       */
+      attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
       mentions: Schema.optionalKey(Mentions),
     },
     success: EntryId,
@@ -229,7 +249,9 @@ export const EntryRpcs = RpcGroup.make(
    * the card open. When the engine refuses an answer it was sent, the card
    * closes as `refused`, and the turn waits for a Stop. Fails with `Invalid("answer-length")`, leaving the card open, when
    * the answer to an `ask` question as the bot would read it is too long for
-   * the engine that runs the bot to take in one message.
+   * the engine that runs the bot to take in one message. A save-login card
+   * takes only a dismissal, which closes it without waking the bot; it is
+   * saved with `vault.save`.
    */
   Rpc.make("card.answer", {
     payload: {
@@ -753,6 +775,108 @@ export const BrowserRpcs = RpcGroup.make(
   }),
 );
 
+/**
+ * The vault: the operator's saved logins (docs/architecture/server.md, "The
+ * vault"). Any paired client may unlock it, read it and change it. None of
+ * these requests has a command id, since a receipt would keep what it carries;
+ * each is safe to send again instead: `vault.save` names the login it makes.
+ * No value they carry or answer is stored outside the vault, logged or kept
+ * in an error. Every request but `vault.status`, `vault.setup`, `vault.unlock`
+ * and `vault.lock` fails with `Conflict("vault-locked")` while the vault is
+ * locked, `Conflict("vault-not-set-up")` before it has a password, and
+ * `Conflict("vault-newer")` while its state is `newer`. A value the vault
+ * cannot open or read back fails with `Conflict("vault-damaged")`, and so do
+ * `vault.unlock` and `vault.changePassword` when its key settings are out of
+ * range. New in 0.4.0: a client calls them only on a server that answers
+ * `vault.status`.
+ */
+export const VaultRpcs = RpcGroup.make(
+  /** The vault's state now, then each change. */
+  Rpc.make("vault.status", { success: VaultStatus, stream: true }),
+  /**
+   * Creates the vault, unlocked, with this master password. Fails with
+   * `Conflict("vault-set-up")` when it has one already.
+   */
+  Rpc.make("vault.setup", { payload: { password: MasterPassword }, error: VaultError }),
+  /**
+   * Unlocks the vault for every client until one locks it or the server
+   * stops. A wrong password fails with `Invalid("master-password")`; after a
+   * few in a row, every attempt fails with `RateLimited` until its `retryAt`,
+   * which grows with each further wrong one. The count and the wait outlast
+   * a restart, and the count starts over after a day with no wrong one.
+   * Unlocking an unlocked vault checks the password all the same.
+   */
+  Rpc.make("vault.unlock", { payload: { password: MasterPassword }, error: VaultError }),
+  /** Forgets the vault's key until a client unlocks it again. */
+  Rpc.make("vault.lock", {}),
+  /**
+   * Replaces the master password, checking `current` as `vault.unlock` does,
+   * with the same limit. The saved logins stay as they are.
+   */
+  Rpc.make("vault.changePassword", {
+    payload: { current: MasterPassword, next: MasterPassword },
+    error: VaultError,
+  }),
+  /** Every saved login, by name, without its values. */
+  Rpc.make("vault.list", { success: Schema.Array(Credential), error: VaultError }),
+  /**
+   * One value of a login, for the operator to see. The vault records when it
+   * was shown and on which device, never the value.
+   */
+  Rpc.make("vault.reveal", {
+    payload: { id: CredentialId, field: CredentialField },
+    success: Schema.Redacted(Schema.String),
+    error: VaultError,
+  }),
+  /**
+   * Saves a new login as `id`, allowed to the bots in `allowedBots`. With
+   * `request`, it answers that bot's save-login card, which then shows it as
+   * saved. When `id` is saved already, nothing changes and the login is
+   * returned as it is, so a retry adds nothing. Fails with `Invalid("totp")`
+   * when `totp` is not a one-time code setup.
+   */
+  Rpc.make("vault.save", {
+    payload: {
+      id: CredentialId,
+      ...CredentialDraft.fields,
+      allowedBots: Schema.Array(BotId),
+      request: Schema.NullOr(EntryId),
+    },
+    success: Credential,
+    error: VaultError,
+  }),
+  /** Fields left out keep their value; `totp: null` removes the one-time codes. */
+  Rpc.make("vault.update", {
+    payload: {
+      id: CredentialId,
+      name: Schema.optionalKey(CredentialDraft.fields.name),
+      origins: Schema.optionalKey(CredentialOrigins),
+      username: Schema.optionalKey(CredentialUsername),
+      password: Schema.optionalKey(CredentialPassword),
+      totp: Schema.optionalKey(Schema.NullOr(TotpSetup)),
+    },
+    success: Credential,
+    error: VaultError,
+  }),
+  /** Deletes the login. Deleting one already gone succeeds. */
+  Rpc.make("vault.delete", { payload: { id: CredentialId }, error: VaultError }),
+  /** Replaces the bots that may use the login. */
+  Rpc.make("vault.setAllowedBots", {
+    payload: { id: CredentialId, bots: Schema.Array(BotId) },
+    success: Credential,
+    error: VaultError,
+  }),
+  /**
+   * The login's one-time code now, so the operator can check it against the
+   * site's. Fails with `NotFound("credential")` for a login without one.
+   */
+  Rpc.make("vault.totpPreview", {
+    payload: { id: CredentialId },
+    success: TotpPreview,
+    error: VaultError,
+  }),
+);
+
 /** Every RPC a paired client can make, on the socket at `HTTP_PATHS.rpc`. */
 export const J3Rpcs = RosterRpcs.merge(
   EntryRpcs,
@@ -766,4 +890,5 @@ export const J3Rpcs = RosterRpcs.merge(
   ClientRpcs,
   ProviderRpcs,
   BrowserRpcs,
+  VaultRpcs,
 );

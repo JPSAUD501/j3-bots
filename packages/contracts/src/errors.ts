@@ -35,6 +35,8 @@ export const Resource = Schema.Literals([
   "attachment",
   /** Only an answer to a request about sections names it, which an older client never makes. */
   "section",
+  /** A saved login, which only the vault's requests name. */
+  "credential",
 ]);
 export type Resource = typeof Resource.Type;
 
@@ -67,6 +69,24 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      * the link lets it through again.
      */
     "private-location",
+    /** The vault is locked: a client unlocks it with the master password first. */
+    "vault-locked",
+    /** The vault has no master password yet: `vault.setup` sets one. */
+    "vault-not-set-up",
+    /** The vault already has a master password: `vault.changePassword` changes it. */
+    "vault-set-up",
+    /**
+     * A newer release of J3 Bots changed the vault's file, which this one
+     * cannot read. Nothing in it can be used until that release runs again.
+     */
+    "vault-newer",
+    /**
+     * A value in the vault does not open under its key, or does not read as
+     * what it should be, or the vault's key settings are out of range: its
+     * file was changed by hand or damaged. The server's log names the record
+     * and field, never the value. Restoring the vault from a backup fixes it.
+     */
+    "vault-damaged",
   ]),
 }) {
   override get message(): string {
@@ -91,6 +111,10 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "answer-length",
     /** A dismissal of a question the harness asked: only a bot's `ask` question takes one. */
     "not-dismissible",
+    /** The master password given is not the vault's. */
+    "master-password",
+    /** The one-time code setup is neither a base32 secret nor an `otpauth://totp/` address. */
+    "totp",
   ]),
 }) {
   override get message(): string {
@@ -101,3 +125,7 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
 /** What a command can fail with. */
 export const CommandError = Schema.Union([NotFound, Conflict, Invalid]);
 export type CommandError = typeof CommandError.Type;
+
+/** What a request to the vault can fail with: a command's errors, and the unlock limit. */
+export const VaultError = Schema.Union([NotFound, Conflict, Invalid, RateLimited]);
+export type VaultError = typeof VaultError.Type;

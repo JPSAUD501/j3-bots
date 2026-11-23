@@ -82,6 +82,19 @@ const sentences = {
   "roster.hidden": "Conversas ocultas",
   "roster.hidden.back": "Voltar para bots e salas",
   "roster.hidden.empty": "Nenhuma conversa oculta.",
+  "roster.menu.back": "Voltar",
+  "roster.hidden.count.one": "{count} conversa oculta",
+  "roster.hidden.count.other": "{count} conversas ocultas",
+  "roster.hidden.unhideName": "Reexibir {name}",
+  "roster.section": "Seção {name}",
+  "roster.section.count.one": "{count} bot",
+  "roster.section.count.other": "{count} bots",
+  "roster.section.new.title": "Nova seção",
+  "roster.section.new.confirm": "Criar",
+  "roster.section.rename.title": "Renomear seção",
+  "roster.section.rename.confirm": "Salvar",
+  "roster.section.name.placeholder": "Trabalho, casa, um projeto…",
+  "roster.section.name.cancel": "Cancelar",
 
   "presence.thinking": "Pensando",
   "presence.working": "Trabalhando",
@@ -108,6 +121,7 @@ const sentences = {
   "summary.askedApproval": "Pediu aprovação: {action}",
   "summary.needsSecret": "Precisa de uma credencial: {label}",
   "summary.askedSecret": "Pediu uma credencial: {label}",
+  "summary.askedLogin": "Pediu para salvar um login de {origin}",
   "summary.workFold": "Trabalhou um pouco",
   "summary.workStopped": "Parou",
   "summary.workFailed": "Falhou",
@@ -165,6 +179,9 @@ const sentences = {
 
   "file.open": "Abrir {name}",
   "file.opening": "Abrindo…",
+  "file.save": "Salvar {name}",
+  "file.viewer.close": "Fechar a imagem",
+  "file.share": "Abrir {name} em outro app",
   "file.kindAndSize": "{kind} · {size}",
 
   "card.waiting": "Esperando por você",
@@ -190,6 +207,79 @@ const sentences = {
   "secret.provided": "Enviada. Ela não aparece nesta conversa.",
   "secret.declined": "Recusada. O bot segue sem ela.",
   "secret.expired": "Este pedido expirou antes de ser respondido.",
+
+  "login.title": "Salvar um login",
+  "login.site": "Site",
+  "login.siteInvalid": "Digite o endereço do site, como https://example.com.",
+  "login.name": "Nome",
+  "login.username": "Usuário ou email",
+  "login.password": "Senha",
+  "login.totp": "Chave de código único (opcional)",
+  "login.totpHint":
+    "A chave de configuração ou o endereço otpauth:// que o site mostra ao ativar o login em duas etapas.",
+  "login.totpInvalid": "Isso não é uma chave de código único.",
+  "login.invalid": "Confira o login: ele precisa de um nome e de uma senha.",
+  "login.allow": "Deixar {name} usar",
+  "login.unseen": "Vai direto para o seu cofre. {name} nunca vê o que você digita aqui.",
+  "login.save": "Salvar",
+  "login.dismiss": "Dispensar",
+  "login.saved": "Salvo no seu cofre como {name}.",
+  "login.dismissed": "Dispensado.",
+  "login.failed": "Não foi possível salvar. Tente de novo.",
+
+  "vault.title": "Cofre",
+  "vault.state.locked": "Trancado",
+  "vault.state.unlocked": "Destrancado",
+  "vault.lockedBody":
+    "Destranque para salvar ou ver logins. Ele tranca de novo sempre que o servidor reinicia.",
+  "vault.notSetUp": "Seu cofre ainda não tem senha. Crie uma para salvar logins.",
+  "vault.newer":
+    "Uma versão mais nova do J3 Bots alterou o cofre. Atualize o servidor para usá-lo.",
+  "vault.unsupported": "Este servidor não tem cofre. Atualize-o para salvar logins.",
+  "vault.password": "Senha do cofre",
+  "vault.confirm": "Digite de novo",
+  "vault.mismatch": "As senhas não são iguais.",
+  "vault.tooShort": "Use pelo menos {count} caracteres.",
+  "vault.noRecovery":
+    "Sem esta senha, os logins salvos não podem ser recuperados. Ninguém consegue redefini-la.",
+  "vault.create": "Criar senha",
+  "vault.unlock": "Destrancar",
+  "vault.manageOnWeb": "Para ver ou alterar os logins salvos, abra o J3 Bots no navegador.",
+  "vault.lock": "Trancar agora",
+  "vault.wrong": "Senha errada.",
+  "vault.wait": "Muitas senhas erradas. Tente de novo às {time}.",
+  "vault.failed": "Algo deu errado. Tente de novo.",
+  "vault.damaged":
+    "Algo no cofre não abre: o arquivo dele foi alterado ou danificado. Restaure-o de um backup.",
+  "vault.changePassword": "Trocar senha",
+  "vault.current": "Senha atual",
+  "vault.next": "Nova senha",
+  "vault.changed": "Senha trocada.",
+  "vault.logins": "Logins salvos",
+  "vault.empty": "Nenhum login salvo ainda. Um bot pede para você salvar um quando precisar.",
+  "vault.add": "Adicionar login",
+  "vault.edit": "Editar",
+  "vault.delete": "Excluir",
+  "vault.deleteTitle": "Excluir {name}?",
+  "vault.deleteBody": "A senha e a chave de código único são apagadas do cofre.",
+  "vault.cancel": "Cancelar",
+  "vault.save": "Salvar",
+  "vault.show": "Mostrar",
+  "vault.hide": "Ocultar",
+  "vault.copy": "Copiar",
+  "vault.copied": "Copiado",
+  "vault.field.username": "Usuário",
+  "vault.field.password": "Senha",
+  "vault.field.totp": "Chave de código único",
+  "vault.code": "Código agora",
+  "vault.codeShow": "Mostrar o código agora",
+  "vault.keepTotp": "Deixe vazio para manter a chave de código único que ele tem.",
+  "vault.removeTotp": "Remover a chave de código único",
+  "vault.keepPassword": "Deixe vazio para manter a senha.",
+  "vault.bots": "Bots que podem usar",
+  "vault.botsHint":
+    "Os bots ainda não entram com logins salvos. Isto define quais poderão, quando puderem.",
+  "vault.lastShown": "Mostrado por último {when}",
   "question.recommended": "Recomendada",
   "question.destructive": "Perde algo",
   "approval.kind.command": "Quer executar um comando",
@@ -635,6 +725,11 @@ const sentences = {
   "onboarding.arrival.title": "{name} chegou",
   "onboarding.arrival.hello": "Dando oi…",
   "onboarding.arrival.waiting": "{name} dá oi assim que um modelo for conectado.",
+  "onboarding.vault.title": "Crie a senha do cofre",
+  "onboarding.vault.body":
+    "Seus bots podem pedir para você salvar logins. Eles ficam criptografados com esta senha, no seu servidor.",
+  "onboarding.vault.skip": "Pular por enquanto",
+  "onboarding.vault.done": "A senha do cofre está criada.",
   "onboarding.failed":
     "Não deu para criar {name}. Veja se este aparelho ainda alcança seu servidor e tente de novo.",
   "onboarding.failedNoModel":
@@ -672,7 +767,6 @@ const sentences = {
   "timeline.newMessages": "Novas mensagens",
   "timeline.toLatest": "Ir para a mensagem mais recente",
 
-  "composer.files": "Arquivos para enviar",
   "composer.stillUploading": "Os arquivos ainda estão subindo",
   "composer.file.uploading": "Enviando, {percent}",
   "composer.file.uploadingUnmeasured": "Enviando…",
@@ -713,6 +807,7 @@ const sentences = {
   "composer.dictation.listening": "Ouvindo…",
   "composer.dictation.listeningOnline":
     "Ouvindo… O serviço de voz deste aparelho pode reconhecer isto online.",
+  "composer.dictation.onlineNote": "pode ser reconhecido online",
   "composer.dictation.denied": "O ditado precisa do microfone.",
   "composer.dictation.settings": "Configurações",
   "composer.dictation.noSpeech": "Nada foi ouvido. Tente de novo.",
@@ -799,6 +894,55 @@ const sentences = {
   "server.change.body":
     "O app esquece {address} e o acesso deste dispositivo lá, com os rascunhos e as mensagens não enviadas. O dispositivo pode continuar em Dispositivos nesse servidor, e outro dispositivo pode removê-lo de lá.",
   "server.change.cancel": "Manter este servidor",
+
+  "where.title": "Onde os bots vão ficar?",
+  "where.body": "Dá para mudar depois, nas Configurações.",
+  "where.thisComputer": "Usar neste computador",
+  "where.thisComputer.hint": "Os bots ficam neste computador e dormem quando ele dorme.",
+  "where.thisComputer.pending": "Preparando…",
+  "where.thisComputer.failed":
+    "Não foi possível preparar este computador para os bots. Tente de novo.",
+  "where.thisComputer.unavailable":
+    "Este computador não consegue rodar os bots. Conecte a um servidor.",
+  "where.server": "Conectar a um servidor",
+
+  "local.waiting": "Iniciando o J3 Bots neste computador…",
+  "local.line.starting": "Iniciando os bots…",
+  "local.line.stopped": "Os bots estão parados.",
+  "local.line.start": "Iniciar",
+  "local.line.restarting": "Os bots pararam.",
+  "local.line.failed": "Os bots não iniciaram.",
+  "local.line.update.updating": "Atualizando os bots para a {version}…",
+  "local.line.update.rolledBack":
+    "A atualização para a {failed} não deu certo. Os bots voltaram para a {running}.",
+  "local.line.update.olderApp":
+    "Os bots rodam na {running}, que é mais nova que este app. Atualize o J3 Bots.",
+  "local.line.update.retry": "Tentar de novo",
+  "local.update.title": "A atualização para a {failed} não deu certo",
+  "local.update.body": "Os bots e os dados deles estão como antes dela, na {running}.",
+  "local.failed.title": "Os bots não iniciaram",
+  "local.failed.unknown": "Algo impediu o J3 Bots de iniciar neste computador.",
+  "local.failed.retry": "Tentar de novo",
+  "local.failed.details": "Ver detalhes",
+  "local.failed.hideDetails": "Ocultar detalhes",
+  "local.failed.noLog": "O J3 Bots não escreveu nada antes de parar.",
+  "local.signedOut.title": "Este computador foi desconectado",
+  "local.signedOut.body":
+    "O acesso dele foi encerrado, talvez por outro dispositivo. Os bots e os dados deles continuam aqui.",
+  "local.signedOut.signIn": "Entrar de novo neste computador",
+  "local.signedOut.pending": "Entrando…",
+  "local.signedOut.failed": "Este computador não conseguiu entrar. Tente de novo.",
+  "local.signInFailed.title": "Este computador não conseguiu entrar",
+  "local.signInFailed.body":
+    "Os bots continuam neste computador. Entre de novo; se continuar falhando, reinicie o J3 Bots.",
+  "local.stopping": "Parando os bots neste computador…",
+  "local.stop": "Parar de usar este computador",
+  "local.stop.title": "Parar de usar este computador?",
+  "local.stop.body":
+    "Os bots deste computador param. Os dados deles ficam guardados aqui e voltam se você escolher este computador de novo. Depois, você pode conectar a um servidor.",
+  "local.stop.cancel": "Continuar usando",
+  "local.stop.pending": "Parando…",
+  "local.stop.failed": "Não foi possível parar os bots deste computador. Tente de novo.",
   "pairing.server": "Servidor: {address}",
 
   "links.pairingServer":
@@ -806,6 +950,7 @@ const sentences = {
   "links.nameServerFirst":
     "Conecte ao seu servidor e pareie este dispositivo primeiro, depois abra esse link de novo.",
   "links.pairFirst": "Pareie este dispositivo primeiro. O link abre assim que ele estiver pareado.",
+  "links.chooseFirst": "Escolha primeiro onde os bots ficam e depois abra o link de novo.",
   "links.otherServer":
     "Esse link de pareamento é de outro servidor, {address}. Para parear com ele, troque de servidor primeiro e abra o link de novo.",
   "links.alreadyPaired": "Este dispositivo já está pareado com {address}.",
@@ -824,6 +969,8 @@ const sentences = {
   "gate.storage.desktopTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.desktopBody":
     "O J3 Bots não conseguiu ler o acesso que guarda neste dispositivo para {address}. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots. Trocar para outro servidor, ou para este de novo, desconecta este dispositivo aqui.",
+  "gate.storage.localBody":
+    "O J3 Bots não conseguiu ler o acesso que guarda para os bots deste computador. Se o chaveiro do sistema estiver bloqueado, desbloqueie-o e reinicie o J3 Bots.",
   "gate.storage.mobileTitle": "Não deu para ler o acesso deste dispositivo",
   "gate.storage.mobileBody":
     "O J3 Bots não conseguiu ler o acesso que guarda no armazenamento seguro deste dispositivo. Tente de novo ou reinicie o app. Esquecer o acesso desconecta este dispositivo aqui, para que você possa pareá-lo de novo.",
@@ -1075,6 +1222,16 @@ const sentences = {
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
   "settings.pair.offline": "Disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
   "settings.server": "Servidor",
+  "settings.where": "Onde os bots ficam",
+  "settings.where.local": "Neste computador",
+  "settings.where.server": "Num servidor",
+  "settings.where.useThisComputer.title": "Usar neste computador?",
+  "settings.where.useThisComputer.body":
+    "O app esquece {address} e o acesso deste dispositivo lá, como ao trocar de servidor. Os bots de lá continuam rodando. Depois, os bots ficam neste computador.",
+  "settings.startWithSystem": "Iniciar com o sistema",
+  "settings.startWithSystem.hint":
+    "Abre na bandeja quando você entra neste computador, e os bots voltam sem você abrir o app.",
+  "settings.startWithSystem.failed": "Não foi possível mudar isso. Tente de novo.",
   "settings.browser": "Este navegador",
   "settings.thisDevice": "Este dispositivo",
   "settings.thisDevice.unencrypted":
@@ -1133,6 +1290,7 @@ const sentences = {
   "desktop.tray.more.one": "E mais {count}",
   "desktop.tray.more.other": "E mais {count}",
   "desktop.tray.local.starting": "Iniciando os bots…",
+  "desktop.tray.local.updating": "Atualizando os bots…",
   "desktop.tray.local.stopped": "Bots parados",
   "desktop.tray.local.restarting": "Bots parados · reiniciando em {seconds} s",
   "desktop.tray.local.restartingNow": "Bots parados · reiniciando…",
