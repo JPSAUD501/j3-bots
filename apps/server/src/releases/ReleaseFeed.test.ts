@@ -131,10 +131,13 @@ const config = ConfigProvider.layer(
 
 const testLayer = Layer.mergeAll(TestDomain.layer, fakeGitHub, config);
 
+/** Each change of channel is its own command. */
+let channelChanges = 0;
+
 const setChannel = (channel: UpdateChannel) =>
   Effect.flatMap(SettingsService, (settings) =>
     settings.update({
-      commandId: CommandId.make(`channel-${channel}-${Math.random()}`),
+      commandId: CommandId.make(`channel-${++channelChanges}`),
       changes: { updateChannel: channel },
     }),
   );
