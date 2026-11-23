@@ -10,7 +10,7 @@ import { useI18n } from "../i18n.ts";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
 import { PressScale } from "../press.tsx";
-import { type AvatarHandle, RoomAvatar } from "./avatar/BotAvatar.tsx";
+import { type AvatarHandle, RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "./avatar/mood.tsx";
 
 export const toneClass = {
@@ -74,14 +74,7 @@ export function RosterRow({
           {...(avatarRef === undefined ? {} : { ref: avatarRef })}
         />
       ) : (
-        <RoomAvatar
-          size={40}
-          ground={ground}
-          members={item.room.members.flatMap((id) => {
-            const bot = bots.get(id);
-            return bot === undefined ? [] : [{ id, avatar: bot.profile.avatar }];
-          })}
-        />
+        <RoomAvatar size={40} ground={ground} members={roomAvatarMembers(item.room, bots)} />
       )}
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="flex-row items-baseline gap-2">

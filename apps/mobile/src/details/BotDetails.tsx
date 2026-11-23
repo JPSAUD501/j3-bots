@@ -28,19 +28,19 @@ import {
   Webhook,
 } from "lucide-react-native";
 import { type ReactElement, useMemo } from "react";
-import { ScrollView, Switch, useWindowDimensions, View } from "react-native";
+import { ScrollView, useWindowDimensions, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
-import { confirm, DeleteButton, Quiet, Section, SkeletonRows } from "../components/form.tsx";
+import { DeleteButton, Quiet, Section, SkeletonRows } from "../components/form.tsx";
+import { useConfirm } from "../confirm.tsx";
 import { PressScale } from "../press.tsx";
 import { Apart, Profile, ProfileLine } from "./Profile.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Navigation } from "../navigation.tsx";
 import { usePresentation } from "../presentation.tsx";
-import { useColor } from "../theme.ts";
 import { useSay } from "../toast.tsx";
-import { Button } from "../ui.tsx";
+import { Button, Switch } from "../ui.tsx";
 import { FileCard } from "../conversation/FileCard.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
 import { useBotActions } from "./actions.ts";
@@ -57,6 +57,7 @@ const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<
 export function BotDetails({ bot }: { readonly bot: Bot }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
+  const confirm = useConfirm();
   const insets = useSafeAreaInsets();
   // The details take the window's width; a section is inset 20 px on each side.
   const column = useWindowDimensions().width - 40;
@@ -219,9 +220,6 @@ function RoutineRow({
   const { t } = ctx.i18n;
   const client = useJ3Client();
   const say = useSay();
-  const on = useColor("accent-control-on");
-  const off = useColor("accent-control-off");
-  const thumb = useColor("accent-control-thumb");
   const lines = routineLines(routine, ctx);
   const icon = !routine.enabled
     ? CirclePause
@@ -271,7 +269,7 @@ function RoutineRow({
       <Switch
         accessibilityLabel={routine.name}
         value={routine.enabled}
-        onValueChange={(enabled) =>
+        onChange={(enabled) =>
           void client.setRoutineEnabled(routine.id, enabled).then((result) => {
             if (result._tag === "failed") {
               say(
@@ -280,8 +278,6 @@ function RoutineRow({
             }
           })
         }
-        trackColor={{ true: on, false: off }}
-        thumbColor={thumb}
       />
     </View>
   );

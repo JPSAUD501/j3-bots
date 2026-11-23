@@ -11,6 +11,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import "../global.css";
 import { I18nContext, useI18n } from "./i18n.ts";
 import { AvatarConnection } from "./components/avatar/mood.tsx";
+import { Confirmations } from "./confirm.tsx";
 import { ChangeServer, ForgetSignIn } from "./Leave.tsx";
 import { Main } from "./navigation.tsx";
 import { PairingScreen } from "./screens/Pairing.tsx";
@@ -156,7 +157,9 @@ export function App() {
       <SafeAreaProvider>
         <StatusBar />
         <View className="flex-1 bg-background" onLayout={hideSplash}>
-          <Root />
+          <Confirmations>
+            <Root />
+          </Confirmations>
         </View>
       </SafeAreaProvider>
     </I18nContext>

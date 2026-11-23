@@ -3,7 +3,7 @@ import type { PairingFailure, ServerAddressProblem, UnpairedReason } from "@j3-b
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import * as DateTime from "effect/DateTime";
 import * as Device from "expo-device";
-import { useState } from "react";
+import { type ComponentRef, type Ref, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,7 +26,11 @@ type FormState =
 /** The name the operator sees for this phone in their list of devices, until they change it. */
 const defaultDeviceName = () => Device.deviceName ?? Device.modelName ?? "";
 
-function Field(props: {
+function Field({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<ComponentRef<typeof TextInput>>;
   readonly label: string;
   readonly value: string;
   readonly onChange: (text: string) => void;
@@ -37,6 +41,7 @@ function Field(props: {
     <View className="gap-1.5">
       <Text className="text-sm font-medium text-foreground">{props.label}</Text>
       <TextInput
+        ref={ref}
         accessibilityLabel={props.label}
         aria-invalid={props.invalid}
         value={props.value}
@@ -75,6 +80,7 @@ export function PairingScreen(props: {
   const [name, setName] = useState(defaultDeviceName);
   const [state, setState] = useState<FormState>({ _tag: "editing" });
   const [scanning, setScanning] = useState(false);
+  const codeField = useRef<ComponentRef<typeof TextInput>>(null);
 
   // A lockout only shows its time: the server enforces it, and the operator
   // can lift it on the host before then, so Pair stays available.
@@ -112,7 +118,13 @@ export function PairingScreen(props: {
     if (!ready) return;
     setState({ _tag: "pairing" });
     void session.pair({ address, code: code.trim(), deviceName: name.trim() }).then((outcome) => {
-      if (outcome._tag !== "paired") setState({ _tag: "refused", problem: outcome });
+      if (outcome._tag === "paired") return;
+      setState({ _tag: "refused", problem: outcome });
+      // A wrong or expired code is selected, ready to type the next one over it.
+      if (outcome._tag === "failed" && outcome.reason._tag === "invalid-code") {
+        codeField.current?.focus();
+        codeField.current?.setSelection(0, code.length);
+      }
     });
   };
 
@@ -161,6 +173,7 @@ export function PairingScreen(props: {
             invalid={problem?._tag === "address"}
           />
           <Field
+            ref={codeField}
             kind="code"
             label={t("pairing.code")}
             value={code}

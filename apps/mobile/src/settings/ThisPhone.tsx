@@ -5,7 +5,8 @@ import { LANGUAGE_NAMES } from "@j3-bots/i18n";
 import { useState } from "react";
 import { View } from "react-native";
 import { Text } from "../text.tsx";
-import { ChoiceRow, confirm, Problem, Quiet, Section, Segmented } from "../components/form.tsx";
+import { ChoiceRow, Problem, Quiet, Section, Segmented } from "../components/form.tsx";
+import { useConfirm } from "../confirm.tsx";
 import { useI18n } from "../i18n.ts";
 import { ChangeServer } from "../Leave.tsx";
 import { session } from "../platform/platform.ts";
@@ -94,6 +95,7 @@ function SignOut() {
   const { t } = useI18n();
   const client = useJ3Client();
   const say = useSay();
+  const confirm = useConfirm();
   const [state, setState] = useState<"idle" | "pending" | "failed">("idle");
   const signOut = () => {
     setState("pending");
@@ -120,7 +122,7 @@ function SignOut() {
         onPress={() =>
           confirm({
             title: t("settings.signOut.title"),
-            body: t("settings.signOut.body"),
+            body: t("settings.signOut.body.mobile"),
             cancel: t("settings.signOut.cancel"),
             confirm: t("settings.signOut"),
             onConfirm: signOut,

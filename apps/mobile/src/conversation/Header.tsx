@@ -5,10 +5,11 @@ import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runti
 import type { EntryId, RosterItem, WorkFoldEntry } from "@j3-bots/contracts";
 import { ChevronLeft, ChevronRight, CornerDownRight, Square } from "lucide-react-native";
 import { useState } from "react";
-import { AccessibilityInfo, Alert, Pressable, View } from "react-native";
+import { AccessibilityInfo, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
-import { RoomAvatar } from "../components/avatar/BotAvatar.tsx";
+import { RoomAvatar, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar, useOffline } from "../components/avatar/mood.tsx";
+import { useConfirm } from "../confirm.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";
 import { SwapText } from "../components/SwapText.tsx";
@@ -64,11 +65,15 @@ export function ConversationHeader({
   const offline = useOffline();
   useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
 
+  const confirm = useConfirm();
   const confirmRoomStop = () =>
-    Alert.alert(t("room.stop.title", { name }), t("room.stop.body", { name }), [
-      { text: t("room.stop.cancel"), style: "cancel" },
-      { text: t("room.stop"), style: "destructive", onPress: onStop },
-    ]);
+    confirm({
+      title: t("room.stop.title", { name }),
+      body: t("room.stop.body", { name }),
+      cancel: t("room.stop.cancel"),
+      confirm: t("room.stop"),
+      onConfirm: onStop,
+    });
 
   return (
     <View className="min-h-14 flex-row items-center gap-1 border-b border-border px-2">
@@ -94,14 +99,7 @@ export function ConversationHeader({
         {item._tag === "bot" ? (
           <LiveBotAvatar bot={item.bot} lastEntry={item.lastEntry} size={32} ground={ground} />
         ) : (
-          <RoomAvatar
-            size={32}
-            ground={ground}
-            members={item.room.members.flatMap((id) => {
-              const bot = bots.get(id);
-              return bot === undefined ? [] : [{ id, avatar: bot.profile.avatar }];
-            })}
-          />
+          <RoomAvatar size={32} ground={ground} members={roomAvatarMembers(item.room, bots)} />
         )}
         <View className="min-w-0 flex-1">
           <View className="flex-row items-center gap-0.5">

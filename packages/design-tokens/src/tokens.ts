@@ -66,10 +66,7 @@ export const colors = {
   "control-on": themed("oklch(0.52 0.12 160)", "oklch(0.6 0.13 160)"),
   /** The track of a switch that is off: a boundary of 3:1 against every canvas. */
   "control-off": themed("#82828a", "#6b6b73"),
-  /**
-   * The thumb of a switch the system draws, light in both themes. Android draws
-   * it past the ends of the track, over the page, where `background` would hide it.
-   */
+  /** The thumb of a switch, light in both themes, drawn inside its track. */
   "control-thumb": themed("#ffffff", "#f5f5f6"),
   /** Marks drawn over a bot's color, such as the composer's send arrow on the conversation's tint. */
   "avatar-ink": themed("#ffffff", "#0b0b0c"),
