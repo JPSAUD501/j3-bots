@@ -32,7 +32,7 @@ import {
 } from "react";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { DeleteButton, Problem, Quiet, SkeletonRows } from "../components/form.tsx";
+import { DeleteButton, Problem, Quiet, SkeletonRows, TextField } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
 import { useBotList, usePresentation } from "../presentation.tsx";
@@ -88,8 +88,10 @@ export function ConnectorScreen({ navigation, route }: Props) {
   const startedOnOpen = useRef(false);
   const shownId = connector?.id ?? null;
   const startOnOpen = useEffectEvent(() => {
-    if (connector?.signIn === "oauth") signIn.start(connector.id);
-    else if (connector?.signIn === "fields") setReplacing(true);
+    // One that runs on the computer is signed in to there; its page says so.
+    if (connector === null || connector.transport._tag === "command") return;
+    if (connector.signIn === "oauth") signIn.start(connector.id);
+    else if (connector.signIn === "fields") setReplacing(true);
   });
   useEffect(() => {
     if (!signInOnOpen || startedOnOpen.current || shownId === null) return;
@@ -273,6 +275,9 @@ function SignInPanel({
           <Text accessibilityLiveRegion="polite" className="text-base font-medium text-foreground">
             {phase.route === "relay" ? t("signIn.waiting.relay") : t("signIn.waiting")}
           </Text>
+          {phase.route === "paste" && (
+            <PasteForm refused={phase.pasteRefused} onPaste={signIn.paste} />
+          )}
           <View className="flex-row flex-wrap gap-2">
             <Button variant="secondary" label={t("signIn.openAgain")} onPress={signIn.openAgain} />
             <Button variant="quiet" label={t("signIn.cancel")} onPress={signIn.cancel} />
@@ -283,6 +288,46 @@ function SignInPanel({
         </Panel>
       );
   }
+}
+
+/**
+ * Where the operator pastes the address the browser landed on, when the
+ * server can take the browser back neither itself nor through this app. The
+ * field empties as it is sent, and the form lives only while the sign-in waits
+ * for an address, so a new wait starts empty.
+ */
+function PasteForm({
+  refused,
+  onPaste,
+}: {
+  readonly refused: boolean;
+  readonly onPaste: (address: string) => void;
+}) {
+  const { t } = useI18n();
+  const [address, setAddress] = useState("");
+  return (
+    <View className="gap-2">
+      <Text className="text-sm text-muted-foreground">{t("signIn.paste.steps")}</Text>
+      <TextField
+        label={t("signIn.paste.label")}
+        value={address}
+        onChange={setAddress}
+        autoCapitalize="none"
+        error={refused ? t("signIn.paste.refused") : null}
+      />
+      <View className="flex-row">
+        <Button
+          variant="primary"
+          label={t("signIn.paste.submit")}
+          disabled={address.trim() === ""}
+          onPress={() => {
+            setAddress("");
+            onPaste(address);
+          }}
+        />
+      </View>
+    </View>
+  );
 }
 
 /**
