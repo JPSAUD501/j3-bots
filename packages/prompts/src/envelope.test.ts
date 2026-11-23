@@ -475,21 +475,21 @@ describe("renderWake", () => {
     `);
     expect(system({ name: "browser-help", outcome: "done", site: "mail.example.com" }))
       .toMatchInlineSnapshot(`
-      "<j3-wake kind="system" event="browser-help" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      Your user did the step you asked for in your browser and gave it back. Take a fresh snapshot before you act, since the page has changed, then carry on with the task.
-      <browser-tab site="mail.example.com"/>
-      </j3-wake>
-      This is an event, not a message from your user. Respond only as your instructions say for it.
-      "
-    `);
+        "<j3-wake kind="system" event="browser-help" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+        Your user did the step you asked for in your browser and gave it back. Take a fresh snapshot before you act, since the page has changed, then carry on with the task. Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\`.
+        <browser-tab site="mail.example.com"/>
+        </j3-wake>
+        This is an event, not a message from your user. Respond only as your instructions say for it.
+        "
+      `);
     expect(system({ name: "browser-help", outcome: "handed-back", site: null }))
       .toMatchInlineSnapshot(`
-      "<j3-wake kind="system" event="browser-help" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      Your user took over your browser while you worked and has given it back. Take a fresh snapshot before you act, since the page may have changed, then carry on with what you were doing; if it was already done, end your turn without a word.
-      </j3-wake>
-      This is an event, not a message from your user. Respond only as your instructions say for it.
-      "
-    `);
+        "<j3-wake kind="system" event="browser-help" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+        Your user took over your browser while you worked and has given it back. Take a fresh snapshot before you act, since the page may have changed, then carry on with what you were doing, and deliver it with \`say\`, your last call with \`done: true\`. If it was already done, end your turn without a word.
+        </j3-wake>
+        This is an event, not a message from your user. Respond only as your instructions say for it.
+        "
+      `);
   });
 
   it("tells the bot how each browser help request ended, and never to retry a step on its own", () => {

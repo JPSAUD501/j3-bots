@@ -299,15 +299,15 @@ const ASK_NAME_LINE =
 const BROWSER_HELP_LINES: {
   readonly [O in Extract<SystemEvent, { readonly name: "browser-help" }>["outcome"]]: string;
 } = {
-  done: "Your user did the step you asked for in your browser and gave it back. Take a fresh snapshot before you act, since the page has changed, then carry on with the task.",
+  done: "Your user did the step you asked for in your browser and gave it back. Take a fresh snapshot before you act, since the page has changed, then carry on with the task. Reply with `say`; nothing else reaches them. Your last call is a `say` with `done: true`.",
   declined:
-    "Your user could not do the step you asked for in your browser, and gave it back. Do not try the step yourself. Finish what does not need it, then tell your user what it still blocks.",
+    "Your user could not do the step you asked for in your browser, and gave it back. Do not try the step yourself. Finish what does not need it, then end with a `say` with `done: true` that tells your user what the step still blocks; nothing else reaches them.",
   "tab-closed":
-    "The tab you asked your user for help in closed before they did the step, so it was not done. Do not ask again on your own: tell your user in one short message that the task waits on that step, and that you will continue when they tell you to.",
+    "The tab you asked your user for help in closed before they did the step, so it was not done. Do not ask again on your own: end with one short `say` with `done: true` that tells your user the task waits on that step, and that you will continue when they tell you to.",
   "timed-out":
-    "Your user did not do the step you asked for in your browser in time, so the request closed. Do not ask again on your own: tell your user in one short message that the task waits on that step, and that you will continue when they tell you to.",
+    "Your user did not do the step you asked for in your browser in time, so the request closed. Do not ask again on your own: end with one short `say` with `done: true` that tells your user the task waits on that step, and that you will continue when they tell you to.",
   "handed-back":
-    "Your user took over your browser while you worked and has given it back. Take a fresh snapshot before you act, since the page may have changed, then carry on with what you were doing; if it was already done, end your turn without a word.",
+    "Your user took over your browser while you worked and has given it back. Take a fresh snapshot before you act, since the page may have changed, then carry on with what you were doing, and deliver it with `say`, your last call with `done: true`. If it was already done, end your turn without a word.",
 };
 
 /** What happened, in one line. */
