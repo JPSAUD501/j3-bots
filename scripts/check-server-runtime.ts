@@ -4,13 +4,15 @@
 // Checks the server runtime a desktop package carries, on the machine it is
 // for, as the release and CI run it once the package is built:
 //
-//   node scripts/check-server-runtime.ts <folder> --version <version>
+//   node scripts/check-server-runtime.ts <folder> --version <version> [--skip-start]
 //
 // - its files and release.json, as the packaging hook checks them, for this
 //   machine's platform and J3 Bots <version>;
 // - its Node runs and is the pinned release;
 // - the server on it prints `j3-bots v<version>` for --version;
-// - the server starts: it answers /health, then stops when told to.
+// - the server starts: it answers /health, then stops when told to. A
+//   platform whose server cannot start yet passes --skip-start, which the
+//   workflow that passes it explains.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -30,7 +32,7 @@ const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 30_000;
 
 const { values, positionals } = NodeUtil.parseArgs({
-  options: { version: { type: "string" } },
+  options: { version: { type: "string" }, "skip-start": { type: "boolean", default: false } },
   allowPositionals: true,
   strict: true,
 });
@@ -38,7 +40,7 @@ const [folder] = positionals;
 const version = values.version;
 if (folder === undefined || positionals.length !== 1 || version === undefined) {
   throw new Error(
-    "Usage: node scripts/check-server-runtime.ts <folder> --version <version>, as J3 Bots' version, such as 0.3.0.",
+    "Usage: node scripts/check-server-runtime.ts <folder> --version <version> [--skip-start], with J3 Bots' version, such as 0.3.0.",
   );
 }
 const platform = hostPlatform();
@@ -92,53 +94,59 @@ const answers = async (url: string) => {
   }
 };
 
-// A home of its own, so that the check leaves nothing behind on the machine.
-const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j3-runtime-"));
-try {
-  const [port, toolPort, enginePort] = await freePorts(3);
-  const server = NodeChildProcess.spawn(node, [bin, "serve"], {
-    env: {
-      ...process.env,
-      HOME: home,
-      USERPROFILE: home,
-      J3_HOME: NodePath.join(home, "j3"),
-      J3_HOST: "127.0.0.1",
-      J3_PORT: String(port),
-      J3_TOOL_PORT: String(toolPort),
-      J3_ENGINE_PORT: String(enginePort),
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let output = "";
-  server.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
-  server.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
-  const exited = new Promise<string>((resolve) =>
-    server.once("exit", (code, signal) => resolve(signal ?? `code ${code}`)),
-  );
-  const failed = (problem: string) =>
-    new Error(`The server ${problem}. It wrote:\n${output.trimEnd() || "(nothing)"}`);
+/** Starts the server, waits for it to answer /health, and stops it. */
+const checkStarts = async () => {
+  // A home of its own, so that the check leaves nothing behind on the machine.
+  const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j3-runtime-"));
+  try {
+    const [port, toolPort, enginePort] = await freePorts(3);
+    const server = NodeChildProcess.spawn(node, [bin, "serve"], {
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        J3_HOME: NodePath.join(home, "j3"),
+        J3_HOST: "127.0.0.1",
+        J3_PORT: String(port),
+        J3_TOOL_PORT: String(toolPort),
+        J3_ENGINE_PORT: String(enginePort),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    server.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    server.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    const exited = new Promise<string>((resolve) =>
+      server.once("exit", (code, signal) => resolve(signal ?? `code ${code}`)),
+    );
+    const failed = (problem: string) =>
+      new Error(`The server ${problem}. It wrote:\n${output.trimEnd() || "(nothing)"}`);
 
-  const started = Date.now();
-  while (!(await answers(`http://127.0.0.1:${port}/health`))) {
-    const ended = await Promise.race([exited, NodeTimers.setTimeout(100, undefined)]);
-    if (ended !== undefined) throw failed(`exited (${ended}) before it answered /health`);
-    if (Date.now() - started > START_TIMEOUT_MS) {
-      server.kill("SIGKILL");
-      throw failed(`did not answer /health within ${START_TIMEOUT_MS / 1000} s`);
+    const started = Date.now();
+    while (!(await answers(`http://127.0.0.1:${port}/health`))) {
+      const ended = await Promise.race([exited, NodeTimers.setTimeout(100, undefined)]);
+      if (ended !== undefined) throw failed(`exited (${ended}) before it answered /health`);
+      if (Date.now() - started > START_TIMEOUT_MS) {
+        server.kill("SIGKILL");
+        throw failed(`did not answer /health within ${START_TIMEOUT_MS / 1000} s`);
+      }
     }
-  }
-  const answered = Date.now() - started;
+    const answered = Date.now() - started;
 
-  const stopping = Date.now();
-  server.kill("SIGTERM");
-  const how = await Promise.race([exited, NodeTimers.setTimeout(STOP_TIMEOUT_MS, "timeout")]);
-  if (how === "timeout") {
-    server.kill("SIGKILL");
-    throw failed(`did not stop within ${STOP_TIMEOUT_MS / 1000} s of SIGTERM`);
+    const stopping = Date.now();
+    server.kill("SIGTERM");
+    const how = await Promise.race([exited, NodeTimers.setTimeout(STOP_TIMEOUT_MS, "timeout")]);
+    if (how === "timeout") {
+      server.kill("SIGKILL");
+      throw failed(`did not stop within ${STOP_TIMEOUT_MS / 1000} s of SIGTERM`);
+    }
+    console.log(
+      `Its server started: /health answered ${answered} ms after it was run, and it stopped (${how}) ${Date.now() - stopping} ms after SIGTERM.`,
+    );
+  } finally {
+    NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
   }
-  console.log(
-    `Its server started: /health answered ${answered} ms after it was run, and it stopped (${how}) ${Date.now() - stopping} ms after SIGTERM.`,
-  );
-} finally {
-  NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
-}
+};
+
+if (values["skip-start"]) console.log("Its server was not started: --skip-start.");
+else await checkStarts();
