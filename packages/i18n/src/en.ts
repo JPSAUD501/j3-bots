@@ -1098,6 +1098,7 @@ export const en = {
   "settings.pair.expires": "Works once, until {time}",
   "settings.pair.failed": "No code was made. Try again.",
   "settings.pair.offline": "Available once this device is connected to J3 Bots again.",
+  "settings.server": "Server",
   "settings.where": "Where your bots live",
   "settings.where.local": "On this computer",
   "settings.where.server": "On a server",

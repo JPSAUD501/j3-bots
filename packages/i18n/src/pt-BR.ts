@@ -1116,6 +1116,7 @@ const sentences = {
   "settings.pair.expires": "Vale uma vez, até {time}",
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
   "settings.pair.offline": "Disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
+  "settings.server": "Servidor",
   "settings.where": "Onde os bots ficam",
   "settings.where.local": "Neste computador",
   "settings.where.server": "Num servidor",

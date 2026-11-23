@@ -24,7 +24,7 @@ import { DesktopSettings } from "./settings.ts";
 // lists (the XDG Autostart Specification).
 
 /** The argument the system's start gives the app: it opens in the tray only. */
-export const HIDDEN_ARG = "--hidden";
+const HIDDEN_ARG = "--hidden";
 
 /** Whether a launch with `argv` is the system's, as the operator signed in. */
 export const startsHidden = (argv: ReadonlyArray<string>): boolean => argv.includes(HIDDEN_ARG);
