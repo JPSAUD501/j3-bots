@@ -10,12 +10,13 @@ import {
 } from "@j3-bots/contracts";
 import {
   attachmentLimitViolation,
+  type EngineTabId,
   SessionId,
   TurnId,
   toolInputDigest,
   ToolInputDigest,
 } from "@j3-bots/engine-t3";
-import type { ToolInput } from "@j3-bots/prompts";
+import { BROWSER_HELP_REQUESTED, type ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -65,6 +66,7 @@ import {
 } from "./model.ts";
 import { notices } from "./notices.ts";
 import { Observer } from "./Observer.ts";
+import { Stops } from "./Stops.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { Wakes } from "./Wakes.ts";
 
@@ -197,6 +199,7 @@ export const layer = Layer.effect(
     const browserTabs = yield* BrowserTabs;
     const ids = yield* Ids;
     const stops = stopTargets(sql);
+    const turnStops = yield* Stops;
     const chains = hopCounts(sql);
     const { notify } = notices(sql, entries);
     const readWorkspaceFile = yield* workspaceReader;
@@ -866,14 +869,57 @@ export const layer = Layer.effect(
     });
 
     /**
+     * How the bot's last browser help card for the tab closed, when its
+     * operator declined it or let it run out and has not written since, in
+     * the bot's conversation or the room the request is for: the bot may not
+     * ask again for that tab until they do. Its cards wait one at a time, so
+     * the last one asked is the last one closed.
+     */
+    const lastUnanswered = (found: Pin, tab: EngineTabId) =>
+      SqlSchema.findOneOption({
+        Request: Schema.Void,
+        Result: Schema.Struct({
+          closing: Schema.NullOr(Schema.Literals(["done", "declined", "tab-closed", "timed-out"])),
+        }),
+        execute: () => sql`
+          SELECT lu_card.closing FROM browser_help_cards lu_card
+          JOIN entries lu_asked ON lu_asked.id = lu_card.entry_id
+          WHERE lu_card.bot_id = ${found.botId} AND lu_card.engine_tab_id = ${tab}
+            AND NOT EXISTS (
+              SELECT 1 FROM entries lu_entry
+              WHERE lu_entry.kind = 'message' AND lu_entry.author_kind = 'operator'
+                AND lu_entry.seq > lu_card.closed_through_seq
+                AND (
+                  lu_entry.conversation_bot_id = ${found.botId}
+                  ${found.audience._tag === "room" ? sql`OR lu_entry.room_id = ${found.audience.roomId}` : sql``}
+                )
+            )
+          ORDER BY lu_asked.seq DESC
+          LIMIT 1
+        `,
+      })(undefined).pipe(
+        Effect.orDie,
+        Effect.map(
+          Option.flatMap(({ closing }) =>
+            closing === "declined" || closing === "timed-out"
+              ? Option.some(closing)
+              : Option.none(),
+          ),
+        ),
+      );
+
+    /**
      * `request_browser_help` (`docs/architecture/server.md`, Browser help): a
      * `browser-help` card in the bot's own conversation for its front tab,
      * found here, never named by the bot. Like an `ask`, it ends the turn; the
      * operator's answer, or the card expiring, wakes the bot for the turn's
-     * audience. A turn for a room tells the room the bot waits in its own
-     * conversation. Refused, with nothing written, in a routine run, with no
-     * tab open, for work the operator stopped, and while another of the bot's
-     * cards waits.
+     * audience, in a turn of its own: once the card is in, the server stops
+     * the turn that asked (`Stops.endTurn`), so it can do nothing more in the
+     * browser meanwhile. A turn for a room tells the room the bot waits in
+     * its own conversation. Refused, with nothing written, in a routine run,
+     * with no tab open, for work the operator stopped, while another of the
+     * bot's cards waits, and for the tab of a card the operator declined or
+     * let run out, until they write again (`lastUnanswered`).
      */
     const requestBrowserHelp = Effect.fn("Speech.requestBrowserHelp")(function* (
       found: Pin,
@@ -886,19 +932,21 @@ export const layer = Layer.effect(
             "Nothing was asked: a routine run cannot wait for your user to act in your browser. Say in your message what blocked the run.",
         });
       }
-      const front = yield* browserTabs.front(found.botId);
-      if (Option.isNone(front)) {
-        return yield* new TurnToolRefused({
-          reason:
-            "Nothing was asked: you have no browser tab open, so there is nothing for your user to act on. Open the page in your browser first.",
-        });
-      }
-      const tab = front.value;
       return yield* once(
         "request_browser_help",
         found,
       )(
         Effect.gen(function* () {
+          // Looked up here, after the pin: a retry of a request that went
+          // through returns what it answered, whatever the tabs are now.
+          const front = yield* browserTabs.front(found.botId);
+          if (Option.isNone(front)) {
+            return yield* new TurnToolRefused({
+              reason:
+                "Nothing was asked: you have no browser tab open, so there is nothing for your user to act on. Open the page in your browser first.",
+            });
+          }
+          const tab = front.value;
           yield* requireTarget(found.botId, found.audience);
           const work = yield* workStopped(found);
           if (work.stopped) {
@@ -913,6 +961,15 @@ export const layer = Layer.effect(
             return yield* new TurnToolRefused({
               reason:
                 "Nothing was asked: your user already has a request of yours for help in your browser. Their answer arrives as your next turn. End this turn now.",
+            });
+          }
+          const unanswered = yield* lastUnanswered(found, tab.tab);
+          if (Option.isSome(unanswered)) {
+            return yield* new TurnToolRefused({
+              reason:
+                unanswered.value === "declined"
+                  ? "Nothing was asked: your user already answered that they cannot do a step on this page. Do not ask again: tell them what it still blocks. Once they write to you, you may ask again."
+                  : "Nothing was asked: your last request for help on this page went unanswered. Do not ask again: tell your user the task waits on that step. Once they write to you, you may ask again.",
             });
           }
           const card = yield* entries.append({
@@ -947,11 +1004,18 @@ export const layer = Layer.effect(
               null,
             );
           }
-          // The bot ends its turn after asking; the answer wakes it again.
+          // The turn ends here, also for a bot that would go on in the
+          // browser, which J3 Bots does not see: the server stops it once
+          // this commits, and the answer wakes the bot again.
           for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "ask");
+          yield* turnStops.endTurn(found.botId, {
+            sessionId: found.sessionId,
+            turnId: found.turnId,
+            audience: found.audience,
+          });
           return {
             status: "requested",
-            note: "Your user was asked to do this step in your browser. End this turn now, and do not use the browser until their answer arrives as your next turn.",
+            note: BROWSER_HELP_REQUESTED,
           } satisfies Schema.Json;
         }),
       );

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Schema from "effect/Schema";
 import type { BrowserHelpReason } from "@j3-bots/contracts";
-import { DECODE_OPTIONS, tools, type Wake } from "../src/index.ts";
+import { BROWSER_HELP_REQUESTED, DECODE_OPTIONS, tools, type Wake } from "../src/index.ts";
 import { github, PASSING_RUNS } from "./acme.ts";
 import {
   BROWSER_TOOLS,
@@ -286,7 +286,7 @@ const askedEarlier: EarlierTurn = {
       input: { reason: "login", note: "Sign in to your mail so I can look for Lena's invoice." },
       output: JSON.stringify({
         status: "requested",
-        note: "Your user was asked to do this step in your browser. End this turn now, and do not use the browser until their answer arrives as your next turn.",
+        note: BROWSER_HELP_REQUESTED,
       }),
     },
   ],

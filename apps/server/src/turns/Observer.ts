@@ -667,6 +667,14 @@ export const layer = Layer.effect(
       // What the operator stopped needs no notice and no follow-up, also when
       // the turn ended on its own before the Stop's interrupt reached it.
       if (yield* stops.covers(session.bot_id, audience, dispatch.seq)) return;
+      // A turn its request for help in the bot's browser ended (`Stops.endTurn`)
+      // ended as it asked: its card wakes the bot again.
+      if (
+        dispatch.engine_turn_id !== null &&
+        (yield* stops.endedOnRequest(dispatch.session_id, dispatch.engine_turn_id))
+      ) {
+        return;
+      }
       // Interrupted, or a continuation cancelled before it started: the work
       // did not get to its end.
       if (outcome._tag !== "completed") {

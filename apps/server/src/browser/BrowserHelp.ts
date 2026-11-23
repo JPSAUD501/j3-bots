@@ -26,7 +26,12 @@ import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { AudienceColumn, audienceOf, DispatchSeq, TurnsInvariant } from "../turns/model.ts";
 import { type NewWake, Wakes } from "../turns/Wakes.ts";
-import { RELEASE_WAIT, SWEEP_EVERY, TAB_ABSENT_GRACE } from "./browserHelpRules.ts";
+import {
+  HAND_BACK_GRACE,
+  RELEASE_WAIT,
+  SWEEP_EVERY,
+  TAB_ABSENT_GRACE,
+} from "./browserHelpRules.ts";
 import { BrowserTabs } from "./BrowserTabs.ts";
 import { BrowserViewers } from "./BrowserViewers.ts";
 
@@ -105,10 +110,15 @@ export const layer = Layer.effect(
     })(undefined).pipe(Effect.orDie);
 
     const closeRow = SqlSchema.findAll({
-      Request: Schema.Struct({ entryId: EntryId, at: Schema.String }),
+      Request: Schema.Struct({
+        entryId: EntryId,
+        at: Schema.String,
+        closing: Schema.Literals(["done", "declined", "tab-closed", "timed-out"]),
+      }),
       Result: ClosedCard,
-      execute: ({ entryId, at }) => sql`
-        UPDATE browser_help_cards SET closed_at = ${at}
+      execute: ({ entryId, at, closing }) => sql`
+        UPDATE browser_help_cards SET closed_at = ${at}, closing = ${closing},
+          closed_through_seq = (SELECT COALESCE(MAX(seq), 0) FROM entries)
         WHERE entry_id = ${entryId} AND closed_at IS NULL
         RETURNING bot_id, audience, audience_room_id, origin_seq
       `,
@@ -121,7 +131,7 @@ export const layer = Layer.effect(
      * Stop of that work leaves the bot asleep.
      */
     const close = Effect.fn("BrowserHelp.close")(function* (entryId: EntryId, closing: Closing) {
-      const [row] = yield* closeRow({ entryId, at: timeText(yield* DateTime.now) }).pipe(
+      const [row] = yield* closeRow({ entryId, at: timeText(yield* DateTime.now), closing }).pipe(
         Effect.orDie,
       );
       if (row === undefined) return false;
@@ -184,9 +194,8 @@ export const layer = Layer.effect(
       if (Option.isNone(found)) return yield* new NotFound({ resource: "entry" });
       const card = found.value.entry;
       if (card._tag !== "browser-help") return yield* new Invalid({ reason: "answer" });
-      // Outside the transaction: it waits on the engine. The card is closed
-      // only once the bot can use its browser again.
-      if (card.status._tag === "pending") yield* handBack(card.author.botId);
+      // The card is claimed first, so nothing that letting go of the tabs
+      // sets off, the expiry sweep included, can close it in between.
       yield* receipts.once({
         commandId: input.commandId,
         method: "card.answer",
@@ -197,23 +206,47 @@ export const layer = Layer.effect(
         },
         result: Schema.Void,
         apply: Effect.gen(function* () {
-          if (!(yield* close(input.entryId, input.outcome))) {
-            return yield* new Conflict({ reason: "card-closed" });
-          }
+          if (yield* close(input.entryId, input.outcome)) return;
+          // Two of the operator's devices gave the same answer at once: the
+          // card says what both said.
+          const closed = yield* entries.find(input.entryId);
+          const status = Option.map(closed, ({ entry }) =>
+            entry._tag === "browser-help" ? entry.status._tag : null,
+          );
+          if (Option.getOrNull(status) === input.outcome) return;
+          return yield* new Conflict({ reason: "card-closed" });
         }),
       });
+      // Then every device lets go, outside the transaction, as it waits on the
+      // engine. The bot's first call when it wakes is a snapshot, which reads
+      // the page whoever holds it.
+      yield* handBack(card.author.botId);
     });
 
     // ---- Expiry -------------------------------------------------------------------
 
-    /** Since when each open card's tab has been missing from the engine's list. */
+    /**
+     * Since when each open card's tab has been missing from the engine's
+     * list, and when each bot's tabs were last given back. Both live in
+     * memory, from the server's start: after a restart, a missing tab's grace
+     * counts again from then, and a card past its wait has no hand-back grace,
+     * since no device held a tab across the restart.
+     */
     const absentSince = new Map<EntryId, DateTime.Utc>();
+    const heldBefore = new Set<BotId>();
+    const givenBackAt = new Map<BotId, DateTime.Utc>();
 
     const sweep = Effect.fn("BrowserHelp.sweep")(function* (
       open: ReadonlySet<EngineTabId>,
       heldBy: ReadonlySet<BotId>,
     ) {
       const now = yield* DateTime.now;
+      for (const botId of heldBefore) if (!heldBy.has(botId)) givenBackAt.set(botId, now);
+      heldBefore.clear();
+      for (const botId of heldBy) {
+        heldBefore.add(botId);
+        givenBackAt.delete(botId);
+      }
       const cards = yield* openCards;
       const stillOpen = new Set(cards.map((card) => card.entry_id));
       for (const id of absentSince.keys()) if (!stillOpen.has(id)) absentSince.delete(id);
@@ -228,9 +261,14 @@ export const layer = Layer.effect(
             closing = "tab-closed";
           }
         }
-        // Someone at work in the bot's browser keeps the card open past its wait.
+        // Someone at work in the bot's browser keeps the card open past its
+        // wait, and for a grace once they gave it back, to answer the card.
         if (closing === null && DateTime.isGreaterThanOrEqualTo(now, card.expires_at)) {
-          if (!heldBy.has(card.bot_id)) closing = "timed-out";
+          const givenBack = givenBackAt.get(card.bot_id);
+          const graced =
+            givenBack !== undefined &&
+            Duration.isLessThan(DateTime.distance(givenBack, now), HAND_BACK_GRACE);
+          if (!heldBy.has(card.bot_id) && !graced) closing = "timed-out";
         }
         if (closing === null) continue;
         yield* transaction(close(card.entry_id, closing));

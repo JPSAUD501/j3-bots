@@ -7,7 +7,7 @@ import {
   NotFound,
   RoomId,
 } from "@j3-bots/contracts";
-import { Engine, IdempotencyKey, SessionId, type TurnId } from "@j3-bots/engine-t3";
+import { Engine, IdempotencyKey, SessionId, TurnId } from "@j3-bots/engine-t3";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +28,7 @@ import { transactional } from "../persistence/transaction.ts";
 import { RoomWork } from "../rooms/RoomWork.ts";
 import { Ledger } from "./Ledger.ts";
 import {
+  type Audience,
   AudienceColumn,
   DispatchRowId,
   DispatchSeq,
@@ -66,6 +67,8 @@ const Round = Schema.Struct({
   stop_id: Schema.String,
   /** The room a `room` Stop is for; null for a `bot` Stop. */
   room_id: Schema.NullOr(RoomId),
+  /** The one turn a Stop the server recorded for it ends (`endTurn`); null for any other. */
+  engine_turn_id: Schema.NullOr(TurnId),
   session_id: SessionRowId,
   round: Schema.Int,
   engine_key: IdempotencyKey,
@@ -75,6 +78,20 @@ const Round = Schema.Struct({
   retry_at: Schema.NullOr(Time),
 });
 type Round = typeof Round.Type;
+
+/**
+ * A Stop that ends only some of its target session's work: a room's, its
+ * work for the room; a turn's, that turn and the background work it started.
+ */
+type Narrow =
+  | { readonly _tag: "room"; readonly roomId: RoomId }
+  | { readonly _tag: "turn"; readonly turnId: TurnId };
+
+const narrowOf = (round: Round): Narrow | null => {
+  if (round.engine_turn_id !== null) return { _tag: "turn", turnId: round.engine_turn_id };
+  if (round.room_id !== null) return { _tag: "room", roomId: round.room_id };
+  return null;
+};
 
 const Fenced = Schema.Struct({
   id: DispatchRowId,
@@ -122,6 +139,22 @@ export class Stops extends Context.Service<
   {
     /** Records a Stop of the bot's work in scope, in the caller's transaction. */
     readonly record: (botId: BotId, scope: StopScope, options?: StopOptions) => Effect.Effect<void>;
+    /**
+     * Records, in the caller's transaction, a Stop of one turn while it runs:
+     * the turn and the background work it started, in its session, and
+     * nothing else (`docs/architecture/server.md`, Stop). The server's own,
+     * for a turn whose request for help in the bot's browser closed it: it
+     * covers no work and cancels no wake, and the turn's end is not a failure
+     * (`stopTargets.endedOnRequest`). A turn that already ended needs none.
+     */
+    readonly endTurn: (
+      botId: BotId,
+      turn: {
+        readonly sessionId: SessionRowId;
+        readonly turnId: TurnId;
+        readonly audience: Audience;
+      },
+    ) => Effect.Effect<void>;
     /** `bot.stop`. */
     readonly stopBot: (input: {
       readonly commandId: CommandId;
@@ -189,6 +222,55 @@ export const layer = Layer.effect(
 
     /** Whether a wake column set is the bot's opening (`StopOptions`). */
     const opening = sql`json_extract(payload_json, '$._tag') = 'first-run'`;
+
+    /**
+     * Fences the dispatches `fenceable` selects with the Stop, in the
+     * caller's transaction. An undecided one the engine may have goes to the
+     * recovery; one never sent is released, its wakes cancelled when the Stop
+     * covers them and pending again when they were other work, or an opening
+     * `keepOpening` keeps.
+     */
+    const fence = Effect.fn("Stops.fence")(function* (
+      stopId: string,
+      at: string,
+      fenceable: Statement.Fragment,
+      keepOpening: boolean,
+    ) {
+      const fenced = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Fenced,
+        execute: () => sql`
+        UPDATE dispatches SET fenced_by_stop_id = ${stopId}, updated_at = ${at},
+          next_attempt_at = CASE
+            WHEN status = 'intended' AND attempts > 0 THEN NULL ELSE next_attempt_at
+          END
+        WHERE ${fenceable}
+        RETURNING id, bot_id, audience, audience_room_id, status, attempts, seq
+      `,
+      })(undefined);
+      // An undecided one the engine may have is settled by the recovery,
+      // which owns it from here: once now, since the Stop waits on it, then
+      // with its backoff.
+      if (fenced.some((dispatch) => dispatch.status === "intended" && dispatch.attempts > 0)) {
+        yield* sql.afterCommit(signals.recovery.fire);
+      }
+      for (const dispatch of fenced) {
+        // Never sent: released. Its wakes are cancelled when this Stop
+        // covers them, and wait again when they were private work or an
+        // opening this Stop keeps (a system wake is dispatched alone).
+        if (dispatch.status === "intended" && dispatch.attempts === 0) {
+          const kept =
+            keepOpening &&
+            (yield* sql`
+            SELECT 1 FROM wakes WHERE dispatch_id = ${dispatch.id} AND ${opening}
+          `).length > 0;
+          yield* ledger.release(
+            dispatch.id,
+            kept ? { _tag: "pending" } : yield* targets.wakesAfter(dispatch, { _tag: "unsent" }),
+          );
+        }
+      }
+    });
 
     const record = Effect.fn("Stops.record")(function* (
       botId: BotId,
@@ -292,40 +374,7 @@ export const layer = Layer.effect(
             "stopped",
           );
         }
-        const fenced = yield* SqlSchema.findAll({
-          Request: Schema.Void,
-          Result: Fenced,
-          execute: () => sql`
-            UPDATE dispatches SET fenced_by_stop_id = ${stopId}, updated_at = ${at},
-              next_attempt_at = CASE
-                WHEN status = 'intended' AND attempts > 0 THEN NULL ELSE next_attempt_at
-              END
-            WHERE ${fenceable}
-            RETURNING id, bot_id, audience, audience_room_id, status, attempts, seq
-          `,
-        })(undefined);
-        // An undecided one the engine may have is settled by the recovery,
-        // which owns it from here: once now, since the Stop waits on it, then
-        // with its backoff.
-        if (fenced.some((dispatch) => dispatch.status === "intended" && dispatch.attempts > 0)) {
-          yield* sql.afterCommit(signals.recovery.fire);
-        }
-        for (const dispatch of fenced) {
-          // Never sent: released. Its wakes are cancelled when this Stop
-          // covers them, and wait again when they were private work or an
-          // opening this Stop keeps (a system wake is dispatched alone).
-          if (dispatch.status === "intended" && dispatch.attempts === 0) {
-            const kept =
-              options.keepOpening &&
-              (yield* sql`
-                SELECT 1 FROM wakes WHERE dispatch_id = ${dispatch.id} AND ${opening}
-              `).length > 0;
-            yield* ledger.release(
-              dispatch.id,
-              kept ? { _tag: "pending" } : yield* targets.wakesAfter(dispatch, { _tag: "unsent" }),
-            );
-          }
-        }
+        yield* fence(stopId, at, fenceable, options.keepOpening);
       }
       // A teammate's urgent message among them waits on as a held one: the
       // Stop ends this bot's work, not what its teammates told it (`Ledger`).
@@ -341,6 +390,49 @@ export const layer = Layer.effect(
       if (pending.some((wake) => wake.kind === "routine")) {
         yield* sql.afterCommit(signals.routines.fire);
       }
+    }, Effect.orDie);
+
+    const endTurn = Effect.fn("Stops.endTurn")(function* (
+      botId: BotId,
+      turn: {
+        readonly sessionId: SessionRowId;
+        readonly turnId: TurnId;
+        readonly audience: Audience;
+      },
+    ) {
+      const [running] = yield* sql`
+        SELECT 1 FROM turns
+        WHERE session_id = ${turn.sessionId} AND engine_turn_id = ${turn.turnId}
+          AND finished_at IS NULL
+      `;
+      if (running === undefined) return;
+      const at = timeText(yield* DateTime.now);
+      const stopId = yield* ids.make("stop");
+      const roomId = turn.audience._tag === "room" ? turn.audience.roomId : null;
+      yield* sql`
+        INSERT INTO stops (id, bot_id, scope, room_id, created_at, dispatch_mark, engine_turn_id)
+        VALUES (
+          ${stopId}, ${botId}, ${roomId === null ? "bot" : "room"}, ${roomId}, ${at},
+          (SELECT COALESCE(MAX(seq), 0) FROM dispatches), ${turn.turnId}
+        )
+      `;
+      yield* sql`
+        INSERT INTO stop_targets (stop_id, session_id, round, engine_key)
+        VALUES (${stopId}, ${turn.sessionId}, 0, ${stopKey(stopId, turn.sessionId, 0)})
+      `;
+      // The engine's stop ends the whole session, so nothing undecided goes
+      // into it meanwhile; work that never went waits again, since this Stop
+      // covers none.
+      yield* fence(
+        stopId,
+        at,
+        sql`
+          session_id = ${turn.sessionId} AND (status = 'intended' OR ${mayLand(sql)})
+            AND fenced_by_stop_id IS NULL
+        `,
+        false,
+      );
+      yield* sql.afterCommit(signals.stops.fire);
     }, Effect.orDie);
 
     const stopBot = Effect.fn("Stops.stopBot")(function* (input: {
@@ -368,7 +460,7 @@ export const layer = Layer.effect(
       Request: Schema.Void,
       Result: Round,
       execute: () => sql`
-        SELECT t.stop_id, p.room_id, t.session_id, t.round, t.engine_key,
+        SELECT t.stop_id, p.room_id, p.engine_turn_id, t.session_id, t.round, t.engine_key,
           t.sent_at IS NOT NULL AS sent, s.engine_session_id, t.due_at, t.retry_at
         FROM stop_targets t JOIN sessions s ON s.id = t.session_id
         JOIN stops p ON p.id = t.stop_id
@@ -407,16 +499,28 @@ export const layer = Layer.effect(
     `;
 
     /**
-     * Whether the session runs a turn for an audience other than the room, as
-     * far as the events show. A room's Stop sends no round then, since the
+     * Whether a row of `turns` or `dispatches`, by its alias, is the narrow
+     * Stop's own work: for a room's, its audience is the room; for a turn's,
+     * it is that turn, or a dispatch it delivers.
+     */
+    const own = (narrow: Narrow, alias: string) => {
+      const row = sql.literal(alias);
+      return narrow._tag === "room"
+        ? sql`(${row}.audience = 'room' AND ${row}.audience_room_id = ${narrow.roomId})`
+        : sql`(${row}.engine_turn_id = ${narrow.turnId})`;
+    };
+
+    /**
+     * Whether the session runs a turn other than the narrow Stop's own work,
+     * as far as the events show. Its round is not sent then, since the
      * engine's stop would end that work too: it waits for that turn, which
      * ends on its own, and whose end nudges the runner.
      */
-    const runsOtherAudience = (sessionId: SessionRowId, roomId: RoomId) =>
+    const runsOtherWork = (sessionId: SessionRowId, narrow: Narrow) =>
       sql<{ readonly n: number }>`
         SELECT 1 AS n FROM turns oa_turn
         WHERE oa_turn.session_id = ${sessionId} AND oa_turn.finished_at IS NULL
-          AND NOT (oa_turn.audience = 'room' AND oa_turn.audience_room_id = ${roomId})
+          AND NOT ${own(narrow, "oa_turn")}
         LIMIT 1
       `.pipe(
         Effect.orDie,
@@ -424,13 +528,13 @@ export const layer = Layer.effect(
       );
 
     /**
-     * Whether the dispatch, of another audience, cannot start its turn as far
-     * as the server sees: the engine did not answer it as started, and the
-     * room's own turn runs ahead of it, or the engine holds the queue, as it
-     * does with a steer requeued behind a turn that failed. The room's Stop
-     * then cancels it with the room's work.
+     * Whether the dispatch, of other work, cannot start its turn as far as
+     * the server sees: the engine did not answer it as started, and the
+     * Stop's own turn runs ahead of it, or the engine holds the queue, as it
+     * does with a steer requeued behind a turn that failed. The Stop's round
+     * then cancels it with its own work.
      */
-    const waitsBehind = (sessionId: SessionRowId, roomId: RoomId, dispatch: Statement.Fragment) =>
+    const waitsBehind = (sessionId: SessionRowId, narrow: Narrow, dispatch: Statement.Fragment) =>
       sql`(
         NOT (
           ${dispatch}.disposition IS 'started'
@@ -438,29 +542,29 @@ export const layer = Layer.effect(
         )
         AND (
           EXISTS (
-            SELECT 1 FROM turns wb_room
-            WHERE wb_room.session_id = ${sessionId} AND wb_room.finished_at IS NULL
-              AND wb_room.audience = 'room' AND wb_room.audience_room_id = ${roomId}
+            SELECT 1 FROM turns wb_own
+            WHERE wb_own.session_id = ${sessionId} AND wb_own.finished_at IS NULL
+              AND ${own(narrow, "wb_own")}
           )
           OR ${queueHeld(sessionId)}
         )
       )`;
 
     /**
-     * Whether the session has a dispatch for an audience other than the room
-     * that the engine took and whose turn has not ended as far as the events
-     * show: it may be starting, or running unseen. So does the operator's
-     * steer until its settlement arrives, which the engine sends after the end
-     * of the turn it steered: taken, dropped, or requeued as a follow-up turn.
-     * Except a dispatch whose turn the events have not shown start while it
-     * cannot start (`waitsBehind`). The turn's start or end, and the
-     * dispatch's settling, nudge the runner.
+     * Whether the session has a dispatch of other work than the narrow
+     * Stop's that the engine took and whose turn has not ended as far as the
+     * events show: it may be starting, or running unseen. So does the
+     * operator's steer until its settlement arrives, which the engine sends
+     * after the end of the turn it steered: taken, dropped, or requeued as a
+     * follow-up turn. Except a dispatch whose turn the events have not shown
+     * start while it cannot start (`waitsBehind`). The turn's start or end,
+     * and the dispatch's settling, nudge the runner.
      */
-    const awaitsOtherAudience = (sessionId: SessionRowId, roomId: RoomId) =>
+    const awaitsOtherWork = (sessionId: SessionRowId, narrow: Narrow) =>
       sql<{ readonly n: number }>`
         SELECT 1 AS n FROM dispatches oa_dispatch
         WHERE oa_dispatch.session_id = ${sessionId} AND oa_dispatch.status = 'accepted'
-          AND NOT (oa_dispatch.audience = 'room' AND oa_dispatch.audience_room_id = ${roomId})
+          AND NOT ${own(narrow, "oa_dispatch")}
           AND NOT (
             EXISTS (
               SELECT 1 FROM turns oa_ended
@@ -480,7 +584,7 @@ export const layer = Layer.effect(
               WHERE oa_seen.session_id = ${sessionId}
                 AND oa_seen.engine_turn_id = oa_dispatch.engine_turn_id
             )
-            AND ${waitsBehind(sessionId, roomId, sql.literal("oa_dispatch"))}
+            AND ${waitsBehind(sessionId, narrow, sql.literal("oa_dispatch"))}
           )
         LIMIT 1
       `.pipe(
@@ -489,11 +593,12 @@ export const layer = Layer.effect(
       );
 
     /**
-     * A room's round held back only by work the server cannot see run, which
-     * holds it at most `ROOM_ROUND_HOLD_BOUND` from when it first did, as
-     * stored on the round: `held` until then, with the runner due back at
-     * the bound, and `overdue` after. An overdue round goes as a bot Stop's
-     * would while the room's work still runs or is flagged (`judgeRoomRound`),
+     * A narrow Stop's round held back only by work the server cannot see
+     * run, which holds it at most `ROOM_ROUND_HOLD_BOUND` from when it first
+     * did, as stored on the round: `held` until then, with the runner due
+     * back at the bound, and `overdue` after. An overdue round goes as a bot
+     * Stop's would while its own work still runs or is flagged
+     * (`judgeNarrowRound`),
      * and what it ends fails `stopped`, which the operator can retry.
      */
     const unseenHold = Effect.fn("Stops.unseenHold")(function* (round: Round, outcome: Outcome) {
@@ -520,123 +625,128 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     /**
-     * What holds a room's round back: `held` while a dispatch's answer is not
-     * known yet or a turn of another audience runs, which end on their own,
+     * What holds a narrow Stop's round back: `held` while a dispatch's answer
+     * is not known yet or a turn of other work runs, which end on their own,
      * and for a bounded time while only work the server cannot see run does
      * (`unseenHold`); `free` when nothing does. The bound counts again from
-     * the next time unseen work alone holds the round once a turn of another
-     * audience was admitted (`stopTargets.admitted`).
+     * the next time unseen work alone holds the round once a turn of other
+     * work was admitted (`stopTargets.admitted`).
      */
-    const roomRoundHold = Effect.fn("Stops.roomRoundHold")(function* (
+    const narrowRoundHold = Effect.fn("Stops.narrowRoundHold")(function* (
       round: Round,
-      roomId: RoomId,
+      narrow: Narrow,
       outcome: Outcome,
     ) {
       if (yield* inFlight(round.session_id)) return "held" as const;
-      if (yield* runsOtherAudience(round.session_id, roomId)) return "held" as const;
-      if (yield* awaitsOtherAudience(round.session_id, roomId)) {
+      if (yield* runsOtherWork(round.session_id, narrow)) return "held" as const;
+      if (yield* awaitsOtherWork(round.session_id, narrow)) {
         return yield* unseenHold(round, outcome);
       }
       return "free" as const;
     });
 
     /**
-     * What of the room's work the session's applied events still show:
-     * `running`, a turn of the room not finished or a dispatch for it the
-     * engine has or may be taking; `flagged`, a turn of the room whose
-     * background work the engine last reported pending. A dispatch whose
-     * recovery gave up counts as neither: its fence reopens the Stop if its
-     * key lands (`stopTargets.openRound`).
+     * What of the narrow Stop's own work the session's applied events still
+     * show: `running`, a turn of it not finished or a dispatch of it the
+     * engine has or may be taking; `flagged`, a turn of it whose background
+     * work the engine last reported pending. A dispatch whose recovery gave
+     * up counts as neither: its fence reopens the Stop if its key lands
+     * (`stopTargets.openRound`).
      */
-    const roomWork = SqlSchema.findOne({
-      Request: Schema.Struct({ sessionId: SessionRowId, roomId: RoomId }),
-      Result: Schema.Struct({ running: Schema.BooleanFromBit, flagged: Schema.BooleanFromBit }),
-      execute: ({ sessionId, roomId }) => sql`
-        SELECT
-          EXISTS (
-            SELECT 1 FROM turns WHERE session_id = ${sessionId} AND finished_at IS NULL
-              AND audience = 'room' AND audience_room_id = ${roomId}
-          ) OR EXISTS (
-            SELECT 1 FROM dispatches WHERE session_id = ${sessionId}
-              AND audience = 'room' AND audience_room_id = ${roomId}
-              AND (status IN ('accepted', 'delivered') OR (status = 'intended' AND attempts > 0))
-          ) AS running,
-          EXISTS (
-            SELECT 1 FROM turns WHERE session_id = ${sessionId} AND background_pending = 1
-              AND audience = 'room' AND audience_room_id = ${roomId}
-          ) AS flagged
-      `,
-    });
+    const ownWork = (sessionId: SessionRowId, narrow: Narrow) =>
+      SqlSchema.findOne({
+        Request: Schema.Void,
+        Result: Schema.Struct({ running: Schema.BooleanFromBit, flagged: Schema.BooleanFromBit }),
+        execute: () => sql`
+          SELECT
+            EXISTS (
+              SELECT 1 FROM turns ow_turn WHERE ow_turn.session_id = ${sessionId}
+                AND ow_turn.finished_at IS NULL AND ${own(narrow, "ow_turn")}
+            ) OR EXISTS (
+              SELECT 1 FROM dispatches ow_dispatch WHERE ow_dispatch.session_id = ${sessionId}
+                AND ${own(narrow, "ow_dispatch")}
+                AND (
+                  ow_dispatch.status IN ('accepted', 'delivered')
+                  OR (ow_dispatch.status = 'intended' AND ow_dispatch.attempts > 0)
+                )
+            ) AS running,
+            EXISTS (
+              SELECT 1 FROM turns ow_flagged WHERE ow_flagged.session_id = ${sessionId}
+                AND ow_flagged.background_pending = 1 AND ${own(narrow, "ow_flagged")}
+            ) AS flagged
+        `,
+      })(undefined).pipe(Effect.orDie);
 
     /**
      * Whose the turns the engine's report lists as runnable are, by the
      * server's rows: its turns, and the dispatches that name a turn
-     * (`engine_turn_id`), admitted or not. `room`: one is the room's, which
-     * the round ends with the rest of its work, and which may be an active
-     * run, while the engine lists no background work. `unseen`: one may start
-     * or run for another audience with no event telling of it, which a round
-     * would interrupt: one no dispatch of the room's names, unless a dispatch
-     * of another audience names it whose turn cannot start (`waitsBehind`),
-     * which the round cancels. An engine-queued run no dispatch names, such
-     * as the wake of a background command, is unseen also behind a held
-     * queue: the turn whose work it reports may be the room's.
+     * (`engine_turn_id`), admitted or not. `own`: one is the narrow Stop's
+     * own work, which the round ends with the rest of it, and which may be an
+     * active run, while the engine lists no background work. `unseen`: one
+     * may start or run for other work with no event telling of it, which a
+     * round would interrupt: one no dispatch of the Stop's own work names,
+     * unless a dispatch of other work names it whose turn cannot start
+     * (`waitsBehind`), which the round cancels. An engine-queued run no
+     * dispatch names, such as the wake of a background command, is unseen
+     * also behind a held queue: the turn whose work it reports may be the
+     * Stop's own.
      */
     const runnableOf = Effect.fn("Stops.runnableOf")(function* (
       sessionId: SessionRowId,
-      roomId: RoomId,
+      narrow: Narrow,
       runnable: ReadonlyArray<TurnId>,
     ) {
-      if (runnable.length === 0) return { room: false, unseen: false };
-      const turns = yield* sql<{ readonly engine_turn_id: string; readonly room: number }>`
-        SELECT engine_turn_id, (audience = 'room' AND audience_room_id = ${roomId}) AS room
-        FROM turns WHERE session_id = ${sessionId} AND ${sql.in("engine_turn_id", runnable)}
+      if (runnable.length === 0) return { own: false, unseen: false };
+      const turns = yield* sql<{ readonly engine_turn_id: string; readonly own: number }>`
+        SELECT ro_turn.engine_turn_id, ${own(narrow, "ro_turn")} AS own
+        FROM turns ro_turn
+        WHERE ro_turn.session_id = ${sessionId} AND ${sql.in("ro_turn.engine_turn_id", runnable)}
       `;
       const named = yield* sql<{
         readonly engine_turn_id: string;
-        readonly room: number;
+        readonly own: number;
         readonly waits: number;
       }>`
-        SELECT ro_dispatch.engine_turn_id,
-          (ro_dispatch.audience = 'room' AND ro_dispatch.audience_room_id = ${roomId}) AS room,
-          ${waitsBehind(sessionId, roomId, sql.literal("ro_dispatch"))} AS waits
+        SELECT ro_dispatch.engine_turn_id, ${own(narrow, "ro_dispatch")} AS own,
+          ${waitsBehind(sessionId, narrow, sql.literal("ro_dispatch"))} AS waits
         FROM dispatches ro_dispatch
         WHERE ro_dispatch.session_id = ${sessionId}
           AND ${sql.in("ro_dispatch.engine_turn_id", runnable)}
       `;
-      const seen = new Map(turns.map((row) => [row.engine_turn_id, row.room === 1]));
+      const seen = new Map(turns.map((row) => [row.engine_turn_id, row.own === 1]));
       const whose = runnable.map((turnId) => {
-        const room = seen.get(turnId);
-        // A turn of another audience the events show running holds the round
-        // before this (`roomRoundHold`): one listed here no longer runs as far
-        // as they show, and may still, unseen.
-        if (room !== undefined) return room ? "room" : "unseen";
+        const isOwn = seen.get(turnId);
+        // A turn of other work the events show running holds the round
+        // before this (`narrowRoundHold`): one listed here no longer runs as
+        // far as they show, and may still, unseen.
+        if (isOwn !== undefined) return isOwn ? "own" : "unseen";
         const naming = named.filter((row) => row.engine_turn_id === turnId);
-        if (naming.some((row) => row.room === 1)) return "room";
+        if (naming.some((row) => row.own === 1)) return "own";
         return naming.length > 0 && naming.every((row) => row.waits === 1) ? "waits" : "unseen";
       });
-      return { room: whose.includes("room"), unseen: whose.includes("unseen") };
+      return { own: whose.includes("own"), unseen: whose.includes("unseen") };
     }, Effect.orDie);
 
-    /** Whether the engine's report lists background work one of the room's turns started. */
-    const listsRoomWork = Effect.fn("Stops.listsRoomWork")(function* (
+    /** Whether the engine's report lists background work the narrow Stop's own turns started. */
+    const listsOwnWork = Effect.fn("Stops.listsOwnWork")(function* (
       sessionId: SessionRowId,
-      roomId: RoomId,
+      narrow: Narrow,
       listed: ReadonlyArray<TurnId>,
     ) {
       if (listed.length === 0) return false;
       const rows = yield* sql`
-        SELECT 1 FROM turns
-        WHERE session_id = ${sessionId} AND audience = 'room' AND audience_room_id = ${roomId}
-          AND ${sql.in("engine_turn_id", listed)}
+        SELECT 1 FROM turns lo_turn
+        WHERE lo_turn.session_id = ${sessionId} AND ${own(narrow, "lo_turn")}
+          AND ${sql.in("lo_turn.engine_turn_id", listed)}
         LIMIT 1
       `;
       return rows.length > 0;
     }, Effect.orDie);
 
     /**
-     * A room's target with nothing of the room left in the session settles
-     * without a round: its turns ended, and the engine's latest report shows
-     * no background work they started. Dispatches its Stop fenced keep their
+     * A narrow Stop's target with nothing of its own work left in the
+     * session settles without a round: its turns ended, and the engine's
+     * latest report shows no background work they started. Dispatches its Stop fenced keep their
      * fence, so one that lands after all reopens it.
      */
     const settleUnsent = Effect.fn("Stops.settleUnsent")(function* (round: Round) {
@@ -727,30 +837,30 @@ export const layer = Layer.effect(
       );
 
     /**
-     * The one decision for a room's round, in the session's gate, where a
-     * send into the session is claimed, on a report of the engine's taken this
-     * pass (`report`): `held` while other work holds it (`roomRoundHold`);
-     * `settled` once nothing of the room is left there; `refresh`, for the
-     * next pass and its fresh report, while, within the bound, the report
-     * lists a runnable turn that may start or run unseen (`runnableOf`); and
-     * `send` while the room's work runs, the report lists a runnable turn of
-     * the room's or the background work its turns started, or the round is
-     * overdue on its bound with the room's work flagged. A report whose
-     * runnable turns are none of the room's and none unseen leaves the
-     * background work it lists complete: one that lists none of the room's
-     * settles the round unsent.
+     * The one decision for a narrow Stop's round, a room's or a turn's, in
+     * the session's gate, where a send into the session is claimed, on a
+     * report of the engine's taken this pass (`report`): `held` while other
+     * work holds it (`narrowRoundHold`); `settled` once nothing of its own
+     * work is left there; `refresh`, for the next pass and its fresh report,
+     * while, within the bound, the report lists a runnable turn that may
+     * start or run unseen (`runnableOf`); and `send` while its own work runs,
+     * the report lists a runnable turn of its own or the background work its
+     * own turns started, or the round is overdue on its bound with its own
+     * work flagged. A report whose runnable turns are none of its own and
+     * none unseen leaves the background work it lists complete: one that
+     * lists none of its own settles the round unsent.
      */
-    const judgeRoomRound = Effect.fn("Stops.judgeRoomRound")(function* (
+    const judgeNarrowRound = Effect.fn("Stops.judgeNarrowRound")(function* (
       round: Round,
-      roomId: RoomId,
+      narrow: Narrow,
       report: Synchronized,
       outcome: Outcome,
     ): Effect.fn.Return<Verdict> {
-      const hold = yield* roomRoundHold(round, roomId, outcome);
+      const hold = yield* narrowRoundHold(round, narrow, outcome);
       if (hold === "held") return "held";
-      const left = yield* roomWork({ sessionId: round.session_id, roomId }).pipe(Effect.orDie);
+      const left = yield* ownWork(round.session_id, narrow);
       if (left.running || left.flagged) {
-        const runnable = yield* runnableOf(round.session_id, roomId, report.runnableTurns);
+        const runnable = yield* runnableOf(round.session_id, narrow, report.runnableTurns);
         let overdue = hold === "overdue";
         if (runnable.unseen && !overdue) {
           if ((yield* unseenHold(round, outcome)) === "held") return "refresh";
@@ -758,9 +868,9 @@ export const layer = Layer.effect(
         }
         if (
           left.running ||
-          runnable.room ||
+          runnable.own ||
           overdue ||
-          (yield* listsRoomWork(round.session_id, roomId, report.backgroundWork.turns))
+          (yield* listsOwnWork(round.session_id, narrow, report.backgroundWork.turns))
         ) {
           return "send";
         }
@@ -773,7 +883,7 @@ export const layer = Layer.effect(
      * Sends one round's commands through the gate, which only acknowledges
      * them. The round is issued, durably, before the call. `judged` decides,
      * in the gate, whether it goes: always for a bot Stop's round, as
-     * `judgeRoomRound` decides for a room's.
+     * `judgeNarrowRound` decides for a room's or a turn's.
      */
     const sendRound = Effect.fn("Stops.sendRound")(function* (
       round: Round,
@@ -909,18 +1019,18 @@ export const layer = Layer.effect(
           outcome.until(round.due_at);
           continue;
         }
-        // A room's Stop waits rather than end another audience's work: the
-        // engine's stop ends the whole session. A turn of another audience
-        // the events show running holds it with no more asked. Otherwise its
+        // A room's or a turn's Stop waits rather than end other work: the
+        // engine's stop ends the whole session. A turn of other work the
+        // events show running holds it with no more asked. Otherwise its
         // round is judged on a report of the engine's taken this pass, one
         // for the session, asked for outside the gate, which no step holds
         // while it waits for events: the events alone may be stale, as when
         // the session's stream stalls. One that cannot be had now leaves the
         // round for a later pass; a session the engine no longer has is lost.
         let judged: Effect.Effect<Verdict> = Effect.succeed("send");
-        const roomId = round.room_id;
-        if (roomId !== null) {
-          if (yield* runsOtherAudience(round.session_id, roomId)) continue;
+        const narrow = narrowOf(round);
+        if (narrow !== null) {
+          if (yield* runsOtherWork(round.session_id, narrow)) continue;
           if (report === null) {
             const refreshed = yield* observer.synchronize(round.session_id, engineSessionId).pipe(
               Effect.catchTags({
@@ -937,7 +1047,7 @@ export const layer = Layer.effect(
             if (typeof refreshed === "string") return refreshed;
             report = refreshed;
           }
-          judged = judgeRoomRound(round, roomId, report, outcome);
+          judged = judgeNarrowRound(round, narrow, report, outcome);
         }
         const progress = yield* sendRound(round, engineSessionId, judged);
         if (progress === "unavailable") return progress;
@@ -1100,7 +1210,7 @@ export const layer = Layer.effect(
       readiness,
     });
 
-    return Stops.of({ record, stopBot, runPending, run });
+    return Stops.of({ record, endTurn, stopBot, runPending, run });
   }),
 );
 

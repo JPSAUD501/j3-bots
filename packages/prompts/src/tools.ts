@@ -58,6 +58,13 @@ const toolInput = <const Fields extends Schema.Struct.Fields>(fields: Fields) =>
 export const NO_TURN_REFUSAL =
   "This call belongs to no running turn of yours: your turn has ended, or you are a subagent or delegated worker. Nothing was sent. A subagent or delegated worker reports in its final reply instead.";
 
+/**
+ * What `request_browser_help` answers once the operator was asked. The
+ * server stops the turn then, so the bot's next call in it may never run.
+ */
+export const BROWSER_HELP_REQUESTED =
+  "Your user was asked to do this step in your browser. This turn ends here: J3 Bots stops it now, and their answer arrives as your next turn. Do not use the browser until then.";
+
 /** For the tools a delegated worker can see but must not use. */
 const BOT_ONLY =
   "Only the bot itself calls this. A subagent or delegated worker does not: it reports in its final reply.";

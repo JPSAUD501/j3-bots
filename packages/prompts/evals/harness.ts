@@ -10,6 +10,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import {
   type BotInstructionsInput,
+  BROWSER_HELP_REQUESTED,
   DECODE_OPTIONS,
   renderSystemFile,
   renderWake,
@@ -698,7 +699,7 @@ const answer = (
         ? reply(
             json({
               status: "requested",
-              note: "Your user was asked to do this step in your browser. End this turn now, and do not use the browser until their answer arrives as your next turn.",
+              note: BROWSER_HELP_REQUESTED,
             }),
           )
         : reply(json({ error: "The call was refused as invalid." }));

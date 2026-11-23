@@ -15,6 +15,13 @@ export const BROWSER_HELP_WAIT = Duration.hours(1);
  */
 export const TAB_ABSENT_GRACE = Duration.minutes(2);
 
+/**
+ * How long past its wait a card stays open once its devices gave the bot's
+ * tabs back: an operator who gives the tab back in the viewer and then answers
+ * the card answers it, rather than finding it expired in between.
+ */
+export const HAND_BACK_GRACE = Duration.minutes(2);
+
 /** How often open cards are checked against the clock and the open tabs. */
 export const SWEEP_EVERY = Duration.seconds(30);
 

@@ -43,7 +43,10 @@ export default Effect.gen(function* () {
   // One row per card. `audience` is the turn's that asked, which the answer
   // wakes the bot for; the card itself is always in the bot's conversation.
   // `origin_seq` is the dispatch that began that turn's work, so a Stop that
-  // covers the work also drops the wake an expiry would send.
+  // covers the work also drops the wake an expiry would send. `closing` is
+  // how it closed, once it did, and `closed_through_seq` the last entry then:
+  // a declined or unanswered card keeps the bot from asking again for the
+  // same tab until its operator writes a later one.
   yield* sql`
     CREATE TABLE browser_help_cards (
       entry_id TEXT PRIMARY KEY REFERENCES entries (id) ON DELETE CASCADE,
@@ -54,12 +57,25 @@ export default Effect.gen(function* () {
       engine_tab_id TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       closed_at TEXT,
+      closing TEXT CHECK (closing IN ('done', 'declined', 'tab-closed', 'timed-out')),
+      closed_through_seq INTEGER,
       follow_up_wake_id TEXT UNIQUE REFERENCES wakes (id) ON DELETE SET NULL,
       created_at TEXT NOT NULL,
-      CHECK (audience = 'room' OR audience_room_id IS NULL)
+      CHECK (audience = 'room' OR audience_room_id IS NULL),
+      CHECK ((closed_at IS NULL) = (closing IS NULL)),
+      CHECK ((closed_at IS NULL) = (closed_through_seq IS NULL))
     )
   `;
   yield* sql`
     CREATE INDEX browser_help_cards_open ON browser_help_cards (bot_id) WHERE closed_at IS NULL
   `;
+
+  // A Stop the server records itself to end one turn, the one that asked for
+  // help, names that turn: it ends that turn and the background work it
+  // started, in its target session, and nothing else. `scope` and `room_id`
+  // are the turn's audience. It covers no work and cancels no wake, so it is
+  // never the operator's Stop (`stopTargets.covers`). The check on `scope`
+  // cannot widen in place, as a column a table check names cannot be
+  // dropped, and a rebuild of `stops` would empty `stop_targets`.
+  yield* sql`ALTER TABLE stops ADD COLUMN engine_turn_id TEXT`;
 });
