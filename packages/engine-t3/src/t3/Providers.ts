@@ -134,7 +134,7 @@ const FIRST_CHECK_BUDGET = Duration.seconds(90);
  * budget: from each time it becomes ready until `FIRST_CHECK_BUDGET` passes,
  * when the same state comes again without it, so what depends on the budget
  * changes without a new report from the engine. `states` emits a state only
- * when its tag changes, as `stateChanges` does.
+ * when it changes, as `stateChanges` does.
  */
 export const withFirstCheckBudget = <S extends { readonly _tag: string }, E, R>(
   states: Stream.Stream<S, E, R>,

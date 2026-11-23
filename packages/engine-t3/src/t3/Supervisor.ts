@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- Whether another program holds the engine's port takes a trial listen from node:net.
 import * as NodeNet from "node:net";
-import type { EngineStatus } from "@j3-bots/contracts";
+import type { EngineInstallProgress, EngineStatus } from "@j3-bots/contracts";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -42,7 +42,8 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 type UnavailableReason = Extract<EngineStatus["state"], { readonly _tag: "unavailable" }>["reason"];
 
 export type ProcessState =
-  | { readonly _tag: "starting" }
+  /** `install` while the pinned engine downloads, before the supervisor runs. */
+  | { readonly _tag: "starting"; readonly install?: EngineInstallProgress }
   | { readonly _tag: "ready"; readonly environmentId: string }
   | { readonly _tag: "unavailable"; readonly reason: UnavailableReason }
   | { readonly _tag: "incompatible"; readonly runningVersion: string };
@@ -406,12 +407,23 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
   } satisfies Supervision;
 });
 
+/** Whether two states say the same: same tag, reason and download progress. */
+const sameState = (a: ProcessState, b: ProcessState): boolean => {
+  switch (a._tag) {
+    case "starting":
+      return (
+        b._tag === "starting" &&
+        a.install?.receivedBytes === b.install?.receivedBytes &&
+        a.install?.totalBytes === b.install?.totalBytes
+      );
+    case "unavailable":
+      return b._tag === "unavailable" && a.reason === b.reason;
+    case "ready":
+    case "incompatible":
+      return a._tag === b._tag;
+  }
+};
+
 /** The state as a stream of changes, starting with the current one. */
 export const stateChanges = (state: SubscriptionRef.SubscriptionRef<ProcessState>) =>
-  SubscriptionRef.changes(state).pipe(
-    Stream.changesWith(
-      (a, b) =>
-        a._tag === b._tag &&
-        (a._tag !== "unavailable" || (b._tag === "unavailable" && a.reason === b.reason)),
-    ),
-  );
+  SubscriptionRef.changes(state).pipe(Stream.changesWith(sameState));

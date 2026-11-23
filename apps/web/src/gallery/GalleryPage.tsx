@@ -94,6 +94,7 @@ import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
+import { EngineSection } from "../components/SettingsDialog";
 import { UsageSection } from "../components/UsageSection";
 import { WorkFold } from "../components/WorkFold";
 import { Button } from "../components/ui/button";
@@ -179,6 +180,7 @@ export default function GalleryPage() {
                 <DetailsSection />
                 <EditingSection />
                 <RoomsSection />
+                <EngineSettingsSection />
                 <UsageGallerySection />
                 <FirstRunSection />
                 <FirstRunWideSection />
@@ -1640,6 +1642,18 @@ function Frame({
 
 const engines = {
   starting: null,
+  // As the server sends them: no provider is reported before the engine runs.
+  engineStarting: { ...team.engine, state: { _tag: "starting" }, providers: [] },
+  downloading: {
+    ...team.engine,
+    state: { _tag: "starting", install: { receivedBytes: 42_400_000, totalBytes: 180_200_000 } },
+    providers: [],
+  },
+  downloadingNoTotal: {
+    ...team.engine,
+    state: { _tag: "starting", install: { receivedBytes: 42_400_000, totalBytes: null } },
+    providers: [],
+  },
   down: { ...team.engine, state: { _tag: "unavailable", reason: "down" } },
   portInUse: { ...team.engine, state: { _tag: "unavailable", reason: "port-in-use" } },
   installFailed: { ...team.engine, state: { _tag: "unavailable", reason: "install-failed" } },
@@ -1777,6 +1791,27 @@ const longNames = {
   },
 };
 
+function EngineSettingsSection() {
+  return (
+    <Section title="Settings: the engine">
+      <div className="flex flex-wrap gap-4">
+        <Frame label="Downloading, on the first start" width={420} height={160}>
+          <EngineSection engine={engines.downloading} stale={false} />
+        </Frame>
+        <Frame label="Downloading, with no size known" width={420} height={160}>
+          <EngineSection engine={engines.downloadingNoTotal} stale={false} />
+        </Frame>
+        <Frame label="Starting, once downloaded" width={420} height={160}>
+          <EngineSection engine={engines.engineStarting} stale={false} />
+        </Frame>
+        <Frame label="The download failed" width={420} height={160}>
+          <EngineSection engine={{ ...engines.installFailed, providers: [] }} stale={false} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
 function UsageGallerySection() {
   const usage = (
     engine: EngineStatus | null,
@@ -1905,6 +1940,12 @@ function FirstRunSection() {
         </Frame>
         <Frame label="No provider can run a bot" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.unusable} />
+        </Frame>
+        <Frame label="The engine downloading, on the first start" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.downloading} />
+        </Frame>
+        <Frame label="A download that doesn't say its size" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.downloadingNoTotal} />
         </Frame>
         <Frame label="The engine not running" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.down} />

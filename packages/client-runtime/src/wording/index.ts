@@ -17,7 +17,7 @@ export {
   type RoutineRunLines,
   routineRunLines,
 } from "./details.ts";
-export { engineProblem, providerLine, type ProviderTone } from "./engine.ts";
+export { engineDownload, engineProblem, providerLine, type ProviderTone } from "./engine.ts";
 export {
   deliveryLine,
   draftFileDetail,

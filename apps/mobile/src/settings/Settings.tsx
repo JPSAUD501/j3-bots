@@ -99,8 +99,15 @@ function EngineSection(props: { readonly engine: EngineStatus | null; readonly s
         </Text>
       ) : (
         <View className="gap-1">
+          {/* Starting, or downloading, is on its way rather than blocked. */}
           <Text
-            className={`text-sm font-medium ${stale ? "text-muted-foreground" : "text-blocked"}`}
+            className={`text-sm font-medium tabular-nums ${
+              stale
+                ? "text-muted-foreground"
+                : engine.state._tag === "starting"
+                  ? "text-foreground"
+                  : "text-blocked"
+            }`}
           >
             {problem.title}
           </Text>

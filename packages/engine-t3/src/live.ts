@@ -6,6 +6,8 @@ export {
   type EngineInstall,
   fetchPinned,
   inspectInstall,
+  makeProgressLog,
+  progressText,
   pruneRuntimes,
 } from "./t3/Install.ts";
 export { stateFiles } from "./t3/State.ts";

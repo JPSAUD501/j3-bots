@@ -4,6 +4,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { EngineInstallProgress } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -11,17 +12,29 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as PlatformError from "effect/PlatformError";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { ensureInstalled } from "./Install.ts";
+import { EngineInstallFailed, ensureInstalled, installTracked } from "./Install.ts";
 import { pin } from "./Pin.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
+import type { ProcessState } from "./Supervisor.ts";
 
 /** The release's archive. Not a real one: the install stops at unpacking it. */
 const ARCHIVE = new TextEncoder().encode("the pinned engine release, byte for byte");
 const DIGEST = NodeCrypto.createHash("sha256").update(ARCHIVE).digest("hex");
+
+/** How the release server sends the archive. */
+interface Sending {
+  /** Whether it says the archive's size: `Content-Length`, and a range's `Content-Range`. */
+  readonly sized: boolean;
+  /** Bytes per chunk of the body, or the whole rest in one. */
+  readonly chunk?: number;
+}
 
 /**
  * The release server: the archive, from the byte a range asks for. Every
@@ -29,20 +42,41 @@ const DIGEST = NodeCrypto.createHash("sha256").update(ARCHIVE).digest("hex");
  * `afterArchive` runs once the install has read the archive's last byte,
  * before it has written it.
  */
-const release = (requests: Array<string>, afterArchive: () => void) =>
+const release = (
+  requests: Array<string>,
+  afterArchive: () => void,
+  sending: Sending = { sized: true },
+) =>
   HttpClient.make((request) => {
     const range = /^bytes=(\d+)-$/.exec(request.headers["range"] ?? "");
     requests.push(range?.[0] ?? "whole");
     const from = Number(range?.[1] ?? 0);
+    const rest = ARCHIVE.slice(from);
+    const size = sending.chunk ?? rest.length;
     const body = new ReadableStream<Uint8Array>({
-      start: (controller) => controller.enqueue(ARCHIVE.slice(from)),
+      start: (controller) => {
+        for (let at = 0; at < rest.length; at += size) {
+          controller.enqueue(rest.slice(at, at + size));
+        }
+      },
       pull: (controller) => {
         afterArchive();
         controller.close();
       },
     });
+    const headers: Record<string, string> = sending.sized
+      ? {
+          "content-length": String(rest.length),
+          ...(from > 0
+            ? { "content-range": `bytes ${from}-${ARCHIVE.length - 1}/${ARCHIVE.length}` }
+            : {}),
+        }
+      : {};
     return Effect.succeed(
-      HttpClientResponse.fromWeb(request, new Response(body, { status: from > 0 ? 206 : 200 })),
+      HttpClientResponse.fromWeb(
+        request,
+        new Response(body, { status: from > 0 ? 206 : 200, headers }),
+      ),
     );
   });
 
@@ -65,6 +99,8 @@ interface Setup {
   readonly homeOnly?: boolean;
   /** The digest pinned for the archive. Otherwise the one the release serves. */
   readonly pinned?: string;
+  /** How the release server sends it. Otherwise sized, in one chunk. */
+  readonly sending?: Sending;
 }
 
 /** Whether `location`, through its nearest parent that exists, links resolved, is inside `home`. */
@@ -101,21 +137,23 @@ const install = (requests: Array<string>, setup: Setup) =>
           )
         : Effect.succeed(true),
     );
+    const progress: Array<EngineInstallProgress> = [];
     const exit = yield* ensureInstalled({
       home,
       platform: "linux",
       arch: "x64",
       sha256: { "linux-x64": setup.pinned ?? DIGEST },
       files,
+      onProgress: (reported) => Effect.sync(() => progress.push(reported)),
     }).pipe(
       Effect.provideService(
         HttpClient.HttpClient,
-        release(requests, () => setup.afterArchive?.(workspace)),
+        release(requests, () => setup.afterArchive?.(workspace), setup.sending),
       ),
       Effect.exit,
     );
     const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : Option.none();
-    return { ...workspace, reason: Option.getOrUndefined(error)?.reason };
+    return { ...workspace, progress, reason: Option.getOrUndefined(error)?.reason };
   });
 
 const machine = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
@@ -145,11 +183,16 @@ describe("ensureInstalled", () => {
       const fs = yield* FileSystem.FileSystem;
       const requests: Array<string> = [];
 
-      const { partial, reason } = yield* install(requests, {
+      const { partial, progress, reason } = yield* install(requests, {
         prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
       });
 
       assert.deepStrictEqual(requests, ["bytes=10-"]);
+      // It counts what it had, of the size the range says.
+      assert.deepStrictEqual(progress, [
+        { receivedBytes: 10, totalBytes: ARCHIVE.length },
+        { receivedBytes: ARCHIVE.length, totalBytes: ARCHIVE.length },
+      ]);
       // The resumed file matched the pinned digest; only unpacking it failed.
       assert.strictEqual(reason, "extract");
       assert.deepStrictEqual(yield* fs.readFile(partial), ARCHIVE);
@@ -288,5 +331,114 @@ describe("ensureInstalled", () => {
         `${pin.version}.lock`,
       ]);
     }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
+
+describe("a download's progress", () => {
+  it.effect("is reported when it starts and when it ends, not with every chunk", () =>
+    Effect.gen(function* () {
+      const { progress } = yield* install([], { sending: { sized: true, chunk: 1 } });
+
+      // The test clock stands still: no second passes between chunks.
+      assert.deepStrictEqual(progress, [
+        { receivedBytes: 0, totalBytes: ARCHIVE.length },
+        { receivedBytes: ARCHIVE.length, totalBytes: ARCHIVE.length },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.live("is reported again once a second has passed while it runs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const files = yield* makePrivateFiles(() => Effect.succeed(true));
+      // Ten bytes at once, ten more after a second and a bit, then the rest at once.
+      const slow = HttpClient.make((request) => {
+        const body = Stream.make(ARCHIVE.slice(0, 10)).pipe(
+          Stream.concat(
+            Stream.fromEffect(Effect.as(Effect.sleep("1100 millis"), ARCHIVE.slice(10, 20))),
+          ),
+          Stream.concat(Stream.make(ARCHIVE.slice(20))),
+        );
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(Stream.toReadableStream(body), {
+              headers: { "content-length": String(ARCHIVE.length) },
+            }),
+          ),
+        );
+      });
+      const progress: Array<EngineInstallProgress> = [];
+
+      yield* ensureInstalled({
+        home,
+        platform: "linux",
+        arch: "x64",
+        sha256: { "linux-x64": DIGEST },
+        files,
+        onProgress: (reported) => Effect.sync(() => progress.push(reported)),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, slow), Effect.exit);
+
+      assert.deepStrictEqual(
+        progress.map(({ receivedBytes }) => receivedBytes),
+        [0, 20, ARCHIVE.length],
+      );
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.effect("has no total when the release server does not say the size", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const resumed = yield* install([], {
+        sending: { sized: false },
+        prepare: ({ partial }) => fs.writeFile(partial, ARCHIVE.slice(0, 10)),
+      });
+
+      assert.deepStrictEqual(resumed.progress, [
+        { receivedBytes: 10, totalBytes: null },
+        { receivedBytes: ARCHIVE.length, totalBytes: null },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
+
+describe("installTracked", () => {
+  it.effect("shows the download in the state, and clears it once installed", () =>
+    Effect.gen(function* () {
+      const state = yield* SubscriptionRef.make<ProcessState>({ _tag: "starting" });
+      const seen: Array<ProcessState> = [];
+      const look = SubscriptionRef.get(state).pipe(Effect.map((now) => seen.push(now)));
+      let attempts = 0;
+
+      const executable = yield* installTracked({
+        state,
+        retry: Schedule.recurs(1),
+        install: (onProgress) =>
+          Effect.gen(function* () {
+            attempts += 1;
+            yield* look;
+            if (attempts === 1) {
+              yield* onProgress({ receivedBytes: 4, totalBytes: 10 });
+              yield* look;
+              return yield* new EngineInstallFailed({ reason: "download", version: pin.version });
+            }
+            yield* onProgress({ receivedBytes: 10, totalBytes: 10 });
+            yield* look;
+            return "/engine/t3";
+          }),
+      });
+      yield* look;
+
+      assert.strictEqual(executable, "/engine/t3");
+      assert.deepStrictEqual(seen, [
+        { _tag: "starting" },
+        { _tag: "starting", install: { receivedBytes: 4, totalBytes: 10 } },
+        // Waiting to try again, the failure shows; the next download replaces it.
+        { _tag: "unavailable", reason: "install-failed" },
+        { _tag: "starting", install: { receivedBytes: 10, totalBytes: 10 } },
+        { _tag: "starting" },
+      ]);
+    }),
   );
 });
