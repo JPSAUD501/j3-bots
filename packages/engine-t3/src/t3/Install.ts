@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off -- SHA-256 of a 190 MB archive needs an incremental hash; Effect has none.
 import * as NodeCrypto from "node:crypto";
+import type { EngineInstallProgress } from "@j3-bots/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
+import type * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Headers from "effect/http/Headers";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -15,6 +21,7 @@ import { boundedCommand } from "./Command.ts";
 import { holdExclusive } from "./Lock.ts";
 import { archiveName, pin, releaseUrl } from "./Pin.ts";
 import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
+import type { ProcessState } from "./Supervisor.ts";
 
 // Installs the pinned engine release into the J3-owned engine home:
 //
@@ -87,6 +94,100 @@ const runtimeDirectory = (path: Path.Path, home: string) =>
 
 const INSTALLED_MARKER = ".installed";
 
+/** How often, at most, a download reports how far it has come, besides when it starts and ends. */
+const PROGRESS_INTERVAL_MS = 1_000;
+
+/**
+ * The size of the whole archive, from the answer to a download that already
+ * holds `have` bytes, when it says: the total of a range's `Content-Range`
+ * (`bytes 10-99/100`), or `have` plus the `Content-Length` of what it sends.
+ * Null when it says neither.
+ */
+const archiveSize = (headers: Headers.Headers, have: number): number | null => {
+  const total = Option.flatMapNullishOr(
+    Headers.get(headers, "content-range"),
+    (range) => /\/(\d+)$/.exec(range.trim())?.[1],
+  );
+  if (Option.isSome(total)) return Number(total.value);
+  return Option.match(
+    Option.filter(Headers.get(headers, "content-length"), (length) => /^\d+$/.test(length.trim())),
+    { onNone: () => null, onSome: (length) => have + Number(length.trim()) },
+  );
+};
+
+/** Megabytes, as a download's progress is told in: whole ones, 1 MB being a million bytes. */
+const megabytes = (bytes: number): number => Math.floor(bytes / 1_000_000);
+
+/**
+ * A download's progress in words, for a terminal or a log: "42 of 180 MB",
+ * or "42 MB" when its size is not known.
+ */
+export const progressText = ({ receivedBytes, totalBytes }: EngineInstallProgress): string =>
+  totalBytes === null
+    ? `${megabytes(receivedBytes)} MB`
+    : `${megabytes(receivedBytes)} of ${megabytes(totalBytes)} MB`;
+
+/** How often, at most, a log says how far a download has come, besides at its start and end. */
+const PROGRESS_LOG_INTERVAL_MS = 10_000;
+
+/**
+ * Which of a download's progress reports a log keeps, as "42 of 180 MB": the
+ * first, then one every ten seconds, and the one that reaches the size, never
+ * the same count twice. For the server's log and a terminal that is not one,
+ * where a line a second would bury the rest.
+ */
+export const makeProgressLog = Effect.fnUntraced(function* () {
+  const logged = yield* Ref.make<{ readonly at: number; readonly bytes: number } | null>(null);
+  return Effect.fnUntraced(function* (progress: EngineInstallProgress) {
+    const now = yield* Clock.currentTimeMillis;
+    const last = yield* Ref.get(logged);
+    const due =
+      last === null ||
+      (last.bytes !== progress.receivedBytes &&
+        (progress.receivedBytes === progress.totalBytes ||
+          now - last.at >= PROGRESS_LOG_INTERVAL_MS));
+    if (!due) return Option.none<string>();
+    yield* Ref.set(logged, { at: now, bytes: progress.receivedBytes });
+    return Option.some(progressText(progress));
+  });
+});
+
+/**
+ * `bytes`, reporting to `report` how many bytes of the archive are in hand:
+ * `have` at once, then as chunks arrive, at most once every
+ * `PROGRESS_INTERVAL_MS`, and when the stream ends; never the same count
+ * twice in a row.
+ */
+const reportingProgress = <E>(
+  bytes: Stream.Stream<Uint8Array, E>,
+  have: number,
+  totalBytes: number | null,
+  report: (progress: EngineInstallProgress) => Effect.Effect<void>,
+): Stream.Stream<Uint8Array, E> =>
+  Stream.suspend(() => {
+    let receivedBytes = have;
+    let reported: { readonly at: number; readonly bytes: number } | null = null;
+    const reportNow = Effect.gen(function* () {
+      if (reported?.bytes === receivedBytes) return;
+      reported = { at: yield* Clock.currentTimeMillis, bytes: receivedBytes };
+      yield* report({ receivedBytes, totalBytes });
+    });
+    const counted = bytes.pipe(
+      Stream.tap((chunk) =>
+        Effect.gen(function* () {
+          receivedBytes += chunk.byteLength;
+          const now = yield* Clock.currentTimeMillis;
+          if (reported === null || now - reported.at >= PROGRESS_INTERVAL_MS) yield* reportNow;
+        }),
+      ),
+    );
+    return Stream.fromEffect(reportNow).pipe(
+      Stream.drain,
+      Stream.concat(counted),
+      Stream.concat(Stream.fromEffect(reportNow).pipe(Stream.drain)),
+    );
+  });
+
 /**
  * Whether the pinned engine is installed under `home`, without installing it
  * or starting it: what `j3-bots doctor` reports.
@@ -137,6 +238,10 @@ export const inspectInstall = Effect.fn("engine.inspectInstall")(function* (inpu
  * `sha256` holds the archive digest for each release platform: the pin's own,
  * `pin.sha256`. The archive is installed only if it has that digest, and a
  * platform it has none for is `unsupported-platform`.
+ *
+ * `onProgress`, when given, hears how far a download has come: when it
+ * starts, counting what a resumed one had already, about once a second while
+ * it runs, and when it ends. An install that downloads nothing never calls it.
  */
 export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (input: {
   readonly home: string;
@@ -144,6 +249,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
   readonly arch: string;
   readonly sha256: Readonly<Record<string, string>>;
   readonly files: PrivateFiles;
+  readonly onProgress?: (progress: EngineInstallProgress) => Effect.Effect<void>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -218,11 +324,17 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
       return yield* download(`status ${response.status}`);
     }
     if (response.status !== 416) {
+      const from = appending ? have : 0;
       yield* input.files
         .writeStream(
           partial,
           appending,
-          response.stream.pipe(Stream.catch((cause) => Stream.fromEffect(download(cause)))),
+          reportingProgress(
+            response.stream.pipe(Stream.catch((cause) => Stream.fromEffect(download(cause)))),
+            from,
+            archiveSize(response.headers, from),
+            input.onProgress ?? (() => Effect.void),
+          ),
         )
         .pipe(Effect.catchTags({ StorageExposed: storage, PlatformError: storage }));
     }
@@ -293,6 +405,7 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
 export const installForThisMachine = Effect.fn("engine.installForThisMachine")(function* (
   home: string,
   files: PrivateFiles,
+  onProgress: (progress: EngineInstallProgress) => Effect.Effect<void>,
 ) {
   yield* files
     .folder(home)
@@ -305,19 +418,61 @@ export const installForThisMachine = Effect.fn("engine.installForThisMachine")(f
     arch: process.arch,
     sha256: pin.sha256,
     files,
+    onProgress,
   });
+});
+
+/**
+ * Runs `install` until it succeeds, again on `retry` after each failure, with
+ * what it is doing in `state`:
+ * - `starting` with `install` while it downloads, which a retry after a
+ *   failure also shows once bytes arrive again;
+ * - `unavailable` (`install-failed`) after a failure, while it waits to retry;
+ * - `starting` without `install` once installed, until the supervisor starts
+ *   the engine.
+ * The download's progress goes to the log as `makeProgressLog` keeps it.
+ * Answers the executable.
+ */
+export const installTracked = Effect.fnUntraced(function* <R>(options: {
+  readonly state: SubscriptionRef.SubscriptionRef<ProcessState>;
+  readonly install: (
+    onProgress: (progress: EngineInstallProgress) => Effect.Effect<void>,
+  ) => Effect.Effect<string, EngineInstallFailed, R>;
+  readonly retry: Schedule.Schedule<unknown, EngineInstallFailed>;
+}) {
+  const { state } = options;
+  const log = yield* makeProgressLog();
+  const downloading = Effect.fnUntraced(function* (progress: EngineInstallProgress) {
+    yield* SubscriptionRef.set(state, { _tag: "starting", install: progress });
+    const line = yield* log(progress);
+    if (Option.isSome(line)) yield* Effect.logInfo(`Downloading the engine: ${line.value}`);
+  });
+  const executable = yield* options.install(downloading).pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("Installing the engine failed", error).pipe(
+        Effect.andThen(
+          SubscriptionRef.set(state, { _tag: "unavailable", reason: "install-failed" }),
+        ),
+      ),
+    ),
+    Effect.retry(options.retry),
+  );
+  yield* SubscriptionRef.set(state, { _tag: "starting" });
+  return executable;
 });
 
 /**
  * Installs the pinned engine under `home` without starting it, when it is not
  * installed yet: `j3-bots engine fetch`, so a new release's engine can be in
  * place before the server that runs it starts. Every write goes through
- * `isPrivate`, as the running engine's do. Answers whether it was installed
- * already and where its executable is.
+ * `isPrivate`, as the running engine's do. `onProgress` hears how far the
+ * download has come, as `ensureInstalled` says. Answers whether it was
+ * installed already and where its executable is.
  */
 export const fetchPinned = Effect.fn("engine.fetchPinned")(function* (options: {
   readonly home: string;
   readonly isPrivate: (location: string) => Effect.Effect<boolean>;
+  readonly onProgress: (progress: EngineInstallProgress) => Effect.Effect<void>;
 }) {
   const before = yield* inspectInstall({
     home: options.home,
@@ -327,7 +482,7 @@ export const fetchPinned = Effect.fn("engine.fetchPinned")(function* (options: {
   const files = yield* makePrivateFiles(options.isPrivate).pipe(
     Effect.provide(SecureRandom.layerWebCrypto),
   );
-  const executable = yield* installForThisMachine(options.home, files);
+  const executable = yield* installForThisMachine(options.home, files, options.onProgress);
   return {
     version: pin.version,
     executable,

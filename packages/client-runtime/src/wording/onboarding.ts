@@ -3,7 +3,7 @@ import type { EngineStatus } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
 import { hasDefaultModel, providerGate } from "../presentation/engine.ts";
 import { providerLoginGuide } from "../presentation/onboarding.ts";
-import { engineProblem } from "./engine.ts";
+import { engineDownload, engineProblem } from "./engine.ts";
 
 /**
  * The first run's connect step, in words, for the bot named `name`:
@@ -46,19 +46,25 @@ export function connectStepText(
       later,
     };
   }
+  if (engine.state._tag === "starting") {
+    // While it downloads, the live line says how far, under the same title.
+    const download = engineDownload(engine, i18n);
+    return {
+      title: t("engine.starting.title"),
+      body: download === null ? t("engine.starting.body") : t("engine.downloading.body"),
+      command: null,
+      login: null,
+      status: { text: download ?? t("onboarding.connect.status.starting"), tone: "waiting" },
+      later,
+    };
+  }
   const problem = engineProblem(engine, i18n);
   if (problem !== null) {
     return {
       ...problem,
       command: null,
       login: null,
-      status: {
-        text:
-          engine.state._tag === "starting"
-            ? t("onboarding.connect.status.starting")
-            : t("onboarding.connect.status.engineOut"),
-        tone: engine.state._tag === "starting" ? "waiting" : "muted",
-      },
+      status: { text: t("onboarding.connect.status.engineOut"), tone: "muted" },
       later,
     };
   }

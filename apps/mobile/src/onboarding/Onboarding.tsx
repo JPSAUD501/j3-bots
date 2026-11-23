@@ -599,7 +599,7 @@ function ConnectStep({
       {/* Live: the step says when a provider connects, without moving on by itself. */}
       <View accessibilityLiveRegion="polite" className="flex-row items-center gap-2">
         <Pulse tone={text.status.tone} />
-        <Text className={`text-sm font-medium ${toneClass[text.status.tone]}`}>
+        <Text className={`text-sm font-medium tabular-nums ${toneClass[text.status.tone]}`}>
           {text.status.text}
         </Text>
       </View>

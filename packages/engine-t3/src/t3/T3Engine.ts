@@ -88,7 +88,7 @@ import {
   renewalDue,
   type Credential,
 } from "./Credential.ts";
-import { installForThisMachine } from "./Install.ts";
+import { installForThisMachine, installTracked } from "./Install.ts";
 import { commandIdFor, messageIdFor, projectIdFor, threadIdFor } from "./Keys.ts";
 import { isMissingThread } from "./missingThread.ts";
 import { isBackgroundWorkRefusal } from "./backgroundRefusal.ts";
@@ -433,23 +433,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
 
   /**
-   * Installs the pinned engine, unless overridden. A failed install is a
-   * state, never a crash: the engine is `unavailable` with the reason while
-   * the install is retried.
+   * Installs the pinned engine, unless overridden, with its download in the
+   * state (`installTracked`). A failed install is a state, never a crash: the
+   * engine is `unavailable` with the reason while the install is retried.
    */
   const install = Option.isSome(options.binaryOverride)
     ? Effect.succeed(options.binaryOverride.value)
-    : installForThisMachine(options.home, files).pipe(
-        Effect.tapError((error) =>
-          Effect.logWarning("Installing the engine failed", error).pipe(
-            Effect.andThen(
-              SubscriptionRef.set(state, { _tag: "unavailable", reason: "install-failed" }),
-            ),
-          ),
-        ),
-        Effect.retry(INSTALL_RETRY),
-        platformServices,
-      );
+    : installTracked({
+        state,
+        install: (onProgress) => installForThisMachine(options.home, files, onProgress),
+        retry: INSTALL_RETRY,
+      }).pipe(platformServices);
 
   // Everything that needs the executable starts once it is installed.
   yield* Effect.forkScoped(
@@ -1748,7 +1742,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             providers: providerStatuses(options.providers, engineProviders, firstCheck),
           };
         case "starting":
-          return { state: { _tag: "starting" }, pinnedVersion: pin.version, providers: [] };
+          return {
+            state:
+              current.install === undefined
+                ? { _tag: "starting" }
+                : { _tag: "starting", install: current.install },
+            pinnedVersion: pin.version,
+            providers: [],
+          };
         case "incompatible":
           return {
             state: { _tag: "incompatible", runningVersion: current.runningVersion },

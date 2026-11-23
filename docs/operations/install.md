@@ -141,7 +141,7 @@ Each line is ✓ (fine), `!` (a warning: the server runs, but something is missi
 7. enables and starts it;
 8. waits up to a minute for the service's server to answer, and says whether it did and what state the engine is in.
 
-On its first start the server downloads the engine it is pinned to into `~/.j3-bots/engine`, so the engine may still be starting when `service install` returns. If the server does not answer, run `j3-bots doctor`, then read why in the log: `journalctl --user -u j3-bots -n 100`. What the unit does on a failure, a stop or high memory is in [Operating: the service](operating.md#the-service).
+On its first start the server downloads the engine it is pinned to into `~/.j3-bots/engine`, so the engine may still be starting when `service install` returns. Its log, the first run and Settings say how far the download has come, and `j3-bots doctor` does too. If the server does not answer, run `j3-bots doctor`, then read why in the log: `journalctl --user -u j3-bots -n 100`. What the unit does on a failure, a stop or high memory is in [Operating: the service](operating.md#the-service).
 
 ### When `lan` is refused
 

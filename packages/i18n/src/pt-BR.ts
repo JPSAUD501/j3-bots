@@ -743,6 +743,10 @@ const sentences = {
   "engine.starting.title": "O motor está iniciando",
   "engine.starting.body":
     "O J3 Bots está iniciando o motor. Esta página atualiza quando ele estiver pronto.",
+  "engine.downloading.body":
+    "O J3 Bots baixa o motor uma vez, na primeira vez que inicia, e o inicia logo depois. Esta página atualiza quando ele estiver pronto.",
+  "engine.downloading.progress": "Baixando o motor… {received} de {total} MB",
+  "engine.downloading.progressNoTotal": "Baixando o motor… {received} MB",
   "engine.down.title": "O motor parou",
   "engine.down.body":
     "O J3 Bots está reiniciando o motor. Se passar de um minuto, veja o log do J3 Bots na máquina onde ele roda.",

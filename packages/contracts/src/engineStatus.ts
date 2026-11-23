@@ -2,7 +2,7 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { BotId, Label, ModelId, ProviderId, RoutineId } from "./base.ts";
+import { BotId, Label, ModelId, NonNegativeInt, ProviderId, RoutineId } from "./base.ts";
 
 export const UsageWindow = Schema.Struct({
   /**
@@ -54,9 +54,27 @@ export const ProviderStatus = Schema.Struct({
 });
 export type ProviderStatus = typeof ProviderStatus.Type;
 
+/**
+ * How far the download of the pinned engine has come, on the server's first
+ * start or the first after an update: `receivedBytes` of `totalBytes`, which
+ * is null when the download does not say its size. A resumed download counts
+ * what it had before. The server updates it at most about once a second.
+ */
+export const EngineInstallProgress = Schema.Struct({
+  receivedBytes: NonNegativeInt,
+  totalBytes: Schema.NullOr(NonNegativeInt),
+});
+export type EngineInstallProgress = typeof EngineInstallProgress.Type;
+
 export const EngineStatus = Schema.Struct({
   state: Schema.Union([
-    Schema.TaggedStruct("starting", {}),
+    /**
+     * Not ready yet. `install` while the pinned engine is downloading, and
+     * absent once it is installed (or was already). A server older than
+     * `install` never sends it, at the same protocol version, and an older
+     * client ignores it.
+     */
+    Schema.TaggedStruct("starting", { install: Schema.optionalKey(EngineInstallProgress) }),
     Schema.TaggedStruct("ready", {}),
     /**
      * Not running or not reachable; the server keeps trying. `reason` says why:

@@ -198,7 +198,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
  * Whether the engine runs, and if not, why and what to do; then each provider.
  * Disconnected, it is what the server last reported, muted and said to be so.
  */
-function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: boolean }) {
+export function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: boolean }) {
   const i18n = useI18n();
   const { t } = i18n;
   if (engine === null) {
@@ -218,8 +218,16 @@ function EngineSection({ engine, stale }: { engine: EngineStatus | null; stale: 
         </p>
       ) : (
         <div className="flex flex-col gap-1">
+          {/* Starting, or downloading, is on its way rather than blocked. */}
           <p
-            className={cn("text-sm font-medium", stale ? "text-muted-foreground" : "text-blocked")}
+            className={cn(
+              "text-sm font-medium tabular-nums",
+              stale
+                ? "text-muted-foreground"
+                : engine.state._tag === "starting"
+                  ? "text-foreground"
+                  : "text-blocked",
+            )}
           >
             {problem.title}
           </p>

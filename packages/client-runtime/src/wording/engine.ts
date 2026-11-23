@@ -4,20 +4,46 @@ import type { I18n } from "@j3-bots/i18n";
 import { usageLimitText } from "./status.ts";
 import type { TimeContext } from "./time.ts";
 
+/** Whole megabytes, 1 MB being a million bytes, as the download's size is told. */
+const megabytes = (bytes: number): number => Math.floor(bytes / 1_000_000);
+
+/**
+ * How far the engine's download has come, while the server downloads it:
+ * "Downloading the engine… 42 of 180 MB", or "… 42 MB" when the download did
+ * not say its size. Null when the engine is not downloading.
+ */
+export function engineDownload(engine: EngineStatus, { t }: I18n): string | null {
+  const { state } = engine;
+  if (state._tag !== "starting" || state.install === undefined) return null;
+  const { receivedBytes, totalBytes } = state.install;
+  return totalBytes === null
+    ? t("engine.downloading.progressNoTotal", { received: megabytes(receivedBytes) })
+    : t("engine.downloading.progress", {
+        received: megabytes(receivedBytes),
+        total: megabytes(totalBytes),
+      });
+}
+
 /**
  * What keeps the engine from running bots, and what the operator can do about
- * it; null when it is ready.
+ * it; null when it is ready. While it downloads, the title is how far the
+ * download has come (`engineDownload`).
  */
 export function engineProblem(
   engine: EngineStatus,
-  { t }: I18n,
+  i18n: I18n,
 ): { readonly title: string; readonly body: string } | null {
+  const { t } = i18n;
   const { state } = engine;
   switch (state._tag) {
     case "ready":
       return null;
-    case "starting":
-      return { title: t("engine.starting.title"), body: t("engine.starting.body") };
+    case "starting": {
+      const download = engineDownload(engine, i18n);
+      return download === null
+        ? { title: t("engine.starting.title"), body: t("engine.starting.body") }
+        : { title: download, body: t("engine.downloading.body") };
+    }
     case "incompatible":
       return {
         title: t("firstRun.incompatible.title"),

@@ -372,7 +372,14 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
     case "ready":
       return check("Engine", "ok", `T3 Code ${engine.pinnedVersion} is running.`);
     case "starting":
-      return check("Engine", "warning", "The engine is starting.", "Run this again in a minute.");
+      return engine.state.install === undefined
+        ? check("Engine", "warning", "The engine is starting.", "Run this again in a minute.")
+        : check(
+            "Engine",
+            "warning",
+            `The engine is downloading: ${EngineLive.progressText(engine.state.install)}.`,
+            "Run this again once it has downloaded.",
+          );
     case "incompatible":
       return check(
         "Engine",

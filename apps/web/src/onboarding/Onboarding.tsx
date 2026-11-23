@@ -611,7 +611,10 @@ function ConnectStep({
       {/* Live: the step says when a provider connects, without moving on by itself. */}
       <p
         role="status"
-        className={cn("flex items-center gap-2 text-sm font-medium", toneClass[text.status.tone])}
+        className={cn(
+          "flex items-center gap-2 text-sm font-medium tabular-nums",
+          toneClass[text.status.tone],
+        )}
       >
         <span
           aria-hidden
