@@ -1265,6 +1265,20 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
+          <BotDetails
+            bot={scout}
+            routines={null}
+            memory={null}
+            files={null}
+            modelName="Claude Code · Claude Sonnet 5.5"
+            intents={detailsIntents}
+            onClose={nothing}
+          />
+        </Pane>
+        <Pane>
+          <RoutineRunList routine={priceWatch} runs={null} />
+        </Pane>
+        <Pane>
           <RoomDetails room={team.room} intents={roomIntents} onClose={nothing} />
         </Pane>
         <Pane>
@@ -1333,7 +1347,7 @@ function MemoryVariant({
     <Frame label={label} width={400} height={360}>
       <div className="h-full bg-background">
         <MemoryFile
-          title="Profile note"
+          title="Profile"
           reading={{ _tag: "read", document: profileNote }}
           save={undefined}
           connected
@@ -1380,6 +1394,7 @@ function EditingSection() {
       </div>
       <div className="flex flex-wrap gap-4">
         <MemoryVariant label="Memory: read" />
+        <MemoryVariant label="Memory: reading" reading={{ _tag: "reading" }} />
         <MemoryVariant label="Memory: saving" save={{ _tag: "saving", changes: edit }} />
         <MemoryVariant
           label="Memory: changed on the server meanwhile"
