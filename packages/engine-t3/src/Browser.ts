@@ -43,7 +43,14 @@ export type ViewerOutput =
         readonly defaultValue: string;
       } | null;
     }
-  | { readonly _tag: "probe"; readonly x: number; readonly y: number; readonly editable: boolean };
+  | { readonly _tag: "probe"; readonly x: number; readonly y: number; readonly editable: boolean }
+  /** Where the bot points while it acts on the tab, and when it clicks. */
+  | {
+      readonly _tag: "cursor";
+      readonly action: "move" | "click";
+      readonly x: number;
+      readonly y: number;
+    };
 
 /**
  * Why a viewer's output ended: the tab closed or never existed (`gone`), the

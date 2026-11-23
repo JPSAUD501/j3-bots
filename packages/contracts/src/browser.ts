@@ -154,6 +154,16 @@ export const BrowserServerFrame = Schema.Union([
     y: Coordinate,
     editable: Schema.Boolean,
   }),
+  /**
+   * Where the bot points while it acts on the tab, and when it clicks: sent
+   * only while the bot acts, never for a person's input.
+   */
+  Schema.Struct({
+    type: Schema.Literal("cursor"),
+    action: Schema.Literals(["move", "click"]),
+    x: Coordinate,
+    y: Coordinate,
+  }),
   /** The engine's browser cannot start until the host is set up; `j3-bots doctor` says how. */
   Schema.Struct({
     type: Schema.Literal("setup-needed"),

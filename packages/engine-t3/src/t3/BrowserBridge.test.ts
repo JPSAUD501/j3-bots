@@ -56,8 +56,8 @@ describe("viewerOf", () => {
       const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
       yield* Queue.offerAll(incoming, [
         jpeg,
-        // The agent's cursor, the clipboard, a download and a file picker are not passed on.
-        JSON.stringify({ type: "pointer", phase: "move", x: 1, y: 2, sequence: 1 }),
+        JSON.stringify({ type: "pointer", phase: "click", x: 1, y: 2, sequence: 1 }),
+        // The clipboard, a download and a file picker are not passed on.
         JSON.stringify({ type: "clipboard", text: "copied password" }),
         JSON.stringify({ type: "download", id: "d", fileName: "a.pdf", sizeBytes: 1 }),
         JSON.stringify({ type: "fileChooser", id: "c", multiple: false, accept: "" }),
@@ -74,9 +74,10 @@ describe("viewerOf", () => {
         }),
         JSON.stringify({ type: "probe", x: 10, y: 20, editable: true }),
       ]);
-      const outputs = yield* viewer.output.pipe(Stream.take(4), Stream.runCollect);
+      const outputs = yield* viewer.output.pipe(Stream.take(5), Stream.runCollect);
       assert.deepStrictEqual(outputs, [
         { _tag: "frame", jpeg },
+        { _tag: "cursor", action: "click", x: 1, y: 2 },
         { _tag: "viewport", width: 1280, height: 800 },
         {
           _tag: "control",

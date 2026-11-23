@@ -25,7 +25,11 @@ const RECONNECT = 1012;
 
 const Dimension = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
-/** The frames J3 Bots passes on; the agent's cursor, clipboard, files and downloads are not among them. */
+/**
+ * The frames J3 Bots passes on; the clipboard, files and downloads are not
+ * among them. The engine sends `pointer` only while the agent acts (**Read**,
+ * `ServerBrowser.ts` L2433-2444).
+ */
 const StreamFrame = Schema.Union([
   Schema.Struct({ type: Schema.Literal("viewport"), width: Dimension, height: Dimension }),
   Schema.Struct({
@@ -45,6 +49,12 @@ const StreamFrame = Schema.Union([
     x: Schema.Finite,
     y: Schema.Finite,
     editable: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("pointer"),
+    phase: Schema.Literals(["move", "click"]),
+    x: Schema.Finite,
+    y: Schema.Finite,
   }),
 ]);
 
@@ -79,6 +89,8 @@ export const decodeTextFrame = (text: string): Option.Option<ViewerOutput> =>
         };
       case "probe":
         return { _tag: "probe", x: frame.x, y: frame.y, editable: frame.editable };
+      case "pointer":
+        return { _tag: "cursor", action: frame.phase, x: frame.x, y: frame.y };
     }
   });
 

@@ -286,6 +286,14 @@ export const layer = Layer.effect(
                     editable: output.editable,
                   });
                   return;
+                case "cursor":
+                  yield* sendTo(entry, {
+                    type: "cursor",
+                    action: output.action,
+                    x: output.x,
+                    y: output.y,
+                  });
+                  return;
               }
             }),
           ),
