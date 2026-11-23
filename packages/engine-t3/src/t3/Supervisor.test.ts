@@ -106,9 +106,10 @@ const incompatibleMachine = () => {
             isRunning: Effect.succeed(true),
             kill: () => Effect.void,
             stdin: Sink.drain,
-            // What the Windows launcher prints first: the engine's id. Elsewhere
-            // the supervisor reads none of it.
-            stdout: Stream.make(new TextEncoder().encode("4242\n")),
+            // What the Windows launcher prints first: the engine's id, here one
+            // no process has, which a stop finds gone at once. Elsewhere the
+            // supervisor reads none of it.
+            stdout: Stream.make(new TextEncoder().encode("2147483644\n")),
             stderr: Stream.empty,
             all: Stream.empty,
             getInputFd: () => Sink.drain,

@@ -13,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -82,8 +83,11 @@ const HEALTH_FAILURES = 3;
 /** A run this long resets the restart backoff. */
 const STABLE_RUN = Duration.minutes(1);
 const BACKOFF_MAX_MS = 30_000;
-/** How long the engine gets to stop on SIGTERM before SIGKILL, when the server stops. */
-const ENGINE_STOP = "10 seconds";
+/**
+ * How long the engine gets to stop on SIGTERM before SIGKILL, when the server
+ * stops; on Windows, also how long a stop then waits for the engine to be gone.
+ */
+const ENGINE_STOP = Duration.seconds(10);
 /** How long a lost engine gets to stop on SIGTERM, and then to be gone once killed. */
 const ORPHAN_TERM_GRACE = Duration.seconds(10);
 const ORPHAN_KILL_GRACE = Duration.seconds(5);
@@ -309,6 +313,24 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
       }
       yield* input.beforeStart;
       yield* SubscriptionRef.set(state, { _tag: "starting" });
+      // On Windows the handle is the launcher's, which can end before the
+      // engine it ended has: a stop returns once the engine is gone too, so
+      // what follows it (a restart, an update's snapshot) finds its files
+      // free. Registered before the spawn, this runs after the spawn's stop.
+      const launchedEngine = yield* Ref.make(Option.none<number>());
+      if (onWindows) {
+        yield* Effect.addFinalizer(() =>
+          Ref.get(launchedEngine).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.void,
+                onSome: (pid) => processes.waitUntilGone(pid, ENGINE_STOP),
+              }),
+            ),
+            Effect.asVoid,
+          ),
+        );
+      }
       const handle = yield* spawner.spawn(engine);
       const exited = yield* handle.exitCode.pipe(Effect.forkScoped);
       // The engine's own id: on Windows, the one its launcher prints.
@@ -330,6 +352,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
         );
         return true;
       }
+      yield* Ref.set(launchedEngine, enginePid);
 
       const healthy = check.pipe(
         Effect.repeat({

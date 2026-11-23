@@ -342,5 +342,5 @@ export const makeProcesses = Effect.fnUntraced(function* (
     }
   });
 
-  return { isAlive, lookUp, stop };
+  return { isAlive, lookUp, stop, waitUntilGone };
 });

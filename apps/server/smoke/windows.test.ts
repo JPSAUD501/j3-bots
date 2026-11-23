@@ -253,16 +253,22 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
             });
             yield* turn;
 
-            // The engine among what the server started, and the stand-in harness under it.
+            // The engine among what the server started: the `t3.exe` whose parent is no `t3.exe` itself.
+            const engineIn = (table: typeof Processes.Type) => {
+              const started = descendantsOf(serverPid, table);
+              const t3 = new Set(running(table, "t3.exe").filter((pid) => started.has(pid)));
+              const [engine, ...others] = table
+                .filter(({ pid, parent }) => t3.has(pid) && !t3.has(parent))
+                .map(({ pid }) => pid);
+              return engine === undefined || others.length > 0
+                ? Effect.die("the server does not run exactly one engine")
+                : Effect.succeed(engine);
+            };
+
+            // The engine, and the stand-in harness under it.
             const before = yield* processTable;
             const startedBefore = descendantsOf(serverPid, before);
-            // The engine is the `t3.exe` the server started whose parent is no `t3.exe` itself.
-            const t3 = new Set(running(before, "t3.exe").filter((pid) => startedBefore.has(pid)));
-            const [engine, ...others] = before
-              .filter(({ pid, parent }) => t3.has(pid) && !t3.has(parent))
-              .map(({ pid }) => pid);
-            if (engine === undefined || others.length > 0)
-              return yield* Effect.die("the server does not run exactly one engine");
+            const engine = yield* engineIn(before);
             const harnesses = running(before, marker);
             assert.isNotEmpty(harnesses, "the stand-in harness does not run");
 
@@ -279,6 +285,7 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
             yield* turn;
 
             const after = yield* processTable;
+            const engineAfter = yield* engineIn(after);
             const started = new Set([...startedBefore, ...descendantsOf(serverPid, after)]);
             const harnessesAfter = running(after, marker);
             assert.isNotEmpty(harnessesAfter, "the engine started again runs no stand-in harness");
@@ -293,6 +300,8 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
               }),
             );
             assert.strictEqual(code, 0, output);
+            // An update snapshots the data once the server has exited: its engine is gone by then.
+            assert.isFalse(isRunning(engineAfter), "the server exited before its engine");
             assert.deepStrictEqual(yield* leftRunning([...started, ...harnessesAfter]), []);
             const holdsHome = (yield* processTable).filter(
               ({ commandLine }) =>
