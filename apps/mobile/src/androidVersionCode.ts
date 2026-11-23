@@ -83,7 +83,9 @@ export const androidVersionCode = (version: string): number => {
       throw new Error(
         `Version ${version} has no Android version code: a release candidate goes up to rc.${MAX_RC}.`,
       );
-    return x * 1_000_000 + y * 10_000 + z * 100 + (rc === undefined ? FIRST_FORMULA_RELEASE : Number(rc));
+    return (
+      x * 1_000_000 + y * 10_000 + z * 100 + (rc === undefined ? FIRST_FORMULA_RELEASE : Number(rc))
+    );
   }
 
   const nightly = day === undefined ? undefined : daysToNightly(day);
@@ -100,7 +102,6 @@ export const androidVersionCode = (version: string): number => {
     throw new Error(
       `Version ${version} has no Android version code: the major version goes up to ${MAX_MAJOR}, the minor and the patch up to ${MAX_MINOR_OR_PATCH}, and a release candidate up to rc.${MAX_RC}.`,
     );
-  const stage =
-    nightly !== undefined ? nightly + 1 : rc !== undefined ? RC + Number(rc) : RELEASE;
+  const stage = nightly !== undefined ? nightly + 1 : rc !== undefined ? RC + Number(rc) : RELEASE;
   return x * 100_000_000 + y * 1_000_000 + z * 10_000 + stage;
 };

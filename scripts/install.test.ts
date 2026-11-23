@@ -39,8 +39,7 @@ const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(byt
 const keyPair = () => {
   const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ed25519");
   return {
-    sign: (bytes: Uint8Array) =>
-      `${NodeCrypto.sign(null, bytes, privateKey).toString("base64")}\n`,
+    sign: (bytes: Uint8Array) => `${NodeCrypto.sign(null, bytes, privateKey).toString("base64")}\n`,
     publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
   };
 };
@@ -126,19 +125,15 @@ const install = (
 ) => {
   const home = folder("j3-install-home-");
   return new Promise<{ code: number | null; output: string; home: string }>((resolve) => {
-    const child = NodeChildProcess.spawn(
-      "sh",
-      [SCRIPT, "--version", VERSION, "--no-service"],
-      {
-        env: {
-          PATH: searchPath(path.left ?? [], path.replaced ?? {}),
-          HOME: home,
-          LANG: "C.UTF-8",
-          ...(url === undefined ? {} : { J3_RELEASE_BASE_URL: url }),
-          ...env,
-        },
+    const child = NodeChildProcess.spawn("sh", [SCRIPT, "--version", VERSION, "--no-service"], {
+      env: {
+        PATH: searchPath(path.left ?? [], path.replaced ?? {}),
+        HOME: home,
+        LANG: "C.UTF-8",
+        ...(url === undefined ? {} : { J3_RELEASE_BASE_URL: url }),
+        ...env,
       },
-    );
+    });
     let output = "";
     child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
