@@ -19,6 +19,8 @@ import * as Schema from "effect/Schema";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { BrowserBridge, type ViewerOutput } from "../src/Browser.ts";
 import { Engine, type EngineOptions } from "../src/Engine.ts";
@@ -30,7 +32,7 @@ import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
 import { threadIdFor } from "../src/t3/Keys.ts";
 import { pin } from "../src/t3/Pin.ts";
-import { makePrivateFiles } from "../src/t3/PrivateFiles.ts";
+import { engineFolders, makePrivateFiles } from "../src/t3/PrivateFiles.ts";
 import { instanceIdFor } from "../src/t3/Provision.ts";
 import { layer as engineLayer } from "../src/t3/T3Engine.ts";
 import { workInShell } from "../src/t3/Translate.ts";
@@ -337,7 +339,68 @@ const testPage = Effect.acquireRelease(
   ({ server }) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
 );
 
+/** The sessions labelled "J3 Bots" the engine CLI lists for the data directory `home`. */
+const j3Sessions = Effect.fnUntraced(function* (executable: string, home: string) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const listed = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(executable, ["auth", "session", "list", "--base-dir", home, "--json"]),
+      );
+      return yield* handle.stdout.pipe(Stream.decodeText(), Stream.mkString);
+    }),
+  );
+  const sessions = yield* Schema.decodeEffect(
+    Schema.fromJsonString(
+      Schema.Array(
+        Schema.Struct({
+          sessionId: Schema.String,
+          client: Schema.optionalKey(Schema.Struct({ label: Schema.optionalKey(Schema.String) })),
+        }),
+      ),
+    ),
+  )(listed);
+  return sessions.filter((session) => session.client?.label === "J3 Bots");
+});
+
 describe("Engine conformance, real engine only", () => {
+  it.live(
+    "revokes the token an earlier J3 Bots minted once it mints one with the browser scope",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { home: benchHome } = yield* paths;
+        const files = yield* makePrivateFiles(() => Effect.succeed(true));
+        const executable = yield* ensureInstalled({
+          home: benchHome,
+          platform: NodeProcess.platform,
+          arch: NodeProcess.arch,
+          sha256: pin.sha256,
+          files,
+        });
+        // A data directory of its own, with no engine running on it.
+        const home = yield* fs.makeTempDirectoryScoped();
+        yield* ensureCredential({ executable, home, files });
+        const first = yield* j3Sessions(executable, home);
+        assert.strictEqual(first.length, 1);
+
+        // As J3 Bots before 0.4 left it: no scopes recorded, so it lacks `preview:operate`.
+        const stored = path.join(engineFolders(path, home).j3, "credential.json");
+        const Unscoped = Schema.fromJsonString(
+          Schema.Struct({ token: Schema.String, expiresAt: Schema.String }),
+        );
+        const unscoped = yield* Schema.decodeEffect(Unscoped)(yield* fs.readFileString(stored));
+        yield* files.write(stored, yield* Schema.encodeEffect(Unscoped)(unscoped));
+        yield* ensureCredential({ executable, home, files });
+
+        const after = yield* j3Sessions(executable, home);
+        assert.strictEqual(after.length, 1);
+        assert.notStrictEqual(after[0]?.sessionId, first[0]?.sessionId);
+      }).pipe(Effect.scoped, Effect.provide([platform, SecureRandom.layerWebCrypto])),
+    { timeout: 120_000 },
+  );
+
   it.live(
     "reads a settled thread's pending background work from its shell",
     () =>

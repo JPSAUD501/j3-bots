@@ -81,6 +81,8 @@ This is a deployment recommendation, not something J3 Bots enforces. `j3-bots do
 
 - The engine listens on loopback only.
 - J3 Bots' engine token carries `orchestration:operate`, which can start a full-access agent. The engine's own CLI mints it, the server keeps it in `<J3_HOME>/engine/j3/credential.json` (mode 0600, inside the private home), never writes it to a log, and replaces it before it expires. A backup of the home contains it.
+- The token also carries `preview:operate`, without which the engine drops what a person does in a tab. Whoever holds the token can open a viewer on any tab of the engine's browser, take it from the bot that drives it, and click, type, go to an address and answer its dialogs, as that browser, with its sign-ins. Any process of the server's user can read the file, a bot's shell included ([Trust model](#trust-model)), so a misled bot could drive another bot's tabs that way. That adds little to what such a process already reaches: `orchestration:operate`, the database and the admin channel.
+- When the engine starts with a stored token that lacks a scope or is due for renewal, the adapter mints a new one and revokes every older session J3 Bots minted (`t3 auth session revoke`, matched by the label it mints with). So the token an earlier J3 Bots minted without `preview:operate` stops working at once. A token replaced while the engine runs, on renewal or after the engine refused it, is not revoked, because revoking it could cut connections that still use it: it expires within two days, or the engine already refuses it.
 - Bots receive no engine credential from J3 Bots. Their sessions get the engine's own per-session MCP token, scoped to their thread, as T3 Code provides to any agent it runs.
 
 ## J3 Bots' own surface

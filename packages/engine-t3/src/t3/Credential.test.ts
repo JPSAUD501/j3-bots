@@ -17,25 +17,51 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { checkAccess, ensureCredential } from "./Credential.ts";
 import { engineFolders, makePrivateFiles } from "./PrivateFiles.ts";
 
+/** A session the engine CLI lists: its id and the label it was issued with. */
+interface ListedSession {
+  readonly sessionId: string;
+  readonly label?: string;
+}
+
 /**
- * An engine CLI that mints `token` on every `auth session issue`, and the
+ * An engine CLI that mints `token` on every `auth session issue`, lists
+ * `sessions` and the ones it minted, and revokes what it is asked to; and the
  * argument lists it was started with.
  */
-const mintingCli = (token: string) => {
+const mintingCli = (token: string, sessions: ReadonlyArray<ListedSession> = []) => {
   const calls: Array<ReadonlyArray<string>> = [];
+  const listed = [...sessions];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.sync(() => {
-      if (ChildProcess.isStandardCommand(command)) {
-        calls.push(command.args.map((word) => (typeof word === "string" ? word : "<redacted>")));
-      }
-      const issued = JSON.stringify({ token, expiresAt: "2099-01-01T00:00:00.000Z" });
+      const args = ChildProcess.isStandardCommand(command)
+        ? command.args.map((word) => (typeof word === "string" ? word : "<redacted>"))
+        : [];
+      calls.push(args);
+      const answer = (() => {
+        switch (args[2]) {
+          case "issue": {
+            const sessionId = `minted-${listed.length}`;
+            listed.push({ sessionId, label: "J3 Bots" });
+            return JSON.stringify({ sessionId, token, expiresAt: "2099-01-01T00:00:00.000Z" });
+          }
+          case "list":
+            return JSON.stringify(
+              listed.map(({ sessionId, label }) => ({
+                sessionId,
+                client: label === undefined ? { deviceType: "bot" } : { label, deviceType: "bot" },
+              })),
+            );
+          default:
+            return "";
+        }
+      })();
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(4242),
         exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         stdin: Sink.drain,
-        stdout: Stream.make(new TextEncoder().encode(issued)),
+        stdout: Stream.make(new TextEncoder().encode(answer)),
         stderr: Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
@@ -44,7 +70,9 @@ const mintingCli = (token: string) => {
       });
     }),
   );
-  return { calls, spawner };
+  /** The sessions the adapter revoked, in order. */
+  const revoked = () => calls.filter((args) => args[2] === "revoke").map((args) => args.at(-1));
+  return { calls, spawner, revoked };
 };
 
 /** Mints with `cli` against a fresh engine home whose stored credential is `stored`. */
@@ -77,11 +105,22 @@ describe("ensureCredential", () => {
         expiresAt: yield* farFromExpiry,
       });
       assert.strictEqual(Redacted.value(credential.token), "fresh");
-      assert.strictEqual(cli.calls.length, 1);
-      const args = cli.calls[0] ?? [];
+      const args = cli.calls.find((each) => each[2] === "issue") ?? [];
       assert.isTrue(
         args.some((word, index) => word === "--scope" && args[index + 1] === "preview:operate"),
       );
+    }),
+  );
+
+  it.effect("revokes the tokens J3 Bots minted before a new one, and no one else's", () =>
+    Effect.gen(function* () {
+      const cli = mintingCli("fresh", [
+        { sessionId: "older", label: "J3 Bots" },
+        { sessionId: "operator", label: "Laptop" },
+        { sessionId: "unlabelled" },
+      ]);
+      yield* ensureWith(cli, { token: "older", expiresAt: yield* farFromExpiry });
+      assert.deepStrictEqual(cli.revoked(), ["older"]);
     }),
   );
 
