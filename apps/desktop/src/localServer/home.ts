@@ -86,8 +86,15 @@ export const checkHome = Effect.fn("LocalHome.checkHome")(function* (
 /** Where the app's own server starts looking for free ports: clear of the command line's 3737–3739. */
 const FIRST_PORT = 3747;
 const LAST_PORT = 65535;
-/** The addresses a port must be free on, as T3 Code's desktop checks its own. */
-const BIND_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
+/**
+ * Where a port must be free: loopback, the only address the server listens
+ * on. A listen on the wildcard addresses would make Windows ask the operator
+ * to let the app through its firewall, for a port only this computer uses.
+ * On Linux a program on the wildcard address takes the port on loopback too;
+ * on Windows and macOS it does not stop a listen on loopback alone, which is
+ * all the server makes (**Assumed** for macOS).
+ */
+const LOOPBACK = "127.0.0.1";
 
 /** Whether `port` is free on `host`: a listen there succeeds. An address this system lacks counts as free. */
 const freeOn = (host: string, port: number) =>
@@ -102,11 +109,8 @@ const freeOn = (host: string, port: number) =>
     return Effect.sync(() => server.close());
   });
 
-/** Whether `port` is free on every address of `BIND_HOSTS`. */
-export const isFree = (port: number) =>
-  Effect.forEach(BIND_HOSTS, (host) => freeOn(host, port)).pipe(
-    Effect.map((free) => free.every(Boolean)),
-  );
+/** Whether `port` is free on loopback. */
+export const isFree = (port: number) => freeOn(LOOPBACK, port);
 
 /** No three free ports were found from `FIRST_PORT` up. */
 export class NoFreePorts extends Schema.TaggedError<NoFreePorts>()("NoFreePorts", {}) {
@@ -116,11 +120,8 @@ export class NoFreePorts extends Schema.TaggedError<NoFreePorts>()("NoFreePorts"
 }
 
 /**
- * Three ports free on every address, the lowest from `FIRST_PORT` up, for
- * the server's clients, its tool endpoint and its engine. Scanning on every
- * address and not only loopback follows T3 Code's desktop (MIT; read at
- * db51b671, `apps/desktop/src/app/DesktopApp.ts`): a port taken on the
- * wildcard address is taken for a later `lan` listen too.
+ * Three ports free on loopback, the lowest from `FIRST_PORT` up, for the
+ * server's clients, its tool endpoint and its engine.
  */
 export const choosePorts = Effect.fn("LocalHome.choosePorts")(function* (
   free: (port: number) => Effect.Effect<boolean> = isFree,
@@ -160,13 +161,23 @@ const encodeWrittenConfig = Schema.encodeEffect(Schema.fromJsonString(WrittenCon
 /** The port the server's own defaults give clients when `config.json` names none. */
 const DEFAULT_PORT = 3737;
 
-/** The home's `config.json` exists and its client port cannot be read. */
+/**
+ * The home's `config.json` is there, and its client port cannot be read: the
+ * file could not be opened (`unreadable`, with the system's reason), or it is
+ * not a configuration J3 Bots reads (`invalid`). Either way it stays as it is.
+ */
 class HomeConfigUnreadable extends Schema.TaggedError<HomeConfigUnreadable>()(
   "HomeConfigUnreadable",
-  { file: Schema.String },
+  {
+    file: Schema.String,
+    reason: Schema.Literals(["unreadable", "invalid"]),
+    detail: Schema.optionalKey(Schema.String),
+  },
 ) {
   override get message(): string {
-    return `${this.file} is not a configuration J3 Bots can read. Repair it, or delete it to have the app write it again.`;
+    return this.reason === "unreadable"
+      ? `J3 Bots cannot read ${this.file}${this.detail === undefined ? "" : ` (${this.detail})`}. Give your user read access to it, or delete it to have the app write it again.`
+      : `${this.file} is not a configuration J3 Bots can read. Repair it, or delete it to have the app write it again.`;
   }
 }
 
@@ -186,10 +197,21 @@ export const prepareHome = Effect.fn("LocalHome.prepareHome")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const file = path.join(home, "config.json");
-  const text = yield* fs.readFileString(file).pipe(Effect.option);
+  // Only a file that is not there is written; one that cannot be read is
+  // the operator's, and refused, never replaced.
+  const text = yield* fs.readFileString(file).pipe(
+    Effect.asSome,
+    Effect.catch((error) =>
+      error.reason._tag === "NotFound"
+        ? Effect.succeedNone
+        : Effect.fail(
+            new HomeConfigUnreadable({ file, reason: "unreadable", detail: error.reason._tag }),
+          ),
+    ),
+  );
   if (Option.isSome(text)) {
     const config = decodeHomeConfig(text.value);
-    if (Option.isNone(config)) return yield* new HomeConfigUnreadable({ file });
+    if (Option.isNone(config)) return yield* new HomeConfigUnreadable({ file, reason: "invalid" });
     return config.value.port ?? DEFAULT_PORT;
   }
   const chosen = yield* ports;

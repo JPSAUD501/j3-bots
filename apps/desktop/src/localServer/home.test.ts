@@ -156,4 +156,33 @@ describe("preparing the server's config.json", () => {
       assert.strictEqual(yield* fs.readFileString(`${home}/config.json`), "{ port: 37");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  // Root reads a file of any mode, so the refusal cannot be seen as root.
+  it.effect.skipIf(process.getuid?.() === 0)(
+    "refuses a config.json this user may not read, and leaves it as it was",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* freshFolder;
+        const file = `${home}/config.json`;
+        yield* fs.writeFileString(file, '{"port": 3790}');
+        yield* fs.chmod(file, 0o000);
+        const error = yield* Effect.flip(Home.prepareHome(home, Effect.die("not chosen")));
+        assert.strictEqual(error._tag, "HomeConfigUnreadable");
+        assert.include(error.message, "cannot read");
+        yield* fs.chmod(file, 0o600);
+        assert.strictEqual(yield* fs.readFileString(file), '{"port": 3790}');
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses a config.json that cannot be read as a file, rather than replace it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* freshFolder;
+      yield* fs.makeDirectory(`${home}/config.json`);
+      const error = yield* Effect.flip(Home.prepareHome(home, Effect.die("not chosen")));
+      assert.strictEqual(error._tag, "HomeConfigUnreadable");
+      assert.isTrue((yield* fs.stat(`${home}/config.json`)).type === "Directory");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
