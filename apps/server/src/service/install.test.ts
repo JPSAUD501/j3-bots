@@ -112,16 +112,18 @@ const installOn = (machine: Machine) =>
       Layer.succeed(
         AdminClient,
         AdminClient.of({
-          status: (socket) =>
+          status: () =>
             calls.length > 0
               ? Effect.succeed(machine.server)
               : machine.before === "unreadable"
-                ? Effect.fail(new AdminRequestFailed({ path: socket, cause: "unreadable" }))
+                ? Effect.fail(new AdminRequestFailed({ path: "/status", cause: "unreadable" }))
                 : Effect.succeed(machine.before),
           startPairing: () => Effect.die("install never pairs"),
           connectProviders: () => Effect.die("install never connects providers"),
           readiness: () => Effect.die("install never waits for an update"),
           runningWork: () => Effect.die("install never asks for running work"),
+          localDevice: () => Effect.die("install never pairs a local device"),
+          shutdown: () => Effect.die("install never stops the server"),
         }),
       ),
       Layer.succeed(

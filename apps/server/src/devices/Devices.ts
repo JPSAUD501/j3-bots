@@ -91,6 +91,12 @@ export class Devices extends Context.Service<
       readonly code: PairingCode;
       readonly name: string;
     }) => Effect.Effect<PairResult, Invalid | RateLimited>;
+    /**
+     * Pairs a device with no code, as `pair` does once a code matched: a new
+     * row and token, of which only the hash is stored. Only the admin channel
+     * calls it, which only the server's own user can reach.
+     */
+    readonly mint: (name: string) => Effect.Effect<PairResult>;
     /** Until when pairing is locked after failed attempts, or none while it is open. */
     readonly lockedUntil: Effect.Effect<Option.Option<DateTime.Utc>>;
     /** Lifts a lock and forgets the failed attempts counted towards one. */
@@ -162,6 +168,20 @@ export const layer = Layer.effect(
       return { code: PairingCode.make(code), expiresAt: DateTime.makeUnsafe(expiresAt) };
     });
 
+    const mint = Effect.fn("Devices.mint")(function* (name: string) {
+      const token = DeviceToken.make(Base64Url.encode(yield* random.randomBytes(32)));
+      const tokenHash = yield* hashDeviceToken(token).pipe(
+        Effect.provideService(Digest.Digest, digest),
+      );
+      const deviceId = DeviceId.make(yield* ids.make("device"));
+      const at = timeText(yield* DateTime.now);
+      yield* sql`
+        INSERT INTO devices (id, name, token_hash, paired_at)
+        VALUES (${deviceId}, ${name}, ${tokenHash}, ${at})
+      `.pipe(Effect.orDie);
+      return { deviceId, token } satisfies PairResult;
+    });
+
     const pair = Effect.fn("Devices.pair")(function* (input: {
       readonly code: PairingCode;
       readonly name: string;
@@ -186,16 +206,7 @@ export const layer = Layer.effect(
         return yield* new Invalid({ reason: "pairing-code" });
       }
       codes.delete(matched);
-      const token = DeviceToken.make(Base64Url.encode(yield* random.randomBytes(32)));
-      const tokenHash = yield* hashDeviceToken(token).pipe(
-        Effect.provideService(Digest.Digest, digest),
-      );
-      const deviceId = DeviceId.make(yield* ids.make("device"));
-      yield* sql`
-        INSERT INTO devices (id, name, token_hash, paired_at)
-        VALUES (${deviceId}, ${input.name}, ${tokenHash}, ${timeText(DateTime.makeUnsafe(now))})
-      `.pipe(Effect.orDie);
-      return { deviceId, token } satisfies PairResult;
+      return yield* mint(input.name);
     });
 
     const lockedUntilNow = Clock.currentTimeMillis.pipe(
@@ -333,6 +344,7 @@ export const layer = Layer.effect(
     return Devices.of({
       startPairing,
       pair,
+      mint,
       lockedUntil: lockedUntilNow,
       unlock,
       list,

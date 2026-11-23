@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- NodeHttpServer takes a factory for the Node HTTP server it wraps.
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { PairResult } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -15,29 +16,40 @@ import * as HttpServer from "effect/http/HttpServer";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import packageJson from "../../package.json" with { type: "json" };
+import { DeviceAuth } from "../auth/DeviceAuth.ts";
 import { ServerConfig } from "../config.ts";
 import { Devices } from "../devices/Devices.ts";
 import { EngineState } from "../engine/EngineState.ts";
 import { Listener } from "../listener.ts";
 import * as Ports from "../system/Ports.ts";
+import { ServerStop } from "../ServerStop.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
 import { WebClientStatus } from "../web/WebClient.ts";
+import * as Pipe from "./pipe.ts";
 import {
   ADMIN_PATHS,
   AdminStatus,
+  LocalDeviceRequest,
   PairingOffer,
   ProviderConnectionOutcome,
   ProviderConnectionRequest,
   RunningWorkReply,
 } from "./protocol.ts";
 
-// The admin socket: how `j3-bots pair`, `j3-bots doctor` and
-// `j3-bots provider connect` reach the running server. A Unix socket in the
-// home, which only the operator's user can open, so it needs no credential.
-// Nothing on the network reaches it. The server binds it only while it holds
-// the home (`home/Home.ts`), which also removed any socket a stopped server
-// left there.
+// The admin channel: how `j3-bots pair`, `j3-bots doctor` and
+// `j3-bots provider connect` reach the running server, and how the desktop app
+// gets the device it uses and stops the server it runs. It needs no
+// credential, because only the server's own user can reach it, two ways that
+// serve the same routes:
+//
+// - the admin socket, a Unix socket in the home, which only that user can
+//   open. The server binds it only while it holds the home (`home/Home.ts`),
+//   which also removed any socket a stopped server left there;
+// - with `--admin-fd`, a pipe inherited from the process that started the
+//   server, which only that process holds (`pipe.ts`).
+//
+// Nothing on the network reaches either.
 
 /**
  * A code for a new device, or while pairing is locked, until when. The answer
@@ -86,6 +98,37 @@ const routes = Layer.mergeAll(
     }),
   ),
   HttpRouter.add("POST", ADMIN_PATHS.pairing, offerPairing),
+  HttpRouter.add(
+    "POST",
+    ADMIN_PATHS.localDevice,
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.schemaBodyJson(LocalDeviceRequest).pipe(
+        Effect.option,
+      );
+      if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
+      const { name, replaces } = request.value;
+      const mint = (yield* Devices).mint(name);
+      // The answer holds the token, and the request log records only the
+      // method, path and status.
+      const paired =
+        replaces === null ? yield* mint : yield* (yield* DeviceAuth).revokeWith(replaces, mint);
+      yield* Effect.logInfo("Paired a device through the admin channel").pipe(
+        Effect.annotateLogs({ deviceId: paired.deviceId, replaces }),
+      );
+      return yield* HttpServerResponse.schemaJson(PairResult)(paired).pipe(Effect.orDie);
+    }),
+  ),
+  HttpRouter.add(
+    "POST",
+    ADMIN_PATHS.shutdown,
+    Effect.gen(function* () {
+      yield* Effect.logInfo("Stopping, as asked on the admin channel");
+      // A stop releases the admin channels before the rest of the server, and
+      // each answers the requests in progress, this one included, before it closes.
+      yield* (yield* ServerStop).request;
+      return HttpServerResponse.empty({ status: 202 });
+    }),
+  ),
   HttpRouter.add(
     "POST",
     ADMIN_PATHS.unlockPairing,
@@ -167,3 +210,10 @@ export const layer: Layer.Layer<
   Layer.Error<typeof served>,
   Layer.Services<typeof served>
 > = served;
+
+/**
+ * The same routes, served on the pipe the server inherited at `fd` from the
+ * process that started it (`pipe.ts`).
+ */
+export const pipeLayer = (fd: number) =>
+  Ports.serve(routes, Pipe.server(fd), { logAddress: false });

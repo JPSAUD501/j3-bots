@@ -156,6 +156,8 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
           connectProviders: () => Effect.die("uninstall never connects providers"),
           readiness: () => Effect.die("uninstall never waits for an update"),
           runningWork: () => Effect.die("uninstall never asks for running work"),
+          localDevice: () => Effect.die("uninstall never pairs a local device"),
+          shutdown: () => Effect.die("uninstall never stops the server"),
         }),
       ),
       Layer.succeed(
