@@ -40,6 +40,8 @@ export const StatusReply = Schema.Struct({
    * the status is asked; absent from a release from before them.
    */
   origins: Schema.optionalKey(Schema.Array(ServerOrigin)),
+  /** The `publicOrigin` it runs with, which `origins` lists first; absent when none is set. */
+  publicOrigin: Schema.optionalKey(ServerOrigin),
   /** Its engine's state, by name only, so a newer release's states read too. */
   engine: Schema.Struct({ state: Schema.Struct({ _tag: Schema.String }) }),
 });

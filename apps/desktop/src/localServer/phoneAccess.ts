@@ -12,7 +12,9 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { isPrivateAddress } from "@j3-bots/server/network";
 import { DesktopSettings } from "../settings.ts";
+import type { StatusReply } from "./adminChannel.ts";
 import type { Supervisor } from "./supervisor.ts";
 
 // Phones on this computer's network reaching the server it runs ("Usar pelo
@@ -28,16 +30,23 @@ import type { Supervisor } from "./supervisor.ts";
 //   127.0.0.1, with what the server said, until the operator tries again.
 //   The app is never left without its server.
 //
+// Each time the server answers, where it listens is compared with where the
+// choice puts it now, and a server that listens elsewhere, as one an earlier
+// run of the app left running, or one launched while the choice changed, is
+// started again where it should.
+//
 // Changing it starts the server again, which stops the work bots have
-// running: the operator is asked first while any has. Devices paired over
-// the network stay paired while it is off; they reach the server again once
-// it is back on.
+// running: the operator is asked first while any has, or while the server
+// cannot say. The move is one step with the changes of where the bots live
+// (`whileLocal`), so the choice is never kept, nor the server moved, once
+// they run elsewhere. Devices paired over the network stay paired while it is
+// off; they reach the server again once it is back on.
 //
 // The network is read at each start of the server, at each change of the
 // choice, and again (only the addresses to show) as the page asks and as the
 // system wakes. Nothing watches it in between: a public address that appears
 // while the server listens on `lan` is refused by the server itself, which
-// checks the address each connection reached.
+// checks the address each new connection reached, while it keeps listening.
 
 /** Where the server listens: every IPv4 interface (`lan`), or this computer alone. */
 export type ListenHost = "lan" | "127.0.0.1";
@@ -87,6 +96,24 @@ const phoneAccessOf = (listening: Listening): PhoneAccess => {
 };
 
 const samePhoneAccess = Schema.toEquivalence(PhoneAccess);
+
+/** A plain-HTTP origin at a private, non-loopback IP address. */
+const isPrivateInterface = (origin: ServerOrigin): boolean => {
+  const url = new URL(origin);
+  const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
+  return url.protocol === "http:" && isPrivateAddress(host);
+};
+
+/**
+ * The origins a phone is given, best first: the server's own private
+ * interfaces alone. Its `publicOrigin`, which names a way in the operator set
+ * up for elsewhere, such as a proxy, is not one a phone on this network is
+ * sent to.
+ */
+const phoneOrigins = (status: StatusReply): ReadonlyArray<ServerOrigin> =>
+  pairingOrigins(status.origins ?? [])
+    .filter((origin) => origin !== status.publicOrigin && isPrivateInterface(origin))
+    .slice(0, 16);
 
 /**
  * What decides where each start of the server listens, made before the
@@ -159,21 +186,26 @@ export const listening = Effect.fn("PhoneAccess.listening")(function* (options: 
 
 export interface PhoneAccessOptions {
   readonly listening: PhoneListening;
-  readonly supervisor: Pick<Supervisor, "state" | "changes" | "ready" | "retry">;
+  readonly supervisor: Pick<Supervisor, "state" | "changes" | "ready" | "retry" | "stop" | "start">;
   /**
-   * Stops the server and starts it again, where it should listen now,
-   * while the bots still live on this computer.
+   * Runs `effect` one at a time with the changes of where the bots live,
+   * while they live on this computer; nothing, without running it, once they
+   * live elsewhere.
    */
-  readonly restart: Effect.Effect<void>;
+  readonly whileLocal: <A>(effect: Effect.Effect<A>) => Effect.Effect<Option.Option<A>>;
 }
+
+/** Bots with work running, as the server counts them; `null` when it could not say. */
+type RunningWork = number | null;
 
 /** Follows the server's starts, and turns phone access on and off, for as long as the scope lasts. */
 export const serve = Effect.fn("PhoneAccess.serve")(function* (options: PhoneAccessOptions) {
   const settings = yield* DesktopSettings;
   const scope = yield* Effect.scope;
   const { state, publicAddress } = options.listening;
-  const { supervisor } = options;
+  const { supervisor, whileLocal } = options;
   const oneAtATime = yield* Semaphore.make(1);
+  const restart = Effect.andThen(supervisor.stop, supervisor.start);
 
   /** The server, while it answers. */
   const answering = Effect.gen(function* () {
@@ -188,11 +220,36 @@ export const serve = Effect.fn("PhoneAccess.serve")(function* (options: PhoneAcc
     const status = yield* server.value.admin.status().pipe(Effect.option);
     if (Option.isNone(status)) return Option.none<ReadonlyArray<ServerOrigin> | null>();
     return Option.some(
-      status.value.listener.address === LOOPBACK
-        ? null
-        : pairingOrigins(status.value.origins ?? []).slice(0, 16),
+      status.value.listener.address === LOOPBACK ? null : phoneOrigins(status.value),
     );
   });
+
+  /** Where the server should listen now, as the next start would put it. */
+  const chosenHost: Effect.Effect<ListenHost> = Effect.gen(function* () {
+    const { phoneAccess } = yield* settings.get;
+    const { fellBack } = yield* SubscriptionRef.get(state);
+    if (!phoneAccess || Option.isSome(fellBack)) return LOOPBACK;
+    return Option.isNone(yield* publicAddress) ? ("lan" as const) : LOOPBACK;
+  });
+
+  /**
+   * Starts the server again where it should listen, when it answers
+   * elsewhere: checked again in the step itself, as a change of the choice
+   * may have moved it since.
+   */
+  const placeAgain = whileLocal(
+    Effect.gen(function* () {
+      const { host, lanPending } = yield* SubscriptionRef.get(state);
+      if ((yield* supervisor.state).state !== "ready" || lanPending || host === null) return;
+      const chosen = yield* chosenHost;
+      if (chosen === host) return;
+      yield* Effect.logInfo("The server listens elsewhere than chosen; restarting it", {
+        listens: host,
+        chosen,
+      });
+      yield* restart;
+    }),
+  );
 
   /** The server answered: where it listens, and the origins phones reach it at. */
   const answered = Effect.gen(function* () {
@@ -201,43 +258,54 @@ export const serve = Effect.fn("PhoneAccess.serve")(function* (options: PhoneAcc
     const status = yield* server.value.admin.status().pipe(Effect.option);
     if (Option.isNone(status)) return;
     const onLan = status.value.listener.address !== LOOPBACK;
-    const before = yield* SubscriptionRef.get(state);
-    const origins = onLan ? pairingOrigins(status.value.origins ?? []).slice(0, 16) : null;
-    yield* SubscriptionRef.set(state, {
-      ...before,
-      host: onLan ? "lan" : LOOPBACK,
+    const host: ListenHost = onLan ? "lan" : LOOPBACK;
+    yield* SubscriptionRef.update(state, (now) => ({
+      ...now,
+      host,
       lanPending: false,
-      origins,
-    });
-    // A server an earlier run of the app left running, and this one took
-    // over, may listen where the operator no longer wants it to: it is
-    // started again, where it should.
-    if (before.host === null) {
-      const wantsLan = before.on && Option.isNone(yield* publicAddress);
-      if (wantsLan !== onLan) {
-        yield* Effect.logInfo("The server taken over listens elsewhere than chosen; restarting it");
-        yield* options.restart.pipe(Effect.forkIn(scope));
-      }
-    }
+      origins: onLan ? phoneOrigins(status.value) : null,
+    }));
+    // A server an earlier run of the app left running, or one launched as the
+    // choice changed, which read it before it was kept, may listen where the
+    // operator no longer wants it to.
+    if ((yield* chosenHost) !== host) yield* placeAgain.pipe(Effect.forkIn(scope));
   });
 
-  /** The server stopped or failed before it answered: a start on `lan` falls back to 127.0.0.1. */
+  /**
+   * The server stopped or failed before it answered: a start on `lan` falls
+   * back to 127.0.0.1, and says why. A public address that appeared since the
+   * start, which the server refuses `lan` for, is that reason.
+   */
   const didNotAnswer = Effect.fn("PhoneAccess.didNotAnswer")(function* (
     reason: string | undefined,
   ) {
     const before = yield* SubscriptionRef.get(state);
     if (!before.lanPending) return;
-    const why = reason ?? "The server did not start on the network.";
-    yield* Effect.logWarning(
-      "The server did not start on the network; it starts on 127.0.0.1 instead",
-      why,
-    );
-    yield* SubscriptionRef.set(state, {
-      ...before,
-      lanPending: false,
-      fellBack: Option.some(why),
-      origins: null,
-    });
+    const exposed = yield* publicAddress;
+    if (Option.isSome(exposed)) {
+      yield* Effect.logWarning(
+        "This computer has a public address, so the server did not start on the network; it starts on 127.0.0.1 instead",
+        exposed.value,
+      );
+      yield* SubscriptionRef.update(state, (now) => ({
+        ...now,
+        lanPending: false,
+        publicAddress: true,
+        origins: null,
+      }));
+    } else {
+      const why = reason ?? "The server did not start on the network.";
+      yield* Effect.logWarning(
+        "The server did not start on the network; it starts on 127.0.0.1 instead",
+        why,
+      );
+      yield* SubscriptionRef.update(state, (now) => ({
+        ...now,
+        lanPending: false,
+        fellBack: Option.some(why),
+        origins: null,
+      }));
+    }
     yield* supervisor.retry;
   });
 
@@ -276,51 +344,86 @@ export const serve = Effect.fn("PhoneAccess.serve")(function* (options: PhoneAcc
     return yield* current;
   });
 
+  /** The work bots have running, which a stop of the server stops: none while it does not answer. */
+  const runningWork: Effect.Effect<RunningWork> = answering.pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.succeed<RunningWork>(0),
+        onSome: (server) =>
+          server.admin.runningWork.pipe(
+            Effect.map((bots): RunningWork => bots),
+            // A server that cannot say may have work running: the operator is asked.
+            Effect.catch((error) =>
+              Effect.logWarning("Asking the server for its running work failed", error).pipe(
+                Effect.as<RunningWork>(null),
+              ),
+            ),
+          ),
+      }),
+    ),
+  );
+
+  /** A server that runs moves when it listens elsewhere than `target`; one that is stopped or failed starts there. */
+  const movesTo = Effect.fn("PhoneAccess.movesTo")(function* (target: ListenHost) {
+    const server = (yield* supervisor.state).state;
+    if (server === "stopped" || server === "failed") return false;
+    return target !== (yield* SubscriptionRef.get(state)).host;
+  });
+
   const set = (request: PhoneAccessRequest): Effect.Effect<PhoneAccessChange> =>
     oneAtATime.withPermits(1)(
       Effect.gen(function* () {
-        const before = yield* SubscriptionRef.get(state);
-        const { mode } = yield* settings.get;
-        const exposed = request.on ? Option.isSome(yield* publicAddress) : false;
+        const exposed = request.on && Option.isSome(yield* publicAddress);
+        // Asked on again after it fell back, it tries the network again.
         const target: ListenHost = request.on && !exposed ? "lan" : LOOPBACK;
-        const server = (yield* supervisor.state).state;
-        // A server that runs moves when it listens elsewhere than it should:
-        // asked on again after it fell back, it tries the network again. One
-        // that is stopped or failed starts where the choice puts it, once it
-        // starts again.
-        const moves =
-          mode === "local" && server !== "stopped" && server !== "failed" && target !== before.host;
-        if (moves && !request.stopWork) {
-          const bots = yield* answering.pipe(
-            Effect.flatMap(
-              Option.match({
-                onNone: () => Effect.succeed(0),
-                onSome: (server) => server.admin.runningWork.pipe(Effect.orElseSucceed(() => 0)),
-              }),
-            ),
+        const notSaved = () =>
+          SubscriptionRef.get(state).pipe(
+            Effect.map((now) => ({ _tag: "not-saved", access: phoneAccessOf(now) }) as const),
           );
-          if (bots > 0) return { _tag: "work-running", bots } as const;
+        // Asked first outside the step below, which waits on the changes of
+        // where the bots live: asking the operator never waits on one.
+        if (!request.stopWork && (yield* movesTo(target))) {
+          const bots = yield* runningWork;
+          if (bots !== 0) return { _tag: "work-running", bots } as const;
         }
-        const saved = yield* settings
-          .update((now) => ({ ...now, phoneAccess: request.on }))
-          .pipe(
-            Effect.as(true),
-            Effect.catch((error) =>
-              Effect.logWarning("Saving phone access failed", error).pipe(Effect.as(false)),
-            ),
-          );
-        if (!saved) return { _tag: "not-saved", access: phoneAccessOf(before) } as const;
-        yield* SubscriptionRef.set(state, {
-          ...before,
-          on: request.on,
-          fellBack: Option.none(),
-          publicAddress: exposed && target === before.host,
-          origins: moves ? null : before.origins,
-        });
-        if (moves) yield* options.restart.pipe(Effect.forkIn(scope));
-        // Where it stays, the addresses are read again: asking again is how
-        // the operator checks a network they just joined.
-        return { _tag: "changed", access: moves ? yield* current : yield* refresh } as const;
+        const step = yield* whileLocal(
+          Effect.gen(function* () {
+            // Asked again right before the stop: work may have started since.
+            if (!request.stopWork && (yield* movesTo(target))) {
+              const bots = yield* runningWork;
+              if (bots !== 0) return { _tag: "work-running", bots } as const;
+            }
+            const saved = yield* settings
+              .update((now) => ({ ...now, phoneAccess: request.on }))
+              .pipe(
+                Effect.as(true),
+                Effect.catch((error) =>
+                  Effect.logWarning("Saving phone access failed", error).pipe(Effect.as(false)),
+                ),
+              );
+            if (!saved) return yield* notSaved();
+            yield* SubscriptionRef.update(state, (now) => ({
+              ...now,
+              on: request.on,
+              fellBack: Option.none(),
+              publicAddress: exposed,
+            }));
+            // Where it listens is read again once the choice is kept: a start
+            // under way may have put it elsewhere meanwhile, having read the
+            // choice before. Such a server has only just started, so has no
+            // work to stop.
+            if (yield* movesTo(target)) {
+              yield* SubscriptionRef.update(state, (now) => ({ ...now, origins: null }));
+              yield* restart;
+              return { _tag: "changed", access: yield* current } as const;
+            }
+            // Where it stays, the addresses are read again: asking again is how
+            // the operator checks a network they just joined.
+            return { _tag: "changed", access: yield* refresh } as const;
+          }),
+        );
+        // The bots live elsewhere now: nothing is kept.
+        return Option.isSome(step) ? step.value : yield* notSaved();
       }),
     );
 

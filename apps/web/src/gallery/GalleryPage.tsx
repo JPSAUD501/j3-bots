@@ -2605,12 +2605,14 @@ const PHONE_ON: PhoneAccess = { on: true, origins: [LAN_ORIGIN] };
 
 /**
  * Phone access as the gallery fakes it: it starts at `access`; turning it on
- * or off asks first, as two bots have work running, then holds at once.
+ * or off asks first, as `bots` bots have work running (`null`: the server
+ * could not say), then holds at once.
  */
 const galleryPhone = (
   access: PhoneAccess,
   system: DesktopSystem,
   pairingLink: DesktopPhone["pairingLink"] = () => Promise.resolve({ _tag: "unavailable" }),
+  bots: number | null = 2,
 ): DesktopPhone => ({
   access,
   follow: () => () => {},
@@ -2619,7 +2621,7 @@ const galleryPhone = (
     Promise.resolve(
       stopWork
         ? { _tag: "changed", access: on ? PHONE_ON : PHONE_OFF }
-        : { _tag: "work-running", bots: 2 },
+        : { _tag: "work-running", bots },
     ),
   pairingLink,
 });
@@ -2816,14 +2818,16 @@ function PhoneSetting({
   access,
   system = "linux",
   pairingLink,
+  bots,
 }: {
   access: PhoneAccess;
   system?: DesktopSystem;
   pairingLink?: DesktopPhone["pairingLink"];
+  bots?: number | null;
 }) {
   return (
     <div className="p-4">
-      <PhoneAccessSetting phone={galleryPhone(access, system, pairingLink)} />
+      <PhoneAccessSetting phone={galleryPhone(access, system, pairingLink, bots)} />
     </div>
   );
 }
@@ -2843,6 +2847,13 @@ function PhoneAccessSection() {
           height={300}
         >
           <PhoneSetting access={PHONE_OFF} />
+        </Frame>
+        <Frame
+          label="Off: turning it on asks first here, as the server could not say whether bots are working"
+          width={420}
+          height={300}
+        >
+          <PhoneSetting access={PHONE_OFF} bots={null} />
         </Frame>
         <Frame label="Turning on: the bots restart on the network" width={420} height={300}>
           <PhoneSetting access={{ on: true, origins: [] }} />

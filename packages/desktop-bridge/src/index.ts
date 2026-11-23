@@ -208,13 +208,17 @@ export type PhoneAccessRequest = typeof PhoneAccessRequest.Type;
 /**
  * How a `PhoneAccessRequest` ended: `changed`, and the server moves if it
  * must, which `access` follows (`onPhoneAccess`); `work-running`, nothing
- * changed, since `bots` bots have work running that the restart would stop
- * and the operator did not agree to it yet; `not-saved`, the choice could
- * not be kept, and nothing changed. `access` is what holds after it.
+ * changed, since `bots` bots have work running that the restart would stop,
+ * or, `null`, the server could not say whether any has, and the operator did
+ * not agree to it yet; `not-saved`, the choice could not be kept, as when the
+ * bots no longer live on this computer, and nothing changed. `access` is what
+ * holds after it.
  */
 export const PhoneAccessChange = Schema.Union([
   Schema.TaggedStruct("changed", { access: PhoneAccess }),
-  Schema.TaggedStruct("work-running", { bots: Schema.Int.check(Schema.isGreaterThan(0)) }),
+  Schema.TaggedStruct("work-running", {
+    bots: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
   Schema.TaggedStruct("not-saved", { access: PhoneAccess }),
 ]);
 export type PhoneAccessChange = typeof PhoneAccessChange.Type;

@@ -1176,6 +1176,8 @@ const sentences = {
     "Um bot está trabalhando. Isso reinicia os bots deste computador, e esse trabalho para.",
   "settings.phone.restart.body.other":
     "{count} bots estão trabalhando. Isso reinicia os bots deste computador, e o trabalho deles para.",
+  "settings.phone.restart.unknown":
+    "Os bots podem estar trabalhando: o J3 Bots não conseguiu verificar. Isso reinicia os bots deste computador, e qualquer trabalho deles para.",
   "settings.phone.restart": "Reiniciar",
   "settings.phone.restart.cancel": "Agora não",
   "settings.phone.firewall.windows":

@@ -1158,6 +1158,8 @@ export const en = {
     "A bot is working. This restarts the bots on this computer, which stops that work.",
   "settings.phone.restart.body.other":
     "{count} bots are working. This restarts the bots on this computer, which stops their work.",
+  "settings.phone.restart.unknown":
+    "Your bots may be working: J3 Bots couldn’t check. This restarts the bots on this computer, which stops any work they have running.",
   "settings.phone.restart": "Restart",
   "settings.phone.restart.cancel": "Not now",
   "settings.phone.firewall.windows":

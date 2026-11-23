@@ -71,10 +71,14 @@ export function PhoneAccessSetting({ phone }: { readonly phone: DesktopPhone }) 
   /** What the switch shows while a change is under way. */
   const [shown, setShown] = useState<boolean | null>(null);
   const [failed, setFailed] = useState(false);
-  /** The change that waits for the operator's yes, as bots have work running. */
-  const [asking, setAsking] = useState<{ readonly on: boolean; readonly bots: number } | null>(
-    null,
-  );
+  /**
+   * The change that waits for the operator's yes, as bots have work running,
+   * or may have: `bots` is `null` when the server could not say.
+   */
+  const [asking, setAsking] = useState<{
+    readonly on: boolean;
+    readonly bots: number | null;
+  } | null>(null);
   const pending = shown !== null;
 
   const send = (on: boolean, stopWork: boolean) => {
@@ -154,7 +158,13 @@ export function PhoneAccessSetting({ phone }: { readonly phone: DesktopPhone }) 
           if (!open) setAsking(null);
         }}
         title={t("settings.phone.restart.title")}
-        body={asking === null ? "" : plural("settings.phone.restart.body", asking.bots)}
+        body={
+          asking === null
+            ? ""
+            : asking.bots === null
+              ? t("settings.phone.restart.unknown")
+              : plural("settings.phone.restart.body", asking.bots)
+        }
         cancel={t("settings.phone.restart.cancel")}
         confirm={t("settings.phone.restart")}
         onConfirm={() => {

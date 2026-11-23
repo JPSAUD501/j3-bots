@@ -7,6 +7,7 @@ import type {
   ServerOrigin,
 } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -202,12 +203,17 @@ export const make = Effect.fn("ServerChoice.make")(function* (
   /**
    * Runs `effect` while the bots run on this computer, one at a time with the
    * changes above: a change of where they run never comes between its steps.
+   * Nothing, without running it, while they run elsewhere.
    */
-  const whileLocal = <E, R>(effect: Effect.Effect<void, E, R>) =>
+  const whileLocal = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<Option.Option<A>, E, R> =>
     oneAtATime.withPermits(1)(
-      Effect.gen(function* () {
-        if ((yield* settings.get).mode === "local") yield* effect;
-      }),
+      settings.get.pipe(
+        Effect.flatMap(({ mode }) =>
+          mode === "local" ? Effect.asSome(effect) : Effect.succeedNone,
+        ),
+      ),
     );
 
   return { connect, forget, useThisComputer, connectToServerInstead, whileLocal } as const;

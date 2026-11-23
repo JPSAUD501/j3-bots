@@ -8,15 +8,15 @@ The desktop app's own server listens on `127.0.0.1` ([decision 0024](0024-the-lo
 
 ## Decision
 
-**Phone access is a choice the app keeps, and the server starts on `lan` while it is on.** The desktop settings keep `phoneAccess`, off by default. Each start the supervisor makes asks where to listen: `127.0.0.1` while it is off, `lan` while it is on. Changing the choice stops the server and starts it again through the same start path as every other start, an update's transition included. While bots have work running, the page asks before that restart, since it stops the work.
+**Phone access is a choice the app keeps, and the server starts on `lan` while it is on.** The desktop settings keep `phoneAccess`, off by default. Each start the supervisor makes asks where to listen: `127.0.0.1` while it is off, `lan` while it is on. Changing the choice stops the server and starts it again through the same start path as every other start, an update's transition included. While bots have work running, or the server cannot say whether any has, the page asks before that restart, since it stops the work. The move is one step with the changes of where the bots live, and asks for running work again right before the stop.
 
 **The server's own `lan` rules are the only rules.** The app adds no listener, proxy or Host list of its own. It reads the machine's addresses before each start and keeps the server on `127.0.0.1` while one is public, saying why, as the server would refuse `lan` there. A start on `lan` that ends without the server answering is followed by one on `127.0.0.1`, so the app is never left without its server, and the operator sees what the server said and can try again.
 
-**A phone pairs as any device does.** The page asks the server on the admin pipe for a pairing code and shows the pairing link, `<origin>/pair#<code>`, for a private origin the server reports. The page never gets a token for the phone.
+**A phone pairs as any device does.** The page asks the server on the admin pipe for a pairing code and shows the pairing link, `<origin>/pair#<code>`, for one of the server's own private interface origins, never its `publicOrigin`. The page never gets a token for the phone.
 
 ## Consequences
 
-- Turning phone access on or off restarts the bots, which stops their running work. The operator is asked when there is work to stop.
+- Turning phone access on or off restarts the bots, which stops their running work. The operator is asked when there is work to stop, or when the server cannot say.
 - Over plain HTTP on the local network, anyone on it can read a device token in transit. Settings says to turn it on only on a trusted network.
 - The app watches no network change. It reads the addresses at each start, each change of the choice, each Try again, each time Settings or a pairing code is shown and on wake. A public address that appears while the server runs on `lan` is refused by the server, connection by connection.
 - Paired phones stay paired while it is off, and reconnect once it is on again.

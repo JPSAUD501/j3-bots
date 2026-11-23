@@ -6,16 +6,20 @@ import type { LocalServerState, PhoneAccess as Access } from "@j3-bots/desktop-b
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as ServerChoice from "../serverChoice.ts";
 import * as Settings from "../settings.ts";
-import type { AdminChannel, PairingOffer } from "./adminChannel.ts";
+import { AdminRefused, type AdminChannel, type PairingOffer } from "./adminChannel.ts";
 import * as PhoneAccess from "./phoneAccess.ts";
 import * as Supervisor from "./supervisor.ts";
 
 const LAN_ORIGIN = ServerOrigin.make("http://192.168.1.20:3747");
+const LOOPBACK_ORIGIN = ServerOrigin.make("http://127.0.0.1:3747");
 const CODE = PairingCode.make("7KQ2M9XH4D");
 const EXPIRES = DateTime.makeUnsafe("2026-11-20T17:45:00Z");
 
@@ -23,10 +27,19 @@ const EXPIRES = DateTime.makeUnsafe("2026-11-20T17:45:00Z");
 interface World {
   /** The first public address of the computer's interfaces, if any. */
   publicAddress: Option.Option<string>;
-  /** Whether a server started on the network stops before it answers, as when its port is taken there. */
-  lanFails: boolean;
-  /** How many bots have work running. */
-  bots: number;
+  /**
+   * Whether a server started on the network stops before it answers, and
+   * why: its port is taken there, or a public address appeared as it started.
+   */
+  lanFails: false | "port-taken" | "public-address";
+  /** What `/running-work` answers. */
+  work: AdminChannel["runningWork"];
+  /** The `publicOrigin` the servers run with, if any. */
+  publicOrigin: ServerOrigin | undefined;
+  /** What each launch waits for before it reads where to listen. */
+  beforeLaunch: Effect.Effect<void>;
+  /** What each reading of the interfaces waits for. */
+  readingAddresses: Effect.Effect<void>;
   /** What `/pairing` answers. */
   offer: PairingOffer;
   /** Where each start listened, in order. */
@@ -40,24 +53,31 @@ const fakeServer = (pid: number, host: PhoneAccess.ListenHost, world: World) => 
   const exited = Deferred.makeUnsafe<Supervisor.ServerExit>();
   const end = (exit: Supervisor.ServerExit) => Deferred.doneUnsafe(exited, Effect.succeed(exit));
   const lan = host === "lan";
-  if (lan && world.lanFails) end({ code: Supervisor.START_REFUSED, signal: null });
+  const fails = lan ? world.lanFails : false;
+  if (fails === "public-address") world.publicAddress = Option.some("203.0.113.7");
+  if (fails !== false) end({ code: Supervisor.START_REFUSED, signal: null });
+  const { publicOrigin } = world;
   const admin: AdminChannel = {
     status: () =>
-      lan && world.lanFails
+      fails !== false
         ? Effect.never
         : Effect.succeed({
             version: "0.3.0",
             pid,
             listener: { address: lan ? "0.0.0.0" : "127.0.0.1", port: 3747 },
-            // As `reachableOrigins` lists them; loopback is never offered to a phone.
-            origins: lan
-              ? [ServerOrigin.make("http://127.0.0.1:3747"), LAN_ORIGIN]
-              : [ServerOrigin.make("http://127.0.0.1:3747")],
+            // As `reachableOrigins` lists them: the public origin first, then
+            // the interfaces. Loopback is never offered to a phone.
+            origins: [
+              ...(publicOrigin === undefined ? [] : [publicOrigin]),
+              LOOPBACK_ORIGIN,
+              ...(lan ? [LAN_ORIGIN] : []),
+            ],
+            ...(publicOrigin === undefined ? {} : { publicOrigin }),
             engine: { state: { _tag: "ready" } },
           }),
     localDevice: () => Effect.die("not used here"),
     shutdown: Effect.sync(() => end({ code: 0, signal: null })),
-    runningWork: Effect.sync(() => world.bots),
+    runningWork: Effect.suspend(() => world.work),
     pairing: (unlock) =>
       Effect.sync(() => {
         world.pairings.push(unlock);
@@ -68,7 +88,7 @@ const fakeServer = (pid: number, host: PhoneAccess.ListenHost, world: World) => 
     pid,
     admin,
     exited: Deferred.await(exited),
-    logTail: Effect.succeed(lan && world.lanFails ? "Port 3747 is in use on 0.0.0.0." : ""),
+    logTail: Effect.succeed(fails === "port-taken" ? "Port 3747 is in use on 0.0.0.0." : ""),
     terminate: Effect.sync(() => {
       end({ code: 0, signal: "SIGTERM" });
       return true;
@@ -90,18 +110,51 @@ const settingsFile = (settings: object) =>
     return file;
   });
 
+/** The settings in `file`, whose `nth` write tells `reached`, then waits for `go`. */
+const heldSettings = (
+  file: string,
+  nth: number,
+  reached: Deferred.Deferred<void>,
+  go: Deferred.Deferred<void>,
+) =>
+  Layer.effect(Settings.DesktopSettings)(
+    Effect.gen(function* () {
+      const settings = yield* Settings.DesktopSettings;
+      let writes = 0;
+      return {
+        get: settings.get,
+        update: (change: (now: Settings.Settings) => Settings.Settings) =>
+          Effect.suspend(() => {
+            writes += 1;
+            if (writes !== nth) return settings.update(change);
+            return Deferred.succeed(reached, undefined).pipe(
+              Effect.andThen(Deferred.await(go)),
+              Effect.andThen(settings.update(change)),
+            );
+          }),
+      };
+    }),
+  ).pipe(Layer.provide(Settings.layer(file)));
+
+/** A page that does nothing, as choosing where the bots live acts on it. */
+const page: ServerChoice.Page = { clearStorage: Effect.void, openHome: Effect.void };
+
 /**
- * The supervisor of a server on this computer and phone access to it, as
- * the app wires them, over the settings in `file`, in a `world` of fake servers.
+ * The supervisor of a server on this computer, the choice of where the bots
+ * live, and phone access to the server, as the app wires them, in a `world`
+ * of fake servers.
  */
 const setUp = (world: World) =>
   Effect.gen(function* () {
     const listening = yield* PhoneAccess.listening({
-      publicAddress: Effect.sync(() => world.publicAddress),
+      publicAddress: Effect.suspend(() => world.readingAddresses).pipe(
+        Effect.andThen(Effect.sync(() => world.publicAddress)),
+      ),
     });
     let pid = 100;
     const supervisor = yield* Supervisor.make({
       launch: Effect.gen(function* () {
+        yield* world.beforeLaunch;
         const host = yield* listening.hostForLaunch;
         world.hosts.push(host);
         pid += 1;
@@ -109,25 +162,34 @@ const setUp = (world: World) =>
       }),
       adopt: Effect.succeedNone,
     });
+    const choice = yield* ServerChoice.make(() => Effect.succeed(null), {
+      available: true,
+      prepare: Effect.succeed(LOOPBACK_ORIGIN),
+      start: supervisor.start,
+      stop: supervisor.stop,
+    });
     const phone = yield* PhoneAccess.serve({
       listening,
       supervisor,
-      restart: Effect.andThen(supervisor.stop, supervisor.start),
+      whileLocal: choice.whileLocal,
     });
-    return { supervisor, phone };
+    return { supervisor, choice, phone };
   });
 
 const newWorld = (changes: Partial<World> = {}): World => ({
   publicAddress: Option.none(),
   lanFails: false,
-  bots: 0,
+  work: Effect.succeed(0),
+  publicOrigin: undefined,
+  beforeLaunch: Effect.void,
+  readingAddresses: Effect.void,
   offer: { _tag: "granted", code: CODE, expiresAt: EXPIRES },
   hosts: [],
   pairings: [],
   ...changes,
 });
 
-const LOCAL = { mode: "local", server: "http://127.0.0.1:3747" };
+const LOCAL = { mode: "local", server: LOOPBACK_ORIGIN };
 
 /** Waits for phone access to hold `matches`. */
 const reach = (changes: Stream.Stream<Access>, matches: (access: Access) => boolean) =>
@@ -202,7 +264,7 @@ describe("phone access to the server on this computer", () => {
   it.effect("asks before a restart that would stop work the bots have running", () =>
     Effect.gen(function* () {
       const file = yield* settingsFile(LOCAL);
-      const world = newWorld({ bots: 2 });
+      const world = newWorld({ work: Effect.succeed(2) });
       const { supervisor, phone } = yield* setUp(world).pipe(Effect.provide(Settings.layer(file)));
       yield* supervisor.start;
       yield* serverReady(supervisor, world, 1);
@@ -260,7 +322,7 @@ describe("phone access to the server on this computer", () => {
     () =>
       Effect.gen(function* () {
         const file = yield* settingsFile({ ...LOCAL, phoneAccess: true });
-        const world = newWorld({ lanFails: true });
+        const world = newWorld({ lanFails: "port-taken" });
         const { supervisor, phone } = yield* setUp(world).pipe(
           Effect.provide(Settings.layer(file)),
         );
@@ -288,11 +350,12 @@ describe("phone access to the server on this computer", () => {
   );
 
   it.effect(
-    "gives a phone a link to a private address only, and lifts a lock only when asked",
+    "gives a phone a link to a private address of its own only, and lifts a lock only when asked",
     () =>
       Effect.gen(function* () {
         const file = yield* settingsFile(LOCAL);
-        const world = newWorld();
+        // A way in the operator set up for elsewhere is not one a phone here is sent to.
+        const world = newWorld({ publicOrigin: ServerOrigin.make("https://j3.example.test") });
         const { supervisor, phone } = yield* setUp(world).pipe(
           Effect.provide(Settings.layer(file)),
         );
@@ -316,6 +379,167 @@ describe("phone access to the server on this computer", () => {
         assert.deepStrictEqual(yield* phone.pairingLink(false), { _tag: "locked", until });
         yield* phone.pairingLink(true);
         assert.deepStrictEqual(world.pairings, [false, false, true]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "ends on this computer alone when turned off while a start on the network reads the choice",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(LOCAL);
+        const offWrite = yield* Deferred.make<void>();
+        const writeOff = yield* Deferred.make<void>();
+        const world = newWorld();
+        // The second write is turning it off.
+        const { supervisor, phone } = yield* setUp(world).pipe(
+          Effect.provide(heldSettings(file, 2, offWrite, writeOff)),
+        );
+        yield* supervisor.start;
+        yield* serverReady(supervisor, world, 1);
+
+        const launch = yield* Deferred.make<void>();
+        world.beforeLaunch = Deferred.await(launch);
+        yield* phone.set({ on: true, stopWork: false });
+        const off = yield* Effect.forkChild(phone.set({ on: false, stopWork: false }));
+        yield* Deferred.await(offWrite);
+        // The start under way reads the choice before off is kept.
+        yield* Deferred.succeed(launch, undefined);
+        yield* serverReady(supervisor, world, 2);
+        yield* Deferred.succeed(writeOff, undefined);
+        assert.strictEqual((yield* Fiber.join(off))._tag, "changed");
+
+        yield* serverReady(supervisor, world, 3);
+        assert.deepStrictEqual(world.hosts, ["127.0.0.1", "lan", "127.0.0.1"]);
+        assert.deepStrictEqual(yield* phone.current, { on: false, origins: [] });
+        assert.isFalse((yield* kept(file)).phoneAccess);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "starts a server that answers on the network again on this computer alone, once turned off while it started",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(LOCAL);
+        const world = newWorld();
+        const { supervisor, phone } = yield* setUp(world).pipe(
+          Effect.provide(Settings.layer(file)),
+        );
+        yield* supervisor.start;
+        yield* serverReady(supervisor, world, 1);
+
+        const launch = yield* Deferred.make<void>();
+        world.beforeLaunch = Deferred.await(launch);
+        yield* phone.set({ on: true, stopWork: false });
+        // The start under way reads the choice, on, then the interfaces, and waits there.
+        const reading = yield* Deferred.make<void>();
+        const addresses = yield* Deferred.make<void>();
+        world.readingAddresses = Deferred.succeed(reading, undefined).pipe(
+          Effect.andThen(Deferred.await(addresses)),
+        );
+        yield* Deferred.succeed(launch, undefined);
+        yield* Deferred.await(reading);
+        // Off is kept while it waits, and finds the server where it last answered.
+        assert.deepStrictEqual(yield* phone.set({ on: false, stopWork: false }), {
+          _tag: "changed",
+          access: { on: false, origins: [] },
+        });
+        world.readingAddresses = Effect.void;
+        yield* Deferred.succeed(addresses, undefined);
+
+        yield* serverReady(supervisor, world, 3);
+        assert.deepStrictEqual(world.hosts, ["127.0.0.1", "lan", "127.0.0.1"]);
+        assert.isFalse((yield* kept(file)).phoneAccess);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("asks before a restart while the server cannot say whether bots are working", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(LOCAL);
+      const world = newWorld({
+        work: Effect.fail(new AdminRefused({ route: "/running-work", status: 500 })),
+      });
+      const { supervisor, phone } = yield* setUp(world).pipe(Effect.provide(Settings.layer(file)));
+      yield* supervisor.start;
+      yield* serverReady(supervisor, world, 1);
+
+      assert.deepStrictEqual(yield* phone.set({ on: true, stopWork: false }), {
+        _tag: "work-running",
+        bots: null,
+      });
+      assert.deepStrictEqual(world.hosts, ["127.0.0.1"]);
+      assert.isFalse((yield* kept(file)).phoneAccess);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("asks again right before the restart, as work may have started since", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(LOCAL);
+      let asked = 0;
+      const world = newWorld({ work: Effect.sync(() => (asked++ === 0 ? 0 : 1)) });
+      const { supervisor, phone } = yield* setUp(world).pipe(Effect.provide(Settings.layer(file)));
+      yield* supervisor.start;
+      yield* serverReady(supervisor, world, 1);
+
+      assert.deepStrictEqual(yield* phone.set({ on: true, stopWork: false }), {
+        _tag: "work-running",
+        bots: 1,
+      });
+      // The server kept running where it was.
+      assert.deepStrictEqual(world.hosts, ["127.0.0.1"]);
+      assert.strictEqual((yield* supervisor.state).state, "ready");
+      assert.isFalse((yield* kept(file)).phoneAccess);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "keeps nothing once the bots stop running here while it asked the server, so they come back on this computer alone",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(LOCAL);
+        const asking = yield* Deferred.make<void>();
+        const answer = yield* Deferred.make<void>();
+        const world = newWorld({
+          work: Deferred.succeed(asking, undefined).pipe(
+            Effect.andThen(Deferred.await(answer)),
+            Effect.as(0),
+          ),
+        });
+        const { supervisor, choice, phone } = yield* setUp(world).pipe(
+          Effect.provide(Settings.layer(file)),
+        );
+        yield* supervisor.start;
+        yield* serverReady(supervisor, world, 1);
+
+        const turningOn = yield* Effect.forkChild(phone.set({ on: true, stopWork: false }));
+        yield* Deferred.await(asking);
+        assert.strictEqual(yield* choice.connectToServerInstead(page), "changed");
+        yield* Deferred.succeed(answer, undefined);
+        assert.strictEqual((yield* Fiber.join(turningOn))._tag, "not-saved");
+        assert.isFalse((yield* kept(file)).phoneAccess);
+
+        world.work = Effect.succeed(0);
+        assert.strictEqual(yield* choice.useThisComputer(page), "changed");
+        yield* serverReady(supervisor, world, 2);
+        assert.deepStrictEqual(world.hosts, ["127.0.0.1", "127.0.0.1"]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "says a public address that appeared as the server started is why it stays on this computer",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile({ ...LOCAL, phoneAccess: true });
+        const world = newWorld({ lanFails: "public-address" });
+        const { supervisor, phone } = yield* setUp(world).pipe(
+          Effect.provide(Settings.layer(file)),
+        );
+        yield* supervisor.start;
+        assert.deepStrictEqual(
+          yield* reach(phone.changes, (access) => access.refusedReason !== undefined),
+          { on: true, origins: [], refusedReason: "public-address" },
+        );
+        yield* serverReady(supervisor, world, 2);
+        assert.deepStrictEqual(world.hosts, ["lan", "127.0.0.1"]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

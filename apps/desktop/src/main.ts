@@ -287,7 +287,7 @@ const program = Effect.gen(function* () {
   const phone = yield* PhoneAccessControl.serve({
     listening: localHost.phone,
     supervisor,
-    restart: choice.whileLocal(Effect.andThen(supervisor.stop, supervisor.start)),
+    whileLocal: choice.whileLocal,
   });
 
   const setPhoneAccess = Effect.fn("desktop.setPhoneAccess")(function* (
