@@ -26,9 +26,9 @@
 #                        Its SHA256SUMS must be signed like the release's, so a
 #                        mirror of a release serves the release's own files.
 #   J3_RELEASE_PUBLIC_KEY  with J3_RELEASE_BASE_URL only: the Ed25519 public key
-#                        (PEM) the mirror's SHA256SUMS is signed with, instead of
-#                        the release keys below. For tests, and for a mirror
-#                        that builds and signs its own releases.
+#                        (PEM) the mirror's SHA256SUMS is signed with, taken as
+#                        well as the release keys below. For tests, and for a
+#                        mirror that builds and signs its own releases.
 #
 # What it installs (docs/decisions/0015-a-release-is-a-self-contained-archive.md):
 #
@@ -248,11 +248,10 @@ verify_signature() {
     grep -Eq '^[A-Za-z0-9+/]{86}==$' "$2" || return 1
   openssl base64 -d -A -in "$2" -out "$work/signature" 2> /dev/null || return 1
   rm -f "$work"/key-*.pem
-  if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ]; then
-    printf '%s\n' "$J3_RELEASE_PUBLIC_KEY"
-  else
+  {
     release_keys
-  fi | awk -v dir="$work" '/^-----BEGIN PUBLIC KEY-----$/ { n++ } n { print > (dir "/key-" n ".pem") }'
+    if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ]; then printf '%s\n' "$J3_RELEASE_PUBLIC_KEY"; fi
+  } | awk -v dir="$work" '/^-----BEGIN PUBLIC KEY-----$/ { n++ } n { print > (dir "/key-" n ".pem") }'
   for key in "$work"/key-*.pem; do
     [ -f "$key" ] || continue
     if openssl pkeyutl -verify -pubin -inkey "$key" -rawin -in "$1" -sigfile "$work/signature" > /dev/null 2>&1; then
@@ -315,7 +314,7 @@ else
   fetch "$download_url/SHA256SUMS.sig" "$work/SHA256SUMS.sig" ||
     fail "Could not download $download_url/SHA256SUMS.sig, the signature that shows the release is J3 Bots', so nothing was installed. Releases before 0.3.1 have none: install one of those with the install.sh on its own release page. Otherwise check the network, then run this again."
   key_name="the J3 Bots release key"
-  if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ]; then key_name="the mirror's key in J3_RELEASE_PUBLIC_KEY"; fi
+  if [ -n "${J3_RELEASE_PUBLIC_KEY:-}" ]; then key_name="the J3 Bots release key or the mirror's key in J3_RELEASE_PUBLIC_KEY"; fi
   verify_signature "$work/SHA256SUMS" "$work/SHA256SUMS.sig" ||
     fail "The signature on J3 Bots $version's SHA256SUMS does not match $key_name, so nothing was installed: these are not the files that were published. Run this again; if it happens again, the download is being changed on the way."
   expected="$(awk -v name="$archive" '$2 == name || $2 == "*" name { print $1; exit }' "$work/SHA256SUMS")"
