@@ -41,6 +41,47 @@ export const MessageAttachments = Schema.Array(AttachmentId).check(
 );
 
 /**
+ * Where each of a message's files stands in its text, as the operator placed
+ * it: one offset per file, in the order of the files, in UTF-16 code units (0
+ * before the first character, the text's length after the last). Offsets
+ * never decrease, so the files are listed in reading order, which is the
+ * order a bot's harness receives them in; two files at the same offset stand
+ * side by side in their order. An offset is never inside a surrogate pair.
+ * See {@link attachmentOffsetsFit}.
+ */
+export const AttachmentOffsets = Schema.Array(NonNegativeInt).check(
+  Schema.isMaxLength(MAX_ATTACHMENTS_PER_MESSAGE),
+);
+export type AttachmentOffsets = typeof AttachmentOffsets.Type;
+
+const isLowSurrogate = (unit: number) => unit >= 0xdc00 && unit <= 0xdfff;
+const isHighSurrogate = (unit: number) => unit >= 0xd800 && unit <= 0xdbff;
+
+/**
+ * Whether `offsets` place `count` files in `text` as {@link AttachmentOffsets}
+ * describes: one per file, never decreasing, within the text, and none
+ * between the two halves of a character.
+ */
+export const attachmentOffsetsFit = (
+  text: string,
+  count: number,
+  offsets: ReadonlyArray<number>,
+): boolean =>
+  offsets.length === count &&
+  offsets.every(
+    (offset, index) =>
+      Number.isInteger(offset) &&
+      offset >= (offsets[index - 1] ?? 0) &&
+      offset <= text.length &&
+      !(
+        offset > 0 &&
+        offset < text.length &&
+        isHighSurrogate(text.charCodeAt(offset - 1)) &&
+        isLowSurrogate(text.charCodeAt(offset))
+      ),
+  );
+
+/**
  * The largest file `POST /attachments` accepts, in bytes. It refuses an empty
  * file. A message can carry less than this per file: see `message.send`.
  */

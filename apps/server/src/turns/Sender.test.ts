@@ -30,6 +30,7 @@ import {
   sendInRoom,
   sendToBot,
   sendWithFile,
+  sendWithFiles,
   sessionAfter,
   stopSettled,
   timesSent,
@@ -61,6 +62,47 @@ it.effect("never sends a message a Stop fenced while its send was staging in the
     yield* nextTurn(bot.id);
     yield* deliveryIs(after, "delivered");
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "hands the engine a message's files in the order its envelope numbers them, each where it was placed",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+
+      const text = "Compare  with .";
+      const message = yield* sendWithFiles(
+        bot.id,
+        text,
+        ["a.txt", "b.txt", "notes.txt"],
+        [8, 14, 15],
+      );
+      yield* nextTurn(bot.id);
+      yield* deliveryIs(message, "delivered");
+
+      const [dispatch] = (yield* control.dispatches(session)).filter(({ text }) =>
+        text.includes("Compare"),
+      );
+      assert.isDefined(dispatch);
+      const numbered = Array.from(
+        dispatch.text.matchAll(/<attachment n="(\d+)" name="([^"]+)"/g),
+        ([, n, name]) => ({ n: Number(n), name }),
+      );
+      assert.deepStrictEqual(
+        numbered,
+        ["a.txt", "b.txt", "notes.txt"].map((name, index) => ({ n: index + 1, name })),
+      );
+      assert.deepStrictEqual(
+        dispatch.attachments.map((file) => file.name),
+        ["a.txt", "b.txt", "notes.txt"],
+      );
+      assert.match(
+        dispatch.text,
+        /\nCompare <attachment n="1"[^>]*\/> with <attachment n="2"[^>]*\/>\.<attachment n="3"[^>]*\/>\n/,
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("sends as a start a steer whose turn ended while its file was staging", () =>

@@ -164,6 +164,12 @@ export function MessageBubble({
   const widths = use(EntryWidths);
   const fromOperator = message._tag === "outgoing" || message.author._tag === "operator";
   const startsGroup = position === "single" || position === "first";
+  // Where the operator placed each file in the text. A message without text, or
+  // kept before files were placed, shows its files after it.
+  const placed =
+    message.text !== "" && message.attachmentOffsets?.length === message.attachments.length
+      ? message.attachmentOffsets
+      : null;
   const status = messageStatus(message);
   const failed = status._tag === "failed" || status._tag === "not-sent";
   const troubled = failed || status._tag === "unrecorded";
@@ -208,13 +214,26 @@ export function MessageBubble({
               className={
                 fromOperator ? "text-bubble-operator-foreground" : "text-bubble-bot-foreground"
               }
+              {...(placed === null
+                ? {}
+                : {
+                    placed: {
+                      files: message.attachments,
+                      offsets: placed,
+                      color: fromOperator
+                        ? "accent-bubble-operator-foreground"
+                        : "accent-bubble-bot-foreground",
+                    },
+                  })}
             />
           </Animated.View>
         </View>
       )}
-      {message.attachments.map((attachment) => (
-        <FileCard key={attachment.id} attachment={attachment} />
-      ))}
+      {/* Files placed in the text stand there; others follow it. */}
+      {placed === null &&
+        message.attachments.map((attachment) => (
+          <FileCard key={attachment.id} attachment={attachment} />
+        ))}
       {delivery !== null && (
         <View
           style={{ maxWidth: widths.bubble }}

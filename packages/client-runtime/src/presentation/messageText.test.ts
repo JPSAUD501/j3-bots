@@ -89,3 +89,42 @@ describe("parseMessageText", () => {
     ]);
   });
 });
+
+describe("parseMessageText with files placed in the text", () => {
+  it("shows no file in the text of a message that placed none", () => {
+    expect(parseMessageText("Here are the notes.")).toEqual([
+      { kind: "paragraph", inlines: [{ kind: "text", text: "Here are the notes." }] },
+    ]);
+  });
+
+  it("puts a file before the code, link or mention it is placed at, and after one it would split", () => {
+    const text = "see `a` https://x.dev @Ana end";
+    const [block] = parseMessageText(text, ["Ana"], [4, 8, 24, 30]);
+    expect(block).toEqual({
+      kind: "paragraph",
+      inlines: [
+        { kind: "text", text: "see " },
+        { kind: "file", index: 0 },
+        { kind: "code", text: "a" },
+        { kind: "text", text: " " },
+        { kind: "file", index: 1 },
+        { kind: "link", href: "https://x.dev", text: "https://x.dev" },
+        { kind: "text", text: " " },
+        { kind: "mention", name: "Ana" },
+        { kind: "file", index: 2 },
+        { kind: "text", text: " end" },
+        { kind: "file", index: 3 },
+      ],
+    });
+  });
+
+  it("keeps a file placed at a code block before it, and one inside it after it", () => {
+    const text = "Look:\n```\ncode\n```";
+    expect(parseMessageText(text, [], [6, 12])).toEqual([
+      { kind: "paragraph", inlines: [{ kind: "text", text: "Look:" }] },
+      { kind: "paragraph", inlines: [{ kind: "file", index: 0 }] },
+      { kind: "code", language: null, text: "code" },
+      { kind: "paragraph", inlines: [{ kind: "file", index: 1 }] },
+    ]);
+  });
+});

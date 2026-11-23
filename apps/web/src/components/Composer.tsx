@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Avatar } from "@j3-bots/contracts";
-import { ArrowUpIcon, FileIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
+import type { Attachment, Avatar } from "@j3-bots/contracts";
+import { ArrowUpIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
 import {
   type KeyboardEvent,
   type RefObject,
   useEffect,
-  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
@@ -19,6 +18,7 @@ import {
   draggedText,
   EVERYONE,
   insertMention,
+  markCount,
   mentionOptions,
   mentionQuery,
   movedOption,
@@ -36,7 +36,17 @@ import { springs } from "@j3-bots/design-tokens";
 import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
+import { useAttachmentImage } from "./attachmentImages";
 import { BotAvatar } from "./avatar/BotAvatar";
+import {
+  ChipField,
+  dropOffset,
+  type FieldChange,
+  fieldSelection,
+  fieldText,
+  selectInField,
+} from "./ChipField";
+import { FileKindIcon } from "./FileCard";
 import { Button } from "./ui/button";
 
 /**
@@ -62,12 +72,21 @@ interface ComposerProps {
   readonly draftKey: string;
   /** Who the message goes to: a bot's or a room's name. */
   readonly recipient: string;
+  /** The draft's text, with a mark where each of its files stands. */
   readonly value: string;
   /** The mentions picked in `value`. Only a room has any. */
   readonly mentions?: ReadonlyArray<DraftMention>;
-  /** The new text, with the picked mentions that still stand in it, moved along with it. */
-  readonly onValueChange: (value: string, mentions: ReadonlyArray<DraftMention>) => void;
-  /** The files in the draft, as they upload. */
+  /**
+   * The new text, with the picked mentions that still stand in it, moved along
+   * with it, and the keys of the files it still places, in their new order,
+   * when that changed.
+   */
+  readonly onValueChange: (
+    value: string,
+    mentions: ReadonlyArray<DraftMention>,
+    order?: ReadonlyArray<string>,
+  ) => void;
+  /** The files in the draft, as they upload, in the order of their marks. */
   readonly files?: ReadonlyArray<DraftFile>;
   /** The draft is on its way to the outbox, for a few milliseconds: it takes no change. */
   readonly sending?: boolean;
@@ -83,9 +102,14 @@ interface ComposerProps {
   readonly unread?: { readonly onRetry: () => Promise<boolean> };
   /** The device could not keep the draft as it shows: it is in memory only, and is saved again. */
   readonly notSaved?: boolean;
-  /** Files the operator picked, pasted or dropped. Without it, the composer takes no files. */
-  readonly onAttachFiles?: (files: ReadonlyArray<File>) => void;
+  /**
+   * Files the operator picked, pasted or dropped, to place at `at` in the
+   * text, or after it. Without it, the composer takes no files.
+   */
+  readonly onAttachFiles?: (files: ReadonlyArray<File>, at?: number) => void;
   readonly onDetachFile?: (key: string) => void;
+  /** Opens a file of the draft the server already holds. */
+  readonly onOpenFile?: (attachment: Attachment) => void;
   readonly onSend: () => void;
   /** Without it, the trailing button is always Send. */
   readonly onDictate?: () => void;
@@ -99,7 +123,7 @@ interface ComposerProps {
     readonly onRestore: () => void;
     readonly onDismiss: () => void;
   };
-  readonly inputRef?: RefObject<HTMLTextAreaElement | null>;
+  readonly inputRef?: RefObject<HTMLDivElement | null>;
   /**
    * In a room, its members: typing `@` offers them and `@everyone`, and only
    * a pick mentions one; a name typed or pasted addresses nobody.
@@ -112,14 +136,17 @@ interface ComposerProps {
 /**
  * The composer at the bottom of a conversation: a rounded rectangle that
  * grows with its text. Enter sends, Shift+Enter starts a new line. Files
- * picked, pasted or dropped upload at once and show above the composer; the message goes once they all have. With nothing to send, the
+ * picked, pasted or dropped upload at once and stand in the text as chips:
+ * where the caret was, or where they were dropped. A chip shows its image or
+ * its kind, and its name; it is deleted as one character, and a click opens
+ * its file once uploaded. A file that cannot go says why below the composer.
+ * The message goes once every file has uploaded. With nothing to send, the
  * trailing button dictates where dictation exists. A message over a limit
  * of `message.send` is kept, and says why instead of sending. While Send hands
  * the draft over, or the drafts load or could not be read, the field stays
  * focused but read-only, and attaching and removing files show as
  * unavailable; files dropped or pasted meanwhile are not taken, and the
- * composer asks for them again. Many files scroll within their own list, so
- * the composer and what sits above it stay in view. A draft that could not be
+ * composer asks for them again. A draft that could not be
  * read says so above the composer, with a way to read it again: once read, the
  * focus returns to the field; read in vain, it says so again. A draft the
  * device could not keep says so quietly below the composer until it is kept. Text
@@ -146,6 +173,7 @@ export function Composer({
   notSaved = false,
   onAttachFiles,
   onDetachFile,
+  onOpenFile,
   onSend,
   onDictate,
   replaced,
@@ -156,7 +184,7 @@ export function Composer({
   const i18n = useI18n();
   const { t } = i18n;
   const pickerRef = useRef<HTMLInputElement>(null);
-  const ownFieldRef = useRef<HTMLTextAreaElement>(null);
+  const ownFieldRef = useRef<HTMLDivElement>(null);
   const fieldRef = inputRef ?? ownFieldRef;
   const waitingId = useId();
   const addresseeId = useId();
@@ -193,10 +221,11 @@ export function Composer({
       play(boxRef.current, [{ transform: "scale(0.97)" }, { transform: "none" }], springs.pop);
     }
   }, [sending]);
-  // The field's selection as the operator last left it: what an edit replaces.
+  // The field's selection as the operator last left it: what an edit replaces,
+  // and where files attached go.
   const selection = useRef<readonly [number, number] | null>(null);
-  const remember = (element: HTMLTextAreaElement) => {
-    selection.current = [element.selectionStart, element.selectionEnd];
+  const remember = (element: HTMLElement) => {
+    selection.current = fieldSelection(element) ?? selection.current;
   };
   // Text being dragged out of the field, with the mentions in it, which a drop back in moves.
   const dragged = useRef<DraggedText | null>(null);
@@ -208,40 +237,48 @@ export function Composer({
     field: fieldRef,
     members: frozen ? undefined : mentionable,
   });
-  // Follows an edit of the field, with the mentions that still stand after it.
-  const follow = (field: HTMLTextAreaElement, input: Event) => {
+  // Follows an edit of the field, with the mentions and files that still stand after it.
+  const follow = (change: FieldChange) => {
     setNotTaken(false);
-    const told = input instanceof InputEvent ? input : null;
     const edit: FieldInput = {
       before: value,
-      after: field.value,
-      inputType: told?.inputType ?? null,
-      data: told?.data ?? null,
+      after: change.text,
+      inputType: change.inputType,
+      data: change.data,
       selection: selection.current,
-      now: [field.selectionStart, field.selectionEnd],
+      now: change.selection,
     };
-    onValueChange(field.value, followFieldInput(edit, mentions, dragged.current));
-    remember(field);
-    mention.follow(field);
+    const reordered =
+      change.order.length !== files.length ||
+      change.order.some((key, index) => files[index]?.key !== key);
+    onValueChange(
+      change.text,
+      followFieldInput(edit, mentions, dragged.current),
+      reordered ? change.order : undefined,
+    );
+    selection.current = change.selection;
+    mention.follow(change.text, change.selection);
   };
-  // React reports no edit that leaves the text as it was, as text pasted over
-  // the same text, or the second half of a move WebKit has already made: the
-  // field's own event does.
-  const followUnchanged = useEffectEvent((input: Event) => {
+  // Where the caret goes once files attached at it are in the text: after them.
+  const caretAfter = useRef<{ readonly marks: number; readonly at: number } | null>(null);
+  useLayoutEffect(() => {
+    const pending = caretAfter.current;
     const field = fieldRef.current;
-    if (field !== null && field.value === value) follow(field, input);
-  });
-  useEffect(() => {
-    const field = fieldRef.current;
-    if (field === null) return;
-    const listener = (input: Event) => followUnchanged(input);
-    field.addEventListener("input", listener);
-    return () => field.removeEventListener("input", listener);
-  }, [fieldRef]);
-  const attach = (list: FileList | null) => {
+    if (pending === null || field === null || markCount(value) !== pending.marks) return;
+    caretAfter.current = null;
+    if (field.ownerDocument.activeElement !== field) return;
+    selectInField(field, pending.at);
+    selection.current = [pending.at, pending.at];
+  }, [fieldRef, value]);
+  const attach = (list: FileList | null, at?: number) => {
     if (!onAttachFiles || list === null || list.length === 0) return;
     setNotTaken(frozen);
-    if (!frozen) onAttachFiles([...list]);
+    if (frozen) return;
+    const place = at ?? selection.current?.[0];
+    if (place !== undefined) {
+      caretAfter.current = { marks: markCount(value) + list.length, at: place + list.length };
+    }
+    onAttachFiles([...list], place);
   };
   const detach = (key: string) => {
     if (!frozen) onDetachFile?.(key);
@@ -262,10 +299,13 @@ export function Composer({
   const failures = files.flatMap((file) =>
     file._tag === "failed"
       ? [
-          t("composer.file.failed", {
-            name: file.name,
-            reason: fileProblemText(file.problem, i18n),
-          }),
+          {
+            key: file.key,
+            text: t("composer.file.failed", {
+              name: file.name,
+              reason: fileProblemText(file.problem, i18n),
+            }),
+          },
         ]
       : [],
   );
@@ -280,27 +320,13 @@ export function Composer({
         if (onAttachFiles && event.dataTransfer.types.includes("Files")) event.preventDefault();
       }}
       onDrop={(event) => {
+        // Files dropped on the field go where they were dropped; the field took them.
+        if (event.defaultPrevented) return;
         if (!onAttachFiles || event.dataTransfer.files.length === 0) return;
         event.preventDefault();
         attach(event.dataTransfer.files);
       }}
     >
-      {files.length > 0 && (
-        <ul
-          aria-label={t("composer.files")}
-          className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto overscroll-contain"
-        >
-          {files.map((file) => (
-            <DraftFileChip
-              key={file.key}
-              file={file}
-              arriving={!restored.has(file.key)}
-              onRemove={onDetachFile ? () => detach(file.key) : undefined}
-              unavailable={frozen}
-            />
-          ))}
-        </ul>
-      )}
       {/* Drafts that load say nothing: it takes a moment. Drafts that could not be read say so until read. */}
       {unread && !loading && (
         <div className="flex flex-wrap items-center justify-end gap-x-2 ps-3 pe-1 text-xs text-muted-foreground">
@@ -342,7 +368,7 @@ export function Composer({
       </p>
       {/* A file that cannot go is announced; progress is there to see, not to hear. */}
       <p role="status" className="sr-only">
-        {failures.join(" ")}
+        {failures.map((failure) => failure.text).join(" ")}
       </p>
       {/* Over the conversation, not in the composer's flow, so nothing above it moves. */}
       {mention.open && (
@@ -388,34 +414,55 @@ export function Composer({
             />
           </>
         )}
-        <textarea
+        <ChipField
           ref={fieldRef}
-          rows={1}
           value={value}
+          chips={files.map((file) => ({
+            key: file.key,
+            content: (
+              <DraftFileChip
+                file={file}
+                arriving={!restored.has(file.key)}
+                onRemove={onDetachFile ? () => detach(file.key) : undefined}
+                onOpen={onOpenFile}
+                unavailable={frozen}
+              />
+            ),
+          }))}
           readOnly={frozen}
-          onChange={(event) => follow(event.currentTarget, event.nativeEvent)}
+          onChange={follow}
           onSelect={(event) => {
-            remember(event.currentTarget);
-            mention.follow(event.currentTarget);
+            const field = event.currentTarget;
+            remember(field);
+            const at = fieldSelection(field);
+            if (at !== null) mention.follow(fieldText(field), at);
           }}
           onFocus={(event) => {
-            remember(event.currentTarget);
-            mention.follow(event.currentTarget);
+            const field = event.currentTarget;
+            remember(field);
+            const at = fieldSelection(field);
+            if (at !== null) mention.follow(fieldText(field), at);
           }}
           onBlur={mention.leave}
           onCut={(event) => remember(event.currentTarget)}
           onDragStart={(event) => {
-            const field = event.currentTarget;
             dragged.current = draggedText(
               value,
-              [field.selectionStart, field.selectionEnd],
+              fieldSelection(event.currentTarget) ?? [0, 0],
               mentions,
             );
           }}
           onDragEnd={() => {
             dragged.current = null;
           }}
-          onDrop={(event) => remember(event.currentTarget)}
+          onDrop={(event) => {
+            const field = event.currentTarget;
+            remember(field);
+            if (!onAttachFiles || event.dataTransfer.files.length === 0) return;
+            event.preventDefault();
+            const at = dropOffset(field, event.clientX, event.clientY);
+            attach(event.dataTransfer.files, at ?? undefined);
+          }}
           onKeyDown={(event) => {
             remember(event.currentTarget);
             if (mention.onKeyDown(event)) return;
@@ -435,7 +482,7 @@ export function Composer({
           aria-describedby={addressee === undefined ? undefined : addresseeId}
           {...mention.fieldProps}
           data-composer=""
-          className="field-sizing-content max-h-(--layout-composer-max-height) min-h-8 flex-1 resize-none bg-transparent px-1 py-1.5 text-base outline-none placeholder:text-muted-foreground pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
+          className="max-h-(--layout-composer-max-height) min-h-8 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5 text-base pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
         />
         {empty && onDictate && !sending ? (
           <Button
@@ -491,21 +538,35 @@ export function Composer({
             ? null
             : messageProblemText(problem, i18n)}
       </p>
+      {/* Each file that cannot go, which its chip marks, says why. Announced once, above. */}
+      {failures.length > 0 && (
+        <ul aria-hidden className="flex flex-col px-3 text-xs text-blocked">
+          {failures.map((failure) => (
+            <li key={failure.key}>{failure.text}</li>
+          ))}
+        </ul>
+      )}
     </form>
   );
 }
 
-/** A file in the draft: its name, how its upload goes or why it cannot go, and a way out. */
+/**
+ * A file in the draft, where it stands in the text: its image or its kind,
+ * its name, how its upload goes or that it cannot go, and a way out. Once
+ * uploaded, a click opens it.
+ */
 function DraftFileChip({
   file,
   arriving,
   onRemove,
+  onOpen,
   unavailable,
 }: {
   file: DraftFile;
   /** Attached since the draft was shown: it settles in. */
   arriving: boolean;
   onRemove: (() => void) | undefined;
+  onOpen: ((attachment: Attachment) => void) | undefined;
   /** The draft takes no change: the file cannot be removed meanwhile. */
   unavailable: boolean;
 }) {
@@ -513,36 +574,56 @@ function DraftFileChip({
   const { t } = i18n;
   const name = draftFileName(file);
   const detail = draftFileDetail(file, i18n, { progress: true });
+  const ready = file._tag === "ready" ? file.attachment : null;
+  const image = useAttachmentImage(ready);
+  const mediaType = file._tag === "ready" ? file.attachment.mediaType : file.mediaType;
   return (
-    <li
+    <span
+      title={detail}
       className={cn(
-        "relative flex max-w-full min-w-0 items-center gap-2 overflow-hidden rounded-md border bg-surface py-1 ps-2 pe-1",
+        "relative mx-0.5 inline-flex h-6 max-w-56 items-center gap-1 overflow-hidden rounded-md border align-middle text-xs leading-none select-none",
         arriving && "arrive",
-        file._tag === "failed" ? "border-blocked/40 bg-blocked-surface" : "border-border",
+        file._tag === "failed"
+          ? "border-blocked/40 bg-blocked-surface text-blocked"
+          : "border-border bg-muted text-foreground",
       )}
     >
-      <FileIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-      <span className="flex min-w-0 flex-col">
-        <span className="max-w-48 truncate text-xs font-medium">{name}</span>
-        <span
-          className={cn(
-            "text-2xs tabular-nums",
-            file._tag === "failed" ? "text-blocked" : "text-muted-foreground",
-          )}
-        >
-          {detail}
-        </span>
-      </span>
+      <button
+        type="button"
+        tabIndex={-1}
+        disabled={ready === null || onOpen === undefined}
+        // The field keeps the focus and its caret.
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={() => {
+          if (ready !== null) onOpen?.(ready);
+        }}
+        aria-label={t("file.open", { name })}
+        className="flex h-full min-w-0 items-center gap-1 ps-0.5 pe-1 enabled:cursor-pointer"
+      >
+        {image?._tag === "shown" ? (
+          <img src={image.url} alt="" className="size-5 shrink-0 rounded-sm object-cover" />
+        ) : (
+          <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
+            <FileKindIcon mediaType={mediaType} />
+          </span>
+        )}
+        <span className="truncate font-medium">{name}</span>
+        <span className="sr-only">{detail}</span>
+      </button>
       {onRemove && (
-        <Button
-          variant="ghost-muted"
-          size="icon-sm"
-          onClick={onRemove}
+        <button
+          type="button"
+          tabIndex={-1}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (!unavailable) onRemove();
+          }}
           aria-disabled={unavailable}
           aria-label={t("composer.file.remove", { name })}
+          className="flex h-full shrink-0 items-center pe-1 text-muted-foreground hover:text-foreground aria-disabled:opacity-50"
         >
-          <XIcon />
-        </Button>
+          <XIcon aria-hidden className="size-3.5" />
+        </button>
       )}
       {file._tag === "uploading" && (
         <span
@@ -551,7 +632,7 @@ function DraftFileChip({
           style={{ transform: `scaleX(${file.size === 0 ? 0 : file.sent / file.size})` }}
         />
       )}
-    </li>
+    </span>
   );
 }
 
@@ -572,7 +653,7 @@ function useMentionPicker({
   value: string;
   mentions: ReadonlyArray<DraftMention>;
   onValueChange: (value: string, mentions: ReadonlyArray<DraftMention>) => void;
-  field: RefObject<HTMLTextAreaElement | null>;
+  field: RefObject<HTMLDivElement | null>;
   members: ReadonlyArray<Mentionable> | undefined;
 }) {
   const listId = useId();
@@ -609,9 +690,9 @@ function useMentionPicker({
   useLayoutEffect(() => {
     const at = placeCaret.current;
     const element = field.current;
-    if (at === null || element === null || element.value !== value) return;
+    if (at === null || element === null || fieldText(element) !== value) return;
     placeCaret.current = null;
-    element.setSelectionRange(at, at);
+    selectInField(element, at);
     setCaret(at);
   }, [field, value]);
 
@@ -621,7 +702,7 @@ function useMentionPicker({
     const element = field.current;
     // A pick that leaves the text as it was changes nothing in the field: the caret moves now.
     if (next.text === value && element !== null) {
-      element.setSelectionRange(next.caret, next.caret);
+      selectInField(element, next.caret);
       setCaret(next.caret);
     } else {
       placeCaret.current = next.caret;
@@ -637,18 +718,15 @@ function useMentionPicker({
     optionId,
     pick,
     /** Follows the caret of the field after an edit, a move or a focus. */
-    follow: (element: HTMLTextAreaElement) => {
-      setCaret(element.selectionStart === element.selectionEnd ? element.selectionStart : null);
-      if (
-        dismissed !== null &&
-        mentionQuery(element.value, element.selectionStart, mentions)?.start !== dismissed
-      ) {
+    follow: (text: string, [start, end]: readonly [number, number]) => {
+      setCaret(start === end ? start : null);
+      if (dismissed !== null && mentionQuery(text, start, mentions)?.start !== dismissed) {
         setDismissed(null);
       }
     },
     leave: () => setCaret(null),
     /** Handles the key when the list is open; true when it took it. */
-    onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
       if (!open || query === null || event.nativeEvent.isComposing) return false;
       const option = options[current];
       // Arrows with a modifier belong to the shell, which moves through the roster with them.

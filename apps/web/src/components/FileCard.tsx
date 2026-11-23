@@ -5,6 +5,7 @@ import { fileIcon } from "@j3-bots/client-runtime/presentation";
 import { fileDetail } from "@j3-bots/client-runtime/wording";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
+import { useAttachmentImage } from "./attachmentImages";
 
 const kindIcons = {
   image: FileImageIcon,
@@ -14,12 +15,16 @@ const kindIcons = {
   other: FileIcon,
 } as const;
 
-function FileKindIcon({ mediaType }: { mediaType: string }) {
+/** The icon of a file's kind. */
+export function FileKindIcon({ mediaType }: { mediaType: string }) {
   const Icon = kindIcons[fileIcon(mediaType)];
   return <Icon className="size-4" aria-hidden />;
 }
 
-/** A file in a conversation: name, kind and size. Opening it shows a preview. */
+/**
+ * A file in a conversation: its image, or its kind; its name and size.
+ * Opening it shows it.
+ */
 export function FileCard({
   attachment,
   onOpen,
@@ -31,6 +36,7 @@ export function FileCard({
 }) {
   const i18n = useI18n();
   const { t } = i18n;
+  const image = useAttachmentImage(attachment);
   return (
     <button
       type="button"
@@ -41,9 +47,13 @@ export function FileCard({
         className,
       )}
     >
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-        <FileKindIcon mediaType={attachment.mediaType} />
-      </span>
+      {image?._tag === "shown" ? (
+        <img src={image.url} alt="" className="size-10 shrink-0 rounded-md bg-muted object-cover" />
+      ) : (
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+          <FileKindIcon mediaType={attachment.mediaType} />
+        </span>
+      )}
       <span className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{attachment.name}</span>
         <span className="text-2xs text-muted-foreground">{fileDetail(attachment, i18n)}</span>

@@ -289,8 +289,9 @@ const problemKey = {
 } as const;
 
 /**
- * The quiet line under the pill: that the phone listens, and that its speech
- * service recognizes it online when it does; or why dictation stopped.
+ * The quiet line under the pill, when dictation stopped by itself: why. While
+ * the phone listens the field says so, and this announces it, with whether
+ * its speech service recognizes it online.
  */
 export function DictationLine({ dictation }: { readonly dictation: Dictation }) {
   const { t } = useI18n();
@@ -305,18 +306,16 @@ export function DictationLine({ dictation }: { readonly dictation: Dictation }) 
       : problem === null
         ? null
         : t(problemKey[problem]);
-  // Android reads the line through its live region; iOS has none.
+  // Listening shows in the field, where the text goes (`Composer`), and is
+  // announced here in full. A problem shows under it, read through its live
+  // region on Android; iOS has none.
   useEffect(() => {
-    if (Platform.OS === "ios" && line !== null) AccessibilityInfo.announceForAccessibility(line);
-  }, [line]);
-  if (line === null) return null;
-  if (state._tag === "listening") {
-    return (
-      <Text accessibilityLiveRegion="polite" className="px-3 text-xs text-muted-foreground">
-        {line}
-      </Text>
-    );
-  }
+    const listening = state._tag === "listening";
+    if (line !== null && (listening || Platform.OS === "ios")) {
+      AccessibilityInfo.announceForAccessibility(line);
+    }
+  }, [line, state._tag]);
+  if (line === null || state._tag === "listening") return null;
   return (
     <View className="flex-row items-center justify-between gap-2 ps-3">
       <Text accessibilityLiveRegion="polite" className="flex-1 text-xs text-muted-foreground">
