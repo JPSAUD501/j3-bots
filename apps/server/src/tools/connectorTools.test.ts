@@ -10,7 +10,15 @@ import * as Option from "effect/Option";
 import type { OfferedTool } from "../connectors/Connectors.ts";
 import { TestConnectors } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { createBot, engineSession, nextTurn, sendToBot } from "../testing/turns.ts";
+import {
+  awaitEntry,
+  command,
+  createBot,
+  engineSession,
+  nextTurn,
+  sendToBot,
+} from "../testing/turns.ts";
+import { Cards } from "../turns/Cards.ts";
 import { BotTools } from "./BotTools.ts";
 import { ToolLists } from "./ToolLists.ts";
 
@@ -151,6 +159,54 @@ it.effect(
       assert.deepStrictEqual(another, { _tag: "refused", message: NO_TURN_REFUSAL });
       assert.deepStrictEqual(yield* callsBy(ana.bot.id), ["notion__search"]);
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("never makes a connector call whose approval the operator declined", () =>
+  Effect.gen(function* () {
+    const ana = yield* working("Ana", [search]);
+    const engine = yield* TestEngineControl;
+    const args = { query: "roadmap" };
+    const callId = yield* engine.toolCall({
+      sessionId: ana.session,
+      turnId: ana.turnId,
+      tool: "notion__search",
+      input: args,
+      recorded: "now",
+    });
+    // Codex's record closes while the call waits, which alone leaves it claimable.
+    yield* engine.closeToolCall({ sessionId: ana.session, turnId: ana.turnId, callId });
+    yield* engine.openRequest({
+      sessionId: ana.session,
+      turnId: ana.turnId,
+      request: {
+        _tag: "approval",
+        kind: "tool",
+        action: 'Notion: search {"query":"roadmap"}',
+        detail: null,
+        reason: null,
+        exact: true,
+        sessionGrant: null,
+      },
+      heldCall: callId,
+    });
+    const card = yield* awaitEntry(ana.bot.id, "approval");
+
+    yield* (yield* Cards).answer({
+      commandId: command(),
+      entryId: card.id,
+      answer: { _tag: "approval", decision: "deny" },
+    });
+    // Whoever has the session and the call's input, before the engine hears the answer.
+    const reply = yield* (yield* BotTools).call({
+      requestId: "call-1",
+      sessionId: ana.session,
+      tool: "notion__search",
+      arguments: args,
+    });
+
+    assert.deepStrictEqual(reply, { _tag: "refused", message: NO_TURN_REFUSAL });
+    assert.deepStrictEqual(yield* callsBy(ana.bot.id), []);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("refuses a connector tool the bot is not offered, though another bot is", () =>

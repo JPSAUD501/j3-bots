@@ -164,9 +164,17 @@ const gatedItem = (
   return undefined;
 };
 
+/** A connector's `j3` tool call an approval holds back. */
+interface ConnectorCall {
+  /** The engine's item of the call. */
+  readonly itemId: string;
+  readonly label: string;
+  readonly input: unknown;
+}
+
 /**
  * The `j3` connector call `approval` holds back, by the same native id, with
- * its step label and its input as the engine recorded them. Claude Code's
+ * its item, and its step label and its input as the engine recorded them. Claude Code's
  * prompt for an MCP tool is the tool's `command` argument when it has one,
  * so a connector tool's card could show that alone, as a shell command; the
  * card names the connector's tool instead. **Read** at `59651c1`: the
@@ -174,11 +182,11 @@ const gatedItem = (
  * (`ClaudeAdapterV2.ts`, `buildApprovalRequestArtifacts` and
  * `buildToolCallArtifacts`), and the prompt prefers `command` (`canUseTool`).
  */
-const heldConnectorCall = (
+export const heldConnectorCall = (
   approval: ApprovalItem,
   request: RuntimeRequest | undefined,
   items: Iterable<Item>,
-): { readonly label: string; readonly input: unknown } | undefined => {
+): ConnectorCall | undefined => {
   const ref = approval.nativeItemRef;
   if (ref === null || ref.nativeId === null || ref.strength !== "strong") return undefined;
   const asked = request?.nativeRequestRef;
@@ -193,7 +201,7 @@ const heldConnectorCall = (
     ) {
       const step = toolStep({ name: item.toolName, title: null, input: null, viewsImage: false });
       return step.tool === "connector" && step.label !== null
-        ? { label: step.label, input: item.input }
+        ? { itemId: item.id, label: step.label, input: item.input }
         : undefined;
     }
   }
@@ -204,7 +212,7 @@ const heldConnectorCall = (
  * A connector call's card: the tool, named as its step is, then its input as
  * the engine recorded it, which is what the connector will be sent.
  */
-const connectorApproval = (call: { readonly label: string; readonly input: unknown }): Approval => {
+const connectorApproval = (call: ConnectorCall): Approval => {
   const action = `${call.label} ${JSON.stringify(call.input ?? {})}`;
   const shown = action.slice(0, APPROVAL_TEXT_LENGTH);
   return {

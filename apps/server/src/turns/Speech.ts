@@ -255,7 +255,11 @@ export const layer = Layer.effect(
       `,
     });
 
-    /** The oldest call in the running admitted turn that matches, is `calls`, and no request claimed. */
+    /**
+     * The oldest call in the running admitted turn that matches, is `calls`,
+     * no request claimed, and is not held by an approval the operator declined:
+     * a declined call is over, whatever the engine's record of it says.
+     */
     const candidate = SqlSchema.findOneOption({
       Request: CallKey,
       Result: Candidate,
@@ -269,6 +273,11 @@ export const layer = Layer.effect(
           AND NOT EXISTS (
             SELECT 1 FROM tool_calls p
             WHERE p.session_id = c.session_id AND p.engine_call_id = c.engine_call_id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM engine_requests r
+            WHERE r.session_id = c.session_id AND r.engine_call_id = c.engine_call_id
+              AND json_extract(r.response_json, '$.decision') = 'deny'
           )
         ORDER BY c.seen_at, c.rowid
         LIMIT 1
@@ -341,8 +350,8 @@ export const layer = Layer.effect(
 
     /**
      * The call is still the session's admitted turn's, open unless the pin
-     * takes a closed one too, with the arguments it was matched by, and that
-     * turn has not finished.
+     * takes a closed one too, with the arguments it was matched by, not
+     * declined by the operator, and that turn has not finished.
      */
     const stillAdmitted = (found: Pin) =>
       sql<{ readonly n: number }>`
@@ -353,6 +362,11 @@ export const layer = Layer.effect(
           AND c.engine_turn_id = ${found.turnId} AND c.input_digest = ${found.digest}
           AND c.open >= ${minimumOpen(found.calls)} AND t.finished_at IS NULL
           AND s.retired_at IS NULL AND s.lost_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM engine_requests r
+            WHERE r.session_id = c.session_id AND r.engine_call_id = c.engine_call_id
+              AND json_extract(r.response_json, '$.decision') = 'deny'
+          )
       `.pipe(
         Effect.orDie,
         Effect.map(([row]) => (row?.n ?? 0) > 0),

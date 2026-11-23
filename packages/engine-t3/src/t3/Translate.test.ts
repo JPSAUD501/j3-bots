@@ -1211,6 +1211,65 @@ describe("a connector's `j3` call", () => {
     }),
   );
 
+  it.effect("held back by an approval, is the call the approval's request names", () =>
+    Effect.gen(function* () {
+      // Claude Code's approval and the call it holds share the tool use's id.
+      const ref = { driver: "claudeAgent", nativeId: "toolu-1", strength: "strong" };
+      const mirror = emptyMirror();
+      applyEvent(mirror, run("running", 1));
+      const { view } = replacement(mirror, false, at);
+      applyEvent(
+        mirror,
+        item({
+          id: "item-search",
+          type: "dynamic_tool",
+          toolName: "mcp__j3__notion__search",
+          input: { query: "roadmap" },
+          status: "running",
+          nativeItemRef: ref,
+        }),
+      );
+      applyEvent(
+        mirror,
+        item({
+          id: "item-approval",
+          type: "approval_request",
+          requestId: "request-1",
+          requestKind: "command",
+          prompt: "Search Notion",
+          status: "waiting",
+          nativeItemRef: ref,
+        }),
+      );
+      applyEvent(
+        mirror,
+        event("runtime-request.updated", {
+          id: "request-1",
+          nodeId: "node-1",
+          providerTurnId: null,
+          nativeRequestRef: ref,
+          kind: "command",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: at,
+          resolvedAt: null,
+        }),
+      );
+      yield* digestToolCalls(mirror);
+      const events = diff(mirror, view, at);
+
+      const calls = events.flatMap((event) => (event._tag === "tool-call" ? [event.call] : []));
+      const held = events.flatMap((event) =>
+        event._tag === "request-opened" ? [event.open.heldCall] : [],
+      );
+      assert.strictEqual(calls.length, 1);
+      assert.deepStrictEqual(
+        held,
+        calls.map((call) => call.callId),
+      );
+    }),
+  );
+
   it.effect("named `send_to_user` is a connector's step, never the bot speaking", () =>
     Effect.gen(function* () {
       const mirror = emptyMirror();

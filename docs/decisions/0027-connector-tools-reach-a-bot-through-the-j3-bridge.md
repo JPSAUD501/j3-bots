@@ -1,6 +1,6 @@
 # 0027: Connector tools reach a bot through the `j3` bridge, under the bot's permission mode
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

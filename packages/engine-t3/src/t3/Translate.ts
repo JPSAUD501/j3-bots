@@ -51,6 +51,7 @@ import { toolInputDigest } from "../toolCaller.ts";
 import {
   approvalOf,
   fileChangeWithoutDiff,
+  heldConnectorCall,
   type FileChangeItem,
   sameVersion,
 } from "./approvalDetail.ts";
@@ -1335,6 +1336,8 @@ export interface RequestState {
   readonly turnId: TurnId;
   readonly openedAt: DateTime.Utc;
   readonly request: EngineRequest;
+  /** The `j3` tool call it holds back (`OpenRequest.heldCall`). */
+  readonly heldCall: ToolCallId | null;
   /** `undefined` while it is open. */
   readonly resolution: RequestResolution | undefined;
 }
@@ -1380,12 +1383,14 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
       // once both are here.
       const request = mirror.requests.get(item.requestId);
       if (request === undefined && LIVE_ITEM.has(item.status)) return undefined;
+      const held = heldConnectorCall(item, request, mirror.items.values());
       return {
         requestId: RequestId.make(localIdFor(item.requestId)),
         answerTo: { _tag: "runtime-request", requestId: item.requestId },
         turnId,
         openedAt,
         request: approvalOf(item, request, mirror.items.values(), mirror.fetched),
+        heldCall: held === undefined ? null : ToolCallId.make(localIdFor(held.itemId)),
         resolution: runtimeResolution(request, item),
       };
     }
@@ -1398,6 +1403,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         turnId,
         openedAt,
         request,
+        heldCall: null,
         resolution: runtimeResolution(mirror.requests.get(item.requestId), item),
       };
     }
@@ -1414,6 +1420,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
           url: item.url?.slice(0, 2000) ?? null,
           placeholder: item.placeholder === undefined ? null : label(item.placeholder, "Secret"),
         },
+        heldCall: null,
         resolution: secretResolution(item),
       };
     default:
@@ -1492,6 +1499,7 @@ const openRequestOf = (state: RequestState): OpenRequest => ({
   turnId: state.turnId,
   openedAt: state.openedAt,
   request: state.request,
+  heldCall: state.heldCall,
 });
 
 // ---------------------------------------------------------------------------
@@ -1848,6 +1856,7 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
             requestId: state.requestId,
             turnId,
             request: state.request,
+            heldCall: state.heldCall,
           });
         }
       }

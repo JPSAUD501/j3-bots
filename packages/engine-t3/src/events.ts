@@ -104,6 +104,11 @@ export const OpenRequest = Schema.Struct({
   turnId: TurnId,
   openedAt: Schema.DateTimeUtc,
   request: EngineRequest,
+  /**
+   * The `j3` tool call the request holds back, as a `tool-call` event names
+   * it: a connector's call waiting on its approval. Null for any other request.
+   */
+  heldCall: Schema.NullOr(ToolCallId),
 });
 export type OpenRequest = typeof OpenRequest.Type;
 
@@ -429,6 +434,8 @@ export const SessionEvent = Schema.Union([
     requestId: RequestId,
     turnId: TurnId,
     request: EngineRequest,
+    /** `OpenRequest.heldCall`, which the engine may record after the request. */
+    heldCall: Schema.NullOr(ToolCallId),
   }),
   Schema.TaggedStruct("request-closed", {
     ...at,
