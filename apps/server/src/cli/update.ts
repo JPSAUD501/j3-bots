@@ -17,6 +17,7 @@ import type { UpdateFailure } from "@j3-bots/contracts";
 import type { StepFailed } from "../transition/switch.ts";
 import { rollBack, update, type UpdateResult, type UpdateStage } from "../install/update.ts";
 import * as ServerConfig from "../config.ts";
+import { updateUnit } from "../update/launch.ts";
 import { advanceRun, endRun, type Ending, isUnderway, readRun } from "../update/run.ts";
 import { refuse, userFacing } from "./errors.ts";
 
@@ -351,7 +352,7 @@ const clientRun = Effect.fn("update.clientRun")(function* (
 
 /**
  * Runs an update and reports it. With `run`, the update is the one a client
- * asked for (`../update/Updates.ts`): only the run the home records as
+ * asked for (`../update/UpdateRuns.ts`): only the run the home records as
  * underway, to exactly `version`, is carried out, and its record is told each
  * stage and how it ended.
  */
@@ -363,10 +364,21 @@ const runUpdate = Effect.fn("update.run")(function* (
   const tracked = Option.isSome(run)
     ? Option.some(yield* clientRun(run.value, version))
     : Option.none();
+  // A client reads how it ended away from this output, which goes to the unit's journal.
   const end = (ending: Ending) =>
     Option.match(tracked, {
       onNone: () => Effect.void,
-      onSome: ({ home, id }) => endRun(home, id, ending).pipe(Effect.ignore),
+      onSome: ({ home, id }) =>
+        endRun(
+          home,
+          id,
+          ending._tag === "done"
+            ? ending
+            : {
+                ...ending,
+                detail: `${ending.detail} What the update printed is in \`journalctl --user -u ${updateUnit(id)}\`.`,
+              },
+        ).pipe(Effect.ignore),
     });
   const progress = Option.isSome(tracked)
     ? yield* recordStages(tracked.value.home, tracked.value.id)

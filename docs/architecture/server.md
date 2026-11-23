@@ -584,7 +584,7 @@ A client asks the server to update itself through `POST /api/update/v1/start`, w
 
 - `done`: the new release runs.
 - `rolled-back`, with a reason: either the new release did not get ready and the release before runs again on the data as it was (`health-check`), or the update stopped before it changed anything (`download`, `verification`, `engine`, `disk`, `other`). Either way the release before runs.
-- `failed`: bringing the release before back failed too, and `j3-bots update --rollback` finishes it; or the unit ended without recording how, as when the machine restarted under it (`interrupted`). A run whose unit has ended while it has not is ended that way the next time the status is read, with the unit's journal named in its detail.
+- `failed`: bringing the release before back failed too, and `j3-bots update --rollback` finishes it; or the unit ended without recording how, as when the machine restarted under it (`interrupted`). A run whose unit has ended while it has not is ended that way the next time the status is read. The detail of any ending but `done` names the unit's journal, where what the update printed is.
 
 While a run has not ended, the status' `state` is its stage and `run` names it, so a client follows it by polling `status`. A stream would end with the restart, and a client already polls `GET /api/server` while the server is down. The server logs the run, the versions and the device when it starts one, and how it ended when it finds one cut off, never a token.
 

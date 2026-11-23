@@ -106,7 +106,7 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
       case "disk":
         return this.detail;
       case "engine-fetch":
-        return `J3 Bots ${this.detail} could not install the engine it is pinned to: see above. The release that runs now was not touched.`;
+        return `J3 Bots ${this.detail} could not install the engine it is pinned to. The release that runs now was not touched.`;
       case "no-snapshot":
         return `No update has taken a snapshot in ${this.detail} yet, so there is nothing to roll back to.`;
       case "snapshot-elsewhere":
@@ -347,7 +347,7 @@ const serviceSteps = (
           : Effect.fail(
               new StepFailed({
                 step: side === "new" ? "start-new" : "start-old",
-                reason: `\`j3-bots service install\` of J3 Bots ${releases[side].version} failed: see above`,
+                reason: `J3 Bots ${releases[side].version} did not start as the service`,
               }),
             ),
       ),
