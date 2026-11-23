@@ -119,15 +119,22 @@ it.effect("changes nothing, and shows nothing, for the name the operator already
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("refuses the name in a turn the operator did not speak in", () =>
+it.effect("refuses the name in the opening, which the operator has not written in yet", () =>
   Effect.gen(function* () {
-    // The opening: the operator has not written yet.
-    const opening = yield* createNewBot("Juno");
-    const openingSession = yield* engineSession(opening.id);
-    const openingTurn = yield* nextTurn(opening.id);
-    const fromOpening = yield* setName(openingSession, openingTurn, "Ana", "call-1");
+    const bot = yield* createNewBot("Juno");
+    const session = yield* engineSession(bot.id);
+    const turnId = yield* nextTurn(bot.id);
 
-    // A teammate's urgent message.
+    const reply = yield* setName(session, turnId, "Ana", "call-1");
+
+    assert.strictEqual(reply._tag, "refused");
+    assert.isNull(yield* operatorName);
+    assert.deepStrictEqual(yield* namedIn(bot.id), []);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("refuses a name a teammate passes on", () =>
+  Effect.gen(function* () {
     const sender = yield* createBot("Scout");
     const recipient = yield* createBot("Pixel");
     const recipientSession = yield* engineSession(recipient.id);
@@ -139,11 +146,10 @@ it.effect("refuses the name in a turn the operator did not speak in", () =>
       urgent: true,
     });
     const teammateTurn = yield* nextTurn(recipient.id);
-    const fromTeammate = yield* setName(recipientSession, teammateTurn, "Bob", "call-2");
 
-    for (const reply of [fromOpening, fromTeammate]) {
-      assert.strictEqual(reply._tag, "refused");
-    }
+    const reply = yield* setName(recipientSession, teammateTurn, "Bob", "call-1");
+
+    assert.strictEqual(reply._tag, "refused");
     assert.isNull(yield* operatorName);
     assert.deepStrictEqual(yield* namedIn(recipient.id), []);
   }).pipe(Effect.provide(TestDomain.layer)),

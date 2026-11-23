@@ -438,7 +438,7 @@ describe("renderWake", () => {
     `);
     expect(system({ name: "first-run", askName: true })).toMatchInlineSnapshot(`
       "<j3-wake kind="system" event="first-run" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      You were just created, and your user has not written yet. None of their bots knows yet what they want to be called.
+      You were just created, and your user has not written yet. None of their bots knows yet what they want to be called, so instead of what they need, your hello asks what to call them, in a few friendly words.
       </j3-wake>
       This is an event, not a message from your user. Respond only as your instructions say for it.
       "

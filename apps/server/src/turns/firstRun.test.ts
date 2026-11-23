@@ -148,7 +148,7 @@ const deliveredBoth = (first: EntryId, second: EntryId) =>
   });
 
 /** What a first-run envelope adds when the opening asks the operator's name. */
-const ASKS_NAME = "None of their bots knows yet what they want to be called.";
+const ASKS_NAME = "None of their bots knows yet what they want to be called";
 
 it.effect("asks the operator's name in the first bot's opening only, also when it goes again", () =>
   Effect.gen(function* () {
