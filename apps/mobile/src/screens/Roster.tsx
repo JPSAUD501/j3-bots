@@ -23,7 +23,7 @@ import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { StateMark } from "../components/States.tsx";
 import { Menu, type MenuAnchor, type MenuEntry } from "../components/Menu.tsx";
-import { ReorderCell, RowLift, RowMoves, useRowMoves } from "../components/Reorder.tsx";
+import { ReorderCell, RowLift, RowMoves, useRowMotion } from "../components/Reorder.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
@@ -160,7 +160,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       : searching
         ? orderRoster(filterRoster(roster.value, query))
         : rosterRows(roster.value);
-  const moves = useRowMoves(
+  const motion = useRowMotion(
     rows === null
       ? null
       : { keys: rows.map((item) => rosterKeyText(rosterKeyOf(item))), query: searched },
@@ -247,7 +247,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       </View>
       <ConnectionLine loaded />
       <AvatarHold held={scrolling}>
-        <RowMoves moves={moves}>
+        <RowMoves motion={motion}>
           <FlatList
             className="flex-1"
             contentContainerStyle={{ paddingBottom: insets.bottom }}
