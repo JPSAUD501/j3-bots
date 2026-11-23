@@ -19,12 +19,25 @@ const NEW_DEVICE = Schema.decodeSync(DeviceId)("device-new");
 const TOKEN = Schema.decodeSync(DeviceToken)("t".repeat(43));
 const PID = 4242;
 
-/** A server whose status answers `statusPid`, and that mints NEW_DEVICE unless it `refuses`. */
-const server = (options: { readonly statusPid?: number; readonly refuses?: boolean } = {}) => {
+/**
+ * A server whose status answers `statusPid` and the port it `listensOn`
+ * (the kept one unless told), and that mints NEW_DEVICE unless it `refuses`.
+ */
+const server = (
+  options: {
+    readonly statusPid?: number;
+    readonly listensOn?: number;
+    readonly refuses?: boolean;
+  } = {},
+) => {
   const asked: Array<LocalDeviceRequest> = [];
   const admin: AdminChannel = {
     status: () =>
-      Effect.succeed({ version: "0.3.0", pid: options.statusPid ?? PID, listener: { port: 3747 } }),
+      Effect.succeed({
+        version: "0.3.0",
+        pid: options.statusPid ?? PID,
+        listener: { port: options.listensOn ?? 3747 },
+      }),
     localDevice: (request) =>
       Effect.suspend(() => {
         asked.push(request);
@@ -39,7 +52,7 @@ const server = (options: { readonly statusPid?: number; readonly refuses?: boole
     admin,
     exited: Effect.never,
     logTail: Effect.succeed(""),
-    terminate: Effect.void,
+    terminate: Effect.succeed(true),
     kill: Effect.void,
   };
   return { running, asked };
@@ -137,6 +150,23 @@ describe("signing this computer in to the server it runs", () => {
       assert.deepStrictEqual(result, { _tag: "failed" });
       assert.deepStrictEqual(fake.asked, []);
       assert.isNull((yield* settings.get).localDevice);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("mints nothing for an address the server does not listen on", () =>
+    Effect.gen(function* () {
+      // The settings keep the page on 3747; the server says it listens on 3790.
+      const fake = server({ listensOn: 3790 });
+      const { signIn, settings } = yield* signingIn(
+        local({ id: OLD_DEVICE, current: false }),
+        Effect.succeed(fake.running),
+      );
+      const result = yield* signIn({ again: false });
+      assert.deepStrictEqual(result, { _tag: "failed" });
+      assert.deepStrictEqual(fake.asked, []);
+      const after = yield* settings.get;
+      assert.strictEqual(after.server, LOCAL);
+      assert.deepStrictEqual(after.localDevice, { id: OLD_DEVICE, current: false });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

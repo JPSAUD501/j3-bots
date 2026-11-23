@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { MAX_LABEL_LENGTH } from "@j3-bots/contracts";
+import { MAX_LABEL_LENGTH, ServerOrigin } from "@j3-bots/contracts";
 import type { LocalDeviceRequest, LocalDeviceResult } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { DesktopSettings } from "../settings.ts";
 import type { Supervisor } from "./supervisor.ts";
@@ -15,6 +17,11 @@ import type { Supervisor } from "./supervisor.ts";
 // The app never signs in again by itself. A device revoked from the phone
 // stays signed out until the operator asks, here, to sign in again: only the
 // first sign-in after the operator chose this computer needs no asking.
+
+const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
+
+/** The origin of the server listening on loopback `port`, as the page is kept on it. */
+const loopbackOrigin = (port: number) => decodeOrigin(`http://127.0.0.1:${port}`);
 
 /** The device name this computer signs in as: its own name, as a label holds it. */
 export const deviceName = (hostname: string): string => {
@@ -57,6 +64,18 @@ export const make = Effect.fn("LocalCredential.make")(function* (options: {
           );
           return { _tag: "failed" } as const;
         }
+        // A token is for the origin the server listens on, as it says on its
+        // own channel, never only the one the settings name: the page would
+        // otherwise keep it for another address. The settings change only by
+        // choosing this computer again, which reads the home's port anew.
+        const listening = loopbackOrigin(status.value.listener.port);
+        if (Option.isNone(listening) || listening.value !== before.server) {
+          yield* Effect.logError(
+            "The local server listens on another address than the app keeps for it; no device was signed in. Choose this computer again in Settings.",
+            { kept: before.server, listening: status.value.listener.port },
+          );
+          return { _tag: "failed" } as const;
+        }
         const minted = yield* admin
           .localDevice({ name: options.name, replaces: before.localDevice?.id ?? null })
           .pipe(Effect.option);
@@ -69,7 +88,7 @@ export const make = Effect.fn("LocalCredential.make")(function* (options: {
               Effect.logWarning("Keeping the id of this computer's device failed", error),
             ),
           );
-        return { _tag: "minted", server: before.server, deviceId, token } as const;
+        return { _tag: "minted", server: listening.value, deviceId, token } as const;
       }),
     );
 });
