@@ -56,8 +56,7 @@ export const MIRROR_PUBLIC_KEY = mirrorKey.publicKey
 const signature = (sums: Uint8Array) =>
   encoded(`${NodeCrypto.sign(null, sums, mirrorKey.privateKey).toString("base64")}\n`);
 
-const sha256 = (bytes: Uint8Array) =>
-  NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+const sha256 = (bytes: Uint8Array) => NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
 const encoded = (text: string) => new TextEncoder().encode(text);
 
