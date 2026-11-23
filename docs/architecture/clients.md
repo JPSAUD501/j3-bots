@@ -169,6 +169,7 @@ The app updates itself from the release's APK ([decision 0035](../decisions/0035
 - Two nightlies of one day with the same version code: the second installed over the first.
 - After an install ended the app's process, the next start emptied the update folder.
 - Cancelling Android's install dialog: the app said the install was cancelled and the checked release ready, kept the file, and installed it from there at the next tap.
+- Leaving the app during the download: nothing opened over the other app. Android's confirmation was there when the operator came back, and cancelling it ended the update as cancelled.
 - The server's update from the phone, against a server that `install.sh` installed as a systemd user service: the roster's notice opened Settings at the server's offer, one tap took it, the roster said the bots were restarting on the new version, and the app reconnected to it. A release that never became ready rolled back, and the roster said so, with the reason, until it was closed.
 
 Mobile uses its own components. Web and mobile share logic, tokens and vocabulary, not React components. See [decision 0007](../decisions/0007-client-and-server-stack.md) for why, and for the alternative of a single universal codebase.
