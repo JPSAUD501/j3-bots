@@ -126,8 +126,6 @@ jobs:
             os: windows-2025
             targets: --win --x64
             runtime: win-unpacked/resources/server-runtime
-            # No start check: the server's path check (isWithin) knows only "/", so it refuses its own home on Windows. Lane W turns it on with #158.
-            check-flags: --skip-start
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     permissions:
@@ -184,9 +182,8 @@ jobs:
       - name: Check the packaged server runtime
         env:
           RUNTIME: apps/desktop/release/${{ matrix.runtime }}
-          FLAGS: ${{ matrix.check-flags }}
           VERSION: ${{ needs.draft.outputs.version }}
-        run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION" $FLAGS
+        run: node scripts/check-server-runtime.ts "$RUNTIME" --version "$VERSION"
 
       # The packages, their block maps and the feed files (latest-linux.yml,
       # latest-mac.yml, latest.yml, or the pre-release channel's), not

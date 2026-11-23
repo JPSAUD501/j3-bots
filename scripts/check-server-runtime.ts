@@ -4,15 +4,15 @@
 // Checks the server runtime a desktop package carries, on the machine it is
 // for, as the release and CI run it once the package is built:
 //
-//   node scripts/check-server-runtime.ts <folder> --version <version> [--skip-start]
+//   node scripts/check-server-runtime.ts <folder> --version <version>
 //
 // - its files and release.json, as the packaging hook checks them, for this
 //   machine's platform and J3 Bots <version>;
 // - its Node runs and is the pinned release;
 // - the server on it prints `j3-bots v<version>` for --version;
-// - the server starts: it answers /health, then stops when told to. A
-//   platform whose server cannot start yet passes --skip-start, which the
-//   workflow that passes it explains.
+// - the server starts: it answers /health, then stops when its stdin ends,
+//   as the desktop app stops the server it runs (`--exit-with-stdin`), on
+//   Windows too, where a signal would end it without running its finalizers.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -32,7 +32,7 @@ const START_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 30_000;
 
 const { values, positionals } = NodeUtil.parseArgs({
-  options: { version: { type: "string" }, "skip-start": { type: "boolean", default: false } },
+  options: { version: { type: "string" } },
   allowPositionals: true,
   strict: true,
 });
@@ -40,7 +40,7 @@ const [folder] = positionals;
 const version = values.version;
 if (folder === undefined || positionals.length !== 1 || version === undefined) {
   throw new Error(
-    "Usage: node scripts/check-server-runtime.ts <folder> --version <version> [--skip-start], with J3 Bots' version, such as 0.3.0.",
+    "Usage: node scripts/check-server-runtime.ts <folder> --version <version>, with J3 Bots' version, such as 0.3.0.",
   );
 }
 const platform = hostPlatform();
@@ -94,13 +94,13 @@ const answers = async (url: string) => {
   }
 };
 
-/** Starts the server, waits for it to answer /health, and stops it. */
+/** Starts the server, waits for it to answer /health, and stops it as the desktop app does. */
 const checkStarts = async () => {
   // A home of its own, so that the check leaves nothing behind on the machine.
   const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "j3-runtime-"));
   try {
     const [port, toolPort, enginePort] = await freePorts(3);
-    const server = NodeChildProcess.spawn(node, [bin, "serve"], {
+    const server = NodeChildProcess.spawn(node, [bin, "serve", "--exit-with-stdin"], {
       env: {
         ...process.env,
         HOME: home,
@@ -111,7 +111,7 @@ const checkStarts = async () => {
         J3_TOOL_PORT: String(toolPort),
         J3_ENGINE_PORT: String(enginePort),
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
     let output = "";
     server.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
@@ -134,19 +134,19 @@ const checkStarts = async () => {
     const answered = Date.now() - started;
 
     const stopping = Date.now();
-    server.kill("SIGTERM");
+    server.stdin.end();
     const how = await Promise.race([exited, NodeTimers.setTimeout(STOP_TIMEOUT_MS, "timeout")]);
     if (how === "timeout") {
       server.kill("SIGKILL");
-      throw failed(`did not stop within ${STOP_TIMEOUT_MS / 1000} s of SIGTERM`);
+      throw failed(`did not stop within ${STOP_TIMEOUT_MS / 1000} s of its stdin's end`);
     }
+    if (how !== "code 0") throw failed(`stopped with ${how} when its stdin ended, not code 0`);
     console.log(
-      `Its server started: /health answered ${answered} ms after it was run, and it stopped (${how}) ${Date.now() - stopping} ms after SIGTERM.`,
+      `Its server started: /health answered ${answered} ms after it was run, and it stopped (${how}) ${Date.now() - stopping} ms after its stdin ended.`,
     );
   } finally {
     NodeFS.rmSync(home, { recursive: true, force: true, maxRetries: 5 });
   }
 };
 
-if (values["skip-start"]) console.log("Its server was not started: --skip-start.");
-else await checkStarts();
+await checkStarts();

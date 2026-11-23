@@ -28,6 +28,7 @@
     "test": "vp test run --config ../../vite.config.ts --dir src",
     "every-surface:host": "node every-surface/host.ts",
     "smoke:release": "vp test run --config ../../vite.config.ts --dir smoke",
+    "smoke:windows": "vp test run --config ../../vite.config.ts smoke/windows.test.ts",
     "upgrade-check": "vp test run --config ../../vite.config.ts --dir upgrade-check"
   },
   "dependencies": {
