@@ -39,7 +39,7 @@ The visual is an optional field of `MessageEntry`, not an entry kind of its own.
 
 ## Consequences
 
-- A visual is drawn the same way wherever J3 Bots shows a conversation: the web, the desktop app and Android load one document built by `@j3-bots/client-runtime`, under one policy from `@j3-bots/contracts`.
-- A visual cannot load anything: a chart library must be inlined, and a remote image or font does not appear. It cannot open a peer connection or embed another page, since a nested document would bring WebRTC back. The prompt and the tool description say so.
-- A page that never yields stalls the visuals that share its renderer process, and each shows as failed after ten seconds. The app's own page stays responsive, and a reload shows the others again (**Verified**, Chrome 151 and Electron 44).
+- A visual is drawn the same way wherever J3 Bots shows a conversation: the web, the desktop app and Android load one document built by `@j3-bots/client-runtime`, under one policy from `@j3-bots/contracts`, in a frame sandboxed with scripts only (Android's WebView through `visualShell`).
+- A visual cannot load anything: a chart library must be inlined, and a remote image or font does not appear. It cannot open a peer connection, embed another page or declare a shadow root in its markup, since a nested document the guard did not see would bring WebRTC back. A resource hint can still reach a host (a known gap in [Security](../architecture/security.md#known-gaps)). The prompt and the tool description say so.
+- A page that never yields stalls the visuals that share its renderer process, and each shows as failed after ten seconds. The app's own page stays responsive (**Verified**, Chrome 151 and Electron 44). A reload does not reliably bring the others back (**Verified**, Chrome 151 and Electron 44); closing the tab or restarting the app does (**Assumed**).
 - The engine's own rendering is unused. If T3 Code ever streams pages whole and in order with the text, A can be revisited without changing what the operator sees.

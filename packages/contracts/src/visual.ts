@@ -50,18 +50,29 @@ export const VISUAL_FRAME_PATH = "/visual-frame.html";
 export const VISUAL_FRAME_POLICY = `${VISUAL_CONTENT_SECURITY_POLICY}; sandbox allow-scripts; frame-ancestors 'self'`;
 
 /**
- * Whether a page's markup embeds another document: an `<iframe>`, `<frame>`,
- * `<object>` or `<embed>` start tag anywhere in its text, the only way markup
- * makes one. A nested document is a realm of its own, out of reach of the
- * guard a visual's document runs first, so a page that holds one is not
- * shown. It reads text, not a parsed document, so a tag in a comment or in a
- * script's string counts too.
+ * Whether a page's markup holds what the guard a visual's document runs
+ * first could not watch, so the page is not shown:
+ *
+ * - another document: an `<iframe>`, `<frame>`, `<object>` or `<embed>` start
+ *   tag, the only way markup makes one. A nested document is a realm of its
+ *   own, with everything the guard took from the page.
+ * - a declarative shadow root: a `shadowrootmode` attribute, or the older
+ *   `shadowroot`. The parser attaches it without `attachShadow`, so the guard
+ *   never observes it, and a frame a script later adds inside it would stay.
+ *
+ * It reads text, not a parsed document, so a tag or attribute in a comment or
+ * in a script's string counts too.
  */
-export const visualEmbedsDocument = (html: string): boolean => EMBEDDED_DOCUMENT.test(html);
+export const visualEscapesGuard = (html: string): boolean =>
+  EMBEDDED_DOCUMENT.test(html) || DECLARATIVE_SHADOW_ROOT.test(html);
 
 // A start tag's name ends at whitespace, `/` or `>`; the tokenizer lowercases
 // only ASCII letters, so no other spelling makes one of these elements.
 const EMBEDDED_DOCUMENT = /<(?:iframe|frame|object|embed)[\s/>]/i;
+// An attribute's name starts after whitespace, after the `/` that follows a
+// tag's name, or right after a quoted value; `=` gives it the value a root
+// needs. A property read in a script, such as `.shadowRoot`, follows a `.`.
+const DECLARATIVE_SHADOW_ROOT = /[\s/"']shadowroot(?:mode)?\s*=/i;
 
 const utf8 = new TextEncoder();
 

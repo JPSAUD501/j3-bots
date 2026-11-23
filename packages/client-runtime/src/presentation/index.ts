@@ -200,4 +200,5 @@ export {
   VISUAL_FRAME_SANDBOX,
   VISUAL_HEIGHT_MESSAGE,
   visualDocument,
+  visualShell,
 } from "./visual.ts";

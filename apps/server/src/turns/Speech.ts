@@ -9,7 +9,7 @@ import {
   type MessageEntry,
   RoomId,
   type Visual,
-  visualEmbedsDocument,
+  visualEscapesGuard,
   VisualHtml,
   VisualTitle,
 } from "@j3-bots/contracts";
@@ -652,9 +652,9 @@ export const layer = Layer.effect(
           const html = Option.getOrUndefined(decodeVisualHtml(text));
           if (html === undefined)
             return yield* refuse(`Nothing was sent: ${given} has no content.`);
-          if (visualEmbedsDocument(html)) {
+          if (visualEscapesGuard(html)) {
             return yield* refuse(
-              `Nothing was sent: ${given} embeds another page (an <iframe>, <frame>, <object> or <embed>), which a visual cannot hold. Draw everything in the page itself.`,
+              `Nothing was sent: ${given} embeds another page (an <iframe>, <frame>, <object> or <embed>) or has a declarative shadow root (a shadowrootmode attribute), which a visual cannot hold. Draw everything in the page itself, and attach a shadow root from a script if you need one.`,
             );
           }
           return { title, html, height: visual.height ?? null } satisfies Visual;

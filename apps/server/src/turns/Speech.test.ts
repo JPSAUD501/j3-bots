@@ -629,6 +629,12 @@ for (const [why, name, file, reason] of [
     "embeds another page",
   ],
   [
+    "a page with a declarative shadow root",
+    "chart.html",
+    new TextEncoder().encode('<div><template shadowrootmode="open"><p>Chart</p></template></div>'),
+    "declarative shadow root",
+  ],
+  [
     "a page over the cap",
     "chart.html",
     new Uint8Array(MAX_VISUAL_BYTES + 1).fill(0x61),

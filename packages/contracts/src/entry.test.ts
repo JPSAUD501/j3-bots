@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import { EntryId, EntryOrder } from "./base.ts";
 import { BotState } from "./bot.ts";
 import { EntryPreview, MessageDelivery, ReceivedEntry } from "./entry.ts";
-import { MAX_VISUAL_BYTES, visualEmbedsDocument } from "./visual.ts";
+import { MAX_VISUAL_BYTES, visualEscapesGuard } from "./visual.ts";
 
 // As the socket carries them: JSON, which a client decodes with the contract.
 const EntriesJson = Schema.toCodecJson(Schema.Array(ReceivedEntry));
@@ -147,7 +147,7 @@ describe("a message's visual", () => {
 });
 
 describe("a visual's page", () => {
-  it("embeds a document wherever its text has a frame's start tag, in any case", () => {
+  it("escapes the guard wherever its text has a frame's start tag, in any case", () => {
     for (const html of [
       "<iframe srcdoc='<p>'></iframe>",
       "<IFRAME\tsrc=x>",
@@ -157,19 +157,34 @@ describe("a visual's page", () => {
       "<embed>",
       "<script>const tag = '<iframe>';</script>",
     ]) {
-      assert.isTrue(visualEmbedsDocument(html), html);
+      assert.isTrue(visualEscapesGuard(html), html);
     }
   });
 
-  it("embeds none when it only names one, or holds a longer tag that starts the same", () => {
+  it("escapes the guard wherever its text gives an element a declarative shadow root", () => {
+    for (const html of [
+      '<div><template shadowrootmode="open"></template></div>',
+      "<x-a><TEMPLATE SHADOWROOTMODE=closed></TEMPLATE></x-a>",
+      "<template/shadowrootmode=open>",
+      '<template id="a"shadowrootmode="open">',
+      "<template\nshadowrootmode = 'open'>",
+      '<template shadowroot="open">',
+    ]) {
+      assert.isTrue(visualEscapesGuard(html), html);
+    }
+  });
+
+  it("keeps to the guard when it only names one, holds a longer tag that starts the same, or reads a shadow root in a script", () => {
     for (const html of [
       "<p>&lt;iframe&gt; is not allowed</p>",
       "<frameset></frameset>",
       "<objective-list></objective-list>",
       "<embedded-chart></embedded-chart>",
       "<svg><text>iframe</text></svg>",
+      "<script>if (host.shadowRoot == null) host.attachShadow({ mode: 'open' });</script>",
+      "<p>A shadowrootmode attribute is not used here.</p>",
     ]) {
-      assert.isFalse(visualEmbedsDocument(html), html);
+      assert.isFalse(visualEscapesGuard(html), html);
     }
   });
 });

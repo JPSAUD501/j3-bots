@@ -86,7 +86,7 @@ const VISUAL_VARIABLE_NAMES = Object.keys(visualVariables("light"))
 const SayVisual = Schema.Struct({
   path: described(
     text(1, 1_024),
-    `An .html file in your workspace, usually under files/, at most ${MAX_VISUAL_BYTES / 1024} KB. Self-contained: inline <style> and <script>, images as data: URLs. It runs with no network, so remote scripts, fonts, images and fetches fail, and it cannot embed another page (no iframe, frame, object or embed). It is shown in your user's light or dark theme: color it with these CSS variables, set on its :root, so it matches either: ${VISUAL_VARIABLE_NAMES}.`,
+    `An .html file in your workspace, usually under files/, at most ${MAX_VISUAL_BYTES / 1024} KB. Self-contained: inline <style> and <script>, images as data: URLs. It runs with no network, so remote scripts, fonts, images and fetches fail, and it cannot embed another page (no iframe, frame, object or embed) or declare a shadow root in markup (no shadowrootmode; attach one from a script). It is shown in your user's light or dark theme: color it with these CSS variables, set on its :root, so it matches either: ${VISUAL_VARIABLE_NAMES}.`,
   ),
   title: described(
     text(1, MAX_VISUAL_TITLE_LENGTH),

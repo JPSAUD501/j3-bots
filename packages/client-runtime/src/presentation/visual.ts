@@ -2,7 +2,7 @@
 import {
   clampVisualHeight,
   VISUAL_CONTENT_SECURITY_POLICY,
-  visualEmbedsDocument,
+  visualEscapesGuard,
 } from "@j3-bots/contracts";
 import { visualVariables } from "@j3-bots/design-tokens";
 import * as Option from "effect/Option";
@@ -10,18 +10,20 @@ import * as Schema from "effect/Schema";
 
 /**
  * How every client wraps a bot's visual before it renders it, so the web, the
- * desktop app and Android shut it in the same way. The frame around it is
- * each client's own (`sandbox="allow-scripts"` on the web; an isolated
- * WebView on Android); the document is this one. docs/architecture/security.md,
- * "Visuals", says why each rule is there.
+ * desktop app and Android shut it in the same way: the document is this one,
+ * always in a frame sandboxed with scripts only (the client's own visual page
+ * on the web and the desktop, `visualShell` in a WebView).
+ * docs/architecture/security.md, "Visuals", says why each rule is there.
  */
 
 export type VisualAppearance = "light" | "dark";
 
 /**
- * The web's `sandbox` for a visual's frame: scripts, and nothing else. Never
+ * The `sandbox` of a visual's frame: scripts, and nothing else. Never
  * `allow-same-origin`, which would give the page the client's origin, its
- * storage and its session; never top navigation, popups or forms.
+ * storage and its session; never top navigation, popups or forms. Every
+ * document the page makes inherits it, so each has an opaque origin of its
+ * own and the page cannot reach into it.
  */
 export const VISUAL_FRAME_SANDBOX = "allow-scripts";
 
@@ -29,9 +31,9 @@ export const VISUAL_FRAME_SANDBOX = "allow-scripts";
 export const VISUAL_HEIGHT_MESSAGE = "j3-visual-height";
 
 /**
- * The object an Android WebView puts on a visual's window to take its height:
- * a `postMessage(string)` that receives the message as JSON. Android's side
- * names it with the same literal.
+ * The object an Android WebView puts on `visualShell`'s window to take a
+ * visual's height: a `postMessage(string)` that receives the message as JSON.
+ * Android's side names it with the same literal.
  */
 export const VISUAL_BRIDGE = "J3Visual";
 
@@ -47,8 +49,8 @@ export const VISUAL_BRIDGE = "J3Visual";
 //   at the next microtask, before the frame's document can load. The ways to
 //   parse a declarative shadow root, whose inside this could not see, are
 //   deleted, with `document.write`. A nested document is cross-origin to the
-//   page in any case (each has an opaque origin of its own), and the policy
-//   starts no worker.
+//   page in any case, from the moment it exists, since the sandbox gives each
+//   an opaque origin of its own, and the policy starts no worker.
 // It keeps the built-ins it uses, so the page cannot turn it off by replacing
 // them. docs/architecture/security.md, "Visuals", has the proof.
 const GUARD = `(function () {
@@ -91,30 +93,34 @@ const GUARD = `(function () {
   };
 })();`;
 
-// Measures the content and reports its height whenever it changes. A frame is
-// sized to the report, so it measures the root's box, which follows the
-// content, rather than the viewport, which would follow the frame; content
-// that overflows the root counts too. The box is fractional and rounded up,
-// so the frame is never a fraction short and never shows a scrollbar for it.
-// On Android the WebView's bridge carries it as a string; in a frame it goes
-// to the parent. Both are taken before the page runs, so the page cannot
-// shadow them; it can still lie about its height, which sizes only its own
-// frame.
-const HEIGHT_REPORTER = `(function(){var n=window[${JSON.stringify(VISUAL_BRIDGE)}],p=window.parent,l=-1;function s(){var r=document.documentElement,h=Math.ceil(Math.max(r.getBoundingClientRect().height,r.scrollHeight>r.clientHeight?r.scrollHeight:0));if(h===l)return;l=h;var m={type:${JSON.stringify(VISUAL_HEIGHT_MESSAGE)},height:h};if(n&&typeof n.postMessage==="function")n.postMessage(JSON.stringify(m));else if(p!==window)p.postMessage(m,"*");}if(window.ResizeObserver){var o=new ResizeObserver(s);o.observe(document.documentElement);document.addEventListener("DOMContentLoaded",function(){if(document.body)o.observe(document.body);s();});}window.addEventListener("load",s);})();`;
+// Measures the content and reports its height to the frame's parent whenever
+// it changes. A frame is sized to the report, so it measures the root's box,
+// which follows the content, rather than the viewport, which would follow the
+// frame; content that overflows the root counts too. The box is fractional
+// and rounded up, so the frame is never a fraction short and never shows a
+// scrollbar for it. The parent is taken before the page runs, so the page
+// cannot shadow it; the page can still lie about its height, which sizes only
+// its own frame.
+const HEIGHT_REPORTER = `(function(){var p=window.parent,l=-1;function s(){var r=document.documentElement,h=Math.ceil(Math.max(r.getBoundingClientRect().height,r.scrollHeight>r.clientHeight?r.scrollHeight:0));if(h===l)return;l=h;if(p!==window)p.postMessage({type:${JSON.stringify(VISUAL_HEIGHT_MESSAGE)},height:h},"*");}if(window.ResizeObserver){var o=new ResizeObserver(s);o.observe(document.documentElement);document.addEventListener("DOMContentLoaded",function(){if(document.body)o.observe(document.body);s();});}window.addEventListener("load",s);})();`;
 
+// The root keeps room for a scrollbar on both sides whether one shows or not.
+// Otherwise, where scrollbars take space, a page whose height follows its
+// width (a chart scaled to fit) could stay shorter than it is without one:
+// shown first in a frame too short for it, it gets a scrollbar, narrows,
+// reports the narrower height, and the scrollbar never goes away.
 const themeStyle = (appearance: VisualAppearance): string => {
   const variables = Object.entries(visualVariables(appearance))
     .map(([name, value]) => `--${name}:${value};`)
     .join("");
   return (
     `:root{color-scheme:${appearance};${variables}}` +
-    "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%}" +
+    "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:15px;line-height:1.5;-webkit-text-size-adjust:100%;scrollbar-gutter:stable both-edges}" +
     "body{margin:0;padding:12px}code,kbd,pre,samp{font-family:var(--font-mono)}"
   );
 };
 
 /**
- * A bot's page, ready for the client's visual page or a WebView's `html`: the
+ * A bot's page, ready for the client's visual page or `visualShell`: the
  * policy, the theme of `appearance`, the guard and the height reporter, then
  * the page as the bot wrote it. They come before any of the page, so the
  * policy holds from the page's first byte and the page cannot take it back (a
@@ -122,11 +128,12 @@ const themeStyle = (appearance: VisualAppearance): string => {
  * before the page's first script. The page's own `<html>`, `<head>` and
  * doctype join the ones already open. A theme change builds it again.
  *
- * Null when the page embeds another document, which a visual may not hold:
- * the client shows that it could not show it.
+ * Null when the page's markup holds what the guard could not watch, another
+ * document or a declarative shadow root (`visualEscapesGuard`): the client
+ * shows that it could not show it.
  */
 export const visualDocument = (html: string, appearance: VisualAppearance): string | null =>
-  visualEmbedsDocument(html)
+  visualEscapesGuard(html)
     ? null
     : "<!doctype html>" +
       `<meta http-equiv="Content-Security-Policy" content="${VISUAL_CONTENT_SECURITY_POLICY}">` +
@@ -135,6 +142,32 @@ export const visualDocument = (html: string, appearance: VisualAppearance): stri
       `<script>${GUARD}</script>` +
       `<script>${HEIGHT_REPORTER}</script>` +
       html;
+
+// Relays the height the framed document reports, from that frame's window
+// alone, to the WebView's bridge, as the two fields `readVisualHeight` reads.
+const HEIGHT_RELAY = `(function(){var f=document.getElementById("visual"),b=window[${JSON.stringify(VISUAL_BRIDGE)}];window.addEventListener("message",function(e){var d=e.data;if(e.source!==f.contentWindow||!b||d===null||typeof d!=="object")return;b.postMessage(JSON.stringify({type:d.type,height:d.height}));});})();`;
+
+/** `text` as a double-quoted attribute's value: the parser gives back `text`. */
+const attributeValue = (text: string): string =>
+  text.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+
+/**
+ * The page a WebView loads to show `document`, as `visualDocument` builds it.
+ * A WebView loads its page unsandboxed (a policy's `sandbox` in a `<meta>`
+ * does nothing), so a frame the visual added would share its origin, and the
+ * visual could take that frame's built-ins, which the guard never touched.
+ * Here the document runs in a frame sandboxed with scripts only, as on the
+ * web, and this page, under the visual's policy too, passes its height to
+ * the app's bridge (`VISUAL_BRIDGE`). The frame fills the page; the app sizes
+ * the WebView to the height.
+ */
+export const visualShell = (document: string): string =>
+  "<!doctype html>" +
+  `<meta http-equiv="Content-Security-Policy" content="${VISUAL_CONTENT_SECURITY_POLICY}">` +
+  '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+  "<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>" +
+  `<iframe id="visual" sandbox="${VISUAL_FRAME_SANDBOX}" srcdoc="${attributeValue(document)}"></iframe>` +
+  `<script>${HEIGHT_RELAY}</script>`;
 
 const HeightMessage = Schema.Struct({
   type: Schema.Literal(VISUAL_HEIGHT_MESSAGE),
