@@ -7,6 +7,7 @@ import {
   CirclePause,
   CornerDownRight,
   OctagonPause,
+  UserRoundCheck,
 } from "lucide-react-native";
 import { Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
@@ -14,8 +15,8 @@ import { Icon } from "../components/Icon.tsx";
 import { usePresentation } from "../presentation.tsx";
 
 /**
- * A quiet line where something stopped, with Try again when the server still
- * takes one. It is part of the conversation, not an announcement: the
+ * A quiet line where something stopped, or where a bot changed something the
+ * operator should know about, with Try again when the server still takes one. It is part of the conversation, not an announcement: the
  * header says a change of state.
  */
 export function NoticeLine({
@@ -46,7 +47,14 @@ export function NoticeLine({
     waiting: "accent-waiting",
     "muted-foreground": "accent-muted-foreground",
   }[tone];
-  const icon = notice._tag === "chain-stopped" ? OctagonPause : waiting ? CirclePause : CircleAlert;
+  const icon =
+    notice._tag === "chain-stopped"
+      ? OctagonPause
+      : waiting
+        ? CirclePause
+        : notice._tag === "operator-named"
+          ? UserRoundCheck
+          : CircleAlert;
   return (
     <View className="my-2 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
       <Icon icon={icon} size={14} color={iconTone} />

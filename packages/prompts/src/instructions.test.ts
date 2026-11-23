@@ -74,6 +74,16 @@ describe("bot instructions", () => {
     expect(agents.startsWith("# Your profile\n")).toBe(true);
   });
 
+  it("calls the operator their user until they say what to call them", () => {
+    const unnamed = { ...scout, operator: { ...scout.operator, name: null } };
+    expect(renderBaseInstructions(unnamed.operator)).toContain(
+      "You are one of your user's bots in J3 Bots.",
+    );
+    expect(renderBotInstructions(unnamed)).toContain(
+      "- **Your user:** your user, time zone America/Sao_Paulo\n",
+    );
+  });
+
   it("says plainly when a profile field or a memory is empty", () => {
     const blank = renderBotInstructions({
       ...scout,

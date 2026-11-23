@@ -535,6 +535,7 @@ export function galleryVariants(now: DateTime.Utc) {
       routineId: RoutineId.make("routine-digest"),
       name: "Morning digest",
     }),
+    notice("notice-operator-named", { _tag: "operator-named", botId: ids.juniper, name: "Sam" }),
   ];
 
   const handoff = (

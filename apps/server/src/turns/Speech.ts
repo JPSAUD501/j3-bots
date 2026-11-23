@@ -35,6 +35,7 @@ import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { type LiveRoom, liveRoom } from "../rooms/liveRoom.ts";
 import { RoomRouting } from "../rooms/RoomRouting.ts";
+import { SettingsService } from "../settings/SettingsService.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import {
   TurnEnded,
@@ -149,7 +150,7 @@ interface WorkspaceFile {
 }
 
 /** The turn tools a request is pinned for. */
-type PinnedTool = "say" | "ask" | "message_bot" | "set_routine";
+type PinnedTool = "say" | "ask" | "message_bot" | "set_routine" | "set_operator_name";
 
 /** A request matched to its call, or one a forward of it already committed. */
 type Matched =
@@ -165,7 +166,7 @@ const keyOf = (call: TurnToolCall) => ({
 /**
  * The turn tools (`docs/architecture/server.md`, Bot tools): `say` and `ask`,
  * which speak, `message_bot`, which reaches a teammate (Teammate messages),
- * and `set_routine` (`routineTool.ts`). Each request is matched to the
+ * `set_routine` (`routineTool.ts`) and `set_operator_name`. Each request is matched to the
  * engine's record of its call in the session's running admitted turn and
  * pinned to it, in the transaction that applies it, so a request acts once,
  * for the turn and the audience that made it.
@@ -182,6 +183,7 @@ export const layer = Layer.effect(
     const bots = yield* BotStore;
     const routing = yield* RoomRouting;
     const settings = yield* SettingsStore;
+    const settingsService = yield* SettingsService;
     const wakes = yield* Wakes;
     const ids = yield* Ids;
     const stops = stopTargets(sql);
@@ -981,6 +983,47 @@ export const layer = Layer.effect(
       );
     });
 
+    /**
+     * `set_operator_name` (`docs/architecture/server.md`, Bot tools): saves
+     * what the operator asked to be called, as Settings saves it, with an
+     * `operator-named` notice where the turn speaks. Only a turn the operator
+     * spoke in may (`operatorSpokeIn`), so a teammate, another member of a
+     * room or a routine run cannot rename them through the bot. The name
+     * they already have changes nothing.
+     */
+    const setOperatorName = Effect.fn("Speech.setOperatorName")(function* (
+      found: Pin,
+      input: ToolInput<"set_operator_name">,
+    ) {
+      if (!(yield* operatorSpokeIn(found))) {
+        return yield* new TurnToolRefused({
+          reason:
+            "Nothing was saved: only your user can say what they want to be called, in a message of theirs that this turn answers.",
+        });
+      }
+      const changes = { operatorName: input.name };
+      const result = yield* once(
+        "set_operator_name",
+        found,
+      )(
+        Effect.gen(function* () {
+          const saved = { name: input.name } satisfies Schema.Json;
+          if ((yield* settings.get).operatorName === input.name) return saved;
+          // Only a time zone can be refused.
+          yield* settingsService.save(changes).pipe(Effect.orDie);
+          yield* notify(
+            found.botId,
+            found.audience,
+            { _tag: "operator-named", botId: found.botId, name: input.name },
+            null,
+          );
+          return saved;
+        }),
+      );
+      yield* settingsService.applied(changes);
+      return result;
+    });
+
     const encodeValues = Schema.encodeEffect(
       json(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
     );
@@ -1008,6 +1051,8 @@ export const layer = Layer.effect(
           return yield* messageBot(found, call.input);
         case "set_routine":
           return yield* setRoutine(found, call.input, once("set_routine", found));
+        case "set_operator_name":
+          return yield* setOperatorName(found, call.input);
       }
     });
 

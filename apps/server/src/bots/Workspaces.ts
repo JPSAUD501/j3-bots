@@ -16,7 +16,6 @@ import { EngineState } from "../engine/EngineState.ts";
 import { SYSTEM_PROMPT_FILE, WORKSPACE_ENTRIES } from "../home/entries.ts";
 import { Layout, type PrivateLocationExposed } from "../Layout.ts";
 import { MemoryFiles } from "../memory/MemoryFiles.ts";
-import { UNNAMED_OPERATOR } from "../settings/BasePrompt.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { BotStore } from "./BotStore.ts";
 
@@ -115,7 +114,7 @@ export const layer = Layer.effect(
       const pinnedBot = yield* pinned({ _tag: "bot", botId }, PINNED_FILE.bot);
       const pinnedShared = yield* pinned({ _tag: "shared" }, PINNED_FILE.shared);
       const input: BotInstructionsInput = {
-        operator: { name: now.operatorName ?? UNNAMED_OPERATOR, timeZone: now.timeZone },
+        operator: { name: now.operatorName, timeZone: now.timeZone },
         profile: {
           name: bot.profile.name,
           title: bot.profile.title,

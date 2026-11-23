@@ -479,6 +479,13 @@ export const EngineRpcs = RpcGroup.make(
 
 export const SettingsRpcs = RpcGroup.make(
   Rpc.make("settings.get", { success: Settings }),
+  /**
+   * The settings now, then each change, whoever made it: a device, or a bot
+   * the operator told what to call them. A server older than this RPC
+   * answers it with a defect, which a client passes over: it then reads them
+   * with `settings.get` as before.
+   */
+  Rpc.make("settings.subscribe", { success: Settings, stream: true }),
   /** Fields left out keep their value. Returns the settings as saved. */
   Rpc.make("settings.update", {
     payload: {

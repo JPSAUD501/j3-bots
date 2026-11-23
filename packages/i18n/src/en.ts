@@ -266,6 +266,7 @@ export const en = {
   "notice.tooLong": "Something meant for this bot was too long to pass on, so it was left out.",
   "notice.routinePaused":
     "{name} was paused: its schedule couldn’t be read. Edit it to turn it back on.",
+  "notice.operatorNamed": "{bot} saved your name: your bots now call you {name}.",
   "notice.retry": "Try again",
   "notice.openConversation": "Open",
 

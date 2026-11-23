@@ -7,9 +7,6 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { SettingsStore } from "./SettingsStore.ts";
 
-/** What bots call the operator until the operator gives a name. */
-export const UNNAMED_OPERATOR = "your user";
-
 /**
  * The base prompt every bot shares, rendered for the operator's name. The
  * engine is given it as a stream (`EngineOptions.basePrompt`), because Codex
@@ -31,9 +28,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const store = yield* SettingsStore;
     const render = store.get.pipe(
-      Effect.map((settings) =>
-        renderBaseInstructions({ name: settings.operatorName ?? UNNAMED_OPERATOR }),
-      ),
+      Effect.map((settings) => renderBaseInstructions({ name: settings.operatorName })),
     );
     const current = yield* SubscriptionRef.make(yield* render);
     return BasePrompt.of({

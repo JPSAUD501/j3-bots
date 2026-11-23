@@ -217,11 +217,14 @@ const botWake = (
   return { ...base, sinceLastTurn: since, kind: "bot", messages: [first, ...rest] };
 };
 
-/** The event a system wake reports; any other payload on one is a bug. */
-const systemEventOf = (payload: WakePayload): Effect.Effect<SystemEvent> => {
+/**
+ * The event a system wake reports, `askName` saying whether an opening asks
+ * the operator's name; any other payload on one is a bug.
+ */
+const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<SystemEvent> => {
   switch (payload._tag) {
     case "first-run":
-      return Effect.succeed({ name: "first-run" });
+      return Effect.succeed({ name: "first-run", askName });
     case "undelivered":
       return Effect.succeed({ name: "undelivered" });
     case "message":
@@ -1468,6 +1471,24 @@ export const layer = Layer.effect(
      * does not fit alone goes in an envelope of its own that is never sent
      * (`oversized`), so the wakes behind it go on.
      */
+    /**
+     * Whether the bot's opening asks what to call the operator: nobody knows
+     * yet, and no other bot's opening has gone to the engine. So only the
+     * first bot to open without a name asks, and a name the operator passed
+     * over there is not asked again. An opening sent again asks again: it is
+     * the same hello. Read in the transaction that writes the dispatch.
+     */
+    const opensAsking = Effect.fn("Pipeline.opensAsking")(function* (botId: BotId) {
+      if ((yield* settings.get).operatorName !== null) return false;
+      const opened = yield* sql`
+        SELECT 1 FROM wakes
+        WHERE bot_id <> ${botId} AND json_extract(payload_json, '$._tag') = 'first-run'
+          AND status IN ('dispatched', 'finished')
+        LIMIT 1
+      `;
+      return opened.length === 0;
+    }, Effect.orDie);
+
     const envelopeOf = Effect.fn("Pipeline.envelopeOf")(function* (
       plan: Plan,
       unseen: ReadonlyArray<Unseen>,
@@ -1496,7 +1517,10 @@ export const layer = Layer.effect(
       const carried: Array<Unseen> = [];
       const dropped: Array<Unseen["source"]> = [];
       for (const one of unseen) {
-        if (one.item === null || fitsEngine(system({ name: "first-run" }, [one.item]))) {
+        if (
+          one.item === null ||
+          fitsEngine(system({ name: "first-run", askName: false }, [one.item]))
+        ) {
           carried.push(one);
         } else dropped.push(one.source);
       }
@@ -1514,7 +1538,13 @@ export const layer = Layer.effect(
           room: { files: fitted.files, through: fitted.through },
         };
       }
-      const event = head.kind === "system" ? yield* systemEventOf(head.payload_json) : null;
+      const event =
+        head.kind === "system"
+          ? yield* systemEventOf(
+              head.payload_json,
+              head.payload_json._tag === "first-run" && (yield* opensAsking(plan.botId)),
+            )
+          : null;
       const parts = head.kind === "system" ? [] : yield* Effect.forEach(plan.wakes, partOf);
       const render = (wakes: number, seen: number): Wake | null => {
         const since = carried.slice(0, seen).flatMap(({ item }) => (item === null ? [] : [item]));

@@ -23,6 +23,7 @@ import type { ServerConfigShape } from "../config.ts";
 import * as Domain from "../domain.ts";
 import { homeLayout } from "../home/entries.ts";
 import { migrate, migrationsThrough } from "../persistence/Migrations.ts";
+import { SettingsService } from "../settings/SettingsService.ts";
 import * as TestDatabase from "../testing/database.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { archive, member, roomWith } from "../testing/rooms.ts";
@@ -47,6 +48,7 @@ import {
   until,
 } from "../testing/turns.ts";
 import { busyBackoff } from "./model.ts";
+import { Pipeline } from "./Pipeline.ts";
 import { Stops } from "./Stops.ts";
 
 // A bot's first turn opens its conversation (`docs/product/experience.md`,
@@ -144,6 +146,52 @@ const deliveredBoth = (first: EntryId, second: EntryId) =>
     yield* deliveryIs(first, "delivered");
     yield* deliveryIs(second, "delivered");
   });
+
+/** What a first-run envelope adds when the opening asks the operator's name. */
+const ASKS_NAME = "None of their bots knows yet what they want to be called.";
+
+it.effect("asks the operator's name in the first bot's opening only, also when it goes again", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const first = yield* createNewBot("Juno");
+    const firstSession = yield* engineSession(first.id);
+    const hello = yield* nextTurn(first.id);
+    assert.strictEqual(yield* dispatchesWith(firstSession, ASKS_NAME), 1);
+    yield* control.finishTurn({
+      sessionId: firstSession,
+      turnId: hello,
+      outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+    });
+
+    // Offered again, it is still the first bot's opening, and asks again.
+    const failed = yield* awaitEntry(first.id, "notice");
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: failed.id });
+    yield* finishRunning(first.id, hello);
+    assert.strictEqual(yield* dispatchesWith(firstSession, ASKS_NAME), 2);
+
+    // The operator passed over the question: no other bot asks it again.
+    const second = yield* createNewBot("Pixel");
+    yield* finishRunning(second.id);
+    const secondSession = yield* engineSession(second.id);
+    assert.strictEqual(yield* dispatchesWith(secondSession, FIRST_RUN), 1);
+    assert.strictEqual(yield* dispatchesWith(secondSession, ASKS_NAME), 0);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("asks no name in an opening once the operator has one", () =>
+  Effect.gen(function* () {
+    yield* (yield* SettingsService).update({
+      commandId: command(),
+      changes: { operatorName: "Ana" },
+    });
+    const bot = yield* createNewBot("Juno");
+    yield* finishRunning(bot.id);
+
+    const session = yield* engineSession(bot.id);
+    assert.strictEqual(yield* dispatchesWith(session, FIRST_RUN), 1);
+    assert.strictEqual(yield* dispatchesWith(session, ASKS_NAME), 0);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
 
 it.effect("creates a bot before any provider is connected, and it speaks once one is", () =>
   Effect.gen(function* () {

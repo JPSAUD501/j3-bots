@@ -6,6 +6,7 @@ import {
   CirclePauseIcon,
   CornerDownRightIcon,
   OctagonPauseIcon,
+  UserRoundCheckIcon,
 } from "lucide-react";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -13,8 +14,9 @@ import { noticeText } from "@j3-bots/client-runtime/wording";
 import { Button } from "./ui/button";
 
 /**
- * A quiet line where something stopped, with a way to retry when the server
- * still accepts one. It is part of the timeline, not an announcement: the
+ * A quiet line where something stopped, or where a bot changed something the
+ * operator should know about, with a way to retry when the server still
+ * accepts one. It is part of the timeline, not an announcement: the
  * header's live region is what tells a screen reader the state changed.
  */
 export function NoticeLine({
@@ -38,7 +40,9 @@ export function NoticeLine({
       ? OctagonPauseIcon
       : notice._tag === "waiting-in-conversation"
         ? CirclePauseIcon
-        : CircleAlertIcon;
+        : notice._tag === "operator-named"
+          ? UserRoundCheckIcon
+          : CircleAlertIcon;
   return (
     <div
       className={cn(

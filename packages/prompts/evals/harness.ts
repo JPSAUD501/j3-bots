@@ -56,20 +56,32 @@ const JUNIPER: BotSetup = {
   pinned: "",
 };
 
-/** A fictional operator and bot. */
-const bot = (model: string, setup: BotSetup): BotInstructionsInput => ({
-  operator: { name: "Rui", timeZone: "Europe/Lisbon" },
-  profile: { name: "Juniper", title: setup.title, job: setup.job, primary: false },
-  runtime: { model, harness: model.startsWith("gpt") ? "Codex" : "Claude Code" },
-  pinned: { shared: "- Rui reads messages on his phone; keep them short.", bot: setup.pinned },
-});
+/** Rui, as most scenarios have him, or an operator who has not said what to call them. */
+const operatorOf = (unnamed: boolean) =>
+  unnamed
+    ? { name: null, shared: "" }
+    : { name: "Rui", shared: "- Rui reads messages on his phone; keep them short." };
+
+/**
+ * A fictional operator and bot. An operator who has not said what to call
+ * them has no shared facts either: nobody has got to know them yet.
+ */
+const bot = (model: string, setup: BotSetup, unnamed: boolean): BotInstructionsInput => {
+  const operator = operatorOf(unnamed);
+  return {
+    operator: { name: operator.name, timeZone: "Europe/Lisbon" },
+    profile: { name: "Juniper", title: setup.title, job: setup.job, primary: false },
+    runtime: { model, harness: model.startsWith("gpt") ? "Codex" : "Claude Code" },
+    pinned: { shared: operator.shared, bot: setup.pinned },
+  };
+};
 
 /** Whether a turn has the shipped skills as already read. */
 export type Skills = "with the skill" | "without the skill";
 
-const systemPrompt = (model: string, skills: Skills, setup: BotSetup): string =>
+const systemPrompt = (model: string, skills: Skills, setup: BotSetup, unnamed: boolean): string =>
   [
-    renderSystemFile(bot(model, setup)),
+    renderSystemFile(bot(model, setup, unnamed)),
     ...(skills === "with the skill" ? sharedSkills : []).map(
       (skill) => `# You read the skill skills/${skill.name}/SKILL.md\n\n${skill.text}`,
     ),
@@ -244,6 +256,11 @@ export interface Scenario {
   readonly history?: ReadonlyArray<EarlierTurn>;
   /** The bot, when it is not Juniper as most scenarios have it. */
   readonly bot?: BotSetup;
+  /**
+   * The operator has not said what to call them: their bots call them "your
+   * user". Rui otherwise.
+   */
+  readonly unnamed?: boolean;
   /** What `run_command` says about the programs signed in, when not only `gh`. */
   readonly shell?: string;
   /** What the user types into a `request_secret` card; none leaves the card unanswered. */
@@ -262,6 +279,10 @@ const MAX_STEPS = 12;
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const decodeSetRoutine = Schema.decodeUnknownOption(tools.set_routine.input, DECODE_OPTIONS);
 const decodeAsk = Schema.decodeUnknownOption(tools.ask.input, DECODE_OPTIONS);
+const decodeOperatorName = Schema.decodeUnknownOption(
+  tools.set_operator_name.input,
+  DECODE_OPTIONS,
+);
 const decodeShellInput = Schema.decodeUnknownOption(Schema.Struct({ command: Schema.String }));
 
 const json = (value: unknown): string => JSON.stringify(value);
@@ -552,6 +573,25 @@ const answer = (
       const saved = routines.set(request.routine);
       return { ...reply(saved.output), refused: saved.refused };
     }
+    case "set_operator_name": {
+      // The server takes it only in a turn the operator spoke in (`Speech.ts`).
+      const spoke =
+        scenario.wake.kind === "user" ||
+        (scenario.wake.kind === "room" &&
+          scenario.wake.entries.some((entry) => entry.author === "user"));
+      if (!spoke) {
+        return reply(
+          json({
+            error:
+              "Nothing was saved: only your user can say what they want to be called, in a message of theirs that this turn answers.",
+          }),
+        );
+      }
+      const named = decodeOperatorName(request.input);
+      return named._tag === "Some"
+        ? reply(json({ name: named.value.name }))
+        : reply(json({ error: "`name` must be 1 to 200 characters once trimmed." }));
+    }
     case "recall":
       return reply(json({ facts: [] }));
     case "remember":
@@ -650,7 +690,10 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const routines = new HeldRoutines(scenario.wake);
     const tools = functionTools(workspace.commands, scenario.shell ?? GH_SIGNED_IN);
     const messages: Array<Message> = [
-      { role: "system", content: systemPrompt(model, skills, scenario.bot ?? JUNIPER) },
+      {
+        role: "system",
+        content: systemPrompt(model, skills, scenario.bot ?? JUNIPER, scenario.unnamed === true),
+      },
       ...earlierMessages(
         yield* Effect.forEach(scenario.history ?? [], ({ wake, calls }) =>
           Effect.map(renderWake(wake), (envelope) => ({ envelope, calls })),
