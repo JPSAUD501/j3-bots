@@ -9,15 +9,18 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { lineField } from "./ui/field";
 
+/** What the form creates: a name, whether the bot becomes the primary one, and its look. */
+export interface NewBot {
+  readonly name: string;
+  readonly primary: boolean;
+  readonly avatar: AvatarChoice;
+}
+
 interface NewBotFormProps {
   /** Whether "primary" starts checked: the first bot is the primary one unless the operator says otherwise. */
   readonly primaryAtFirst: boolean;
   /** Resolves once the bot exists. */
-  readonly onCreate: (bot: {
-    readonly name: string;
-    readonly primary: boolean;
-    readonly avatar: AvatarChoice;
-  }) => Promise<void>;
+  readonly onCreate: (bot: NewBot) => Promise<void>;
   /** Absent where there is nothing to go back to. */
   readonly onCancel?: () => void;
   /** Told whether a name is typed and not created yet; told `false` again on unmount. */

@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
-import type { BotDraft } from "@j3-bots/client-runtime";
 import { useId } from "react";
 import { useI18n } from "../app/context";
-import { NewBotForm } from "./NewBotForm";
+import { type NewBot, NewBotForm } from "./NewBotForm";
 import { alertDialog, dialogBackdrop, dialogTitle } from "./ui/dialog";
 
 interface NewBotDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   /** Resolves once the bot exists; the dialog then closes and its conversation opens. */
-  readonly onCreate: (draft: BotDraft) => Promise<void>;
+  readonly onCreate: (bot: NewBot) => Promise<void>;
   /** Whether a name is typed and not created yet. Held by the owner, which keeps such a form open. */
   readonly onUnsavedChange: (unsaved: boolean) => void;
 }

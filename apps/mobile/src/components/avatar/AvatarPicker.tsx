@@ -27,14 +27,10 @@ export interface AvatarPickerProps {
 }
 
 /**
- * A bot's look: its silhouette and its color, each a group of radios, under
- * a live preview that reacts to a new name, shape or color. Each shape shows
- * in the color picked, so the operator sees the pair they will get.
+ * A bot's look: its silhouette and its color (`AvatarChoices`), under a live
+ * preview that reacts to a new name, shape or color.
  */
 export function AvatarPicker({ value, onChange, name, seed, readOnly = false }: AvatarPickerProps) {
-  const i18n = useI18n();
-  const { t } = i18n;
-  const theme = useUniwind().theme === "dark" ? "dark" : "light";
   const picked = resolveAvatar(value);
   const preview = useRef<AvatarHandle>(null);
 
@@ -53,6 +49,27 @@ export function AvatarPicker({ value, onChange, name, seed, readOnly = false }: 
       <View className="items-center py-1">
         <BotAvatar ref={preview} avatar={picked} seed={seed} state="idle" size={88} />
       </View>
+      <AvatarChoices value={value} onChange={onChange} readOnly={readOnly} />
+    </View>
+  );
+}
+
+/**
+ * The choices of a bot's look, without a preview, for a place that shows the
+ * bot already: its silhouette and its color, each a group of radios. Each
+ * shape shows in the color picked, so the operator sees the pair they will get.
+ */
+export function AvatarChoices({
+  value,
+  onChange,
+  readOnly = false,
+}: Pick<AvatarPickerProps, "value" | "onChange" | "readOnly">) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const theme = useUniwind().theme === "dark" ? "dark" : "light";
+  const picked = resolveAvatar(value);
+  return (
+    <View className="gap-3">
       <Group
         label={t("avatar.shape")}
         values={avatarShapeNames}

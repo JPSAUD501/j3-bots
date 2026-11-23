@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AvatarChoice, EngineStatus } from "@j3-bots/contracts";
+import type { EngineStatus } from "@j3-bots/contracts";
 import { providerGate } from "./engine.ts";
 
 /**
@@ -66,19 +66,3 @@ const firstNames = ["Nova", "Juno", "Milo", "Iris", "Otto", "Luma", "Pip", "Theo
 /** The first bot's default name, chosen by `seed`, any whole number: a random one gives a random name. */
 export const defaultBotName = (seed: number): string =>
   firstNames[Math.abs(Math.trunc(seed)) % firstNames.length] ?? firstNames[0];
-
-/**
- * Looks that suit a first bot, the first one its default: bright, and never
- * the red that reads as an error. The cast's first looks, tomato left out;
- * the avatar picker replaces this list with its own defaults.
- */
-export const firstLooks: readonly [AvatarChoice, ...AvatarChoice[]] = [
-  { shape: "dome", color: "tangerine" },
-  { shape: "ears", color: "cobalt" },
-  { shape: "drop", color: "mint" },
-  { shape: "horns", color: "orchid" },
-  { shape: "ghost", color: "honey" },
-  { shape: "block", color: "iris" },
-  { shape: "bean", color: "sky" },
-  { shape: "pear", color: "lime" },
-];

@@ -29,9 +29,8 @@ const option =
   "flex aspect-square items-center justify-center pressable rounded-md outline-offset-1 hover:bg-muted focus-visible:outline-2 focus-visible:outline-accent data-checked:bg-muted data-checked:ring-1 data-checked:ring-foreground/60 data-readonly:hover:bg-transparent";
 
 /**
- * A bot's look: its silhouette and its color, each a group of radios, beside
- * a live preview that reacts to a new name, shape or color. Each shape shows
- * in the color picked, so the operator sees the pair they will get.
+ * A bot's look: its silhouette and its color (`AvatarChoices`), beside a live
+ * preview that reacts to a new name, shape or color.
  */
 export function AvatarPicker({
   value,
@@ -41,10 +40,6 @@ export function AvatarPicker({
   readOnly = false,
   className,
 }: AvatarPickerProps) {
-  const i18n = useI18n();
-  const { t } = i18n;
-  const shapeId = useId();
-  const colorId = useId();
   const picked = resolveAvatar(value);
   const preview = useRef<AvatarHandle>(null);
 
@@ -63,67 +58,94 @@ export function AvatarPicker({
       <div className="flex size-24 shrink-0 items-center justify-center">
         <BotAvatar ref={preview} avatar={picked} seed={seed} state="idle" size={88} />
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <p id={shapeId} className="text-xs">
-            {t("avatar.shape")}
-          </p>
-          <RadioGroup
-            aria-labelledby={shapeId}
-            value={picked.shape}
-            readOnly={readOnly}
-            onValueChange={(shape: unknown) => {
-              if (isShape(shape)) onChange({ shape, color: picked.color });
-            }}
-            className="grid grid-cols-6 gap-1"
-          >
-            {avatarShapeNames.map((shape) => (
-              <Radio.Root
-                key={shape}
-                value={shape}
-                aria-label={avatarShapeText(shape, i18n)}
-                className={option}
-              >
-                <BotAvatar
-                  avatar={{ shape, color: picked.color }}
-                  seed={shape}
-                  state="idle"
-                  size={26}
-                  still
-                />
-              </Radio.Root>
-            ))}
-          </RadioGroup>
-        </div>
-        <div className="flex flex-col gap-1">
-          <p id={colorId} className="text-xs">
-            {t("avatar.color")}
-          </p>
-          <RadioGroup
-            aria-labelledby={colorId}
-            value={picked.color}
-            readOnly={readOnly}
-            onValueChange={(color: unknown) => {
-              if (isColor(color)) onChange({ shape: picked.shape, color });
-            }}
-            className="grid grid-cols-6 gap-1"
-          >
-            {botColors.map((color) => (
-              <Radio.Root
-                key={color}
-                value={color}
-                aria-label={botColorText(color, i18n)}
-                className={option}
-              >
-                <span
-                  aria-hidden
-                  className="size-5 rounded-pill"
-                  style={{ background: `var(--bot-${color})` }}
-                />
-              </Radio.Root>
-            ))}
-          </RadioGroup>
-        </div>
+      <AvatarChoices
+        value={value}
+        onChange={onChange}
+        readOnly={readOnly}
+        className="min-w-0 flex-1"
+      />
+    </div>
+  );
+}
+
+/**
+ * The choices of a bot's look, without a preview, for a place that shows the
+ * bot already: its silhouette and its color, each a group of radios. Each
+ * shape shows in the color picked, so the operator sees the pair they will get.
+ */
+export function AvatarChoices({
+  value,
+  onChange,
+  readOnly = false,
+  className,
+}: Pick<AvatarPickerProps, "value" | "onChange" | "readOnly" | "className">) {
+  const i18n = useI18n();
+  const { t } = i18n;
+  const shapeId = useId();
+  const colorId = useId();
+  const picked = resolveAvatar(value);
+
+  return (
+    <div className={cn("flex flex-col gap-3", className)}>
+      <div className="flex flex-col gap-1">
+        <p id={shapeId} className="text-xs">
+          {t("avatar.shape")}
+        </p>
+        <RadioGroup
+          aria-labelledby={shapeId}
+          value={picked.shape}
+          readOnly={readOnly}
+          onValueChange={(shape: unknown) => {
+            if (isShape(shape)) onChange({ shape, color: picked.color });
+          }}
+          className="grid grid-cols-6 gap-1"
+        >
+          {avatarShapeNames.map((shape) => (
+            <Radio.Root
+              key={shape}
+              value={shape}
+              aria-label={avatarShapeText(shape, i18n)}
+              className={option}
+            >
+              <BotAvatar
+                avatar={{ shape, color: picked.color }}
+                seed={shape}
+                state="idle"
+                size={26}
+                still
+              />
+            </Radio.Root>
+          ))}
+        </RadioGroup>
+      </div>
+      <div className="flex flex-col gap-1">
+        <p id={colorId} className="text-xs">
+          {t("avatar.color")}
+        </p>
+        <RadioGroup
+          aria-labelledby={colorId}
+          value={picked.color}
+          readOnly={readOnly}
+          onValueChange={(color: unknown) => {
+            if (isColor(color)) onChange({ shape: picked.shape, color });
+          }}
+          className="grid grid-cols-6 gap-1"
+        >
+          {botColors.map((color) => (
+            <Radio.Root
+              key={color}
+              value={color}
+              aria-label={botColorText(color, i18n)}
+              className={option}
+            >
+              <span
+                aria-hidden
+                className="size-5 rounded-pill"
+                style={{ background: `var(--bot-${color})` }}
+              />
+            </Radio.Root>
+          ))}
+        </RadioGroup>
       </div>
     </div>
   );

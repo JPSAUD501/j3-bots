@@ -46,15 +46,18 @@ export const botColors = [
 
 export type BotColor = (typeof botColors)[number];
 
+/** A shape and a color that go together as a bot's avatar. */
+interface AvatarPair {
+  readonly shape: AvatarShapeName;
+  readonly color: BotColor;
+}
+
 /**
  * The avatars the server gives new bots, in order. Twelve shapes and twelve
  * colors, each once, ordered so the first few sit well side by side:
  * neighbors differ in hue, in lightness and in outline.
  */
-export const avatarCast: ReadonlyArray<{
-  readonly shape: AvatarShapeName;
-  readonly color: BotColor;
-}> = [
+export const avatarCast: readonly [AvatarPair, ...AvatarPair[]] = [
   { shape: "dome", color: "tangerine" },
   { shape: "ears", color: "cobalt" },
   { shape: "drop", color: "mint" },
@@ -68,8 +71,6 @@ export const avatarCast: ReadonlyArray<{
   { shape: "loaf", color: "teal" },
   { shape: "gem", color: "slate" },
 ];
-
-type AvatarPair = (typeof avatarCast)[number];
 
 const castIndex = (key: "shape" | "color", token: string) =>
   avatarCast.findIndex((pair) => pair[key] === token);

@@ -497,8 +497,6 @@ const sentences = {
   "onboarding.name.label": "Nome do bot",
   "onboarding.name.hint": "Pode deixar assim ou mudar quando quiser.",
   "onboarding.look.title": "Escolha o visual de {name}",
-  "onboarding.look.options": "Visuais",
-  "onboarding.look.option": "Visual {number} de {count}",
   "onboarding.look.hint": "Dá para trocar depois, nos detalhes do bot.",
   "onboarding.create": "Criar {name}",
   "onboarding.connect.title": "{name} precisa de um modelo para pensar",

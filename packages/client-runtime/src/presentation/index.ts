@@ -69,7 +69,6 @@ export {
 export { type Inline, parseMessageText } from "./messageText.ts";
 export {
   defaultBotName,
-  firstLooks,
   makingProgress,
   nextStep,
   type OnboardingStep,

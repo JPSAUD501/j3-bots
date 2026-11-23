@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { firstLooks } from "@j3-bots/client-runtime/presentation";
 import type { AvatarChoice } from "@j3-bots/contracts";
+import { avatarCast } from "@j3-bots/design-tokens";
 import { BotAvatar } from "../components/avatar/BotAvatar";
 import { cn } from "../lib/cn";
 import { springAnimation } from "./motion";
@@ -16,7 +16,8 @@ interface Member {
   readonly float: number;
 }
 
-const at = (index: number): AvatarChoice => firstLooks[index % firstLooks.length] ?? firstLooks[0];
+/** The cast's look at `index`: the first is the one the first bot starts with. */
+const at = (index: number): AvatarChoice => avatarCast[index % avatarCast.length] ?? avatarCast[0];
 
 /** A small crowd of bots, the largest in the middle, the rest around and in front of it. */
 const members: ReadonlyArray<Member> = [

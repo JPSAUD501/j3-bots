@@ -494,8 +494,6 @@ export const en = {
   "onboarding.name.label": "Bot name",
   "onboarding.name.hint": "Leave it as it is, or rename it any time.",
   "onboarding.look.title": "Pick a look for {name}",
-  "onboarding.look.options": "Looks",
-  "onboarding.look.option": "Look {number} of {count}",
   "onboarding.look.hint": "You can change it later in the bot’s details.",
   "onboarding.create": "Create {name}",
   "onboarding.connect.title": "{name} needs a model to think with",

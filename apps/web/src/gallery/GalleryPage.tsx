@@ -511,7 +511,7 @@ function MotionSection() {
 function AvatarsSection() {
   const [subject, setSubject] = useState(scout);
   const [count, setCount] = useState(0);
-  const [picked, setPicked] = useState<AvatarChoice>(avatarCast[0] ?? scout.avatar);
+  const [picked, setPicked] = useState<AvatarChoice>(avatarCast[0]);
   const [name, setName] = useState("Scout");
   const subjectName = `${subject.avatar.shape} · ${subject.avatar.color}`;
   return (

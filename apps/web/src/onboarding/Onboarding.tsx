@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   defaultBotName,
-  firstLooks,
   makingProgress,
   nextStep,
   type OnboardingStep,
@@ -9,7 +8,7 @@ import {
   providerGate,
   showsConnect,
 } from "@j3-bots/client-runtime/presentation";
-import { springs } from "@j3-bots/design-tokens";
+import { avatarCast, springs } from "@j3-bots/design-tokens";
 import { type IntentResult, refusedWith } from "@j3-bots/client-runtime";
 import { connectStepText, providerLine } from "@j3-bots/client-runtime/wording";
 import type { AvatarChoice, BotId, EngineStatus } from "@j3-bots/contracts";
@@ -25,11 +24,11 @@ import {
   useState,
 } from "react";
 import { useI18n, usePresentation } from "../app/context";
-import { BotAvatar } from "../components/avatar/BotAvatar";
+import { AvatarChoices } from "../components/avatar/AvatarPicker";
+import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar";
 import { CommandLine } from "../components/CommandLine";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/cn";
-import { BotLookSlot } from "./BotLookSlot";
 import { Cast } from "./Cast";
 import { BigButton, bigFieldClass, StepTitle } from "./parts";
 import { springAnimation, useReducedMotion } from "./motion";
@@ -88,7 +87,7 @@ export function Onboarding({
     () => initialName ?? defaultBotName(crypto.getRandomValues(new Uint32Array(1))[0] ?? 0),
   );
   const [name, setName] = useState(fallbackName);
-  const [look, setLook] = useState<AvatarChoice>(firstLooks[0]);
+  const [look, setLook] = useState<AvatarChoice>(avatarCast[0]);
   const [view, setView] = useState<{
     readonly step: OnboardingStep;
     readonly direction: Direction;
@@ -324,7 +323,8 @@ function Progress({ index, count }: { readonly index: number; readonly count: nu
 
 /**
  * The bot being made, above the screens: it pops in, hops at every step and
- * every change, and grows when it arrives, with rings in its colour.
+ * every change, morphs into a new shape, and grows when it arrives, with rings
+ * in its colour.
  */
 function Hero({
   look,
@@ -335,6 +335,12 @@ function Hero({
   readonly pokes: number;
   readonly arrived: boolean;
 }) {
+  const bot = useRef<AvatarHandle>(null);
+  const shape = useRef(look.shape);
+  useEffect(() => {
+    if (look.shape !== shape.current) bot.current?.poke("morph");
+    shape.current = look.shape;
+  }, [look.shape]);
   return (
     <div
       aria-hidden
@@ -363,7 +369,7 @@ function Hero({
             className="block"
             style={{ animation: springAnimation("onboarding-hop", "pop") }}
           >
-            <BotAvatar avatar={look} seed="first-bot" state="idle" size={96} />
+            <BotAvatar ref={bot} avatar={look} seed="first-bot" state="idle" size={96} />
           </span>
         </span>
       </span>
@@ -509,9 +515,7 @@ function LookStep({
       }
     >
       <StepTitle>{t("onboarding.look.title", { name })}</StepTitle>
-      <div className="mt-2">
-        <BotLookSlot look={look} onLook={onLook} />
-      </div>
+      <AvatarChoices value={look} onChange={onLook} className="mt-2 w-full max-w-80 text-start" />
       <p className="text-sm text-muted-foreground">{t("onboarding.look.hint")}</p>
     </StepFrame>
   );

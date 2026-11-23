@@ -216,7 +216,7 @@ A field a client does not know is dropped as the client decodes, so a server may
 
 Protocol 6 is the first whose clients pass over the open sets: from protocol 6 on, adding a kind of entry or notice, or a failure class, needs no bump. Clients of protocol 5 and before, J3 Bots 0.1.0 among them, refuse a conversation or a roster that holds one, so 6 shows them the incompatible screen instead.
 
-Protocol 7 came with the twelve silhouettes and twelve colors (migration 18). Its clients send them whenever a bot is created or its look is edited, the look the picker starts on included. A server of protocol 6, J3 Bots 0.1.1 among them, refuses a token it does not have. Teal is the only one it shares, a color, so every look a new client sends carries a shape it refuses. A client of protocol 6 against a newer server draws every bot as a circle, gray unless its color is teal. Either way the client shows the server as incompatible instead, which asks the operator to update the app or the server so they match.
+Protocol 7 came with the twelve silhouettes and twelve colors (migration 20). Its clients send them whenever a bot is created or its look is edited, the look the picker starts on included. A server of protocol 6, J3 Bots 0.1.1 among them, refuses a token it does not have. Teal is the only one it shares, a color, so every look a new client sends carries a shape it refuses. A client of protocol 6 against a newer server draws every bot as a circle, gray unless its color is teal. Either way the client shows the server as incompatible instead, which asks the operator to update the app or the server so they match.
 
 ## Behavior every client must get right
 
