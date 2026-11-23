@@ -122,17 +122,17 @@ const awaitConnector = (id: ConnectorId, predicate: (connector: Connector) => bo
   });
 
 /** Signs in through the browser, coming back to `redirect`; `before` runs between begin and return. */
-const signIn = (
+const signIn = <E = never, R = never>(
   id: ConnectorId,
   redirect: { readonly _tag: "relay"; readonly port: number } | { readonly _tag: "paste" },
-  before: Effect.Effect<void> = Effect.void,
+  before?: Effect.Effect<void, E, R>,
 ) =>
   Effect.gen(function* () {
     const auth = yield* ConnectorAuth;
     const fake = yield* TestOAuth;
     const { authorizationUrl } = yield* auth.begin({ connectorId: id, deviceId: LAPTOP, redirect });
     const back = fake.authorize(authorizationUrl);
-    yield* before;
+    if (before !== undefined) yield* before;
     yield* auth.complete({ _tag: "device", deviceId: LAPTOP, url: Redacted.make(back) });
     return new URL(authorizationUrl);
   });
