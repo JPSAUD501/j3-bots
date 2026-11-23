@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { Text } from "../text.tsx";
-import { canShowVisuals, VisualFrame } from "./VisualFrame.tsx";
+import { canShowVisuals, type VisualFailure, VisualFrame } from "./VisualFrame.tsx";
 import { type ConversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
 
@@ -59,10 +59,16 @@ export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visu
   const [height, setHeight] = useState(
     () => visuals?.heights.get(id) ?? visual.height ?? UNMEASURED_HEIGHT,
   );
-  const [shown, setShown] = useState<Shown>(canShowVisuals ? "loading" : "failed");
+  const [shown, setShown] = useState<Shown>(() =>
+    canShowVisuals && visuals?.failed.has(id) !== true ? "loading" : "failed",
+  );
   const [open, setOpen] = useState(false);
   const full = widths.column < layout.breakpoints.tablet;
   const failed = shown === "failed";
+  const fail = (failure: VisualFailure) => {
+    if (failure === "page") visuals?.failed.add(id);
+    setShown("failed");
+  };
 
   return (
     <>
@@ -107,7 +113,7 @@ export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visu
                     setHeight(reported);
                   }}
                   onLoaded={() => setShown("shown")}
-                  onFailed={() => setShown("failed")}
+                  onFailed={fail}
                   style={{ flex: 1 }}
                 />
               </View>
@@ -120,7 +126,7 @@ export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visu
           </View>
         )}
       </Pressable>
-      {open && <VisualFullScreen visual={visual} onClose={() => setOpen(false)} />}
+      {open && <VisualFullScreen visual={visual} onFailed={fail} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -132,9 +138,12 @@ export function VisualCard({ id, visual }: { readonly id: EntryId; readonly visu
  */
 function VisualFullScreen({
   visual,
+  onFailed,
   onClose,
 }: {
   readonly visual: Visual;
+  /** Told as the card is: a page that fails here fails inline too. */
+  readonly onFailed: (failure: VisualFailure) => void;
   readonly onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -174,7 +183,10 @@ function VisualFullScreen({
             <VisualFrame
               html={visual.html}
               interactive
-              onFailed={() => setFailed(true)}
+              onFailed={(failure) => {
+                setFailed(true);
+                onFailed(failure);
+              }}
               style={{ flex: 1 }}
             />
           )}

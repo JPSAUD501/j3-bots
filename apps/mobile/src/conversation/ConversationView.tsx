@@ -263,6 +263,7 @@ export function ConversationView({
   const [column, setColumn] = useState(0);
   // The conversation is mounted once per conversation, and so is what its visuals share.
   const [visuals] = useState(conversationVisuals);
+  useEffect(() => visuals.end, [visuals]);
   const widths = useMemo(() => {
     const { max, bubbleShare, cardShare } = layout.entryWidth;
     return {

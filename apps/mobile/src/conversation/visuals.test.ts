@@ -22,6 +22,14 @@ describe("whether a conversation's list is moving", () => {
     assert.deepStrictEqual(heard, [true, false]);
   });
 
+  it("leaves no timer behind when the conversation closes mid-scroll", () => {
+    const visuals = conversationVisuals();
+    visuals.scrolled();
+    visuals.end();
+    assert.isFalse(visuals.moving());
+    assert.strictEqual(vi.getTimerCount(), 0);
+  });
+
   it("tells nothing to a visual that left", () => {
     const visuals = conversationVisuals();
     let heard = 0;

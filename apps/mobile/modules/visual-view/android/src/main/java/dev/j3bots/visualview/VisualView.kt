@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.os.Message
+import android.util.AndroidRuntimeException
 import android.util.Base64
 import android.view.View
 import android.webkit.ConsoleMessage
@@ -58,12 +59,18 @@ private const val BRIDGE_NAME = "ReactNativeWebView"
  *
  * The WebView is drawn on a clear background, so the placeholder behind it
  * shows until the page has painted its own.
+ *
+ * It fails without taking the app down: when the device has no WebView, or
+ * the one it has is being updated, when the page's renderer dies, or when the
+ * page cannot load. `onPageFailed` says whether the page itself was the cause
+ * (`page`), and so would fail again, or the system was (`system`), and a later
+ * try may work.
  */
 @SuppressLint("ViewConstructor")
 class VisualView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
   private val onPageMessage by EventDispatcher<Map<String, String>>()
   private val onPageLoaded by EventDispatcher<Unit>()
-  private val onPageFailed by EventDispatcher<Unit>()
+  private val onPageFailed by EventDispatcher<Map<String, String>>()
 
   override val shouldUseAndroidLayout = true
 
@@ -81,10 +88,17 @@ class VisualView(context: Context, appContext: AppContext) : ExpoView(context, a
   private val pending = AtomicReference<String?>(null)
 
   init {
-    val view = WebView(context)
-    configure(view)
-    webView = view
-    addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    try {
+      val view = WebView(context)
+      configure(view)
+      webView = view
+      addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    } catch (missing: AndroidRuntimeException) {
+      // No WebView provider: none is installed, or the system is updating it.
+      // Said once the view is attached, when the app can hear it.
+      failed = true
+      post { onPageFailed(mapOf("cause" to "system")) }
+    }
   }
 
   /** Applies the props React Native set: the zoom and scroll of `interactive`, and a new page. */
@@ -118,11 +132,11 @@ class VisualView(context: Context, appContext: AppContext) : ExpoView(context, a
     view.destroy()
   }
 
-  private fun fail() {
+  private fun fail(cause: String) {
     if (failed) return
     failed = true
     destroy()
-    onPageFailed(Unit)
+    onPageFailed(mapOf("cause" to cause))
   }
 
   @SuppressLint("SetJavaScriptEnabled")
@@ -173,13 +187,14 @@ class VisualView(context: Context, appContext: AppContext) : ExpoView(context, a
       request: WebResourceRequest,
       error: WebResourceError,
     ) {
-      if (request.isForMainFrame) fail()
+      if (request.isForMainFrame) fail("page")
     }
 
-    // The page crashed its renderer, or the system reclaimed it: this visual
-    // says it could not be shown, and the app goes on.
+    // The renderer, which every WebView of the app shares, is gone: this
+    // visual says it could not be shown, and the app goes on. On screen, a
+    // page drawn there took it down; out of sight, the system reclaimed it.
     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-      fail()
+      fail(if (windowVisibility == View.VISIBLE) "page" else "system")
       return true
     }
   }

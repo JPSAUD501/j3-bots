@@ -15,8 +15,15 @@ type NativeVisualProps = ViewProps & {
   readonly interactive: boolean;
   readonly onPageMessage: (event: NativeSyntheticEvent<{ readonly data: string }>) => void;
   readonly onPageLoaded: () => void;
-  readonly onPageFailed: () => void;
+  readonly onPageFailed: (event: NativeSyntheticEvent<{ readonly cause: string }>) => void;
 };
+
+/**
+ * Why a visual could not be drawn: its page did it (a load it cannot make, a
+ * renderer it took down), and would again; or the system did (no WebView,
+ * the renderer reclaimed while out of sight), and a later try may work.
+ */
+export type VisualFailure = "page" | "system";
 
 /**
  * The app's own view for a visual (`modules/visual-view`), on Android only.
@@ -48,7 +55,7 @@ export function VisualFrame({
   readonly interactive: boolean;
   readonly onHeight?: (height: number) => void;
   readonly onLoaded?: () => void;
-  readonly onFailed: () => void;
+  readonly onFailed: (failure: VisualFailure) => void;
   readonly style?: StyleProp<ViewStyle>;
 }) {
   const appearance = useColorScheme() === "dark" ? "dark" : "light";
@@ -63,7 +70,7 @@ export function VisualFrame({
         if (height !== null) onHeight?.(height);
       }}
       onPageLoaded={() => onLoaded?.()}
-      onPageFailed={onFailed}
+      onPageFailed={({ nativeEvent }) => onFailed(nativeEvent.cause === "page" ? "page" : "system")}
       style={style}
     />
   );

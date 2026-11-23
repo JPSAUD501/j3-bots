@@ -176,7 +176,7 @@ The Android app draws a bot's visual in its own native view (`apps/mobile/module
 - **No way out.** The WebView refuses every navigation on its own thread, with no timeout: a link, `location`, a meta refresh, `window.open` (multiple windows are off, and `onCreateWindow` refuses) and a form. Nothing reaches the system browser.
 - **Nothing else of the device.** Off: file access, content URIs, DOM storage, the database, the cache, third-party cookies, saved form data and geolocation. Permission requests (camera, microphone) are denied, the file chooser does not open, and `alert`, `confirm`, `prompt` and `beforeunload` are cancelled, so no dialog draws over the app. Nothing the page logs reaches the device's log.
 - **One string in.** The page reaches the app only through `postMessage(string)`. A string over 256 characters is dropped, and only the latest message waits for the app's main thread. The app reads only `{type: "j3-visual-height", height}` from it, clamped (`readVisualHeight`).
-- **A dead renderer** shows "Couldn't show this visual" instead of taking the app down (`onRenderProcessGone`).
+- **A dead renderer, or no WebView,** shows "Couldn't show this visual" instead of taking the app down (`onRenderProcessGone`; the `AndroidRuntimeException` a WebView throws as it is made when the device has none, or is updating it).
 
 **Verified** on the Pixel 8 emulator (Android 16), with a page that tries each way out, inline and full screen:
 - the origin was `null`;
