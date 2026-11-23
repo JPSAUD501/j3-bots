@@ -464,7 +464,28 @@ export const make = Effect.fn("VersionTransition.make")(function* (
           reason: "Another change to the bots' data on this computer is under way.",
           retry: true,
         }),
-    ).pipe(Effect.mapError(onTheHome));
+    ).pipe(
+      // Every start holds the lock now, a plain one too: one it cannot take is
+      // said as what it is, with the lock's own fix.
+      Effect.mapError((error) =>
+        isLaunchFailed(error)
+          ? error
+          : error._tag === "HomeBlocked"
+            ? new LaunchFailed({
+                reason: clip(error.summary, REASON),
+                fix: error.fix,
+                retry: false,
+              })
+            : new LaunchFailed({
+                reason: clip(
+                  `The bots' data on this computer could not be changed: ${error.message}`,
+                  REASON,
+                ),
+                fix: `Check that this user can write to ${home}.`,
+                retry: false,
+              }),
+      ),
+    );
     // A Try again is answered by the first start that gets this far.
     const retrying = yield* Ref.getAndSet(retryAsked, false);
     const plan = yield* decide(retrying).pipe(Effect.mapError(unreadable));

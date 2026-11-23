@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { listSnapshots, takeSnapshot, unfinishedRollback } from "../install/snapshot.ts";
+import { devicesApart } from "../testing/filesystem.ts";
 import { type ServerProbe } from "./readiness.ts";
 import { decideStart, readRuntimeRecord, recordReady } from "./record.ts";
 import { type Side, StepFailed } from "./switch.ts";
@@ -218,6 +219,34 @@ it.layer(NodeServices.layer)("a version transition", (it) => {
           "the release rolled back from is not tried again by itself",
         );
       }),
+  );
+
+  it.effect("takes no snapshot a rollback could not put back, and starts the old release", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { home, database, host, steps, lock } = yield* hostOn();
+      // backups/, which holds the lock already, as if a disk of its own were mounted there.
+      const backups = yield* fs.realPath(path.join(home, "backups"));
+
+      const { outcome } = yield* transition({ lock, from: OLD, to: NEW, steps }).pipe(
+        Effect.provideService(FileSystem.FileSystem, devicesApart(fs, [backups])),
+      );
+
+      assert.strictEqual(outcome._tag, "rolled-back");
+      if (outcome._tag !== "rolled-back") return;
+      assert.strictEqual(outcome.failed.step, "snapshot");
+      assert.include(outcome.failed.reason, "on another filesystem");
+      assert.isTrue(Option.isNone(outcome.restored));
+      assert.deepStrictEqual(host.log, ["stop", "start 0.3.0"]);
+      assert.strictEqual(yield* fs.readFileString(database), "data of 0.3.0");
+      assert.deepStrictEqual(yield* listSnapshots(home), []);
+      assert.strictEqual(
+        (yield* readRuntimeRecord(home))._tag,
+        "none",
+        "nothing is recorded pending or rolled back from: the next start may try again",
+      );
+    }),
   );
 
   it.effect(

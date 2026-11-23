@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
+import { devicesApart } from "../testing/filesystem.ts";
 import {
   backupsElsewhere,
   listSnapshots,
@@ -74,23 +75,6 @@ const renamesFailingOnto = (fs: FileSystem.FileSystem, failing: string) =>
             }),
           )
         : fs.rename(from, to),
-  });
-
-/**
- * A file system that reports the folders `apart`, and what is in them, on
- * another device, as `stat` does: through links.
- */
-const devicesApart = (fs: FileSystem.FileSystem, apart: ReadonlyArray<string>) =>
-  FileSystem.FileSystem.of({
-    ...fs,
-    stat: (at) =>
-      Effect.all([fs.stat(at), fs.realPath(at)]).pipe(
-        Effect.map(([info, real]) =>
-          apart.some((folder) => real === folder || real.startsWith(`${folder}/`))
-            ? { ...info, dev: info.dev + 1n }
-            : info,
-        ),
-      ),
   });
 
 const FILES = ["config.json", "j3.sqlite", "engine/userdata/settings.json"] as const;

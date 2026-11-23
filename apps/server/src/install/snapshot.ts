@@ -178,6 +178,35 @@ export const backupsElsewhere = Effect.fn("snapshot.backupsElsewhere")(function*
 });
 
 /**
+ * Why a rollback could not use `<home>/backups` when it is `elsewhere`: it
+ * moves the home's files into it, which never crosses filesystems.
+ */
+export const backupsElsewhereReason = ({ folder, backups, linkTo }: BackupsElsewhere): string =>
+  `${Option.match(linkTo, {
+    onSome: (target) => `${backups} is a link to ${target}, on another filesystem than ${folder}`,
+    onNone: () => `${backups} is on another filesystem than ${folder}`,
+  })}. A rollback moves the data directory's files into it, which cannot cross filesystems, so backups must be on the data directory's filesystem.`;
+
+/** `<home>/backups` is on another filesystem than files a rollback would move into it. */
+class BackupsNotBeside extends Schema.TaggedError<BackupsNotBeside>()("BackupsNotBeside", {
+  folder: Schema.String,
+  backups: Schema.String,
+  linkTo: Schema.Option(Schema.String),
+}) {
+  override get message(): string {
+    return `${backupsElsewhereReason(this)} Nothing was changed.`;
+  }
+}
+
+/** Fails when a rollback in `home` could not move its files into `backups/`. */
+export const requireBackupsBeside = Effect.fn("snapshot.requireBackupsBeside")(function* (
+  home: string,
+) {
+  const elsewhere = yield* backupsElsewhere(home);
+  if (Option.isSome(elsewhere)) return yield* new BackupsNotBeside(elsewhere.value);
+});
+
+/**
  * How many more bytes a rollback to `snapshot` copies into `home`: none once
  * its copies are made, and otherwise the snapshot's files less the copies a
  * cut-off rollback left, which it removes first.

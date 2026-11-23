@@ -12,6 +12,7 @@ import {
   listSnapshots,
   markRestoring,
   pruneSnapshots,
+  requireBackupsBeside,
   restoreSnapshot,
   type Snapshot,
   type SnapshotRelease,
@@ -193,18 +194,24 @@ const switchSteps = <R>(
       side === "new" ? "await-new" : "await-old",
     ),
   resumed,
-  // Pending once the snapshot is whole, before the new release can migrate anything.
+  // Pending once the snapshot is whole, before the new release can migrate
+  // anything; none is taken that a rollback could not put back.
   snapshot: withHome(
     home,
     "snapshot",
-    Effect.tap(takeSnapshot({ home, from: releases.old, to: releases.new }), (snapshot) =>
-      Effect.flatMap(Path.Path, (path) =>
-        recordPending(home, {
-          from: releases.old,
-          to: releases.new,
-          snapshot: path.basename(snapshot.folder),
-        }),
+    Effect.tap(
+      Effect.andThen(
+        requireBackupsBeside(home),
+        takeSnapshot({ home, from: releases.old, to: releases.new }),
       ),
+      (snapshot) =>
+        Effect.flatMap(Path.Path, (path) =>
+          recordPending(home, {
+            from: releases.old,
+            to: releases.new,
+            snapshot: path.basename(snapshot.folder),
+          }),
+        ),
     ),
   ),
   mark: (snapshot) =>

@@ -35,6 +35,7 @@ import { type Side, StepFailed } from "../transition/switch.ts";
 import * as Transition from "../transition/transition.ts";
 import {
   backupsElsewhere,
+  backupsElsewhereReason,
   listSnapshots,
   restoreBytes,
   rollbackSnapshot,
@@ -439,11 +440,7 @@ const checkNoUnfinishedRollback = Effect.fn("update.checkNoUnfinishedRollback")(
 const checkBackupsBeside = Effect.fn("update.checkBackupsBeside")(function* (home: string) {
   const elsewhere = yield* backupsElsewhere(home);
   if (Option.isNone(elsewhere)) return;
-  const { folder, backups, linkTo } = elsewhere.value;
-  const where = Option.match(linkTo, {
-    onSome: (target) => `${backups} is a link to ${target}, on another filesystem than ${folder}`,
-    onNone: () => `${backups} is on another filesystem than ${folder}`,
-  });
+  const { backups, linkTo } = elsewhere.value;
   const fix = Option.match(linkTo, {
     onSome: (target) =>
       `Put the folder in its place: \`rm ${shellWord(backups)} && mv ${shellWord(target)} ${shellWord(backups)}\``,
@@ -452,7 +449,7 @@ const checkBackupsBeside = Effect.fn("update.checkBackupsBeside")(function* (hom
   });
   return yield* new UpdateRefused({
     reason: "backups-elsewhere",
-    detail: `${where}. A rollback moves the data directory's files into it, which cannot cross filesystems, so backups must be on the data directory's filesystem. ${fix}, then run this again. Nothing was changed.`,
+    detail: `${backupsElsewhereReason(elsewhere.value)} ${fix}, then run this again. Nothing was changed.`,
   });
 });
 

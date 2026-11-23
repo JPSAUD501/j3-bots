@@ -65,7 +65,8 @@ const computer = Effect.fn(function* (ran: string = OLD) {
     /**
      * How long a release takes to serve, as on a slow computer. It reads its
      * pipe only then, so a request that gives up sooner closes the pipe, and
-     * every later one fails.
+     * every later one fails. No time passes: the first request is answered at
+     * once, by whether its deadline would have outlasted the wait.
      */
     slowToServe: new Map<string, Duration.Duration>(),
   };
@@ -321,6 +322,26 @@ describe("the version of the server on this computer", () => {
       const retried = yield* versions.launch;
       assert.strictEqual(yield* here.versionOf(retried), NEW);
       assert.strictEqual(Option.getOrThrow(yield* here.record).version, NEW);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("says how to let it lock the data when it cannot", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const here = yield* computer();
+      const backups = path.join(here.home, "backups");
+      yield* Effect.acquireRelease(fs.makeDirectory(backups, { mode: 0o500 }), () =>
+        fs.chmod(backups, 0o700).pipe(Effect.orDie),
+      );
+
+      const refused = yield* Effect.flip((yield* here.app(OLD)).launch);
+      assert.include(refused.reason, path.join(backups, "update.lock"));
+      assert.strictEqual(
+        refused.fix,
+        "Check that this user can write to the folder that holds it.",
+      );
+      assert.deepStrictEqual(here.host.startedOn, []);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

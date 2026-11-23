@@ -462,6 +462,15 @@ function useLocalHere(origin: URL) {
   useEffect(() => {
     readyNow.current = ready;
   }, [ready]);
+  // A server that spoke another protocol is not asked again by itself: once
+  // the one on this computer is ready anew, as after Try again of an update
+  // that rolled back, the page tries it.
+  const wakeIncompatible = useEffectEvent(() => {
+    if (connection._tag === "incompatible") j3.reconnectNow();
+  });
+  useEffect(() => {
+    if (ready) wakeIncompatible();
+  }, [ready]);
 
   const fresh = localMode !== null && connection._tag === "unpaired" && connection.reason === "new";
   if (fresh && !firstRun) setFirstRun(true);
