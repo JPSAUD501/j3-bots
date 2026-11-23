@@ -135,7 +135,8 @@ export const install = Effect.fn("Runtime.install")(function* (options: InstallO
     }).pipe(Effect.mapError(notCopied));
   }
   for (const name of yield* fs.readDirectory(options.folder).pipe(Effect.orElseSucceed(() => []))) {
-    if (name.endsWith(".partial")) {
+    // Only a copy's own staging folder: a release's version never starts with a dot.
+    if (name.startsWith(".") && name.endsWith(".partial")) {
       yield* fs
         .remove(path.join(options.folder, name), { recursive: true, force: true })
         .pipe(Effect.ignore);

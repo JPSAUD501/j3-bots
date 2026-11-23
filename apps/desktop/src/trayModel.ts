@@ -26,17 +26,22 @@ export interface TrayModel {
   readonly more: string | null;
 }
 
-/** What the tray says of the server on this computer, or `null` while it runs. */
+/** What the tray says of the server on this computer, or `null` while it runs and nothing moves it. */
 const localLine = (local: LocalServerState, i18n: I18n): string | null => {
+  const updating = local.update?._tag === "updating";
   switch (local.state) {
     case "ready":
-      return null;
+      // The server before an update still answers while it stops for it.
+      return updating ? i18n.t("desktop.tray.local.updating") : null;
     case "starting":
-      return local.update?._tag === "updating"
+      return updating
         ? i18n.t("desktop.tray.local.updating")
         : i18n.t("desktop.tray.local.starting");
     case "stopped":
-      return i18n.t("desktop.tray.local.stopped");
+      // Stopped for an update the operator asked to try again.
+      return updating
+        ? i18n.t("desktop.tray.local.updating")
+        : i18n.t("desktop.tray.local.stopped");
     case "restarting":
       return local.retryInSeconds === undefined || local.retryInSeconds === 0
         ? i18n.t("desktop.tray.local.restartingNow")

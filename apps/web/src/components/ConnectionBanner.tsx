@@ -78,9 +78,12 @@ export function ConnectionBanner({
   const down = local !== undefined && local.server.state !== "ready" ? local : null;
   const retryAt = down !== null ? down.restartAt : state._tag === "waiting" ? state.retryAt : null;
   const seconds = useSecondsUntil(retryAt);
-  // An update of the server on this computer, from the stop of the one that ran to the new one's answer.
+  // An update of the server on this computer, from the stop of the one that ran to the new one's
+  // answer; a start that failed or waits to try again says so instead.
   const updating =
-    local?.server.update?._tag === "updating"
+    local?.server.update?._tag === "updating" &&
+    local.server.state !== "failed" &&
+    local.server.state !== "restarting"
       ? t("local.line.update.updating", { version: local.server.update.to })
       : null;
   /** The server on this computer, while it is not running. */

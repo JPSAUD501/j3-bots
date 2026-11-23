@@ -375,10 +375,20 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
         </Screen>
       );
     case "incompatible":
+      // An update of the server on this computer rolled back to a release the
+      // app does not speak with still says so, with its Try again and details.
       return (
-        <Screen>
-          <Incompatible server={desktopServer} update={update} />
-        </Screen>
+        <ConnectionBanner
+          state={connection}
+          local={local?.line}
+          everConnected={everConnected}
+          onRetryNow={j3.reconnectNow}
+        >
+          <Screen>
+            <Incompatible server={desktopServer} update={update} />
+          </Screen>
+          {local?.details}
+        </ConnectionBanner>
       );
     case "storage-failed":
       return (

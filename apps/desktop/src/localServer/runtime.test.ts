@@ -83,13 +83,16 @@ describe("putting the server runtime in place", () => {
         Runtime.ready({ folder, version: "0.3.0", platform: "linux" }),
       );
       assert.strictEqual(cutShort.reason, "not-kept");
+      // A release whose version ends as a copy's staging folder does is a release all the same.
+      yield* packaged(source, "0.2.9-rc.partial");
+      yield* Runtime.install({ source, folder });
 
       yield* packaged(source, "0.3.0");
       yield* Runtime.install({ source, folder });
       const runtime = yield* Runtime.ready({ folder, version: "0.3.0", platform: "linux" });
       assert.strictEqual(yield* fs.readFileString(runtime.node), "node for 0.3.0");
       assert.strictEqual(yield* fs.readFileString(runtime.entry), "server 0.3.0");
-      assert.deepStrictEqual(yield* listed(folder), ["0.3.0"]);
+      assert.deepStrictEqual(yield* listed(folder), ["0.2.9-rc.partial", "0.3.0"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

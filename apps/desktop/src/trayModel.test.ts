@@ -42,9 +42,14 @@ describe("the tray's menu", () => {
       trayModel(report, local, i18n).summary;
     assert.strictEqual(summary({ state: "ready" }), "1 needs you");
     assert.strictEqual(summary({ state: "starting" }), "Starting your bots…");
+    const updating = { _tag: "updating", from: "0.3.0", to: "0.3.1" } as const;
+    // From the stop of the server before it, as Try again stops it, to the new one's answer.
+    for (const state of ["ready", "stopped", "starting"] as const) {
+      assert.strictEqual(summary({ state, update: updating }), "Updating your bots…");
+    }
     assert.strictEqual(
-      summary({ state: "starting", update: { _tag: "updating", from: "0.3.0", to: "0.3.1" } }),
-      "Updating your bots…",
+      summary({ state: "failed", reason: "Port 3747 is in use.", update: updating }),
+      "Bots couldn’t start",
     );
     assert.strictEqual(summary({ state: "stopped" }), "Bots stopped");
     assert.strictEqual(

@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Transition from "@j3-bots/server/transition";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -36,7 +37,8 @@ const packaged = Effect.fn(function* (source: string, version: string) {
  * database as that release left it, and the record saying so. Its servers
  * are fakes that each migrate the database to their release as they start;
  * a release in `failing` then exits before it is ready, and one in `killedAt`
- * takes the app down with it, once, as the system killing it there would.
+ * takes the app down with it, once, as the system killing it there would,
+ * and one in `lockingState` leaves the home's `state` folder read-only.
  * `startedOn` says, for each start, the data the release found.
  */
 const computer = Effect.fn(function* (ran: string = OLD) {
@@ -52,11 +54,20 @@ const computer = Effect.fn(function* (ran: string = OLD) {
   yield* packaged(source, ran);
   yield* Runtime.install({ source, folder: runtimes });
   yield* Transition.recordReady(home, ran);
+  const state = path.join(home, "state");
+  yield* Effect.addFinalizer(() => fs.chmod(state, 0o700).pipe(Effect.ignore));
 
   const host = {
     startedOn: [] as Array<string>,
     failing: new Set<string>(),
     killedAt: new Set<string>(),
+    lockingState: new Set<string>(),
+    /**
+     * How long a release takes to serve, as on a slow computer. It reads its
+     * pipe only then, so a request that gives up sooner closes the pipe, and
+     * every later one fails.
+     */
+    slowToServe: new Map<string, Duration.Duration>(),
   };
   let pid = 100;
 
@@ -66,23 +77,32 @@ const computer = Effect.fn(function* (ran: string = OLD) {
       host.startedOn.push(`${version} on ${yield* fs.readFileString(database)}`);
       yield* fs.writeFileString(database, `data of ${version}`);
       if (host.killedAt.delete(version)) return yield* Effect.die("the app was killed");
+      if (host.lockingState.delete(version)) yield* fs.chmod(state, 0o500);
       pid += 1;
       const exited = yield* Deferred.make<ServerExit>();
       const end = (exit: ServerExit) => Deferred.succeed(exited, exit).pipe(Effect.asVoid);
       const failing = host.failing.has(version);
       if (failing) yield* end({ code: 1, signal: null });
+      const servesAfter = host.slowToServe.get(version);
+      let pipe: "waiting" | "read" | "closed" = servesAfter === undefined ? "read" : "waiting";
       const admin: AdminChannel = {
-        status: () =>
-          Effect.flatMap(Deferred.isDone(exited), (gone) =>
-            gone
-              ? Effect.fail(new AdminRefused({ route: "/status", status: 503 }))
-              : Effect.succeed({
-                  version,
-                  pid,
-                  listener: { port: 3747 },
-                  engine: { state: { _tag: "ready" } },
-                }),
-          ),
+        status: (deadline = Duration.seconds(30)) =>
+          Effect.gen(function* () {
+            if (pipe === "waiting" && servesAfter !== undefined) {
+              pipe = Duration.isLessThan(Duration.fromInputUnsafe(deadline), servesAfter)
+                ? "closed"
+                : "read";
+            }
+            if (pipe === "closed" || (yield* Deferred.isDone(exited))) {
+              return yield* new AdminRefused({ route: "/status", status: 503 });
+            }
+            return {
+              version,
+              pid,
+              listener: { port: 3747 },
+              engine: { state: { _tag: "ready" } },
+            };
+          }),
         localDevice: () => Effect.die("not used here"),
         shutdown: end({ code: 0, signal: null }),
       };
@@ -184,6 +204,18 @@ describe("the version of the server on this computer", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("waits for a new release that is slow to serve, without losing its pipe", () =>
+    Effect.gen(function* () {
+      const here = yield* computer();
+      here.host.slowToServe.set(NEW, Duration.seconds(20));
+      const versions = yield* here.app(NEW);
+
+      const server = yield* versions.launch;
+      assert.strictEqual(yield* here.versionOf(server), NEW);
+      assert.strictEqual(Option.getOrThrow(yield* here.record).version, NEW);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.live("rolls back to the release that ran when the app's does not become ready", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -210,6 +242,24 @@ describe("the version of the server on this computer", () => {
       assert.strictEqual(update.failed, NEW);
       assert.include(update.reason ?? "", "exit code 1");
       assert.include(update.logTail ?? "", "the engine could not be started");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("says the update failed when the release before runs, unrecorded", () =>
+    Effect.gen(function* () {
+      const here = yield* computer();
+      here.host.failing.add(NEW);
+      here.host.lockingState.add(OLD);
+      const versions = yield* here.app(NEW);
+
+      const server = yield* versions.launch;
+      assert.strictEqual(yield* here.versionOf(server), OLD);
+      const update = Option.getOrThrow(yield* versions.update);
+      assert.strictEqual(update._tag, "rolled-back");
+      if (update._tag !== "rolled-back") return;
+      assert.strictEqual(update.running, OLD);
+      assert.strictEqual(update.failed, NEW);
+      assert.include(update.reason ?? "", "exit code 1");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -247,7 +297,7 @@ describe("the version of the server on this computer", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("says no update is under way once a retry could not start one", () =>
+  it.live("keeps a Try again that found the data busy for the next start", () =>
     Effect.gen(function* () {
       const here = yield* computer();
       here.host.failing.add(NEW);
@@ -264,8 +314,13 @@ describe("the version of the server on this computer", () => {
         ),
       );
       assert.isTrue(busy.retry);
+      // No update is under way while the supervisor waits to start again.
       assert.isTrue(Option.isNone(yield* versions.update));
       assert.strictEqual(Option.getOrThrow(yield* here.record).version, OLD);
+
+      const retried = yield* versions.launch;
+      assert.strictEqual(yield* here.versionOf(retried), NEW);
+      assert.strictEqual(Option.getOrThrow(yield* here.record).version, NEW);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

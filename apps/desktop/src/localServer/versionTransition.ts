@@ -2,7 +2,6 @@
 import type { ServerUpdate } from "@j3-bots/desktop-bridge";
 import * as Transition from "@j3-bots/server/transition";
 import * as Deferred from "effect/Deferred";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
@@ -58,7 +57,7 @@ type Plan =
       readonly update: Option.Option<ServerUpdate>;
     }
   | { readonly _tag: "transition"; readonly from: string }
-  | { readonly _tag: "refused"; readonly reason: string };
+  | { readonly _tag: "refused"; readonly reason: string; readonly fix?: string };
 
 /** A server a step started, for one side of a transition, and its end once it came. */
 interface Started {
@@ -140,8 +139,8 @@ export const make = Effect.fn("VersionTransition.make")(function* (
       // Only a record this release reads decides anything but a plain start.
       return {
         _tag: "refused",
-        reason:
-          "The bots' data on this computer keeps a record of the J3 Bots release it was last used with (state/runtime.json) that this one cannot read: a newer J3 Bots wrote it, or it is damaged. Install the newer J3 Bots again.",
+        reason: `The bots' data on this computer keeps a record of the J3 Bots release it was last used with that this one cannot read: a newer J3 Bots wrote it, or it is damaged (${path.join(home, "state", "runtime.json")}).`,
+        fix: "Open your bots with the newer J3 Bots that wrote it. If none did, move that file out of its folder and try again: this J3 Bots then starts on the data as it is, with no snapshot taken first.",
       } satisfies Plan;
     }
     const { version, pending } = recorded.record;
@@ -200,11 +199,12 @@ export const make = Effect.fn("VersionTransition.make")(function* (
     );
 
   /**
-   * Runs `operation` on the home with the desktop's steps, under its lock,
-   * then answers the server it left running, if one, and why the new release
+   * Runs `operation` on the home with the desktop's steps, under `lock`, then
+   * answers the server it left running, if one, and why the new release
    * failed when it did.
    */
   const withSteps = Effect.fn("VersionTransition.withSteps")(function* <A, E>(
+    lock: Transition.TransitionLock,
     operation: (
       lock: Transition.TransitionLock,
       steps: Transition.HostStepsFor<FileSystem.FileSystem | Path.Path>,
@@ -252,34 +252,30 @@ export const make = Effect.fn("VersionTransition.make")(function* (
           return { _tag: "exited", reason: "it is not running" } as const;
         }
         const { server, exit } = now.value;
-        if (yield* Deferred.isDone(exit)) {
+        const exited = Effect.gen(function* () {
           const ended = yield* Deferred.await(exit);
           return { _tag: "exited", reason: exitReason(ended, yield* server.logTail) } as const;
-        }
-        return {
-          _tag: "running",
-          pid: Option.some(server.pid),
-          answer: yield* server.admin.status(Duration.seconds(5)).pipe(Effect.option),
-        } as const;
+        });
+        if (yield* Deferred.isDone(exit)) return yield* exited;
+        // A server reads its pipe only once it serves, and a request given up
+        // on takes the pipe with it: each waits for its answer as long as the
+        // server may take to get ready, or until the server exits.
+        return yield* Effect.raceFirst(
+          server.admin.status(Transition.READY_WITHIN).pipe(
+            Effect.option,
+            Effect.map(
+              (answer) => ({ _tag: "running", pid: Option.some(server.pid), answer }) as const,
+            ),
+          ),
+          exited,
+        );
       }),
       // The desktop runs whichever release it started: nothing to point elsewhere.
       adopt: () => Effect.void,
       pruneRuntimes: (keep) => Runtime.prune(runtimes, keep),
     });
 
-    const result = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const lock = yield* Transition.TransitionLock.hold(
-          home,
-          () =>
-            new LaunchFailed({
-              reason: "Another change to the bots' data on this computer is under way.",
-              retry: true,
-            }),
-        );
-        return yield* operation(lock, steps);
-      }),
-    );
+    const result = yield* operation(lock, steps);
     return {
       result,
       running: Option.map(yield* Ref.get(started), (now) => now.server),
@@ -318,12 +314,15 @@ export const make = Effect.fn("VersionTransition.make")(function* (
     rollback.step === "record" || rollback.step === "unmark";
 
   const finishRollback = Effect.fn("VersionTransition.finishRollback")(function* (
+    lock: Transition.TransitionLock,
     snapshot: Transition.Snapshot,
   ) {
     yield* Effect.logInfo("Finishing a rollback of the bots' data a stop cut short", {
       snapshot: snapshot.folder,
     });
-    const done = yield* withSteps((lock, steps) => Transition.rollBack({ lock, snapshot, steps }));
+    const done = yield* withSteps(lock, (held, steps) =>
+      Transition.rollBack({ lock: held, snapshot, steps }),
+    );
     const running = Option.filter(done.running, () =>
       Option.match(done.result, { onNone: () => true, onSome: runsAfter }),
     );
@@ -350,7 +349,10 @@ export const make = Effect.fn("VersionTransition.make")(function* (
     return running.value;
   });
 
-  const runTransition = Effect.fn("VersionTransition.runTransition")(function* (from: string) {
+  const runTransition = Effect.fn("VersionTransition.runTransition")(function* (
+    lock: Transition.TransitionLock,
+    from: string,
+  ) {
     const engine = yield* Runtime.releaseOf(path.join(runtimes, from)).pipe(
       Effect.map((release) => Option.fromUndefinedOr(release.engine)),
       Effect.orElseSucceed(() => Option.none<string>()),
@@ -367,10 +369,22 @@ export const make = Effect.fn("VersionTransition.make")(function* (
       from,
       to: bundled.version,
     });
-    const done = yield* withSteps((lock, steps) =>
-      Transition.transition({ lock, from: old, to: bundled, steps }),
+    const done = yield* withSteps(lock, (held, steps) =>
+      Transition.transition({ lock: held, from: old, to: bundled, steps }),
     );
     const { result } = done;
+    /** What the person is told once the release before runs again, after `failed`. */
+    const rolledBack = (failed: Transition.StepFailed): Option.Option<ServerUpdate> =>
+      Option.some({
+        _tag: "rolled-back",
+        running: result.from.version,
+        failed: bundled.version,
+        reason: clip(failed.reason, REASON),
+        ...Option.match(done.failedTail, {
+          onNone: () => ({}),
+          onSome: (tail) => ({ logTail: clip(tail, LOG_TAIL) }),
+        }),
+      });
     if (Option.isSome(result.interrupted)) {
       yield* Effect.logInfo("Rolled back an update a stop had cut off first", {
         to: result.interrupted.value.version,
@@ -393,28 +407,18 @@ export const make = Effect.fn("VersionTransition.make")(function* (
         yield* Effect.logWarning("The new server did not start; the one before runs again", {
           failed: outcome.failed,
         });
-        yield* SubscriptionRef.set(
-          update,
-          Option.some<ServerUpdate>({
-            _tag: "rolled-back",
-            running: result.from.version,
-            failed: bundled.version,
-            reason: clip(outcome.failed.reason, REASON),
-            ...Option.match(done.failedTail, {
-              onNone: () => ({}),
-              onSome: (tail) => ({ logTail: clip(tail, LOG_TAIL) }),
-            }),
-          }),
-        );
+        yield* SubscriptionRef.set(update, rolledBack(outcome.failed));
         break;
       case "rollback-failed":
       case "cut-off-rollback-failed": {
         const failed =
           outcome._tag === "rollback-failed" ? Option.some(outcome.failed) : Option.none();
-        yield* SubscriptionRef.set(update, Option.none());
         if (!runsAfter(outcome.rollback) || Option.isNone(done.running)) {
+          yield* SubscriptionRef.set(update, Option.none());
           return yield* rollbackFailed(done.stopStarted, failed, outcome.rollback);
         }
+        // The release before runs on its data: the update failed all the same.
+        yield* SubscriptionRef.set(update, Option.flatMap(failed, rolledBack));
         yield* Effect.logWarning(
           "The server before the update runs, but the rollback did not finish",
           {
@@ -439,10 +443,10 @@ export const make = Effect.fn("VersionTransition.make")(function* (
 
   /**
    * Starts the server the home's record lets start: what the supervisor's
-   * launch runs, after the home's checks.
+   * launch runs, after the home's checks. As with `j3-bots update`, the
+   * record is read, and acted on, under the home's update lock.
    */
   const launch = Effect.gen(function* () {
-    const retrying = yield* Ref.getAndSet(retryAsked, false);
     yield* Ref.set(afterReady, Effect.void);
     const installed = yield* Runtime.install({ source: options.source, folder: runtimes }).pipe(
       Effect.mapError(notReady),
@@ -453,11 +457,25 @@ export const make = Effect.fn("VersionTransition.make")(function* (
         retry: false,
       });
     }
+    const lock = yield* Transition.TransitionLock.hold(
+      home,
+      () =>
+        new LaunchFailed({
+          reason: "Another change to the bots' data on this computer is under way.",
+          retry: true,
+        }),
+    ).pipe(Effect.mapError(onTheHome));
+    // A Try again is answered by the first start that gets this far.
+    const retrying = yield* Ref.getAndSet(retryAsked, false);
     const plan = yield* decide(retrying).pipe(Effect.mapError(unreadable));
     switch (plan._tag) {
       case "refused":
         yield* SubscriptionRef.set(update, Option.none());
-        return yield* new LaunchFailed({ reason: plan.reason, retry: false });
+        return yield* new LaunchFailed({
+          reason: plan.reason,
+          ...(plan.fix === undefined ? {} : { fix: plan.fix }),
+          retry: false,
+        });
       case "run": {
         const server = yield* runKept(plan.version);
         yield* SubscriptionRef.set(update, plan.update);
@@ -465,11 +483,12 @@ export const make = Effect.fn("VersionTransition.make")(function* (
         return server;
       }
       case "transition":
-        return yield* runTransition(plan.from).pipe(Effect.mapError(onTheHome));
+        return yield* runTransition(lock, plan.from).pipe(Effect.mapError(onTheHome));
       case "finish-rollback":
-        return yield* finishRollback(plan.snapshot).pipe(Effect.mapError(onTheHome));
+        return yield* finishRollback(lock, plan.snapshot).pipe(Effect.mapError(onTheHome));
     }
   }).pipe(
+    Effect.scoped,
     // A start that fails or stops moves nothing: an update said to be under way is not.
     Effect.onExit((exit) =>
       Exit.isSuccess(exit)
