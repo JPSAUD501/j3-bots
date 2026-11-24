@@ -63,7 +63,7 @@ Each run starts, connects and pairs as the room eval does, on one harness, then:
 3. Waits until a member other than Lia has a message in the room, or until nothing has been under way for 30 seconds.
 4. Scores the run from the server's database, then stops the server and deletes the run's home.
 
-Lia runs on the harness under test. The bots she makes take the model a bot created without one gets: the first model of the first ready provider as the engine lists them, whatever Lia runs on. With both connected, that was Claude Code's in every run so far. So a Codex run tests what a Codex bot does when asked for a team, and its members answer on that default; the report says which provider each ran on.
+Lia runs on the harness under test, and the bots she makes run on her model, so a Codex run tests a Codex team from the request to the members' answers. The report says which provider each made bot ran on: another one there means Lia's provider was not ready when she made it, and it took the default.
 
 A run passes when all of these hold:
 

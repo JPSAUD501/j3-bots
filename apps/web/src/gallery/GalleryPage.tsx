@@ -1109,6 +1109,7 @@ function BubblesSection() {
             vault={galleryVault}
             turnBot={{ bot: team.bots.scout, lastEntry: null }}
             onOpenPair={nothing}
+            onOpenRoom={nothing}
           />
         </div>
       </Labeled>
@@ -1122,6 +1123,7 @@ function BubblesSection() {
             intents={timelineIntents}
             vault={galleryVault}
             onOpenPair={nothing}
+            onOpenRoom={nothing}
           />
         </div>
       </Labeled>
@@ -1325,14 +1327,16 @@ function NoticesSection() {
       <Labeled label="A kind from a newer server">
         <NeedsUpdateLine />
       </Labeled>
-      <Labeled label="Event lines: handoffs, routine changes, a saved name">
+      <Labeled label="Event lines: handoffs, routine changes, a saved name, a team">
         <div className="flex flex-col">
           {variants.eventLines.map((line) => (
             <EventLine
               key={latestOfLine(line).id}
               line={line}
+              room={null}
               onOpenRoutine={nothing}
               onOpenPair={nothing}
+              onOpenRoom={nothing}
             />
           ))}
         </div>

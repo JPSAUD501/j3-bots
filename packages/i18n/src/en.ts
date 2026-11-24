@@ -490,6 +490,7 @@ export const en = {
   "eventLine.opensPairs": "Lists their conversations",
   "eventLine.opensRoutines": "Lists the routines",
   "eventLine.opensRoutine": "Opens the routine",
+  "eventLine.opensRoom": "Opens the room",
 
   "handoff.urgent": "Urgent",
   "handoff.notDelivered": "Not delivered",

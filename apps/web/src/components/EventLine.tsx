@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Popover } from "@base-ui/react/popover";
-import type { BotId, EntryId, PairBotIds, RoutineId } from "@j3-bots/contracts";
+import type { BotId, EntryId, PairBotIds, RoomId, RoutineId } from "@j3-bots/contracts";
 import {
   type EventLine as Line,
   eventLineOpens,
@@ -22,6 +22,7 @@ import {
   type LucideIcon,
   MessagesSquareIcon,
   Trash2Icon,
+  UsersRoundIcon,
   WebhookIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -40,6 +41,7 @@ const icons: Record<EventIcon, LucideIcon> = {
   paused: CirclePauseIcon,
   deleted: Trash2Icon,
   message: MessagesSquareIcon,
+  room: UsersRoundIcon,
 };
 
 const markTone: Record<EventMark["tone"], string> = {
@@ -69,21 +71,27 @@ const control = cn(
  * of teammate messages, their teammate conversation at the run, or first a
  * popover of the conversations when the run has several teammates; the
  * routines of a line that tells several, in a popover; a routine, in the
- * details panel. The rest only tell.
+ * details panel; the room a bot started, or made this bot for, unless the
+ * line is in that room. The rest only tell.
  */
 export function EventLine({
   line,
+  room,
   onOpenRoutine,
   onOpenPair,
+  onOpenRoom,
 }: {
   line: Line;
+  /** The room the line is in; null in a bot's conversation. */
+  room: RoomId | null;
   onOpenRoutine: (routineId: RoutineId) => void;
   onOpenPair: OpenPair;
+  onOpenRoom: (roomId: RoomId) => void;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const words = eventLineWords(line, ctx);
-  const opens = eventLineOpens(line);
+  const opens = eventLineOpens(line, { room, roomName: ctx.roomName });
   const sentence = <Sentence words={words} />;
   const title = words.runs.map((run) => run.text).join("");
   const popover = (hint: string, content: ReactNode) => (
@@ -112,6 +120,16 @@ export function EventLine({
           aria-label={words.label}
           aria-description={t("eventLine.opensPair")}
           onClick={() => onOpenPair(opens.pair.botIds, opens.pair.first)}
+          className={control}
+        >
+          {sentence}
+        </button>
+      ) : opens._tag === "room" ? (
+        <button
+          type="button"
+          aria-label={words.label}
+          aria-description={t("eventLine.opensRoom")}
+          onClick={() => onOpenRoom(opens.roomId)}
           className={control}
         >
           {sentence}

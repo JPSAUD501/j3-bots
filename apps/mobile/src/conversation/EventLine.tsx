@@ -14,7 +14,7 @@ import {
   routineChangeDetail,
   teammateChoice,
 } from "@j3-bots/client-runtime/wording";
-import type { BotId, RoutineId } from "@j3-bots/contracts";
+import type { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
 import {
   CalendarClock,
   ChevronRight,
@@ -22,6 +22,7 @@ import {
   type LucideIcon,
   MessagesSquare,
   Trash2,
+  UsersRound,
   Webhook,
 } from "lucide-react-native";
 import { useState } from "react";
@@ -40,6 +41,7 @@ const icons: Record<EventIcon, LucideIcon> = {
   paused: CirclePause,
   deleted: Trash2,
   message: MessagesSquare,
+  room: UsersRound,
 };
 
 /**
@@ -48,26 +50,32 @@ const icons: Record<EventIcon, LucideIcon> = {
  * with the name in medium weight. A line with more to show opens it: a run of
  * teammate messages, their conversation at the run's first message, or, with
  * several teammates, a sheet to pick which; the routines of a line that tells
- * several, in a sheet; a routine, over its bot's details. The rest only tell.
- * A line that opens is pressed anywhere across its row, edge to edge: a row
- * that wide is easy to hit at 32 dp, and its target never reaches into the
- * next row.
+ * several, in a sheet; a routine, over its bot's details; the room a bot
+ * started, or made this bot for, unless the line is in that room. The rest
+ * only tell. A line that opens is pressed anywhere across its row, edge to
+ * edge: a row that wide is easy to hit at 32 dp, and its target never reaches
+ * into the next row.
  */
 export function EventLine({
   line,
+  room,
   onOpenRoutine,
   onOpenPair,
+  onOpenRoom,
 }: {
   readonly line: Line;
+  /** The room the line is in; null in a bot's conversation. */
+  readonly room: RoomId | null;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
   /** Opens a teammate conversation at the run's first message with that teammate. */
   readonly onOpenPair: (pair: TeammateRunPair) => void;
+  readonly onOpenRoom: (roomId: RoomId) => void;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const [open, setOpen] = useState(false);
   const words = eventLineWords(line, ctx);
-  const opens = eventLineOpens(line);
+  const opens = eventLineOpens(line, { room, roomName: ctx.roomName });
   const sentence = <Sentence words={words} />;
   const title = words.runs.map((run) => run.text).join("");
   return (
@@ -89,6 +97,7 @@ export function EventLine({
           onPress={() => {
             if (opens._tag === "routine") onOpenRoutine(opens.routineId);
             else if (opens._tag === "pair") onOpenPair(opens.pair);
+            else if (opens._tag === "room") onOpenRoom(opens.roomId);
             else setOpen(true);
           }}
           className="min-h-8 flex-row items-center justify-center gap-1.5 px-4 active:bg-muted"
@@ -127,6 +136,7 @@ const hints = {
   pairs: "eventLine.opensPairs",
   routine: "eventLine.opensRoutine",
   routines: "eventLine.opensRoutines",
+  room: "eventLine.opensRoom",
 } as const satisfies Record<NonNullable<EventLineOpens>["_tag"], string>;
 
 function Sentence({ words }: { readonly words: EventLineWords }) {

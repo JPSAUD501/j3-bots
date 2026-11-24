@@ -59,6 +59,7 @@ describe("a conversation", () => {
         intents={intents}
         vault={{ view: vault.view.get(), intents: vault }}
         onOpenPair={() => {}}
+        onOpenRoom={() => {}}
       />,
     );
     const before = html.indexOf("Before");

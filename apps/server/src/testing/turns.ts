@@ -106,10 +106,10 @@ const openings = new Set<IdempotencyKey>();
  * without a word: what most tests begin with, an empty conversation and an
  * idle session.
  */
-export const createBot = (name: string) =>
+export const createBot = (name: string, model?: ModelChoice) =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
-    const bot = yield* createNewBot(name);
+    const bot = yield* createNewBot(name, model);
     const session = yield* engineSession(bot.id);
     const turnId = yield* nextTurn(bot.id);
     const [opening, ...more] = yield* control.dispatches(session);

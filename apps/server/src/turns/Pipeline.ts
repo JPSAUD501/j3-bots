@@ -159,9 +159,10 @@ const LONGEST_ROOM_REASON: RoomReason = RoomReason.literals.reduce((longest, rea
   ROOM_CLOSING_LINES[reason].length > ROOM_CLOSING_LINES[longest].length ? reason : longest,
 );
 
-/** Why a bot is woken for a room, of several coalesced wakes: hosting asks the most of it. */
+/** Why a bot is woken for a room, of several coalesced wakes: the one that asks the most of it. */
 const strongestReason = (reasons: ReadonlyArray<RoomReason>): RoomReason =>
-  reasons.includes("host") ? "host" : reasons.includes("mentioned") ? "mentioned" : "everyone";
+  (["host", "kickoff", "mentioned"] as const).find((reason) => reasons.includes(reason)) ??
+  "everyone";
 
 /** The room's queue as planning reads it. */
 const RoomQueue = Schema.Struct({

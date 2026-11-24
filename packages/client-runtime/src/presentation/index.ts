@@ -238,6 +238,7 @@ export {
   handoffPeer,
   joinEventLines,
   latestOfLine,
+  type LineSetting,
   type NonMessageEntry,
   placeOf,
   type RoutineChanges,

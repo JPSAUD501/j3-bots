@@ -490,6 +490,7 @@ const sentences = {
   "eventLine.opensPairs": "Lista as conversas deles",
   "eventLine.opensRoutines": "Lista as rotinas",
   "eventLine.opensRoutine": "Abre a rotina",
+  "eventLine.opensRoom": "Abre a sala",
 
   "handoff.urgent": "Urgente",
   "handoff.notDelivered": "Não entregue",

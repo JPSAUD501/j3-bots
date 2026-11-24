@@ -11,6 +11,7 @@ import type {
   EntryId,
   QuestionAnswers,
   Room,
+  RoomId,
   RoutineId,
   WorkStep,
 } from "@j3-bots/contracts";
@@ -93,7 +94,7 @@ interface TimelineProps {
    * says so, and where Send again sends it. Null in a bot's conversation,
    * which has one speaker.
    */
-  readonly room: Pick<Room, "members" | "hostId"> | null;
+  readonly room: Pick<Room, "id" | "members" | "hostId"> | null;
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Whether the operator's answer to a card is still on its way. */
   readonly submitting: (entryId: EntryId) => boolean;
@@ -115,6 +116,8 @@ interface TimelineProps {
   readonly turnExtra?: ReactNode;
   /** Opens the teammate conversation a line of teammate messages leads to, at that message. */
   readonly onOpenPair: OpenPair;
+  /** Opens the room a line of a bot's team names. */
+  readonly onOpenRoom: (roomId: RoomId) => void;
 }
 
 /**
@@ -134,6 +137,7 @@ export function Timeline({
   turnBot = null,
   turnExtra,
   onOpenPair,
+  onOpenRoom,
 }: TimelineProps) {
   const bots = useBots();
   const i18n = useI18n();
@@ -182,8 +186,10 @@ export function Timeline({
             <div key={item.key} data-seen-id={latestOfLine(item.line).id} className={settles}>
               <EventLine
                 line={item.line}
+                room={room?.id ?? null}
                 onOpenRoutine={intents.openRoutine}
                 onOpenPair={onOpenPair}
+                onOpenRoom={onOpenRoom}
               />
             </div>
           );

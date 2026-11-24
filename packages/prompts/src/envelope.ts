@@ -175,7 +175,8 @@ export interface RoomWake extends WakeBase {
     readonly hostName: string;
   };
   /**
-   * Why this bot is the one woken: it was mentioned, the operator addressed
+   * Why this bot is the one woken: the kickoff of a room its host started
+   * mentioned it, a later message mentioned it, the operator addressed
    * everyone, or the operator addressed nobody and this bot hosts the room.
    * It chooses the envelope's closing line.
    */
@@ -190,7 +191,7 @@ export interface RoomWake extends WakeBase {
 }
 
 /** Why a bot is woken for a room. */
-export type RoomReason = "mentioned" | "everyone" | "host";
+export type RoomReason = "kickoff" | "mentioned" | "everyone" | "host";
 
 export interface BotWake extends WakeBase {
   readonly kind: "bot";
@@ -284,9 +285,14 @@ export const CLOSING_LINES: { readonly [K in Exclude<WakeKind, "room">]: string 
 /**
  * A room envelope's closing line, by why the bot was woken: the host's role
  * when nobody was addressed, and how far a mentioned or polled member goes.
+ * The kickoff's says the room is the user's and gives the member a part: a
+ * bot made for the room has nothing else to go on, and the room's rule of
+ * staying silent with nothing new would otherwise leave it waiting.
  */
 export const ROOM_CLOSING_LINES: { readonly [R in RoomReason]: string } = {
   host: "In this room, `say` reaches everyone. You host it and nobody was addressed: answer, or hand the work to one member with `mention`.",
+  kickoff:
+    "In this room, `say` reaches everyone. Your user asked for it, and this is its kickoff, which names your part. Answer what it asks of you now, even if another member opens: the members it names are woken one at a time, each seeing the replies before theirs. End your turn without a word only if it asks nothing of you.",
   mentioned:
     "In this room, `say` reaches everyone. You were addressed: answer, and `mention` a member only if they must act next.",
   everyone:

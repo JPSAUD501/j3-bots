@@ -56,7 +56,7 @@ export function ConversationScreen({ navigation, route }: Props) {
       item={found.item}
       onBack={navigation.goBack}
       onOpenDetails={() => navigation.navigate("details", { item: key })}
-      onOpenBot={(botId) => openConversation({ _tag: "bot", botId })}
+      onOpen={openConversation}
       onGone={() => navigation.popTo("roster")}
     />
   );

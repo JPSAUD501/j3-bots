@@ -224,12 +224,12 @@ const StartRoomInput = toolInput({
   ),
   kickoff: described(
     text(1, MAX_SPOKEN_TEXT),
-    "The room's first message, yours: what the room is for, what your user needs, who owns which part, the rules, and who opens.",
+    "The room's first message, yours: what the room is for, what your user needs, who owns which part, the rules, and what each member you mention should answer first.",
   ),
   mention: Schema.optionalKey(
     described(
       Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_REQUEST)),
-      "The members the kickoff wakes, each in turn, in this order. Leave it out to wake every member, in the order of `members`.",
+      "The members the kickoff wakes, each in turn, in this order: the one who opens first. Leave it out to wake every member, in the order of `members`.",
     ),
   ),
 });
@@ -566,8 +566,8 @@ export const tools = {
     "start_room",
     [
       "Start a room: a group chat where you and the teammates you name work on something together, and where your user reads along and writes too. Only when your user asked for group work in this turn's message. When they asked for a group or a team of bots, first create the teammates it lacks with `create_bot`, in this same turn.",
-      "You join as the host. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and who opens.",
-      "The kickoff wakes the members in `mention`, every other member by default, one at a time: each answers in the room and sees the replies before it. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
+      "You join as the host. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and what each member you mention should answer first.",
+      "The kickoff wakes the members in `mention`, every other member by default, one at a time in that order, so list first the one who opens: each answers in the room and sees the replies before it, and none waits for you or your user to speak first. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
       "A room holds two to six bots, you included. Your user's limit on how long a chain of turns between bots may run since they last spoke holds here too.",
       "Returns the room's id. Then tell your user, in a `say`, what you set up and who owns what.",
       BOT_ONLY,

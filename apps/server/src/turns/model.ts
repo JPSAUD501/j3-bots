@@ -113,11 +113,12 @@ export const priorityOf = (kind: WakeKind, byOperator: boolean): number =>
   kind === "room" && byOperator ? PRIORITY.user : PRIORITY[kind];
 
 /**
- * Why a bot is woken for a room (`docs/architecture/server.md`, Rooms): a
- * message mentioned it, the operator addressed everyone, or the operator
- * addressed nobody and it hosts the room.
+ * Why a bot is woken for a room (`docs/architecture/server.md`, Rooms): the
+ * kickoff of a room a bot started mentioned it, a later message mentioned it,
+ * the operator addressed everyone, or the operator addressed nobody and it
+ * hosts the room.
  */
-export const RoomReason = Schema.Literals(["mentioned", "everyone", "host"]);
+export const RoomReason = Schema.Literals(["kickoff", "mentioned", "everyone", "host"]);
 export type RoomReason = typeof RoomReason.Type;
 
 /** What a wake carries, read when its envelope is rendered. */

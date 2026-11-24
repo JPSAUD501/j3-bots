@@ -897,16 +897,17 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Wakes the members a room `say` mentioned, unless the operator stopped
-     * the work that spoke. Past the room's hop limit nobody is woken, and the
-     * room shows one `chain-stopped` notice for the turn, however often it
-     * tries; nobody is woken to hear of it either.
+     * Wakes the members a room `say`, or a kickoff, mentioned, unless the
+     * operator stopped the work that spoke. Past the room's hop limit nobody
+     * is woken, and the room shows one `chain-stopped` notice for the turn,
+     * however often it tries; nobody is woken to hear of it either.
      */
     const routeMentions = Effect.fn("Speech.routeMentions")(function* (
       found: Pin,
       room: LiveRoom,
       message: MessageEntry,
       mention: ReadonlyArray<BotId>,
+      reason: "kickoff" | "mentioned",
     ): Effect.fn.Return<RoutedMentions> {
       if (mention.length === 0) return null;
       const work = yield* workStopped(found);
@@ -919,6 +920,7 @@ export const layer = Layer.effect(
         botId: found.botId,
         message,
         mention,
+        reason,
         hops: counted.hops,
         seq: work.seq,
       });
@@ -1023,7 +1025,7 @@ export const layer = Layer.effect(
             });
             const routed =
               Option.isSome(room) && entry._tag === "message"
-                ? yield* routeMentions(found, room.value, entry, mention)
+                ? yield* routeMentions(found, room.value, entry, mention, "mentioned")
                 : null;
             if (input.done === true) {
               for (const { id } of yield* deliveredBy(found))
@@ -1339,7 +1341,9 @@ export const layer = Layer.effect(
         text: input.text,
       });
       const routed =
-        entry._tag === "message" ? yield* routeMentions(found, live.value, entry, mention) : null;
+        entry._tag === "message"
+          ? yield* routeMentions(found, live.value, entry, mention, "mentioned")
+          : null;
       return (
         roomPosted(routed) ??
         ({
@@ -1603,6 +1607,7 @@ export const layer = Layer.effect(
         });
       }
       const botId = yield* call.create({
+        maker: found.botId,
         turn: { sessionId: found.sessionId, turnId: found.turnId },
         claim: Effect.fn("Speech.createBot.claim")(function* (id: BotId) {
           yield* requireUnclaimed(found);
@@ -1735,7 +1740,7 @@ export const layer = Layer.effect(
           const live = yield* roomOf(room.id);
           const routed =
             Option.isSome(live) && kickoff._tag === "message"
-              ? yield* routeMentions(found, live.value, kickoff, mention)
+              ? yield* routeMentions(found, live.value, kickoff, mention, "kickoff")
               : null;
           const posted = roomPosted(routed);
           return {

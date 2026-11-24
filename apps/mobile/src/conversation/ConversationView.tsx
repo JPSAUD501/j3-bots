@@ -46,6 +46,7 @@ import type {
   Mentions,
   Room,
   RosterItem,
+  RosterItemKey,
   RoutineId,
 } from "@j3-bots/contracts";
 import { layout, springs } from "@j3-bots/design-tokens";
@@ -197,15 +198,18 @@ export function ConversationView({
   item,
   onBack,
   onOpenDetails,
-  onOpenBot,
+  onOpen,
   onGone,
 }: {
   readonly item: RosterItem;
   /** On a phone, back to the roster; beside the roster there is none. */
   readonly onBack: (() => void) | null;
   readonly onOpenDetails: () => void;
-  /** Opens a bot's own conversation, as a notice in a room offers. */
-  readonly onOpenBot: (botId: BotId) => void;
+  /**
+   * Opens another conversation: a bot's own, as a notice in a room offers, or
+   * the room a bot's team line names.
+   */
+  readonly onOpen: (key: RosterItemKey) => void;
   /** Leaves a conversation whose bot or room was deleted. */
   readonly onGone: () => void;
 }) {
@@ -366,7 +370,7 @@ export function ConversationView({
                         turnBot={turnBot}
                         arriving={arrived.has(row.key)}
                         openingHold={openingHold}
-                        onOpenBot={onOpenBot}
+                        onOpen={onOpen}
                         onOpenRoutine={openRoutine}
                         onOpenBrowser={openBrowser}
                         onOpenPair={openPair}
@@ -559,21 +563,21 @@ function Row({
   turnBot,
   arriving,
   openingHold,
-  onOpenBot,
+  onOpen,
   onOpenRoutine,
   onOpenBrowser,
   onOpenPair,
 }: {
   readonly row: TimelineItem;
-  /** In a room, its members and host now; null in a bot's conversation. */
-  readonly room: Pick<Room, "members" | "hostId"> | null;
+  /** In a room, the room, with its members and host now; null in a bot's conversation. */
+  readonly room: Pick<Room, "id" | "members" | "hostId"> | null;
   /** In a bot's conversation, the bot: the row of its turn under way says what it is doing. */
   readonly turnBot: TurnBot | null;
   /** It just arrived at the end: it settles into place as it mounts. */
   readonly arriving: boolean;
   /** What holds the bot's hello back, which the operator's messages behind it wait for (`openingHeld`). */
   readonly openingHold: OpeningHold | null;
-  readonly onOpenBot: (botId: BotId) => void;
+  readonly onOpen: (key: RosterItemKey) => void;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
   readonly onOpenBrowser: (card: BrowserHelpEntry) => void;
   readonly onOpenPair: (pair: TeammateRunPair) => void;
@@ -622,7 +626,9 @@ function Row({
               entry={entry}
               onRetry={() => void client.retryNotice(entry.id)}
               onOpenConversation={() => {
-                if (entry.notice._tag === "waiting-in-conversation") onOpenBot(entry.notice.botId);
+                if (entry.notice._tag === "waiting-in-conversation") {
+                  onOpen({ _tag: "bot", botId: entry.notice.botId });
+                }
               }}
             />
           ) : (
@@ -634,7 +640,13 @@ function Row({
     case "event":
       return (
         <AnimatedView {...entering}>
-          <EventLine line={row.line} onOpenRoutine={onOpenRoutine} onOpenPair={onOpenPair} />
+          <EventLine
+            line={row.line}
+            room={room?.id ?? null}
+            onOpenRoutine={onOpenRoutine}
+            onOpenPair={onOpenPair}
+            onOpenRoom={(roomId) => onOpen({ _tag: "room", roomId })}
+          />
         </AnimatedView>
       );
     case "unknown":

@@ -36,15 +36,17 @@ export class RoomRouting extends Context.Service<
     }) => Effect.Effect<void>;
     /**
      * A bot spoke in a room and listed `mention`, members other than itself,
-     * already checked. A wake it causes is `hops` hops from the operator
-     * (Budgets); `seq` is the dispatch that began the speaking turn's work,
-     * `null` for a turn no dispatch began.
+     * already checked: in a `say`, or in the kickoff of a room it started,
+     * which `reason` tells the members. A wake it causes is `hops` hops from
+     * the operator (Budgets); `seq` is the dispatch that began the speaking
+     * turn's work, `null` for a turn no dispatch began.
      */
     readonly botMessage: (input: {
       readonly room: LiveRoom;
       readonly botId: BotId;
       readonly message: MessageEntry;
       readonly mention: ReadonlyArray<BotId>;
+      readonly reason: Extract<RoomReason, "kickoff" | "mentioned">;
       readonly hops: number;
       readonly seq: DispatchSeq | null;
     }) => Effect.Effect<BotMessageRouted>;
@@ -91,6 +93,7 @@ export const layer = Layer.effect(
       readonly botId: BotId;
       readonly message: MessageEntry;
       readonly mention: ReadonlyArray<BotId>;
+      readonly reason: Extract<RoomReason, "kickoff" | "mentioned">;
       readonly hops: number;
       readonly seq: DispatchSeq | null;
     }) {
@@ -106,7 +109,7 @@ export const layer = Layer.effect(
           botId,
           kind: "room",
           audience,
-          payload: { _tag: "room", entryId: input.message.id, reason: "mentioned" },
+          payload: { _tag: "room", entryId: input.message.id, reason: input.reason },
           sourceEntryId: input.message.id,
           hops: input.hops,
           retryOf: null,

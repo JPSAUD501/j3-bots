@@ -777,6 +777,16 @@ export function galleryVariants(now: DateTime.Utc) {
       name: "Morning digest",
     }),
     notice("notice-operator-named", { _tag: "operator-named", botId: ids.juniper, name: "Sam" }),
+    notice("notice-room-started", {
+      _tag: "room-started",
+      botId: ids.scout,
+      roomId: ids.newsletter,
+    }),
+    notice("notice-made-for-room", {
+      _tag: "made-for-room",
+      botId: ids.scout,
+      roomId: ids.newsletter,
+    }),
   ];
 
   const handoff = (
