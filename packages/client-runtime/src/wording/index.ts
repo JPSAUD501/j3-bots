@@ -65,6 +65,18 @@ export {
   usageLimitText,
 } from "./status.ts";
 export { connectStepText, type ConnectStepText } from "./onboarding.ts";
+export {
+  handoffStateText,
+  type LineName,
+  type NamedLine,
+  pairLine,
+  pairTitle,
+  teammateChoice,
+  teammateRunLine,
+  type TeamLineContext,
+  type TeamNotice,
+  teamNoticeLine,
+} from "./pairs.ts";
 export { endpointInstead, type SignInLine, signInLine } from "./providerSetup.ts";
 export { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
 export {

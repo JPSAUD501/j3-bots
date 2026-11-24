@@ -36,6 +36,8 @@ import type {
   HarnessLocation,
   MasterPassword,
   Notification,
+  PairBotIds,
+  PairSeq,
   ProviderConnectionRequest,
   Room,
   RoomId,
@@ -44,12 +46,14 @@ import type {
   RoutineId,
   Section as RosterSection,
   SectionId,
+  TeammatePair,
   ReleaseVersion,
   Settings as SettingsValue,
   SignInHarness,
   UpdateChannel,
   TotpPreview,
 } from "@j3-bots/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -92,6 +96,7 @@ import type { Loaded } from "./stores/reads.ts";
 import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
 import type { Synced } from "./stores/synced.ts";
+import * as TeammatePairs from "./stores/TeammatePairs.ts";
 import * as Usage from "./stores/Usage.ts";
 import * as Vault from "./stores/Vault.ts";
 import * as WorkSteps from "./stores/WorkSteps.ts";
@@ -116,6 +121,7 @@ export const layer = SignOut.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       Roster.layer,
+      TeammatePairs.layer,
       EngineStatus.layer,
       Settings.layer,
       Devices.layer,
@@ -174,6 +180,21 @@ export interface ConversationHandle {
   readonly loadOlder: () => void;
   /** Moves the read mark forward to `through`, the newest entry the operator has seen. */
   readonly markRead: (through: EntryOrder) => void;
+  /** Lets go of the conversation. Its subscription ends when nobody else holds it. */
+  readonly release: () => void;
+}
+
+/** One teammate conversation, held open until `release`. See `TeammatePairs.PairConversation`. */
+export interface PairHandle {
+  readonly botIds: PairBotIds;
+  readonly state: Readable<TeammatePairs.PairConversationState>;
+  readonly loadOlder: () => void;
+  /**
+   * Reads back until the message one of whose cards is `entryId` is held:
+   * its `seq`, to scroll to (`pairMessageKey`), or null when there is none,
+   * or the handle was released first.
+   */
+  readonly reveal: (entryId: EntryId) => Promise<PairSeq | null>;
   /** Lets go of the conversation. Its subscription ends when nobody else holds it. */
   readonly release: () => void;
 }
@@ -310,7 +331,15 @@ export interface J3Client {
   /** Actions in flight or just accepted, by `cardAction`, `retryAction`, `stopAction` or `roomStopAction` key. */
   readonly actions: Readable<ReadonlyMap<string, Actions.ActionState>>;
 
+  /**
+   * Every pair of bots that wrote each other, latest first; see
+   * `TeammatePairs.state`. `betweenBots` picks the roster's, `teammatesOf` a
+   * bot's details'.
+   */
+  readonly pairs: Readable<Synced<ReadonlyArray<TeammatePair>>>;
+
   readonly openConversation: (target: EntryTarget) => ConversationHandle;
+  readonly openPair: (botIds: PairBotIds) => PairHandle;
   readonly openWorkSteps: (foldId: EntryId) => WorkStepsHandle;
 
   /** `invalid` when the message breaks a limit of `message.send`: it was not sent. */
@@ -578,6 +607,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         connection: yield* Connection.Connection,
         actions: yield* Actions.Actions,
         roster: yield* Roster.Roster,
+        pairs: yield* TeammatePairs.TeammatePairs,
         engine: yield* EngineStatus.EngineStatus,
         settings: yield* Settings.Settings,
         devices: yield* Devices.Devices,
@@ -655,6 +685,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
     roster: services.roster.state,
     sections: services.roster.sections,
+    pairs: services.pairs.state,
     engine: services.engine.state,
     settings: services.settings.state,
     settingsSaves: services.settings.saves,
@@ -678,6 +709,23 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         loadOlder: () => fire(value.loadOlder),
         markRead: (through) => fire(value.markRead(through)),
         release,
+      };
+    },
+    openPair: (botIds) => {
+      const { value, release } = hold(services.pairs.open(botIds));
+      const released = run.sync(Deferred.make<void>());
+      return {
+        botIds,
+        state: value.state,
+        loadOlder: () => fire(value.loadOlder),
+        reveal: (entryId) =>
+          run.promise(
+            value.reveal(entryId).pipe(Effect.raceFirst(Effect.as(Deferred.await(released), null))),
+          ),
+        release: () => {
+          run.sync(Deferred.succeed(released, undefined));
+          release();
+        },
       };
     },
     openWorkSteps: (foldId) => {

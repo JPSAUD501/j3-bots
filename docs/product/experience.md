@@ -72,7 +72,7 @@ The operator creates a room, adds two to six bots, and writes.
 
 - The operator asks, or the bot offers ("want me to ask Scout?").
 - What the two bots say to each other goes in their **teammate conversation**, "Scout and Wren", one per pair of bots. It reads like a room: each bot's name over its messages, its avatar in its tint, the time between them, and each message that never reached the other bot marked so. The operator reads it and cannot write in it: in place of a composer, a "Read-only" mark. Its menu offers "Talk to Scout", "Talk to Wren" and "Start a room with both".
-- In each bot's own conversation, a run of messages with teammates is one small line ("Wrote to Wren", "Talked with Wren · 3 messages"), which opens the teammate conversation there. An urgent message that never reached the teammate still shows the recipient's conversation a card that offers to send it again.
+- In each bot's own conversation, a run of messages with teammates, with nothing else between them, is one small line with the teammates' small avatars ("Wrote to Wren", "Wren wrote", "Talked with Wren · 3 messages"), which opens the teammate conversation at the run. A run with several teammates ("Talked with Wren and Pip · 4 messages") first asks which conversation to open. A line whose messages did not all reach their teammate says how many did not, quietly ("1 not delivered"). An urgent message that never reached the teammate still shows the recipient's conversation a card that offers to send it again.
 - The reply comes back later, as its own turn. Messages between bots never make a conversation unread, never become its last line in the roster and never notify: the operator is told only when a bot has something new for them, and a bot that needs them says so.
 
 ### Changing a bot
@@ -146,7 +146,7 @@ Answers: who do I have, who needs me, what is each of them doing.
 - Hidden bots keep running. They are left out of the list and reachable through search and through a "Hidden conversations" row at its end, which says how many there are and whether one has something unread, and lists them, each with Unhide.
 - After the bots and rooms, a "Between bots" section lists each pair of bots that wrote each other, latest first: both avatars overlapped, "Scout and Wren", the last message with who said it ("Wren: …") and its time. It is not one of the operator's sections, and its rows are never unread, pinned or notified. A pair shows only while both bots are in the list, neither hidden nor deleted; the other bot's details still reach it.
 - Each bot and room has a menu (right-click, the "…" or a long press) to mark it read or unread, pin it, move it to a section, make it the primary bot, hide it, and reach its details. The primary bot's avatar carries a small star wherever it appears.
-- Search finds bots, rooms and messages.
+- Search finds bots, rooms and messages, and pairs of bots by either name, a hidden bot's too.
 - New bot and new room are one action each, and a new bot can start from a template file.
 
 ### Conversation
