@@ -108,8 +108,6 @@ export { type FileIcon, fileIcon, fileKind, showsImage } from "./files.ts";
 export { webAddress } from "./links.ts";
 export {
   addressed,
-  type Addressee,
-  addresseeOf,
   draggedText,
   type DraggedText,
   EVERYONE,
@@ -145,6 +143,7 @@ export { assembleAnswers, optionDescription, type QuestionDraft } from "./questi
 export {
   blankRoomForm,
   followRoom,
+  hopLimitSteps,
   ROOM_MEMBERS,
   ROOM_NAME_MAX,
   roomChanges,

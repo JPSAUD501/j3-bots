@@ -42,9 +42,11 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     name: "Launch",
     status: "active",
     members: [bot("Scout").id, bot("Wren").id],
+    hopLimit: 3,
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
+    answering: [],
   },
   lastEntry,
   lastActivityAt: lastEntry?.createdAt ?? null,
@@ -174,9 +176,11 @@ describe("roomStop", () => {
     name: "Launch",
     status: "active",
     members: [bot("Scout").id, bot("Wren").id],
+    hopLimit: 3,
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
+    answering: [],
   };
 
   it("offers Stop while the room's work runs, and shows it stopping until the server ends it", () => {

@@ -24,9 +24,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Teammate conversation.** The record of the messages two bots sent each other, one per pair of bots, titled with their two names ("Scout and Wren"). The operator reads it and never writes into it: they steer a bot in its own conversation, or several in a room. It is not a session and not a room.
 
-**Room.** A group chat with the operator and two to six bots. A room has a name, members, a host and its own message history. Bots keep their own memory in a room; they share only what is said there. The operator creates one, or asks a bot to: it then starts the room as its host, with a kickoff that hands out the work.
-
-**Host.** The bot in a room that answers when the operator addresses nobody in particular, and that decides who should take a request.
+**Room.** A group chat with the operator and two to six bots, all equal. A room has a name, members and its own message history. Every member reads every message there, the operator's and each bot's, and the members answer at once, each only when the message is for it or it has something to add; a mention tells a bot the message is for it, and wakes nobody the message would not. Bots keep their own memory in a room; they share only what is said there. The operator creates one, or asks a bot to: it then starts the room as its first member, with a kickoff that hands out the work.
 
 ## The roster
 
@@ -70,7 +68,7 @@ The bots live where J3 Bots runs. The operator chooses where in the desktop app'
 
 **A server.** J3 Bots runs as a service on a machine that stays on, and every device pairs with it: a browser, a phone, or the desktop app connected to it. The interface says "Connect to a server" and, in Settings, "On a server".
 
-The machine J3 Bots runs on is never called a "host": a host is a room's bot.
+The interface never calls the machine J3 Bots runs on a "host": it is "this computer" or "a server".
 
 ## What bots keep
 

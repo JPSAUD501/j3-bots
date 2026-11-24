@@ -184,7 +184,7 @@ const sentences = {
   "message.failed.unresolved": "Pode ter sido entregue. Enviar de novo pode repetir o trabalho.",
   "message.failed.stopped": "Não entregue: o trabalho foi interrompido",
   "message.retry": "Enviar de novo",
-  "message.retry.host": "Enviar ao anfitrião ({name})",
+  "message.retry.room": "Enviar para a sala",
   "message.retry.to": "Enviar para {names}",
 
   "file.open": "Abrir {name}",
@@ -653,11 +653,18 @@ const sentences = {
 
   "room.members": "{names}",
   "room.membersTitle": "Membros",
+  "room.answering.one": "{name} está respondendo…",
+  "room.answering.some": "{names} estão respondendo…",
+  "room.answering.more": "{names} e mais {count} estão respondendo…",
   "room.memberCount.one": "Um bot",
   "room.memberCount.other": "{count} bots",
   "room.archivedBadge": "Arquivada",
   "room.archiveSection": "Arquivar",
-  "room.host": "Anfitrião",
+  "room.budget": "Respostas entre bots",
+  "room.hopLimit.one":
+    "Os bots podem responder uns aos outros uma vez antes de a sala esperar por você.",
+  "room.hopLimit.other":
+    "Os bots podem responder uns aos outros {count} vezes seguidas antes de a sala esperar por você.",
 
   "room.edit": "Editar {name}",
   "room.archivedLine": "Arquivada. O que foi dito fica, e ela não recebe mensagens.",
@@ -669,7 +676,7 @@ const sentences = {
   "room.archiveFailed": "{name} não foi arquivada. Tente de novo.",
   "room.unarchiveFailed": "{name} não foi desarquivada. Tente de novo.",
   "room.unarchiveNeedsMembers":
-    "{name} não foi desarquivada: antes ela precisa de dois a seis bots e um anfitrião. Desarquive-a de novo para escolhê-los.",
+    "{name} não foi desarquivada: antes ela precisa de dois a seis bots. Desarquive-a de novo para escolhê-los.",
   "room.delete": "Excluir {name}",
   "room.delete.title": "Excluir {name}?",
   "room.delete.body":
@@ -688,18 +695,20 @@ const sentences = {
   "roomForm.newTitle": "Nova sala",
   "roomForm.editTitle": "Editar {name}",
   "roomForm.unarchiveTitle": "Desarquivar {name}",
-  "roomForm.unarchiveBody":
-    "{name} precisa de dois a seis bots e de um anfitrião para voltar a receber mensagens.",
+  "roomForm.unarchiveBody": "{name} precisa de dois a seis bots para voltar a receber mensagens.",
   "roomForm.close": "Fechar",
   "roomForm.name": "Nome",
   "roomForm.name.required": "Dê um nome à sala.",
   "roomForm.members": "Bots",
   "roomForm.members.hint": "Escolha de dois a seis.",
   "roomForm.members.invalid": "Escolha de dois a seis bots.",
-  "roomForm.host": "Anfitrião",
-  "roomForm.host.hint": "Responde o que você escreve sem mencionar ninguém.",
-  "roomForm.host.pick": "Escolha um anfitrião",
-  "roomForm.host.required": "Escolha o bot que é o anfitrião da sala.",
+  "roomForm.hopLimit": "Respostas seguidas entre bots",
+  "roomForm.hopLimit.hint":
+    "Quantas vezes os bots podem responder uns aos outros antes de a sala esperar por você.",
+  "roomForm.hopLimit.default": "Deixe vazio para usar o padrão, {count}.",
+  "roomForm.hopLimit.fewer": "Uma resposta a menos",
+  "roomForm.hopLimit.more": "Uma resposta a mais",
+  "roomForm.hopLimit.invalid": "Use um número inteiro a partir de 1.",
   "roomForm.cancel": "Cancelar",
   "roomForm.create": "Criar sala",
   "roomForm.creating": "Criando…",
@@ -709,7 +718,7 @@ const sentences = {
   "roomForm.createFailed": "A sala não foi criada. Tente de novo.",
   "roomForm.failed": "Suas alterações não foram salvas. Tente de novo.",
   "roomForm.membersRefused":
-    "Uma sala precisa de dois a seis bots, com o anfitrião entre eles. Talvez um deles tenha sido excluído nesse meio-tempo.",
+    "Uma sala precisa de dois a seis bots. Talvez um deles tenha sido excluído nesse meio-tempo.",
   "roomForm.dropped.one": "{names} foi excluído e saiu da seleção.",
   "roomForm.dropped.other": "{names} foram excluídos e saíram da seleção.",
   "roomForm.archived": "{name} foi arquivada nesse meio-tempo, então nada foi salvo.",
@@ -864,9 +873,7 @@ const sentences = {
   "empty.quiet.waitingForReset": "{name} dá oi quando o limite de uso renovar.",
   "empty.quiet.waitingForResetAt": "{name} dá oi quando o limite de uso renovar {when}.",
   "empty.quiet.room":
-    "Nenhuma mensagem ainda. {host} responde ao que você escrever aqui, e um @ chama qualquer outro membro.",
-  "empty.quiet.roomAnyHost":
-    "Nenhuma mensagem ainda. O anfitrião responde ao que você escrever aqui, e um @ chama qualquer outro membro.",
+    "Nenhuma mensagem ainda. Todos aqui leem o que você escreve: quem tiver algo a acrescentar responde, e um @ avisa um bot que é com ele.",
   "empty.quiet.connectHint":
     "Para conectar um, rode isto na máquina onde o J3 Bots está instalado.",
 
@@ -919,9 +926,6 @@ const sentences = {
   "composer.dismiss": "Dispensar",
   "composer.unread": "Não foi possível carregar seu rascunho.",
   "composer.unread.retry": "Tentar de novo",
-  "composer.to.host": "Para o anfitrião (agora {name})",
-  "composer.to": "Para {names}",
-  "composer.to.everyone": "Para todos",
   "composer.notSaved": "Ainda não salvo",
   "composer.waitToAttach": "Espere um instante e adicione os arquivos de novo.",
   "composer.dictation.stop": "Parar o ditado",

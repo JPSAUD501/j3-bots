@@ -54,7 +54,7 @@ export function useRoomActions() {
   const say = useSay();
   const navigation = useNavigation<Navigation>();
   const leaveDeleted = useLeaveDeleted();
-  /** Opens the form that gives the room the members and the host it needs. */
+  /** Opens the form that gives the room the members it needs. */
   const askForMembers = (room: Room) =>
     navigation.navigate("roomForm", { form: { _tag: "unarchive", roomId: room.id } });
   return {
@@ -69,8 +69,8 @@ export function useRoomActions() {
         if (result._tag === "failed") say(t("room.archiveFailed", { name: room.name }));
       }),
     /**
-     * Unarchives the room, or opens the form first when it lacks the members
-     * it needs, as a room left too small by deleted bots does.
+     * Unarchives the room, or opens the form first when it has too few
+     * members, as a room left too small by deleted bots does.
      * Resolves like `archive`.
      */
     unarchive: (room: Room): Promise<void> => {

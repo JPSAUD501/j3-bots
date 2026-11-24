@@ -70,8 +70,10 @@ The operator asks a bot for a team, or sets one up themselves.
 Either way, the room then works the same:
 
 - The room's header shows its members' avatars side by side, up to three, then how many more ("+2"), and its name. The composer reads "Message Support".
-- Writing without addressing anyone goes to the host. The host answers or hands the request to the right bot by mentioning it.
-- `@Name` gives a request one owner. `@everyone` asks each member in turn and is meant to be rare.
+- Every member reads every message in the room, the operator's and each bot's, and starts on it at once. A member answers when the message is for it or it has something to add, and otherwise stays quiet, so a hello is not answered six times. The room's empty state says so.
+- `@Name` tells a bot the message is for it, and that bot answers; the others still read it and stay out unless they have something to add. There is no `@everyone`: every message already reaches everyone. Nothing under the composer says whom a message goes to: a picked mention stands out in the text.
+- While members answer, one quiet line at the room's end says who, with their faces: "Hal is answering…", several at once, "Hal and Bo are answering…", and past three, "Hal, Bo, and 2 more are answering…". It changes in place as each one's turn ends and goes once nobody answers, whether or not they said anything.
+- A message that could not go because a member it mentions left the room says so, and Send again sends it to the members it mentions who stayed, or to the room when none did.
 - Bots answer each other in the room. A member can also bring later work back into the room from its own conversation, instead of passing it from bot to bot. The chain stops when a bot has nothing to add, or when the room's budget for consecutive bot turns runs out; then the room waits for the operator.
 - Approvals and questions never appear in a room. They go to the asking bot's own conversation, and the room shows that the bot is waiting.
 - While the room's work is under way, also work a bot left running in the background for it, the room's details offer Stop. It asks first, saying what ends (what the bots are doing for the room, and the work they left running for it) and that anything else they're doing goes on.
@@ -162,7 +164,7 @@ Answers: who do I have, who needs me, what is each of them doing.
 Answers: what did we say, what is it doing, what does it need from me.
 
 - Messages as bubbles, the operator's on one side and the bot's on the other, with timestamps between groups.
-- In a room, each bot's name stands over its run of messages and its avatar beside the last, as in a teammate conversation. The header shows the members' avatars, three at most and "+2" for the rest, the room's name and, under it, who is in it.
+- In a room, each bot's name stands over its run of messages and its avatar beside the last, as in a teammate conversation. The header shows the members' avatars, three at most and "+2" for the rest, the room's name and, under it, who is in it. While members answer, the room's last line names them ("Hal is answering…").
 - In a bot's conversation, the header shows the bot's face and name on one line, with no line about what it is doing under it.
 - Cards inline for what needs the operator (questions, approvals, credentials, a step in the bot's browser, a connector to add or sign in to) and for files.
 - What only happened takes one quiet line, as small as a time between messages: messages with teammates ("Talked with Wren · 3 messages"), a routine created or changed ("Routine Morning digest created"; several in a row, "3 routines created"), the name a bot saved for the operator. Tapping one shows the rest: the teammate conversation, the routine, or the routines to pick from.

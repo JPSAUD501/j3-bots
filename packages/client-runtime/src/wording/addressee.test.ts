@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId } from "@j3-bots/contracts";
-import { describe, expect, it } from "vite-plus/test";
-import { addresseeOf, type Mentionable } from "../presentation/mentions.ts";
 import { createI18n } from "@j3-bots/i18n";
-import { addresseeLine, resendLabel } from "./addressee.ts";
+import { describe, expect, it } from "vite-plus/test";
+import { resendLabel } from "./addressee.ts";
 
-const member = (id: string, name: string): Mentionable => ({ id: BotId.make(id), name });
-const ana = member("ana", "Ana");
-const scout = member("scout", "Scout");
-const members = [scout, ana];
+const ana = BotId.make("ana");
+const scout = BotId.make("scout");
+const names = new Map([
+  [ana, "Ana"],
+  [scout, "Scout"],
+]);
 
-describe("addressee", () => {
+describe("resendLabel", () => {
   const en = createI18n("en");
-  const nameOf = (botId: BotId) => members.find((one) => one.id === botId)?.name;
+  const nameOf = (botId: BotId) => names.get(botId);
 
-  it("says a message for nobody goes to every member", () => {
-    expect(addresseeLine(addresseeOf(null, nameOf, en), en)).toBe("To everyone");
+  it("sends to the room once every member mentioned has left", () => {
+    expect(resendLabel({ _tag: "bots", ids: [] }, nameOf, en)).toBe("Send to the room");
   });
 
-  it("says Send again goes to every member once every member mentioned has left", () => {
-    const without = { _tag: "bots", ids: [] } as const;
-    expect(resendLabel(addresseeOf(without, nameOf, en), en)).toBe("Send again");
-    const someStay = { _tag: "bots", ids: [ana.id] } as const;
-    expect(resendLabel(addresseeOf(someStay, nameOf, en), en)).toBe("Send to Ana");
+  it("sends to the members mentioned who stay, by their names now", () => {
+    expect(resendLabel({ _tag: "bots", ids: [ana, scout] }, nameOf, en)).toBe(
+      "Send to Ana and Scout",
+    );
   });
 });

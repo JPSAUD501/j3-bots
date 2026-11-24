@@ -2,7 +2,6 @@
 import { type MentionLabel, retryAction } from "@j3-bots/client-runtime";
 import {
   addressed,
-  addresseeOf,
   arrivalCounts,
   buildTimeline,
   type CardPlace,
@@ -31,7 +30,6 @@ import {
   useSelected,
 } from "@j3-bots/client-runtime/react";
 import {
-  addresseeLine,
   dividerTime,
   heldHelloText,
   quietConversationText,
@@ -90,6 +88,7 @@ import { Composer, type MentionCandidate } from "./Composer.tsx";
 import { ConversationHeader } from "./Header.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
 import { AnimatedView } from "./animated.ts";
+import { AnsweringLine } from "./AnsweringLine.tsx";
 import { EventLine } from "./EventLine.tsx";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { ToLatest } from "./ToLatest.tsx";
@@ -358,7 +357,6 @@ export function ConversationView({
   }, [column]);
 
   const room = item._tag === "room" ? item.room : null;
-  const nameOf = (botId: BotId) => bots.get(botId)?.profile.name;
   const engine = useEngineStatus();
   const engineNow = engine._tag === "ready" ? engine.value : null;
   // Kept while the hold reads the same, so the list redraws its rows only when it changes.
@@ -371,10 +369,6 @@ export function ConversationView({
   // Who the message wakes as the draft stands: only mentions picked, and still standing, count.
   const addressing =
     room === null ? undefined : addressed(draft.text, draft.mentions, room.members);
-  const addressee =
-    room === null
-      ? null
-      : addresseeLine(addresseeOf(addressing?.mentions ?? null, nameOf, ctx.i18n), ctx.i18n);
   const mentionable: ReadonlyArray<MentionCandidate> | undefined = room?.members.flatMap((id) => {
     const bot = bots.get(id);
     return bot === undefined ? [] : [{ id, name: bot.profile.name, avatar: bot.profile.avatar }];
@@ -463,6 +457,14 @@ export function ConversationView({
                   onStartReached={() => {
                     if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
                   }}
+                  // In a room, who is answering now, after everything said there.
+                  ListFooterComponent={
+                    room === null ? null : (
+                      <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
+                        <AnsweringLine room={room} />
+                      </View>
+                    )
+                  }
                   ListHeaderComponent={
                     state?.loadingOlder === true ? (
                       <Text className="py-3 text-center text-xs text-muted-foreground">
@@ -523,7 +525,6 @@ export function ConversationView({
                     target={target}
                     recipient={item._tag === "bot" ? item.bot.profile.name : item.room.name}
                     {...(mentionable === undefined ? {} : { mentionable })}
-                    {...(addressee === null ? {} : { addressee })}
                     onSend={send}
                     inView={inView}
                     tint={item._tag === "bot" ? item.bot.profile.avatar : null}
@@ -603,9 +604,9 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
 }
 
 /**
- * A room before anything is said in it: its members, its name, and who
- * answers what is written there. An archived room takes nothing, so it shows
- * only who was in it.
+ * A room before anything is said in it: its members, its name, and that every
+ * one of them reads what is written there. An archived room takes nothing, so
+ * it shows only who was in it.
  */
 function QuietRoom({ room, bottom }: { readonly room: Room; readonly bottom: number }) {
   const { t } = usePresentation().i18n;
@@ -619,7 +620,7 @@ function QuietRoom({ room, bottom }: { readonly room: Room; readonly bottom: num
         <RoomAvatar size={96} members={roomAvatarMembers(room, bots)} />
       </Animated.View>
       <Title>{room.name}</Title>
-      {room.status === "active" && <Body>{t("empty.quiet.roomAnyHost")}</Body>}
+      {room.status === "active" && <Body>{t("empty.quiet.room")}</Body>}
     </View>
   );
 }
@@ -790,7 +791,7 @@ function OutgoingMessage({
         ? {}
         : {
             leftRoom: left.left.map(labelOf),
-            retryLabel: resendLabel(addresseeOf(left.without, nameOf, ctx.i18n), ctx.i18n),
+            retryLabel: resendLabel(left.without, nameOf, ctx.i18n),
           })}
     />
   );

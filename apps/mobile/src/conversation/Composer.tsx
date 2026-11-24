@@ -71,7 +71,6 @@ export function Composer({
   target,
   recipient,
   mentionable,
-  addressee,
   onSend,
   inView,
   tint: tintOf = null,
@@ -81,8 +80,6 @@ export function Composer({
   readonly recipient: string;
   /** In a room, its members, which `@` offers. */
   readonly mentionable?: ReadonlyArray<MentionCandidate>;
-  /** In a room, who the message wakes as it stands. */
-  readonly addressee?: string;
   readonly onSend: () => void;
   /** The operator can see the conversation: its screen has the focus, and the app is in front. */
   readonly inView: boolean;
@@ -343,7 +340,6 @@ export function Composer({
           status={status}
           editable={!frozen}
           label={label}
-          {...(addressee === undefined ? {} : { hint: addressee })}
           onEdit={edit}
           onSelection={(next) => {
             selection.current = next;
@@ -391,11 +387,6 @@ export function Composer({
         ]}
       />
       {dictation !== null && <DictationLine dictation={dictation} />}
-      {addressee !== undefined && (
-        <Text numberOfLines={1} className="px-3 text-xs text-muted-foreground">
-          {addressee}
-        </Text>
-      )}
       {/* Quiet: it clears by itself once the device keeps the draft. */}
       {notSaved && (
         <Text className="px-3 text-xs text-muted-foreground">{t("composer.notSaved")}</Text>

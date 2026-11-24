@@ -92,11 +92,12 @@ export interface BotChanges {
   readonly vault?: boolean;
 }
 
-/** What creating a room takes. */
+/** What creating a room takes. A hop limit left out takes the server's default. */
 export interface RoomDraft {
   readonly name: string;
-  /** Two to six bots, in the order the room lists them in. */
+  /** Two to six bots, in the order members woken together answer in. */
   readonly members: ReadonlyArray<BotId>;
+  readonly hopLimit?: number;
 }
 
 /**
@@ -106,6 +107,7 @@ export interface RoomDraft {
 export interface RoomChanges {
   readonly name?: string;
   readonly members?: ReadonlyArray<BotId>;
+  readonly hopLimit?: number;
   /** A room keeps its own pin, at the top of the roster's list. */
   readonly pinned?: boolean;
   readonly archived?: boolean;

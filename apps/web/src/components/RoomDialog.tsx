@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import type { Bot } from "@j3-bots/contracts";
-import { CheckIcon, XIcon } from "lucide-react";
-import { useEffect, useId } from "react";
+import { CheckIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
+import { useEffect, useId, useState } from "react";
 import type { IntentFailure } from "@j3-bots/client-runtime";
 import {
+  hopLimitSteps,
   ROOM_NAME_MAX,
   roomFormTarget,
   type RoomFormMode,
@@ -18,13 +19,15 @@ import { BotAvatar } from "./avatar/BotAvatar";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
-import { lineField } from "./ui/field";
+import { lineField, textField } from "./ui/field";
 
 /** The props of the form, whatever frames it: the dialog in the app, a pane in the gallery. */
 export interface RoomFormProps {
   readonly mode: RoomFormMode;
   /** Every bot the operator has, to pick members from. */
   readonly bots: ReadonlyArray<Bot>;
+  /** The hop limit a room takes when it gives none; null until the settings are read. */
+  readonly defaultHopLimit: number | null;
   /** Saving takes a connection to the server. */
   readonly connected: boolean;
   /** Resolves with why it failed, or null once the server has it; the dialog then closes. */
@@ -41,7 +44,8 @@ export interface RoomFormProps {
 }
 
 /**
- * A room's name and its bots. What is missing is said once
+ * A room's name, its bots, and how many replies in a row bots may trade
+ * before the room waits for the operator. What is missing is said once
  * the operator tries to send; a refusal from the server is said in the footer,
  * or beside the bots when they are the reason, and keeps what was typed. What
  * the operator left alone follows the room as the server has it, so a change
@@ -54,6 +58,7 @@ export interface RoomFormProps {
 export function RoomForm({
   mode,
   bots,
+  defaultHopLimit,
   connected,
   onSubmit,
   onClose,
@@ -69,10 +74,14 @@ export function RoomForm({
     members: useId(),
     membersHint: useId(),
     membersError: useId(),
+    hopLimit: useId(),
+    hopLimitHint: useId(),
+    hopLimitError: useId(),
   };
   const form = useRoomForm({
     mode,
     bots,
+    defaultHopLimit,
     connected,
     locale,
     initial,
@@ -116,6 +125,14 @@ export function RoomForm({
         ? t("roomForm.save")
         : t("roomForm.unarchive");
   const membersInvalid = problems.has("members") || form.membersRefused;
+  const hopSteps = hopLimitSteps(values.hopLimit, defaultHopLimit);
+  // The number a minus or plus typed, read out politely: focus stays on the button.
+  const [stepped, setStepped] = useState("");
+  const step = (to: number | null) => {
+    if (busy || to === null) return;
+    setStepped(String(to));
+    form.change({ ...values, hopLimit: String(to) });
+  };
 
   return (
     <form
@@ -237,6 +254,68 @@ export function RoomForm({
                 })}
           </p>
         </fieldset>
+
+        <div className="flex flex-col gap-1">
+          <label htmlFor={ids.hopLimit} className="text-xs">
+            {t("roomForm.hopLimit")}
+          </label>
+          <div className="flex items-center gap-1.5">
+            <Button
+              size="icon"
+              aria-label={t("roomForm.hopLimit.fewer")}
+              aria-controls={ids.hopLimit}
+              aria-disabled={busy || hopSteps.fewer === null || undefined}
+              onClick={() => step(hopSteps.fewer)}
+            >
+              <MinusIcon />
+            </Button>
+            <input
+              id={ids.hopLimit}
+              type="text"
+              inputMode="numeric"
+              value={values.hopLimit}
+              readOnly={busy}
+              autoComplete="off"
+              placeholder={defaultHopLimit === null ? undefined : String(defaultHopLimit)}
+              onChange={(event) => {
+                setStepped("");
+                form.change({ ...values, hopLimit: event.currentTarget.value });
+              }}
+              aria-invalid={problems.has("hop-limit") || undefined}
+              aria-describedby={
+                problems.has("hop-limit")
+                  ? `${ids.hopLimitHint} ${ids.hopLimitError}`
+                  : ids.hopLimitHint
+              }
+              className={cn(
+                textField,
+                "h-9 w-16 text-center tabular-nums pointer-coarse:h-11 disabled:text-muted-foreground",
+              )}
+            />
+            <Button
+              size="icon"
+              aria-label={t("roomForm.hopLimit.more")}
+              aria-controls={ids.hopLimit}
+              aria-disabled={busy || hopSteps.more === null || undefined}
+              onClick={() => step(hopSteps.more)}
+            >
+              <PlusIcon />
+            </Button>
+            <span aria-live="polite" className="sr-only">
+              {stepped}
+            </span>
+          </div>
+          <p id={ids.hopLimitHint} className="text-2xs text-muted-foreground">
+            {t("roomForm.hopLimit.hint")}
+            {defaultHopLimit !== null &&
+              ` ${t("roomForm.hopLimit.default", { count: defaultHopLimit })}`}
+          </p>
+          {problems.has("hop-limit") && (
+            <p id={ids.hopLimitError} className="text-xs text-blocked">
+              {t("roomForm.hopLimit.invalid")}
+            </p>
+          )}
+        </div>
       </div>
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">

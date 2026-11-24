@@ -4,7 +4,8 @@
  * line, a notice, a delivery line, why a file cannot go, a time in words.
  * Built from the catalog in `@j3-bots/i18n`, free of any interface library.
  */
-export { addresseeLine, resendLabel } from "./addressee.ts";
+export { resendLabel } from "./addressee.ts";
+export { type AnsweringLine, answeringLine } from "./answering.ts";
 export {
   connectedText,
   connectFailureText,

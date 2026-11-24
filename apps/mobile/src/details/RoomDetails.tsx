@@ -18,7 +18,7 @@ import { Apart, Profile, ProfileLine } from "./Profile.tsx";
 import { StopRow } from "./StopRow.tsx";
 
 /**
- * A room's details: who is in it, who hosts, how long bots may talk among
+ * A room's details: who is in it, how long bots may talk among
  * themselves, and what the operator does to the room itself. While the room's
  * work is under way, Stop comes first under its profile, and asks first.
  */

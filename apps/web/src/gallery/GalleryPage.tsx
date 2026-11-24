@@ -83,8 +83,6 @@ import {
   type SignInView,
 } from "@j3-bots/client-runtime";
 import {
-  addressed,
-  addresseeOf,
   avatarSeed,
   avatarStates,
   buildTimeline,
@@ -164,7 +162,6 @@ import { Switch } from "../components/ui/switch";
 import { LANGUAGE_NAMES, notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
-import { addresseeLine } from "@j3-bots/client-runtime/wording";
 import type { DesktopLocal, DesktopUpdate, RemoteServerUpdate } from "../shell/data";
 import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
@@ -197,9 +194,10 @@ const restingRoom: Room = {
   name: "Weekend plans",
   members: [team.bots.moss.id, team.bots.pip.id],
   work: "none",
+  answering: [],
 };
 /** The sample room while the server ends its work. */
-const stoppingRoom: Room = { ...team.room, work: "stopping" };
+const stoppingRoom: Room = { ...team.room, work: "stopping", answering: [] };
 const shortcuts = shellShortcuts();
 /** The type scale's two sets: the one a page shows depends on its pointer, so both are drawn. */
 const typeInputs: ReadonlyArray<TypeInput> = ["pointer", "touch"];
@@ -1031,7 +1029,7 @@ function BubblesSection() {
             onRetry={nothing}
             onDiscard={nothing}
           />
-          {/* In a room, refused because the member it mentions left: Send again sends it to the host. */}
+          {/* In a room, refused because the member it mentions left: Send again sends it to the room. */}
           <MessageBubble
             message={bubbles.notSent}
             position="single"
@@ -1039,7 +1037,7 @@ function BubblesSection() {
             onRetry={nothing}
             onDiscard={nothing}
             leftRoom={["Wren"]}
-            retryLabel={t("message.retry")}
+            retryLabel={t("message.retry.room")}
           />
           <MessageBubble
             message={bubbles.unrecorded}
@@ -1414,27 +1412,11 @@ function ComposerDemo({
   /** Text another tab replaced, on offer. */
   replaced?: string | null;
   /** In a room, its members. */
-  mentionable?: { readonly members: ReadonlyArray<MentionCandidate> };
+  mentionable?: ReadonlyArray<MentionCandidate>;
 }) {
-  const i18n = useI18n();
   const draftKey = useId();
   const [value, setValue] = useState(initial);
   const [mentions, setMentions] = useState<ReadonlyArray<DraftMention>>([]);
-  const addressee =
-    mentionable === undefined
-      ? null
-      : addresseeLine(
-          addresseeOf(
-            addressed(
-              value,
-              mentions,
-              mentionable.members.map((member) => member.id),
-            )?.mentions ?? null,
-            (botId) => mentionable.members.find((member) => member.id === botId)?.name,
-            i18n,
-          ),
-          i18n,
-        );
   const [files, setFiles] = useState(initialFiles);
   const [replaced, setReplaced] = useState(initialReplaced);
   return (
@@ -1457,8 +1439,7 @@ function ComposerDemo({
         setMentions([]);
       }}
       onDictate={nothing}
-      {...(mentionable === undefined ? {} : { mentionable: mentionable.members })}
-      {...(addressee === null ? {} : { addressee })}
+      {...(mentionable === undefined ? {} : { mentionable })}
       {...(replaced === null
         ? {}
         : {
@@ -1565,10 +1546,11 @@ const roomIntents = {
   deleteRoom: nothing,
 };
 
-/** The sample room after deleting bots left it with one: archived, with no host. */
+/** The sample room after deleting bots left it with one: archived. */
 const archivedRoom: Room = {
   id: team.room.id,
   name: team.room.name,
+  hopLimit: team.room.hopLimit,
   pinned: false,
   createdAt: team.room.createdAt,
   status: "archived",
@@ -2117,6 +2099,7 @@ function RoomFormVariant({
         <RoomForm
           mode={{ _tag: "create" }}
           bots={bots}
+          defaultHopLimit={team.settings.budgets.hops}
           connected
           onSubmit={() => new Promise(() => {})}
           onClose={nothing}
@@ -2171,6 +2154,7 @@ function RoomsSection() {
           initial={{
             name: "Launch week",
             members: [scout.id, wren.id],
+            hopLimit: "",
           }}
           initialFailure={{ _tag: "refused", error: new Invalid({ reason: "room-members" }) }}
         />
@@ -2185,6 +2169,7 @@ function RoomsSection() {
           initial={{
             name: team.room.name,
             members: [juniper.id, scout.id],
+            hopLimit: "2",
           }}
           initialFailure={{ _tag: "refused", error: new Conflict({ reason: "room-archived" }) }}
         />
@@ -2206,13 +2191,9 @@ function RoomsSection() {
         <MentionVariant label="Mentions: after @w, the members it matches" query="w" active={0} />
         <MentionVariant label="Mentions: after @ev, only everyone" query="ev" active={0} />
       </div>
-      <Labeled label="Composer in a room: type @ to open the list; arrows, Enter, Tab and Escape work, and so does a tap. Only a pick mentions; the line under it says who the message wakes">
+      <Labeled label="Composer in a room: type @ to open the list; arrows, Enter, Tab and Escape work, and so does a tap. Only a pick mentions">
         <div className="max-w-(--layout-text-column) pt-60">
-          <ComposerDemo
-            initial=""
-            recipient={team.room.name}
-            mentionable={{ members: roomMembers }}
-          />
+          <ComposerDemo initial="" recipient={team.room.name} mentionable={roomMembers} />
         </div>
       </Labeled>
     </Section>

@@ -20,6 +20,7 @@ import {
   insertMarks,
   placedMessage,
   providerGate,
+  ROOM_MEMBERS,
   showsImage,
   withBot,
   withoutMarks,
@@ -405,22 +406,20 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
         ),
         drafts: { ...s.drafts, [key]: blankDraft },
       }));
-      // In a room, the first bot addressed answers, or the first member when nobody is.
+      // In a room, the first bot mentioned answers, or the first member when nobody is.
       const room = get().roster.find(
         (i) => i._tag === "room" && target._tag === "room" && i.room.id === target.roomId,
       );
-      const first = room?._tag === "room" ? room.room.members[0] : undefined;
-      const addressed =
-        mentions === undefined || mentions._tag === "everyone" ? first : (mentions.ids[0] ?? first);
-      const host =
+      const mentioned = mentions?._tag === "bots" ? mentions.ids[0] : undefined;
+      const answering =
         target._tag === "conversation"
           ? target.botId
           : room?._tag === "room"
-            ? (addressed ?? null)
+            ? (mentioned ?? room.room.members[0] ?? null)
             : null;
-      if (host !== null)
+      if (answering !== null)
         replyLater(
-          host,
+          answering,
           key,
           "Noted. This is the sample team, so nothing really runs, but the message is here.",
         );
@@ -501,7 +500,7 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
                 : bot,
             ),
           updateRoom(s, roomId, (room) =>
-            room.status === "active" ? { ...room, work: "none" } : room,
+            room.status === "active" ? { ...room, work: "none", answering: [] } : room,
           ),
         );
       }),
@@ -723,16 +722,18 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     unarchiveRoom: (roomId) => {
       update((s) =>
         updateRoom(s, roomId, (room) =>
-          room.status === "active" || room.members.length < 2
+          room.status === "active" || room.members.length < ROOM_MEMBERS.min
             ? room
             : {
                 id: room.id,
                 name: room.name,
+                hopLimit: room.hopLimit,
                 pinned: room.pinned,
                 createdAt: room.createdAt,
                 status: "active",
                 members: room.members,
                 work: "none",
+                answering: [],
               },
         ),
       );

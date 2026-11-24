@@ -227,10 +227,12 @@ export function sampleTeam(now: DateTime.Utc) {
     status: "active",
     // More than the header draws, so it counts the rest.
     members: [ids.juniper, ids.wren, ids.scout, ids.atlas, ids.otto],
+    hopLimit: 4,
     pinned: false,
     createdAt: ago(60 * 24 * 7),
-    // Scout is working on it.
+    // Scout is working on it, and Juniper answers after.
     work: "running",
+    answering: [ids.scout, ids.juniper],
   };
 
   const operator = { _tag: "operator" } as const;

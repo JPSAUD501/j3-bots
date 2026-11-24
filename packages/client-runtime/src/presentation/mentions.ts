@@ -84,33 +84,6 @@ export function addressed(
   return ids.length === 0 ? undefined : { mentions: { _tag: "bots", ids }, labels };
 }
 
-/** Who a room message wakes, as the server routes it, by the names to show. */
-export type Addressee =
-  | { readonly _tag: "everyone" }
-  | { readonly _tag: "bots"; readonly names: string }
-  | null;
-
-/**
- * Who a room message wakes: each member mentioned, in turn; or every member,
- * for `@everyone` and for a message that mentions nobody. Null while a name to
- * show is not known.
- */
-export function addresseeOf(
-  mentions: Mentions | null,
-  nameOf: (botId: BotId) => string | undefined,
-  { locale }: { readonly locale: string },
-): Addressee {
-  if (mentions === null || mentions._tag === "everyone" || mentions.ids.length === 0) {
-    return { _tag: "everyone" };
-  }
-  const names = mentions.ids.flatMap((id) => nameOf(id) ?? []);
-  if (names.length === 0) return null;
-  return {
-    _tag: "bots",
-    names: new Intl.ListFormat(locale, { type: "conjunction" }).format(names),
-  };
-}
-
 /**
  * The names a room message highlights: those of the members it addressed, as
  * the server took them, or `@everyone`. Each member goes by the names it was
