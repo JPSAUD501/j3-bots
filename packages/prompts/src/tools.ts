@@ -39,13 +39,20 @@ const MAX_SPOKEN_TEXT = 4_000;
 const inputBytes = (input: unknown): number =>
   new TextEncoder().encode(JSON.stringify(input)).length;
 
-/** Refuses a call too large for the engine to record, telling the bot how to fit it. */
-const withinInputCap = Schema.makeFilter((input: object) => {
+/**
+ * Why a call's arguments are too large for the engine to record, in words
+ * that tell the bot how to fit them, or `undefined` when they fit. A
+ * connector's tool is held to the same limit, by the server.
+ */
+export const inputCapRefusal = (input: unknown): string | undefined => {
   const bytes = inputBytes(input);
   return bytes <= MAX_TOOL_INPUT_BYTES
-    ? true
+    ? undefined
     : `The arguments are ${bytes} bytes; a call carries at most ${MAX_TOOL_INPUT_BYTES}. Split a long message into several calls, put long content in a file and attach it, or shorten the field.`;
-});
+};
+
+/** Refuses a call too large for the engine to record, telling the bot how to fit it. */
+const withinInputCap = Schema.makeFilter((input: object) => inputCapRefusal(input) ?? true);
 
 /** A tool's arguments: the named fields, within {@link MAX_TOOL_INPUT_BYTES}. */
 const toolInput = <const Fields extends Schema.Struct.Fields>(fields: Fields) =>
@@ -577,3 +584,10 @@ const toMcpTool = (tool: ToolDefinition): McpTool => ({
 
 /** Every `j3` tool in the shape MCP's `tools/list` returns, in table order. */
 export const toolList: ReadonlyArray<McpTool> = Object.values(tools).map(toMcpTool);
+
+/**
+ * Whether a name in the `j3` namespace is a connector tool's,
+ * `<connector>__<tool>`. None of J3 Bots' own tools has a `__` in its name,
+ * so the two never collide.
+ */
+export const isConnectorTool = (name: string): boolean => name.indexOf("__") > 0;

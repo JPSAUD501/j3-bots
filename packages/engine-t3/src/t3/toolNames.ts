@@ -2,6 +2,7 @@
 import type { WorkStep, WorkTool } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { TOOL_SERVER } from "./Provision.ts";
 
 /**
  * The engine's own tool server, as the harnesses name its tools:
@@ -20,6 +21,20 @@ const split = (name: string): { readonly server: string | null; readonly tool: s
     return { server: dotted[1], tool: dotted[2] };
   }
   return { server: null, tool: name };
+};
+
+/**
+ * Whether a bare `j3` tool name is a connector's. The bridge lists a
+ * connector's tool as `<connector>__<tool>`, and none of J3 Bots' own tool
+ * names holds `__`, so a call to one is a step of the bot's work, shown as
+ * the connector's, as well as a call the server matches to its turn.
+ */
+export const isConnectorTool = (tool: string): boolean => tool.indexOf("__") > 0;
+
+/** A connector tool's step label: the connector, then its tool, from the names the bridge gave them. */
+const connectorLabel = (tool: string): string => {
+  const at = tool.indexOf("__");
+  return `${readable(tool.slice(0, at))}: ${readable(tool.slice(at + 2)).toLowerCase()}`;
 };
 
 /** A bare name compared as the engine compares Claude's: case, spaces, `_` and `-` aside. */
@@ -158,6 +173,10 @@ export const toolStep = (
   if (call.viewsImage) return { kind: "tool", tool: "image", label: englishLabel.image };
   if (call.name === null) return { kind: "tool", tool: null, label: call.title };
   const { server, tool } = split(call.name.trim());
+  if (server === TOOL_SERVER && isConnectorTool(tool)) {
+    // From its name only: a connector call's input is the operator's data.
+    return { kind: "tool", tool: "connector", label: connectorLabel(tool) };
+  }
   if (server === ENGINE_TOOL_SERVER) {
     const named = engineTool(tool);
     return { kind: "tool", tool: named, label: englishLabel[named] };

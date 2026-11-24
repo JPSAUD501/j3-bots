@@ -379,11 +379,12 @@ export class TestEngineControl extends Context.Service<
       readonly turnId: TurnId;
       readonly callId: ToolCallId;
     }) => Effect.Effect<void>;
-    /** The turn holds on the operator. */
+    /** The turn holds on the operator, holding back `heldCall` when one is given. */
     readonly openRequest: (input: {
       readonly sessionId: SessionId;
       readonly turnId: TurnId;
       readonly request: EngineRequest;
+      readonly heldCall?: ToolCallId;
     }) => Effect.Effect<RequestId>;
     /**
      * An open request shows something else, as when the adapter fetched a held
@@ -1104,6 +1105,9 @@ const make = Effect.gen(function* () {
           steps,
           toolCalls: [...turn.toolCalls.values()].flatMap((record) =>
             record.state === "open" ? [record.call] : [],
+          ),
+          closedToolCalls: [...turn.toolCalls.values()].flatMap((record) =>
+            record.state === "closed" ? [record.call] : [],
           ),
         });
         listed.push(turn);
@@ -1995,7 +1999,7 @@ const make = Effect.gen(function* () {
         }));
       }),
 
-    openRequest: ({ sessionId, turnId, request }) =>
+    openRequest: ({ sessionId, turnId, request, heldCall }) =>
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         yield* runningTurn(session, turnId);
@@ -2005,6 +2009,7 @@ const make = Effect.gen(function* () {
           turnId,
           openedAt: at,
           request,
+          heldCall: heldCall ?? null,
         };
         session.requests.set(open.requestId, open);
         emit(session, at, (stamp) => ({ _tag: "request-opened", ...stamp, open }));
@@ -2024,6 +2029,7 @@ const make = Effect.gen(function* () {
           requestId,
           turnId: open.turnId,
           request,
+          heldCall: open.heldCall,
         }));
       }),
 

@@ -235,6 +235,24 @@ export type ConnectionOutcome =
  * engine on loopback with its own data directory, restarts it when it exits,
  * mints its credentials and keeps one connection open, reconnecting on its own.
  */
+/** The `j3` MCP server every harness session starts: the server's stdio bridge. */
+export interface ToolBridge {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  /**
+   * The bare names of the bridge's tools that run without asking, in every
+   * permission mode: J3 Bots' own. Every other tool it lists, a connector's,
+   * follows the session's permission mode, as the harness's own tools do.
+   */
+  readonly preApproved: ReadonlyArray<string>;
+  /**
+   * How long a harness waits for one call to the bridge before it gives up
+   * on it, in seconds. Above the longest the bridge itself waits for a call,
+   * so the bridge's own answer, not the harness's timeout, ends a slow call.
+   */
+  readonly callTimeoutSeconds: number;
+}
+
 export interface EngineOptions {
   /** The engine's data directory, `<J3_HOME>/engine`. Created if missing. */
   readonly home: string;
@@ -248,7 +266,7 @@ export interface EngineOptions {
    * The process each harness starts as the `j3` MCP server in every session, for
    * the bot tools: the server's stdio bridge.
    */
-  readonly toolBridge: { readonly command: string; readonly args: ReadonlyArray<string> };
+  readonly toolBridge: ToolBridge;
   /**
    * The bot's system prompt file, relative to its workspace folder: `.j3/system.md`.
    * A session reads it when its provider process starts, so a change reaches the

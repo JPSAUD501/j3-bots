@@ -59,6 +59,27 @@ export type TurnToolCall = {
 }[TurnToolName];
 
 /**
+ * A connector call whose request was claimed for its turn before, and which
+ * has no answer to give again: the server stopped while it ran, or its answer
+ * was lost. Whether it took effect at the connector is not known.
+ */
+export class CallCutOff extends Schema.TaggedError<CallCutOff>()("CallCutOff", {}) {
+  override get message(): string {
+    return "J3 Bots lost track of this call while it ran, so it may or may not have taken effect. Check before you make it again.";
+  }
+}
+
+/** A connector tool's call to claim for its turn: who made it, under which id, and its arguments. */
+export interface ClaimedCall {
+  /** The tool's name in the `j3` namespace, `<connector>__<tool>`. */
+  readonly tool: string;
+  readonly requestId: string;
+  readonly caller: BotSession;
+  /** As the bridge received them: what the engine's record of the call is digested from. */
+  readonly arguments: Schema.Json;
+}
+
+/**
  * A `fill_credential` call, claimed for its turn before the fill runs
  * (`vault/Fill.ts`).
  */
@@ -105,14 +126,24 @@ export class TurnTools extends Context.Service<
      * Pins a fill to the engine's record of its call in the caller's running
      * admitted turn, as `call` pins the other tools, but in a transaction of
      * its own: a fill holds a browser tab for seconds, so it runs after the
-     * pin, and its answer is stored with `settle`. A request without such a
+     * pin, and its answer is stored with `settleFill`. A request without such a
      * call, as one that names a session it was not made from, fails with
      * `TurnEnded`.
      */
-    readonly claim: (
+    readonly claimFill: (
       call: FillCall,
     ) => Effect.Effect<FillClaim, TurnEnded | TurnToolRefused | TurnToolRetry | Conflict>;
     /** Stores a claimed fill's answer, which a forward retried under its id then gets. */
-    readonly settle: (call: FillCall, result: Schema.Json) => Effect.Effect<void>;
+    readonly settleFill: (call: FillCall, result: Schema.Json) => Effect.Effect<void>;
+    /**
+     * Matches a connector tool's call to the engine's record of it in the
+     * session's running admitted turn, as the turn tools are, and claims that
+     * record for the request, committed before it returns, so the call is
+     * made at the connector once. What the connector answers is not kept: a
+     * request claimed before fails with `CallCutOff`.
+     */
+    readonly claimConnectorCall: (
+      call: ClaimedCall,
+    ) => Effect.Effect<void, TurnEnded | TurnToolRetry | CallCutOff>;
   }
 >()("@j3-bots/server/tools/TurnTools") {}

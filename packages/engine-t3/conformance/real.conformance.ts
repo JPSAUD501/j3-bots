@@ -106,7 +106,7 @@ const options = Effect.map(paths, ({ home, agent, sharedSkills }): EngineOptions
     },
   ],
   // The scripted agent calls no bot tools.
-  toolBridge: { command: "true", args: [] },
+  toolBridge: { command: "true", args: [], preApproved: ["say"], callTimeoutSeconds: 720 },
   systemPromptFile: ".j3/system.md",
   // Only Codex reads it, and the bench runs no Codex instance.
   basePrompt: Stream.make(""),

@@ -554,7 +554,7 @@ const make = (timing: FillTiming) =>
         request: FillRequest,
         call: FillCall,
       ) {
-        const claim = yield* turnTools.claim(call);
+        const claim = yield* turnTools.claimFill(call);
         if (claim._tag === "stored") return yield* decodeOutcome(claim.result).pipe(Effect.orDie);
         const startedAt = yield* DateTime.now;
         const seen: { origin: SiteOrigin | null; credential: Credential | null } = {
@@ -571,7 +571,7 @@ const make = (timing: FillTiming) =>
           lock.withPermits(1),
         );
         yield* record(request, outcome, seen, startedAt);
-        yield* turnTools.settle(call, yield* encodeOutcome(outcome).pipe(Effect.orDie));
+        yield* turnTools.settleFill(call, yield* encodeOutcome(outcome).pipe(Effect.orDie));
         return outcome;
       });
 

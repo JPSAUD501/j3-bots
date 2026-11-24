@@ -17,6 +17,7 @@ import {
   type SessionNotFound,
   SyncToken,
   type ToolCall,
+  type ToolCallId,
   type TurnCause,
   TurnId,
   TurnOutcome,
@@ -1064,9 +1065,17 @@ export const layer = Layer.effect(
       session: Watched,
       requestId: RequestId,
       request: EngineRequest,
+      heldCall: ToolCallId | null,
     ) {
       const known = yield* requestRow({ sessionId: session.id, requestId });
       if (Option.isNone(known) || known.value.closed_at !== null) return;
+      // The engine may record the call it holds after the request: kept once known.
+      if (heldCall !== null) {
+        yield* sql`
+          UPDATE engine_requests SET engine_call_id = ${heldCall}
+          WHERE entry_id = ${known.value.entry_id} AND engine_call_id IS NULL
+        `;
+      }
       const found = yield* entries.find(known.value.entry_id);
       if (Option.isNone(found)) return;
       const card = found.value.entry;
@@ -1095,7 +1104,9 @@ export const layer = Layer.effect(
       open: OpenRequest,
     ) {
       const known = yield* requestRow({ sessionId: session.id, requestId: open.requestId });
-      if (Option.isSome(known)) return yield* updateRequest(session, open.requestId, open.request);
+      if (Option.isSome(known)) {
+        return yield* updateRequest(session, open.requestId, open.request, open.heldCall);
+      }
       // The room is told once per turn, however many requests the turn opens.
       const earlier = yield* sql`
         SELECT 1 FROM engine_requests
@@ -1107,8 +1118,11 @@ export const layer = Layer.effect(
         entry: cardOf(session.bot_id, open.request),
       });
       yield* sql`
-        INSERT INTO engine_requests (entry_id, session_id, engine_request_id, engine_turn_id)
-        VALUES (${entry.id}, ${session.id}, ${open.requestId}, ${open.turnId})
+        INSERT INTO engine_requests (
+          entry_id, session_id, engine_request_id, engine_turn_id, engine_call_id
+        ) VALUES (
+          ${entry.id}, ${session.id}, ${open.requestId}, ${open.turnId}, ${open.heldCall}
+        )
       `;
       const turn = yield* turnAudience({ sessionId: session.id, turnId: open.turnId });
       if (earlier.length === 0 && Option.isSome(turn) && turn.value.audience === "room") {
@@ -1180,6 +1194,9 @@ export const layer = Layer.effect(
         for (const work of turn.steps) yield* step(session, turn.turnId, work, event.at);
         for (const call of turn.toolCalls)
           yield* toolCall(session, turn.turnId, call, true, event.at);
+        // Recorded closed, also when this is the first sight of them.
+        for (const call of turn.closedToolCalls)
+          yield* toolCall(session, turn.turnId, call, false, event.at);
         const listed = turn.toolCalls.map((call) => call.callId);
         yield* sql`
           UPDATE engine_tool_calls SET open = 0
@@ -1288,7 +1305,7 @@ export const layer = Layer.effect(
         case "request-opened":
           return yield* openRequest(session, event.open);
         case "request-updated":
-          return yield* updateRequest(session, event.requestId, event.request);
+          return yield* updateRequest(session, event.requestId, event.request, event.heldCall);
         case "request-closed":
           return yield* closeRequest(session, event.requestId, event.resolution);
         case "turn-finished":

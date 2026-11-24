@@ -51,12 +51,13 @@ import { toolInputDigest } from "../toolCaller.ts";
 import {
   approvalOf,
   fileChangeWithoutDiff,
+  heldConnectorCall,
   type FileChangeItem,
   sameVersion,
 } from "./approvalDetail.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
-import { toolStep } from "./toolNames.ts";
+import { isConnectorTool, toolStep } from "./toolNames.ts";
 import { hasPersistentFlag, type ToolPersistence } from "./toolPersistence.ts";
 
 // The engine's thread, mirrored entity by entity, and the J3 Bots events it
@@ -1073,11 +1074,6 @@ const label = (text: string | null | undefined, fallback: string) => {
 
 type DynamicTool = Extract<Item, { type: "dynamic_tool" }>;
 
-const SEND_TO_USER = /(^|__|\/|\.)send_to_user$/;
-
-const isHostSpeech = (item: Item): item is DynamicTool =>
-  item.type === "dynamic_tool" && item.toolName !== null && SEND_TO_USER.test(item.toolName);
-
 /**
  * How each harness names a `j3` tool on the engine's item: `mcp__j3__say` on
  * Claude Code, `j3.say` on Codex and on ACP agents (**Read** at `db51b67`,
@@ -1091,6 +1087,19 @@ const j3ToolOf = (item: Item): string | undefined =>
   item.type === "dynamic_tool" && item.toolName !== null
     ? J3_TOOL.exec(item.toolName)?.[1]
     : undefined;
+
+const SEND_TO_USER = /(^|__|\/|\.)send_to_user$/;
+
+/**
+ * A call to the engine's own `send_to_user`. Never one on the `j3` server: a
+ * connector's tool there may be named `<slug>__send_to_user` by its remote
+ * server, and its input is not speech.
+ */
+const isHostSpeech = (item: Item): item is DynamicTool =>
+  item.type === "dynamic_tool" &&
+  item.toolName !== null &&
+  SEND_TO_USER.test(item.toolName) &&
+  j3ToolOf(item) === undefined;
 
 /** Takes the digest of every `j3` tool call input the mirror has not digested yet. */
 export const digestToolCalls = (mirror: Mirror): Effect.Effect<void> =>
@@ -1128,11 +1137,14 @@ const stepKind = (item: Item): WorkStep["kind"] | undefined => {
       return "web";
     case "subagent":
       return "delegation";
-    case "dynamic_tool":
-      // Host speech and `j3` calls are events of their own.
-      return isHostSpeech(item) || j3ToolOf(item) !== undefined
+    case "dynamic_tool": {
+      // Host speech and J3 Bots' own tools are events of their own; a
+      // connector's tool is also a step of the bot's work.
+      const j3Tool = j3ToolOf(item);
+      return isHostSpeech(item) || (j3Tool !== undefined && !isConnectorTool(j3Tool))
         ? undefined
         : dynamicToolStep(item).kind;
+    }
     default:
       return undefined;
   }
@@ -1334,6 +1346,8 @@ export interface RequestState {
   readonly turnId: TurnId;
   readonly openedAt: DateTime.Utc;
   readonly request: EngineRequest;
+  /** The `j3` tool call it holds back (`OpenRequest.heldCall`). */
+  readonly heldCall: ToolCallId | null;
   /** `undefined` while it is open. */
   readonly resolution: RequestResolution | undefined;
 }
@@ -1379,12 +1393,14 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
       // once both are here.
       const request = mirror.requests.get(item.requestId);
       if (request === undefined && LIVE_ITEM.has(item.status)) return undefined;
+      const held = heldConnectorCall(item, request, mirror.items.values());
       return {
         requestId: RequestId.make(localIdFor(item.requestId)),
         answerTo: { _tag: "runtime-request", requestId: item.requestId },
         turnId,
         openedAt,
         request: approvalOf(item, request, mirror.items.values(), mirror.fetched),
+        heldCall: held === undefined ? null : ToolCallId.make(localIdFor(held.itemId)),
         resolution: runtimeResolution(request, item),
       };
     }
@@ -1397,6 +1413,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         turnId,
         openedAt,
         request,
+        heldCall: null,
         resolution: runtimeResolution(mirror.requests.get(item.requestId), item),
       };
     }
@@ -1413,6 +1430,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
           url: item.url?.slice(0, 2000) ?? null,
           placeholder: item.placeholder === undefined ? null : label(item.placeholder, "Secret"),
         },
+        heldCall: null,
         resolution: secretResolution(item),
       };
     default:
@@ -1491,6 +1509,7 @@ const openRequestOf = (state: RequestState): OpenRequest => ({
   turnId: state.turnId,
   openedAt: state.openedAt,
   request: state.request,
+  heldCall: state.heldCall,
 });
 
 // ---------------------------------------------------------------------------
@@ -1847,6 +1866,7 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
             requestId: state.requestId,
             turnId,
             request: state.request,
+            heldCall: state.heldCall,
           });
         }
       }
@@ -1980,6 +2000,10 @@ export const replacement = (
         toolCalls: itemsOf(mirror, run).flatMap((item) => {
           const call = toolCallOf(mirror, item);
           return call !== undefined && LIVE_ITEM.has(item.status) ? [call] : [];
+        }),
+        closedToolCalls: itemsOf(mirror, run).flatMap((item) => {
+          const call = toolCallOf(mirror, item);
+          return call !== undefined && !LIVE_ITEM.has(item.status) ? [call] : [];
         }),
       });
     } else {

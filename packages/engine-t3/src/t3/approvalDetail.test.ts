@@ -114,6 +114,34 @@ describe("approvalOf", () => {
     });
   });
 
+  it("names a connector's tool and shows its input, never its `command` argument alone", () => {
+    // Claude Code's prompt for a tool with a `command` argument is that argument.
+    const input = { command: "ls -la", repository: "acme/site" };
+    const asks = request("toolu-1", "claudeAgent");
+    const asked = approval("toolu-1", { requestKind: "command", prompt: "ls -la" }, "claudeAgent");
+    const held = item(
+      "toolu-1",
+      { type: "dynamic_tool", toolName: "mcp__j3__github__run", input },
+      "claudeAgent",
+    );
+    assert.deepStrictEqual(approvalOf(asked, asks, [held, asked], none), {
+      _tag: "approval",
+      kind: "tool",
+      action: 'Github: run {"command":"ls -la","repository":"acme/site"}',
+      detail: null,
+      reason: null,
+      exact: true,
+      sessionGrant: null,
+    });
+    // Any other tool keeps the provider's prompt.
+    const other = item(
+      "toolu-1",
+      { type: "dynamic_tool", toolName: "mcp__other__run", input },
+      "claudeAgent",
+    );
+    assert.strictEqual(approvalOf(asked, asks, [other, asked], none).action, "ls -la");
+  });
+
   it("keeps every line of a multi-line command, indentation included", () => {
     const command = "cat > notes.txt <<'EOF'\n  indented first line\n\tthen a tab\nEOF\n";
     const asks = request("cmd-2");
