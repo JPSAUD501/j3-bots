@@ -12,9 +12,12 @@ import { Engine } from "@j3-bots/engine-t3";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
+import { ConnectorAuth } from "../connectors/oauth/ConnectorAuth.ts";
+import { toCommandError } from "../connectors/oauth/errors.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { BrowserHelp } from "../browser/BrowserHelp.ts";
 import { BrowserTabs } from "../browser/BrowserTabs.ts";
@@ -46,17 +49,10 @@ import { Vault } from "../vault/Vault.ts";
 
 /**
  * The RPCs this server answers: every one of `J3Rpcs` but the connector
- * gallery's and the connector sign-in's, whose contract came first. Until
- * each is served, a client's call of one is answered with a defect, as an
- * unknown request is.
+ * gallery's, whose contract came first. Until each is served, a client's
+ * call of one is answered with a defect, as an unknown request is.
  */
-export const ServedRpcs = J3Rpcs.omit(
-  "connectors.list",
-  "connectors.search",
-  "connectors.get",
-  "connector.beginSignIn",
-  "connector.completeSignIn",
-);
+export const ServedRpcs = J3Rpcs.omit("connectors.list", "connectors.search", "connectors.get");
 
 const operator = { _tag: "operator" } as const;
 
@@ -92,6 +88,7 @@ export const handlers = ServedRpcs.toLayer(
     const browserTabs = yield* BrowserTabs;
     const vault = yield* Vault;
     const connectors = yield* Connectors;
+    const connectorAuth = yield* ConnectorAuth;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
 
     /**
@@ -222,6 +219,20 @@ export const handlers = ServedRpcs.toLayer(
       "connector.remove": (input) => connectors.remove(input),
       "connector.setBots": (input) => connectors.setBots(input),
       "connector.acceptToolChanges": (input) => connectors.acceptToolChanges(input),
+      // A sign-in's address and the one it returns to carry its code and
+      // `state`: neither is logged, and neither request has a receipt.
+      "connector.beginSignIn": ({ connectorId, redirect }) =>
+        connectorAuth.begin({ connectorId, deviceId: device.id, redirect }).pipe(
+          Effect.map(({ authorizationUrl, expiresAt }) => ({
+            authorizationUrl: Redacted.make(authorizationUrl),
+            expiresAt,
+          })),
+          Effect.mapError(toCommandError),
+        ),
+      "connector.completeSignIn": ({ url }) =>
+        connectorAuth
+          .complete({ _tag: "device", deviceId: device.id, url })
+          .pipe(Effect.asVoid, Effect.mapError(toCommandError)),
     };
   }),
 );

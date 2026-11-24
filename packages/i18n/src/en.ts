@@ -1629,4 +1629,7 @@ export const en = {
   "browser.viewer.leaveKey": "{key} leaves the page",
   "browser.viewer.heldElsewhere":
     "Someone has control on another device. You can take it once they finish.",
+  "oauthCallback.title": "J3 Bots",
+  "oauthCallback.signedIn": "Connected. You can close this tab and go back to J3 Bots.",
+  "oauthCallback.failed": "This connection didn't finish. Go back to J3 Bots and try again.",
 } as const;

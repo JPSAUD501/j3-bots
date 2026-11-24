@@ -457,10 +457,18 @@ export const EnvName = Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-
 export type EnvName = typeof EnvName.Type;
 
 /**
- * An OAuth client the operator registered at the service and pastes: its id,
- * and its secret when the service gave one.
+ * An OAuth client the operator registered at the service and pastes: the
+ * authorization server it is registered at (its issuer, as the service
+ * documents it, such as `https://accounts.google.com`), its id, and its
+ * secret when the service gave one. The server uses it with that issuer
+ * only, so a connector that names another never gets its secret.
  */
 export const OAuthClientInput = Schema.Struct({
+  issuer: Schema.String.check(
+    Schema.makeFilter(
+      (text: string) => isHttpsAddress(text, MAX_CONNECTOR_URL_LENGTH, true) || BARE_HTTPS,
+    ),
+  ),
   clientId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   clientSecret: Schema.NullOr(secretValue(1, 2_000)),
 });

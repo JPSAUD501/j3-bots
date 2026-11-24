@@ -12,9 +12,10 @@ import * as EngineSessions from "./bots/EngineSessions.ts";
 import * as Templates from "./bots/Templates.ts";
 import * as Workspaces from "./bots/Workspaces.ts";
 import * as CommandReceipts from "./commands/CommandReceipts.ts";
-import * as ConnectorSignIns from "./connectors/auth.ts";
 import * as ConnectorStore from "./connectors/ConnectorStore.ts";
 import * as Connectors from "./connectors/Connectors.ts";
+import * as ConnectorAuth from "./connectors/oauth/ConnectorAuth.ts";
+import * as OAuthSignIns from "./connectors/oauth/signIns.ts";
 import * as Devices from "./devices/Devices.ts";
 import * as EngineState from "./engine/EngineState.ts";
 import * as Entries from "./entries/Entries.ts";
@@ -64,10 +65,11 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 
 /**
  * Every service of the server's domain, over a migrated database, the server's
- * configuration, the filesystem, an `Engine` with its `BrowserBridge`, and a
- * `PushSender`. Which engine and which sender are the caller's: the real ones in `server.ts`, in-memory
- * ones in tests. Building it starts the turn machinery and the push worker,
- * which run for as long as the layer's scope.
+ * configuration, the filesystem, an `Engine` with its `BrowserBridge`, a
+ * `PushSender` and the HTTP client connectors' sign-ins use (`OAuthHttp`).
+ * Which engine, sender and client are the caller's: the real ones in
+ * `server.ts`, in-memory ones in tests. Building it starts the turn machinery
+ * and the push worker, which run for as long as the layer's scope.
  */
 export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.layer).pipe(
   // A fill is claimed for its call's turn, through `Speech`'s turn tools.
@@ -105,6 +107,8 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
   Layer.provideMerge(Layer.mergeAll(Stops.layer, HeldQueues.layer)),
   Layer.provideMerge(Sender.layer),
   Layer.provideMerge(Observer.layer),
+  Layer.provideMerge(OAuthSignIns.layer),
+  Layer.provideMerge(ConnectorAuth.layer.pipe(Layer.provide(OAuthSignIns.connectorsLayer))),
   Layer.provideMerge(
     Layer.mergeAll(
       Ledger.layer,
@@ -128,7 +132,6 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
       ChangeLog.layer,
       CommandReceipts.layer,
       ConnectorStore.layer,
-      ConnectorSignIns.layerNone,
       SettingsStore.layer,
       EngineState.layer,
       Usage.layer,

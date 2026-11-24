@@ -9,6 +9,7 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as AdminSocket from "./admin/AdminSocket.ts";
 import * as ServerConfig from "./config.ts";
+import * as OAuthEndpoints from "./connectors/oauth/endpoints.ts";
 import * as Domain from "./domain.ts";
 import { engineProviders } from "./engine/providers.ts";
 import * as Home from "./home/Home.ts";
@@ -102,7 +103,7 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     // One decision for the client routes and the admin socket's report.
     Layer.provide(WebClient.statusLayer),
     Layer.provide(Domain.layer),
-    Layer.provide(Layer.merge(engine, ExpoPushSender.layer)),
+    Layer.provide(Layer.mergeAll(engine, ExpoPushSender.layer, OAuthEndpoints.layer)),
     // One base prompt for the engine and the settings that change it.
     Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),
     Layer.provide(Sqlite.layer),

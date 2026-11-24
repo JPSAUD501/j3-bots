@@ -167,8 +167,15 @@ export const listen = (
     NodeHttpServer.layerHttpServices,
   );
 
-/** A request URL's path: what the request log records of it. */
-const pathOf = (url: string) => url.replace(/[?#].*$/s, "");
+/**
+ * A request target's path: what the request log records of it. A target in
+ * absolute form (`GET http://host/path`), which a client may send and the
+ * router serves, is its path too, so no spelling escapes redaction.
+ */
+export const pathOf = (url: string) =>
+  /^[a-z][a-z0-9+.-]*:\/\//i.test(url) && URL.canParse(url)
+    ? new URL(url).pathname
+    : url.replace(/[?#].*$/s, "");
 
 /**
  * `HttpMiddleware.logger`, unless `redactPath` gives what to show of the

@@ -1651,6 +1651,9 @@ const sentences = {
   "browser.viewer.leaveKey": "{key} sai da página",
   "browser.viewer.heldElsewhere":
     "Alguém está no controle em outro aparelho. Você pode assumir quando terminar.",
+  "oauthCallback.title": "J3 Bots",
+  "oauthCallback.signedIn": "Conectado. Você pode fechar esta aba e voltar ao J3 Bots.",
+  "oauthCallback.failed": "Esta conexão não terminou. Volte ao J3 Bots e tente de novo.",
 } as const satisfies Catalog;
 
 export const ptBR: AddingNone<typeof sentences> = sentences;

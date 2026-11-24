@@ -38,8 +38,6 @@ export const connectorsUnserved = Layer.mergeAll(
   J3Rpcs.toLayerHandler("connectors.list", () => Effect.die("Not served")),
   J3Rpcs.toLayerHandler("connectors.search", () => Effect.die("Not served")),
   J3Rpcs.toLayerHandler("connectors.get", () => Effect.die("Not served")),
-  J3Rpcs.toLayerHandler("connector.beginSignIn", () => Effect.die("Not served")),
-  J3Rpcs.toLayerHandler("connector.completeSignIn", () => Effect.die("Not served")),
 );
 
 /** What the domain offers the handlers of the RPCs it does not serve yet. */
