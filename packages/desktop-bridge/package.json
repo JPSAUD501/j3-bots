@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/release": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

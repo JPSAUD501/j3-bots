@@ -36,6 +36,7 @@ import type {
   DesktopServer,
   DesktopShortcut,
   DesktopUpdate,
+  RemoteServerUpdate,
   ShellData,
   ShellIntents,
 } from "../shell/data";
@@ -47,7 +48,9 @@ import {
   engineProblem,
   timeZoneHint,
 } from "@j3-bots/client-runtime/wording";
-import { AppUpdate } from "./AppUpdate";
+import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
+import { updateHasDetails } from "./ConnectionBanner";
+import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
 import { HarnessLocations, type LocalProviderSetup, LocalSignIn } from "./ProviderSetup";
@@ -79,6 +82,7 @@ type SettingsIntents = Pick<
   | "server"
   | "local"
   | "update"
+  | "serverUpdate"
   | "shortcut"
   | "providerSetup"
 >;
@@ -106,6 +110,15 @@ interface SettingsButtonProps {
 // keeps them; closing it themselves discards them.
 
 /**
+ * Whether an update waits for the operator: the server's, on offer to a
+ * device that can start it, or the app's, downloaded and ready, or out for
+ * a build that does not install it itself.
+ */
+const updateWaiting = ({ serverUpdate, update }: SettingsIntents): boolean =>
+  (serverUpdate !== undefined && serverUpdateOffered(serverUpdate)) ||
+  (update !== undefined && appUpdateWaiting(update));
+
+/**
  * The roster's footer: opens everything that is not about one bot. Opening
  * reads the settings and devices again, for what another device changed.
  */
@@ -121,8 +134,11 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
           if (open) {
             intents.refreshSettings();
             intents.refreshDevices();
+            intents.serverUpdate?.refresh();
           } else {
             profile.discard();
+            // The operator has seen how the update this device followed ended.
+            intents.serverUpdate?.dismissEnded();
           }
           intents.setSettingsOpen(open);
         }}
@@ -132,6 +148,12 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
         >
           <SettingsIcon aria-hidden />
           {t("settings.title")}
+          {updateWaiting(intents) && (
+            <span className="ms-auto flex items-center gap-1.5 text-2xs text-muted-foreground">
+              <span aria-hidden className="size-1.5 rounded-full bg-accent" />
+              {t("updates.notice")}
+            </span>
+          )}
         </Dialog.Trigger>
         <Dialog.Portal>
           <Dialog.Backdrop className={dialogBackdrop} />
@@ -194,12 +216,18 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               {(intents.server !== undefined || intents.local !== undefined) && (
                 <WhereSection server={intents.server} local={intents.local} />
               )}
+              {(intents.serverUpdate !== undefined || intents.update !== undefined) && (
+                <UpdatesSection
+                  server={intents.serverUpdate}
+                  app={intents.update}
+                  local={intents.local}
+                />
+              )}
               <BrowserSection
                 onSignOut={intents.signOut}
                 desktop={intents.server !== undefined || intents.local !== undefined}
                 local={intents.local !== undefined}
                 unencrypted={data.signInUnencrypted}
-                update={intents.update}
                 shortcut={intents.shortcut}
               />
             </div>
@@ -817,9 +845,91 @@ export function WhereSection({
 }
 
 /**
+ * What the server runs and updating it, and in the desktop app, the app's
+ * version and its update. In local mode the app runs the server, so updating
+ * the app updates both, and the server has no row of its own.
+ */
+export function UpdatesSection({
+  server,
+  app,
+  local,
+}: {
+  server: RemoteServerUpdate | undefined;
+  app: DesktopUpdate | undefined;
+  /** The bots on this computer, in local mode. */
+  local: DesktopLocal | undefined;
+}) {
+  const { t } = useI18n();
+  return (
+    <Section title={t("settings.about")}>
+      {server !== undefined && (
+        <div className="flex flex-col gap-1.5">
+          <h4 className="text-xs font-medium">{t("serverUpdate.title")}</h4>
+          <ServerUpdateRow update={server} />
+        </div>
+      )}
+      {app !== undefined && (
+        <div className="flex flex-col gap-1.5">
+          <h4 className="text-xs font-medium">{t("updates.app.heading")}</h4>
+          {local !== undefined && (
+            <p className="text-2xs text-muted-foreground">{t("updates.app.local")}</p>
+          )}
+          <AppUpdate update={app} channel className="items-start" />
+          {local?.serverUpdate !== undefined && <LocalServerUpdateLine local={local} />}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * Where the bots on this computer stand after the app moved them to the
+ * release it carries, as the connection line says it: moving, rolled back
+ * with Try again and why, or on a release newer than the app.
+ */
+function LocalServerUpdateLine({ local }: { local: DesktopLocal }) {
+  const { t } = useI18n();
+  const update = local.serverUpdate;
+  switch (update?._tag) {
+    case undefined:
+      return null;
+    case "updating":
+      return (
+        <p role="status" className="text-xs text-muted-foreground">
+          {t("local.line.update.updating", { version: update.to })}
+        </p>
+      );
+    case "older-app":
+      return (
+        <p className="text-xs text-muted-foreground">
+          {t("local.line.update.olderApp", { running: update.running })}
+        </p>
+      );
+    case "rolled-back":
+      return (
+        <div className="flex flex-col items-start gap-1.5">
+          <p className="text-xs">
+            {t("local.line.update.rolledBack", { failed: update.failed, running: update.running })}
+          </p>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={local.retryServerUpdate}>
+              {t("local.line.update.retry")}
+            </Button>
+            {updateHasDetails(update) && (
+              <Button size="sm" variant="ghost" onClick={local.showUpdateDetails}>
+                {t("local.failed.details")}
+              </Button>
+            )}
+          </div>
+        </div>
+      );
+  }
+}
+
+/**
  * Choices kept in this browser only, and signing this device out. In the
- * `desktop` app, the same for this device, with the app's version and its
- * `update`, its global `shortcut`, and that its sign-in is stored
+ * `desktop` app, the same for this device, with its global `shortcut`, and
+ * that its sign-in is stored
  * `unencrypted` when it is, as that is less safe than the operator would
  * expect. In `local` mode, signing out is stopping using this computer, in
  * the section above: there is no other server to sign in to.
@@ -829,14 +939,12 @@ function BrowserSection({
   desktop,
   local,
   unencrypted,
-  update,
   shortcut,
 }: {
   onSignOut: SettingsIntents["signOut"];
   desktop: boolean;
   local: boolean;
   unencrypted: boolean;
-  update: DesktopUpdate | undefined;
   shortcut: DesktopShortcut | undefined;
 }) {
   const { t } = useI18n();
@@ -855,7 +963,6 @@ function BrowserSection({
   ];
   return (
     <Section title={t(desktop ? "settings.thisDevice" : "settings.browser")}>
-      {update !== undefined && <AppUpdate update={update} className="items-start" />}
       {shortcut !== undefined && <ShortcutSetting shortcut={shortcut} />}
       <div className="flex flex-col gap-1.5">
         <span id={appearanceId} className="text-xs">
