@@ -776,7 +776,7 @@ it.effect("lists each of a large earlier release's teammate messages once, in th
 );
 
 it.effect(
-  "keeps every room and its links without a host or a hop limit, and renames its wakes' reasons",
+  "keeps every room and its links without a host or a hop limit, and its wakes in the new words without hops",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -842,21 +842,22 @@ it.effect(
           roomId: string,
           entryId: string,
           reason: string,
-          botId = "bo",
+          { botId = "bo", hops = 0 }: { readonly botId?: string; readonly hops?: number } = {},
         ) =>
           sql`
             INSERT INTO wakes (
               id, bot_id, kind, priority, audience, audience_room_id, hops, payload_json, status,
               source_entry_id, created_at, updated_at
             ) VALUES (
-              ${id}, ${botId}, 'room', 0, 'room', ${roomId}, 0, ${wake(entryId, reason)}, 'pending',
+              ${id}, ${botId}, 'room', 0, 'room', ${roomId}, ${hops}, ${wake(entryId, reason)}, 'pending',
               ${entryId}, ${now}, ${now}
             )
           `;
         yield* wakeOf("w-all", "launch", "to-all", "everyone");
         yield* wakeOf("w-none", "launch", "to-none", "host");
-        yield* wakeOf("w-bo", "launch", "to-bo", "mentioned");
-        yield* wakeOf("w-kickoff", "old", "kickoff", "kickoff", "cy");
+        // Ana's message to Bo was a hop of a chain the room counted.
+        yield* wakeOf("w-bo", "launch", "to-bo", "mentioned", { hops: 2 });
+        yield* wakeOf("w-kickoff", "old", "kickoff", "kickoff", { botId: "cy" });
       }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
 
       yield* Effect.gen(function* () {
@@ -906,31 +907,35 @@ it.effect(
         );
         assert.deepStrictEqual(
           yield* sql`
-            SELECT id, audience_room_id, source_entry_id, payload_json FROM wakes ORDER BY id
+            SELECT id, audience_room_id, source_entry_id, hops, payload_json FROM wakes ORDER BY id
           `,
           [
             {
               id: "w-all",
               audience_room_id: "launch",
               source_entry_id: "to-all",
+              hops: 0,
               payload_json: wake("to-all", "everyone"),
             },
             {
               id: "w-bo",
               audience_room_id: "launch",
               source_entry_id: "to-bo",
+              hops: 0,
               payload_json: wake("to-bo", "addressed"),
             },
             {
               id: "w-kickoff",
               audience_room_id: "old",
               source_entry_id: "kickoff",
+              hops: 0,
               payload_json: wake("kickoff", "kickoff"),
             },
             {
               id: "w-none",
               audience_room_id: "launch",
               source_entry_id: "to-none",
+              hops: 0,
               payload_json: wake("to-none", "user"),
             },
           ],

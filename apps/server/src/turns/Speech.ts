@@ -55,7 +55,7 @@ import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { type LiveRoom, liveRoom } from "../rooms/liveRoom.ts";
-import { RoomRouting } from "../rooms/RoomRouting.ts";
+import { type BotMessageRouted, RoomRouting } from "../rooms/RoomRouting.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
@@ -187,11 +187,8 @@ interface Suggested extends OfferedService {
   readonly glyph: ConnectorGlyph | null;
 }
 
-/**
- * What became of a bot's room message's wakes (`routeRoomMessage`): `null`
- * when the work that spoke was stopped.
- */
-type RoutedRoomMessage = null | { readonly _tag: "routed" } | { readonly _tag: "quiet" };
+/** What became of a bot's room message's wakes (`routeRoomMessage`). */
+type RoutedRoomMessage = BotMessageRouted | null;
 
 /** A request as its stored result is looked up: under its id, for its caller and its tool. */
 const RequestKey = Schema.Struct({
@@ -872,38 +869,25 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Wakes the members a bot's room message wakes, a `say`, a `message_bot`
-     * to the room or a kickoff, unless the operator stopped the work that
-     * spoke. Once the room's bots have said `ROOM_QUIET_AFTER` messages since
-     * the operator last wrote, nobody is woken, and the room shows one
-     * `chain-stopped` notice until the operator writes again; nobody is woken
-     * to hear of it either.
+     * Counts a bot's room message, a `say`, a `message_bot` to the room or a
+     * kickoff, and wakes the members it wakes (`RoomRouting.botMessage`),
+     * unless the operator stopped the work that spoke.
      */
     const routeRoomMessage = Effect.fn("Speech.routeRoomMessage")(function* (
       found: Pin,
       room: LiveRoom,
       message: MessageEntry,
       kickoff: boolean,
-    ): Effect.fn.Return<RoutedRoomMessage> {
+    ) {
       const work = yield* workStopped(found);
-      if (work.stopped) return null;
-      const routed = yield* routing.botMessage({
+      return yield* routing.botMessage({
         room,
         botId: found.botId,
         message,
         kickoff,
         seq: work.seq,
+        stopped: work.stopped,
       });
-      if (routed._tag === "routed") return routed;
-      if (routed.first) {
-        yield* notify(
-          found.botId,
-          { _tag: "room", roomId: room.id },
-          { _tag: "chain-stopped", limit: "room" },
-          null,
-        );
-      }
-      return { _tag: "quiet" } as const;
     });
 
     /**

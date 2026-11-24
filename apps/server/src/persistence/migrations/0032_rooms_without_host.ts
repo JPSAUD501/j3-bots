@@ -21,6 +21,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 // A room wake keeps what it told its member, in the new words: woken as the
 // host for a message to nobody, it is the operator's message to the room
 // (`user`); mentioned, it is `addressed`; `everyone` and a kickoff stay.
+// And it carries no hops, as room wakes now do: a teammate message its turn
+// sends starts a chain of its own rather than going on with the room's.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
@@ -56,4 +58,5 @@ export default Effect.gen(function* () {
     WHERE kind = 'room' AND json_extract(payload_json, '$._tag') = 'room'
       AND json_extract(payload_json, '$.reason') IN ('host', 'mentioned')
   `;
+  yield* sql`UPDATE wakes SET hops = 0 WHERE kind = 'room' AND hops <> 0`;
 });

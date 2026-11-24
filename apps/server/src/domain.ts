@@ -105,7 +105,6 @@ export const layer = Layer.mergeAll(
       Memory.layer,
       Rooms.layer,
       Sections.layer,
-      RoomRouting.layer,
       EngineSessions.layer,
       SettingsService.layer,
       Routines.layer,
@@ -117,6 +116,7 @@ export const layer = Layer.mergeAll(
   Layer.provideMerge(Layer.mergeAll(Stops.layer, HeldQueues.layer)),
   Layer.provideMerge(Sender.layer),
   Layer.provideMerge(Observer.layer),
+  Layer.provideMerge(RoomRouting.layer),
   Layer.provideMerge(OAuthSignIns.layer),
   Layer.provideMerge(ConnectorAuth.layer.pipe(Layer.provide(OAuthSignIns.connectorsLayer))),
   Layer.provideMerge(

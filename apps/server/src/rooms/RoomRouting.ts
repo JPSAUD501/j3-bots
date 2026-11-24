@@ -6,7 +6,9 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { Entries } from "../entries/Entries.ts";
 import type { DispatchSeq, RoomReason } from "../turns/model.ts";
+import { notices } from "../turns/notices.ts";
 import { type NewWake, Wakes } from "../turns/Wakes.ts";
 import type { LiveRoom } from "./liveRoom.ts";
 
@@ -19,10 +21,9 @@ export type BotMessageRouted =
   | { readonly _tag: "routed" }
   /**
    * The room's bots had already said `ROOM_QUIET_AFTER` messages since the
-   * operator last wrote, so none was written. `first` when it is the first
-   * message since then that wakes nobody, which the room shows.
+   * operator last wrote, so none was written.
    */
-  | { readonly _tag: "quiet"; readonly first: boolean };
+  | { readonly _tag: "quiet" };
 
 /**
  * Who a room message wakes (`docs/architecture/server.md`, Rooms), the
@@ -31,7 +32,8 @@ export type BotMessageRouted =
  * reads it in its next envelope either way. The room counts its bots'
  * messages since the operator last wrote there, or a bot's kickoff started
  * it (`rooms.bot_streak`); past `ROOM_QUIET_AFTER` a bot's message wakes
- * nobody. Each wake is a `room` wake for the room, written in the caller's
+ * nobody, and the first such message shows one `chain-stopped` notice in the
+ * room until the operator writes again. Each wake is a `room` wake for the room, written in the caller's
  * transaction, the one that writes the message.
  */
 export class RoomRouting extends Context.Service<
@@ -44,9 +46,11 @@ export class RoomRouting extends Context.Service<
     /**
      * A bot spoke in a room: in a `say` or a `message_bot` to it, or in the
      * `kickoff` of a room it started, which counts as the operator's word:
-     * a bot starts a room only in a turn they spoke in. Its mentions are
-     * already checked to be other members. `seq` is the dispatch that began
-     * the speaking turn's work, `null` for a turn no dispatch began.
+     * a bot starts a room only in a turn they spoke in; or in the engine's
+     * own speech of a room turn. Its mentions are already checked to be
+     * other members. `seq` is the dispatch that began the speaking turn's
+     * work, `null` for a turn no dispatch began. A message of work the
+     * operator `stopped` is in the room, so it counts, but wakes nobody.
      */
     readonly botMessage: (input: {
       readonly room: LiveRoom;
@@ -54,6 +58,7 @@ export class RoomRouting extends Context.Service<
       readonly message: MessageEntry;
       readonly kickoff: boolean;
       readonly seq: DispatchSeq | null;
+      readonly stopped: boolean;
     }) => Effect.Effect<BotMessageRouted>;
   }
 >()("@j3-bots/server/rooms/RoomRouting") {}
@@ -84,6 +89,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const wakes = yield* Wakes;
+    const { notify } = notices(sql, yield* Entries);
 
     const restart = (room: { readonly id: Room["id"] }) =>
       sql`UPDATE rooms SET bot_streak = 0 WHERE id = ${room.id}`.pipe(Effect.orDie);
@@ -123,15 +129,20 @@ export const layer = Layer.effect(
       readonly message: MessageEntry;
       readonly kickoff: boolean;
       readonly seq: DispatchSeq | null;
+      readonly stopped: boolean;
     }) {
+      const audience = { _tag: "room", roomId: input.room.id } as const;
       if (input.kickoff) yield* restart(input.room);
       else {
         const { bot_streak: streak } = yield* counted(input.room.id).pipe(Effect.orDie);
         if (streak > ROOM_QUIET_AFTER) {
-          return { _tag: "quiet", first: streak === ROOM_QUIET_AFTER + 1 } as const;
+          if (streak === ROOM_QUIET_AFTER + 1) {
+            yield* notify(input.botId, audience, { _tag: "chain-stopped", limit: "room" }, null);
+          }
+          return { _tag: "quiet" } as const;
         }
       }
-      const audience = { _tag: "room", roomId: input.room.id } as const;
+      if (input.stopped) return { _tag: "routed" } as const;
       // The speaking turn's work: a Stop that covers it, or the room's
       // archival, leaves these wakes unwritten (`Wakes.record`). A room
       // counts its own messages, so its wakes carry no hops: a teammate

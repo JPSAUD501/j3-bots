@@ -360,6 +360,56 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+/** How many messages the room's bots have said since the operator last wrote there. */
+const botStreak = (roomId: RoomId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly bot_streak: number }>`
+      SELECT bot_streak FROM rooms WHERE id = ${roomId}
+    `.pipe(Effect.orDie);
+    return row?.bot_streak ?? 0;
+  });
+
+it.effect(
+  "counts what a member says in a room turn through the engine rather than `say`, and wakes every other member for it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [ana, bo, cy] = [yield* member("Ana"), yield* member("Bo"), yield* member("Cy")];
+      const members = [ana, bo, cy];
+      const room = yield* roomWith(ana, [bo, cy]);
+      yield* operatorWrites(room.id, members, "Ana, how is the launch?", to(ana));
+
+      const turn = yield* nextTurn(ana.bot.id);
+      yield* control.hostSpeech({ sessionId: ana.session, turnId: turn, text: "On track." });
+      yield* finish(ana, turn, members);
+
+      assert.includeMembers(yield* roomTexts(room.id), ["On track."]);
+      assert.strictEqual(yield* botStreak(room.id), 1);
+      assert.strictEqual(yield* roomWakesOf(bo.bot.id, room.id), 1);
+      assert.strictEqual(yield* roomWakesOf(cy.bot.id, room.id), 1);
+      assert.strictEqual(yield* roomWakesOf(ana.bot.id, room.id), 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("counts a room message of work the operator stopped, which wakes nobody", () =>
+  Effect.gen(function* () {
+    const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
+    const members = [ana, bo];
+    const room = yield* roomWith(ana, [bo]);
+    yield* operatorWrites(room.id, members, "Ana, ask Bo for the date.", to(ana));
+    const turn = yield* nextTurn(ana.bot.id);
+
+    // The Stop is recorded while Ana's `say` is still on its way.
+    yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+    yield* say(ana, turn, { text: "Bo, the date?", mention: [bo.bot.id] });
+
+    assert.includeMembers(yield* roomTexts(room.id), ["Bo, the date?"]);
+    assert.strictEqual(yield* botStreak(room.id), 1);
+    assert.strictEqual(yield* roomWakesOf(bo.bot.id, room.id), 0);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("coalesces a room's waiting wakes into one envelope, never with another room's", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;

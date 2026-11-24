@@ -42,6 +42,8 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { liveRoom } from "../rooms/liveRoom.ts";
+import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { hopCounts } from "./hopCounts.ts";
 import { liveTarget as liveTargetOf } from "./liveTarget.ts";
 import { DISPATCH_COLUMNS, DispatchRow, dispatchOfKey, Ledger, type WakeRow } from "./Ledger.ts";
@@ -52,6 +54,7 @@ import {
   audienceOf,
   conversation,
   type DispatchRowId,
+  DispatchSeq,
   NotObserved,
   SessionRowId,
   StoredResponse,
@@ -282,6 +285,8 @@ export const layer = Layer.effect(
     const changes = yield* ChangeLog;
     const ids = yield* Ids;
     const workSteps = yield* WorkSteps;
+    const routing = yield* RoomRouting;
+    const roomOf = liveRoom(sql);
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
     const chains = hopCounts(sql);
@@ -917,6 +922,31 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     /** The host's own speech tool, delivered once per speech like a `say` without `done`. */
+    /**
+     * The dispatch that began the turn's work, and whether the operator
+     * stopped the turn: what a room message it speaks is routed with.
+     */
+    const speakingWork = SqlSchema.findOne({
+      Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
+      Result: Schema.Struct({ seq: Schema.NullOr(DispatchSeq), stopped: Flag }),
+      execute: ({ sessionId, turnId }) => sql`
+        SELECT
+          (SELECT MIN(seq) FROM dispatches
+            WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}) AS seq,
+          EXISTS (
+            SELECT 1 FROM turns
+            WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
+              AND stop_id IS NOT NULL
+          ) AS stopped
+      `,
+    });
+
+    /**
+     * What the bot said through the engine rather than `say`: a message of
+     * its turn's audience, with no mentions. In a room it is a bot's message
+     * like any other (`RoomRouting.botMessage`): it counts, and wakes every
+     * other member.
+     */
     const hostSpeech = Effect.fn("Observer.hostSpeech")(function* (
       session: Watched,
       speech: {
@@ -953,6 +983,24 @@ export const layer = Layer.effect(
         UPDATE host_speech SET entry_id = ${entry.id}
         WHERE session_id = ${session.id} AND speech_id = ${speech.speechId}
       `;
+      if (target._tag === "room" && entry._tag === "message") {
+        const room = yield* roomOf(target.roomId);
+        if (Option.isSome(room)) {
+          const work = yield* speakingWork({ sessionId: session.id, turnId: speech.turnId }).pipe(
+            Effect.orDie,
+          );
+          const covered =
+            work.seq !== null && (yield* stops.covers(session.bot_id, audience, work.seq));
+          yield* routing.botMessage({
+            room: room.value,
+            botId: session.bot_id,
+            message: entry,
+            kickoff: false,
+            seq: work.seq,
+            stopped: work.stopped || covered,
+          });
+        }
+      }
       yield* spoken.said({
         sessionId: session.id,
         botId: session.bot_id,
