@@ -13,6 +13,7 @@
 //
 // The structure follows T3 Code's own development replay agent
 // (apps/server/scripts/dev-replay-agent.ts, MIT); the scripts are J3 Bots'.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeReadline from "node:readline";
 import * as Option from "effect/Option";
@@ -79,6 +80,19 @@ const McpToolResult = Schema.Struct({
   }),
 });
 const decodeMcpToolResult = Schema.decodeUnknownOption(Schema.fromJsonString(McpToolResult));
+const decodeToolResult = Schema.decodeUnknownOption(McpToolResult);
+
+/**
+ * The bot tools' bridge, as the engine gives an ACP agent its command line
+ * (`TOOL_BRIDGE_VARIABLE` in `src/t3/Provision.ts`), when it does.
+ */
+const toolBridge = Option.flatMap(
+  Option.fromNullishOr(process.env["J3_TOOL_BRIDGE"]),
+  Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Array(Schema.String))),
+);
+const decodeCreated = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ id: Schema.String })),
+);
 
 interface Session {
   readonly cwd: string;
@@ -93,6 +107,8 @@ type StopReason = "end_turn" | "cancelled";
 interface Turn {
   readonly sessionId: string;
   readonly session: Session;
+  /** The prompt's text, as the engine sent it. */
+  readonly text: string;
   readonly args: ReadonlyMap<string, string>;
   readonly signal: AbortSignal;
 }
@@ -177,17 +193,7 @@ const callHostTool = async (
     await say(turn, `No host tools: cannot call ${tool}.`);
     return { failed: true, text: "" };
   }
-  const toolCallId = `${tool}-${NodeCrypto.randomUUID()}`;
-  const rawInput = { server: server.value.name, tool, arguments: input };
-  update(turn.sessionId, {
-    sessionUpdate: "tool_call",
-    toolCallId,
-    title: `${server.value.name}/${tool}`,
-    kind: "other",
-    status: "in_progress",
-    rawInput,
-    _meta: { is_mcp_tool_call: true },
-  });
+  const { toolCallId, rawInput } = reportToolCall(turn, server.value.name, tool, input);
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
@@ -223,6 +229,37 @@ const callHostTool = async (
   const answer = decodeMcpToolResult(
     await post({ id: "call", method: "tools/call", params: { name: tool, arguments: input } }),
   );
+  return reportToolResult(turn, toolCallId, rawInput, answer);
+};
+
+/** Reports an MCP tool call's start, the way an agent does. */
+const reportToolCall = (
+  turn: Turn,
+  server: string,
+  tool: string,
+  input: Record<string, unknown>,
+) => {
+  const toolCallId = `${tool}-${NodeCrypto.randomUUID()}`;
+  const rawInput = { server, tool, arguments: input };
+  update(turn.sessionId, {
+    sessionUpdate: "tool_call",
+    toolCallId,
+    title: `${server}/${tool}`,
+    kind: "other",
+    status: "in_progress",
+    rawInput,
+    _meta: { is_mcp_tool_call: true },
+  });
+  return { toolCallId, rawInput };
+};
+
+/** Reports how an MCP tool call ended, and returns what it answered. */
+const reportToolResult = (
+  turn: Turn,
+  toolCallId: string,
+  rawInput: Record<string, unknown>,
+  answer: Option.Option<typeof McpToolResult.Type>,
+): HostToolResult => {
   const text = Option.match(answer, {
     onNone: () => "",
     onSome: (value) =>
@@ -244,6 +281,65 @@ const callHostTool = async (
   });
   return { failed, text };
 };
+
+/**
+ * Calls one of J3 Bots' own tools, as a harness does: it starts the `j3`
+ * bridge the engine named (`toolBridge`), which inherits this agent's
+ * environment and with it the session's thread id, and speaks MCP to it over
+ * standard input and output for one call.
+ */
+const callBotTool = async (
+  turn: Turn,
+  tool: string,
+  input: Record<string, unknown>,
+): Promise<HostToolResult> => {
+  const [command, ...args] = Option.getOrElse(toolBridge, () => []);
+  if (command === undefined) {
+    await say(turn, `No bot tools: cannot call ${tool}.`);
+    return { failed: true, text: "" };
+  }
+  const { toolCallId, rawInput } = reportToolCall(turn, "j3", tool, input);
+  const bridge = NodeChildProcess.spawn(command, args, { stdio: ["pipe", "pipe", "inherit"] });
+  const answers = new Map<string, (result: unknown) => void>();
+  NodeReadline.createInterface({ input: bridge.stdout, crlfDelay: Infinity }).on("line", (line) => {
+    const message = decodeMessage(line);
+    if (Option.isNone(message)) return;
+    const id = String(message.value.id);
+    answers.get(id)?.(message.value.result);
+    answers.delete(id);
+  });
+  const request = (id: string, method: string, params: Record<string, unknown>) =>
+    new Promise<Option.Option<unknown>>((resolve) => {
+      answers.set(id, (result) => resolve(Option.some(result)));
+      bridge.once("exit", () => resolve(Option.none()));
+      bridge.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    });
+  const stop = () => bridge.kill();
+  turn.signal.addEventListener("abort", stop, { once: true });
+  try {
+    await request("init", "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "j3-scripted-agent", version: "1" },
+    });
+    bridge.stdin.write(
+      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
+    );
+    const result = await request("call", "tools/call", { name: tool, arguments: input });
+    return reportToolResult(
+      turn,
+      toolCallId,
+      rawInput,
+      Option.flatMap(result, (value) => decodeToolResult({ result: value })),
+    );
+  } finally {
+    turn.signal.removeEventListener("abort", stop);
+    bridge.stdin.end();
+  }
+};
+
+/** The teammates the `team` script creates, in order. */
+const TEAM = ["Ana", "Bo", "Cy", "Di", "Ed"];
 
 /** The commands the `steps` script runs, in turn. */
 const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"];
@@ -275,6 +371,14 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  * - `browser`: calls the engine's `t3_preview_list`, which only a session
  *   given the browser may call, then speaks, as `speak` does, `allowed` or
  *   `refused`.
+ * - `team`: a primary bot building a team on J3 Bots' own tools: creates
+ *   `count` teammates (default 4) with `create_bot`, starts a room with them
+ *   with `start_room`, whose kickoff has each member run `room-answer`, then
+ *   `say`s what it set up and ends. It `say`s the refusal instead when a call
+ *   is refused.
+ * - `room-answer`: `say`s `Answer #<n>.` and ends, where `n` is one more
+ *   than the answers its prompt already carries: the members a kickoff woke
+ *   one at a time count 1, 2, 3 and so on.
  *
  * No script starts work on its own after its turn: the engine offers a
  * continuation only to agents it recognizes by name (**Read**, `db51b67`,
@@ -447,6 +551,35 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
     reportUsage(turn);
     return "end_turn";
   },
+  team: async (turn) => {
+    const refused = async (text: string) => {
+      await callBotTool(turn, "say", { text: `Refused: ${text}`, done: true });
+      reportUsage(turn);
+      return "end_turn" as const;
+    };
+    const members: Array<string> = [];
+    for (const name of TEAM.slice(0, Number(turn.args.get("count") ?? "4"))) {
+      const created = await callBotTool(turn, "create_bot", { name, job: `${name} owns a part.` });
+      const id = Option.map(decodeCreated(created.text), (value) => value.id);
+      if (created.failed || Option.isNone(id)) return refused(created.text);
+      members.push(id.value);
+    }
+    const started = await callBotTool(turn, "start_room", {
+      name: "Support",
+      members,
+      kickoff: "Each of you takes one part, in the order you are named. [[script:room-answer]]",
+    });
+    if (started.failed) return refused(started.text);
+    await callBotTool(turn, "say", { text: "I started Support with the team.", done: true });
+    reportUsage(turn);
+    return turn.signal.aborted ? "cancelled" : "end_turn";
+  },
+  "room-answer": async (turn) => {
+    const seen = turn.text.match(/Answer #\d+\./g)?.length ?? 0;
+    await callBotTool(turn, "say", { text: `Answer #${seen + 1}.`, done: true });
+    reportUsage(turn);
+    return turn.signal.aborted ? "cancelled" : "end_turn";
+  },
   browse: async (turn) => {
     const every = Number(turn.args.get("every") ?? "1000");
     const until = Date.now() + Number(turn.args.get("for") ?? "60000");
@@ -574,6 +707,7 @@ const handleRequest = async (method: string, params: Record<string, unknown>): P
             : await script({
                 sessionId: prompt.sessionId,
                 session,
+                text,
                 args: directive.args,
                 signal: controller.signal,
               });

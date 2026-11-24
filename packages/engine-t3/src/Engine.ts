@@ -195,8 +195,10 @@ export type ProviderInstance = {
       /**
        * Any agent that speaks the Agent Client Protocol, started as a local
        * command: the scripted agent the conformance suite runs, which needs no
-       * model and spends no allowance. It gets no J3 Bots prompt and no `j3`
-       * tools; the engine passes it the message as it does every harness.
+       * model and spends no allowance. It gets no J3 Bots prompt, and the `j3`
+       * tools only as the bridge's command line in its environment
+       * (`J3_TOOL_BRIDGE`), which it may start itself; the engine passes it
+       * the message as it does every harness.
        */
       readonly harness: "acp-command";
       readonly command: string;

@@ -50,6 +50,13 @@ jobs:
         env:
           J3_TEST_OTHER_USER: j3-other
 
+      # A development server of this checkout on the pinned engine, whose
+      # scripted agent calls J3 Bots' own tools through the real `j3` bridge:
+      # a primary bot builds a team in one turn. Downloads the engine.
+      - name: Scripted
+        if: ${{ !cancelled() }}
+        run: vp run --filter @j3-bots/server scripted
+
       - name: Unused code
         run: vp run knip
 
