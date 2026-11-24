@@ -43,6 +43,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0035](0035-the-android-app-installs-its-update-through-a-session.md) | The Android app installs its own update through an installer session, after checking it | Proposed |
 | [0036](0036-phone-access-restarts-the-local-server-on-the-network.md) | Phone access restarts the local server on the network, under the server's own `lan` rules | Accepted |
 | [0037](0037-the-server-types-a-saved-login-into-the-bots-tab.md) | The server types a saved login into the bot's tab, unattended | Proposed |
-| [0038](0038-a-teammate-conversation-is-a-view-of-teammate-messages.md) | A teammate conversation is a view of the teammate messages that already exist | Proposed |
+| [0038](0038-a-teammate-conversation-is-a-view-of-teammate-messages.md) | A teammate conversation is a view of the teammate messages that already exist | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

@@ -1,6 +1,6 @@
 # 0038: A teammate conversation is a view of the teammate messages that already exist
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

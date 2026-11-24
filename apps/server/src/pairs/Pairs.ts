@@ -138,12 +138,17 @@ export const layer = Layer.effect(
 
     /**
      * The pairs with messages, latest message first; with `botId`, only
-     * that bot's. The latest message's text is cut to a preview.
+     * that bot's. The latest message's text is cut to a preview. SQLite
+     * counts characters by code point, each one or two of the units the
+     * preview's length counts, so one code point more than it holds always
+     * reaches past it unless the text ends first: the character the read
+     * may split, an emoji or a letter with its accents, ends past the
+     * preview, and `cut` leaves it out whole.
      */
     const pairs = Effect.fn("Pairs.pairs")(function* (botId: BotId | null) {
       const ofBot = botId === null ? sql`` : sql`WHERE pair_low = ${botId} OR pair_high = ${botId}`;
       const rows = yield* sql`
-        SELECT last.count, ${columns}, substr(${text}, 1, ${PREVIEW_LENGTH}) AS text
+        SELECT last.count, ${columns}, substr(${text}, 1, ${PREVIEW_LENGTH + 1}) AS text
         FROM (
           SELECT COUNT(*) AS count, MAX(seq) AS seq FROM pair_messages ${ofBot}
           GROUP BY pair_low, pair_high
@@ -312,38 +317,46 @@ export const layer = Layer.effect(
           );
           const first = yield* snapshot;
 
-          /** The pair's messages whose cards changed in `botId`'s conversation. */
-          const changedIn = (botId: BotId) =>
-            transaction(
-              Effect.gen(function* () {
-                const index = botId === botIds[0] ? 0 : 1;
-                const found = yield* changedCards(botId, read[index]);
+          /**
+           * The pair's messages whose cards changed since the last frame, in
+           * either bot's conversation. Both are read in one step, so a message
+           * whose two cards changed together, as each message's do when it is
+           * sent or its state changes, is sent once, whichever bot's change
+           * signalled first; the other's signal then finds nothing new.
+           */
+          const changed = transaction(
+            Effect.gen(function* () {
+              const ids = new Set<string>();
+              for (const index of [0, 1] as const) {
+                const found = yield* changedCards(botIds[index], read[index]);
                 if (found === null) return yield* snapshot;
                 read[index] = found.sequence;
-                if (found.ids.length === 0) return null;
-                const touched = sql`
-                  ${inPair(botIds)}
-                  AND (${sql.in("p.sent_entry_id", found.ids)}
-                    OR ${sql.in("p.received_entry_id", found.ids)})
-                `;
-                // Too much to send at once: the bounded snapshot instead.
-                const sized = yield* sql`
-                  SELECT COALESCE(SUM(length(${text})), 0) AS size
-                  FROM pair_messages p JOIN ${card} WHERE ${touched}
-                `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SizeRows)), Effect.orDie);
-                if ((sized[0]?.size ?? 0) > FRAME_BUDGET) return yield* snapshot;
-                const upsert = yield* messagesOf(
-                  yield* sql`
-                    SELECT ${columns}, ${text} AS text FROM pair_messages p JOIN ${card}
-                    WHERE ${touched}
-                    ORDER BY p.seq
-                  `.pipe(Effect.orDie),
-                );
-                if (upsert.length === 0) return null;
-                const frame: PairMessagesFrame = { _tag: "changed", upsert };
-                return frame;
-              }),
-            );
+                for (const id of found.ids) ids.add(id);
+              }
+              if (ids.size === 0) return null;
+              const touched = sql`
+                ${inPair(botIds)}
+                AND (${sql.in("p.sent_entry_id", [...ids])}
+                  OR ${sql.in("p.received_entry_id", [...ids])})
+              `;
+              // Too much to send at once: the bounded snapshot instead.
+              const sized = yield* sql`
+                SELECT COALESCE(SUM(length(${text})), 0) AS size
+                FROM pair_messages p JOIN ${card} WHERE ${touched}
+              `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(SizeRows)), Effect.orDie);
+              if ((sized[0]?.size ?? 0) > FRAME_BUDGET) return yield* snapshot;
+              const upsert = yield* messagesOf(
+                yield* sql`
+                  SELECT ${columns}, ${text} AS text FROM pair_messages p JOIN ${card}
+                  WHERE ${touched}
+                  ORDER BY p.seq
+                `.pipe(Effect.orDie),
+              );
+              if (upsert.length === 0) return null;
+              const frame: PairMessagesFrame = { _tag: "changed", upsert };
+              return frame;
+            }),
+          );
 
           /**
            * A bot's deletion changes no message, but may take some away with
@@ -363,7 +376,7 @@ export const layer = Layer.effect(
                   botIds.includes(scope.botId),
               ),
               Stream.mapEffect((scope) =>
-                scope._tag === "conversation" ? changedIn(scope.botId) : deleted(scope.botId),
+                scope._tag === "conversation" ? changed : deleted(scope.botId),
               ),
               Stream.filter((frame): frame is NonNullable<typeof frame> => frame !== null),
             ),

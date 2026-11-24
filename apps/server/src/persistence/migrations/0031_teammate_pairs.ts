@@ -6,9 +6,10 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   // Each teammate message, as the teammate conversation of its two bots lists
-  // it (docs/decisions/0038). Nothing moves: the message stays its two `handoff` cards and its `handoffs` row,
-  // which delivery works from. This only says which pair it belongs to and
-  // where it sorts among them, `seq`, given in the order messages are sent.
+  // it (docs/decisions/0038). Nothing moves: the message stays its two
+  // `handoff` cards and its `handoffs` row, which delivery works from. This
+  // only says which pair it belongs to and where it sorts among them, `seq`,
+  // given in the order messages are sent.
   // A `handoffs` row goes with the received card, so the cards are named
   // here directly, each set to null once its bot is deleted: the other bot
   // still reads the message from its own card. A message with neither card
@@ -33,7 +34,10 @@ export default Effect.gen(function* () {
   yield* sql`CREATE INDEX pair_messages_pair ON pair_messages (pair_low, pair_high, seq)`;
   yield* sql`CREATE INDEX pair_messages_high ON pair_messages (pair_high)`;
   // The second card's deletion would leave a row with neither, which the
-  // check refuses; the row goes first.
+  // check refuses; the row goes first. The trigger names `entries.kind`, so a
+  // later migration that replaces that column (as 0028 did, to widen its
+  // check) must drop this trigger first and create it again after, as 0028
+  // did `entries_fixed_place`: SQLite refuses to drop a column a trigger names.
   yield* sql`
     CREATE TRIGGER pair_messages_gone
     BEFORE DELETE ON entries
@@ -44,6 +48,12 @@ export default Effect.gen(function* () {
         OR (received_entry_id = OLD.id AND sent_entry_id IS NULL);
     END
   `;
+
+  // Which sender's cards have a row is asked of every sent card below, and
+  // of every row whenever a sender's card is deleted: without this index,
+  // each asks the whole table, and a large database takes longer to upgrade
+  // than the service waits for the server to be ready.
+  yield* sql`CREATE INDEX handoffs_sent ON handoffs (sent_entry_id)`;
 
   // Every message sent before this, in the order it was sent: a card's `seq`
   // is the order entries were written, and the sent card is written first.

@@ -582,7 +582,8 @@ it.effect(
         JSON.stringify({ recipientId, direction, text, urgent: false, state: "sent" });
 
       // Ana and Bo wrote each other; Ana also wrote Cy, who was deleted since,
-      // which took its received card and that message's `handoffs` row.
+      // which took its received card and that message's `handoffs` row; and
+      // Dee, deleted since too, wrote Ana, whose row lost its sent card.
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`PRAGMA foreign_keys = ON`;
@@ -611,10 +612,12 @@ it.effect(
         yield* card("sent-2", "ana", 1, "ana", handoff("cy", "sent", "Check the prices."));
         yield* card("sent-3", "bo", 1, "bo", handoff("ana", "sent", "Posted."));
         yield* card("received-3", "ana", 2, "bo", handoff("ana", "received", "Posted."));
+        yield* card("received-4", "ana", 3, "dee", handoff("ana", "received", "The brief."));
         yield* sql`
         INSERT INTO handoffs (recipient_bot_id, sent_entry_id, received_entry_id) VALUES
           ('bo', 'sent-1', 'received-1'),
-          ('ana', 'sent-3', 'received-3')
+          ('ana', 'sent-3', 'received-3'),
+          ('ana', NULL, 'received-4')
       `;
       }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
 
@@ -650,6 +653,14 @@ it.effect(
             sent_entry_id: "sent-3",
             received_entry_id: "received-3",
           },
+          {
+            pair_low: "ana",
+            pair_high: "dee",
+            sender_bot_id: "dee",
+            recipient_bot_id: "ana",
+            sent_entry_id: null,
+            received_entry_id: "received-4",
+          },
         ]);
 
         // A deleted bot's cards leave its messages to the other bot's; once
@@ -661,6 +672,7 @@ it.effect(
             { sent_entry_id: "sent-1", received_entry_id: null },
             { sent_entry_id: "sent-2", received_entry_id: null },
             { sent_entry_id: null, received_entry_id: "received-3" },
+            { sent_entry_id: null, received_entry_id: "received-4" },
           ],
         );
         yield* sql`DELETE FROM conversations WHERE bot_id = 'ana'`;
@@ -669,4 +681,96 @@ it.effect(
         Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("lists each of a large earlier release's teammate messages once, in the order sent", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+    const count = 2000;
+    // Message i: every tenth, from Ana to Cy, who was deleted since with its
+    // received card and the message's row; every tenth from the fifth, from
+    // Dee, deleted since too, to Ana, its row without a sent card; the
+    // others, from Ana to Bo when i is odd and from Bo to Ana when it is even.
+    const sent = Array.from({ length: count }, (_, index) => {
+      const i = index + 1;
+      if (i % 10 === 0) return ["ana", "cy"];
+      if (i % 10 === 5) return ["dee", "ana"];
+      return i % 2 === 1 ? ["ana", "bo"] : ["bo", "ana"];
+    });
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA foreign_keys = ON`;
+      yield* migrate(migrationsThrough(30));
+      for (const id of ["ana", "bo"]) {
+        yield* sql`
+          INSERT INTO bots (
+            id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+            permission_mode, workspace_path, created_at, updated_at
+          ) VALUES (
+            ${id}, ${id}, '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', ${`/bots/${id}`},
+            ${now}, ${now}
+          )
+        `;
+        yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES (${id}, ${now})`;
+      }
+      yield* sql`
+          CREATE TEMP TABLE fixture AS
+          WITH RECURSIVE n (i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${count})
+          SELECT i,
+            CASE WHEN i % 10 = 5 THEN 'dee' WHEN i % 10 = 0 OR i % 2 = 1 THEN 'ana' ELSE 'bo' END
+              AS sender,
+            CASE WHEN i % 10 = 0 THEN 'cy' WHEN i % 10 = 5 OR i % 2 = 0 THEN 'ana' ELSE 'bo' END
+              AS recipient
+          FROM n
+        `;
+      // Each sent card is written before its received card, in send order.
+      yield* sql`
+          INSERT INTO entries (
+            id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+            created_at, updated_at
+          )
+          SELECT id, owner, position, 'handoff', 'bot', sender,
+            json_object(
+              'recipientId', recipient, 'direction', direction, 'text', 'Message ' || i,
+              'urgent', json('false'), 'state', 'sent'
+            ),
+            ${now}, ${now}
+          FROM (
+            SELECT i, 0 AS part, 'sent-' || i AS id, sender AS owner, i * 2 AS position, sender,
+              recipient, 'sent' AS direction
+            FROM fixture WHERE i % 10 <> 5
+            UNION ALL
+            SELECT i, 1, 'received-' || i, recipient, i * 2 + 1, sender, recipient, 'received'
+            FROM fixture WHERE i % 10 <> 0
+          )
+          ORDER BY i, part
+        `;
+      // The rows in the opposite order, so their own order says nothing.
+      yield* sql`
+          INSERT INTO handoffs (recipient_bot_id, sent_entry_id, received_entry_id)
+          SELECT recipient, CASE WHEN i % 10 = 5 THEN NULL ELSE 'sent-' || i END, 'received-' || i
+          FROM fixture WHERE i % 10 <> 0
+          ORDER BY i DESC
+        `;
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepStrictEqual(
+        yield* sql`
+            SELECT sender_bot_id, recipient_bot_id, sent_entry_id, received_entry_id
+            FROM pair_messages ORDER BY seq
+          `,
+        sent.map(([sender, recipient], index) => ({
+          sender_bot_id: sender,
+          recipient_bot_id: recipient,
+          sent_entry_id: sender === "dee" ? null : `sent-${index + 1}`,
+          received_entry_id: recipient === "cy" ? null : `received-${index + 1}`,
+        })),
+      );
+    }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

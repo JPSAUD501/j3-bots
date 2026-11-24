@@ -1,10 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type BotId, type PairBotIds, pairBotIds, type TeammatePair } from "@j3-bots/contracts";
+import {
+  type BotId,
+  type EntryId,
+  type HandoffState,
+  type PairBotIds,
+  pairBotIds,
+  type TeammateMessage,
+  type TeammatePair,
+} from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { Bots } from "../bots/Bots.ts";
+import { Entries } from "../entries/Entries.ts";
+import { transactional } from "../persistence/transaction.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { command, conversation, createBot, heldForTeammates } from "../testing/turns.ts";
 import { type PairMessagesFrame, Pairs, type PairsFrame } from "./Pairs.ts";
@@ -40,6 +52,28 @@ const frameWhere = <A>(frames: Queue.Queue<A>, check: (frame: A) => boolean) =>
       const frame = yield* Queue.take(frames);
       if (check(frame)) return frame;
     }
+  });
+
+/**
+ * Both cards of a message show `state`, in one transaction, as a change in
+ * its delivery shows them.
+ */
+const showState = (message: TeammateMessage, state: HandoffState) =>
+  Effect.gen(function* () {
+    const entries = yield* Entries;
+    const cards = [message.sentEntryId, message.receivedEntryId].filter(
+      (id): id is EntryId => id !== null,
+    );
+    yield* transactional(yield* SqlClient.SqlClient)(
+      Effect.forEach(cards, (id) =>
+        Effect.gen(function* () {
+          const found = yield* entries.find(id);
+          if (Option.isSome(found) && found.value.entry._tag === "handoff") {
+            yield* entries.update({ ...found.value.entry, state });
+          }
+        }),
+      ),
+    );
   });
 
 const upserted = (frame: PairsFrame, botIds: PairBotIds): TeammatePair | undefined =>
@@ -160,13 +194,36 @@ it.effect("follows an open pair: each new message, and a fresh start once a bot 
       ["snapshot", ["Draft the launch post."]],
     );
 
-    // Another pair's message changes nothing here.
+    // Each new message comes once, in the order sent, and another pair's
+    // message changes nothing here.
     yield* heldForTeammates(ana.id, [
-      { to: cy.id, text: "Check the prices." },
       { to: bo.id, text: "Keep it short." },
+      { to: cy.id, text: "Check the prices." },
+      { to: bo.id, text: "Use the photo." },
     ]);
-    const added = yield* Queue.take(frames);
-    assert.deepStrictEqual([added._tag, texts(added)], ["changed", ["Keep it short."]]);
+    const added: Array<TeammateMessage> = [];
+    while (added.length < 2) {
+      const frame = yield* Queue.take(frames);
+      assert.strictEqual(frame._tag, "changed");
+      if (frame._tag === "changed") added.push(...frame.upsert);
+    }
+    const [short, photo] = added;
+    assert.deepStrictEqual(
+      added.map((message) => message.text),
+      ["Keep it short.", "Use the photo."],
+    );
+    assert.isTrue(short !== undefined && photo !== undefined && short.seq < photo.seq);
+
+    // A message whose two cards change together comes once.
+    if (short !== undefined) yield* showState(short, "not-delivered");
+    const shown = yield* Queue.take(frames);
+    assert.deepStrictEqual(
+      shown._tag === "changed" ? shown.upsert.map((message) => [message.seq, message.state]) : [],
+      [[short?.seq, "not-delivered"]],
+    );
+    yield* heldForTeammates(ana.id, [{ to: bo.id, text: "Ready?" }]);
+    const next = yield* Queue.take(frames);
+    assert.deepStrictEqual([next._tag, texts(next)], ["changed", ["Ready?"]]);
 
     // Bo never had a turn to read them in: they will not reach it now.
     yield* remove(bo.id);
@@ -178,7 +235,23 @@ it.effect("follows an open pair: each new message, and a fresh start once a bot 
       [
         ["Draft the launch post.", "not-delivered"],
         ["Keep it short.", "not-delivered"],
+        ["Use the photo.", "not-delivered"],
+        ["Ready?", "not-delivered"],
       ],
     );
   }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
+it.effect("never cuts a character in two in a pair's preview", () =>
+  Effect.gen(function* () {
+    const ana = yield* createBot("Ana");
+    const bo = yield* createBot("Bo");
+    // The accent is the preview's 201st unit: the letter it marks goes with it.
+    yield* heldForTeammates(ana.id, [{ to: bo.id, text: `${"a".repeat(199)}e\u0301` }]);
+    const [snapshot] = yield* (yield* Pairs).subscribe.pipe(Stream.take(1), Stream.runCollect);
+    assert.deepStrictEqual(
+      snapshot?._tag === "snapshot" ? snapshot.pairs.map((pair) => pair.lastMessage.text) : [],
+      ["a".repeat(199)],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
