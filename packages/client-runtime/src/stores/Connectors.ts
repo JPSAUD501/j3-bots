@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type CommandError,
+  type CommandLine,
   type Connector,
   type ConnectorFieldValue,
   type ConnectorGrant,
@@ -41,10 +42,15 @@ export interface ConnectorAddition {
   readonly suggestion: EntryId | null;
 }
 
-/** What changes in a connector the operator added: its name, or values its form took. */
+/**
+ * What changes in a connector the operator added: its name, values its form
+ * took, or a command connector's whole command line, once the operator
+ * confirmed it.
+ */
 export interface ConnectorChanges {
   readonly name?: Connector["name"];
   readonly values?: ReadonlyArray<ConnectorFieldValue>;
+  readonly command?: CommandLine;
 }
 
 const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
