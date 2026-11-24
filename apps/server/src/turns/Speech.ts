@@ -621,6 +621,33 @@ export const layer = Layer.effect(
       return { stopped, seq: turn.seq };
     });
 
+    /**
+     * Whether the operator stopped `roomId` after the pinned turn's chain
+     * began: a room Stop recorded for the bot once its first turn had started.
+     * It covers the chain's posts to the room whatever dispatch, if any, began
+     * that work, as a turn the engine started on its own carries none.
+     */
+    const roomStoppedSince = (found: Pin, roomId: RoomId) =>
+      SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ stopped: Schema.BooleanFromBit }),
+        execute: () => sql`
+          SELECT EXISTS (
+            SELECT 1 FROM stops rs_stop
+            WHERE rs_stop.bot_id = ${found.botId} AND rs_stop.scope = 'room'
+              AND rs_stop.room_id = ${roomId} AND rs_stop.engine_turn_id IS NULL
+              AND rs_stop.created_at > (
+                SELECT MIN(rs_turn.started_at) FROM turns rs_turn
+                WHERE rs_turn.session_id = ${found.sessionId}
+                  AND rs_turn.engine_turn_id IN (${chainOf(found)})
+              )
+          ) AS stopped
+        `,
+      })(undefined).pipe(
+        Effect.orDie,
+        Effect.map(([row]) => row?.stopped ?? false),
+      );
+
     /** The teammates the pinned turn's chain has messaged, each once. */
     const messagedBy = (found: Pin) =>
       SqlSchema.findAll({
@@ -1283,9 +1310,14 @@ export const layer = Layer.effect(
       if (Option.isNone(live)) return yield* new Conflict({ reason: "room-archived" });
       const mention = yield* mentionedIn(found, live.value, input.mention ?? []);
       // A Stop of the room covers this turn's post there, whatever audience
-      // the turn speaks for: it is recorded for every member.
+      // the turn speaks for: it is recorded for every member, and covers the
+      // work begun before it, by a dispatch or by the engine on its own.
       const there = { _tag: "room", roomId } as const;
-      if ((yield* workStopped(found)).stopped || (yield* workStopped(found, there)).stopped) {
+      if (
+        (yield* workStopped(found)).stopped ||
+        (yield* workStopped(found, there)).stopped ||
+        (yield* roomStoppedSince(found, roomId))
+      ) {
         return yield* refuse("Your user stopped this work, so nothing was sent.");
       }
       const entry = yield* entries.append({
@@ -1513,7 +1545,9 @@ export const layer = Layer.effect(
      * order made: by its `create_bot` calls, and by those of every turn of the
      * bot that answered the same message or card before, as one that failed
      * and was retried. A Retry then goes on from the bots already made, to
-     * `start_room`, instead of making a second set.
+     * `start_room`, instead of making a second set. The request is its source
+     * entry, whatever kind of wake carried it: an operator's message in a
+     * room is a `room` wake, and its Retry one too.
      */
     const madeForRequest = (found: Pin) =>
       SqlSchema.findAll({
@@ -1527,12 +1561,19 @@ export const layer = Layer.effect(
               OR EXISTS (
                 SELECT 1 FROM dispatches earlier
                 JOIN wakes earlier_wake ON earlier_wake.dispatch_id = earlier.id
+                JOIN entries request ON request.id = earlier_wake.source_entry_id
                 JOIN wakes here_wake ON here_wake.source_entry_id = earlier_wake.source_entry_id
                   AND here_wake.bot_id = earlier_wake.bot_id
                 JOIN dispatches here ON here.id = here_wake.dispatch_id
                 WHERE earlier.session_id = made.session_id
                   AND earlier.engine_turn_id = made.engine_turn_id
-                  AND earlier_wake.kind = 'user' AND here_wake.kind = 'user'
+                  AND (
+                    request.author_kind = 'operator'
+                    OR (
+                      json_extract(earlier_wake.payload_json, '$._tag') = 'answer'
+                      AND json_extract(here_wake.payload_json, '$._tag') = 'answer'
+                    )
+                  )
                   AND here.session_id = ${found.sessionId}
                   AND here.engine_turn_id = ${found.turnId}
               )

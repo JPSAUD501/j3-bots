@@ -3,10 +3,12 @@ import { assert, it } from "@effect/vitest";
 import { type Bot, BotId, type Notice, RoomId } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import { Rooms } from "../rooms/Rooms.ts";
@@ -18,6 +20,7 @@ import {
   type Member,
   member,
   noticesIn,
+  operatorWrites,
   roomEntries,
   roomWakeStatuses,
   roomWith,
@@ -40,6 +43,7 @@ import {
   received,
   sendToBot,
   turnEnded,
+  until,
 } from "../testing/turns.ts";
 import type { ToolCallResponse } from "../tools/protocol.ts";
 import { BotTools } from "../tools/BotTools.ts";
@@ -315,6 +319,55 @@ it.effect("goes on from the bots a failed turn made when the operator retries it
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("goes on from the bots a failed room turn made when the operator retries it there", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const scoutBot = yield* primaryBot("Scout");
+    const scout = { bot: scoutBot, session: yield* engineSession(scoutBot.id) } satisfies Member;
+    const wren = yield* member("Wren");
+    const room = yield* roomWith(scout, [wren]);
+    // The operator asks in the room: a `room` wake, and so is its Retry.
+    yield* operatorWrites(room.id, [scout, wren], "Make me a support group.", to(scout));
+    const turnId = yield* nextTurn(scout.bot.id);
+    const pip = yield* madeMember(scout.session, turnId, "Pip");
+    for (const name of ["Two", "Three", "Four"]) {
+      resultOf(yield* createIn(scout.session, turnId, name));
+    }
+    yield* control.finishTurn({
+      sessionId: scout.session,
+      turnId,
+      outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+    });
+    yield* turnEnded(scout.bot.id);
+    yield* until(
+      Effect.map(roomEntries(room.id), (entries) =>
+        entries.some((entry) => entry._tag === "notice" && entry.retryable),
+      ),
+    );
+    const failed = (yield* roomEntries(room.id)).find(
+      (entry) => entry._tag === "notice" && entry.retryable,
+    );
+    assert.isDefined(failed);
+
+    yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: failed.id });
+    const retried = yield* nextTurn(scout.bot.id, turnId);
+    const now = yield* engineSession(scout.bot.id);
+
+    // The request has made four: one more, not a second set.
+    resultOf(yield* createIn(now, retried, "Five"));
+    assert.include(refusalOf(yield* createIn(now, retried, "Six")), "at most 5 bots");
+    const started = yield* call(now, retried, "start_room", {
+      name: "Support",
+      members: [pip.bot.id],
+      kickoff: "Pip, you take billing.",
+    });
+    const roomId = decodeStarted(resultOf(started)).id;
+    assert.deepStrictEqual(yield* noticesOf(pip.bot.id), [
+      { _tag: "made-for-room", botId: scout.bot.id, roomId },
+    ]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "starts a room whose kickoff wakes the members one at a time, the bots made for it with no hello",
   () =>
@@ -527,6 +580,47 @@ it.effect("posts nothing in a room the operator stopped from a turn begun before
     });
     assert.strictEqual(decodeStatus(resultOf(again)).status, "posted");
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "posts nothing in a room the operator stopped from a turn the engine began before it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const scout = yield* member("Scout");
+      const wren = yield* member("Wren");
+      const room = yield* roomWith(scout, [wren]);
+      // The engine starts a turn of Scout's own conversation on its own: no
+      // dispatch began it.
+      const turnId = yield* control.startEngineTurn(scout.session);
+      yield* nextTurn(scout.bot.id);
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* stopRoom(room.id);
+
+      const posted = yield* call(scout.session, turnId, "message_bot", {
+        to: room.id,
+        text: "Wren, the release notes are yours.",
+        mention: [wren.bot.id],
+      });
+
+      assert.include(refusalOf(posted), "Your user stopped this work");
+      assert.deepStrictEqual(yield* roomEntries(room.id), []);
+      assert.deepStrictEqual(yield* roomWakeStatuses(wren.bot.id, room.id), []);
+      // A turn the engine begins after the Stop is new work, and posts.
+      yield* endTurn(scout.bot.id, scout.session, turnId);
+      const next = yield* control.startEngineTurn(scout.session);
+      yield* nextTurn(scout.bot.id, turnId);
+      const again = yield* call(scout.session, next, "message_bot", {
+        to: room.id,
+        text: "The release notes are next.",
+      });
+      assert.strictEqual(decodeStatus(resultOf(again)).status, "posted");
+      const [message] = yield* roomEntries(room.id);
+      assert.strictEqual(
+        message?._tag === "message" ? message.text : null,
+        "The release notes are next.",
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("posts nothing in a room the bot is not in, an archived one, or with `urgent`", () =>
