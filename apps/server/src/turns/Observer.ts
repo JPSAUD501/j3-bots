@@ -54,7 +54,6 @@ import {
   audienceOf,
   conversation,
   type DispatchRowId,
-  DispatchSeq,
   NotObserved,
   SessionRowId,
   StoredResponse,
@@ -66,6 +65,7 @@ import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
 import { rotationRequests } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
+import { workStopped } from "./workStopped.ts";
 import { Wakes } from "./Wakes.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 
@@ -289,6 +289,7 @@ export const layer = Layer.effect(
     const roomOf = liveRoom(sql);
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
+    const stoppedWork = workStopped(sql);
     const chains = hopCounts(sql);
     const { notify } = notices(sql, entries);
     const spoken = routineSpeech(sql, ids, changes);
@@ -923,25 +924,6 @@ export const layer = Layer.effect(
 
     /** The host's own speech tool, delivered once per speech like a `say` without `done`. */
     /**
-     * The dispatch that began the turn's work, and whether the operator
-     * stopped the turn: what a room message it speaks is routed with.
-     */
-    const speakingWork = SqlSchema.findOne({
-      Request: Schema.Struct({ sessionId: SessionRowId, turnId: TurnId }),
-      Result: Schema.Struct({ seq: Schema.NullOr(DispatchSeq), stopped: Flag }),
-      execute: ({ sessionId, turnId }) => sql`
-        SELECT
-          (SELECT MIN(seq) FROM dispatches
-            WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}) AS seq,
-          EXISTS (
-            SELECT 1 FROM turns
-            WHERE session_id = ${sessionId} AND engine_turn_id = ${turnId}
-              AND stop_id IS NOT NULL
-          ) AS stopped
-      `,
-    });
-
-    /**
      * What the bot said through the engine rather than `say`: a message of
      * its turn's audience, with no mentions. In a room it is a bot's message
      * like any other (`RoomRouting.botMessage`): it counts, and wakes every
@@ -986,18 +968,19 @@ export const layer = Layer.effect(
       if (target._tag === "room" && entry._tag === "message") {
         const room = yield* roomOf(target.roomId);
         if (Option.isSome(room)) {
-          const work = yield* speakingWork({ sessionId: session.id, turnId: speech.turnId }).pipe(
-            Effect.orDie,
-          );
-          const covered =
-            work.seq !== null && (yield* stops.covers(session.bot_id, audience, work.seq));
+          const work = yield* stoppedWork({
+            sessionId: session.id,
+            botId: session.bot_id,
+            turnId: speech.turnId,
+            audience,
+          });
           yield* routing.botMessage({
             room: room.value,
             botId: session.bot_id,
             message: entry,
             kickoff: false,
             seq: work.seq,
-            stopped: work.stopped || covered,
+            stopped: work.stopped,
           });
         }
       }

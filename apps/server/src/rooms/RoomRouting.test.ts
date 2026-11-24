@@ -392,6 +392,33 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "wakes nobody for what a turn the engine started for stopped room work says through the engine",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
+      const members = [ana, bo];
+      const room = yield* roomWith(ana, [bo]);
+      yield* operatorWrites(room.id, members, "Bo, run the build.", to(bo));
+      const building = yield* nextTurn(bo.bot.id);
+      yield* control.startBackgroundWork({ sessionId: bo.session, turnId: building });
+      yield* finish(bo, building, members);
+
+      // The operator stops the room's work; the build wakes Bo's session
+      // before that reaches it, with a turn that goes on with that work.
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      const done = yield* control.startEngineTurn(bo.session, building);
+      yield* nextTurn(bo.bot.id, building);
+      yield* control.hostSpeech({ sessionId: bo.session, turnId: done, text: "Ana, it passed." });
+      yield* finish(bo, done, members);
+
+      assert.includeMembers(yield* roomTexts(room.id), ["Ana, it passed."]);
+      assert.strictEqual(yield* botStreak(room.id), 1);
+      assert.strictEqual(yield* roomWakesOf(ana.bot.id, room.id), 0);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("counts a room message of work the operator stopped, which wakes nobody", () =>
   Effect.gen(function* () {
     const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
