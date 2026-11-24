@@ -13,7 +13,14 @@ import {
   publisherText,
   signedInText,
 } from "@j3-bots/client-runtime/wording";
-import type { Bot, Connector, ConnectorGrant, FieldKey, ToolReview } from "@j3-bots/contracts";
+import type {
+  Bot,
+  Connector,
+  ConnectorGrant,
+  ConnectorId,
+  FieldKey,
+  ToolReview,
+} from "@j3-bots/contracts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useI18n, usePresentation } from "../../app/context";
 import { cn } from "../../lib/cn";
@@ -31,6 +38,16 @@ import {
 } from "./parts";
 import type { ConnectorsIntents } from "./screen";
 import { SignInPanel } from "./SignInPanel";
+
+/**
+ * What the page last did, which its one message reports: each thing done on it
+ * replaces the one before, so an older message never stays above a newer one.
+ * Opening it on a connector just added counts, with the sign-in that finishes adding it.
+ */
+type Outcome =
+  | { readonly _tag: "added" }
+  | { readonly _tag: "signed-in" }
+  | { readonly _tag: "edited"; readonly saved: EditOutcome };
 
 /**
  * A connector the operator added: whether bots can use it now, and the one
@@ -67,16 +84,21 @@ export function ConnectorPage({
     connector,
   });
   const [replacing, setReplacing] = useState(false);
-  // A command connector's edit, while open; what it saved, once it closed.
+  // A command connector's edit, while open.
   const [editing, setEditing] = useState(false);
-  const [edited, setEdited] = useState<EditOutcome | null>(null);
+  const [outcome, setOutcome] = useState<Outcome | null>(added ? { _tag: "added" } : null);
+  // A sign-in reports its own outcome, except the one that finishes adding the connector.
+  const startSignIn = (id: ConnectorId) => {
+    setOutcome((current) => (current?._tag === "added" ? current : { _tag: "signed-in" }));
+    signIn.start(id);
+  };
 
   // A card's Sign in, or a connector just added that signs in, starts it as the page opens:
   // the browser's sign-in for one that signs in there, its form again for one that takes a key.
   const startedOnOpen = useRef(false);
   const connectorId = connector?.id ?? null;
   const startOnOpen = useEffectEvent(() => {
-    if (connector?.signIn === "oauth") signIn.start(connector.id);
+    if (connector?.signIn === "oauth") startSignIn(connector.id);
     else if (connector?.signIn === "fields") setReplacing(true);
   });
   useEffect(() => {
@@ -102,9 +124,12 @@ export function ConnectorPage({
     signingIn || !connected
       ? null
       : connector.signIn === "oauth"
-        ? () => signIn.start(connector.id)
+        ? () => startSignIn(connector.id)
         : connector.signIn === "fields"
-          ? () => setReplacing(true)
+          ? () => {
+              setOutcome(null);
+              setReplacing(true);
+            }
           : null;
   const account =
     connector.account === null ? null : t("connector.signedInAs", { account: connector.account });
@@ -123,19 +148,20 @@ export function ConnectorPage({
         </div>
       </div>
 
-      {added && connector.status._tag === "connected" && (
+      {outcome?._tag === "added" && connector.status._tag === "connected" && (
         <p role="status" className="text-sm">
           {connectedText(connector.grant, bots, ctx.i18n)}
         </p>
       )}
-      {signIn.phase._tag === "done" && (
+      {(outcome?._tag === "added" || outcome?._tag === "signed-in") &&
+        signIn.phase._tag === "done" && (
+          <p role="status" className="text-sm">
+            {t("signIn.done")}
+          </p>
+        )}
+      {outcome?._tag === "edited" && (
         <p role="status" className="text-sm">
-          {t("signIn.done")}
-        </p>
-      )}
-      {edited !== null && (
-        <p role="status" className="text-sm">
-          {edited === "command"
+          {outcome.saved === "command"
             ? t("connector.editCommand.saved")
             : t("connector.editCommand.savedValues")}
         </p>
@@ -143,7 +169,7 @@ export function ConnectorPage({
       <StatusBlock connector={connector} onReconnect={reconnect} onUnlock={intents.openVault} />
       <SignInPanel
         signIn={signIn}
-        onRetry={() => signIn.start(connector.id)}
+        onRetry={() => startSignIn(connector.id)}
         onUnlock={intents.openVault}
       />
       {replacing && (
@@ -179,9 +205,9 @@ export function ConnectorPage({
             connector={connector}
             known={command}
             intents={intents}
-            onDone={(outcome) => {
+            onDone={(saved) => {
               setEditing(false);
-              setEdited(outcome);
+              setOutcome(saved === null ? null : { _tag: "edited", saved });
             }}
           />
         ) : (
@@ -198,7 +224,7 @@ export function ConnectorPage({
                 aria-disabled={!connected}
                 onClick={() => {
                   if (!connected) return;
-                  setEdited(null);
+                  setOutcome(null);
                   setEditing(true);
                 }}
               >
