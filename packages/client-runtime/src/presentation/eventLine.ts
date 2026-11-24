@@ -8,6 +8,7 @@ import {
   type NoticeEntry,
   type PairBotIds,
   pairBotIds,
+  type RoomId,
   type RoutineChangeEntry,
   type RoutineId,
   type WorkFoldEntry,
@@ -35,12 +36,15 @@ export type RoutineChanges = readonly [RoutineChangeEntry, ...RoutineChangeEntry
  * - `routine-paused`: J3 Bots paused a routine it could not read; the line
  *   opens it, to be edited.
  * - `operator-named`: a bot saved the name the operator asked to be called by.
+ * - `team`: a bot started a room on the operator's word (`room-started`), or
+ *   made this bot for one (`made-for-room`); the line opens the room.
  */
 export type EventLine =
   | { readonly _tag: "teammates"; readonly run: TeammateRun }
   | { readonly _tag: "routines"; readonly changes: RoutineChanges }
   | { readonly _tag: "routine-paused"; readonly entry: NoticeOf<"routine-paused"> }
-  | { readonly _tag: "operator-named"; readonly entry: NoticeOf<"operator-named"> };
+  | { readonly _tag: "operator-named"; readonly entry: NoticeOf<"operator-named"> }
+  | { readonly _tag: "team"; readonly entry: NoticeOf<"room-started" | "made-for-room"> };
 
 /** Every entry that is neither a message nor a turn's work. */
 export type NonMessageEntry = Exclude<Entry, MessageEntry | WorkFoldEntry>;
@@ -126,6 +130,8 @@ export function placeOf(entry: NonMessageEntry): EntryPlace {
         return { _tag: "line", line: { _tag: "routine-paused", entry: { ...entry, notice } } };
       if (notice._tag === "operator-named")
         return { _tag: "line", line: { _tag: "operator-named", entry: { ...entry, notice } } };
+      if (notice._tag === "room-started" || notice._tag === "made-for-room")
+        return { _tag: "line", line: { _tag: "team", entry: { ...entry, notice } } };
       return { _tag: "card", entry };
     }
     default:
@@ -197,6 +203,7 @@ export function latestOfLine(line: EventLine): NonMessageEntry {
       );
     case "routine-paused":
     case "operator-named":
+    case "team":
       return line.entry;
   }
 }
@@ -205,17 +212,26 @@ export function latestOfLine(line: EventLine): NonMessageEntry {
  * What tapping a line opens: the teammate conversation, at the run's first
  * message with that teammate (`TeammatePairs` reveals it); the teammates of a
  * run with several, to pick one; the routine; the routines of a line that
- * tells several, to pick one; or nothing, for a line with nothing more to
- * show, such as a deleted routine's.
+ * tells several, to pick one; the room a team line names; or nothing, for a
+ * line with nothing more to show, such as a deleted routine's.
  */
 export type EventLineOpens =
   | { readonly _tag: "pair"; readonly pair: TeammateRunPair }
   | { readonly _tag: "pairs"; readonly pairs: TeammateRun["pairs"] }
   | { readonly _tag: "routine"; readonly routineId: RoutineId }
   | { readonly _tag: "routines"; readonly changes: RoutineChanges }
+  | { readonly _tag: "room"; readonly roomId: RoomId }
   | null;
 
-export function eventLineOpens(line: EventLine): EventLineOpens {
+/** Where a line is read, which decides whether a team line opens its room. */
+export interface LineSetting {
+  /** The room the timeline shows; null in a bot's conversation. */
+  readonly room: RoomId | null;
+  /** A room's name as it is now, or null once it is deleted (`PresentationContext.roomName`). */
+  readonly roomName: (id: RoomId) => string | null;
+}
+
+export function eventLineOpens(line: EventLine, setting: LineSetting): EventLineOpens {
   switch (line._tag) {
     case "teammates": {
       const [only, ...rest] = line.run.pairs;
@@ -232,5 +248,12 @@ export function eventLineOpens(line: EventLine): EventLineOpens {
       return { _tag: "routine", routineId: line.entry.notice.routineId };
     case "operator-named":
       return null;
+    case "team": {
+      // A deleted room has nothing to open, and the room's own line is already there.
+      const { roomId } = line.entry.notice;
+      return setting.roomName(roomId) === null || setting.room === roomId
+        ? null
+        : { _tag: "room", roomId };
+    }
   }
 }

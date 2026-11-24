@@ -608,7 +608,7 @@ function Pane({
       item={found.item}
       onBack={null}
       onOpenDetails={onOpenDetails}
-      onOpenBot={(botId) => openConversation({ _tag: "bot", botId })}
+      onOpen={openConversation}
       onGone={onClose}
     />
   );

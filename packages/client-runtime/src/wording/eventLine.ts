@@ -2,11 +2,12 @@
 import type { BotId, HandoffState, RoutineChangeEntry } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
 import type { EventLine, RoutineChanges, TeammateRun } from "../presentation/eventLine.ts";
+import { teamNoticeLine } from "./pairs.ts";
 import { scheduleInWords } from "./schedule.ts";
 import type { PresentationContext } from "./status.ts";
 
 /** The glyph a line leads with when no bot's face does. */
-export type EventIcon = "routine" | "webhook" | "paused" | "deleted" | "message";
+export type EventIcon = "routine" | "webhook" | "paused" | "deleted" | "message" | "room";
 
 /** What a line leads with: the other bot's face, or a glyph. */
 export type EventLead =
@@ -248,6 +249,25 @@ function linePieces(line: EventLine, ctx: PresentationContext): Omit<EventLineWo
       return {
         lead: bot === null ? { _tag: "icon", icon: "message" } : { _tag: "bot", botId },
         runs: runsOf(parts, { name, bot: bot ?? i18n.t("bot.unknown") }),
+        status: null,
+      };
+    }
+    case "team": {
+      // "Scout started Support", "Made by Scout for Support": the bot's and the room's names strong.
+      const { notice } = line.entry;
+      const runs: EventRun[] = [];
+      let at = 0;
+      for (const part of teamNoticeLine(notice, ctx).parts) {
+        const text = typeof part === "string" ? part : part.name;
+        runs.push({ text, strong: typeof part !== "string", at });
+        at += text.length;
+      }
+      return {
+        lead:
+          ctx.botName(notice.botId) === null
+            ? { _tag: "icon", icon: "room" }
+            : { _tag: "bot", botId: notice.botId },
+        runs,
         status: null,
       };
     }

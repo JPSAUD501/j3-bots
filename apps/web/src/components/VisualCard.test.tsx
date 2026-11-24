@@ -54,6 +54,7 @@ const shown = (page: string) =>
       intents={intents}
       vault={{ view: vault.view.get(), intents: vault }}
       onOpenPair={() => {}}
+      onOpenRoom={() => {}}
     />,
   );
 

@@ -593,6 +593,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                     item._tag === "bot" ? { bot: item.bot, lastEntry: item.lastEntry } : null
                   }
                   onOpenPair={navigation.openPair}
+                  onOpenRoom={(roomId) => navigation.select({ _tag: "room", roomId })}
                   {...(browserBot === null
                     ? {}
                     : {
