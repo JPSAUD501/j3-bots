@@ -228,14 +228,21 @@ export const EntryRpcs = RpcGroup.make(
     error: CommandError,
   }),
   /**
-   * Resolves a question or approval card everywhere. Answering or dismissing an
-   * `ask` question wakes the bot with the answer; answering an `engine` question
-   * or an approval lets the turn that raised it continue. An `engine` question
-   * takes no dismissal: it fails with `Invalid("not-dismissible")`, leaving
-   * the card open. When the engine refuses an answer it was sent, the card
-   * closes as `refused`, and the turn waits for a Stop. Fails with `Invalid("answer-length")`, leaving the card open, when
-   * the answer to an `ask` question as the bot would read it is too long for
-   * the engine that runs the bot to take in one message.
+   * Resolves a question, approval or browser help card everywhere. Answering
+   * or dismissing an `ask` question wakes the bot with the answer; answering an
+   * `engine` question or an approval lets the turn that raised it continue. An
+   * `engine` question takes no dismissal: it fails with
+   * `Invalid("not-dismissible")`, leaving the card open. When the engine
+   * refuses an answer it was sent, the card closes as `refused`, and the turn
+   * waits for a Stop. Fails with `Invalid("answer-length")`, leaving the card
+   * open, when the answer to an `ask` question as the bot would read it is too
+   * long for the engine that runs the bot to take in one message.
+   *
+   * A browser help card is answered `done` or `declined`: the server gives
+   * every tab of the bot a device holds back to the bot, then wakes it with
+   * the outcome, so a client need not release the tab first. Fails with
+   * `Conflict("card-closed")` once the card has closed, by another device's
+   * answer or by expiring.
    */
   Rpc.make("card.answer", {
     payload: {
@@ -245,6 +252,7 @@ export const EntryRpcs = RpcGroup.make(
         Schema.TaggedStruct("question", { answers: QuestionAnswers }),
         Schema.TaggedStruct("dismiss", {}),
         Schema.TaggedStruct("approval", { decision: ApprovalDecision }),
+        Schema.TaggedStruct("browser-help", { outcome: Schema.Literals(["done", "declined"]) }),
       ]),
     },
     error: CommandError,
@@ -633,6 +641,7 @@ export const NotificationKind = Schema.Literals([
   "question",
   "approval",
   "secret-request",
+  "browser-help",
 ]);
 export type NotificationKind = typeof NotificationKind.Type;
 

@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, MemoryPath, RoomId, RosterItemKey, RoutineId } from "@j3-bots/contracts";
+import type {
+  BotId,
+  BrowserTabRef,
+  EntryId,
+  MemoryPath,
+  RoomId,
+  RosterItemKey,
+  RoutineId,
+} from "@j3-bots/contracts";
 import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { fontFamilies } from "@j3-bots/design-tokens";
 import {
@@ -60,6 +68,11 @@ export type Screens = {
   editBot: { readonly botId: BotId };
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
   routineRuns: { readonly botId: BotId; readonly routineId: RoutineId };
+  /**
+   * The bot's browser, on the tab `ref` names or its front tab, answering the
+   * browser help card `help` once the operator is done.
+   */
+  browser: { readonly botId: BotId; readonly ref?: BrowserTabRef; readonly help?: EntryId };
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
   settings: undefined;

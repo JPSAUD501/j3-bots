@@ -17,6 +17,7 @@ import {
   WorkStepId,
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
+import { BrowserTabRef } from "./browser.ts";
 import { RoutineTrigger } from "./routine.ts";
 import { StepTool } from "./work.ts";
 
@@ -297,6 +298,63 @@ export const SecretRequestEntry = Schema.TaggedStruct("secret-request", {
 });
 export type SecretRequestEntry = typeof SecretRequestEntry.Type;
 
+/**
+ * What a bot met in its browser that only the operator can get past: a check
+ * that a person is at the keyboard (`captcha`), a sign-in it has no
+ * credential for (`login`), a one-time code (`two-factor`), a code to scan
+ * with a phone (`qr-code`), a passkey, or something else (`other`).
+ */
+export const BrowserHelpReason = Schema.Literals([
+  "captcha",
+  "login",
+  "two-factor",
+  "qr-code",
+  "passkey",
+  "other",
+]);
+export type BrowserHelpReason = typeof BrowserHelpReason.Type;
+
+/** The most characters a browser help card's note holds. */
+export const MAX_BROWSER_HELP_NOTE_LENGTH = 500;
+
+/**
+ * A bot asks the operator to do one step in its browser for it. Asking ended
+ * the bot's turn; the card stays open until the operator says the step is
+ * done or that they cannot do it, either of which gives the tab back to the
+ * bot and wakes it, or until it expires.
+ */
+export const BrowserHelpEntry = Schema.TaggedStruct("browser-help", {
+  ...entry,
+  author: BotAuthor,
+  reason: BrowserHelpReason,
+  /** What the bot needs, in its own words. */
+  note: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(MAX_BROWSER_HELP_NOTE_LENGTH),
+  ),
+  /** The host name of the page the tab was on ("example.com"); empty when it had none. */
+  site: Schema.String.check(Schema.isMaxLength(253)),
+  /**
+   * The tab the step is in. A ref names a tab only while the server that
+   * minted it runs, so after a restart a client opens the bot's front tab.
+   */
+  tab: BrowserTabRef,
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    /** The operator did the step. */
+    Schema.TaggedStruct("done", {}),
+    /** The operator could not do it. */
+    Schema.TaggedStruct("declined", {}),
+    /**
+     * Closed before the operator answered: the tab closed (`tab-closed`), as
+     * the engine closes one nobody used for a while, or the card waited too
+     * long (`timed-out`). The bot is told either way.
+     */
+    Schema.TaggedStruct("expired", { cause: Schema.Literals(["tab-closed", "timed-out"]) }),
+  ]),
+});
+export type BrowserHelpEntry = typeof BrowserHelpEntry.Type;
+
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
 export type TurnEnding = typeof TurnEnding.Type;
@@ -562,6 +620,7 @@ export const Entry = Schema.Union([
   QuestionEntry,
   ApprovalEntry,
   SecretRequestEntry,
+  BrowserHelpEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -610,6 +669,7 @@ export const ReceivedEntry = Schema.Union([
   QuestionEntry,
   ApprovalEntry,
   SecretRequestEntry,
+  BrowserHelpEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -623,7 +683,8 @@ export const PREVIEW_LENGTH = 200;
 
 /**
  * The text an entry leads with, which its preview carries: the message, the
- * first question, the action, what is asked for, the routine's name; empty
+ * first question, the action, what is asked for (a credential's label, a
+ * browser step's note), the routine's name; empty
  * for an entry with no text of its own.
  */
 export const entryText = (entry: Entry): string => {
@@ -637,6 +698,8 @@ export const entryText = (entry: Entry): string => {
       return entry.action;
     case "secret-request":
       return entry.label;
+    case "browser-help":
+      return entry.note;
     case "routine-change":
       return entry.name;
     case "work-fold":

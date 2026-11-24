@@ -42,6 +42,7 @@ export const layer = Layer.effect(
         WHEN EXISTS (
           SELECT 1 FROM stops rs_stop JOIN stop_targets rs_target ON rs_target.stop_id = rs_stop.id
           WHERE rs_stop.scope = 'room' AND rs_stop.room_id = rs_room.id
+            AND rs_stop.engine_turn_id IS NULL
             AND rs_target.stopped_at IS NULL
         ) THEN 'stopping'
         WHEN EXISTS (

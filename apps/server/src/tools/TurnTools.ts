@@ -10,6 +10,7 @@ import type { BotSession } from "../bots/EngineSessions.ts";
 const TurnToolName = Schema.Literals([
   "say",
   "ask",
+  "request_browser_help",
   "message_bot",
   "set_routine",
   "set_operator_name",
@@ -57,7 +58,8 @@ export type TurnToolCall = {
 
 /**
  * Where the tools that act for a turn go: `say` and `ask` deliver to the
- * turn's audience, `message_bot` wakes or holds for a teammate,
+ * turn's audience, `request_browser_help` asks the operator to do a step in
+ * the bot's browser, `message_bot` wakes or holds for a teammate,
  * `set_routine` changes a routine on the bot's behalf, and
  * `set_operator_name` saves what the operator asked to be called, only in a
  * turn they spoke in. Each call is first

@@ -10,12 +10,13 @@ import {
 } from "@j3-bots/contracts";
 import {
   attachmentLimitViolation,
+  type EngineTabId,
   SessionId,
   TurnId,
   toolInputDigest,
   ToolInputDigest,
 } from "@j3-bots/engine-t3";
-import type { ToolInput } from "@j3-bots/prompts";
+import { BROWSER_HELP_REQUESTED, type ToolInput } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -28,6 +29,8 @@ import { Attachments, isStorable } from "../attachments/Attachments.ts";
 import { workspaceReader } from "../attachments/workspaceFile.ts";
 import { BotStore } from "../bots/BotStore.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
+import { BROWSER_HELP_WAIT, siteOf } from "../browser/browserHelpRules.ts";
+import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
@@ -63,6 +66,7 @@ import {
 } from "./model.ts";
 import { notices } from "./notices.ts";
 import { Observer } from "./Observer.ts";
+import { Stops } from "./Stops.ts";
 import { stopTargets } from "./stopTargets.ts";
 import { Wakes } from "./Wakes.ts";
 
@@ -150,7 +154,13 @@ interface WorkspaceFile {
 }
 
 /** The turn tools a request is pinned for. */
-type PinnedTool = "say" | "ask" | "message_bot" | "set_routine" | "set_operator_name";
+type PinnedTool =
+  | "say"
+  | "ask"
+  | "request_browser_help"
+  | "message_bot"
+  | "set_routine"
+  | "set_operator_name";
 
 /** A request matched to its call, or one a forward of it already committed. */
 type Matched =
@@ -165,7 +175,8 @@ const keyOf = (call: TurnToolCall) => ({
 
 /**
  * The turn tools (`docs/architecture/server.md`, Bot tools): `say` and `ask`,
- * which speak, `message_bot`, which reaches a teammate (Teammate messages),
+ * which speak, `request_browser_help`, which asks the operator to do a step
+ * in the bot's browser, `message_bot`, which reaches a teammate (Teammate messages),
  * `set_routine` (`routineTool.ts`) and `set_operator_name`. Each request is matched to the
  * engine's record of its call in the session's running admitted turn and
  * pinned to it, in the transaction that applies it, so a request acts once,
@@ -185,8 +196,10 @@ export const layer = Layer.effect(
     const settings = yield* SettingsStore;
     const settingsService = yield* SettingsService;
     const wakes = yield* Wakes;
+    const browserTabs = yield* BrowserTabs;
     const ids = yield* Ids;
     const stops = stopTargets(sql);
+    const turnStops = yield* Stops;
     const chains = hopCounts(sql);
     const { notify } = notices(sql, entries);
     const readWorkspaceFile = yield* workspaceReader;
@@ -856,6 +869,159 @@ export const layer = Layer.effect(
     });
 
     /**
+     * How the bot's last browser help card for the tab closed, when its
+     * operator declined it or let it run out and has not written since, in
+     * the bot's conversation or the room the request is for: the bot may not
+     * ask again for that tab until they do. Its cards wait one at a time, so
+     * the last one asked is the last one closed.
+     */
+    const lastUnanswered = (found: Pin, tab: EngineTabId) =>
+      SqlSchema.findOneOption({
+        Request: Schema.Void,
+        Result: Schema.Struct({
+          closing: Schema.NullOr(Schema.Literals(["done", "declined", "tab-closed", "timed-out"])),
+        }),
+        execute: () => sql`
+          SELECT lu_card.closing FROM browser_help_cards lu_card
+          JOIN entries lu_asked ON lu_asked.id = lu_card.entry_id
+          WHERE lu_card.bot_id = ${found.botId} AND lu_card.engine_tab_id = ${tab}
+            AND NOT EXISTS (
+              SELECT 1 FROM entries lu_entry
+              WHERE lu_entry.kind = 'message' AND lu_entry.author_kind = 'operator'
+                AND lu_entry.seq > lu_card.closed_through_seq
+                AND (
+                  lu_entry.conversation_bot_id = ${found.botId}
+                  ${found.audience._tag === "room" ? sql`OR lu_entry.room_id = ${found.audience.roomId}` : sql``}
+                )
+            )
+          ORDER BY lu_asked.seq DESC
+          LIMIT 1
+        `,
+      })(undefined).pipe(
+        Effect.orDie,
+        Effect.map(
+          Option.flatMap(({ closing }) =>
+            closing === "declined" || closing === "timed-out"
+              ? Option.some(closing)
+              : Option.none(),
+          ),
+        ),
+      );
+
+    /**
+     * `request_browser_help` (`docs/architecture/server.md`, Browser help): a
+     * `browser-help` card in the bot's own conversation for its front tab,
+     * found here, never named by the bot. Like an `ask`, it ends the turn; the
+     * operator's answer, or the card expiring, wakes the bot for the turn's
+     * audience, in a turn of its own: once the card is in, the server stops
+     * the turn that asked (`Stops.endTurn`), so it can do nothing more in the
+     * browser meanwhile. A turn for a room tells the room the bot waits in
+     * its own conversation. Refused, with nothing written, in a routine run,
+     * with no tab open, for work the operator stopped, while another of the
+     * bot's cards waits, and for the tab of a card the operator declined or
+     * let run out, until they write again (`lastUnanswered`).
+     */
+    const requestBrowserHelp = Effect.fn("Speech.requestBrowserHelp")(function* (
+      found: Pin,
+      input: ToolInput<"request_browser_help">,
+    ) {
+      const session = yield* purposeOf(found.sessionId).pipe(Effect.orDie);
+      if (Option.isSome(session) && session.value.purpose === "side") {
+        return yield* new TurnToolRefused({
+          reason:
+            "Nothing was asked: a routine run cannot wait for your user to act in your browser. Say in your message what blocked the run.",
+        });
+      }
+      return yield* once(
+        "request_browser_help",
+        found,
+      )(
+        Effect.gen(function* () {
+          // Looked up here, after the pin: a retry of a request that went
+          // through returns what it answered, whatever the tabs are now.
+          const front = yield* browserTabs.front(found.botId);
+          if (Option.isNone(front)) {
+            return yield* new TurnToolRefused({
+              reason:
+                "Nothing was asked: you have no browser tab open, so there is nothing for your user to act on. Open the page in your browser first.",
+            });
+          }
+          const tab = front.value;
+          yield* requireTarget(found.botId, found.audience);
+          const work = yield* workStopped(found);
+          if (work.stopped) {
+            return yield* new TurnToolRefused({
+              reason: "Nothing was asked: your user stopped this work. Stop here.",
+            });
+          }
+          const [waiting] = yield* sql`
+            SELECT 1 FROM browser_help_cards WHERE bot_id = ${found.botId} AND closed_at IS NULL
+          `.pipe(Effect.orDie);
+          if (waiting !== undefined) {
+            return yield* new TurnToolRefused({
+              reason:
+                "Nothing was asked: your user already has a request of yours for help in your browser. Their answer arrives as your next turn. End this turn now.",
+            });
+          }
+          const unanswered = yield* lastUnanswered(found, tab.tab);
+          if (Option.isSome(unanswered)) {
+            return yield* new TurnToolRefused({
+              reason:
+                unanswered.value === "declined"
+                  ? "Nothing was asked: your user already answered that they cannot do a step on this page. Do not ask again: tell them what it still blocks. Once they write to you, you may ask again."
+                  : "Nothing was asked: your last request for help on this page went unanswered. Do not ask again: tell your user the task waits on that step. Once they write to you, you may ask again.",
+            });
+          }
+          const card = yield* entries.append({
+            target: { _tag: "conversation", botId: found.botId },
+            entry: {
+              _tag: "browser-help",
+              author: { _tag: "bot", botId: found.botId },
+              reason: input.reason,
+              note: input.note,
+              site: siteOf(tab.url),
+              tab: tab.ref,
+              status: { _tag: "pending" },
+            },
+          });
+          const now = yield* DateTime.now;
+          const columns = audienceColumns(found.audience);
+          yield* sql`
+            INSERT INTO browser_help_cards (
+              entry_id, bot_id, audience, audience_room_id, origin_seq, engine_tab_id,
+              expires_at, created_at
+            ) VALUES (
+              ${card.id}, ${found.botId}, ${columns.audience}, ${columns.roomId}, ${work.seq},
+              ${tab.tab}, ${timeText(DateTime.addDuration(now, BROWSER_HELP_WAIT))},
+              ${timeText(now)}
+            )
+          `.pipe(Effect.orDie);
+          if (found.audience._tag === "room") {
+            yield* notify(
+              found.botId,
+              found.audience,
+              { _tag: "waiting-in-conversation", botId: found.botId },
+              null,
+            );
+          }
+          // The turn ends here, also for a bot that would go on in the
+          // browser, which J3 Bots does not see: the server stops it once
+          // this commits, and the answer wakes the bot again.
+          for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "ask");
+          yield* turnStops.endTurn(found.botId, {
+            sessionId: found.sessionId,
+            turnId: found.turnId,
+            audience: found.audience,
+          });
+          return {
+            status: "requested",
+            note: BROWSER_HELP_REQUESTED,
+          } satisfies Schema.Json;
+        }),
+      );
+    });
+
+    /**
      * A message to a teammate (`docs/architecture/server.md`, Teammate
      * messages): a handoff card in each of the two conversations, and an
      * urgent message's `bot` wake or a held one for the teammate's next
@@ -1051,6 +1217,8 @@ export const layer = Layer.effect(
           return yield* say(found, call.input);
         case "ask":
           return yield* ask(found, call.input);
+        case "request_browser_help":
+          return yield* requestBrowserHelp(found, call.input);
         case "message_bot":
           return yield* messageBot(found, call.input);
         case "set_routine":

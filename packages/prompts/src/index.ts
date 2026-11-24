@@ -8,7 +8,9 @@
  * - {@link tools} and {@link toolList}: the `j3` MCP tools, their descriptions
  *   and the schemas their arguments decode with, within
  *   {@link MAX_TOOL_INPUT_BYTES}; {@link NO_TURN_REFUSAL}: what a call that
- *   matches no running turn, such as a subagent's, reads.
+ *   matches no running turn, such as a subagent's, reads; and
+ *   {@link BROWSER_HELP_REQUESTED}: what a request for help in the browser
+ *   answers.
  * - {@link sharedSkills}: the skills J3 Bots ships, which the server installs
  *   for every bot.
  * - {@link PROMPT_VERSION}: one identifier for all of the above.
@@ -49,6 +51,7 @@ export {
   renderSystemFile,
 } from "./instructions.ts";
 export {
+  BROWSER_HELP_REQUESTED,
   DECODE_OPTIONS,
   MAX_TOOL_INPUT_BYTES,
   type McpTool,

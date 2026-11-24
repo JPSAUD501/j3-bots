@@ -15,6 +15,7 @@ import type * as Stream from "effect/Stream";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
 import { BotStore } from "../bots/BotStore.ts";
+import { BrowserHelp } from "../browser/BrowserHelp.ts";
 import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import { Bots } from "../bots/Bots.ts";
 import { Templates } from "../bots/Templates.ts";
@@ -65,6 +66,7 @@ export const handlers = ServedRpcs.toLayer(
     const devices = yield* Devices;
     const pipeline = yield* Pipeline;
     const cards = yield* Cards;
+    const browserHelp = yield* BrowserHelp;
     const stops = yield* Stops;
     const workSteps = yield* WorkSteps;
     const usage = yield* Usage;
@@ -118,7 +120,11 @@ export const handlers = ServedRpcs.toLayer(
       "message.send": (input) => pipeline.sendMessage(input),
       "message.retry": (input) => pipeline.retryMessage(input),
       "notice.retry": (input) => pipeline.retryNotice(input),
-      "card.answer": (input) => cards.answer(input),
+      // Help in the bot's browser is J3 Bots' own card, apart from the engine's requests.
+      "card.answer": ({ answer, ...card }) =>
+        answer._tag === "browser-help"
+          ? browserHelp.answer({ ...card, outcome: answer.outcome })
+          : cards.answer({ ...card, answer }),
       "secret.provide": (input) => cards.provideSecret(input),
       "bot.stop": (input) => stops.stopBot(input),
       "bot.create": ({ commandId, ...draft }) => bots.create({ commandId, draft }),

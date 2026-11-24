@@ -44,6 +44,10 @@ export function notificationText(
         return preview === null
           ? t("notification.secret")
           : t("summary.needsSecret", { label: preview });
+      case "browser-help":
+        return preview === null
+          ? t("notification.browserHelp")
+          : t("summary.needsBrowserHelp", { note: preview });
       case "handoff":
         return preview === null
           ? t("notification.handoff")

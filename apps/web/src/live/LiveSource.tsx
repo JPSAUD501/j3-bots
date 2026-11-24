@@ -1316,6 +1316,11 @@ function LiveShell({
       void j3.answerCard(entryId, { _tag: "approval", decision }),
     provideSecret: (entryId, value) => void j3.provideSecret(entryId, { _tag: "provide", value }),
     declineSecret: (entryId) => void j3.provideSecret(entryId, { _tag: "decline" }),
+    answerBrowserHelp: (entryId, outcome) =>
+      void j3.answerCard(entryId, { _tag: "browser-help", outcome }),
+    // The viewer opens over the bot's conversation, on the tab the address names.
+    openBrowser: (botId, tab) =>
+      void navigate({ to: "/bots/$botId", params: { botId }, search: { browser: tab } }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
     resendMessage: (commandId, mentions) =>

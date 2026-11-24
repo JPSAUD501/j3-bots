@@ -328,6 +328,8 @@ export const layer = Layer.effect(
           const found = yield* entries.find(input.entryId);
           if (Option.isNone(found)) return yield* new NotFound({ resource: "entry" });
           const card = found.value.entry;
+          // Answered with its own variant, which `BrowserHelp` takes.
+          if (card._tag === "browser-help") return yield* new Invalid({ reason: "answer" });
           if (card._tag === "question" && card.origin === "ask") {
             return yield* answerAsk(card, input.answer);
           }

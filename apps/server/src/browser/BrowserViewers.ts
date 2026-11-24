@@ -86,6 +86,12 @@ export class BrowserViewers extends Context.Service<
       readonly size: ViewSize;
       readonly link: ClientLink;
     }) => Effect.Effect<void>;
+    /**
+     * Gives `tabs` back to the bot from every device that holds one, also a
+     * device in its grace after its socket dropped. The engine says so on
+     * each viewer's next `control`, which `BrowserTabs.held` then follows.
+     */
+    readonly release: (tabs: ReadonlyArray<EngineTabId>) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/browser/BrowserViewers") {}
 
@@ -523,6 +529,18 @@ export const layer = Layer.effect(
       }
     });
 
-    return BrowserViewers.of({ connect });
+    const release = (tabs: ReadonlyArray<EngineTabId>) => {
+      const wanted = new Set(tabs);
+      return Effect.forEach(
+        [...entries.values()].filter((entry) => wanted.has(entry.tab)),
+        (entry) =>
+          entry.lock.withPermits(1)(
+            entry.ended || !entry.holds ? Effect.void : entry.viewer.send({ type: "release" }),
+          ),
+        { discard: true },
+      );
+    };
+
+    return BrowserViewers.of({ connect, release });
   }),
 );

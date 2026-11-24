@@ -228,6 +228,8 @@ const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<Sy
       return Effect.succeed({ name: "first-run", askName });
     case "undelivered":
       return Effect.succeed({ name: "undelivered" });
+    case "browser-help":
+      return Effect.succeed({ name: "browser-help", outcome: payload.outcome, site: payload.site });
     case "message":
     case "answer":
     case "routine":

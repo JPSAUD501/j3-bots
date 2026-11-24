@@ -31,6 +31,8 @@ function previewText(entry: Entry): string {
       return entry.action;
     case "secret-request":
       return entry.label;
+    case "browser-help":
+      return entry.note;
     case "routine-change":
       return entry.name;
     case "work-fold":

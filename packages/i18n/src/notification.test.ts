@@ -49,6 +49,16 @@ const wording: Record<
     en: { bare: "Needs a credential", preview: "Needs a credential: Ship it?" },
     "pt-BR": { bare: "Precisa de uma credencial", preview: "Precisa de uma credencial: Ship it?" },
   },
+  "browser-help": {
+    en: {
+      bare: "Needs your help in the browser",
+      preview: "Needs your help in the browser: Ship it?",
+    },
+    "pt-BR": {
+      bare: "Precisa da sua ajuda no navegador",
+      preview: "Precisa da sua ajuda no navegador: Ship it?",
+    },
+  },
   handoff: {
     en: { bare: "Sent a teammate an urgent message", preview: "To a teammate: Ship it?" },
     "pt-BR": {

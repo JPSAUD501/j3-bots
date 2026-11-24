@@ -52,6 +52,7 @@ const kindOf = (
     case "question":
     case "approval":
     case "secret-request":
+    case "browser-help":
       return { kind: entry._tag, botId };
     case "handoff":
       // One notification for an urgent message: the sender's card.

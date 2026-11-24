@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AvatarChoice, OperatorName, Profile, RoutineInstruction } from "@j3-bots/contracts";
+import {
+  AvatarChoice,
+  BrowserHelpReason,
+  MAX_BROWSER_HELP_NOTE_LENGTH,
+  OperatorName,
+  Profile,
+  RoutineInstruction,
+} from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -51,7 +58,14 @@ const toolInput = <const Fields extends Schema.Struct.Fields>(fields: Fields) =>
 export const NO_TURN_REFUSAL =
   "This call belongs to no running turn of yours: your turn has ended, or you are a subagent or delegated worker. Nothing was sent. A subagent or delegated worker reports in its final reply instead.";
 
-/** For the three tools a delegated worker can see but must not use. */
+/**
+ * What `request_browser_help` answers once the operator was asked. The
+ * server stops the turn then, so the bot's next call in it may never run.
+ */
+export const BROWSER_HELP_REQUESTED =
+  "Your user was asked to do this step in your browser. This turn ends here: J3 Bots stops it now, and their answer arrives as your next turn. Do not use the browser until then.";
+
+/** For the tools a delegated worker can see but must not use. */
 const BOT_ONLY =
   "Only the bot itself calls this. A subagent or delegated worker does not: it reports in its final reply.";
 
@@ -269,6 +283,17 @@ const SetOperatorNameInput = toolInput({
   ),
 });
 
+const RequestBrowserHelpInput = toolInput({
+  reason: described(
+    BrowserHelpReason,
+    "What stops you: `captcha` for any check that a person is there, `login` for a sign-in you have no credential for, `two-factor` for a one-time code, `qr-code` for a code to scan, `passkey`, or `other`.",
+  ),
+  note: described(
+    text(1, MAX_BROWSER_HELP_NOTE_LENGTH),
+    "The one step you need, in a sentence your user can act on, such as which account to sign in with. Never a password or a code.",
+  ),
+});
+
 /** One `j3` tool: its name, its description as prompt text, and the schema its arguments decode with. */
 export interface ToolDefinition<S extends Schema.Top = Schema.Top> {
   readonly name: string;
@@ -309,6 +334,17 @@ export const tools = {
       BOT_ONLY,
     ],
     AskInput,
+  ),
+  request_browser_help: define(
+    "request_browser_help",
+    [
+      "Ask your user to do one step in your browser that only they can: a check that a person is there, a sign-in you have no credential for, a one-time code, a code to scan, a passkey.",
+      "J3 Bots shows them a card for the tab you used last, which they open, take over and give back. Never try to get past such a step yourself, and never type a password, a code or payment details into a page.",
+      "Calling it ends your turn: do not use the browser again until their answer arrives as your next turn. It says whether they did the step, could not, or the request expired; once they did, take a fresh snapshot before you act.",
+      "Not in a routine run: say there what blocked it instead.",
+      BOT_ONLY,
+    ],
+    RequestBrowserHelpInput,
   ),
   message_bot: define(
     "message_bot",

@@ -4,6 +4,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Attachments from "./attachments/Attachments.ts";
 import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Bots from "./bots/Bots.ts";
+import * as BrowserHelp from "./browser/BrowserHelp.ts";
 import * as BrowserTabs from "./browser/BrowserTabs.ts";
 import * as BrowserViewers from "./browser/BrowserViewers.ts";
 import * as BotStore from "./bots/BotStore.ts";
@@ -67,7 +68,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
   Layer.provideMerge(
     Layer.mergeAll(
       Bots.layer,
-      BrowserViewers.layer.pipe(Layer.provideMerge(BrowserTabs.layer)),
+      BrowserHelp.layer,
       Templates.layer,
       Roster.layer,
       Speech.layer,
@@ -96,7 +97,14 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
   Layer.provideMerge(Layer.mergeAll(Stops.layer, HeldQueues.layer)),
   Layer.provideMerge(Sender.layer),
   Layer.provideMerge(Observer.layer),
-  Layer.provideMerge(Layer.mergeAll(Ledger.layer, Wakes.layer, WorkSteps.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      Ledger.layer,
+      Wakes.layer,
+      WorkSteps.layer,
+      BrowserViewers.layer.pipe(Layer.provideMerge(BrowserTabs.layer)),
+    ),
+  ),
   Layer.provideMerge(
     Layer.mergeAll(MemoryFiles.layer, Entries.layer, Attachments.layer, BotStore.layer),
   ),

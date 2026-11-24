@@ -18,6 +18,8 @@ const intents: TimelineIntents = {
   decideApproval: nothing,
   provideSecret: nothing,
   declineSecret: nothing,
+  answerBrowserHelp: nothing,
+  openBrowser: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
   resendMessage: nothing,

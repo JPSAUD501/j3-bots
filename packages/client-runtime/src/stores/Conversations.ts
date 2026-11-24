@@ -280,7 +280,9 @@ export const messageStatus = (message: MessageEntry | OutgoingMessage): MessageS
 export type CardAnswer =
   | { readonly _tag: "question"; readonly answers: QuestionAnswers }
   | { readonly _tag: "dismiss" }
-  | { readonly _tag: "approval"; readonly decision: ApprovalDecision };
+  | { readonly _tag: "approval"; readonly decision: ApprovalDecision }
+  /** The operator did the bot's step in its browser, or could not. */
+  | { readonly _tag: "browser-help"; readonly outcome: "done" | "declined" };
 
 /** The value travels redacted from the input to the socket and is kept nowhere. */
 export type SecretAnswer =
