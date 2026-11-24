@@ -7,6 +7,10 @@ import type { RecentTurns } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
   BotId,
+  BrowserTabRef,
+  ConnectorGlyph,
+  ConnectorId,
+  CuratedKey,
   DeviceId,
   EntryId,
   MemoryPath,
@@ -16,6 +20,7 @@ import {
   RoutineId,
   RoutineRunId,
   SectionId,
+  SiteOrigin,
   TimeZone,
   WorkStepId,
   type Attachment,
@@ -35,10 +40,12 @@ import {
   type Settings,
   type UsageRoutine,
   type UsageTurn,
+  type Visual,
   type WorkStep,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { ordered, previewOf, type DraftEntry } from "./entries";
+import { sampleVisuals } from "./visuals";
 
 const claude = ProviderId.make("claude-code");
 const codex = ProviderId.make("codex");
@@ -127,6 +134,8 @@ export function sampleTeam(now: DateTime.Utc) {
       },
       model: { providerId: claude, modelId: ModelId.make("claude-sonnet-5-5") },
       permissionMode: extra.permissionMode ?? "supervised",
+      browser: false,
+      vault: false,
       primary: extra.primary ?? false,
       pinned: extra.pinned ?? false,
       hidden: extra.hidden ?? false,
@@ -158,7 +167,7 @@ export function sampleTeam(now: DateTime.Utc) {
         stalled: false,
         quietSince: null,
         activity: "Checking which of the three the shop has in stock",
-        tool: null,
+        tool: "browser",
       },
       { primary: true, pinned: true, permissionMode: "auto-accept-edits" },
     ),
@@ -238,6 +247,7 @@ export function sampleTeam(now: DateTime.Utc) {
       delivery?: MessageDelivery;
       prefix?: string;
       mentions?: ReadonlyArray<BotId>;
+      visual?: Visual;
     } = {},
   ): DraftEntry {
     return {
@@ -250,6 +260,7 @@ export function sampleTeam(now: DateTime.Utc) {
       mentions: options.mentions ? { _tag: "bots", ids: options.mentions } : nobody,
       delivery: options.delivery ?? { _tag: "delivered" },
       commandId: null,
+      ...(options.visual === undefined ? {} : { visual: options.visual }),
     };
   }
 
@@ -298,7 +309,7 @@ export function sampleTeam(now: DateTime.Utc) {
       by(ids.scout),
       ago(60 * 26 - 3),
       "Three fit. All of them have a mid-drive motor, which is what makes the difference on that hill, and the cheapest needs the larger battery for the round trip.\n\nThe range figures come from owners, not spec sheets: see the `range_km` column. The most useful review is https://example.com/ebikes/long-term.",
-      { attachments: [attachments.report] },
+      { attachments: [attachments.report], visual: sampleVisuals.table },
     ),
     {
       _tag: "routine-change",
@@ -467,12 +478,24 @@ export function sampleTeam(now: DateTime.Utc) {
     },
   ];
 
+  const atlasAuth: DraftEntry = {
+    _tag: "connector-auth",
+    id: EntryId.make("atlas-c1"),
+    author: by(ids.atlas),
+    createdAt: ago(8),
+    connectorId: ConnectorId.make("conn_samplelinear00000"),
+    name: "Linear",
+    glyph: ConnectorGlyph.make("board"),
+    status: "pending",
+  };
+
   const atlasEntries: DraftEntry[] = [
     message(operator, ago(30), "Run the invoice migration on staging once the backup finishes."),
     message(
       by(ids.atlas),
       ago(12),
       "Backup finished and checked: 2.1 GB. Ready to migrate staging.",
+      { visual: sampleVisuals.diagram },
     ),
     {
       _tag: "approval",
@@ -487,6 +510,7 @@ export function sampleTeam(now: DateTime.Utc) {
       sessionGrant: { covers: "every-command" },
       status: { _tag: "pending" },
     },
+    atlasAuth,
   ];
 
   const wrenEntries: DraftEntry[] = [
@@ -533,12 +557,47 @@ export function sampleTeam(now: DateTime.Utc) {
   ];
 
   const ottoEntries: DraftEntry[] = [
+    {
+      _tag: "browser-help",
+      id: EntryId.make("otto-b1"),
+      author: by(ids.otto),
+      createdAt: ago(60 * 5 + 6),
+      reason: "login",
+      note: "Sign in to the garage’s booking page, so I can move the car inspection.",
+      site: "booking.example.com",
+      tab: BrowserTabRef.make("otto-tab"),
+      status: { _tag: "done" },
+    },
     message(
       by(ids.otto),
       ago(60 * 5),
       "Thursday is clear after 10. I moved the car inspection to 3:30 like you asked.",
     ),
     message(operator, ago(60 * 5 - 2), "Thanks"),
+    {
+      _tag: "credential-request",
+      id: EntryId.make("otto-l1"),
+      author: by(ids.otto),
+      createdAt: ago(60 * 5 - 3),
+      origin: SiteOrigin.make("https://inspections.example"),
+      note: "The inspection site wants a login to change the booking. Save it, and next time I can check it there.",
+      status: { _tag: "pending" },
+    },
+    message(operator, ago(12), "Can you block two hours for the tax paperwork next week?"),
+    {
+      _tag: "connector-suggestion",
+      id: EntryId.make("otto-c1"),
+      author: by(ids.otto),
+      createdAt: ago(11),
+      subject: {
+        _tag: "listing",
+        ref: { _tag: "curated", key: CuratedKey.make("google-calendar") },
+      },
+      name: "Google Calendar",
+      glyph: ConnectorGlyph.make("calendar"),
+      reason: "I'd need your calendar to find two free hours and hold them for you.",
+      status: { _tag: "pending" },
+    },
   ];
 
   const roomEntries: DraftEntry[] = [

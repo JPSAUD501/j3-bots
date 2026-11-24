@@ -28,6 +28,8 @@ import {
   ShortcutChange,
   ShortcutStatus,
   StartWithSystemChange,
+  SignInRelayStart,
+  SignInReturn,
   type TrayReport,
   OpenResult,
   SealResult,
@@ -36,6 +38,7 @@ import {
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 /** The system the desktop app runs on, from the user agent its window reports. */
@@ -184,6 +187,24 @@ export interface Desktop {
    * first. `null` when the app gave no answer the page understands.
    */
   readonly localPairingLink: (unlock: boolean) => Promise<LocalPairingLink | null>;
+  /**
+   * Listens on this computer's loopback for the browser's return from a
+   * connector's sign-in, in place of any listener before: the port it
+   * listens on, or `null` when the app could not listen.
+   */
+  readonly catchSignIn: (language: Language) => Promise<number | null>;
+  /**
+   * Tells the listener on `port` the state of the sign-in it waits for, which
+   * the only return it takes carries: whether it still listens and took it.
+   */
+  readonly expectSignIn: (port: number, state: Redacted.Redacted<string>) => Promise<boolean>;
+  /** Stops the listener on `port`, if it still listens. */
+  readonly stopCatchingSignIn: (port: number) => void;
+  /**
+   * Calls `listener` with the address the browser came back to from each
+   * sign-in the app caught; answers a function that stops it.
+   */
+  readonly onSignInReturn: (listener: (url: string) => void) => () => void;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -207,6 +228,9 @@ const decodeStartWithSystem = Schema.decodeUnknownOption(StartWithSystemChange);
 const decodePhoneAccess = Schema.decodeUnknownOption(PhoneAccess);
 const decodePhoneAccessChange = Schema.decodeUnknownOption(PhoneAccessChange);
 const decodePairingLink = Schema.decodeUnknownOption(LocalPairingLink);
+const decodeRelayStart = Schema.decodeUnknownOption(SignInRelayStart);
+const decodeExpected = Schema.decodeUnknownOption(Schema.Boolean);
+const decodeSignInReturn = Schema.decodeUnknownOption(SignInReturn);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -342,6 +366,25 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     onPhoneAccess: (listener) => {
       const stop: unknown = bridge.onPhoneAccess((access: unknown) =>
         Option.map(decodePhoneAccess(access), listener),
+      );
+      return () => {
+        if (typeof stop === "function") stop();
+      };
+    },
+    catchSignIn: (language) =>
+      ask(() => bridge.catchSignIn({ language }), decodeRelayStart).then((answer) =>
+        answer?._tag === "listening" ? answer.port : null,
+      ),
+    expectSignIn: (port, state) =>
+      ask(() => bridge.expectSignIn({ port, state: Redacted.value(state) }), decodeExpected).then(
+        (taken) => taken === true,
+      ),
+    stopCatchingSignIn: (port) => {
+      bridge.stopCatchingSignIn({ port });
+    },
+    onSignInReturn: (listener) => {
+      const stop: unknown = bridge.onSignInReturn((signInReturn: unknown) =>
+        Option.map(decodeSignInReturn(signInReturn), ({ url }) => listener(url)),
       );
       return () => {
         if (typeof stop === "function") stop();

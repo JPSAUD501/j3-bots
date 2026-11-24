@@ -15,11 +15,15 @@ import type {
   SettingsSaves,
   SignInView,
   UpdateResult,
+  VaultView,
 } from "@j3-bots/client-runtime";
+import type { ConnectorsOpening } from "@j3-bots/client-runtime/presentation";
 import type {
   AvatarChoice,
+  Bot,
   BotFile,
   BotId,
+  Connector,
   Device,
   DeviceId,
   EngineStatus,
@@ -53,6 +57,7 @@ import type {
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { TimelineIntents } from "../components/Timeline";
+import type { VaultIntents } from "../components/vault/VaultForms";
 
 /** One conversation or room as the shell shows it. */
 export interface ConversationView {
@@ -109,6 +114,8 @@ export interface ShellData {
   readonly routines: (botId: BotId) => ReadonlyArray<Routine> | null;
   /** Files a bot delivered, newest first; null while they load. */
   readonly files: (botId: BotId) => ReadonlyArray<BotFile> | null;
+  /** Every connector the operator added; null until they load. */
+  readonly connectors: ReadonlyArray<Connector> | null;
   /** Null while they load. */
   readonly memory: (botId: BotId) => ReadonlyArray<MemoryFile> | null;
   /** The server's settings; null until they load. */
@@ -117,6 +124,8 @@ export interface ShellData {
   readonly settingsSaves: SettingsSaves;
   /** Settings is open. */
   readonly settingsOpen: boolean;
+  /** The server's vault: its state, and its saved logins while it is unlocked. */
+  readonly vault: VaultView;
   /** Every paired device; null until they load. */
   readonly devices: ReadonlyArray<Device> | null;
   /** The turns bots spent recently, read while Settings is open. */
@@ -217,6 +226,10 @@ export interface ShellIntents extends TimelineIntents {
   /** Opens the form that edits a bot's profile, model and permission mode. Absent where there is none. */
   readonly editProfile?: (botId: BotId) => void;
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
+  /** Gives the bot the browser, or takes it away; the shell says so if it was not saved. */
+  readonly setBrowser: (bot: Bot, enabled: boolean) => void;
+  /** Lets the bot have its allowed logins filled, or stops it; the shell says so if it was not saved. */
+  readonly setVault: (bot: Bot, enabled: boolean) => void;
   /** `name` is the bot's as the operator asked, for what the shell says once it is done. */
   readonly freshStart: (botId: BotId, name: string) => void;
   readonly deleteBot: (botId: BotId) => void;
@@ -224,6 +237,8 @@ export interface ShellIntents extends TimelineIntents {
   /** Saves the change; the save of its section in `settingsSaves` follows it. */
   readonly updateSettings: (change: SettingsChange) => void;
   readonly setSettingsOpen: (open: boolean) => void;
+  /** Opens the connectors screen, closing Settings if it is open. */
+  readonly openConnectors: (opening: ConnectorsOpening) => void;
   readonly startPairing: () => Promise<PairingStart>;
   /**
    * Resolves `false` unless the server confirmed it within ten seconds; the
@@ -232,6 +247,10 @@ export interface ShellIntents extends TimelineIntents {
   readonly revokeDevice: (deviceId: DeviceId) => Promise<boolean>;
   /** Reads the settings again, as when Settings opens. */
   readonly refreshSettings: () => void;
+  /** Signs the bots' browser out of every site; resolves with whether it did. */
+  readonly signOutBrowser: () => Promise<boolean>;
+  /** Sets up, unlocks, locks and changes the vault and its logins. */
+  readonly vault: VaultIntents;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
   /** Reads more of the recent turns, when `recentTurns` can take more. */

@@ -247,9 +247,15 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     }
     field.isFocusable = true
     field.isFocusableInTouchMode = true
-    field.showSoftInputOnFocus = editable
-    field.isCursorVisible = editable
-    field.keyListener = if (editable) editKeys else null
+    // Setting the key listener restarts the keyboard's input, which loses a
+    // key on its way: React sends its props again as the operator types, so
+    // the field changes it only when it starts or stops taking edits.
+    if (editable != appliedEditable) {
+      appliedEditable = editable
+      field.showSoftInputOnFocus = editable
+      field.isCursorVisible = editable
+      field.keyListener = if (editable) editKeys else null
+    }
     field.contentDescription = label
     field.hint = if (status == null) placeholder else null
     field.invalidate()
@@ -257,6 +263,8 @@ class ChipFieldView(context: Context, appContext: AppContext) :
   }
 
   private val editKeys = field.keyListener
+  /** Whether the field takes edits as last applied; none before the first props. */
+  private var appliedEditable: Boolean? = null
 
   private fun applyLook(look: FieldLook) {
     field.setTextColor(argb(look.textColor))

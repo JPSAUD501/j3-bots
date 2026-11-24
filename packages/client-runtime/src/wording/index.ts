@@ -6,6 +6,18 @@
  */
 export { addresseeLine, resendLabel } from "./addressee.ts";
 export {
+  connectedText,
+  connectFailureText,
+  connectorStatusText,
+  type ConnectorStatusText,
+  envProblemText,
+  grantText,
+  pinRefusalText,
+  publisherText,
+  signedInText,
+  signInProblemText,
+} from "./connectors.ts";
+export {
   avatarShapeText,
   botColorText,
   botModelName,
@@ -53,7 +65,8 @@ export {
 } from "./time.ts";
 export { windowText, type WindowText } from "./usage.ts";
 export { type Announcement, turnAnnouncement, turnLabel, turnLine } from "./turn.ts";
-export { stepText, workFoldTitle } from "./work.ts";
+export { unlockWaitsUntil, vaultFailureText } from "./vault.ts";
+export { fillDetail, stepText, workFoldTitle } from "./work.ts";
 export {
   type ServerUpdateLine,
   serverUpdateLine,

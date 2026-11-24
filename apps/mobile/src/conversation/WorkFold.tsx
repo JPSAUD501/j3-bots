@@ -7,8 +7,20 @@ import {
   turnElapsed,
 } from "@j3-bots/client-runtime/presentation";
 import { useWorkSteps } from "@j3-bots/client-runtime/react";
-import { stepText, turnLabel, turnLine, workFoldTitle } from "@j3-bots/client-runtime/wording";
-import type { Bot, EntryPreview, WorkFoldEntry, WorkStep } from "@j3-bots/contracts";
+import {
+  fillDetail,
+  stepText,
+  turnLabel,
+  turnLine,
+  workFoldTitle,
+} from "@j3-bots/client-runtime/wording";
+import type {
+  Bot,
+  CredentialFill,
+  EntryPreview,
+  WorkFoldEntry,
+  WorkStep,
+} from "@j3-bots/contracts";
 import {
   Bot as BotIcon,
   Check,
@@ -85,7 +97,7 @@ export function WorkFold({
   const folding = live === null && wasLive;
   const toggle = () => setOpen((was) => !was);
   return (
-    <View className="mt-3 px-4">
+    <View className="mt-2 px-4">
       {live !== null ? (
         <LiveLine
           turn={live}
@@ -266,6 +278,8 @@ function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
             <Text selectable className="flex-1 text-2xs text-foreground" face="mono">
               {step.label}
             </Text>
+          ) : step.fill !== undefined ? (
+            <FillLine step={step} fill={step.fill} />
           ) : (
             <Text selectable className="flex-1 text-xs text-foreground">
               {stepText(step, i18n)}
@@ -274,6 +288,30 @@ function Steps({ foldId }: { readonly foldId: WorkFoldEntry["id"] }) {
           <StepStatus step={step} />
         </View>
       ))}
+    </View>
+  );
+}
+
+/**
+ * A login's fill: which login and field, then where it was filled, or why it
+ * was not, in the blocked tone, with the page's origin as the server checked it.
+ */
+function FillLine({ step, fill }: { readonly step: WorkStep; readonly fill: CredentialFill }) {
+  const { i18n } = usePresentation();
+  const detail = fillDetail(fill, i18n);
+  return (
+    <View className="flex-1">
+      <Text selectable className="text-xs text-foreground">
+        {stepText(step, i18n)}
+      </Text>
+      {detail !== "" && (
+        <Text
+          selectable
+          className={`text-xs ${fill.outcome._tag === "filled" ? "text-muted-foreground" : "text-blocked"}`}
+        >
+          {detail}
+        </Text>
+      )}
     </View>
   );
 }

@@ -104,6 +104,11 @@ export const OpenRequest = Schema.Struct({
   turnId: TurnId,
   openedAt: Schema.DateTimeUtc,
   request: EngineRequest,
+  /**
+   * The `j3` tool call the request holds back, as a `tool-call` event names
+   * it: a connector's call waiting on its approval. Null for any other request.
+   */
+  heldCall: Schema.NullOr(ToolCallId),
 });
 export type OpenRequest = typeof OpenRequest.Type;
 
@@ -218,6 +223,11 @@ export const OpenTurn = Schema.Struct({
   steps: Schema.Array(WorkStep),
   /** Its `j3` tool calls still in progress. */
   toolCalls: Schema.Array(ToolCall),
+  /**
+   * Its `j3` tool calls the engine closed. A connector's call can still be
+   * claimed then: Codex's record of one closes while it waits on its approval.
+   */
+  closedToolCalls: Schema.Array(ToolCall),
 });
 export type OpenTurn = typeof OpenTurn.Type;
 
@@ -424,6 +434,8 @@ export const SessionEvent = Schema.Union([
     requestId: RequestId,
     turnId: TurnId,
     request: EngineRequest,
+    /** `OpenRequest.heldCall`, which the engine may record after the request. */
+    heldCall: Schema.NullOr(ToolCallId),
   }),
   Schema.TaggedStruct("request-closed", {
     ...at,

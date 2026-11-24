@@ -108,6 +108,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
       kind: "system",
       event: { name: "profile-changed", changes: [{ field: "name", value: s }] },
     },
+    { ...base, kind: "system", event: { name: "browser-help", outcome: "done", site: s } },
   ];
 };
 
@@ -568,6 +569,43 @@ describe("renderWake", () => {
       This is an event, not a message from your user. Respond only as your instructions say for it.
       "
     `);
+    expect(system({ name: "browser-help", outcome: "done", site: "mail.example.com" }))
+      .toMatchInlineSnapshot(`
+        "<j3-wake kind="system" event="browser-help" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+        Your user did the step you asked for in your browser and gave it back. Take a fresh snapshot before you act, since the page has changed, then carry on with the task. Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\`.
+        <browser-tab site="mail.example.com"/>
+        </j3-wake>
+        This is an event, not a message from your user. Respond only as your instructions say for it.
+        "
+      `);
+    expect(system({ name: "browser-help", outcome: "handed-back", site: null }))
+      .toMatchInlineSnapshot(`
+        "<j3-wake kind="system" event="browser-help" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+        Your user took over your browser while you worked and has given it back. Take a fresh snapshot before you act, since the page may have changed, then carry on with what you were doing, and deliver it with \`say\`, your last call with \`done: true\`. If it was already done, end your turn without a word.
+        </j3-wake>
+        This is an event, not a message from your user. Respond only as your instructions say for it.
+        "
+      `);
+  });
+
+  it("tells the bot how each browser help request ended, and never to retry a step on its own", () => {
+    const outcomes = ["done", "declined", "tab-closed", "timed-out", "handed-back"] as const;
+    const lines = outcomes.map((outcome) =>
+      render({
+        kind: "system",
+        at: now,
+        timeZone,
+        sinceLastTurn: [],
+        event: { name: "browser-help", outcome, site: "example.com" },
+      }),
+    );
+    expect(new Set(lines).size).toBe(outcomes.length);
+    const [done, declined, tabClosed, timedOut, handedBack] = lines;
+    expect(done).toContain("fresh snapshot");
+    expect(handedBack).toContain("fresh snapshot");
+    expect(declined).toContain("Do not try the step yourself.");
+    expect(tabClosed).toContain("Do not ask again on your own");
+    expect(timedOut).toContain("Do not ask again on your own");
   });
 
   it("gives the time in the operator's zone, with its current offset", () => {

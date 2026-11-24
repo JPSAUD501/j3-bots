@@ -2,9 +2,25 @@
 import type {
   Attachment,
   Bot,
+  Connector,
+  ConnectorGrant,
+  ConnectorId,
+  ConnectorListing,
+  ConnectorListingDetails,
+  Language,
+  ListingRef,
+  SignInRedirect,
+  SignInStarted,
+  ToolReviewRevision,
   BotFile,
   BotId,
+  BrowserInput,
+  BrowserTab,
+  BrowserTabRef,
   CommandId,
+  Credential,
+  CredentialField,
+  CredentialId,
   Device,
   DeviceId,
   DeviceToken,
@@ -18,6 +34,7 @@ import type {
   MemoryScope,
   Mentions,
   HarnessLocation,
+  MasterPassword,
   Notification,
   ProviderConnectionRequest,
   Room,
@@ -31,6 +48,7 @@ import type {
   Settings as SettingsValue,
   SignInHarness,
   UpdateChannel,
+  TotpPreview,
 } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -61,6 +79,8 @@ import type {
   WindowLocks,
 } from "./ports.ts";
 import type { Readable } from "./Store.ts";
+import * as Browser from "./stores/Browser.ts";
+import * as Connectors from "./stores/Connectors.ts";
 import * as Conversations from "./stores/Conversations.ts";
 import * as Details from "./stores/Details.ts";
 import * as Devices from "./stores/Devices.ts";
@@ -73,6 +93,7 @@ import * as Roster from "./stores/Roster.ts";
 import * as Settings from "./stores/Settings.ts";
 import type { Synced } from "./stores/synced.ts";
 import * as Usage from "./stores/Usage.ts";
+import * as Vault from "./stores/Vault.ts";
 import * as WorkSteps from "./stores/WorkSteps.ts";
 import * as ServerUpdate from "./update/ServerUpdate.ts";
 
@@ -105,6 +126,9 @@ export const layer = SignOut.layer.pipe(
       Usage.layer,
       ProviderSetup.layer,
       ServerUpdate.layer,
+      Browser.layer,
+      Vault.layer,
+      Connectors.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -113,6 +137,36 @@ export const layer = SignOut.layer.pipe(
   Layer.provideMerge(Connection.layer),
   Layer.provide(refuseRedirects),
 );
+
+/** The vault, with each request answered as a promise; see `Vault.Vault`. */
+export interface VaultHandle {
+  readonly view: Readable<Vault.VaultView>;
+  readonly setup: (password: MasterPassword) => Promise<Vault.VaultResult>;
+  readonly unlock: (password: MasterPassword) => Promise<Vault.VaultResult>;
+  readonly lock: () => Promise<Vault.VaultResult>;
+  readonly changePassword: (
+    current: MasterPassword,
+    next: MasterPassword,
+  ) => Promise<Vault.VaultResult>;
+  readonly save: (
+    credential: Vault.NewCredential,
+    request: EntryId | null,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly update: (
+    id: CredentialId,
+    changes: Vault.CredentialChanges,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly remove: (id: CredentialId) => Promise<Vault.VaultResult>;
+  readonly setAllowedBots: (
+    id: CredentialId,
+    bots: ReadonlyArray<BotId>,
+  ) => Promise<Vault.VaultResult<Credential>>;
+  readonly reveal: (
+    id: CredentialId,
+    field: CredentialField,
+  ) => Promise<Vault.VaultResult<Redacted.Redacted<string>>>;
+  readonly totpPreview: (id: CredentialId) => Promise<Vault.VaultResult<TotpPreview>>;
+}
 
 export interface ConversationHandle {
   readonly target: EntryTarget;
@@ -138,10 +192,69 @@ export interface UsageHandle {
   readonly release: () => void;
 }
 
+/** The operator's connectors and the gallery to find more in; see `Connectors`. */
+export interface ConnectorsClient {
+  readonly state: Readable<Synced<ReadonlyArray<Connector>>>;
+  readonly featured: (
+    language: Language,
+  ) => Promise<Actions.IntentResult<ReadonlyArray<ConnectorListing>>>;
+  readonly search: (input: {
+    readonly query: string;
+    readonly language: Language;
+    readonly all: boolean;
+  }) => Promise<Actions.IntentResult<Connectors.ConnectorSearch>>;
+  readonly listing: (
+    ref: ListingRef,
+    language: Language,
+  ) => Promise<Actions.IntentResult<ConnectorListingDetails>>;
+  readonly add: (
+    addition: Connectors.ConnectorAddition,
+  ) => Promise<Actions.IntentResult<Connector>>;
+  readonly update: (
+    connectorId: ConnectorId,
+    changes: Connectors.ConnectorChanges,
+  ) => Promise<Actions.IntentResult<Connector>>;
+  readonly remove: (connectorId: ConnectorId) => Promise<Actions.IntentResult>;
+  readonly setBots: (
+    connectorId: ConnectorId,
+    grant: ConnectorGrant,
+  ) => Promise<Actions.IntentResult<Connector>>;
+  readonly answerToolReview: (
+    connectorId: ConnectorId,
+    revision: ToolReviewRevision,
+    decision: "accept" | "keep",
+  ) => Promise<Actions.IntentResult<Connector>>;
+  readonly beginSignIn: (
+    connectorId: ConnectorId,
+    redirect: SignInRedirect,
+  ) => Promise<Actions.IntentResult<SignInStarted>>;
+  readonly completeSignIn: (url: Redacted.Redacted<string>) => Promise<Actions.IntentResult>;
+}
+
 /** Server state held open until `release`. */
 export interface LoadedHandle<A> {
   readonly state: Readable<Loaded<A>>;
   readonly release: () => void;
+}
+
+/** One tab of a bot's browser, shown while held. See `Browser.BrowserView`. */
+export interface BrowserViewHandle {
+  readonly state: Readable<Browser.BrowserViewState>;
+  readonly picture: Readable<Browser.BrowserPicture | null>;
+  readonly probe: Readable<Browser.BrowserProbe | null>;
+  readonly cursor: Readable<Browser.BrowserCursor | null>;
+  /** Calls `listener` with each answer to a `probe`. Returns the function that stops it. */
+  readonly onProbe: (listener: (probe: Browser.BrowserProbe) => void) => () => void;
+  /** Calls `listener` with each move and click of the bot's pointer. Returns the function that stops it. */
+  readonly onCursor: (listener: (cursor: Browser.BrowserCursor) => void) => () => void;
+  /** The picture `sequence` is drawn: the next may come. */
+  readonly ack: (sequence: number) => void;
+  readonly send: (input: BrowserInput) => void;
+  /**
+   * Closes the view's socket. It gives nothing back: a tab this device holds
+   * stays its own for the server's grace period, unless `release` was sent.
+   */
+  readonly close: () => void;
 }
 
 /** A file's bytes, or why there are none. */
@@ -370,6 +483,8 @@ export interface J3Client {
   ) => Promise<Actions.IntentResult<SettingsValue>>;
   /** Reads the settings again, as when Settings opens. */
   readonly refreshSettings: () => void;
+  /** Signs the bots' browser out of every site, for every bot. */
+  readonly signOutBrowser: () => Promise<Actions.IntentResult>;
   readonly refreshDevices: () => void;
   /** Waits ten seconds at most; see `Devices.revoke`. */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
@@ -385,10 +500,25 @@ export interface J3Client {
   readonly cancelSignIn: (harness: SignInHarness) => void;
   /** Where the server finds each harness; null when it cannot say. */
   readonly harnessLocations: () => Promise<ReadonlyArray<HarnessLocation> | null>;
+  readonly connectors: ConnectorsClient;
   /** Connects the providers to an endpoint, restarting the engine. */
   readonly connectEndpoint: (
     request: ProviderConnectionRequest,
   ) => Promise<ProviderSetup.ConnectEndpointResult>;
+
+  /** The tabs the bot has open in its browser, live while held. */
+  readonly openBrowserTabs: (botId: BotId) => LoadedHandle<ReadonlyArray<BrowserTab>>;
+  /**
+   * Shows one tab: its pictures and who holds it, on a socket of its own that
+   * opens again after a drop and while the app is in the foreground. `size`
+   * is read for each socket.
+   */
+  readonly openBrowserView: (input: {
+    readonly ref: BrowserTabRef;
+    readonly size: () => Browser.BrowserViewSize;
+  }) => BrowserViewHandle;
+  /** The operator's vault on the server; see `Vault`. */
+  readonly vault: VaultHandle;
 
   readonly setView: (target: EntryTarget | null) => void;
   /**
@@ -456,6 +586,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         presence: yield* Presence.Presence,
         usage: yield* Usage.Usage,
         providerSetup: yield* ProviderSetup.ProviderSetup,
+        browser: yield* Browser.Browser,
+        vault: yield* Vault.Vault,
+        connectors: yield* Connectors.Connectors,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -482,6 +615,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     };
     return { value, release };
   };
+
+  /** Calls `listener` with each value `readable` takes but null, until the returned function is called. */
+  const each = <A>(readable: Readable<A | null>, listener: (value: A) => void) =>
+    readable.subscribe(() => {
+      const value = readable.get();
+      if (value !== null) listener(value);
+    });
 
   /** Calls `listener` for each item of `stream` until the returned function is called. */
   const listen = <A>(stream: Stream.Stream<A>, listener: (item: A) => void) => {
@@ -651,6 +791,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
 
     updateSettings: (change) => run.promise(services.settings.update(change)),
     refreshSettings: () => fire(services.settings.refresh),
+    signOutBrowser: () => run.promise(services.settings.signOutBrowser),
     refreshDevices: () => fire(services.devices.refresh),
     revokeDevice: (deviceId) => run.promise(services.devices.revoke(deviceId)),
     startPairing: () =>
@@ -658,10 +799,39 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         services.devices.startPairing.pipe(Effect.exit, Effect.map(Actions.intentResult)),
       ),
 
+    vault: {
+      view: services.vault.view,
+      setup: (password) => run.promise(services.vault.setup(password)),
+      unlock: (password) => run.promise(services.vault.unlock(password)),
+      lock: () => run.promise(services.vault.lock),
+      changePassword: (current, next) => run.promise(services.vault.changePassword(current, next)),
+      save: (credential, request) => run.promise(services.vault.save(credential, request)),
+      update: (id, changes) => run.promise(services.vault.update(id, changes)),
+      remove: (id) => run.promise(services.vault.remove(id)),
+      setAllowedBots: (id, bots) => run.promise(services.vault.setAllowedBots(id, bots)),
+      reveal: (id, field) => run.promise(services.vault.reveal(id, field)),
+      totpPreview: (id) => run.promise(services.vault.totpPreview(id)),
+    },
     signIns: services.providerSetup.signIns,
     signIn: (harness, openPage) => fire(services.providerSetup.signIn(harness, openPage)),
     cancelSignIn: (harness) => fire(services.providerSetup.cancelSignIn(harness)),
     harnessLocations: () => run.promise(services.providerSetup.harnesses),
+    connectors: {
+      state: services.connectors.state,
+      featured: (language) => run.promise(services.connectors.featured(language)),
+      search: (input) => run.promise(services.connectors.search(input)),
+      listing: (ref, language) => run.promise(services.connectors.listing(ref, language)),
+      add: (addition) => run.promise(services.connectors.add(addition)),
+      update: (connectorId, changes) =>
+        run.promise(services.connectors.update(connectorId, changes)),
+      remove: (connectorId) => run.promise(services.connectors.remove(connectorId)),
+      setBots: (connectorId, grant) => run.promise(services.connectors.setBots(connectorId, grant)),
+      answerToolReview: (connectorId, revision, decision) =>
+        run.promise(services.connectors.answerToolReview(connectorId, revision, decision)),
+      beginSignIn: (connectorId, redirect) =>
+        run.promise(services.connectors.beginSignIn(connectorId, redirect)),
+      completeSignIn: (url) => run.promise(services.connectors.completeSignIn(url)),
+    },
     connectEndpoint: (request) => run.promise(services.providerSetup.connect(request)),
 
     serverUpdate: {
@@ -691,6 +861,24 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
               ),
             ),
         ),
+    },
+    openBrowserTabs: (botId) => {
+      const { value, release } = hold(services.browser.tabs(botId));
+      return { state: value, release };
+    },
+    openBrowserView: (input) => {
+      const { value, release } = hold(services.browser.view(input));
+      return {
+        state: value.state,
+        picture: value.picture,
+        probe: value.probe,
+        cursor: value.cursor,
+        onProbe: (listener) => each(value.probe, listener),
+        onCursor: (listener) => each(value.cursor, listener),
+        ack: (sequence) => fire(value.ack(sequence)),
+        send: (frame) => fire(value.send(frame)),
+        close: release,
+      };
     },
 
     setView: (target) => fire(services.presence.setView(target)),

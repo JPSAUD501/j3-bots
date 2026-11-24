@@ -7,9 +7,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import type { ToolBridge } from "../Engine.ts";
 import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./PrivateFiles.ts";
 import { linkSharedSkills } from "./SkillLinks.ts";
-import { editToml, type TomlEdit, type TomlTable } from "./toml.ts";
+import { editToml, type TomlEdit, type TomlInline, type TomlTable } from "./toml.ts";
 
 // Everything J3 Bots writes into the engine's data directory and the provider
 // homes it owns. Every file is written whole to a new file and renamed
@@ -52,10 +53,7 @@ export interface ProvisionInput {
   readonly home: string;
   readonly files: PrivateFiles;
   readonly instances: ReadonlyArray<InstanceSpec>;
-  readonly toolBridge: {
-    readonly command: string;
-    readonly args: ReadonlyArray<string>;
-  };
+  readonly toolBridge: ToolBridge;
   /** Relative to each workspace folder, as Claude Code resolves it. */
   readonly systemPromptFile: string;
   /** The base prompt every bot shares, which Codex takes as `developer_instructions`. */
@@ -125,12 +123,21 @@ const CLAUDE_DISALLOWED_TOOLS = [
   "PushNotification",
 ] as const;
 
-const claudeLaunchArgs = (systemPromptFile: string) =>
+/**
+ * Claude Code's launch arguments. Only J3 Bots' own tools are pre-approved,
+ * each by its exact name: every other tool the bridge lists, a connector's,
+ * follows the session's permission mode like any of the harness's own tools.
+ */
+const claudeLaunchArgs = (systemPromptFile: string, toolBridge: ToolBridge) =>
   [
     "--append-system-prompt-file",
     systemPromptFile,
-    "--allowedTools",
-    `mcp__${TOOL_SERVER}__*`,
+    ...(toolBridge.preApproved.length === 0
+      ? []
+      : [
+          "--allowedTools",
+          toolBridge.preApproved.map((tool) => `mcp__${TOOL_SERVER}__${tool}`).join(","),
+        ]),
     "--disallowedTools",
     CLAUDE_DISALLOWED_TOOLS.join(","),
   ].join(" ");
@@ -156,6 +163,11 @@ const ENGINE_SETTINGS = {
   continueThreadsAfterServerUpdate: false,
   // Also drops the engine's device instructions from every session.
   enableAgentDeviceAccess: false,
+  // The engine's browser acts with the operator's signed-in sites, so no bot
+  // has it unless the operator turned it on for that bot, which sets it in
+  // the bot's project (`BrowserAccess.ts`). The engine's default is on.
+  // **Read** at `59651c1`, `contracts/src/settings.ts`.
+  enableAgentBrowserAccess: false,
 } as const;
 
 const DRIVERS = {
@@ -266,7 +278,7 @@ const instanceConfig = (input: ProvisionInput, spec: InstanceSpec) => {
     case "claude-code":
       return {
         homePath: spec.home,
-        launchArgs: claudeLaunchArgs(input.systemPromptFile),
+        launchArgs: claudeLaunchArgs(input.systemPromptFile, input.toolBridge),
       };
     case "codex":
       return { homePath: spec.home };
@@ -356,15 +368,43 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
             ],
           },
         ];
+  // Only J3 Bots' own tools are approved ahead, each by name; the server's
+  // default stays Codex's, so a connector's tool follows the session's mode.
+  // **Verified** with Codex 0.171.0: an approved tool runs without asking in
+  // Supervised, any other asks, and in Full access none does. A call past
+  // `tool_timeout_sec` is cut off, also one that reports progress. The
+  // approvals are an inline `tools` table, the same TOML as a
+  // `[mcp_servers.j3.tools.<name>]` table each, so that the server's table is
+  // one pair also where the file writes `mcp_servers` as an inline table.
   const tools: TomlTable = {
     path: ["mcp_servers", TOOL_SERVER],
     values: [
       ["command", input.toolBridge.command],
       ["args", input.toolBridge.args],
-      ["default_tools_approval_mode", "approve"],
+      ["tool_timeout_sec", input.toolBridge.callTimeoutSeconds],
+      [
+        "tools",
+        {
+          inline: input.toolBridge.preApproved.map((tool): readonly [string, TomlInline] => [
+            tool,
+            { inline: [["approval_mode", "approve"]] },
+          ]),
+        },
+      ],
     ],
   };
-  const features: TomlTable = { path: ["features"], values: [["shell_snapshot", false]] };
+  const features: TomlTable = {
+    path: ["features"],
+    values: [
+      ["shell_snapshot", false],
+      // **Verified** with Codex 0.171.0: with it, Codex lists the `j3` server's
+      // tools again when the bridge says they changed, and a tool added
+      // mid-turn can be called in that turn; without it, not even at the
+      // next turn. So a connector granted to a bot reaches it without a new
+      // session.
+      ["mcp_tool_list_changed", true],
+    ],
+  };
   const commandHome: ReadonlyArray<TomlTable> =
     input.userHome === undefined
       ? []
@@ -558,6 +598,11 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
               command: input.toolBridge.command,
               args: input.toolBridge.args,
               env: {},
+              // Milliseconds. **Verified** with Claude Code 2.1.330: a call past
+              // it is cut off, also one that reports progress, and the bridge
+              // is sent `notifications/cancelled`. **Read** there: it
+              // overrides `MCP_TOOL_TIMEOUT`, 1e8 ms by default.
+              timeout: input.toolBridge.callTimeoutSeconds * 1000,
             },
           },
         });

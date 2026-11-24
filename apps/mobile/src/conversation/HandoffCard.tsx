@@ -70,7 +70,7 @@ function SentHandoff({
   const other = useBots().get(peer);
   const line = t("handoff.to", { name: other?.profile.name ?? t("bot.unknown") });
   return (
-    <View className="mt-3 px-4">
+    <View className="mt-2 px-4">
       <View
         style={{ maxWidth: widths.compactCard }}
         className="flex-row items-start gap-2.5 self-start rounded-bubble border border-border bg-surface px-3.5 py-1.5"
@@ -161,7 +161,7 @@ function ReceivedHandoff({
     </View>
   );
   return (
-    <View className="mt-3 gap-1 px-4">
+    <View className="mt-2 gap-1 px-4">
       <View className="flex-row flex-wrap items-center justify-center gap-x-1.5">
         {/* A deleted teammate has no conversation to go to. */}
         {other === undefined ? (

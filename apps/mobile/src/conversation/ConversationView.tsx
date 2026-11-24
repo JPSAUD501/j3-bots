@@ -37,6 +37,7 @@ import {
 import type {
   Bot,
   BotId,
+  BrowserHelpEntry,
   EntryId,
   EntryOrder,
   EntryTarget,
@@ -87,6 +88,7 @@ import { MessageBubble } from "./MessageBubble.tsx";
 import { AnimatedView } from "./animated.ts";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { ToLatest } from "./ToLatest.tsx";
+import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
 import { EntryWidths } from "./widths.ts";
 import { type TurnBot, WorkFold } from "./WorkFold.tsx";
 
@@ -215,6 +217,8 @@ export function ConversationView({
   // Mounted per conversation: the target stays the one it opened with.
   const [target] = useState(() => rosterTarget(rosterKeyOf(item)));
   /** A routine's runs, over its bot's details, which list it with the bot's other routines. */
+  const openBrowser = (card: BrowserHelpEntry) =>
+    navigation.push("browser", { botId: card.author.botId, ref: card.tab, help: card.id });
   const openRoutine = (routineId: RoutineId) => {
     onOpenDetails();
     if (target._tag === "conversation") {
@@ -260,6 +264,9 @@ export function ConversationView({
   );
   const [composerHeight, setComposerHeight] = useState(0);
   const [column, setColumn] = useState(0);
+  // The conversation is mounted once per conversation, and so is what its visuals share.
+  const [visuals] = useState(conversationVisuals);
+  useEffect(() => visuals.end, [visuals]);
   const widths = useMemo(() => {
     const { max, bubbleShare, cardShare } = layout.entryWidth;
     return {
@@ -330,66 +337,72 @@ export function ConversationView({
             setColumn(Math.min(event.nativeEvent.layout.width, layout.textColumn))
           }
         >
-          <EntryWidths value={widths}>
-            {quiet ? (
-              item._tag === "bot" ? (
-                <Quiet bot={item.bot} bottom={composerHeight} />
+          <ConversationVisualsContext value={visuals}>
+            <EntryWidths value={widths}>
+              {quiet ? (
+                item._tag === "bot" ? (
+                  <Quiet bot={item.bot} bottom={composerHeight} />
+                ) : (
+                  <QuietRoom room={item.room} bottom={composerHeight} />
+                )
               ) : (
-                <QuietRoom room={item.room} bottom={composerHeight} />
-              )
-            ) : (
-              <KeyboardAwareLegendList
-                ref={list}
-                data={rows}
-                keyExtractor={(row) => row.key}
-                getItemType={(row) => row.kind}
-                estimatedItemSize={64}
-                // Rows keep state of their own, such as an open fold: a row is never reused for another.
-                recycleItems={false}
-                renderItem={({ item: row }) => (
-                  <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
-                    <Row
-                      row={row}
-                      room={room}
-                      turnBot={turnBot}
-                      arriving={arrived.has(row.key)}
-                      openingHold={openingHold}
-                      onOpenBot={onOpenBot}
-                      onOpenRoutine={openRoutine}
-                    />
-                  </View>
-                )}
-                extraData={{ room, widths, arrived, openingHold, turnBot }}
-                onScroll={({ nativeEvent: { contentOffset, contentSize, layoutMeasurement } }) =>
-                  end.follow(
-                    contentSize.height - layoutMeasurement.height - contentOffset.y,
-                    layoutMeasurement.height,
-                  )
-                }
-                scrollEventThrottle={64}
-                alignItemsAtEnd
-                initialScrollAtEnd
-                maintainScrollAtEnd
-                maintainVisibleContentPosition
-                onStartReached={() => {
-                  if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
-                }}
-                ListHeaderComponent={
-                  state?.loadingOlder === true ? (
-                    <Text className="py-3 text-center text-xs text-muted-foreground">
-                      {t("timeline.loadingOlder")}
-                    </Text>
-                  ) : null
-                }
-                viewabilityConfigCallbackPairs={pairs}
-                contentInsetEndAdjustment={contentInsetEndAdjustment}
-                keyboardOffset={insets.bottom}
-                keyboardDismissMode="interactive"
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
-              />
-            )}
-          </EntryWidths>
+                <KeyboardAwareLegendList
+                  ref={list}
+                  data={rows}
+                  keyExtractor={(row) => row.key}
+                  getItemType={(row) => row.kind}
+                  estimatedItemSize={64}
+                  // Rows keep state of their own, such as an open fold: a row is never reused for another.
+                  recycleItems={false}
+                  renderItem={({ item: row }) => (
+                    <View className="w-full self-center" style={{ maxWidth: layout.textColumn }}>
+                      <Row
+                        row={row}
+                        room={room}
+                        turnBot={turnBot}
+                        arriving={arrived.has(row.key)}
+                        openingHold={openingHold}
+                        onOpenBot={onOpenBot}
+                        onOpenRoutine={openRoutine}
+                        onOpenBrowser={openBrowser}
+                      />
+                    </View>
+                  )}
+                  extraData={{ room, widths, arrived, openingHold, turnBot }}
+                  onScroll={({
+                    nativeEvent: { contentOffset, contentSize, layoutMeasurement },
+                  }) => {
+                    visuals.scrolled();
+                    end.follow(
+                      contentSize.height - layoutMeasurement.height - contentOffset.y,
+                      layoutMeasurement.height,
+                    );
+                  }}
+                  scrollEventThrottle={64}
+                  alignItemsAtEnd
+                  initialScrollAtEnd
+                  maintainScrollAtEnd
+                  maintainVisibleContentPosition
+                  onStartReached={() => {
+                    if (state?.hasOlder === true && !state.loadingOlder) loadOlder();
+                  }}
+                  ListHeaderComponent={
+                    state?.loadingOlder === true ? (
+                      <Text className="py-3 text-center text-xs text-muted-foreground">
+                        {t("timeline.loadingOlder")}
+                      </Text>
+                    ) : null
+                  }
+                  viewabilityConfigCallbackPairs={pairs}
+                  contentInsetEndAdjustment={contentInsetEndAdjustment}
+                  keyboardOffset={insets.bottom}
+                  keyboardDismissMode="interactive"
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{ paddingTop: 4, paddingBottom: 8 }}
+                />
+              )}
+            </EntryWidths>
+          </ConversationVisualsContext>
           {/* Over the composer, riding on the keyboard with it. */}
           {!quiet && (
             <KeyboardStickyView
@@ -543,6 +556,7 @@ function Row({
   openingHold,
   onOpenBot,
   onOpenRoutine,
+  onOpenBrowser,
 }: {
   readonly row: TimelineItem;
   /** In a room, its members and host now; null in a bot's conversation. */
@@ -555,6 +569,7 @@ function Row({
   readonly openingHold: OpeningHold | null;
   readonly onOpenBot: (botId: BotId) => void;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
+  readonly onOpenBrowser: (card: BrowserHelpEntry) => void;
 }) {
   const ctx = usePresentation();
   const client = useJ3Client();
@@ -565,7 +580,7 @@ function Row({
     case "divider":
       return (
         <AnimatedView {...entering}>
-          <Text className="py-3 text-center text-2xs text-muted-foreground">
+          <Text className="py-2 text-center text-2xs text-muted-foreground">
             {dividerTime(row.at, ctx)}
           </Text>
         </AnimatedView>
@@ -604,7 +619,12 @@ function Row({
               }}
             />
           ) : (
-            <Card entry={entry} onOpenBot={onOpenBot} onOpenRoutine={onOpenRoutine} />
+            <Card
+              entry={entry}
+              onOpenBot={onOpenBot}
+              onOpenRoutine={onOpenRoutine}
+              onOpenBrowser={onOpenBrowser}
+            />
           )}
         </AnimatedView>
       );

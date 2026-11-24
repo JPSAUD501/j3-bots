@@ -36,6 +36,8 @@ const BotRow = Schema.Struct({
   is_primary: Flag,
   pinned: Flag,
   hidden: Flag,
+  browser: Flag,
+  vault: Flag,
   section_id: Schema.NullOr(SectionId),
   workspace_path: Schema.String,
   workspace_root: Schema.NullOr(Schema.String),
@@ -75,6 +77,8 @@ const toStored = (
     primary: row.is_primary,
     pinned: row.pinned,
     hidden: row.hidden,
+    browser: row.browser,
+    vault: row.vault,
     sectionId: row.section_id,
     state,
     settingsHeld,
@@ -116,13 +120,15 @@ export interface BotChanges {
   readonly primary?: boolean;
   readonly pinned?: boolean;
   readonly hidden?: boolean;
+  readonly browser?: boolean;
+  readonly vault?: boolean;
   /** The section the bot moves into, or null for none. It must exist. */
   readonly sectionId?: SectionId | null;
 }
 
 const SELECT = `
   SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
-    permission_mode, is_primary, pinned, hidden, section_id, workspace_path, workspace_root,
+    permission_mode, is_primary, pinned, hidden, browser, vault, section_id, workspace_path, workspace_root,
     engine_project_id, created_at
   FROM bots
 `;
@@ -233,9 +239,18 @@ export const layer = Layer.effect(
       if (changes.primary !== undefined) columns["is_primary"] = changes.primary ? 1 : 0;
       if (changes.pinned !== undefined) columns["pinned"] = changes.pinned ? 1 : 0;
       if (changes.hidden !== undefined) columns["hidden"] = changes.hidden ? 1 : 0;
+      if (changes.browser !== undefined) columns["browser"] = changes.browser ? 1 : 0;
+      if (changes.vault !== undefined) columns["vault"] = changes.vault ? 1 : 0;
       if (changes.sectionId !== undefined) columns["section_id"] = changes.sectionId;
-      yield* sql`UPDATE bots SET ${sql.update(columns)} WHERE id = ${id}`.pipe(Effect.orDie);
-    });
+      // A browser taken away is withdrawn from the bot's project
+      // (`EngineSessions`), counted before the switch is written.
+      if (changes.browser === false) {
+        yield* sql`
+          UPDATE bots SET browser_withdrawals = browser_withdrawals + 1 WHERE id = ${id} AND browser = 1
+        `;
+      }
+      yield* sql`UPDATE bots SET ${sql.update(columns)} WHERE id = ${id}`;
+    }, Effect.orDie);
 
     const clearPrimary = Effect.fn("BotStore.clearPrimary")(function* (at: DateTime.Utc) {
       const previous = yield* primaryRows(undefined);

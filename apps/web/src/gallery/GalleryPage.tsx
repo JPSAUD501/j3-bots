@@ -10,6 +10,9 @@ import {
   type BotId,
   type BotTemplate,
   Conflict,
+  type Connector,
+  ConnectorGlyph,
+  CuratedKey,
   type EngineStatus,
   EntryId,
   type EntryTarget,
@@ -24,7 +27,9 @@ import {
   PairingCode,
   ProviderId,
   type ProviderStatus,
+  RegistryName,
   type Bot,
+  type BrowserTabRef,
   type Room,
   RoomId,
   type RosterItem,
@@ -81,14 +86,21 @@ import {
   avatarSeed,
   avatarStates,
   buildTimeline,
+  type ConnectorsPlace,
   liveTurn,
   withLiveTurn,
   mentionOptions,
   type OnboardingStep,
 } from "@j3-bots/client-runtime/presentation";
+import type { SignInRoute } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { BotsProvider, I18nProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
+import {
+  ConnectorAuthCard,
+  ConnectorSuggestionCard,
+} from "../components/connectors/ConnectorCards";
+import { ConnectorsScreen } from "../components/connectors/ConnectorsDialog";
 import { AvatarPicker } from "../components/avatar/AvatarPicker";
 import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
 import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
@@ -120,6 +132,7 @@ import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
+import { VisualTheme } from "../components/VisualCard";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { Roster } from "../components/Roster";
@@ -129,12 +142,15 @@ import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
+import { BrowserHelpCard } from "../components/BrowserHelpCard";
+import { CredentialRequestCard } from "../components/CredentialRequestCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
-import { EngineSection } from "../components/SettingsDialog";
+import { ConnectorsSection, EngineSection } from "../components/SettingsDialog";
 import type { LocalProviderSetup } from "../components/ProviderSetup";
 import { UsageSection } from "../components/UsageSection";
+import { VaultSection } from "../components/vault/VaultSection";
 import { WorkFold } from "../components/WorkFold";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
@@ -151,7 +167,9 @@ import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
+import { connectorsHolder, sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
 import { useSampleSource } from "./sampleSource";
+import { SAMPLE_VAULT_PASSWORD, useSampleVault } from "./sampleVault";
 import { galleryVariants } from "./variants";
 import {
   appPhases,
@@ -233,10 +251,12 @@ export default function GalleryPage() {
                 <NoticesSection />
                 <ComposerSection />
                 <DetailsSection />
+                <ConnectorsGallerySection />
                 <EditingSection />
                 <TemplatesSection />
                 <RoomsSection />
                 <EngineSettingsSection />
+                <VaultGallerySection />
                 <UsageGallerySection />
                 <FirstRunSection />
                 <LocalFirstRunSection />
@@ -282,7 +302,9 @@ function Section({
               {theme}
             </p>
             <div className="flex flex-col gap-6">
-              {typeof children === "function" ? children(theme) : children}
+              <VisualTheme value={theme}>
+                {typeof children === "function" ? children(theme) : children}
+              </VisualTheme>
             </div>
           </div>
         ))}
@@ -714,6 +736,7 @@ const sampleNotification = (
   botId,
   kind,
   preview: null,
+  connector: kind === "connector" ? "sign-in" : null,
 });
 
 /**
@@ -726,6 +749,7 @@ const sampleNotifications: ReadonlyArray<Notification> = [
   sampleNotification("question", ids.otto),
   sampleNotification("approval", ids.atlas),
   sampleNotification("secret-request", ids.iris),
+  sampleNotification("browser-help", ids.otto),
   sampleNotification("message", ids.ledger),
   sampleNotification("message", ids.wren, { _tag: "room", roomId: ids.newsletter }),
 ];
@@ -921,6 +945,9 @@ const timelineIntents: TimelineIntents = {
   decideApproval: nothing,
   provideSecret: nothing,
   declineSecret: nothing,
+  answerBrowserHelp: nothing,
+  openBrowser: nothing,
+  dismissLogin: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
   openWorkFold: nothing,
@@ -928,6 +955,9 @@ const timelineIntents: TimelineIntents = {
   openHandoff: nothing,
   openRoutine: nothing,
   openConversation: nothing,
+  connectSuggested: nothing,
+  dismissSuggestion: nothing,
+  signInConnector: nothing,
   resendMessage: nothing,
   discardMessage: nothing,
   closeWorkFold: nothing,
@@ -937,7 +967,8 @@ const workSteps = (entryId: string) => team.workSteps[entryId] ?? null;
 const notSubmitting = () => false;
 
 function BubblesSection() {
-  const { bubbles } = variants;
+  const galleryVault = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
+  const { bubbles, visualBubbles, escapingVisual, embeddingVisual } = variants;
   const { t } = useI18n();
   return (
     <Section title="Bubbles">
@@ -1023,6 +1054,39 @@ function BubblesSection() {
           />
         </div>
       </Labeled>
+      <Labeled label="A bot's visuals, each above its message: a chart, a table and a diagram">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          {visualBubbles.map((visualMessage) => (
+            <MessageBubble
+              key={visualMessage.id}
+              message={visualMessage}
+              position="single"
+              onOpenAttachment={nothing}
+              onRetry={nothing}
+            />
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="A visual that tries to get out of its frame: the client's storage and API, the window around it, a popup, the network, a peer connection, a frame of its own and spoofed messages; Leave takes its frame elsewhere, and Hang never ends">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={escapingVisual}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="A visual that embeds another page, which a client never shows">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={embeddingVisual}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+        </div>
+      </Labeled>
       <Labeled label="A conversation">
         <div className="max-w-(--layout-text-column)">
           <Timeline
@@ -1034,6 +1098,7 @@ function BubblesSection() {
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
+            vault={galleryVault}
             turnBot={{ bot: team.bots.scout, lastEntry: null }}
           />
         </div>
@@ -1046,6 +1111,7 @@ function BubblesSection() {
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
+            vault={galleryVault}
           />
         </div>
       </Labeled>
@@ -1073,6 +1139,26 @@ function CardsSection() {
       <Labeled label="Approval becoming exact while it waits: the change arrives after the summary, and focus in the summary moves to it">
         <ApprovalBecomingExact />
       </Labeled>
+      <Labeled
+        label={`Save a login: with no vault password, locked (the password is “${SAMPLE_VAULT_PASSWORD}”), unlocked, saved, dismissed`}
+      >
+        <LoginCards />
+      </Labeled>
+      <Labeled label="Connector suggestion: a gallery entry, one the operator added, connected, not now; sign in again: pending, signed in, removed">
+        <div className="flex flex-col gap-3">
+          {variants.connectorSuggestions.map((entry) => (
+            <ConnectorSuggestionCard
+              key={entry.id}
+              entry={entry}
+              onConnect={nothing}
+              onDismiss={nothing}
+            />
+          ))}
+          {variants.connectorAuths.map((entry) => (
+            <ConnectorAuthCard key={entry.id} entry={entry} onSignIn={nothing} />
+          ))}
+        </div>
+      </Labeled>
       <Labeled label="Credential: pending with a link, provided, declined, expired">
         <div className="flex flex-col gap-3">
           {variants.secrets.map((entry) => (
@@ -1085,7 +1171,39 @@ function CardsSection() {
           ))}
         </div>
       </Labeled>
+      <Labeled label="Help in the browser: a check, a sign-in, a step on no site; done, declined, the tab closed, expired">
+        <div className="flex flex-col gap-3">
+          {variants.browserHelps.map((entry) => (
+            <BrowserHelpCard
+              key={entry.id}
+              entry={entry}
+              onOpen={nothing}
+              onDone={nothing}
+              onDecline={nothing}
+            />
+          ))}
+        </div>
+      </Labeled>
     </Section>
+  );
+}
+
+/** A bot's save-login card in each state, each with a vault of its own. */
+function LoginCards() {
+  const uninitialized = useSampleVault({ state: "uninitialized", now: () => SAMPLE_NOW });
+  const locked = useSampleVault({ state: "locked", now: () => SAMPLE_NOW });
+  const unlocked = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
+  const [first, ...closed] = variants.logins;
+  if (first === undefined) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      <CredentialRequestCard entry={first} vault={uninitialized} onDismiss={nothing} />
+      <CredentialRequestCard entry={first} vault={locked} onDismiss={nothing} />
+      <CredentialRequestCard entry={first} vault={unlocked} onDismiss={nothing} />
+      {closed.map((entry) => (
+        <CredentialRequestCard key={entry.id} entry={entry} vault={unlocked} onDismiss={nothing} />
+      ))}
+    </div>
   );
 }
 
@@ -1161,7 +1279,7 @@ function WorkSection() {
           ))}
         </div>
       </Labeled>
-      <Labeled label="Folded: running with no turn seen, finished, loading its steps, stopped, failed">
+      <Labeled label="Folded: running with no turn seen, finished, loading its steps, stopped, failed, filling saved logins (filled, refused on a lookalike, vault locked)">
         <div className="flex flex-col gap-2">
           {variants.folds.map(({ entry, steps, open }) => (
             <WorkFold
@@ -1412,6 +1530,8 @@ function ComposerSection() {
   );
 }
 
+const READY_BROWSER = { _tag: "ready" } as const;
+
 const detailsIntents = {
   setRoutineEnabled: nothing,
   openRoutine: nothing,
@@ -1422,6 +1542,9 @@ const detailsIntents = {
   freshStart: nothing,
   deleteBot: nothing,
   shareTemplate: nothing,
+  setBrowser: nothing,
+  setVault: nothing,
+  openConnectors: nothing,
 };
 
 const roomIntents = {
@@ -1502,19 +1625,24 @@ function DetailsSection() {
             routines={team.routines[scout.id] ?? []}
             memory={team.memory[scout.id] ?? []}
             files={team.files[scout.id] ?? []}
+            connectors={sampleConnectors}
             modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={READY_BROWSER}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}
           />
         </Pane>
         <Pane>
+          {/* The browser and vault access on, and the vault's on with the browser off. */}
           <BotDetails
-            bot={atlas}
+            bot={{ ...atlas, browser: true, vault: true }}
             routines={team.routines[atlas.id] ?? []}
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
+            connectors={sampleConnectors}
             modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={READY_BROWSER}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}
@@ -1522,11 +1650,13 @@ function DetailsSection() {
         </Pane>
         <Pane>
           <BotDetails
-            bot={moss}
+            bot={{ ...moss, vault: true }}
             routines={[]}
             memory={[]}
             files={[]}
+            connectors={sampleConnectors}
             modelName={null}
+            browserHost={READY_BROWSER}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}
@@ -1548,7 +1678,9 @@ function DetailsSection() {
             routines={null}
             memory={null}
             files={null}
+            connectors={null}
             modelName="Claude Code · Claude Sonnet 5.5"
+            browserHost={READY_BROWSER}
             intents={detailsIntents}
             stopShortcut={shortcuts.stop}
             onClose={nothing}
@@ -1823,6 +1955,139 @@ function EditingSection() {
             failure: { _tag: "refused", error: new Conflict({ reason: "private-location" }) },
           }}
         />
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * The connectors screen on one page, in a frame the size of a sheet, over a
+ * server of the sample's that answers and keeps what changes in the frame.
+ */
+function ConnectorsVariant({
+  label,
+  at,
+  route = { _tag: "paste" },
+  connected = true,
+  initial = sampleConnectors,
+}: {
+  label: string;
+  at: ConnectorsPlace;
+  route?: SignInRoute;
+  connected?: boolean;
+  initial?: ReadonlyArray<Connector>;
+}) {
+  const titleId = useId();
+  const [connectors, setConnectors] = useState(initial);
+  const [intents] = useState(() =>
+    sampleConnectorsIntents(connectorsHolder(initial, setConnectors), route),
+  );
+  return (
+    <Frame label={label} width={400} height={720}>
+      <div className="flex h-full flex-col bg-background">
+        <ConnectorsScreen
+          titleId={titleId}
+          opening={{ at, forBot: ids.scout, suggestion: null }}
+          connectors={connectors}
+          bots={Object.values(team.bots)}
+          connected={connected}
+          intents={intents}
+          onClose={nothing}
+        />
+      </div>
+    </Frame>
+  );
+}
+
+const sampleConnectorId = (index: number) => {
+  const connector = sampleConnectors[index];
+  if (connector === undefined) throw new Error(`No sample connector ${index}`);
+  return connector.id;
+};
+
+/** The desktop app's way back from a sign-in, listening on a port of the sample's. */
+const relay: SignInRoute = {
+  _tag: "relay",
+  listen: () => Promise.resolve(51734),
+  expect: () => Promise.resolve(true),
+  onReturn: () => nothing,
+  stop: nothing,
+};
+
+const listingAt = (key: string, name: string, glyph: string | null): ConnectorsPlace => ({
+  _tag: "listing",
+  ref: { _tag: "curated", key: CuratedKey.make(key) },
+  name,
+  glyph: glyph === null ? null : ConnectorGlyph.make(glyph),
+});
+
+/** The sample's connectors with the tool changes waiting on one answered "Not now". */
+const keptReview = sampleConnectors.map((connector) =>
+  connector.review === null
+    ? connector
+    : { ...connector, review: { ...connector.review, kept: true } },
+);
+
+const connectorAt = (index: number, signIn = false): ConnectorsPlace => ({
+  _tag: "connector",
+  connectorId: sampleConnectorId(index),
+  signIn,
+  added: false,
+});
+
+function ConnectorsGallerySection() {
+  return (
+    <Section title="Connectors">
+      <Labeled label="Settings: the connectors, how many work and how many need you">
+        <ConnectorsSection connectors={sampleConnectors} onOpen={nothing} />
+      </Labeled>
+      <div className="flex flex-wrap gap-4">
+        <ConnectorsVariant label="Yours and featured; type to search" at={{ _tag: "home" }} />
+        <ConnectorsVariant label="Offline" at={{ _tag: "home" }} connected={false} />
+        <ConnectorsVariant
+          label="An entry that signs in"
+          at={listingAt("notion", "Notion", "notebook")}
+        />
+        <ConnectorsVariant
+          label="An entry that needs an app you register"
+          at={listingAt("google-calendar", "Google Calendar", "calendar")}
+        />
+        <ConnectorsVariant
+          label="An entry that needs an app you register, with sign-ins back at the server"
+          at={listingAt("google-calendar", "Google Calendar", "calendar")}
+          route={{ _tag: "server" }}
+        />
+        <ConnectorsVariant
+          label="An entry that takes a key"
+          at={listingAt("sentry", "Sentry", null)}
+        />
+        <ConnectorsVariant
+          label="An entry that runs a command"
+          at={{
+            _tag: "listing",
+            ref: { _tag: "registry", name: RegistryName.make("io.example/files") },
+            name: "Local files",
+            glyph: ConnectorGlyph.make("folder"),
+          }}
+        />
+        <ConnectorsVariant label="Connected, for all bots" at={connectorAt(0)} />
+        <ConnectorsVariant
+          label="Signing in again from a browser: paste the address"
+          at={connectorAt(1, true)}
+        />
+        <ConnectorsVariant
+          label="Signing in again from the desktop app"
+          at={connectorAt(1, true)}
+          route={relay}
+        />
+        <ConnectorsVariant label="Can't reach, with tool changes to review" at={connectorAt(2)} />
+        <ConnectorsVariant
+          label="Tool changes answered Not now: held, with no badge"
+          at={connectorAt(2)}
+          initial={keptReview}
+        />
+        <ConnectorsVariant label="Vault locked" at={connectorAt(3)} />
+        <ConnectorsVariant label="Add your own" at={{ _tag: "add-own" }} />
       </div>
     </Section>
   );
@@ -2142,6 +2407,40 @@ function EngineSettingsSection() {
   );
 }
 
+function VaultGallerySection() {
+  const now = () => SAMPLE_NOW;
+  const none = useSampleVault({ state: "uninitialized", now });
+  const locked = useSampleVault({ state: "locked", now });
+  const unlocked = useSampleVault({ state: "unlocked", now, credentials: variants.credentials });
+  const empty = useSampleVault({ state: "unlocked", now });
+  const newer = useSampleVault({ state: "newer", now });
+  return (
+    <Section title="Settings: the vault">
+      <div className="flex flex-wrap gap-4">
+        <Frame label="No password yet" width={420} height={360}>
+          <VaultSection vault={none} />
+        </Frame>
+        <Frame
+          label={`Locked (the password is “${SAMPLE_VAULT_PASSWORD}”)`}
+          width={420}
+          height={260}
+        >
+          <VaultSection vault={locked} />
+        </Frame>
+        <Frame label="Unlocked, with saved logins" width={420} height={760}>
+          <VaultSection vault={unlocked} />
+        </Frame>
+        <Frame label="Unlocked, with none saved" width={420} height={220}>
+          <VaultSection vault={empty} />
+        </Frame>
+        <Frame label="Changed by a newer release" width={420} height={140}>
+          <VaultSection vault={newer} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
 function UsageGallerySection() {
   const usage = (
     engine: EngineStatus | null,
@@ -2238,9 +2537,11 @@ function FirstRunAt({
   engine?: EngineStatus | null;
   providerSetup?: LocalProviderSetup;
 }) {
+  const vault = useSampleVault({ state: "uninitialized", now: () => SAMPLE_NOW });
   return (
     <Onboarding
       engine={engine}
+      vault={vault}
       initialStep={step}
       initialName="Nova"
       providerSetup={providerSetup}
@@ -2262,8 +2563,15 @@ function FirstRunSection() {
         <Frame label="The first bot's name, with a default" width={390} height={760}>
           <FirstRunAt step="name" />
         </Frame>
-        <Frame label="Its look; with a provider, this step creates it" width={390} height={760}>
+        <Frame label="Its look" width={390} height={760}>
           <FirstRunAt step="look" />
+        </Frame>
+        <Frame
+          label="The vault's password, skippable; with a provider, this step creates the bot"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="vault" />
         </Frame>
         <Frame label="No provider connected: one command, live" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.connect} />
@@ -3214,27 +3522,45 @@ function UpdatesGallerySection() {
 function ShellFrame({
   initial,
   details = false,
+  browser = false,
   firstRun = false,
   engine,
 }: {
   initial: RosterItemKey | null;
   details?: boolean;
+  /** The bot's browser open on its front tab. */
+  browser?: boolean;
   firstRun?: boolean;
   engine?: EngineStatus;
 }) {
   const source = useSampleSource(engine === undefined ? { firstRun } : { firstRun, engine });
   const [selected, setSelected] = useState(initial);
   const [detailsOpen, setDetailsOpen] = useState(details);
+  const [browserTarget, setBrowserTarget] = useState<BrowserTabRef | "front" | null>(
+    browser ? "front" : null,
+  );
   return (
     <Shell
       data={source.data}
       intents={source.intents}
+      browser={source.browser}
       keyboard={false}
       navigation={{
         selected,
         detailsOpen: detailsOpen && selected !== null,
-        select: setSelected,
-        setDetailsOpen,
+        select: (key) => {
+          setSelected(key);
+          setBrowserTarget(null);
+        },
+        setDetailsOpen: (open) => {
+          setDetailsOpen(open);
+          if (open) setBrowserTarget(null);
+        },
+        browser: browserTarget,
+        setBrowser: (target) => {
+          setBrowserTarget(target);
+          if (target !== null) setDetailsOpen(false);
+        },
         rowLink: (item) => rowButton(() => setSelected(rowKey(item))),
       }}
     />
@@ -3248,6 +3574,13 @@ function ShellSection() {
       <div className="flex flex-col gap-6">
         <Frame label="Desktop, 1280 px: roster, conversation and details" width={1280} height={760}>
           <ShellFrame initial={scout} details />
+        </Frame>
+        <Frame
+          label="Desktop, 1440 px: Scout's browser beside the conversation; Take control hands the page to the operator, Done gives it back"
+          width={1440}
+          height={800}
+        >
+          <ShellFrame initial={scout} browser />
         </Frame>
         <Frame
           label="Tablet, 900 px: the name opens the details as a modal dialog over the conversation; Escape, the scrim or the close button returns to the title"
@@ -3270,6 +3603,13 @@ function ShellSection() {
             height={760}
           >
             <ShellFrame initial={{ _tag: "bot", botId: ids.atlas }} />
+          </Frame>
+          <Frame
+            label="Phone: Scout's browser, a sheet over the conversation"
+            width={390}
+            height={760}
+          >
+            <ShellFrame initial={scout} browser />
           </Frame>
         </div>
       </div>

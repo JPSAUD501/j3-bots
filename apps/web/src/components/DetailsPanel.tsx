@@ -3,6 +3,9 @@ import type {
   Attachment,
   Bot,
   BotFile,
+  BrowserHostStatus,
+  Connector,
+  ConnectorId,
   MemoryFile,
   MemoryPath,
   Room,
@@ -18,6 +21,8 @@ import {
   CirclePauseIcon,
   CpuIcon,
   FileTextIcon,
+  GlobeIcon,
+  KeyRoundIcon,
   NotebookTextIcon,
   PencilIcon,
   RotateCcwIcon,
@@ -37,9 +42,10 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { canStop, roomStop } from "@j3-bots/client-runtime/presentation";
+import { canStop, connectorsOf, roomStop } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
+import { ConnectorTile, StatusWord } from "./connectors/parts";
 import {
   activityTime,
   fileSize,
@@ -222,6 +228,10 @@ export interface BotDetailsIntents {
   readonly openRoutine: (routineId: RoutineId) => void;
   readonly openAttachment: (attachment: Attachment) => void;
   readonly openMemoryFile: (path: MemoryPath) => void;
+  /** Gives the bot the browser, or takes it away, from its next turn. */
+  readonly setBrowser: (enabled: boolean) => void;
+  /** Lets the bot have its allowed logins filled, or stops it, from its next fill. */
+  readonly setVault: (enabled: boolean) => void;
   /** Absent where the bot cannot be edited. */
   readonly editProfile?: () => void;
   /** Stops the bot's work under way at once, as its keyboard shortcut does. */
@@ -229,6 +239,8 @@ export interface BotDetailsIntents {
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
   readonly shareTemplate: () => void;
+  /** Opens the connectors screen for this bot: on one connector's page, or on all of them. */
+  readonly openConnectors: (connectorId: ConnectorId | null) => void;
 }
 
 interface BotDetailsProps {
@@ -238,8 +250,12 @@ interface BotDetailsProps {
   /** Files the bot delivered, newest first. */
   readonly files: ReadonlyArray<BotFile> | null;
   readonly memory: ReadonlyArray<MemoryFile> | null;
+  /** Every connector the operator added, the bot's among them; null while they load. */
+  readonly connectors: ReadonlyArray<Connector> | null;
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
+  /** Whether the browser can run on the server's computer; null until the engine has said. */
+  readonly browserHost: BrowserHostStatus | null;
   readonly intents: BotDetailsIntents;
   /** The keys that stop the bot, shown on its Stop. */
   readonly stopShortcut: { readonly label: string; readonly aria: string };
@@ -257,7 +273,9 @@ export function BotDetails({
   routines,
   files,
   memory,
+  connectors,
   modelName,
+  browserHost,
   intents,
   stopShortcut,
   onClose,
@@ -371,6 +389,18 @@ export function BotDetails({
         )}
       </DetailsSection>
 
+      <DetailsSection title={t("details.connectors")}>
+        {connectors === null ? (
+          <SkeletonRows count={1} />
+        ) : (
+          <BotConnectors
+            connectors={connectorsOf(connectors, bot.id)}
+            name={name}
+            onOpen={intents.openConnectors}
+          />
+        )}
+      </DetailsSection>
+
       <DetailsSection title={t("details.model")}>
         <dl className="flex flex-col gap-3 text-sm">
           <div className="flex items-start gap-3">
@@ -389,6 +419,47 @@ export function BotDetails({
             </div>
           </div>
         </dl>
+      </DetailsSection>
+
+      <DetailsSection title={t("details.browser")}>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-start gap-3">
+            <GlobeIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p id={`${bot.id}-browser`} className="text-sm">
+                {t("details.browser.use")}
+              </p>
+              <p className="text-xs text-muted-foreground">{t("details.browser.hint", { name })}</p>
+              {bot.browser && browserHost?._tag === "setup-required" && (
+                <p className="mt-1 text-xs text-blocked">{t("details.browser.setup")}</p>
+              )}
+            </div>
+            <Switch
+              checked={bot.browser}
+              onCheckedChange={intents.setBrowser}
+              aria-labelledby={`${bot.id}-browser`}
+            />
+          </div>
+          <div className="flex items-start gap-3">
+            <KeyRoundIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <p id={`${bot.id}-vault`} className="text-sm">
+                {t("details.vault.use")}
+              </p>
+              <p className="text-xs text-muted-foreground">{t("details.vault.hint", { name })}</p>
+              {bot.vault && !bot.browser && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("details.vault.needsBrowser")}
+                </p>
+              )}
+            </div>
+            <Switch
+              checked={bot.vault}
+              onCheckedChange={intents.setVault}
+              aria-labelledby={`${bot.id}-vault`}
+            />
+          </div>
+        </div>
       </DetailsSection>
 
       <DetailsSection title={t("details.workingContext")}>
@@ -415,6 +486,46 @@ export function BotDetails({
         <DeleteBot name={name} onDelete={intents.deleteBot} />
       </Apart>
     </PanelFrame>
+  );
+}
+
+/**
+ * The connectors the bot may use, each with its status, opening its page;
+ * then the connectors screen, where the operator connects more for it.
+ */
+function BotConnectors({
+  connectors,
+  name,
+  onOpen,
+}: {
+  connectors: ReadonlyArray<Connector>;
+  name: string;
+  onOpen: (connectorId: ConnectorId | null) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="appear flex flex-col gap-2">
+      {connectors.length === 0 ? (
+        <Quiet>{t("details.noConnectors", { name })}</Quiet>
+      ) : (
+        <ul className="-mx-2 flex flex-col">
+          {connectors.map((connector) => (
+            <li key={connector.id}>
+              <button type="button" className={rowButton} onClick={() => onOpen(connector.id)}>
+                <ConnectorTile name={connector.name} glyph={connector.glyph} />
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm font-medium">{connector.name}</span>
+                  <StatusWord connector={connector} />
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Button size="sm" className="self-start" onClick={() => onOpen(null)}>
+        {t("details.connectors.manage")}
+      </Button>
+    </div>
   );
 }
 

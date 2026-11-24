@@ -29,7 +29,7 @@ import Migration0012 from "./migrations/0012_room_integrity.ts";
 import Migration0013 from "./migrations/0013_bot_avatar_colors.ts";
 import { updateChannelMigration } from "./migrations/0023_update_channel.ts";
 import { json } from "./columns.ts";
-import { migrate } from "./Migrations.ts";
+import { migrate, migrationsThrough } from "./Migrations.ts";
 import * as Sqlite from "./Sqlite.ts";
 
 const now = "2026-11-20T09:00:00.000Z";
@@ -155,6 +155,14 @@ it.effect("upgrades a database the last release wrote, keeping its rows and thei
         SELECT entry_id FROM attachments WHERE id = 'file-1'
       `;
       assert.deepStrictEqual(files, [{ entry_id: "entry-1" }]);
+      // The entry kept its kind when the kind's check widened (the browser help migration),
+      // and an entry still cannot change it.
+      const kinds = yield* sql<{ readonly kind: string }>`SELECT kind FROM entries`;
+      assert.deepStrictEqual(kinds, [{ kind: "message" }]);
+      const changed = yield* sql`UPDATE entries SET kind = 'notice' WHERE id = 'entry-1'`.pipe(
+        Effect.flip,
+      );
+      assert.include(String(changed.reason.cause), "keeps its target, its place and its kind");
       // The command retried answers as it did, a bot with no settings change held.
       const [receipt] = yield* sql<{ readonly result_json: string }>`
         SELECT result_json FROM command_receipts WHERE command_id = 'command-1'
@@ -494,5 +502,71 @@ it.effect("starts the update channel as the one of the release that first runs w
     assert.strictEqual(yield* channelFrom("0.3.2-nightly.20261124.1"), "nightly");
     assert.strictEqual(yield* channelFrom("0.3.1"), "stable");
     assert.strictEqual(yield* channelFrom("0.3.1-rc.1"), "stable");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("admits the save-login card's kind, keeping every entry and what links to it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA foreign_keys = ON`;
+      yield* migrate(migrationsThrough(22));
+      yield* sql`
+        INSERT INTO bots (
+          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+          permission_mode, workspace_path, created_at, updated_at
+        ) VALUES (
+          'scout', 'scout', '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', '/bots/scout',
+          ${now}, ${now}
+        )
+      `;
+      yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
+      yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, body_json, created_at, updated_at
+        ) VALUES ('entry-1', 'scout', 0, 'message', 'operator', '{}', ${now}, ${now})
+      `;
+      yield* sql`
+        INSERT INTO blobs (sha256, size, storage_path, created_at)
+        VALUES ('abc', 1, 'blobs/abc', ${now})
+      `;
+      yield* sql`
+        INSERT INTO attachments (id, sha256, name, media_type, source, entry_id, created_at)
+        VALUES ('file-1', 'abc', 'notes.txt', 'text/plain', 'operator', 'entry-1', ${now})
+      `;
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // The file still names its entry: the table was never dropped under it.
+      const links = yield* sql`SELECT entry_id FROM attachments WHERE id = 'file-1'`;
+      assert.deepStrictEqual(links, [{ entry_id: "entry-1" }]);
+      const kinds = yield* sql`SELECT id, kind FROM entries`;
+      assert.deepStrictEqual(kinds, [{ id: "entry-1", kind: "message" }]);
+
+      yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+          created_at, updated_at
+        ) VALUES (
+          'entry-2', 'scout', 1, 'credential-request', 'bot', 'scout', '{}', ${now}, ${now}
+        )
+      `;
+      const unknown = yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, body_json, created_at, updated_at
+        ) VALUES ('entry-3', 'scout', 2, 'postcard', 'operator', '{}', ${now}, ${now})
+      `.pipe(Effect.flip);
+      assert.strictEqual(unknown.reason._tag, "ConstraintError");
+      // An entry still keeps its kind: the check takes `notice`, the trigger does not.
+      const moved = yield* sql`UPDATE entries SET kind = 'notice' WHERE id = 'entry-1'`.pipe(
+        Effect.flip,
+      );
+      assert.strictEqual(moved.reason._tag, "ConstraintError");
+    }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

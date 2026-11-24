@@ -37,6 +37,18 @@ A bot needs a decision or permission.
 - Both produce a notification on the operator's devices. Answering on any device resolves the card everywhere.
 - A question the bot asked on its own can be dismissed, which is a "no". The bot does not ask again. A question its coding tool asks mid-task has no dismiss: it waits for an answer, or for the operator to stop the bot.
 
+### Watching the bot's browser, and taking it over
+
+A bot shops, books or reads a site in its own browser, on the machine J3 Bots runs on.
+
+- While the bot has a page open, a globe sits in its conversation's header, its mark breathing while the bot acts on the page. Under the line of the turn under way, a picture of the page and the site's name, taken again as the page changes and every few seconds while the bot works. It is a picture, not a live view: watching it costs nothing.
+- Either opens the browser: beside the conversation on a wide window, over it on a tablet, rising from the bottom on a phone. The page is live, its site and address shown, and a line says who is acting on it: "The bot is browsing", "You have control" or "On another device". While the operator only watches, the page takes nothing they do, and the bot's pointer shows where it acts.
+- **Take control** is the one primary action. Once taken, the bot cannot act on the page, and everything the operator does over it goes to the page: the pointer, the wheel, typing, a phone's keyboard on a field they tap. Back, forward, reload and the address field appear only now. **Done** gives the page back to the bot.
+- When the bot asked for help on the page (a sign-in, a code, a check that a person is there), **Done** tells it the step is done, and **Can't do it** tells it the operator could not; either gives the page back. **Open browser** on that card opens the browser on the page.
+- A sign-in window the page opens shows in the browser as the bot's front page; the operator keeps control in it, and the browser goes back to the page it came from when it closes.
+- Leaving the browser while in control asks once whether to give the page back to the bot. Keeping it leaves the bot waiting until the operator returns and presses Done; giving it back this way leaves a help card open, since the step may not be done.
+- The operator's clipboard and files never reach the page: pasting, dropping, downloads and file pickers are out of reach in this version.
+
 ### Work that starts on its own
 
 The operator says "every weekday morning, tell me what changed in the repo" or "let me know when the deploy finishes".
@@ -81,6 +93,27 @@ The operator has a bot that does its job well and wants someone else to have it,
 
 What a template holds and leaves out is in [Concepts](concepts.md) and [decision 0023](../decisions/0023-a-bot-template-is-a-file.md).
 
+### Giving a bot a service
+
+The operator wants a bot to reach something it cannot yet: their notes, their tracker, their calendar.
+
+- **Connectors**, in Settings and in a bot's details, opens one screen: the operator's connectors first, each with its status and who may use it, then the gallery's featured entries and a search of it. "Add your own" is the last row. A bot can suggest one in its conversation, with a card that says why; Connect on the card opens the same screen at that entry, for that bot.
+- An entry's page says what the connector lets bots do, in J3 Bots' own words for a curated one and its publisher's for one from the registry, and who published it. It connects the way the service asks:
+  - **Sign in**: one press opens the system browser at the service. On the desktop app the browser comes back to the app, which hands the sign-in to the server, and the page says it is done. On the web, served over plain HTTP, the browser ends on a page that does not load; the screen says to copy that page's address and paste it, and that the desktop or phone app does this without the step. Served over `https:` with its address set (`publicOrigin`), the server takes the browser back itself. On the phone the service opens over the app, in the browser's own tab; the phone takes the browser back and hands it to the server, with a notification while it waits, or, from a server reached over `https:` with its address set, the server takes it back itself. Over `https:` without it, the phone asks for the address to paste, as the web does.
+  - **A key or token**: where to make one, with a button that opens that page, then masked fields, with what each is for. One that takes one of a few values is a list to pick from.
+  - **An app of the operator's own**, for a service that asks for one: the steps to register it, a button that opens where to do so, the redirect address to register on it for the way this device signs in, as the server states it, ready to copy, then its client ID and its secret. A curated entry already knows the service's issuer; for another, the operator gives it. J3 Bots uses that app only with that issuer.
+  - **A command**, for a registry entry the server runs: the whole command line, and a confirmation that it runs on the operator's computer, as their user, before it is added.
+- Who may use it starts as the bot that suggested it, or the primary bot, and widens to some bots or all of them, those made later included.
+- On the phone, Add your own takes an address only, and a connector that runs a command shows read-only, with a line that it is connected, changed or removed from J3 Bots on the computer: the phone is no place to review a command that runs on the server. Its status, and why it is not running, read as on the computer.
+- **Add your own** takes an `https:` address, with any headers and an OAuth client the service gave the operator (its issuer, client ID and secret), or a command with its arguments and environment. A key belongs in the environment, where it is masked, never in an argument. An address in the operator's own network is added only once they confirm they meant it.
+- **A command** is a program on the computer that runs J3 Bots, one argument a line, and environment variables, each a name and a masked value. Before it is sent, the form says what the server would refuse: a package `npx` or `uvx` fetches at no exact version (with an example of one), a launcher option J3 Bots cannot read past, a variable such as `PATH` that chooses which program runs, or one named twice. Then a confirmation shows the whole command line, every argument as it will run, and the name of every variable, never a value, and says it runs there as the operator's user, with everything that user can reach. Nothing runs until they choose Run it.
+- A command connector's page has **Change command**: its program and its variables' names as they are, its arguments and values never shown. A new value alone is saved as it is, an empty one keeping its own. Anything else (the program, the arguments, a variable's name, one added or removed) needs the arguments and each value typed again, since the command line is saved whole, and asks for the confirmation again, marking a variable that is new, one that is gone and a program that changed. The process the old command started stops, and the new one lists its tools: a tool that is new or changed waits for the operator as for any connector. Disconnect says the program stops and its variables' values are deleted.
+- A connector's page shows its status and what fixes it: connected; needs signing in again (Sign in again); can't reach it, and why; a command that is not running, because its program is not on the computer (install it, or name it by its full path) or because it stopped or could not start (check the command and its variables; it starts again when a bot next uses it, waiting longer each time); or the vault locked (Unlock, which opens Settings over the screen; closing Settings returns to the page as it was, with anything typed in it). Its tools are listed once it is connected. It says which bots use it, changed in place, and the origin of its address or the program it runs, never the whole address or the arguments, which can carry a key. Disconnect asks first.
+- When a connector's tools change, its page shows what is new or changed, and bots get none of those until the operator accepts them; its other tools work as before. "Not now" leaves them held, without a badge, and Accept stays on the page.
+- A bot that finds its connector signed out says so with a card in its conversation, whose Sign in again opens the connector's page and starts the sign-in, or opens its form again for one that takes a key.
+
+What a connector is, and what a bot can and cannot do with one, is in [Concepts](concepts.md); how its secrets are kept is in [Security: connectors](../architecture/security.md#connectors).
+
 ### Knowing what it costs
 
 - A usage view shows each provider's limit windows as the engine reports them, and which bots and routines used turns recently.
@@ -121,6 +154,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 - Messages as bubbles, the operator's on one side and the bot's on the other, with timestamps between groups.
 - Cards inline: questions, approvals, files, handoffs, routines created or changed.
 - A finished turn's work folds into one line ("Worked for 2m") that opens to show the steps.
+- While the bot has a page open in its browser, a globe in the header, and a picture of the page under the turn under way, open the browser.
 - A composer labeled with the bot's name. Attachments and dictation are in the composer; nothing else is. A file stands in the message where the operator put it ("compare [image] with [image]"), and the bot reads it there, numbered and named as in the harness's list of files. A tap on a file shows it: an image in a viewer, anything else in the app that opens it.
 
 ### Details
@@ -131,12 +165,13 @@ Answers: what is this bot, and what runs without me.
 - Routines with their schedule, next run, last result, and a pause switch.
 - Files the bot produced.
 - Memory, readable and editable.
+- Connectors this bot may use, each with its status, and a way to the connectors screen.
 - Model and permission mode.
 
 ### Outside those three
 
 - **Command palette** on desktop and web: jump to a bot, a room or a message; run any action by name.
-- **Settings**: engine and provider status, usage, the operator's name and time zone, devices, notifications, appearance, and about and updates: the server's version and channel, and in the desktop app, the app's.
+- **Settings**: engine and provider status, connectors, usage, the operator's name and time zone, devices, notifications, appearance, and about and updates: the server's version and channel, and in the desktop app, the app's.
 - **Updates on the phone.** When the server or the app has an update, one quiet line over the roster says so, never a dialog. It opens Settings → About and updates, and hides until the next release. While the server updates, the same line shows how far it has come, its restart included, in place of the line that says the server cannot be reached. It then says once how the update ended. The app's own update is a tap too: the app downloads the release and checks it against the project's signature, and Android asks to install it. The first time, the app explains Android's "Install unknown apps" before it opens that page, and goes on when the operator comes back. A phone whose server speaks another protocol shows the side that is behind, with the update that brings it forward. A server behind the app is first asked to look for releases, so the phone says none is out yet only after it has looked. An app behind its server looks for its own release as the screen opens, and has its check and its channel there, since the server may run a nightly.
 
 ## States the interface must always show

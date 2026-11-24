@@ -8,12 +8,19 @@
  * - {@link tools} and {@link toolList}: the `j3` MCP tools, their descriptions
  *   and the schemas their arguments decode with, within
  *   {@link MAX_TOOL_INPUT_BYTES}; {@link NO_TURN_REFUSAL}: what a call that
- *   matches no running turn, such as a subagent's, reads.
+ *   matches no running turn, such as a subagent's, reads;
+ *   {@link BROWSER_HELP_REQUESTED}: what a request for help in the browser
+ *   answers; and {@link SUGGESTION_SHOWN} and {@link SUGGESTION_REFUSED}:
+ *   what a connector suggestion answers.
  * - {@link sharedSkills}: the skills J3 Bots ships, which the server installs
  *   for every bot.
+ * - {@link renderConnectorResult}: what a bot reads back from a connector's
+ *   tool, framed as untrusted data; {@link connectorToolDescription}: a
+ *   connector tool's description, after a line saying whose it is;
+ *   {@link defuseTags}, for other remote text a bot reads.
  * - {@link PROMPT_VERSION}: one identifier for all of the above.
  *
- * Every function here is pure. `renderWake` draws its nonce from `SecureRandom`.
+ * Every function here is pure. `renderWake` and `renderConnectorResult` draw their nonce from `SecureRandom`.
  */
 export {
   type AskAnswer,
@@ -49,15 +56,28 @@ export {
   renderSystemFile,
 } from "./instructions.ts";
 export {
+  BROWSER_HELP_REQUESTED,
   DECODE_OPTIONS,
+  FILL_NOTES,
   MAX_TOOL_INPUT_BYTES,
+  inputCapRefusal,
+  isConnectorTool,
   type McpTool,
   NO_TURN_REFUSAL,
+  SUGGESTION_REFUSED,
+  SUGGESTION_SHOWN,
   type ToolDefinition,
   type ToolInput,
   type ToolName,
   toolList,
   tools,
 } from "./tools.ts";
+export {
+  type ConnectorResult,
+  type ConnectorUnavailable,
+  connectorToolDescription,
+  renderConnectorResult,
+} from "./connectorResult.ts";
 export { type SharedSkill, sharedSkills } from "./skills.ts";
+export { defuseTags } from "./text.ts";
 export { PROMPT_VERSION } from "./version.ts";

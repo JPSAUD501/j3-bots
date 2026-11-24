@@ -2,6 +2,8 @@
 import type {
   BotFile,
   BotId,
+  BrowserTab,
+  BrowserTabRef,
   EntryId,
   EntryOrder,
   EntryTarget,
@@ -19,9 +21,16 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { ConversationHandle, J3Client, UsageHandle, WorkStepsHandle } from "../client.ts";
+import type {
+  BrowserViewHandle,
+  ConversationHandle,
+  J3Client,
+  UsageHandle,
+  WorkStepsHandle,
+} from "../client.ts";
 import { type ActionState, cardAction } from "../intents/Actions.ts";
 import type { Readable } from "../Store.ts";
+import type { BrowserViewSize } from "../stores/Browser.ts";
 import { type ConversationState, targetKey } from "../stores/Conversations.ts";
 import type { Draft } from "../stores/Drafts.ts";
 import type { RoutineRuns } from "../stores/Details.ts";
@@ -62,6 +71,7 @@ export const useSettings = () => useReadable(useJ3Client().settings);
 export const useDevices = () => useReadable(useJ3Client().devices);
 export const useServerUpdate = () => useReadable(useJ3Client().serverUpdate.view);
 export const useServerUpdateEnded = () => useReadable(useJ3Client().serverUpdate.ended);
+export const useConnectors = () => useReadable(useJ3Client().connectors.state);
 
 /** Where an action on a card stands, to disable its buttons while it runs. */
 export const useCardAction = (entryId: EntryId): ActionState | undefined =>
@@ -139,6 +149,25 @@ export const useRoutineRuns = (routineId: RoutineId | null): Loaded<RoutineRuns>
     useHeld(routineId, same, (client, id) => client.openRoutineRuns(id)),
   );
 
+/** A bot's browser tabs, live, while mounted. A null `botId` reads nothing. */
+export const useBrowserTabs = (botId: BotId | null): Loaded<ReadonlyArray<BrowserTab>> | null =>
+  useHeldState<Loaded<ReadonlyArray<BrowserTab>>>(
+    useHeld(botId, same, (client, id) => client.openBrowserTabs(id)),
+  );
+
+/**
+ * A view of the tab `ref` names while mounted, or null for the first render
+ * and while `ref` is null. `size` is read for each socket the view opens.
+ */
+export const useBrowserView = (
+  ref: BrowserTabRef | null,
+  size: () => BrowserViewSize,
+): BrowserViewHandle | null =>
+  useHeld(ref, same, (client, value) => {
+    const view = client.openBrowserView({ ref: value, size });
+    return { ...view, release: view.close };
+  });
+
 /**
  * The conversation or room while the component is mounted: its state, or
  * `null` for the first render or when `target` is null, and what to call on it.
@@ -204,4 +233,11 @@ export {
   useRoomForm,
 } from "./roomForm.ts";
 export { useAsleep, useAvatarMood } from "./avatar.ts";
+export {
+  type ConnectorSignIn,
+  type SignInPhase,
+  type SignInRoute,
+  useConnectorSignIn,
+} from "./connectorSignIn.ts";
 export { useTurnAnnouncement } from "./turn.ts";
+export { type Answer, useAnswer } from "./answer.ts";

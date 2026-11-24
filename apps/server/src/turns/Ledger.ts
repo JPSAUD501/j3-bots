@@ -207,8 +207,10 @@ export class Ledger extends Context.Service<
     readonly finish: (dispatchId: DispatchRowId, outcome: TurnOutcome) => Effect.Effect<void>;
     /**
      * The bot closed the delivery of the turn a delivered dispatch owns (`say`
-     * with `done`, or `ask`): its wakes are finished, and no `undelivered`
-     * wake follows its turn. The dispatch itself finishes with that turn.
+     * with `done`, or a card the operator answers: `ask` and
+     * `request_browser_help`, both recorded as `ask`): its wakes are
+     * finished, and no `undelivered` wake follows its turn. The dispatch
+     * itself finishes with that turn.
      */
     readonly closeDelivery: (dispatchId: DispatchRowId, by: "done" | "ask") => Effect.Effect<void>;
     /** Delivered, with the turn's work not over: the engine will continue it at `resumesAt`. */

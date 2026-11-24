@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Whether another program holds the engine's port takes a trial listen from node:net.
 import * as NodeNet from "node:net";
 import type { EngineInstallProgress, EngineStatus } from "@j3-bots/contracts";
+import { inJob, jobLauncher } from "@j3-bots/processes";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -26,7 +27,6 @@ import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./PrivateFiles.ts";
 import { makeProcesses, servesHome } from "./Processes.ts";
-import { inJob } from "./WindowsJob.ts";
 
 // Runs the engine as a child process and says, at every moment, whether it can
 // take commands. Being down is a state, not a failure: the supervisor restarts
@@ -44,8 +44,15 @@ import { inJob } from "./WindowsJob.ts";
 // `beforeStart` run between, so what it provisions reaches every harness.
 //
 // On Windows the engine runs in a job that ends every process it started once
-// the engine has ended, crashed or been stopped (`WindowsJob.ts`): nothing it
+// the engine has ended, crashed or been stopped (`inJob` in `@j3-bots/processes`): nothing it
 // started survives into the next run or past the server's stop.
+
+/** The job launcher the engine starts through on Windows could not be compiled; the start is tried again. */
+class LauncherFailed extends Schema.TaggedError<LauncherFailed>()("LauncherFailed", {}) {
+  override get message(): string {
+    return "The job launcher could not be compiled.";
+  }
+}
 
 type UnavailableReason = Extract<EngineStatus["state"], { readonly _tag: "unavailable" }>["reason"];
 
@@ -200,21 +207,30 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
     "--no-browser",
   ];
   const onWindows = process.platform === "win32";
-  const launched = onWindows
-    ? inJob(environment, input.executable, serve)
-    : { command: input.executable, args: serve };
-  const engine = boundedCommand(
-    launched.command,
-    launched.args,
-    {
-      stdin: "ignore",
-      // On Windows the launcher prints the engine's id.
-      stdout: onWindows ? "pipe" : "ignore",
-      stderr: "ignore",
-      env: environment,
-      extendEnv: false,
-    },
-    ENGINE_STOP,
+  /** The engine's command; on Windows, its launcher's, compiled at the first start that needs it. */
+  const engine = (
+    onWindows
+      ? Effect.tryPromise({
+          try: () => jobLauncher(environment),
+          catch: () => new LauncherFailed(),
+        }).pipe(Effect.map((launcher) => inJob(launcher, input.executable, serve)))
+      : Effect.succeed({ command: input.executable, args: serve })
+  ).pipe(
+    Effect.map((launched) =>
+      boundedCommand(
+        launched.command,
+        launched.args,
+        {
+          stdin: "ignore",
+          // On Windows the launcher prints the engine's id.
+          stdout: onWindows ? "pipe" : "ignore",
+          stderr: "ignore",
+          env: environment,
+          extendEnv: false,
+        },
+        ENGINE_STOP,
+      ),
+    ),
   );
 
   /** The engine `pid` names, if it is one serving this data directory, by its command line. */
@@ -331,7 +347,7 @@ export const supervise = Effect.fn("engine.supervise")(function* <E>(input: Supe
           ),
         );
       }
-      const handle = yield* spawner.spawn(engine);
+      const handle = yield* spawner.spawn(yield* engine);
       const exited = yield* handle.exitCode.pipe(Effect.forkScoped);
       // The engine's own id: on Windows, the one its launcher prints.
       const enginePid = onWindows

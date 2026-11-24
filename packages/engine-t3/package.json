@@ -27,6 +27,7 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/processes": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "effect": "catalog:",
     "smol-toml": "1.9.1"

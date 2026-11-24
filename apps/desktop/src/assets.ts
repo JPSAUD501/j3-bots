@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { HTTP_PATHS } from "@j3-bots/contracts";
+import { HTTP_PATHS, VISUAL_FRAME_PATH, VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
 import type { ServerOrigin } from "@j3-bots/desktop-bridge";
 import * as Base64 from "effect/encoding/Base64";
 import * as Option from "effect/Option";
@@ -106,7 +106,25 @@ export const contentSecurityPolicy = (
     `connect-src ${connect.join(" ")}`,
     "base-uri 'none'",
     "form-action 'none'",
+    // The page frames only its own visual page, so a bot's visual that
+    // navigates its frame elsewhere is stopped (docs/architecture/security.md,
+    // "Visuals"). `will-frame-navigate` holds the frame to that page as well.
+    "frame-src 'self'",
     "frame-ancestors 'none'",
     "object-src 'none'",
   ].join("; ");
 };
+
+/**
+ * The policy a file of the build is served with: a visual's for the page a
+ * visual is drawn in, which runs the visual's inline scripts in a sandbox,
+ * and the app's for every other.
+ */
+export const policyFor = (
+  segments: ReadonlyArray<string>,
+  server: ServerOrigin | null,
+  scriptSources: ReadonlyArray<string>,
+): string =>
+  `/${segments.join("/")}` === VISUAL_FRAME_PATH
+    ? VISUAL_FRAME_POLICY
+    : contentSecurityPolicy(server, scriptSources);

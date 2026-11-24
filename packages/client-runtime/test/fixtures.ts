@@ -74,6 +74,8 @@ export function bot(
     model: { providerId: ProviderId.make("p"), modelId: ModelId.make("m") },
     permissionMode: "supervised",
     primary: false,
+    browser: false,
+    vault: false,
     pinned: false,
     hidden: false,
     sectionId: null,

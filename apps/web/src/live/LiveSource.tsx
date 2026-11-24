@@ -5,7 +5,9 @@ import {
   type RoomSubmission,
   useActions,
   useBotFiles,
+  type SignInRoute,
   useConnection,
+  useConnectors,
   useConversation,
   useDevices,
   useEngineStatus,
@@ -70,12 +72,14 @@ import {
   type UpdateResult,
 } from "@j3-bots/client-runtime";
 import {
+  type ConnectorsOpening,
   handoffPeer,
   notificationOpening,
   type OpenedNotification,
   type RoomFormMode,
   roomStopFailed,
   showsImage,
+  suggestionConnect,
   templateFileName,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
@@ -97,6 +101,8 @@ import {
 import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
 import { Onboarding } from "../onboarding/Onboarding";
 import { cn } from "../lib/cn";
+import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
+import type { ConnectorsIntents } from "../components/connectors/screen";
 import { EditBotDialog } from "../components/EditBotDialog";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ImageViewer } from "../components/ImageViewer";
@@ -900,6 +906,15 @@ function LiveShell({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The image a file shows over everything, opened from a conversation.
   const [viewing, setViewing] = useState<Attachment | null>(null);
+  // The connectors screen, and what opened it; null while it is closed.
+  const [connectorsOpening, setConnectorsOpening] = useState<ConnectorsOpening | null>(null);
+  const openConnectors = (opening: ConnectorsOpening) => {
+    setSettingsOpen(false);
+    // A screen put aside under Settings comes back as it was, with what opened it.
+    if (connectorsOpening === null) setConnectorsOpening(opening);
+  };
+  const connectorsState = useConnectors();
+  const connectors = connectorsState._tag === "ready" ? connectorsState.value : null;
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
   // Read each time Settings opens, and on every socket while it stays open.
@@ -1131,11 +1146,39 @@ function LiveShell({
 
   const signIns = useReadable(j3.signIns);
   const providerSetup = localProviderSetup(j3);
+  const vault = useReadable(j3.vault.view);
+
+  // A connector's sign-in comes back to the desktop app through its loopback; to a
+  // browser, through a server reached over https, else as an address the operator pastes.
+  const desktopApp = desktop;
+  const signInRoute: SignInRoute =
+    desktopApp !== null
+      ? {
+          _tag: "relay",
+          listen: () => desktopApp.catchSignIn(i18n.locale),
+          expect: desktopApp.expectSignIn,
+          onReturn: desktopApp.onSignInReturn,
+          stop: desktopApp.stopCatchingSignIn,
+        }
+      : window.location.protocol === "https:"
+        ? { _tag: "server" }
+        : { _tag: "paste" };
+  const { state: _connectorsState, ...connectorsClient } = j3.connectors;
+  const connectorsIntents: ConnectorsIntents = {
+    ...connectorsClient,
+    signInRoute,
+    openPage: (url) => {
+      window.open(url, "_blank", "noopener");
+    },
+    // The vault is unlocked and set up in Settings, over the connectors, which wait as they were.
+    openVault: () => setSettingsOpen(true),
+  };
 
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
     signIns,
+    vault,
     roster,
     sections,
     conversation: (asked) =>
@@ -1151,6 +1194,7 @@ function LiveShell({
     routines: (botId) => (botId === detailsBotId ? loadedList(routines) : null),
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
+    connectors,
     settings: settings._tag === "ready" ? settings.value : null,
     settingsSaves: { profile: profileSave, notifications: notificationsSave },
     settingsOpen,
@@ -1348,6 +1392,12 @@ function LiveShell({
       void j3.answerCard(entryId, { _tag: "approval", decision }),
     provideSecret: (entryId, value) => void j3.provideSecret(entryId, { _tag: "provide", value }),
     declineSecret: (entryId) => void j3.provideSecret(entryId, { _tag: "decline" }),
+    answerBrowserHelp: (entryId, outcome) =>
+      void j3.answerCard(entryId, { _tag: "browser-help", outcome }),
+    // The viewer opens over the bot's conversation, on the tab the address names.
+    openBrowser: (botId, tab) =>
+      void navigate({ to: "/bots/$botId", params: { botId }, search: { browser: tab } }),
+    dismissLogin: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
     resendMessage: (commandId, mentions) =>
@@ -1377,6 +1427,23 @@ function LiveShell({
         search: (prev) => ({ ...prev, details: true, routine: routineId }),
       }),
     openConversation: (botId) => void goToBot(botId),
+    connectSuggested: (entry) => {
+      const { letIn, open } = suggestionConnect(entry, connectors ?? [], bots);
+      if (letIn !== null) {
+        void j3.connectors.setBots(letIn.connectorId, letIn.grant).then((result) => {
+          if (result._tag === "failed") say(t("connectorCard.failed"));
+        });
+      }
+      if (open !== null) openConnectors(open);
+    },
+    dismissSuggestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
+    signInConnector: (entry) =>
+      openConnectors({
+        at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
+        forBot: entry.author.botId,
+        suggestion: null,
+      }),
+    openConnectors,
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
     setDraftText: j3.setDraftText,
     attachFiles: (asked, picked, at) =>
@@ -1446,6 +1513,20 @@ function LiveShell({
       });
     },
     editProfile: setEditingBot,
+    setBrowser: (bot, enabled) =>
+      void j3.updateBot(bot.id, { browser: enabled }).then((result) => {
+        if (result._tag !== "failed") return;
+        // The switch shows the bot as the server has it, so a failure leaves nothing to keep.
+        j3.dismissBotSave(bot.id);
+        if (stillPaired()) say(t("details.browser.failed", { name: bot.profile.name }));
+      }),
+    setVault: (bot, enabled) =>
+      void j3.updateBot(bot.id, { vault: enabled }).then((result) => {
+        if (result._tag !== "failed") return;
+        // As for the browser: the switch shows the bot as the server has it.
+        j3.dismissBotSave(bot.id);
+        if (stillPaired()) say(t("details.vault.failed", { name: bot.profile.name }));
+      }),
     openMemoryFile,
     freshStart: (botId, name) =>
       void j3
@@ -1472,6 +1553,8 @@ function LiveShell({
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
+    signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
+    vault: j3.vault,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,
@@ -1519,7 +1602,7 @@ function LiveShell({
   }
 
   return (
-    <ShellSourceProvider source={{ data, intents }}>
+    <ShellSourceProvider source={{ data, intents, browser: j3 }}>
       <AttachmentImagesProvider fetch={imageOf}>
         {children}
         <ImageViewer
@@ -1595,6 +1678,15 @@ function LiveShell({
           event.currentTarget.value = "";
           if (file !== undefined) openTemplate(file);
         }}
+      />
+      <ConnectorsDialog
+        opening={connectorsOpening}
+        aside={settingsOpen}
+        connectors={connectors}
+        bots={bots}
+        connected={data.connected}
+        intents={connectorsIntents}
+        onClose={() => setConnectorsOpening(null)}
       />
       <RoomDialog
         mode={roomFormMode}

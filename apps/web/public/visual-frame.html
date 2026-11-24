@@ -1,0 +1,18 @@
+<!doctype html>
+<meta charset="utf-8" />
+<script>
+  // The page a bot's visual is drawn in (docs/architecture/security.md,
+  // "Visuals"). The client that framed it posts it the visual's document,
+  // policy first, and it writes that over itself, which removes this listener;
+  // it takes nothing else. Only in a sandbox, where its origin is opaque: on
+  // its own it does nothing.
+  (function () {
+    if (window.origin !== "null") return;
+    window.addEventListener("message", function (event) {
+      if (event.source !== window.parent || typeof event.data !== "string") return;
+      document.open();
+      document.write(event.data);
+      document.close();
+    });
+  })();
+</script>

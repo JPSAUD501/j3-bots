@@ -2,6 +2,7 @@
 import {
   type AttachmentId,
   type BotId,
+  Conflict,
   type Entry,
   J3Rpcs,
   NotFound,
@@ -11,15 +12,21 @@ import { Engine } from "@j3-bots/engine-t3";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
+import { ConnectorAuth } from "../connectors/oauth/ConnectorAuth.ts";
+import { toCommandError } from "../connectors/oauth/errors.ts";
 import { BotStore } from "../bots/BotStore.ts";
+import { BrowserHelp } from "../browser/BrowserHelp.ts";
+import { BrowserTabs } from "../browser/BrowserTabs.ts";
 import { Bots } from "../bots/Bots.ts";
 import { Templates } from "../bots/Templates.ts";
 import { Devices } from "../devices/Devices.ts";
 import { Entries, type EntryFrame } from "../entries/Entries.ts";
 import { ServerConfig } from "../config.ts";
+import { ConnectorSources } from "../connectors/sources/Sources.ts";
 import { Listener } from "../listener.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
@@ -38,6 +45,8 @@ import { SendPause } from "../turns/SendPause.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
+import { Connectors } from "../connectors/Connectors.ts";
+import { Vault } from "../vault/Vault.ts";
 
 /** The RPCs this server answers: every one of `J3Rpcs`. */
 export const ServedRpcs = J3Rpcs;
@@ -64,6 +73,7 @@ export const handlers = ServedRpcs.toLayer(
     const devices = yield* Devices;
     const pipeline = yield* Pipeline;
     const cards = yield* Cards;
+    const browserHelp = yield* BrowserHelp;
     const stops = yield* Stops;
     const workSteps = yield* WorkSteps;
     const usage = yield* Usage;
@@ -72,6 +82,11 @@ export const handlers = ServedRpcs.toLayer(
     const network = yield* Network;
     const { publicOrigin } = yield* ServerConfig;
     const signIns = yield* SignIns;
+    const browserTabs = yield* BrowserTabs;
+    const vault = yield* Vault;
+    const connectors = yield* Connectors;
+    const connectorAuth = yield* ConnectorAuth;
+    const connectorSources = yield* ConnectorSources;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
 
     /**
@@ -116,7 +131,11 @@ export const handlers = ServedRpcs.toLayer(
       "message.send": (input) => pipeline.sendMessage(input),
       "message.retry": (input) => pipeline.retryMessage(input),
       "notice.retry": (input) => pipeline.retryNotice(input),
-      "card.answer": (input) => cards.answer(input),
+      // Help in the bot's browser is J3 Bots' own card, apart from the engine's requests.
+      "card.answer": ({ answer, ...card }) =>
+        answer._tag === "browser-help"
+          ? browserHelp.answer({ ...card, outcome: answer.outcome })
+          : cards.answer({ ...card, answer }),
       "secret.provide": (input) => cards.provideSecret(input),
       "bot.stop": (input) => stops.stopBot(input),
       "bot.create": ({ commandId, ...draft }) => bots.create({ commandId, draft }),
@@ -154,6 +173,11 @@ export const handlers = ServedRpcs.toLayer(
       "settings.subscribe": () => settings.changes,
       "settings.update": ({ commandId, ...changes }) => settings.update({ commandId, changes }),
       "settings.deviceTimeZone": ({ timeZone }) => settings.deviceTimeZone(timeZone),
+      // Clearing again clears nothing more: no receipt.
+      "browser.signOut": () =>
+        engine.clearBrowserProfile.pipe(
+          Effect.mapError(() => new Conflict({ reason: "engine-unavailable" })),
+        ),
       "client.view": ({ target }) => viewer.view(target),
       "notifications.subscribe": () => viewer.notifications,
       "devices.list": () => devices.list(device.id),
@@ -171,6 +195,51 @@ export const handlers = ServedRpcs.toLayer(
       // The request carries the key: it is never logged, and has no receipt.
       "provider.connect": (request) =>
         connectProviders(request).pipe(Effect.provideContext(connectContext)),
+      "browser.subscribe": ({ botId }) => browserTabs.subscribe(botId, device.id),
+      // The vault's requests carry or answer values: none is logged, and none has a receipt.
+      "vault.status": () => vault.status,
+      "vault.setup": ({ password }) => vault.setup(password),
+      "vault.unlock": ({ password }) => vault.unlock(password),
+      "vault.lock": () => vault.lock,
+      "vault.changePassword": ({ current, next }) => vault.changePassword(current, next),
+      "vault.list": () => vault.list,
+      "vault.reveal": ({ id, field }) => vault.reveal({ id, field, deviceId: device.id }),
+      "vault.save": ({ id, allowedBots, request, ...draft }) =>
+        cards.saveCredential({ id, draft, allowedBots, request }),
+      "vault.update": ({ id, ...changes }) => vault.update({ id, changes }),
+      "vault.delete": ({ id }) => vault.remove(id),
+      "vault.setAllowedBots": ({ id, bots }) => vault.setAllowedBots(id, bots),
+      "vault.totpPreview": ({ id }) => vault.totpPreview(id),
+      // A connector's add and update carry its secrets, redacted: none is logged, and neither has a receipt.
+      "connectors.subscribe": () => connectors.subscribe,
+      "connector.add": (input) => connectors.add(input),
+      "connector.update": (input) => connectors.update(input),
+      "connector.remove": (input) => connectors.remove(input),
+      "connector.setBots": (input) => connectors.setBots(input),
+      "connector.acceptToolChanges": (input) => connectors.acceptToolChanges(input),
+      // A sign-in's address and the one it returns to carry its code and
+      // `state`: neither is logged, and neither request has a receipt.
+      "connector.beginSignIn": ({ connectorId, redirect }) =>
+        connectorAuth.begin({ connectorId, deviceId: device.id, redirect }).pipe(
+          Effect.map(({ authorizationUrl, expiresAt }) => ({
+            authorizationUrl: Redacted.make(authorizationUrl),
+            expiresAt,
+          })),
+          Effect.mapError(toCommandError),
+        ),
+      "connector.completeSignIn": ({ url }) =>
+        connectorAuth
+          .complete({ _tag: "device", deviceId: device.id, url })
+          .pipe(Effect.asVoid, Effect.mapError(toCommandError)),
+      "connectors.list": ({ language }) => Effect.succeed(connectorSources.list(language)),
+      "connectors.search": (input) => connectorSources.search(input),
+      // The page names where an own app's sign-ins return, as `begin` would send them.
+      "connectors.get": Effect.fn("connectors.get")(function* ({ ref, language }) {
+        const details = yield* connectorSources.get(ref, language);
+        const issuer = details.setup?.issuer ?? null;
+        const redirects = issuer === null ? null : yield* connectorAuth.redirectsFor(issuer);
+        return { ...details, redirects };
+      }),
     };
   }),
 );

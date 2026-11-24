@@ -44,6 +44,20 @@ export function notificationText(
         return preview === null
           ? t("notification.secret")
           : t("summary.needsSecret", { label: preview });
+      case "browser-help":
+        return preview === null
+          ? t("notification.browserHelp")
+          : t("summary.needsBrowserHelp", { note: preview });
+      case "connector":
+        // The card's own words: a suggestion asks nothing yet, while a sign-in
+        // that ended stops the bot until the operator signs in again.
+        if (notification.connector === "sign-in")
+          return preview === null
+            ? t("notification.connectorSignIn")
+            : t("summary.connectorSignIn", { name: preview });
+        return preview === null
+          ? t("notification.connectorSuggestion")
+          : t("summary.suggestsConnector", { name: preview });
       case "handoff":
         return preview === null
           ? t("notification.handoff")

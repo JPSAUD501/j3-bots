@@ -17,7 +17,11 @@ import {
   WorkStepId,
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
+import { BrowserTabRef } from "./browser.ts";
+import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
 import { RoutineTrigger } from "./routine.ts";
+import { CredentialFill, CredentialId, SiteOrigin } from "./vault.ts";
+import { Visual } from "./visual.ts";
 import { StepTool } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
@@ -109,6 +113,13 @@ export const MessageEntry = Schema.TaggedStruct("message", {
   delivery: MessageDelivery,
   /** The operator's command that created it, so a client can replace its optimistic copy. */
   commandId: Schema.NullOr(CommandId),
+  /**
+   * A page a bot showed above its words: a chart, a table, a diagram or a
+   * mockup, which clients render in a sandboxed frame with no network
+   * (docs/architecture/clients.md, "Visuals"). Absent from every other
+   * message.
+   */
+  visual: Schema.optionalKey(Visual),
 });
 export type MessageEntry = typeof MessageEntry.Type;
 
@@ -297,6 +308,132 @@ export const SecretRequestEntry = Schema.TaggedStruct("secret-request", {
 });
 export type SecretRequestEntry = typeof SecretRequestEntry.Type;
 
+/**
+ * What a bot met in its browser that only the operator can get past: a check
+ * that a person is at the keyboard (`captcha`), a sign-in it has no
+ * credential for (`login`), a one-time code (`two-factor`), a code to scan
+ * with a phone (`qr-code`), a passkey, or something else (`other`).
+ */
+export const BrowserHelpReason = Schema.Literals([
+  "captcha",
+  "login",
+  "two-factor",
+  "qr-code",
+  "passkey",
+  "other",
+]);
+export type BrowserHelpReason = typeof BrowserHelpReason.Type;
+
+/** The most characters a browser help card's note holds. */
+export const MAX_BROWSER_HELP_NOTE_LENGTH = 500;
+
+/**
+ * A bot asks the operator to do one step in its browser for it. Asking ended
+ * the bot's turn; the card stays open until the operator says the step is
+ * done or that they cannot do it, either of which gives the tab back to the
+ * bot and wakes it, or until it expires.
+ */
+export const BrowserHelpEntry = Schema.TaggedStruct("browser-help", {
+  ...entry,
+  author: BotAuthor,
+  reason: BrowserHelpReason,
+  /** What the bot needs, in its own words. */
+  note: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(MAX_BROWSER_HELP_NOTE_LENGTH),
+  ),
+  /** The host name of the page the tab was on ("example.com"); empty when it had none. */
+  site: Schema.String.check(Schema.isMaxLength(253)),
+  /**
+   * The tab the step is in. A ref names a tab only while the server that
+   * minted it runs, so after a restart a client opens the bot's front tab.
+   */
+  tab: BrowserTabRef,
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    /** The operator did the step. */
+    Schema.TaggedStruct("done", {}),
+    /** The operator could not do it. */
+    Schema.TaggedStruct("declined", {}),
+    /**
+     * Closed before the operator answered: the tab closed (`tab-closed`), as
+     * the engine closes one nobody used for a while, or the card waited too
+     * long (`timed-out`). The bot is told either way.
+     */
+    Schema.TaggedStruct("expired", { cause: Schema.Literals(["tab-closed", "timed-out"]) }),
+  ]),
+});
+export type BrowserHelpEntry = typeof BrowserHelpEntry.Type;
+
+/**
+ * A bot asks the operator to save a login in the vault. The client sends the
+ * values the operator types with `vault.save`, naming this card, straight to
+ * the vault: they never pass through the bot, and this entry has no field for
+ * them. It stays open until the operator saves the login or dismisses it
+ * (`card.answer` with `dismiss`); neither wakes the bot.
+ */
+export const CredentialRequestEntry = Schema.TaggedStruct("credential-request", {
+  ...entry,
+  /** Where the bot needs to sign in, which the card offers to save the login for. */
+  origin: SiteOrigin,
+  /** What the bot says the login is for, in its own words. */
+  note: Schema.String.check(Schema.isMaxLength(500)),
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    /** Saved as the login `credentialId`, under the name the operator gave it then. */
+    Schema.TaggedStruct("saved", { credentialId: CredentialId, name: Label }),
+    Schema.TaggedStruct("dismissed", {}),
+  ]),
+});
+export type CredentialRequestEntry = typeof CredentialRequestEntry.Type;
+
+/**
+ * A bot suggests a connector it would use for the task at hand: a gallery
+ * entry, or a connector the operator added that this bot may not use yet.
+ * Bots cannot add a connector or grant themselves one, so the card is all a
+ * bot can do. Its Connect adds the connector (`connector.add`, naming this
+ * card) or lets this bot use it (`connector.setBots`); either way, the server
+ * closes the card as `connected` once the bot is given it. Not now dismisses
+ * it (`card.answer` with `dismiss`), which the server takes as final for that
+ * connector in this conversation. Neither wakes the bot.
+ */
+export const ConnectorSuggestionEntry = Schema.TaggedStruct("connector-suggestion", {
+  ...entry,
+  author: BotAuthor,
+  subject: Schema.Union([
+    Schema.TaggedStruct("listing", { ref: ListingRef }),
+    Schema.TaggedStruct("connector", { connectorId: ConnectorId }),
+  ]),
+  /** The connector's name and glyph when the card was written, which it keeps. */
+  name: Label,
+  glyph: Schema.NullOr(ConnectorGlyph),
+  /** Why the bot needs it, in its own words: one line. */
+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    Schema.TaggedStruct("connected", { connectorId: ConnectorId }),
+    Schema.TaggedStruct("dismissed", {}),
+  ]),
+});
+export type ConnectorSuggestionEntry = typeof ConnectorSuggestionEntry.Type;
+
+/**
+ * A connector a bot called needs the operator to sign in again, in that bot's
+ * conversation: written once each time the connector's sign-in ends, by the
+ * first call that finds it so, and authored by that bot. Its button opens the
+ * sign-in. It closes as `signed-in` once the connector works again, and as
+ * `removed` when the operator removes it.
+ */
+export const ConnectorAuthEntry = Schema.TaggedStruct("connector-auth", {
+  ...entry,
+  author: BotAuthor,
+  connectorId: ConnectorId,
+  name: Label,
+  glyph: Schema.NullOr(ConnectorGlyph),
+  status: Schema.Literals(["pending", "signed-in", "removed"]),
+});
+export type ConnectorAuthEntry = typeof ConnectorAuthEntry.Type;
+
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
 export type TurnEnding = typeof TurnEnding.Type;
@@ -375,6 +512,8 @@ export const WorkStep = Schema.Struct({
   status: Schema.Literals(["running", "completed", "failed"]),
   startedAt: Schema.DateTimeUtc,
   finishedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** For a `login` step, the fill it made or refused. */
+  fill: Schema.optionalKey(CredentialFill),
 });
 export type WorkStep = typeof WorkStep.Type;
 
@@ -562,6 +701,10 @@ export const Entry = Schema.Union([
   QuestionEntry,
   ApprovalEntry,
   SecretRequestEntry,
+  BrowserHelpEntry,
+  CredentialRequestEntry,
+  ConnectorSuggestionEntry,
+  ConnectorAuthEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -571,6 +714,9 @@ export type Entry = typeof Entry.Type;
 
 /** Every kind of entry this build knows. */
 const entryKinds = Entry.members.map((member) => member.fields._tag.schema.literal);
+
+/** The kind of an entry this build knows, as the server stores it beside the entry. */
+export const EntryKind = Schema.Literals(entryKinds);
 
 /** What keeps an entry in its place in a conversation. */
 const placement = { id: EntryId, order: EntryOrder, createdAt: Schema.DateTimeUtc };
@@ -610,6 +756,10 @@ export const ReceivedEntry = Schema.Union([
   QuestionEntry,
   ApprovalEntry,
   SecretRequestEntry,
+  BrowserHelpEntry,
+  CredentialRequestEntry,
+  ConnectorSuggestionEntry,
+  ConnectorAuthEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -623,7 +773,9 @@ export const PREVIEW_LENGTH = 200;
 
 /**
  * The text an entry leads with, which its preview carries: the message, the
- * first question, the action, what is asked for, the routine's name; empty
+ * first question, the action, what is asked for (a credential's label, a
+ * browser step's note), the site a login is asked for, the connector a card is
+ * about, the routine's name; empty
  * for an entry with no text of its own.
  */
 export const entryText = (entry: Entry): string => {
@@ -637,6 +789,13 @@ export const entryText = (entry: Entry): string => {
       return entry.action;
     case "secret-request":
       return entry.label;
+    case "browser-help":
+      return entry.note;
+    case "credential-request":
+      return entry.origin;
+    case "connector-suggestion":
+    case "connector-auth":
+      return entry.name;
     case "routine-change":
       return entry.name;
     case "work-fold":

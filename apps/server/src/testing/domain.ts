@@ -7,15 +7,20 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { ListenerStatus } from "../admin/protocol.ts";
+import { McpRegistry, type RegistryEntry } from "../connectors/sources/Registry.ts";
 import * as Domain from "../domain.ts";
 import * as Listener from "../listener.ts";
 import type { PushSender } from "../push/PushSender.ts";
 import * as BasePrompt from "../settings/BasePrompt.ts";
 import * as SettingsStore from "../settings/SettingsStore.ts";
+import { LEAST_KDF_PARAMS } from "../vault/crypto.ts";
+import { VaultKdf } from "../vault/Vault.ts";
 import * as TestDatabase from "./database.ts";
+import * as TestOAuth from "./oauth.ts";
 import * as TestPush from "./push.ts";
 
 /** The model a bot gets by default: the first the test engine offers. */
@@ -95,8 +100,8 @@ const testProviders = (starting: StartingStatuses) =>
   );
 
 /**
- * The in-memory engine, offering a Claude Code and a Codex provider, both
- * ready until a test says otherwise. The test engine reports no providers of
+ * The in-memory engine and its browser, offering a Claude Code and a Codex
+ * provider, both ready until a test says otherwise. The test engine reports no providers of
  * its own, and a bot needs a model to exist.
  */
 const engineWith = (starting: StartingStatuses) =>
@@ -112,13 +117,23 @@ const engineWith = (starting: StartingStatuses) =>
         ),
       });
     }),
-  ).pipe(Layer.provideMerge(Layer.merge(TestEngine.layer, testProviders(starting))));
+  ).pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(TestEngine.layer, TestEngine.browserLayer, testProviders(starting)),
+    ),
+  );
 
-/** The database `database` gives, the home and the engine, its providers as `starting` says. */
+/**
+ * The database `database` gives, the home, the engine, its providers as
+ * `starting` says, and a fake authorization server for connectors' sign-ins.
+ */
 const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
   Layer.mergeAll(
     engineWith(starting),
     BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
+    // A vault's keys at the cheapest cost it accepts: its tests derive many.
+    Layer.succeed(VaultKdf, LEAST_KDF_PARAMS),
+    TestOAuth.layer,
   ).pipe(Layer.provideMerge(database));
 
 const stores = storesOver(TestDatabase.layer, new Map());
@@ -136,12 +151,26 @@ const listener = Layer.effect(
 );
 
 /**
+ * The MCP Registry with no entries, so no test reaches the network: the
+ * gallery finds the curated list alone. The registry's own behaviour is
+ * tested over a fake network (`Registry.test.ts`).
+ */
+const registry = Layer.succeed(
+  McpRegistry,
+  McpRegistry.of({
+    search: () => Effect.succeed([]),
+    get: () => Effect.succeedNone,
+  }),
+);
+
+/**
  * What outlives a server restart, with `push` as the push sender: the
- * database, the home, the engine, the push service and where clients reach
- * it. A restart test builds this once and `Domain.layer` over it twice.
+ * database, the home, the engine, the push service, the MCP Registry and
+ * where clients reach it. A restart test builds this once and `Domain.layer`
+ * over it twice.
  */
 export const machineWith = <A, R>(push: Layer.Layer<A | PushSender, never, R>) =>
-  Layer.mergeAll(stores, listener, push);
+  Layer.mergeAll(stores, listener, push, registry);
 
 /** What outlives a server restart, with the in-memory push service. */
 export const machine = machineWith(TestPush.layer);
@@ -153,13 +182,39 @@ export const machine = machineWith(TestPush.layer);
 export const layer = Domain.layer.pipe(Layer.provideMerge(machine));
 
 /**
+ * The whole domain, with `entries` as the MCP Registry's: a search finds
+ * those whose name has the query in it.
+ */
+export const layerWithRegistry = (entries: ReadonlyArray<RegistryEntry>) =>
+  Domain.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        stores,
+        listener,
+        TestPush.layer,
+        Layer.succeed(
+          McpRegistry,
+          McpRegistry.of({
+            search: (query) =>
+              Effect.succeed(entries.filter((entry) => entry.name.includes(query))),
+            get: (name) =>
+              Effect.succeed(Option.fromUndefinedOr(entries.find((entry) => entry.name === name))),
+          }),
+        ),
+      ),
+    ),
+  );
+
+/**
  * The whole domain over the database `database` gives, as one an earlier
  * release left (`TestDatabase.layerAfter`), with the in-memory engine, whose
  * providers start as `starting` says, and push service.
  */
 export const layerOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
   Domain.layer.pipe(
-    Layer.provideMerge(Layer.mergeAll(storesOver(database, starting), listener, TestPush.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(storesOver(database, starting), listener, TestPush.layer, registry),
+    ),
   );
 
 /**
@@ -167,5 +222,5 @@ export const layerOver = (database: typeof TestDatabase.layer, starting: Startin
  * (`Listener.layer`), which reports where it bound.
  */
 export const servedLayer = Domain.layer.pipe(
-  Layer.provideMerge(Layer.mergeAll(stores, Listener.unbound, TestPush.layer)),
+  Layer.provideMerge(Layer.mergeAll(stores, Listener.unbound, TestPush.layer, registry)),
 );

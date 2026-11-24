@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { inJob, jobLauncher } from "@j3-bots/processes";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -11,7 +12,6 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { engineEnvironment } from "./Command.ts";
-import { inJob } from "./WindowsJob.ts";
 
 /**
  * A stand-in engine. It starts a harness that runs until it is ended, and a
@@ -103,13 +103,11 @@ const launch = (code: "run" | number) =>
     const path = yield* Path.Path;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const file = path.join(yield* fs.makeTempDirectoryScoped(), "report.json");
-    const launched = inJob(environment, process.execPath, [
-      "-e",
-      ENGINE_SCRIPT,
-      file,
-      String(code),
-      ...ARGS,
-    ]);
+    const launched = inJob(
+      yield* Effect.promise(() => jobLauncher(environment)),
+      process.execPath,
+      ["-e", ENGINE_SCRIPT, file, String(code), ...ARGS],
+    );
     const launcher = yield* spawner.spawn(
       ChildProcess.make(launched.command, launched.args, {
         stdin: "ignore",

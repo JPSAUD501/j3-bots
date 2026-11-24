@@ -121,6 +121,17 @@ export const WakePayload = Schema.Union([
   Schema.TaggedStruct("message", { entryId: EntryId }),
   /** The operator's answer to an `ask` card, read from the card. */
   Schema.TaggedStruct("answer", { cardId: EntryId }),
+  /**
+   * How the operator's help in the bot's browser ended: the card's answer or
+   * expiry, read from the card (`cardId`), or, with no card, the operator
+   * giving back a browser they took while the bot worked.
+   */
+  Schema.TaggedStruct("browser-help", {
+    cardId: Schema.NullOr(EntryId),
+    outcome: Schema.Literals(["done", "declined", "tab-closed", "timed-out", "handed-back"]),
+    /** The host name of the page the card was about; null with no card, or a page with none. */
+    site: Schema.NullOr(Schema.String),
+  }),
   /** The `user` dispatch this one follows up, whose turn delivered nothing. */
   Schema.TaggedStruct("undelivered", { dispatchId: DispatchRowId }),
   /** The bot was just created: its first turn opens its conversation. */

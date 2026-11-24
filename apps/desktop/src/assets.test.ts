@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
 import { ServerOrigin } from "@j3-bots/desktop-bridge";
 import { assert, describe, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
-import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./assets.ts";
+import { contentSecurityPolicy, inlineScriptSources, policyFor, resolveAsset } from "./assets.ts";
 
 const APP = "j3bots-dev://app";
 const page = (path: string, { method = "GET", accept = "*/*" } = {}) =>
@@ -96,5 +97,13 @@ describe("the page's content security policy", () => {
     // `echo -n 'document…;' | openssl dgst -sha256 -binary | base64`
     assert.deepStrictEqual(sources, ["'sha256-2m0LKtL9TkM7m6BmMncU8A6pAb9ikh3OzrtPZXy+uhU='"]);
     assert.include(contentSecurityPolicy(null, sources), `script-src 'self' ${sources[0]};`);
+  });
+
+  it("serves the visual page under a visual's policy, and every other page under the app's", () => {
+    assert.strictEqual(policyFor(["visual-frame.html"], null, []), VISUAL_FRAME_POLICY);
+    for (const segments of [["index.html"], ["assets", "visual-frame.html"], []]) {
+      assert.strictEqual(policyFor(segments, null, []), contentSecurityPolicy(null, []));
+    }
+    assert.include(contentSecurityPolicy(null, []), "frame-src 'self';");
   });
 });

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as EngineLive from "@j3-bots/engine-t3/live";
+import { toolList } from "@j3-bots/prompts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -9,6 +11,8 @@ import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as AdminSocket from "./admin/AdminSocket.ts";
 import * as ServerConfig from "./config.ts";
+import * as OAuthEndpoints from "./connectors/oauth/endpoints.ts";
+import * as McpRegistry from "./connectors/sources/Registry.ts";
 import * as Domain from "./domain.ts";
 import { engineProviders } from "./engine/providers.ts";
 import * as Home from "./home/Home.ts";
@@ -26,6 +30,7 @@ import * as SharedSkills from "./skills/SharedSkills.ts";
 import * as Host from "./system/Host.ts";
 import * as Network from "./system/Network.ts";
 import * as Systemd from "./system/Systemd.ts";
+import { CONNECTOR_CALL_DEADLINE } from "./tools/protocol.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 import * as UpdateLauncher from "./update/UpdateLauncher.ts";
 import * as UpdateRuns from "./update/UpdateRuns.ts";
@@ -58,6 +63,9 @@ const engine = Layer.unwrap(
       toolBridge: {
         command: process.execPath,
         args: [bridge, "--server", `http://127.0.0.1:${config.toolPort}`],
+        // J3 Bots' own tools run without asking; a connector's follow the bot's permission mode.
+        preApproved: toolList.map((tool) => tool.name),
+        callTimeoutSeconds: Duration.toSeconds(CONNECTOR_CALL_DEADLINE) + 60,
       },
       systemPromptFile: SYSTEM_PROMPT_FILE,
       basePrompt: basePrompt.text,
@@ -102,7 +110,8 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     // One decision for the client routes and the admin socket's report.
     Layer.provide(WebClient.statusLayer),
     Layer.provide(Domain.layer),
-    Layer.provide(Layer.merge(engine, ExpoPushSender.layer)),
+    Layer.provide(Layer.mergeAll(engine, ExpoPushSender.layer, OAuthEndpoints.layer)),
+    Layer.provide(McpRegistry.layer),
     // One base prompt for the engine and the settings that change it.
     Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),
     Layer.provide(Sqlite.layer),

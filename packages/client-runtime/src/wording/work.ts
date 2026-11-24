@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  CredentialField,
+  CredentialFill,
   StepSummary,
   StepTool,
   TurnEnding,
@@ -24,6 +26,8 @@ const toolWords: Record<WorkTool, { readonly did: Phrase; readonly doing: Phrase
   "task-status": { did: "tool.taskStatus.did", doing: "tool.taskStatus.doing" },
   "task-stop": { did: "tool.taskStop.did", doing: "tool.taskStop.doing" },
   secret: { did: "tool.secret.did", doing: "tool.secret.doing" },
+  login: { did: "tool.login.did", doing: "tool.login.doing" },
+  connector: { did: "tool.connector.did", doing: "tool.connector.doing" },
   browser: { did: "tool.browser.did", doing: "tool.browser.doing" },
   "pull-request": { did: "tool.pullRequest.did", doing: "tool.pullRequest.doing" },
   issue: { did: "tool.issue.did", doing: "tool.issue.doing" },
@@ -38,15 +42,89 @@ const toolWords: Record<WorkTool, { readonly did: Phrase; readonly doing: Phrase
 /** The tool's words, or none for a tool this build cannot name. */
 const wordsOf = (tool: StepTool) => (tool === null || tool === "unknown" ? null : toolWords[tool]);
 
+const filled: Record<CredentialField, KeyWith<"name">> = {
+  username: "fill.filled.username",
+  password: "fill.filled.password",
+  totp: "fill.filled.totp",
+};
+
+const notFilled: Record<CredentialField, KeyWith<"name">> = {
+  username: "fill.notFilled.username",
+  password: "fill.notFilled.password",
+  totp: "fill.notFilled.totp",
+};
+
 /**
  * A step as its row in the work fold says it: the tool in J3 Bots' words,
  * what it is doing while it runs and what it did once it ran; else the
- * step's own label, a command or a path.
+ * step's own label, a command or a path. A login's fill names the login and
+ * the field, and whether it was filled.
  */
 export function stepText(step: WorkStep, i18n: I18n): string {
+  if (step.fill !== undefined) {
+    const { fill } = step;
+    return i18n.t((fill.outcome._tag === "filled" ? filled : notFilled)[fill.field], {
+      name: fill.name,
+    });
+  }
   const words = wordsOf(step.tool);
   if (words === null) return step.label;
   return i18n.t(step.status === "running" ? words.doing : words.did);
+}
+
+/**
+ * Where a login was filled, or why it was not: the page's origin as the server
+ * checked it, a lookalike as its punycode, so the operator sees where a fill
+ * was asked for.
+ */
+export function fillDetail(fill: CredentialFill, i18n: I18n): string {
+  const { t } = i18n;
+  const { outcome, origin } = fill;
+  switch (outcome._tag) {
+    case "filled":
+      return origin === null
+        ? outcome.submitted
+          ? t("fill.submitted")
+          : ""
+        : t(outcome.submitted ? "fill.onSubmitted" : "fill.on", { origin });
+    case "locked":
+      return t("fill.locked");
+    case "refused":
+      switch (outcome.reason) {
+        case "no-access":
+          return t("fill.refused.noAccess");
+        case "unknown-login":
+          return t("fill.refused.unknownLogin");
+        case "ambiguous":
+          return t("fill.refused.ambiguous");
+        case "no-value":
+          return t("fill.refused.noValue");
+        case "no-tab":
+          return t("fill.refused.noTab");
+        case "held":
+          return t("fill.refused.held");
+        case "loading":
+          return t("fill.refused.loading");
+        case "insecure":
+          return origin === null
+            ? t("fill.refused.insecure")
+            : t("fill.refused.insecureAt", { origin });
+        case "origin":
+          return origin === null
+            ? t("fill.refused.origin")
+            : t("fill.refused.originAt", { origin });
+        case "navigated":
+          return t("fill.refused.navigated");
+        case "refused-before":
+          return t("fill.refused.before");
+        case "stopped":
+          return t("fill.refused.stopped");
+        case "unavailable":
+          return t("fill.refused.unavailable");
+        case "unknown":
+          return t("fill.refused.other");
+      }
+  }
 }
 
 /**

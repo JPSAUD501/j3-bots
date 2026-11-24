@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The `j3` MCP server's process, started by a harness as
 // `node src/bridge/main.ts --server http://127.0.0.1:<J3_TOOL_PORT>`.
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeStdio from "@effect/platform-node/NodeStdio";
 import { sessionOfToolCaller } from "@j3-bots/engine-t3";
@@ -9,7 +10,6 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Stdio from "effect/Stdio";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import packageJson from "../../package.json" with { type: "json" };
 import { serve } from "./Bridge.ts";
 
@@ -27,7 +27,14 @@ main.pipe(
   // Standard output is the MCP channel: logs go to standard error.
   Effect.provideService(Logger.LogToStderr, true),
   Effect.provide(
-    Layer.mergeAll(NodeStdio.layer, FetchHttpClient.layer, SecureRandom.layerWebCrypto),
+    Layer.mergeAll(
+      NodeStdio.layer,
+      // Node's own client, which waits for an answer as long as the bridge's
+      // deadline: `fetch` gives up on a response whose headers take five
+      // minutes, which a connector's call can.
+      NodeHttpClient.layerNodeHttp,
+      SecureRandom.layerWebCrypto,
+    ),
   ),
   NodeRuntime.runMain,
 );

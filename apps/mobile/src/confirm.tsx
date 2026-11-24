@@ -34,7 +34,9 @@ interface Confirmation {
   /**
    * How the answer that acts is drawn: `blocked` for what cannot be undone,
    * the default; `accent` for a change that can be, which still asks because
-   * it takes something from another bot, as making a bot the primary one does.
+   * it takes something from another bot, as making a bot the primary one does,
+   * or lets go of something the operator holds, as giving a bot back its
+   * browser tab does.
    */
   readonly tone?: "destructive" | "primary";
   readonly onConfirm: () => void;
@@ -63,8 +65,8 @@ const AskContext = createContext<((asked: Asked) => void) | null>(null);
 const pop = reanimatedSpring(springs.pop);
 
 /**
- * Asks before something that cannot be undone, or that undoes something else,
- * in the app's own short dialog
+ * Asks before something that cannot be undone, that undoes something else, or
+ * that leaves something the operator holds, in the app's own short dialog
  * rather than the system's alert, so it reads and moves like every other
  * surface: a `surface` panel over the scrim that pops in from slightly
  * smaller on `pop` and leaves on `out`. The answer that keeps things as they

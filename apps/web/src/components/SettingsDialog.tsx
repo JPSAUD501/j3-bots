@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import {
+  type Connector,
   type Device,
   type DeviceId,
   type EngineStatus,
@@ -15,7 +16,12 @@ import * as Schema from "effect/Schema";
 import { SettingsIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
 import type { PairingOffer, SettingsSaves } from "@j3-bots/client-runtime";
-import { clockTime, connectCommand } from "@j3-bots/client-runtime/presentation";
+import {
+  clockTime,
+  connectCommand,
+  connectorNeedsYou,
+  connectorTone,
+} from "@j3-bots/client-runtime/presentation";
 import { type ProfileEdits, useProfileEdits, useProfileForm } from "@j3-bots/client-runtime/react";
 import { useI18n, usePresentation } from "../app/context";
 import { type KeyWith, LANGUAGE_NAMES } from "@j3-bots/i18n";
@@ -61,6 +67,7 @@ import { PhoneAccessSetting } from "./PhoneAccess";
 import { Section } from "./SettingsSection";
 import { SkeletonRows } from "./ui/skeleton";
 import { UsageSection } from "./UsageSection";
+import { VaultSection } from "./vault/VaultSection";
 import { Button } from "./ui/button";
 import { Confirm } from "./ui/confirm";
 import { Segmented } from "./ui/segmented";
@@ -72,6 +79,7 @@ type SettingsIntents = Pick<
   ShellIntents,
   | "updateSettings"
   | "setSettingsOpen"
+  | "openConnectors"
   | "startPairing"
   | "revokeDevice"
   | "refreshSettings"
@@ -79,12 +87,14 @@ type SettingsIntents = Pick<
   | "loadMoreTurns"
   | "retryTurns"
   | "signOut"
+  | "signOutBrowser"
   | "server"
   | "local"
   | "update"
   | "serverUpdate"
   | "shortcut"
   | "providerSetup"
+  | "vault"
 >;
 
 interface SettingsButtonProps {
@@ -101,6 +111,8 @@ interface SettingsButtonProps {
     | "roster"
     | "recentTurns"
     | "signInUnencrypted"
+    | "vault"
+    | "connectors"
   >;
   readonly intents: SettingsIntents;
 }
@@ -192,12 +204,19 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 connected={data.connected}
                 onSave={intents.updateSettings}
               />
+              <VaultSection vault={{ view: data.vault, intents: intents.vault }} />
               <EngineSection
                 engine={data.engine}
                 stale={data.engineStale}
                 {...(intents.providerSetup === undefined
                   ? {}
                   : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
+              />
+              <ConnectorsSection
+                connectors={data.connectors}
+                onOpen={() =>
+                  intents.openConnectors({ at: { _tag: "home" }, forBot: null, suggestion: null })
+                }
               />
               <UsageSection
                 engine={data.engine}
@@ -213,6 +232,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 onStartPairing={intents.startPairing}
                 onRevoke={intents.revokeDevice}
               />
+              <BotBrowserSection connected={data.connected} onSignOut={intents.signOutBrowser} />
               {(intents.server !== undefined || intents.local !== undefined) && (
                 <WhereSection server={intents.server} local={intents.local} />
               )}
@@ -302,6 +322,46 @@ export function EngineSection({
         ) : (
           <ConnectProviders engine={engine} />
         ))}
+    </Section>
+  );
+}
+
+/**
+ * The services bots can use: how many work and how many wait on the
+ * operator, and the screen that manages them.
+ */
+export function ConnectorsSection({
+  connectors,
+  onOpen,
+}: {
+  connectors: ReadonlyArray<Connector> | null;
+  onOpen: () => void;
+}) {
+  const { t, plural } = useI18n();
+  const working =
+    connectors?.filter((connector) => connectorTone(connector) === "connected").length ?? 0;
+  const needYou = connectors?.filter(connectorNeedsYou).length ?? 0;
+  return (
+    <Section title={t("settings.connectors")}>
+      <p className="text-sm text-muted-foreground">{t("settings.connectors.hint")}</p>
+      {connectors === null ? (
+        <SkeletonRows count={1} />
+      ) : connectors.length === 0 ? (
+        <p className="text-sm">{t("settings.connectors.none")}</p>
+      ) : (
+        <p className="text-sm">
+          {plural("settings.connectors.connected", working)}
+          {needYou > 0 && (
+            <span className="text-waiting">
+              {" "}
+              · {plural("settings.connectors.needsYou", needYou)}
+            </span>
+          )}
+        </p>
+      )}
+      <Button size="sm" className="self-start" onClick={onOpen}>
+        {t("settings.connectors.open")}
+      </Button>
     </Section>
   );
 }
@@ -790,6 +850,59 @@ export function SignOutDevice({
         {signOut === "failed" && t("settings.signOut.failed")}
       </p>
     </div>
+  );
+}
+
+/**
+ * The browser bots use keeps the operator's sign-ins; signing it out of every
+ * site asks first, since it ends all of them at once, for every bot.
+ */
+function BotBrowserSection({
+  connected,
+  onSignOut,
+}: {
+  connected: boolean;
+  onSignOut: SettingsIntents["signOutBrowser"];
+}) {
+  const { t } = useI18n();
+  const [signOut, setSignOut] = useState<"idle" | "pending" | "done" | "failed">("idle");
+  return (
+    <Section title={t("settings.botBrowser")}>
+      <p className="text-xs text-muted-foreground">{t("settings.botBrowser.hint")}</p>
+      <div className="flex flex-col items-start gap-1.5">
+        <Confirm
+          trigger={
+            <Button
+              size="sm"
+              variant="destructive-outline"
+              disabled={!connected}
+              aria-disabled={signOut === "pending"}
+            />
+          }
+          busy={signOut === "pending"}
+          title={t("settings.botBrowser.signOut.title")}
+          body={t("settings.botBrowser.signOut.body")}
+          cancel={t("settings.botBrowser.signOut.cancel")}
+          confirm={t("settings.botBrowser.signOut.confirm")}
+          onConfirm={() => {
+            setSignOut("pending");
+            void onSignOut().then((done) => setSignOut(done ? "done" : "failed"));
+          }}
+        >
+          {t("settings.botBrowser.signOut")}
+        </Confirm>
+        <p
+          role={signOut === "failed" ? "alert" : "status"}
+          className={cn(
+            "text-xs empty:hidden",
+            signOut === "failed" ? "text-blocked" : "text-muted-foreground",
+          )}
+        >
+          {signOut === "done" && t("settings.botBrowser.signOut.done")}
+          {signOut === "failed" && t("settings.botBrowser.signOut.failed")}
+        </p>
+      </div>
+    </Section>
   );
 }
 

@@ -59,7 +59,7 @@ export function ConversationHeader({
   useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
 
   return (
-    <View className="min-h-14 flex-row items-center gap-1 border-b border-border px-2">
+    <View className="min-h-12 flex-row items-center gap-1 border-b border-border px-2">
       {onBack !== null && (
         <Pressable
           accessibilityRole="button"
@@ -77,18 +77,18 @@ export function ConversationHeader({
         onPress={onOpenDetails}
         onPressIn={() => setPressed(true)}
         onPressOut={() => setPressed(false)}
-        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2.5 rounded-md px-1.5 active:bg-muted"
+        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-md px-1.5 active:bg-muted"
       >
         {item._tag === "bot" ? (
           <LiveBotAvatar
             bot={item.bot}
             lastEntry={item.lastEntry}
-            size={32}
+            size={28}
             ground={ground}
             markPrimary
           />
         ) : (
-          <RoomAvatar size={32} ground={ground} members={roomAvatarMembers(item.room, bots)} />
+          <RoomAvatar size={28} ground={ground} members={roomAvatarMembers(item.room, bots)} />
         )}
         <View className="min-w-0 flex-1">
           <View className="flex-row items-center gap-0.5">

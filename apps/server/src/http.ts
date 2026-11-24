@@ -32,6 +32,8 @@ import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { readBody, readText } from "./body.ts";
 import { ServerConfig } from "./config.ts";
 import { Devices } from "./devices/Devices.ts";
+import * as MediaSocket from "./browser/MediaSocket.ts";
+import * as OAuthCallback from "./connectors/oauth/callback.ts";
 import * as Webhook from "./routines/webhook.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
@@ -289,20 +291,29 @@ export const routes = Layer.mergeAll(
   download,
   Webhook.route,
   UpdateRoutes.routes,
+  OAuthCallback.route,
 );
 
-/** Every route, the RPC socket and the web client: what clients are served. */
+/** Every route, the RPC and media sockets and the web client: what clients are served. */
 export const app = Layer.mergeAll(
   routes,
   RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers),
+  MediaSocket.route,
   WebClient.layer,
 );
 
 /**
- * `app` on `server`, with a webhook's secret left out of the request log and
- * of any trace (`Ports.serve`).
+ * The paths that hold a credential, as the request log shows them: a
+ * webhook's secret and a sign-in's code and `state` are left out.
+ */
+const redactPath = (path: string) =>
+  Option.orElse(Webhook.redactPath(path), () => OAuthCallback.redactPath(path));
+
+/**
+ * `app` on `server`, with every credential a path holds left out of the
+ * request log and of any trace (`Ports.serve`).
  */
 export const serve = <S, SE, SR>(
   server: Layer.Layer<S, SE, SR>,
   options: { readonly logAddress: boolean },
-) => Ports.serve(app, server, { ...options, redactPath: Webhook.redactPath });
+) => Ports.serve(app, server, { ...options, redactPath });

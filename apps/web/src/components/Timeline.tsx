@@ -3,7 +3,10 @@ import type {
   ApprovalDecision,
   Attachment,
   BotId,
+  BrowserTabRef,
   CommandId,
+  ConnectorAuthEntry,
+  ConnectorSuggestionEntry,
   Mentions,
   Entry,
   EntryId,
@@ -15,7 +18,7 @@ import type {
   WorkStep,
 } from "@j3-bots/contracts";
 import type * as Redacted from "effect/Redacted";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import type { MentionLabel } from "@j3-bots/client-runtime";
 import {
   addresseeOf,
@@ -28,13 +31,17 @@ import { useBots, useI18n } from "../app/context";
 import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
+import { CredentialRequestCard } from "./CredentialRequestCard";
+import { ConnectorAuthCard, ConnectorSuggestionCard } from "./connectors/ConnectorCards";
 import { HandoffCard } from "./HandoffCard";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
 import { RoutineChangeCard } from "./RoutineChangeCard";
+import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimeDivider } from "./TimeDivider";
+import type { VaultAccess } from "./vault/VaultForms";
 import { type TurnBot, WorkFold } from "./WorkFold";
 
 /** What the operator can do from a timeline. Each is an intent; the client runtime carries it out. */
@@ -44,6 +51,12 @@ export interface TimelineIntents {
   readonly decideApproval: (entryId: EntryId, decision: ApprovalDecision) => void;
   readonly provideSecret: (entryId: EntryId, value: Redacted.Redacted<string>) => void;
   readonly declineSecret: (entryId: EntryId) => void;
+  /** The operator did the step a bot asked for in its browser, or could not. */
+  readonly answerBrowserHelp: (entryId: EntryId, outcome: "done" | "declined") => void;
+  /** Opens the bot's browser on `tab`, or on its front tab once that one closed. */
+  readonly openBrowser: (botId: BotId, tab: BrowserTabRef | "front") => void;
+  /** Closes a save-login card without saving; saving goes to the vault itself. */
+  readonly dismissLogin: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
   /**
@@ -60,6 +73,15 @@ export interface TimelineIntents {
   readonly openHandoff: (entryId: EntryId) => void;
   readonly openRoutine: (routineId: RoutineId) => void;
   readonly openConversation: (botId: BotId) => void;
+  /**
+   * A bot's suggested connector: lets the bot use one the operator added, or
+   * opens the page that connects it, for that bot.
+   */
+  readonly connectSuggested: (entry: ConnectorSuggestionEntry) => void;
+  /** Not now: the suggestion closes for good in its conversation. */
+  readonly dismissSuggestion: (entryId: EntryId) => void;
+  /** Opens the connector's page with its sign-in started. */
+  readonly signInConnector: (entry: ConnectorAuthEntry) => void;
 }
 
 interface TimelineProps {
@@ -81,6 +103,8 @@ interface TimelineProps {
   /** What holds the bot's hello back, which the operator's messages behind it wait for (`openingHeld`). */
   readonly openingHold?: OpeningHold | null;
   readonly intents: TimelineIntents;
+  /** The vault, which a save-login card saves to, and unlocks or sets up in place. */
+  readonly vault: VaultAccess;
   /** The rows that just arrived at the end, by key: they settle into place as they mount. */
   readonly arrived?: ReadonlySet<string>;
   /** Where the operator's messages fly from as they arrive: the composer's field. */
@@ -90,6 +114,8 @@ interface TimelineProps {
    * what it is doing (`withLiveTurn`). Null in a room.
    */
   readonly turnBot?: TurnBot | null;
+  /** What shows under the line of the bot's turn under way, as its browser. */
+  readonly turnExtra?: ReactNode;
 }
 
 /**
@@ -103,9 +129,11 @@ export function Timeline({
   submitting,
   openingHold = null,
   intents,
+  vault,
   arrived,
   flyFrom,
   turnBot = null,
+  turnExtra,
 }: TimelineProps) {
   const bots = useBots();
   const i18n = useI18n();
@@ -138,6 +166,7 @@ export function Timeline({
               <WorkFold
                 fold={fold}
                 live={item.live ? turnBot : null}
+                {...(item.live && turnExtra !== undefined ? { extra: turnExtra } : {})}
                 steps={fold === null ? null : workSteps(fold.id)}
                 onOpenChange={(open) => {
                   if (fold === null) return;
@@ -221,7 +250,7 @@ export function Timeline({
         const { entry } = item;
         return (
           <div key={item.key} data-seen-id={entry.id} className={settles}>
-            <Card entry={entry} submitting={submitting} intents={intents} />
+            <Card entry={entry} submitting={submitting} intents={intents} vault={vault} />
           </div>
         );
       })}
@@ -234,10 +263,12 @@ function Card({
   entry,
   submitting,
   intents,
+  vault,
 }: {
   entry: Exclude<Entry, MessageEntry | WorkFoldEntry>;
   submitting: TimelineProps["submitting"];
   intents: TimelineIntents;
+  vault: VaultAccess;
 }) {
   switch (entry._tag) {
     case "question":
@@ -266,6 +297,36 @@ function Card({
           submitting={submitting(entry.id)}
         />
       );
+    case "browser-help":
+      return (
+        <BrowserHelpCard
+          entry={entry}
+          onOpen={() => intents.openBrowser(entry.author.botId, entry.tab)}
+          onDone={() => intents.answerBrowserHelp(entry.id, "done")}
+          onDecline={() => intents.answerBrowserHelp(entry.id, "declined")}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "credential-request":
+      return (
+        <CredentialRequestCard
+          entry={entry}
+          vault={vault}
+          onDismiss={() => intents.dismissLogin(entry.id)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "connector-suggestion":
+      return (
+        <ConnectorSuggestionCard
+          entry={entry}
+          onConnect={() => intents.connectSuggested(entry)}
+          onDismiss={() => intents.dismissSuggestion(entry.id)}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "connector-auth":
+      return <ConnectorAuthCard entry={entry} onSignIn={() => intents.signInConnector(entry)} />;
     case "notice":
       return (
         <NoticeLine

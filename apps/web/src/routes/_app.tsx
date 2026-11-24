@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { RoutineId, type RosterItem, type RosterItemKey } from "@j3-bots/contracts";
+import { BrowserTabRef, RoutineId, type RosterItem, type RosterItemKey } from "@j3-bots/contracts";
 import { Link, Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { lazy } from "react";
@@ -20,12 +20,15 @@ const SourceProvider =
 
 /**
  * What shows over the conversation: its details, and over a bot's details the
- * runs of one of its routines. In the address, so Back closes them and they
- * close when the conversation changes.
+ * runs of one of its routines; or instead of the details the bot's browser, on
+ * one tab or on the one the bot uses. In the address, so Back closes them and
+ * they close when the conversation changes.
  */
 const Search = Schema.Struct({
   details: Schema.optionalKey(Schema.Boolean),
   routine: Schema.optionalKey(RoutineId),
+  // "front" first: a ref is any non-empty string, which would take "front" too.
+  browser: Schema.optionalKey(Schema.Union([Schema.Literal("front"), BrowserTabRef])),
 });
 
 /** The app: one shell for every conversation, so the roster keeps its place between them. */
@@ -47,10 +50,10 @@ const rowLink = (item: RosterItem) =>
   );
 
 function AppLayout() {
-  const { data, intents } = useShellSource();
+  const { data, intents, browser: browserSource } = useShellSource();
   const navigate = useNavigate();
   const params = useParams({ strict: false });
-  const { details } = Route.useSearch();
+  const { details, browser } = Route.useSearch();
   const selected: RosterItemKey | null = params.botId
     ? { _tag: "bot", botId: params.botId }
     : params.roomId
@@ -63,7 +66,10 @@ function AppLayout() {
         intents={{
           ...intents,
           openConversation: (botId) => navigate({ to: "/bots/$botId", params: { botId } }),
+          openBrowser: (botId, tab) =>
+            navigate({ to: "/bots/$botId", params: { botId }, search: { browser: tab } }),
         }}
+        browser={browserSource}
         navigation={{
           selected,
           detailsOpen: details === true && selected !== null,
@@ -73,8 +79,21 @@ function AppLayout() {
               : key._tag === "bot"
                 ? navigate({ to: "/bots/$botId", params: { botId: key.botId } })
                 : navigate({ to: "/rooms/$roomId", params: { roomId: key.roomId } }),
+          // The details and the browser take the same place: opening one closes the other.
           setDetailsOpen: (open) =>
-            navigate({ to: ".", search: (prev) => (open ? { ...prev, details: true } : {}) }),
+            navigate({
+              to: ".",
+              search: (prev) =>
+                open
+                  ? {
+                      details: true,
+                      ...(prev.routine === undefined ? {} : { routine: prev.routine }),
+                    }
+                  : {},
+            }),
+          browser: browser ?? null,
+          setBrowser: (target) =>
+            navigate({ to: ".", search: target === null ? {} : { browser: target } }),
           rowLink,
         }}
       />

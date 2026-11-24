@@ -3,6 +3,7 @@
 import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
 import type * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import { MAX_TEMPLATE_FILE_SIZE } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -33,7 +34,20 @@ interface WebSocketOptions extends NonNullable<NodeHttpServer.Options["websocket
 const HTTP_GRACE = "5 seconds";
 const WEBSOCKET_CLOSE_MILLIS = 2_000;
 
-const websocket: WebSocketOptions = { closeTimeout: WEBSOCKET_CLOSE_MILLIS };
+/**
+ * The largest message a client may send on any socket. A larger one closes the
+ * socket (1009) before `ws` keeps more of it than this, where its default lets
+ * a client make the server hold 100 MiB. The RPC and media sockets upgrade
+ * through one `ws` server, so one limit serves both: the largest RPC message a
+ * client sends is a bot template, whose file is at most
+ * `MAX_TEMPLATE_FILE_SIZE`, and the media socket's frames are a few kilobytes.
+ */
+const MAX_SOCKET_MESSAGE_BYTES = 4 * MAX_TEMPLATE_FILE_SIZE;
+
+const websocket: WebSocketOptions = {
+  closeTimeout: WEBSOCKET_CLOSE_MILLIS,
+  maxPayload: MAX_SOCKET_MESSAGE_BYTES,
+};
 
 /**
  * Where the server listens for clients, as bound: what `j3-bots pair` prints

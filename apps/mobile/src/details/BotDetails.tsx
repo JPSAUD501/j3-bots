@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Loaded } from "@j3-bots/client-runtime";
-import { canStop } from "@j3-bots/client-runtime/presentation";
+import { canStop, connectorsOf } from "@j3-bots/client-runtime/presentation";
 import {
   useBotFiles,
+  useConnectors,
   useEngineStatus,
   useJ3Client,
   useMemory,
@@ -16,7 +17,7 @@ import {
   permissionModeText,
   routineLines,
 } from "@j3-bots/client-runtime/wording";
-import type { Bot, MemoryFile, Routine } from "@j3-bots/contracts";
+import type { Bot, Connector, MemoryFile, Routine } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
 import {
   CalendarClock,
@@ -24,6 +25,8 @@ import {
   CirclePause,
   Cpu,
   FileText,
+  Globe,
+  KeyRound,
   NotebookText,
   ShieldCheck,
   Webhook,
@@ -46,6 +49,8 @@ import { FileCard } from "../conversation/FileCard.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
 import { useShareBotTemplate } from "../template/share.ts";
 import { useBotActions } from "./actions.ts";
+import { useOpenConnectors } from "../connectors/intents.ts";
+import { ConnectorTile, StatusWord } from "../connectors/parts.tsx";
 import { StopRow } from "./StopRow.tsx";
 
 /** A read's list once loaded, or null while it loads; a bot that is gone has none. */
@@ -75,9 +80,12 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const routines = loadedList(useRoutines(bot.id));
   const files = loadedList(useBotFiles(bot.id));
   const memory = loadedList(useMemory({ _tag: "bot", botId: bot.id }));
+  const connectors = useConnectors();
   const { name, title, job } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, ctx.i18n);
   const modelName = botModelName(engine._tag === "ready" ? engine.value : null, bot);
+  const browserNeedsSetup =
+    engine._tag === "ready" && engine.value.browser?._tag === "setup-required";
   const skeleton = (count: number) => <SkeletonRows count={count} />;
   return (
     <ScrollView
@@ -158,6 +166,14 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         )}
       </Section>
 
+      <Section open title={t("details.connectors")}>
+        {connectors._tag === "loading" ? (
+          skeleton(1)
+        ) : (
+          <BotConnectors bot={bot} connectors={connectorsOf(connectors.value, bot.id)} />
+        )}
+      </Section>
+
       <Section open title={t("details.model")}>
         <View className="flex-row items-start gap-3">
           <Icon icon={Cpu} color="accent-muted-foreground" />
@@ -179,6 +195,11 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
             <Text className="text-sm text-muted-foreground">{mode.description}</Text>
           </View>
         </View>
+      </Section>
+
+      <Section open title={t("details.browser")}>
+        <BrowserRow bot={bot} needsSetup={browserNeedsSetup} />
+        <VaultRow bot={bot} />
       </Section>
 
       <Section open title={t("details.workingContext")}>
@@ -294,6 +315,82 @@ function RoutineRow({
   );
 }
 
+/**
+ * Whether the bot may use the browser on the server's computer, with the
+ * operator's sign-ins there, from its next turn; and, while it may, whether
+ * that computer still needs setting up for it.
+ */
+function BrowserRow({ bot, needsSetup }: { readonly bot: Bot; readonly needsSetup: boolean }) {
+  const { t } = usePresentation().i18n;
+  const client = useJ3Client();
+  const say = useSay();
+  const { name } = bot.profile;
+  return (
+    <View className="flex-row items-start gap-3">
+      <View className="pt-0.5">
+        <Icon icon={Globe} color="accent-muted-foreground" />
+      </View>
+      <View className="min-w-0 flex-1 gap-0.5">
+        <Text className="text-base text-foreground">{t("details.browser.use")}</Text>
+        <Text className="text-sm text-muted-foreground">{t("details.browser.hint", { name })}</Text>
+        {bot.browser && needsSetup && (
+          <Text className="text-sm text-blocked">{t("details.browser.setup")}</Text>
+        )}
+      </View>
+      <Switch
+        accessibilityLabel={t("details.browser.use")}
+        value={bot.browser}
+        onChange={(enabled) =>
+          void client.updateBot(bot.id, { browser: enabled }).then((result) => {
+            if (result._tag !== "failed") return;
+            // The switch shows the bot as the server has it, so a failure leaves nothing to keep.
+            client.dismissBotSave(bot.id);
+            say(t("details.browser.failed", { name }));
+          })
+        }
+      />
+    </View>
+  );
+}
+
+/**
+ * Whether the bot may have the logins the operator allows it typed into its
+ * browser page by the server, from its next fill; and, while it may, whether
+ * it still needs the browser for that.
+ */
+function VaultRow({ bot }: { readonly bot: Bot }) {
+  const { t } = usePresentation().i18n;
+  const client = useJ3Client();
+  const say = useSay();
+  const { name } = bot.profile;
+  return (
+    <View className="flex-row items-start gap-3">
+      <View className="pt-0.5">
+        <Icon icon={KeyRound} color="accent-muted-foreground" />
+      </View>
+      <View className="min-w-0 flex-1 gap-0.5">
+        <Text className="text-base text-foreground">{t("details.vault.use")}</Text>
+        <Text className="text-sm text-muted-foreground">{t("details.vault.hint", { name })}</Text>
+        {bot.vault && !bot.browser && (
+          <Text className="text-sm text-muted-foreground">{t("details.vault.needsBrowser")}</Text>
+        )}
+      </View>
+      <Switch
+        accessibilityLabel={t("details.vault.use")}
+        value={bot.vault}
+        onChange={(enabled) =>
+          void client.updateBot(bot.id, { vault: enabled }).then((result) => {
+            if (result._tag !== "failed") return;
+            // As for the browser: the switch shows the bot as the server has it.
+            client.dismissBotSave(bot.id);
+            say(t("details.vault.failed", { name }));
+          })
+        }
+      />
+    </View>
+  );
+}
+
 /** A memory file: the profile note or a period's log, with its size and when it changed. */
 function MemoryRow({ file, onOpen }: { readonly file: MemoryFile; readonly onOpen: () => void }) {
   const ctx = usePresentation();
@@ -321,5 +418,60 @@ function MemoryRow({ file, onOpen }: { readonly file: MemoryFile; readonly onOpe
       <Text className="text-xs text-muted-foreground">{detail}</Text>
       <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />
     </PressScale>
+  );
+}
+
+/**
+ * The connectors the bot may use, each with its status, opening its page;
+ * then the connectors screen, where the operator connects more for it.
+ */
+function BotConnectors({
+  bot,
+  connectors,
+}: {
+  readonly bot: Bot;
+  readonly connectors: ReadonlyArray<Connector>;
+}) {
+  const { t } = usePresentation().i18n;
+  const open = useOpenConnectors();
+  return (
+    <>
+      {connectors.length === 0 ? (
+        <Quiet>{t("details.noConnectors", { name: bot.profile.name })}</Quiet>
+      ) : (
+        connectors.map((connector) => (
+          <PressScale
+            key={connector.id}
+            depth="row"
+            accessibilityRole="button"
+            accessibilityLabel={connector.name}
+            onPress={() =>
+              open({
+                at: { _tag: "connector", connectorId: connector.id, signIn: false, added: false },
+                forBot: bot.id,
+                suggestion: null,
+              })
+            }
+            className="-mx-2 min-h-11 flex-row items-center gap-3 rounded-md px-2 py-1 active:bg-muted"
+          >
+            <ConnectorTile name={connector.name} glyph={connector.glyph} />
+            <View className="min-w-0 flex-1 gap-0.5">
+              <Text numberOfLines={1} className="text-base text-foreground">
+                {connector.name}
+              </Text>
+              <StatusWord connector={connector} />
+            </View>
+            <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />
+          </PressScale>
+        ))
+      )}
+      <View className="items-start">
+        <Button
+          variant="secondary"
+          label={t("details.connectors.manage")}
+          onPress={() => open({ at: { _tag: "home" }, forBot: bot.id, suggestion: null })}
+        />
+      </View>
+    </>
   );
 }

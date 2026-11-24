@@ -2,7 +2,7 @@
 import type { DraftFile } from "@j3-bots/client-runtime";
 import { draftFileName, FILE_MARK } from "@j3-bots/client-runtime/presentation";
 import type { AttachmentId } from "@j3-bots/contracts";
-import { fontFamilies, layout } from "@j3-bots/design-tokens";
+import { fontFamilies, layout, typeScale } from "@j3-bots/design-tokens";
 import { requireNativeView } from "expo";
 import { type ComponentRef, type Ref, useImperativeHandle, useRef, useState } from "react";
 import { type NativeSyntheticEvent, Platform, processColor, type ViewProps } from "react-native";
@@ -132,11 +132,12 @@ const argb = (color: string): number => {
   return processed;
 };
 
-// The field's text size and padding, as the composer's other controls are laid out around them.
-const FONT_SIZE = 18;
+// The field's text is a message's, and one line of it with its padding is a
+// touch target tall: the composer's round buttons are laid out around that line.
+const FONT_SIZE = typeScale.lg.touch.size;
+const MIN_HEIGHT = layout.touchTarget;
 const PADDING_X = 4;
-const PADDING_Y = 10;
-const MIN_HEIGHT = 44;
+const PADDING_Y = (MIN_HEIGHT - typeScale.lg.touch.lineHeight) / 2;
 
 function AndroidField({
   ref,
@@ -160,7 +161,7 @@ function AndroidField({
   // does: the draft takes each edit as it is told, so a value that answers an
   // older count is one the operator has typed past.
   const [eventCount, setEventCount] = useState(0);
-  const [height, setHeight] = useState(MIN_HEIGHT);
+  const [height, setHeight] = useState<number>(MIN_HEIGHT);
   useImperativeHandle(ref, () => ({
     focus: () => void native.current?.focus(),
     blur: () => void native.current?.blur(),

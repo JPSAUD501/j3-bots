@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { EntryId, EntryOrder, type WorkFoldEntry } from "@j3-bots/contracts";
+import {
+  type CredentialFill,
+  EntryId,
+  EntryOrder,
+  SiteOrigin,
+  type WorkFoldEntry,
+  type WorkStep,
+  WorkStepId,
+} from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
-import { workDoneText, workFoldTitle } from "./work.ts";
+import { fillDetail, stepText, workDoneText, workFoldTitle } from "./work.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", {});
 
@@ -107,5 +115,43 @@ describe("workDoneText", () => {
     expect(workDoneText(null, null, ctx.i18n)).toBe("Did some work");
     const ran = { kind: "command", tool: null, label: "git status" } as const;
     expect(plain(workDoneText(ran, "interrupted", ctx.i18n))).toBe("Ran git status");
+  });
+});
+
+describe("a login's fill", () => {
+  const step = (fill: CredentialFill): WorkStep => ({
+    id: WorkStepId.make("step"),
+    kind: "tool",
+    tool: "login",
+    label: "Filled a saved login",
+    status: fill.outcome._tag === "filled" ? "completed" : "failed",
+    startedAt: at("2026-11-20T14:00:00Z"),
+    finishedAt: at("2026-11-20T14:00:01Z"),
+    fill,
+  });
+  const fill = (outcome: CredentialFill["outcome"], origin: string | null): CredentialFill => ({
+    name: "GitHub (work)",
+    credentialId: null,
+    field: "password",
+    origin: origin === null ? null : SiteOrigin.make(origin),
+    outcome,
+  });
+
+  it("names the login and the field, and whether it was filled", () => {
+    const done = fill({ _tag: "filled", submitted: true }, "https://github.com");
+    expect(stepText(step(done), ctx.i18n)).toBe("Filled the password of GitHub (work)");
+    expect(fillDetail(done, ctx.i18n)).toBe("On https://github.com, then sent the form.");
+    const locked = fill({ _tag: "locked" }, "https://github.com");
+    expect(stepText(step(locked), ctx.i18n)).toBe("Didn’t fill the password of GitHub (work)");
+  });
+
+  it("shows the page a refused fill was asked on, as the server checked it", () => {
+    const lookalike = fill({ _tag: "refused", reason: "origin" }, "https://xn--gthub-zsa.com");
+    expect(fillDetail(lookalike, ctx.i18n)).toBe(
+      "The page, https://xn--gthub-zsa.com, isn’t one of the login’s sites.",
+    );
+    expect(fillDetail(fill({ _tag: "refused", reason: "origin" }, null), ctx.i18n)).toBe(
+      "The page isn’t one of the login’s sites.",
+    );
   });
 });

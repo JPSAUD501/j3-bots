@@ -95,13 +95,19 @@ Done when a conversation started on one device continues on the others with noth
 
 **Status.** Built for 0.3.0 on Linux x64 and Windows x64. On Apple silicon it is built but not offered until it has run on a Mac; an Intel Mac connects to a server only. A phone reaching these bots from outside the home network is a later step.
 
-## Next
+## The browser, the vault and connectors
 
-Decided by the owner on 2026-11-23, after 0.3.0. Each is planned in lanes of its own; none is built yet.
+Decided by the owner on 2026-11-23, after 0.3.0, for 0.4.0. The walkthrough is [A bot's browser, the vault and connectors](operations/browser-vault-and-connectors.md); what guards each part is in [Security](architecture/security.md#the-browser-the-vault-and-connectors).
 
-- **The bot's browser, in the clients.** A live view of the tab a bot is using, and taking control of it from any client: the bot waits and goes on when control is handed back. A bot that meets a check, a login, a second factor, a QR code or a passkey asks the operator on a card instead of getting around it. One browser profile keeps the operator's logins. The browser is the engine's own, on the machine J3 Bots runs on.
-- **A credential vault.** Logins saved per site, encrypted and the operator's only, typed into a page by the server so the model never reads them, and one-time codes.
-- **A connector gallery.** MCP servers to find and connect, from the MCP Registry and a curated list, for one bot, some or all. The server signs in, OAuth included, keeps the tokens encrypted and renews them, and bots use the tools through it without ever holding a token.
+- **The bot's browser.** A bot uses the engine's browser on the host only once its switch is on. The operator watches the page it works in from any client, takes control and hands it back, and a bot that meets a check, a sign-in, a second factor, a QR code or a passkey asks for help on a card instead of getting around it. One profile keeps the operator's sign-ins for every bot that has the browser.
+- **The vault.** Logins saved per site, sealed on the server under a master password held only in memory, unlocked from any client after each start, with one-time codes. A bot asks for a login on a card, and the server types a login the bot may use into its page without handing it the value.
+- **Connectors.** MCP servers to find in a curated list and the MCP Registry, or to add by address or by command, for one bot, some or all. The server signs in, OAuth included, keeps the sign-in in the vault, renews it and makes the calls; a connector's tools follow the bot's permission mode, and a change to them waits for the operator.
+- **Visuals.** A chart, a table, a diagram or a mockup a bot builds, shown in its message on the web, the desktop and Android, shut in a frame with no network.
+
+**Status.** Built for 0.4.0, in review, not released. Not proven yet:
+
+- No sign-in to a real service: every OAuth flow ran against fake authorization servers, and the Google and Slack guides are **Assumed**.
+- The browser has not been measured on a Raspberry Pi, nor run on Windows or macOS, and neither a help card nor a fill has been asked for by a real model end to end.
 
 ## Out of scope for now
 

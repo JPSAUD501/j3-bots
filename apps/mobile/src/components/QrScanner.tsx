@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { PairingLink, type PairingLinkTarget } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Linking, Modal, View } from "react-native";
@@ -10,21 +8,34 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useI18n } from "../i18n.ts";
 import { Body, Button, Centered } from "../ui.tsx";
 
-const decodeLink = Schema.decodeUnknownOption(PairingLink);
+/**
+ * What a scanner says: what to point the camera at, what it says of a code it
+ * cannot use, and what to do instead when the camera is refused (`refused`,
+ * when the app may ask again) or out of the app's reach (`denied`).
+ */
+interface ScannerWords {
+  readonly title: string;
+  readonly wrongCode: string;
+  readonly refused: string;
+  readonly denied: string;
+}
 
 /**
- * The camera over the whole screen, reading the QR code a paired device or
- * `j3-bots pair` shows. The first pairing link it reads is handed over, to
- * fill in the pairing screen: it never pairs by itself. The camera is asked
+ * The camera over the whole screen, reading QR codes until one `decode`
+ * takes, which is handed over once: as a pairing link that fills in the
+ * pairing screen, or a one-time code key that fills in a login's field.
+ * Nothing acts on it by itself. The camera is asked
  * for once, as the scanner opens. Refused, the scanner says so and offers to
  * ask again, or, once the system no longer lets the app ask (on Android 11
  * and later, after a second refusal), the phone's settings. The permission is
  * read again each time the app comes back to the foreground, so a camera
  * allowed in the phone's settings opens on return.
  */
-export function PairingScanner(props: {
-  readonly onScanned: (target: PairingLinkTarget) => void;
+export function QrScanner<A>(props: {
+  readonly decode: (data: string) => Option.Option<A>;
+  readonly onScanned: (value: A) => void;
   readonly onClose: () => void;
+  readonly words: ScannerWords;
 }) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
@@ -35,7 +46,7 @@ export function PairingScanner(props: {
     });
     return () => subscription.remove();
   }, [readPermission]);
-  // A code that is not a pairing link says so, until one that is comes into view.
+  // A code `decode` does not take says so, until one it takes comes into view.
   const [wrongCode, setWrongCode] = useState(false);
   const handed = useRef(false);
 
@@ -50,10 +61,10 @@ export function PairingScanner(props: {
               barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
               onBarcodeScanned={({ data }) => {
                 if (handed.current) return;
-                const target = decodeLink(data);
-                if (Option.isSome(target)) {
+                const value = props.decode(data);
+                if (Option.isSome(value)) {
                   handed.current = true;
-                  props.onScanned(target.value);
+                  props.onScanned(value.value);
                 } else {
                   setWrongCode(true);
                 }
@@ -64,11 +75,11 @@ export function PairingScanner(props: {
               style={{ paddingTop: insets.top + 12 }}
             >
               <Text accessibilityRole="header" className="text-base font-medium text-foreground">
-                {t("pairing.scan.title")}
+                {props.words.title}
               </Text>
               {wrongCode && (
                 <Text accessibilityLiveRegion="polite" className="text-sm text-blocked">
-                  {t("pairing.scan.notPairing")}
+                  {props.words.wrongCode}
                 </Text>
               )}
             </View>
@@ -76,19 +87,19 @@ export function PairingScanner(props: {
         ) : permission?.status === "denied" ? (
           permission.canAskAgain ? (
             <Centered>
-              <Body>{t("pairing.scan.refused")}</Body>
+              <Body>{props.words.refused}</Body>
               <Button
                 variant="primary"
-                label={t("pairing.scan.allow")}
+                label={t("scan.allow")}
                 onPress={() => void requestPermission()}
               />
             </Centered>
           ) : (
             <Centered>
-              <Body>{t("pairing.scan.denied")}</Body>
+              <Body>{props.words.denied}</Body>
               <Button
                 variant="primary"
-                label={t("pairing.scan.openSettings")}
+                label={t("scan.openSettings")}
                 onPress={() => void Linking.openSettings()}
               />
             </Centered>
@@ -101,7 +112,7 @@ export function PairingScanner(props: {
           className="items-center border-t border-border bg-background px-4 pt-3"
           style={{ paddingBottom: insets.bottom + 12 }}
         >
-          <Button label={t("pairing.scan.close")} onPress={props.onClose} />
+          <Button label={t("scan.close")} onPress={props.onClose} />
         </View>
       </View>
     </Modal>

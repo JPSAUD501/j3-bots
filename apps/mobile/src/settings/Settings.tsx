@@ -19,11 +19,14 @@ import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
 import { AboutSection } from "./About.tsx";
+import { BotBrowserSection } from "./BotBrowser.tsx";
 import { DevicesSection } from "./Devices.tsx";
 import { usePhoneNotifications } from "./phoneNotifications.ts";
 import { NotificationsSection, YouSection } from "./Profile.tsx";
 import { ServerSection, ThisPhoneSection } from "./ThisPhone.tsx";
 import { UsageSection } from "./Usage.tsx";
+import { VaultSection } from "../vault/VaultSection.tsx";
+import { ConnectorsSection } from "../connectors/ConnectorsSection.tsx";
 
 /**
  * Everything that is not about one bot. Coming to it reads the settings and
@@ -67,9 +70,11 @@ export function SettingsScreen() {
         paddingBottom: insets.bottom + 16,
       }}
     >
-      {/* The operator's own settings first, then the engine and what it spent, as on the web. */}
+      {/* The operator's own settings, vault and connectors first, then the engine and what it spent, as on the web. */}
       <YouSection connected={connected} />
       <NotificationsSection connected={connected} thisPhone={thisPhone} />
+      <VaultSection />
+      <ConnectorsSection />
       <EngineSection engine={engine} stale={engineStale} />
       <UsageSection
         engine={engine}
@@ -79,6 +84,7 @@ export function SettingsScreen() {
         onRetry={recent.retry}
       />
       <DevicesSection connected={connected} />
+      <BotBrowserSection connected={connected} />
       <ServerSection />
       <AboutSection onLayout={onUpdatesLaidOut} />
       <ThisPhoneSection />

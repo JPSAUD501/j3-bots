@@ -20,7 +20,8 @@ const changeText: Record<RoutineChangeEntry["change"], KeyWith> = {
 };
 
 /**
- * A routine was created or changed: the exact schedule it now has, in words.
+ * A routine was created or changed, in two lines: what changed and its
+ * name, then the exact schedule it now has, in words.
  * It opens the bot's details, which list its routines; a deleted routine
  * has nowhere to go.
  */
@@ -43,25 +44,28 @@ export function RoutineChangeCard({
         ? Webhook
         : CalendarClock;
   return (
-    <View className="mt-3 px-4">
+    <View className="mt-2 px-4">
       <PressScale
         accessibilityRole="button"
         accessibilityState={{ disabled: deleted }}
         disabled={deleted}
         onPress={onOpen}
         frame={{ width: widths.compactCard, alignSelf: "flex-start" }}
-        className="min-h-11 flex-row items-center gap-3 rounded-bubble border border-border bg-surface p-3.5"
+        className="min-h-11 flex-row items-center gap-2.5 rounded-bubble border border-border bg-surface px-3 py-2"
       >
-        <View className="size-8 items-center justify-center rounded-md bg-muted">
-          <Icon icon={icon} color="accent-muted-foreground" />
+        <View className="size-7 items-center justify-center rounded-md bg-muted">
+          <Icon icon={icon} size={16} color="accent-muted-foreground" />
         </View>
         <View className="min-w-0 flex-1">
-          <Text className="text-2xs text-muted-foreground">
-            {ctx.i18n.t(changeText[entry.change])}
-          </Text>
-          <Text numberOfLines={1} className="text-sm font-medium text-foreground">
-            {entry.name}
-          </Text>
+          {/* What changed stays whole; a long name gives way. */}
+          <View className="flex-row items-baseline gap-1.5">
+            <Text className="text-xs text-muted-foreground">
+              {ctx.i18n.t(changeText[entry.change])}
+            </Text>
+            <Text numberOfLines={1} className="shrink text-sm font-medium text-foreground">
+              {entry.name}
+            </Text>
+          </View>
           {!deleted && (
             <Text numberOfLines={1} className="text-xs text-muted-foreground">
               {words ?? (entry.trigger._tag === "schedule" ? entry.trigger.cron : "")}

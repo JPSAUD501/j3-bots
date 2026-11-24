@@ -276,6 +276,24 @@ it.effect("writes the bot's profile and pinned memory into its generated instruc
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("gives a bot the browser's rules in its instructions only while its browser is on", () =>
+  Effect.gen(function* () {
+    const bots = yield* Bots;
+    const layout = yield* Layout;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bot = yield* createBot("Scout", "Watches the repository for new issues.");
+    const agents = path.join(layout.workspace(bot.id), "AGENTS.md");
+    assert.notInclude(yield* fs.readFileString(agents), "# Your browser");
+
+    yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: true } });
+    assert.include(yield* fs.readFileString(agents), "# Your browser");
+
+    yield* bots.update({ commandId: command(), botId: bot.id, changes: { browser: false } });
+    assert.notInclude(yield* fs.readFileString(agents), "# Your browser");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "brings a new session to a permission mode changed while it opened, before it takes work",
   () =>

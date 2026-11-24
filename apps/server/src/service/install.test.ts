@@ -107,6 +107,7 @@ const installOn = (machine: Machine) =>
           sshPrivateKeys: Effect.succeed([]),
           groups: Effect.succeed([]),
           reachable: () => Effect.die("install asks nothing of the network"),
+          browserNeeds: () => Effect.die("install never asks about the browser"),
         }),
       ),
       Layer.succeed(

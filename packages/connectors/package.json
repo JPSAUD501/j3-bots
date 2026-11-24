@@ -1,0 +1,37 @@
+{
+  "name": "@j3-bots/connectors",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/fakeMcpServer.ts",
+      "import": "./src/testing/fakeMcpServer.ts"
+    },
+    "./testing/stdio": {
+      "types": "./src/testing/stdioFixture.ts",
+      "import": "./src/testing/stdioFixture.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/processes": "workspace:*",
+    "@j3-bots/prompts": "workspace:*",
+    "@modelcontextprotocol/client": "2.4.0",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -17,7 +17,8 @@ import { CurrentDevice, DeviceAuth, type SocketCredential } from "./auth/DeviceA
 /** What a client sees of a request that failed unexpectedly. The cause is logged instead. */
 export const INTERNAL_ERROR = "Internal server error";
 
-const credentialOf = (
+/** The credential an upgrade carries: the device token as a bearer, or a one-use ticket. */
+export const credentialOf = (
   request: HttpServerRequest.HttpServerRequest,
 ): Option.Option<SocketCredential> => {
   const authorization = request.headers["authorization"];

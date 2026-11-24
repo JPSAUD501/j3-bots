@@ -37,6 +37,55 @@ export {
   withChanges,
   withProfileEdit,
 } from "./botEdit.ts";
+export {
+  type DrawnRect,
+  dragWheel,
+  frontTab,
+  type PageSize,
+  pagePoint,
+  type Point,
+  siteOf,
+} from "./browser.ts";
+export {
+  addedFrom,
+  addedPlace,
+  applyConnectorChange,
+  awaitsReview,
+  connectorNeedsYou,
+  type ConnectorsOpening,
+  connectorsOf,
+  type ConnectorsPlace,
+  connectorTone,
+  type ConnectorTone,
+  grantsBot,
+  initialGrant,
+  listingKey,
+  listingPlace,
+  sameGrant,
+  type SignInProblem,
+  suggestionConnect,
+  withBot,
+} from "./connectors.ts";
+export {
+  type ArgumentsDraft,
+  type ClientInput,
+  type CommandConsent,
+  type CommandEdit,
+  commandConsent,
+  commandEdit,
+  commandSource,
+  type EnvProblem,
+  fieldValues,
+  type FormProblems,
+  keepsLine,
+  type KnownCommand,
+  knownCommand,
+  listingSource,
+  withoutSecrets,
+  type PairInput,
+  remoteSource,
+  type SourceDraft,
+} from "./connectorForm.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
 export {
   connectCommand,
@@ -80,9 +129,11 @@ export {
   defaultBotName,
   makingProgress,
   nextStep,
+  type OnboardingFlow,
   type OnboardingStep,
   previousStep,
   showsConnect,
+  showsVault,
 } from "./onboarding.ts";
 export {
   notificationOpening,
@@ -193,3 +244,23 @@ export {
   type WindowState,
   windowState,
 } from "./usage.ts";
+export {
+  type Arrival,
+  arrival,
+  landingPage,
+  LOOPBACK_HEADERS,
+  type LoopbackAnswer,
+  type LoopbackRequest,
+  type SignInCatch,
+  signInCatch,
+} from "./signInReturn.ts";
+export { typedOrigins } from "./vault.ts";
+export {
+  readVisualHeight,
+  type VisualAppearance,
+  VISUAL_BRIDGE,
+  VISUAL_FRAME_SANDBOX,
+  VISUAL_HEIGHT_MESSAGE,
+  visualDocument,
+  visualShell,
+} from "./visual.ts";

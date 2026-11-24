@@ -30,6 +30,8 @@ const bot = (
     model: { providerId: ProviderId.make("claude"), modelId: ModelId.make("opus") },
     permissionMode: "auto",
     primary: false,
+    browser: false,
+    vault: false,
     pinned: options.pinned ?? false,
     hidden: options.hidden ?? false,
     sectionId: null,

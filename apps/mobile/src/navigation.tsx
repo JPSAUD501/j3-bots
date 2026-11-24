@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, MemoryPath, RoomId, RosterItemKey, RoutineId } from "@j3-bots/contracts";
+import type {
+  BotId,
+  BrowserTabRef,
+  ConnectorGlyph,
+  ConnectorId,
+  CredentialId,
+  EntryId,
+  ListingRef,
+  MemoryPath,
+  RoomId,
+  RosterItemKey,
+  RoutineId,
+} from "@j3-bots/contracts";
 import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { fontFamilies } from "@j3-bots/design-tokens";
 import {
@@ -19,6 +31,10 @@ import {
 import { useState } from "react";
 import { useColorScheme } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { AddConnectorScreen } from "./connectors/AddConnectorScreen.tsx";
+import { ConnectorScreen } from "./connectors/ConnectorScreen.tsx";
+import { ConnectorsScreen } from "./connectors/ConnectorsScreen.tsx";
+import { ListingScreen } from "./connectors/ListingScreen.tsx";
 import { useI18n } from "./i18n.ts";
 import { useSideBySide } from "./layout.ts";
 import { PresentationProvider } from "./presentation.tsx";
@@ -34,7 +50,11 @@ import { SettingsScreen } from "./settings/Settings.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
+import { BrowserScreen } from "./browser/BrowserScreen.tsx";
 import { useColor } from "./theme.ts";
+import { CredentialFormScreen } from "./vault/CredentialFormScreen.tsx";
+import { CredentialScreen } from "./vault/CredentialScreen.tsx";
+import { VaultScreen } from "./vault/VaultScreen.tsx";
 import { Toasts } from "./toast.tsx";
 import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
 
@@ -49,6 +69,11 @@ import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
  * `share` picks where something another app shared goes, over the rest.
  * `shareTemplate` shows a bot as a template before it is shared, and
  * `newFromTemplate` the template file opened, before a bot is made from it.
+ * The vault's saved logins open from Settings, then one login, then its form.
+ * The connectors' screens open from Settings, a bot's details and a card:
+ * their list and the gallery, a gallery entry, one connector, and adding one
+ * of the operator's own. `forBot` is the bot a new connector is for at first,
+ * and `suggestion` the card that suggested it.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
@@ -60,11 +85,36 @@ export type Screens = {
   editBot: { readonly botId: BotId };
   memoryFile: { readonly botId: BotId; readonly path: MemoryPath };
   routineRuns: { readonly botId: BotId; readonly routineId: RoutineId };
+  /**
+   * The bot's browser, on the tab `ref` names or its front tab, answering the
+   * browser help card `help` once the operator is done.
+   */
+  browser: { readonly botId: BotId; readonly ref?: BrowserTabRef; readonly help?: EntryId };
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
   /** `section` scrolls to one section, as the roster's update notice does. */
   settings: { readonly section?: "updates" } | undefined;
   hidden: undefined;
+  vault: undefined;
+  credential: { readonly id: CredentialId };
+  /** A new login with `id` null; otherwise the one to change. */
+  credentialForm: { readonly id: CredentialId | null };
+  connectors: { readonly forBot: BotId | null; readonly suggestion: EntryId | null } | undefined;
+  connectorListing: {
+    readonly ref: ListingRef;
+    readonly name: string;
+    readonly glyph: ConnectorGlyph | null;
+    readonly forBot: BotId | null;
+    readonly suggestion: EntryId | null;
+  };
+  connector: {
+    readonly connectorId: ConnectorId;
+    /** Start its sign-in as the screen opens, as a card's Sign in asks. */
+    readonly signIn: boolean;
+    /** It was just added: the screen says who can use it from now. */
+    readonly added: boolean;
+  };
+  addConnector: { readonly forBot: BotId | null };
 };
 
 /**
@@ -193,6 +243,12 @@ export function Main() {
                   component={ShareScreen}
                   options={{ title: t("share.title"), presentation: "modal" }}
                 />
+                {/* The browser draws its own bar: the page's site and who acts on it. */}
+                <Stack.Screen
+                  name="browser"
+                  component={BrowserScreen}
+                  options={{ ...sheet, headerShown: false }}
+                />
                 {/* The forms, the memory file and a routine's runs set their own titles. */}
                 <Stack.Screen name="editBot" options={sheet} component={EditBotScreen} />
                 <Stack.Screen name="memoryFile" options={sheet} component={MemoryFileScreen} />
@@ -218,6 +274,19 @@ export function Main() {
                   component={SettingsScreen}
                   options={{ ...sheet, title: t("settings.title") }}
                 />
+                {/* The vault's screens set their own titles. */}
+                <Stack.Screen name="vault" component={VaultScreen} />
+                <Stack.Screen name="credential" component={CredentialScreen} />
+                <Stack.Screen
+                  name="credentialForm"
+                  options={sheet}
+                  component={CredentialFormScreen}
+                />
+                {/* The connectors' screens set their own titles. */}
+                <Stack.Screen name="connectors" component={ConnectorsScreen} />
+                <Stack.Screen name="connectorListing" component={ListingScreen} />
+                <Stack.Screen name="connector" component={ConnectorScreen} />
+                <Stack.Screen name="addConnector" options={sheet} component={AddConnectorScreen} />
               </Stack.Navigator>
             </NavigationContainer>
           </FileOpenerProvider>

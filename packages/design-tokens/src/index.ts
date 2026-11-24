@@ -3,6 +3,8 @@ export * from "./appIconArt.ts";
 export * from "./avatar.ts";
 export * from "./avatarShapes.ts";
 export * from "./botPalette.ts";
+export * from "./connectorGlyphs.ts";
 export * from "./names.ts";
 export * from "./springs.ts";
 export * from "./tokens.ts";
+export * from "./visual.ts";

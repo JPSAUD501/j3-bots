@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 export {
+  type BrowserViewHandle,
+  type ConnectorsClient,
   type ConversationHandle,
+  type VaultHandle,
   createJ3Client,
   type DownloadResult,
   type J3Client,
@@ -25,6 +28,12 @@ export {
   type ReconnectSettings,
   type UnpairedReason,
 } from "./connection/Connection.ts";
+export {
+  type ConnectorAddition,
+  type ConnectorChanges,
+  Connectors,
+  type ConnectorSearch,
+} from "./stores/Connectors.ts";
 export { type Download } from "./files/Files.ts";
 export {
   admitFiles,
@@ -131,6 +140,14 @@ export {
 } from "./stores/Settings.ts";
 export type { Synced } from "./stores/synced.ts";
 export {
+  type CredentialChanges,
+  type NewCredential,
+  Vault,
+  type VaultFailure,
+  type VaultResult,
+  type VaultView,
+} from "./stores/Vault.ts";
+export {
   type RecentTurns,
   type RecentTurnsState,
   type RecentTurnsView,
@@ -147,3 +164,14 @@ export {
   type StartResult,
   type UpdateResult,
 } from "./update/ServerUpdate.ts";
+export {
+  Browser,
+  type BrowserControl,
+  type BrowserCursor,
+  type BrowserPicture,
+  type BrowserProbe,
+  type BrowserView,
+  type BrowserViewSize,
+  type BrowserViewState,
+  type BrowserViewStatus,
+} from "./stores/Browser.ts";

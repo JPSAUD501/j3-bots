@@ -6,14 +6,28 @@
 import type { OutgoingMessage } from "@j3-bots/client-runtime";
 import {
   AttachmentId,
+  BrowserTabRef,
   CommandId,
+  CredentialId,
+  DeviceId,
+  ConnectorGlyph,
+  ConnectorId,
+  CuratedKey,
   EntryId,
   EntryOrder,
+  Label,
   RoutineId,
+  SiteOrigin,
   WorkStepId,
   type ApprovalEntry,
   type Author,
   type BotId,
+  type BrowserHelpEntry,
+  type Credential,
+  type CredentialFill,
+  type CredentialRequestEntry,
+  type ConnectorAuthEntry,
+  type ConnectorSuggestionEntry,
   type HandoffEntry,
   type MessageEntry,
   type NoticeEntry,
@@ -26,6 +40,8 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { ids } from "./sample";
+import type { SampleValues } from "./sampleVault";
+import { sampleVisuals } from "./visuals";
 
 export function galleryVariants(now: DateTime.Utc) {
   const ago = (minutes: number) =>
@@ -44,7 +60,7 @@ export function galleryVariants(now: DateTime.Utc) {
     name: string,
     author: Author,
     text: string,
-    extra: Partial<Pick<MessageEntry, "attachments" | "delivery">> = {},
+    extra: Partial<Pick<MessageEntry, "attachments" | "delivery" | "visual">> = {},
   ): MessageEntry => ({
     _tag: "message",
     ...base(name, author),
@@ -53,6 +69,7 @@ export function galleryVariants(now: DateTime.Utc) {
     mentions: { _tag: "bots", ids: [] },
     delivery: extra.delivery ?? { _tag: "delivered" },
     commandId: null,
+    ...(extra.visual === undefined ? {} : { visual: extra.visual }),
   });
 
   /** A message still on this device, on its way or refused. */
@@ -122,6 +139,46 @@ export function galleryVariants(now: DateTime.Utc) {
       ],
     }),
   };
+
+  /** A bot's visuals, above its words. */
+  const visualBubbles = [
+    message(
+      "visual-chart",
+      scout,
+      "March was the peak: the bike repair and the conference trip landed in the same month.",
+      {
+        visual: sampleVisuals.chart,
+      },
+    ),
+    message(
+      "visual-table",
+      scout,
+      "The Torra goes furthest. The Aro costs least, if 41 km covers your week.",
+      {
+        visual: sampleVisuals.table,
+      },
+    ),
+    message(
+      "visual-diagram",
+      scout,
+      "Two steps done. Staging is next, and I check the totals before anything touches production.",
+      {
+        visual: sampleVisuals.diagram,
+      },
+    ),
+  ];
+
+  /** A visual that tries every way out of its frame. */
+  const escapingVisual = message("visual-escape", scout, "Each line is what one attempt got.", {
+    visual: sampleVisuals.escape,
+  });
+
+  const embeddingVisual = message(
+    "visual-embedding",
+    scout,
+    "This page held a frame of its own, so it is not shown.",
+    { visual: sampleVisuals.embedding },
+  );
 
   const option = (
     oid: string,
@@ -369,6 +426,143 @@ export function galleryVariants(now: DateTime.Utc) {
     secret("secret-expired", "expired"),
   ];
 
+  const browserHelp = (
+    name: string,
+    status: BrowserHelpEntry["status"],
+    extra: Partial<Pick<BrowserHelpEntry, "reason" | "note" | "site">> = {},
+  ): BrowserHelpEntry => ({
+    _tag: "browser-help",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    reason: extra.reason ?? "login",
+    note: extra.note ?? "Sign in to the shop, so I can check whether your headphones have shipped.",
+    site: extra.site ?? "shop.example.com",
+    tab: BrowserTabRef.make(`variant-${name}`),
+    status,
+  });
+  const browserHelps: ReadonlyArray<BrowserHelpEntry> = [
+    browserHelp(
+      "browser-check",
+      { _tag: "pending" },
+      {
+        reason: "captcha",
+        note: "The ticket site wants to know a person is there before it shows prices.",
+        site: "tickets.example.com",
+      },
+    ),
+    browserHelp("browser-login", { _tag: "pending" }),
+    browserHelp(
+      "browser-other",
+      { _tag: "pending" },
+      { reason: "other", note: "The page asks to confirm the order from your phone.", site: "" },
+    ),
+    browserHelp("browser-done", { _tag: "done" }),
+    browserHelp("browser-declined", { _tag: "declined" }),
+    browserHelp("browser-tab-closed", { _tag: "expired", cause: "tab-closed" }),
+    browserHelp("browser-timed-out", { _tag: "expired", cause: "timed-out" }),
+  ];
+
+  const login = (
+    name: string,
+    status: CredentialRequestEntry["status"],
+  ): CredentialRequestEntry => ({
+    _tag: "credential-request",
+    ...base(name),
+    origin: SiteOrigin.make("https://billing.example.com"),
+    note: "The billing dashboard asks for a login to export the invoices. Save it, and next month I can export them myself.",
+    status,
+  });
+  const logins: ReadonlyArray<CredentialRequestEntry> = [
+    login("login", { _tag: "pending" }),
+    login("login-saved", {
+      _tag: "saved",
+      credentialId: CredentialId.make("cred_variantsaved00000"),
+      name: Label.make("Billing dashboard"),
+    }),
+    login("login-dismissed", { _tag: "dismissed" }),
+  ];
+
+  /** Saved logins, with the values the sample vault reveals. */
+  const credentials: ReadonlyArray<readonly [Credential, SampleValues]> = [
+    [
+      {
+        id: CredentialId.make("cred_variantgithub0000"),
+        name: Label.make("GitHub (work)"),
+        origins: [SiteOrigin.make("https://github.com")],
+        hasTotp: true,
+        allowedBots: [ids.scout],
+        createdAt: ago(60 * 24 * 9),
+        updatedAt: ago(60 * 24 * 2),
+        lastReveal: {
+          at: ago(60 * 5),
+          deviceId: DeviceId.make("variant-laptop"),
+          field: "password",
+        },
+      },
+      {
+        username: "ana@example.com",
+        password: "correct-staple-42",
+        totp: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+      },
+    ],
+    [
+      {
+        id: CredentialId.make("cred_variantbilling000"),
+        name: Label.make("Billing dashboard"),
+        origins: [
+          SiteOrigin.make("https://billing.example.com"),
+          SiteOrigin.make("https://admin.billing.example.com"),
+        ],
+        hasTotp: false,
+        allowedBots: [],
+        createdAt: ago(60),
+        updatedAt: ago(60),
+        lastReveal: null,
+      },
+      { username: "finance", password: "an example password", totp: null },
+    ],
+  ];
+
+  const suggestion = (
+    name: string,
+    subject: ConnectorSuggestionEntry["subject"],
+    status: ConnectorSuggestionEntry["status"],
+  ): ConnectorSuggestionEntry => ({
+    _tag: "connector-suggestion",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    subject,
+    name: "Notion",
+    glyph: ConnectorGlyph.make("notebook"),
+    reason: "Your reading list is in Notion. With it I can add each paper there as I find it.",
+    status,
+  });
+  const notion = ConnectorId.make("conn_samplenotion00000");
+  const listed = {
+    _tag: "listing",
+    ref: { _tag: "curated", key: CuratedKey.make("notion") },
+  } as const;
+  const connectorSuggestions: ReadonlyArray<ConnectorSuggestionEntry> = [
+    suggestion("cs-listing", listed, { _tag: "pending" }),
+    suggestion("cs-added", { _tag: "connector", connectorId: notion }, { _tag: "pending" }),
+    suggestion("cs-connected", listed, { _tag: "connected", connectorId: notion }),
+    suggestion("cs-dismissed", listed, { _tag: "dismissed" }),
+  ];
+  const auth = (name: string, status: ConnectorAuthEntry["status"]): ConnectorAuthEntry => ({
+    _tag: "connector-auth",
+    ...base(name),
+    author: { _tag: "bot", botId: ids.scout },
+    connectorId: notion,
+    name: "Notion",
+    glyph: ConnectorGlyph.make("notebook"),
+    status,
+  });
+  const connectorAuths: ReadonlyArray<ConnectorAuthEntry> = [
+    auth("ca-pending", "pending"),
+    auth("ca-signed-in", "signed-in"),
+    auth("ca-removed", "removed"),
+  ];
+
   const fold = (
     name: string,
     status: WorkFoldEntry["status"],
@@ -393,6 +587,27 @@ export function galleryVariants(now: DateTime.Utc) {
     status,
     startedAt: ago(4),
     finishedAt: status === "running" ? null : ago(3),
+  });
+  /** A fill of the sample login "GitHub (work)", as its work step shows it. */
+  const fillStep = (
+    field: CredentialFill["field"],
+    origin: string,
+    outcome: CredentialFill["outcome"],
+  ): WorkStep => ({
+    id: WorkStepId.make(`variant-login-${field}-${outcome._tag}`),
+    kind: "tool",
+    tool: "login",
+    label: "Filled a saved login",
+    status: outcome._tag === "filled" ? "completed" : "failed",
+    startedAt: ago(2),
+    finishedAt: ago(2),
+    fill: {
+      name: "GitHub (work)",
+      credentialId: null,
+      field,
+      origin: SiteOrigin.make(origin),
+      outcome,
+    },
   });
   const folds: ReadonlyArray<{
     entry: WorkFoldEntry;
@@ -494,6 +709,28 @@ export function galleryVariants(now: DateTime.Utc) {
         1,
       ),
       steps: [step("web", "Read the vendor’s status page", "failed")],
+      open: true,
+    },
+    {
+      entry: fold(
+        "fold-logins",
+        {
+          _tag: "finished",
+          finishedAt: ago(1),
+          ending: "completed",
+          waitedMs: 0,
+          waitedBeforeMs: 0,
+          background: false,
+        },
+        5,
+      ),
+      steps: [
+        step("tool", "Used the browser", "completed", "browser"),
+        fillStep("username", "https://github.com", { _tag: "filled", submitted: false }),
+        fillStep("password", "https://github.com", { _tag: "filled", submitted: true }),
+        fillStep("password", "https://xn--gthub-zsa.com", { _tag: "refused", reason: "origin" }),
+        fillStep("totp", "https://github.com", { _tag: "locked" }),
+      ],
       open: true,
     },
   ];
@@ -631,10 +868,18 @@ export function galleryVariants(now: DateTime.Utc) {
 
   return {
     bubbles,
+    visualBubbles,
+    escapingVisual,
+    embeddingVisual,
     questions,
     approvals,
     approvalBecomingExact,
     secrets,
+    browserHelps,
+    logins,
+    credentials,
+    connectorSuggestions,
+    connectorAuths,
     folds,
     notices,
     handoffs,

@@ -20,7 +20,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Message.** One entry in a conversation or a room, written by the operator or by a bot. Bot messages are short by design.
 
-**Card.** A structured entry in a conversation that is not prose: a question with options, an approval request, a file, a routine that was created, a handoff between bots.
+**Card.** A structured entry in a conversation that is not prose: a question with options, an approval request, a request for help in the bot's browser, a file, a routine that was created, a handoff between bots.
 
 **Room.** A group chat with the operator and two to six bots. A room has a name, members, a host and its own message history. Bots keep their own memory in a room; they share only what is said there.
 
@@ -87,13 +87,25 @@ The machine J3 Bots runs on is never called a "host": a host is a room's bot.
 
 **Routine.** A saved instruction plus a trigger. The trigger is a schedule or an inbound webhook. A routine belongs to one bot and runs even when no client is open. A routine's instruction says who receives the result and what to do when there is nothing to report.
 
+**Connector.** A service a bot can use through J3 Bots, such as the operator's notes, tracker or calendar, signed in to once by the operator, on the server. It is an MCP server the operator adds from the gallery or by its address, and the operator chooses which bots may use it: one, several or all. A bot can suggest one, never add one. Bots use its tools without ever holding its sign-in. The interface says "Connector" in English and "Conector" in Portuguese, and never "MCP" outside the form that adds one by address.
+
+From the bot's side, a connector is a set of tools named after it (`notion__search`) that act in the operator's own account. A bot given one reads what a task needs; it sends, posts, changes or deletes through one only when the operator asked for that step or said yes to it. What a connector answers, and what its tools' descriptions say, is content the bot never takes as the operator's instruction: a tool that asks for more than its job is reported, not followed. A bot with no connector for what a task needs may suggest one from the gallery, once, as a card in its conversation; the operator's Not now is final there. These rules reach only a bot that has a connector, and the suggestion's own rules travel with the tool every bot has.
+
 ## Controls
 
 **Permission mode.** How much a bot may do without asking: supervised, auto-accept edits, auto (an automatic reviewer decides) or full access. This is the engine's runtime mode, set per bot.
 
 **Approval.** A request from a bot to do one specific thing that its permission mode does not allow outright. Only the operator can grant one.
 
+**Browser.** The engine's headless browser on the host, which a bot may use to read and act on web pages. Each bot has a switch for it in its details, off by default. Turning it on applies from the bot's next turn; turning it off takes effect at once, and stops what the bot is doing. Every bot whose switch is on uses the same browser profile, so it is signed in wherever the operator signed in there, and acts on those sites as the operator. Settings signs that profile out of every site at once.
+
 **Question.** A bot asking the operator to choose. It arrives as a card with options, not as prose.
+
+**Help in the browser.** A bot asking the operator to do one step in its browser that only a person can: a check that a person is there, a sign-in, a one-time code, a code to scan, a passkey. It arrives as a card that opens the browser on the bot's tab. The operator does the step there and answers on the card that they did it or cannot, and the answer wakes the bot. A card nobody answers expires, with its tab or after an hour.
+
+**Vault.** Where the operator's saved logins, and the secrets connectors use, are kept on the server, sealed under a master password only the operator knows. The vault is locked whenever the server starts and stays locked until one of the operator's devices unlocks it; a locked vault also stops every connector that needs a secret. A bot can ask the operator to save a login there, with a card, but never sees what they type. Nothing recovers a forgotten master password.
+
+**Vault access.** A bot's switch, in its details next to the browser's, off by default, that lets it sign in with the saved logins that allow it. The bot is never handed a value: it asks the server to **fill** one, and the server types it into the bot's browser tab, after checking that the page is one of the login's sites. A bot that runs a script in the page can still read what was typed there. Nobody confirms each fill; the operator decides ahead of time, per bot and per login. Each fill shows in the bot's work.
 
 **Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, or one bot's room message may mention, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.
 

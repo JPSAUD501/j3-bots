@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId, RoomId } from "@j3-bots/contracts";
-import { IdempotencyKey } from "@j3-bots/engine-t3";
+import { IdempotencyKey, type TurnId } from "@j3-bots/engine-t3";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -61,7 +61,8 @@ export const stopHoldsSql = (
       steerRoom === null
         ? sql``
         : sql`AND NOT (
-          sh_stop.room_id IS NOT NULL AND sh_stop.room_id IS NOT ${steerRoom}
+          sh_stop.engine_turn_id IS NULL
+          AND sh_stop.room_id IS NOT NULL AND sh_stop.room_id IS NOT ${steerRoom}
           AND NOT EXISTS (
             SELECT 1 FROM stop_targets sh_round
             WHERE sh_round.stop_id = sh_target.stop_id
@@ -181,6 +182,7 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
       SELECT 1 AS n FROM stops s
       WHERE s.bot_id = ${botId}
         AND (s.scope = 'bot' OR (s.scope = 'room' AND s.room_id = ${roomId}))
+        AND s.engine_turn_id IS NULL
         AND s.dispatch_mark >= ${seq}
       LIMIT 1
     `.pipe(Effect.orDie);
@@ -189,6 +191,22 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
 
   return {
     covers,
+
+    /**
+     * Whether a Stop limited to the turn ended it (`Stops.endTurn`): the
+     * turn asked for it, and its end is the one it asked for.
+     */
+    endedOnRequest: Effect.fn("stopTargets.endedOnRequest")(function* (
+      sessionId: SessionRowId,
+      turnId: TurnId,
+    ) {
+      const rows = yield* sql<{ readonly n: number }>`
+        SELECT 1 AS n FROM stops s JOIN stop_targets t ON t.stop_id = s.id
+        WHERE t.session_id = ${sessionId} AND s.engine_turn_id = ${turnId}
+        LIMIT 1
+      `;
+      return rows.length > 0;
+    }, Effect.orDie),
 
     /**
      * Confirms every unsettled target of the session once the latest round of
@@ -315,7 +333,8 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
     /**
      * A turn of the session was admitted for `roomId`'s audience (null for
      * the conversation): each round not sent yet of a room's Stop for another
-     * audience counts its bound on unseen work (`ROOM_ROUND_HOLD_BOUND`)
+     * audience, or of a Stop limited to a turn (`Stops.endTurn`), which this
+     * one is not, counts its bound on unseen work (`ROOM_ROUND_HOLD_BOUND`)
      * again from the next time such work alone holds it, as the turn held it
      * meanwhile, also one that started and ended between two passes of the
      * runner.
@@ -329,7 +348,9 @@ export const stopTargets = (sql: SqlClient.SqlClient) => {
         WHERE session_id = ${sessionId} AND sent_at IS NULL AND stopped_at IS NULL
           AND held_since IS NOT NULL
           AND stop_id IN (
-            SELECT id FROM stops WHERE room_id IS NOT NULL AND room_id IS NOT ${roomId}
+            SELECT id FROM stops
+            WHERE engine_turn_id IS NOT NULL
+              OR (room_id IS NOT NULL AND room_id IS NOT ${roomId})
           )
       `;
     }, Effect.orDie),

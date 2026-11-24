@@ -11,6 +11,7 @@ import {
   DeviceId,
   EntryId,
   EntryOrder,
+  Language,
   RoomId,
   RoutineId,
   RoutineRunId,
@@ -18,6 +19,22 @@ import {
   Sequence,
 } from "./base.ts";
 import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
+import { BrowserTabs } from "./browser.ts";
+import {
+  CommandLine,
+  Connector,
+  ConnectorFieldValues,
+  ConnectorGrant,
+  ConnectorId,
+  ConnectorListing,
+  ConnectorListingDetails,
+  ConnectorSource,
+  ListingRef,
+  SignInCallback,
+  SignInRedirect,
+  SignInStarted,
+  ToolReviewRevision,
+} from "./connector.ts";
 import { Device, PairingCode, PushRegistration } from "./device.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
@@ -31,7 +48,7 @@ import {
   ReceivedEntry,
   WorkStep,
 } from "./entry.ts";
-import { CommandError, NotFound } from "./errors.ts";
+import { CommandError, Conflict, NotFound, VaultError } from "./errors.ts";
 import { ServerOrigin } from "./link.ts";
 import {
   MemoryDocument,
@@ -53,6 +70,19 @@ import {
 import { Section, SectionName } from "./section.ts";
 import { Settings, SettingsChange, TimeZone } from "./settings.ts";
 import { BotTemplate, TemplateTooLarge } from "./template.ts";
+import {
+  Credential,
+  CredentialDraft,
+  CredentialField,
+  CredentialId,
+  CredentialOrigins,
+  CredentialPassword,
+  CredentialUsername,
+  MasterPassword,
+  TotpPreview,
+  TotpSetup,
+  VaultStatus,
+} from "./vault.ts";
 
 // ---------------------------------------------------------------------------
 // Conventions
@@ -72,8 +102,10 @@ import { BotTemplate, TemplateTooLarge } from "./template.ts";
 //
 // Commands carry a client-generated `commandId`. Sending the same command again
 // with the same id has no further effect and returns the first result, so a
-// client retries freely after a dropped connection. `secret.provide` is the one
-// exception: its value must never be stored, so it has no receipt (see there).
+// client retries freely after a dropped connection. `secret.provide`,
+// `provider.connect`, the vault's requests and the connector requests that
+// carry a value or a sign-in are the exceptions: what they carry must never be
+// stored, so they have no receipt (see there).
 //
 // A roster snapshot that carries `sections` comes from a server that organizes
 // the roster: sections, a bot's `sectionId` and `entries.markUnread`. A client
@@ -227,14 +259,27 @@ export const EntryRpcs = RpcGroup.make(
     error: CommandError,
   }),
   /**
-   * Resolves a question or approval card everywhere. Answering or dismissing an
-   * `ask` question wakes the bot with the answer; answering an `engine` question
-   * or an approval lets the turn that raised it continue. An `engine` question
-   * takes no dismissal: it fails with `Invalid("not-dismissible")`, leaving
-   * the card open. When the engine refuses an answer it was sent, the card
-   * closes as `refused`, and the turn waits for a Stop. Fails with `Invalid("answer-length")`, leaving the card open, when
-   * the answer to an `ask` question as the bot would read it is too long for
-   * the engine that runs the bot to take in one message.
+   * Resolves a question, approval, browser help, save-login or connector
+   * suggestion card everywhere.
+   * Answering or dismissing an `ask` question wakes the bot with the answer;
+   * answering an `engine` question or an approval lets the turn that raised it
+   * continue. An `engine` question takes no dismissal: it fails with
+   * `Invalid("not-dismissible")`, leaving the card open. When the engine
+   * refuses an answer it was sent, the card closes as `refused`, and the turn
+   * waits for a Stop. Fails with `Invalid("answer-length")`, leaving the card
+   * open, when the answer to an `ask` question as the bot would read it is too
+   * long for the engine that runs the bot to take in one message.
+   *
+   * A browser help card is answered `done` or `declined`: the server gives
+   * every tab of the bot a device holds back to the bot, then wakes it with
+   * the outcome, so a client need not release the tab first. Fails with
+   * `Conflict("card-closed")` once the card has closed, by another device's
+   * answer or by expiring.
+   *
+   * A save-login card takes only a dismissal, which closes it without waking
+   * the bot; it is saved with `vault.save`. A connector suggestion takes only
+   * a dismissal too, its Not now, which closes it without waking the bot; its
+   * Connect is `connector.add` or `connector.setBots`.
    */
   Rpc.make("card.answer", {
     payload: {
@@ -244,6 +289,7 @@ export const EntryRpcs = RpcGroup.make(
         Schema.TaggedStruct("question", { answers: QuestionAnswers }),
         Schema.TaggedStruct("dismiss", {}),
         Schema.TaggedStruct("approval", { decision: ApprovalDecision }),
+        Schema.TaggedStruct("browser-help", { outcome: Schema.Literals(["done", "declined"]) }),
       ]),
     },
     error: CommandError,
@@ -323,7 +369,8 @@ export const BotRpcs = RpcGroup.make(
    * is unavailable. A turn already running keeps the settings it started with,
    * and background work still running holds the change, which a
    * `settings-held` notice says and the bot's `settingsHeld` shows; a Stop
-   * ends both.
+   * ends both. Turning the browser on or off reaches it the same way: from
+   * its next turn.
    */
   Rpc.make("bot.update", {
     payload: {
@@ -339,6 +386,13 @@ export const BotRpcs = RpcGroup.make(
       primary: Schema.optionalKey(Schema.Boolean),
       pinned: Schema.optionalKey(Schema.Boolean),
       hidden: Schema.optionalKey(Schema.Boolean),
+      /** Lets the bot use the browser (`Bot.browser`), or stops it. */
+      browser: Schema.optionalKey(Schema.Boolean),
+      /**
+       * Lets the bot have its allowed logins filled (`Bot.vault`), or stops
+       * it. Applies to the next fill, also during a turn.
+       */
+      vault: Schema.optionalKey(Schema.Boolean),
       /** Moves the bot into a section, or out of its section with null. */
       sectionId: Schema.optionalKey(Schema.NullOr(SectionId)),
     },
@@ -618,6 +672,14 @@ export const SettingsRpcs = RpcGroup.make(
    * defect, which a client passes over too: it relies on nothing here.
    */
   Rpc.make("settings.deviceTimeZone", { payload: { timeZone: TimeZone } }),
+  /**
+   * Signs the bots' browser out of every site: deletes the cookies and site
+   * data of the one browser profile they all use, on the server's computer.
+   * Pages open in it close. `Conflict("engine-unavailable")` when the engine
+   * cannot take it now. A server older than this RPC answers it with a
+   * defect.
+   */
+  Rpc.make("browser.signOut", { error: Conflict }),
 );
 
 /**
@@ -632,8 +694,19 @@ export const NotificationKind = Schema.Literals([
   "question",
   "approval",
   "secret-request",
+  "browser-help",
+  /** A connector card: a bot suggests one, or one it called needs a sign-in again. */
+  "connector",
 ]);
 export type NotificationKind = typeof NotificationKind.Type;
+
+/**
+ * Which connector card a `connector` notification is about: a bot's
+ * suggestion, or a connector it called that needs a sign-in again. The two are
+ * worded apart.
+ */
+export const ConnectorNotice = Schema.Literals(["suggestion", "sign-in"]);
+export type ConnectorNotice = typeof ConnectorNotice.Type;
 
 /** An entry worth the operator's attention, added where no connected client has it in view. */
 export const Notification = Schema.Struct({
@@ -648,6 +721,10 @@ export const Notification = Schema.Struct({
    * allow previews, or when the entry has no text of its own.
    */
   preview: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH))),
+  /** For a `connector` notification, which card made it; null for every other kind. */
+  connector: Schema.NullOr(ConnectorNotice).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
 });
 export type Notification = typeof Notification.Type;
 
@@ -743,6 +820,309 @@ export const ProviderRpcs = RpcGroup.make(
   }),
 );
 
+export const BrowserRpcs = RpcGroup.make(
+  /**
+   * The tabs the bot opened in the engine's browser, then the whole list
+   * again on every change: a tab opened, closed, navigated or loaded, or
+   * taken or given back by a person. Small, and always starts afresh. A
+   * tab's picture and control are on the media socket (`HTTP_PATHS.browser`).
+   */
+  Rpc.make("browser.subscribe", {
+    payload: { botId: BotId },
+    success: BrowserTabs,
+    error: NotFound,
+    stream: true,
+  }),
+);
+
+/**
+ * The vault: the operator's saved logins (docs/architecture/server.md, "The
+ * vault"). Any paired client may unlock it, read it and change it. None of
+ * these requests has a command id, since a receipt would keep what it carries;
+ * each is safe to send again instead: `vault.save` names the login it makes.
+ * No value they carry or answer is stored outside the vault, logged or kept
+ * in an error. Every request but `vault.status`, `vault.setup`, `vault.unlock`
+ * and `vault.lock` fails with `Conflict("vault-locked")` while the vault is
+ * locked, `Conflict("vault-not-set-up")` before it has a password, and
+ * `Conflict("vault-newer")` while its state is `newer`. A value the vault
+ * cannot open or read back fails with `Conflict("vault-damaged")`, and so do
+ * `vault.unlock` and `vault.changePassword` when its key settings are out of
+ * range. New in 0.4.0: a client calls them only on a server that answers
+ * `vault.status`.
+ */
+export const VaultRpcs = RpcGroup.make(
+  /** The vault's state now, then each change. */
+  Rpc.make("vault.status", { success: VaultStatus, stream: true }),
+  /**
+   * Creates the vault, unlocked, with this master password. Fails with
+   * `Conflict("vault-set-up")` when it has one already.
+   */
+  Rpc.make("vault.setup", { payload: { password: MasterPassword }, error: VaultError }),
+  /**
+   * Unlocks the vault for every client until one locks it or the server
+   * stops. A wrong password fails with `Invalid("master-password")`; after a
+   * few in a row, every attempt fails with `RateLimited` until its `retryAt`,
+   * which grows with each further wrong one. The count and the wait outlast
+   * a restart, and the count starts over after a day with no wrong one.
+   * Unlocking an unlocked vault checks the password all the same.
+   */
+  Rpc.make("vault.unlock", { payload: { password: MasterPassword }, error: VaultError }),
+  /** Forgets the vault's key until a client unlocks it again. */
+  Rpc.make("vault.lock", {}),
+  /**
+   * Replaces the master password, checking `current` as `vault.unlock` does,
+   * with the same limit. The saved logins stay as they are.
+   */
+  Rpc.make("vault.changePassword", {
+    payload: { current: MasterPassword, next: MasterPassword },
+    error: VaultError,
+  }),
+  /** Every saved login, by name, without its values. */
+  Rpc.make("vault.list", { success: Schema.Array(Credential), error: VaultError }),
+  /**
+   * One value of a login, for the operator to see. The vault records when it
+   * was shown and on which device, never the value.
+   */
+  Rpc.make("vault.reveal", {
+    payload: { id: CredentialId, field: CredentialField },
+    success: Schema.Redacted(Schema.String),
+    error: VaultError,
+  }),
+  /**
+   * Saves a new login as `id`, allowed to the bots in `allowedBots`. With
+   * `request`, it answers that bot's save-login card, which then shows it as
+   * saved. When `id` is saved already, nothing changes and the login is
+   * returned as it is, so a retry adds nothing. Fails with `Invalid("totp")`
+   * when `totp` is not a one-time code setup.
+   */
+  Rpc.make("vault.save", {
+    payload: {
+      id: CredentialId,
+      ...CredentialDraft.fields,
+      allowedBots: Schema.Array(BotId),
+      request: Schema.NullOr(EntryId),
+    },
+    success: Credential,
+    error: VaultError,
+  }),
+  /** Fields left out keep their value; `totp: null` removes the one-time codes. */
+  Rpc.make("vault.update", {
+    payload: {
+      id: CredentialId,
+      name: Schema.optionalKey(CredentialDraft.fields.name),
+      origins: Schema.optionalKey(CredentialOrigins),
+      username: Schema.optionalKey(CredentialUsername),
+      password: Schema.optionalKey(CredentialPassword),
+      totp: Schema.optionalKey(Schema.NullOr(TotpSetup)),
+    },
+    success: Credential,
+    error: VaultError,
+  }),
+  /** Deletes the login. Deleting one already gone succeeds. */
+  Rpc.make("vault.delete", { payload: { id: CredentialId }, error: VaultError }),
+  /** Replaces the bots that may use the login. */
+  Rpc.make("vault.setAllowedBots", {
+    payload: { id: CredentialId, bots: Schema.Array(BotId) },
+    success: Credential,
+    error: VaultError,
+  }),
+  /**
+   * The login's one-time code now, so the operator can check it against the
+   * site's. Fails with `NotFound("credential")` for a login without one.
+   */
+  Rpc.make("vault.totpPreview", {
+    payload: { id: CredentialId },
+    success: TotpPreview,
+    error: VaultError,
+  }),
+);
+
+/** What `connectors.subscribe` sends: every connector, then each change. */
+export const ConnectorsEvent = Schema.Union([
+  Schema.TaggedStruct("snapshot", { connectors: Schema.Array(Connector) }),
+  Schema.TaggedStruct("changed", {
+    upsert: Schema.Array(Connector),
+    remove: Schema.Array(ConnectorId),
+  }),
+]);
+export type ConnectorsEvent = typeof ConnectorsEvent.Type;
+
+/**
+ * Connectors (docs/architecture/server.md, "Connectors"): the gallery to find
+ * them in, and the operator's own, which every paired client may add, sign in
+ * to, share among bots and remove. New in 0.4.0, at protocol 8.
+ *
+ * Nothing a connector holds leaves the server: a token, a key, a header's
+ * value, a sign-in's code or `state`. What a client sends of them travels
+ * redacted, and the requests that carry one (`connector.add`,
+ * `connector.update`, `connector.beginSignIn`, `connector.completeSignIn`)
+ * have no command id, since a receipt would keep it; each is safe to send
+ * again instead. A request that needs a connector's secrets fails with
+ * `Conflict("vault-locked")` while the vault is locked, and one that would
+ * keep a secret, with `Conflict("vault-not-set-up")` before the vault has a
+ * master password (decision 0028).
+ */
+export const ConnectorRpcs = RpcGroup.make(
+  /** The curated list, in the client's language: what the gallery features. */
+  Rpc.make("connectors.list", {
+    payload: { language: Language },
+    success: Schema.Array(ConnectorListing),
+  }),
+  /**
+   * The curated entries that match, then the MCP Registry's, best first.
+   * Without `all`, only those J3 Bots can connect from any client: no
+   * `unsupported` and no `command` listing. When the registry does not answer
+   * in time, `registry` says so and the curated matches come alone.
+   */
+  Rpc.make("connectors.search", {
+    payload: {
+      query: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+      language: Language,
+      all: Schema.Boolean,
+    },
+    success: Schema.Struct({
+      listings: Schema.Array(ConnectorListing),
+      registry: Schema.Literals(["answered", "unavailable"]),
+    }),
+  }),
+  /**
+   * One gallery entry's page: what it does, what Connect asks for and, when
+   * its server lists them openly, its tools. `NotFound("connector-listing")`
+   * when there is no such entry; `Conflict("registry-unavailable")` when the
+   * registry does not answer for one of its own.
+   */
+  Rpc.make("connectors.get", {
+    payload: { ref: ListingRef, language: Language },
+    success: ConnectorListingDetails,
+    error: CommandError,
+  }),
+  /**
+   * The operator's connectors, then each one again on every change: a status,
+   * a grant, a tool list or a review. Small, and always starts afresh. A
+   * connector shows how it is reached only as `displayTransport` words it.
+   */
+  Rpc.make("connectors.subscribe", {
+    success: ConnectorsEvent,
+    stream: true,
+  }),
+  /**
+   * Adds the connector as `id`, its secrets to the vault, and lists its tools
+   * when it needs no sign-in; one that does is added as `needs-sign-in`, and
+   * `connector.beginSignIn` follows. When `id` is added already, nothing
+   * changes and the connector is returned as it is, so a retry adds nothing.
+   * `grant` left out gives it to the bot whose card `suggestion` is, else the
+   * primary bot, else no bot. With `suggestion`, that bot's card closes once
+   * the bot can use it. Fails with `Conflict("private-network")` for an
+   * address in the operator's own network without `privateNetwork`,
+   * `Invalid("connector-fields")` for a form's values that do not fit it, or
+   * a command's environment that names a variable twice,
+   * `Invalid("command-unpinned")` for a command that runs a package at no
+   * exact version, and `Invalid("connector-unsupported")` for an entry J3
+   * Bots cannot connect. A command connector's process starts when it is
+   * first used, which may be at once, to list its tools.
+   * The connector returned, like every one after it, shows the address only
+   * as its origin and the command only as its program (`displayTransport`):
+   * the rest, which can carry a key, stays with the secrets.
+   */
+  Rpc.make("connector.add", {
+    payload: {
+      id: ConnectorId,
+      source: ConnectorSource,
+      grant: Schema.optionalKey(ConnectorGrant),
+      suggestion: Schema.NullOr(EntryId),
+    },
+    success: Connector,
+    error: CommandError,
+  }),
+  /**
+   * Renames the connector, or replaces the values its form took, such as a
+   * token the service refused, or a command connector's environment values:
+   * fields left out keep their value, and so does each value `values` does
+   * not name. `command` replaces a command connector's whole command line
+   * and environment, which the client sends only once the operator confirmed
+   * it as for an add: its process, if it runs, stops, and the next use runs
+   * the new one, whose tools wait on the operator's review where they differ.
+   * It fails with `Invalid("connector-unsupported")` for a connector that is
+   * not run by command, and as `connector.add` does for its command.
+   */
+  Rpc.make("connector.update", {
+    payload: {
+      connectorId: ConnectorId,
+      name: Schema.optionalKey(Connector.fields.name),
+      values: Schema.optionalKey(ConnectorFieldValues),
+      command: Schema.optionalKey(CommandLine),
+    },
+    success: Connector,
+    error: CommandError,
+  }),
+  /**
+   * Removes the connector: bots lose its tools at once, its sign-in is
+   * revoked at the service when the service offers that, and its secrets
+   * leave the vault. The operator's account at the service is not changed.
+   * Removing one already gone succeeds.
+   */
+  Rpc.make("connector.remove", {
+    payload: { ...command, connectorId: ConnectorId },
+    error: CommandError,
+  }),
+  /** Replaces which bots may use the connector. A bot that gains it gets its tools from its next model call. */
+  Rpc.make("connector.setBots", {
+    payload: { ...command, connectorId: ConnectorId, grant: ConnectorGrant },
+    success: Connector,
+    error: CommandError,
+  }),
+  /**
+   * Starts a sign-in for the connector, which this device opens in the system
+   * browser; it returns to the server or to this device as `redirect` says.
+   * The sign-in is this device's alone and lasts ten minutes; another starts
+   * a new one. Fails with `Conflict("no-server-redirect")` for `server` where
+   * the server cannot be returned to, `Conflict("sign-in-unsupported")` or
+   * `Conflict("registration-refused")` when the service does not sign in as
+   * J3 Bots requires, `Conflict("sign-in-unreachable")` when it does not
+   * answer, and `Invalid` for a connector that signs in no other way
+   * than its form.
+   */
+  Rpc.make("connector.beginSignIn", {
+    payload: { connectorId: ConnectorId, redirect: SignInRedirect },
+    success: SignInStarted,
+    error: CommandError,
+  }),
+  /**
+   * Finishes a `relay` or `paste` sign-in with the address the browser
+   * returned to, which only the device that began it may send. Success means
+   * the connector is signed in; its status follows on `connectors.subscribe`.
+   * Fails with `Invalid("sign-in-url")` for an address this sign-in does not
+   * expect, `NotFound("sign-in")` for one that ended or expired, and
+   * `Conflict("sign-in-refused")` when the service refused it, and
+   * `Conflict("sign-in-unreachable")` when its token endpoint did not answer.
+   */
+  Rpc.make("connector.completeSignIn", {
+    payload: { url: SignInCallback },
+    error: CommandError,
+  }),
+  /**
+   * Answers the connector's held tool changes, as the review at `revision`
+   * showed them. `accept` gives bots those tools as they now are. `keep`
+   * leaves the changes held: bots keep every tool that did not change, and
+   * get none that the review holds, a changed one included, since its server
+   * answers only as it now is; a tool the connector removed is gone either
+   * way. The review then stays, `kept`, with no badge, and `accept` at the
+   * same revision still takes it, until the tools change again. Fails with
+   * `Conflict("tool-review-stale")`, changing nothing, when they changed
+   * after that review or none wait.
+   */
+  Rpc.make("connector.acceptToolChanges", {
+    payload: {
+      ...command,
+      connectorId: ConnectorId,
+      revision: ToolReviewRevision,
+      decision: Schema.Literals(["accept", "keep"]),
+    },
+    success: Connector,
+    error: CommandError,
+  }),
+);
+
 /** Every RPC a paired client can make, on the socket at `HTTP_PATHS.rpc`. */
 export const J3Rpcs = RosterRpcs.merge(
   EntryRpcs,
@@ -755,4 +1135,7 @@ export const J3Rpcs = RosterRpcs.merge(
   SettingsRpcs,
   ClientRpcs,
   ProviderRpcs,
+  BrowserRpcs,
+  VaultRpcs,
+  ConnectorRpcs,
 );

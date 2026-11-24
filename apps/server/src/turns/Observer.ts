@@ -17,6 +17,7 @@ import {
   type SessionNotFound,
   SyncToken,
   type ToolCall,
+  type ToolCallId,
   type TurnCause,
   TurnId,
   TurnOutcome,
@@ -258,6 +259,13 @@ export class Observer extends Context.Service<
       sessionId: SessionRowId,
       engineSessionId: SessionId,
     ) => Effect.Effect<Synchronized, EngineDown | SessionNotFound | NotObserved>;
+    /**
+     * Adds a step the server took itself, which no engine event reports (a
+     * fill, `vault/Fill.ts`), to the fold of the session's running turn. A
+     * session with no running turn, or a routine run's, which has no fold,
+     * gets nothing.
+     */
+    readonly serverStep: (sessionId: SessionRowId, work: WorkStep) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/turns/Observer") {}
 
@@ -308,6 +316,14 @@ export const layer = Layer.effect(
         SELECT id, bot_id, purpose, engine_session_id, events_cursor FROM sessions
         WHERE id = ${id} AND engine_session_id IS NOT NULL AND lost_at IS NULL
           AND engine_retired_at IS NULL
+      `,
+    });
+
+    const admittedTurn = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Schema.Struct({ admitted_turn_id: TurnId }),
+      execute: (id) => sql`
+        SELECT admitted_turn_id FROM sessions WHERE id = ${id} AND admitted_turn_id IS NOT NULL
       `,
     });
 
@@ -667,6 +683,14 @@ export const layer = Layer.effect(
       // What the operator stopped needs no notice and no follow-up, also when
       // the turn ended on its own before the Stop's interrupt reached it.
       if (yield* stops.covers(session.bot_id, audience, dispatch.seq)) return;
+      // A turn its request for help in the bot's browser ended (`Stops.endTurn`)
+      // ended as it asked: its card wakes the bot again.
+      if (
+        dispatch.engine_turn_id !== null &&
+        (yield* stops.endedOnRequest(dispatch.session_id, dispatch.engine_turn_id))
+      ) {
+        return;
+      }
       // Interrupted, or a continuation cancelled before it started: the work
       // did not get to its end.
       if (outcome._tag !== "completed") {
@@ -1041,9 +1065,17 @@ export const layer = Layer.effect(
       session: Watched,
       requestId: RequestId,
       request: EngineRequest,
+      heldCall: ToolCallId | null,
     ) {
       const known = yield* requestRow({ sessionId: session.id, requestId });
       if (Option.isNone(known) || known.value.closed_at !== null) return;
+      // The engine may record the call it holds after the request: kept once known.
+      if (heldCall !== null) {
+        yield* sql`
+          UPDATE engine_requests SET engine_call_id = ${heldCall}
+          WHERE entry_id = ${known.value.entry_id} AND engine_call_id IS NULL
+        `;
+      }
       const found = yield* entries.find(known.value.entry_id);
       if (Option.isNone(found)) return;
       const card = found.value.entry;
@@ -1072,7 +1104,9 @@ export const layer = Layer.effect(
       open: OpenRequest,
     ) {
       const known = yield* requestRow({ sessionId: session.id, requestId: open.requestId });
-      if (Option.isSome(known)) return yield* updateRequest(session, open.requestId, open.request);
+      if (Option.isSome(known)) {
+        return yield* updateRequest(session, open.requestId, open.request, open.heldCall);
+      }
       // The room is told once per turn, however many requests the turn opens.
       const earlier = yield* sql`
         SELECT 1 FROM engine_requests
@@ -1084,8 +1118,11 @@ export const layer = Layer.effect(
         entry: cardOf(session.bot_id, open.request),
       });
       yield* sql`
-        INSERT INTO engine_requests (entry_id, session_id, engine_request_id, engine_turn_id)
-        VALUES (${entry.id}, ${session.id}, ${open.requestId}, ${open.turnId})
+        INSERT INTO engine_requests (
+          entry_id, session_id, engine_request_id, engine_turn_id, engine_call_id
+        ) VALUES (
+          ${entry.id}, ${session.id}, ${open.requestId}, ${open.turnId}, ${open.heldCall}
+        )
       `;
       const turn = yield* turnAudience({ sessionId: session.id, turnId: open.turnId });
       if (earlier.length === 0 && Option.isSome(turn) && turn.value.audience === "room") {
@@ -1157,6 +1194,9 @@ export const layer = Layer.effect(
         for (const work of turn.steps) yield* step(session, turn.turnId, work, event.at);
         for (const call of turn.toolCalls)
           yield* toolCall(session, turn.turnId, call, true, event.at);
+        // Recorded closed, also when this is the first sight of them.
+        for (const call of turn.closedToolCalls)
+          yield* toolCall(session, turn.turnId, call, false, event.at);
         const listed = turn.toolCalls.map((call) => call.callId);
         yield* sql`
           UPDATE engine_tool_calls SET open = 0
@@ -1265,7 +1305,7 @@ export const layer = Layer.effect(
         case "request-opened":
           return yield* openRequest(session, event.open);
         case "request-updated":
-          return yield* updateRequest(session, event.requestId, event.request);
+          return yield* updateRequest(session, event.requestId, event.request, event.heldCall);
         case "request-closed":
           return yield* closeRequest(session, event.requestId, event.resolution);
         case "turn-finished":
@@ -1604,12 +1644,26 @@ export const layer = Layer.effect(
       }),
     );
 
+    const serverStep = (sessionId: SessionRowId, work: WorkStep) =>
+      transaction(
+        Effect.gen(function* () {
+          const session = yield* watchedRow(sessionId);
+          const admitted = yield* admittedTurn(sessionId);
+          if (Option.isNone(session) || Option.isNone(admitted)) return;
+          const turnId = admitted.value.admitted_turn_id;
+          const turn = yield* turnOf(sessionId, turnId);
+          if (Option.isNone(turn) || turn.value.finished_at !== null) return;
+          yield* step(session.value, turnId, work, yield* DateTime.now);
+        }),
+      ).pipe(Effect.orDie, Effect.withSpan("Observer.serverStep"));
+
     return Observer.of({
       watch,
       ready,
       close,
       watchAll,
       synchronize,
+      serverStep,
     });
   }),
 );
