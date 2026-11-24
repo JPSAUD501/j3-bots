@@ -422,6 +422,7 @@ export const en = {
   "fill.refused.before": "A fill was already refused on this page in this turn.",
   "fill.refused.unavailable":
     "The browser or the vault couldn’t be reached, or the browser didn’t confirm what it typed.",
+  "fill.refused.stopped": "The bot’s turn ended before anything was typed.",
   "fill.refused.other": "J3 Bots refused it.",
   "tool.connector.did": "Used a connector",
   "tool.connector.doing": "Using a connector",
@@ -1697,6 +1698,9 @@ export const en = {
   "connector.status.notMcp": "What answers at its address isn't a connector.",
   "connector.status.refusedAddress":
     "Its address leads into your own network, which J3 Bots doesn't reach for it.",
+  "connector.status.commandNotFound": "Its program isn't on the computer running J3 Bots.",
+  "connector.status.commandExited":
+    "Its program couldn't start, or stopped. It starts again the next time a bot uses it.",
   "connector.status.failingOther": "It doesn't answer as it should.",
   "connector.status.since": "It started {when}.",
   "connector.status.vaultLockedDetail":

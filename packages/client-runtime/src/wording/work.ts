@@ -117,6 +117,8 @@ export function fillDetail(fill: CredentialFill, i18n: I18n): string {
           return t("fill.refused.navigated");
         case "refused-before":
           return t("fill.refused.before");
+        case "stopped":
+          return t("fill.refused.stopped");
         case "unavailable":
           return t("fill.refused.unavailable");
         case "unknown":

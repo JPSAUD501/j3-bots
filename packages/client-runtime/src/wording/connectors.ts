@@ -72,6 +72,8 @@ export function connectorStatusText(
         "server-error": "connector.status.serverError",
         "not-mcp": "connector.status.notMcp",
         "refused-address": "connector.status.refusedAddress",
+        "command-not-found": "connector.status.commandNotFound",
+        "command-exited": "connector.status.commandExited",
         unknown: "connector.status.failingOther",
       } as const;
       return {
