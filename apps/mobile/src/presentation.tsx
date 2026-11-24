@@ -2,7 +2,7 @@
 import { knownTimeZone } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useReadable, useSettings } from "@j3-bots/client-runtime/react";
 import type { PresentationContext } from "@j3-bots/client-runtime/wording";
-import type { Bot, BotId } from "@j3-bots/contracts";
+import type { Bot, BotId, RoomId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from "react";
 import { useI18n } from "./i18n.ts";
@@ -49,14 +49,25 @@ export function PresentationProvider({ children }: { readonly children: ReactNod
       ),
     [roster],
   );
+  // Every room, archived ones too, so a notice names the room as it is called now.
+  const rooms = useMemo(
+    () =>
+      new Map(
+        (roster._tag === "ready" ? roster.value : []).flatMap((item) =>
+          item._tag === "room" ? [[item.room.id, item.room.name] as const] : [],
+        ),
+      ),
+    [roster],
+  );
   const context = useMemo(
     (): PresentationContext => ({
       i18n,
       now,
       timeZone,
       botName: (id: BotId) => bots.get(id)?.profile.name ?? null,
+      roomName: (id: RoomId) => rooms.get(id) ?? null,
     }),
-    [i18n, now, timeZone, bots],
+    [i18n, now, timeZone, bots, rooms],
   );
   return (
     <PresentationContextValue value={context}>

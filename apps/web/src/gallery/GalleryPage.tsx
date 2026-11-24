@@ -98,7 +98,7 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import type { SignInRoute } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
-import { BotsProvider, I18nProvider, useI18n } from "../app/context";
+import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
 import {
   ConnectorAuthCard,
@@ -211,7 +211,7 @@ export default function GalleryPage() {
     <I18nProvider locale={locale}>
       <ClockProvider now={SAMPLE_NOW}>
         <OperatorTimeZone timeZone={team.settings.timeZone}>
-          <BotsProvider bots={bots}>
+          <RosterProvider roster={team.roster}>
             <div className="min-h-full">
               <div className="mx-auto flex max-w-[90rem] flex-col gap-12 px-4 py-8 @container">
                 <header className="flex flex-wrap items-end justify-between gap-4">
@@ -272,7 +272,7 @@ export default function GalleryPage() {
                 <ShellSection />
               </div>
             </div>
-          </BotsProvider>
+          </RosterProvider>
         </OperatorTimeZone>
       </ClockProvider>
     </I18nProvider>

@@ -206,7 +206,10 @@ export const layer = Layer.effect(
      * alignment is due. A lost session, and one on a provider the bot left,
      * are replaced instead. A bot whose permission mode the engine refused
      * waits for its settings to change, or the engine to become ready again
-     * (`EngineSessions`, `mode-refused`).
+     * (`EngineSessions`, `mode-refused`). This sweep is also what opens the
+     * session of a bot another bot made with `create_bot` when opening it at
+     * once failed: `Bots.create` still answers the tool call, so the turn
+     * goes on, and the bot's hello waits for this session like any wake.
      */
     const unprovisioned = SqlSchema.findAll({
       Request: Schema.Void,

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Conflict } from "@j3-bots/contracts";
+import type { BotId, Conflict } from "@j3-bots/contracts";
 import type { TurnId } from "@j3-bots/engine-t3";
 import { NO_TURN_REFUSAL, type ToolInput } from "@j3-bots/prompts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type { MadeBy } from "../bots/Bots.ts";
 import type { BotSession } from "../bots/EngineSessions.ts";
 
 /** The tools whose effect belongs to the turn that called them. */
@@ -17,6 +18,7 @@ const TurnToolName = Schema.Literals([
   "set_operator_name",
   "request_credential",
   "suggest_connector",
+  "start_room",
 ]);
 type TurnToolName = typeof TurnToolName.Type;
 
@@ -58,6 +60,22 @@ export type TurnToolCall = {
     readonly arguments: Schema.Json;
   };
 }[TurnToolName];
+
+/**
+ * A `create_bot` call. The bot is made by `create`, which the caller gives,
+ * since only it holds the bots: the turn's machinery hands it the turn and a
+ * claim to run where the bot is saved, which pins the call and counts it
+ * toward the turn's cap.
+ */
+export interface CreateBotCall {
+  readonly requestId: string;
+  readonly caller: BotSession;
+  /** As the bridge received them: what the engine's record of the call is digested from. */
+  readonly arguments: Schema.Json;
+  readonly create: (
+    madeBy: MadeBy<TurnEnded | TurnToolRefused>,
+  ) => Effect.Effect<BotId, TurnEnded | TurnToolRefused>;
+}
 
 /**
  * A connector call whose request was claimed for its turn before, and which
@@ -112,8 +130,9 @@ export type FillClaim =
  * `set_routine` changes a routine on the bot's behalf, and
  * `set_operator_name` saves what the operator asked to be called, only in a
  * turn they spoke in, `request_credential` shows a save-login card in the
- * bot's conversation, and `suggest_connector` a connector card there. Each
- * call is first
+ * bot's conversation, `suggest_connector` a connector card there, and
+ * `create_bot` and `start_room` build a team in a room, only in a turn the
+ * operator spoke in. Each call is first
  * matched to the engine's record of it in the session's admitted turn
  * (`docs/architecture/server.md`, Bot tools). The layer is the turn
  * machinery's (`turns/Speech.ts`).
@@ -123,6 +142,14 @@ export class TurnTools extends Context.Service<
   {
     readonly call: (
       call: TurnToolCall,
+    ) => Effect.Effect<Schema.Json, TurnEnded | TurnToolRefused | TurnToolRetry | Conflict>;
+    /**
+     * `create_bot`: matched and pinned as the other turn tools are, in the
+     * transaction that saves the bot, so one request of the operator's makes
+     * at most `MAX_BOTS_PER_REQUEST`, and `start_room` finds the bots made for it.
+     */
+    readonly createBot: (
+      call: CreateBotCall,
     ) => Effect.Effect<Schema.Json, TurnEnded | TurnToolRefused | TurnToolRetry | Conflict>;
     /**
      * Pins a fill to the engine's record of its call in the caller's running

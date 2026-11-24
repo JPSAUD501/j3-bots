@@ -71,7 +71,6 @@ export {
   pairOrder,
   pairTitle,
   teammateChoice,
-  type TeamLineContext,
   type TeamNotice,
   teamNoticeLine,
 } from "./pairs.ts";

@@ -51,3 +51,49 @@ J3_EVAL_BASE_URL=http://127.0.0.1:8317 J3_EVAL_API_KEY=… pnpm --filter @j3-bot
 | `J3_EVAL_MODEL`    | The Claude Code model id the bots run on                                                                    | the first model the engine lists for Claude Code |
 
 Runs never overlap, and nothing outside the temporary folder is written. The first run downloads the engine `engine.json` pins; later runs start it from there with `J3_ENGINE_BINARY`. The report is a Markdown table, one row per run, and the eval exits non-zero when any run fails.
+
+## A team on the operator's word
+
+Checks that a bot builds a team when the operator asks for one ([Rooms](../docs/architecture/server.md#rooms)): the primary bot creates teammates with `create_bot`, starts a room of them and itself with `start_room`, posts a kickoff, and a member answers there. Its deterministic counterpart, on the scripted agent, is `apps/server/scripted/team.test.ts`.
+
+Each run starts, connects and pairs as the room eval does, on one harness, then:
+
+1. Saves the operator's name, so the primary bot's hello asks for nothing, and creates the primary bot, Lia, in `auto` permission mode. It waits until her first-run turn is over.
+2. Sends her, in Brazilian Portuguese, a request for a support group of several bots to help open the online shop of the operator's bakery. Who is in it, and what each does, is hers to decide.
+3. Waits until a member other than Lia has a message in the room, or until nothing has been under way for 30 seconds.
+4. Scores the run from the server's database, then stops the server and deletes the run's home.
+
+Lia runs on the harness under test. The bots she makes take the model a bot created without one gets: the first model of the first ready provider as the engine lists them, whatever Lia runs on. With both connected, that was Claude Code's in every run so far. So a Codex run tests what a Codex bot does when asked for a team, and its members answer on that default; the report says which provider each ran on.
+
+A run passes when all of these hold:
+
+| Check                                       | Read from                   |
+| ------------------------------------------- | --------------------------- |
+| At least two bots made by `create_bot`      | Lia's tool calls            |
+| A room hosted by Lia, with Lia a member     | the rooms and their members |
+| Every bot she made is a member of that room | the room's members          |
+| A message of hers in the room: the kickoff  | the room's entries          |
+| A message of another member in the room     | the room's entries          |
+
+The report also gives, per run, the provider each made bot runs on, how the other members' room wakes ended and the tools they called there, the hellos the made bots wrote in their own conversations (a bot made for a room opens there, so these should be none), Lia's tool calls in order, and her last message to the operator.
+
+A run must be over within 20 minutes of its start, boot included.
+
+### Running it
+
+You need the harness's command installed (`claude` or `codex`), and an endpoint for it, as for the room eval. `team` is also a pnpm command, so name the script with `run`:
+
+```sh
+J3_EVAL_HARNESS=codex J3_EVAL_BASE_URL=http://127.0.0.1:8317 J3_EVAL_API_KEY=… pnpm --filter @j3-bots/evals run team
+```
+
+| Variable           | Meaning                                                           | Default                                          |
+| ------------------ | ----------------------------------------------------------------- | ------------------------------------------------ |
+| `J3_EVAL_HARNESS`  | The harness Lia runs on: `claude-code` or `codex`                 | required                                         |
+| `J3_EVAL_BASE_URL` | As for the room eval                                              | required                                         |
+| `J3_EVAL_API_KEY`  | As for the room eval                                              | required                                         |
+| `J3_EVAL_RUNS`     | How many runs, one after another                                  | 3                                                |
+| `J3_EVAL_PORT`     | The server's port; the engine and the bot tools take the next two | 3871                                             |
+| `J3_EVAL_MODEL`    | The model id Lia runs on                                          | the first model the engine lists for the harness |
+
+Runs on different ports can go at once, one per harness.

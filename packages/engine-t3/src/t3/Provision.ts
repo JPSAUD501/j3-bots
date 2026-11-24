@@ -108,6 +108,15 @@ export const instanceIdFor = (providerId: string) =>
 export const TOOL_SERVER = "j3";
 
 /**
+ * The variable that gives an ACP agent the bot tools' bridge, as the JSON
+ * array of its command line. The engine offers an ACP agent only the engine's
+ * own MCP server, so one that calls J3 Bots' tools, as the scripted agent
+ * does, starts the bridge itself: the bridge inherits the agent's
+ * environment, and with it the session's thread id (`sessionOfToolCaller`).
+ */
+export const TOOL_BRIDGE_VARIABLE = "J3_TOOL_BRIDGE";
+
+/**
  * Claude Code tools that reach a person outside J3 Bots or vanish with the
  * session. Removed from the model's tool list; the base prompt names the J3
  * Bots replacement for each.

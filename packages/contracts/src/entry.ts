@@ -599,6 +599,17 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
      * changes it.
      */
     Schema.TaggedStruct("operator-named", { botId: BotId, name: Label }),
+    /**
+     * Bot `botId` started room `roomId` on the operator's word, with the
+     * room's first message. Shown in the room, at its start, and in the
+     * bot's own conversation.
+     */
+    Schema.TaggedStruct("room-started", { botId: BotId, roomId: RoomId }),
+    /**
+     * In a bot's own conversation, at its start: bot `botId` created it for
+     * room `roomId`, where it opens instead of greeting here.
+     */
+    Schema.TaggedStruct("made-for-room", { botId: BotId, roomId: RoomId }),
   ] as const;
 
 /**

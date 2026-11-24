@@ -75,6 +75,16 @@ export class Rooms extends Context.Service<
       readonly hostId: BotId;
       readonly hopLimit?: number;
     }) => Effect.Effect<Room, CommandError>;
+    /**
+     * Creates a room as `create` does, with the operator's default hop limit,
+     * in the caller's transaction and under no receipt: for a bot's
+     * `start_room`, which its turn tool's pin applies once.
+     */
+    readonly open: (input: {
+      readonly name: string;
+      readonly members: ReadonlyArray<BotId>;
+      readonly hostId: BotId;
+    }) => Effect.Effect<Room, Invalid>;
     readonly update: (input: {
       readonly commandId: CommandId;
       readonly roomId: RoomId;
@@ -223,6 +233,26 @@ export const layer = Layer.effect(
       yield* work.end(roomId);
     });
 
+    const open = Effect.fn("Rooms.open")(function* (input: {
+      readonly name: string;
+      readonly members: ReadonlyArray<BotId>;
+      readonly hostId: BotId;
+      readonly hopLimit?: number;
+    }) {
+      yield* checkMembers(input.members, input.hostId);
+      const id = RoomId.make(yield* ids.make("room"));
+      const at = timeText(yield* DateTime.now);
+      const hopLimit = input.hopLimit ?? (yield* settings.get).budgets.hops;
+      yield* sql`
+        INSERT INTO rooms (id, name, host_bot_id, hop_limit, created_at, updated_at)
+        VALUES (${id}, ${input.name}, ${input.hostId}, ${hopLimit}, ${at}, ${at})
+      `.pipe(Effect.orDie);
+      yield* writeMembers(id, input.members);
+      yield* refusals.joined(id, input.members);
+      yield* changes.touch({ _tag: "room", roomId: id });
+      return yield* require(id).pipe(Effect.orDie);
+    });
+
     const create = Effect.fn("Rooms.create")(function* (input: {
       readonly commandId: CommandId;
       readonly name: string;
@@ -235,20 +265,7 @@ export const layer = Layer.effect(
         method: "room.create",
         payload: input,
         result: Room,
-        apply: Effect.gen(function* () {
-          yield* checkMembers(input.members, input.hostId);
-          const id = RoomId.make(yield* ids.make("room"));
-          const at = timeText(yield* DateTime.now);
-          const hopLimit = input.hopLimit ?? (yield* settings.get).budgets.hops;
-          yield* sql`
-            INSERT INTO rooms (id, name, host_bot_id, hop_limit, created_at, updated_at)
-            VALUES (${id}, ${input.name}, ${input.hostId}, ${hopLimit}, ${at}, ${at})
-          `.pipe(Effect.orDie);
-          yield* writeMembers(id, input.members);
-          yield* refusals.joined(id, input.members);
-          yield* changes.touch({ _tag: "room", roomId: id });
-          return yield* require(id).pipe(Effect.orDie);
-        }),
+        apply: open(input),
       });
     });
 
@@ -386,6 +403,7 @@ export const layer = Layer.effect(
       list: select({ id: null, botId: null }),
       ofBot,
       create,
+      open,
       update,
       remove,
       stop,

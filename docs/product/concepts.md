@@ -24,7 +24,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Teammate conversation.** The record of the messages two bots sent each other, one per pair of bots, titled with their two names ("Scout and Wren"). The operator reads it and never writes into it: they steer a bot in its own conversation, or several in a room. It is not a session and not a room.
 
-**Room.** A group chat with the operator and two to six bots. A room has a name, members, a host and its own message history. Bots keep their own memory in a room; they share only what is said there.
+**Room.** A group chat with the operator and two to six bots. A room has a name, members, a host and its own message history. Bots keep their own memory in a room; they share only what is said there. The operator creates one, or asks a bot to: it then starts the room as its host, with a kickoff that hands out the work.
 
 **Host.** The bot in a room that answers when the operator addresses nobody in particular, and that decides who should take a request.
 

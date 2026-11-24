@@ -23,7 +23,6 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { busy, type Score, score } from "./score.ts";
 import {
-  claudeCode,
   type Client,
   connectClient,
   connectProviders,
@@ -31,6 +30,8 @@ import {
   EvalFailure,
   logTail,
   pair,
+  readyProvider,
+  removeHome,
   type ServerSpec,
   startServer,
 } from "./server.ts";
@@ -173,7 +174,7 @@ const createTeam = Effect.fn("createTeam")(function* (
   database: string,
   model: Option.Option<string>,
 ) {
-  const provider = yield* claudeCode(client);
+  const provider = yield* readyProvider(client, "claude-code");
   const listed = provider.models.map((one) => one.id);
   const chosen = Option.getOrElse(model, () => listed[0] ?? "");
   if (!listed.some((id) => id === chosen)) {
@@ -209,7 +210,7 @@ const runOnce = Effect.fn("runOnce")(function* (
   const database = path.join(spec.home, "j3.sqlite");
   yield* startServer(spec, log);
   yield* connectProviders(spec, endpoint);
-  const { token } = yield* pair(spec);
+  const { token } = yield* pair(spec, "Room eval");
   const client = yield* connectClient(spec, token);
   const { bots, modelId } = yield* createTeam(client, database, model);
   yield* Console.log(`  ${bots.length} bots on ${modelId}; the task goes to the room`);
@@ -368,7 +369,7 @@ const main = Effect.gen(function* () {
       const fresh = path.join(home, "engine", "j3", "runtime", version);
       if (yield* fs.exists(path.join(fresh, "t3"))) yield* fs.rename(fresh, engineDir);
     }
-    yield* fs.remove(home, { recursive: true });
+    yield* removeHome(home);
     const line = row(index, outcome);
     yield* Console.log(line);
     outcomes.push(outcome);

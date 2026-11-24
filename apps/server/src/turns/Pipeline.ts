@@ -408,6 +408,25 @@ export const layer = Layer.effect(
       return !providerReady(yield* engineState.current, bot.value.bot.model.providerId);
     });
 
+    /**
+     * The hello of a bot another bot's `create_bot` made waits for the turn
+     * that made it to end: that turn may still place the bot in a room
+     * (`start_room`), where it opens instead, so the hello must not reach the
+     * engine first. A turn whose session was retired or lost ends no other way.
+     */
+    const awaitsMaker = Effect.fn("Pipeline.awaitsMaker")(function* (opening: WakeRow) {
+      const payload = opening.payload_json;
+      if (payload._tag !== "first-run" || payload.madeIn === undefined) return false;
+      const running = yield* sql`
+        SELECT 1 FROM turns am_turn JOIN sessions am_session ON am_session.id = am_turn.session_id
+        WHERE am_turn.session_id = ${payload.madeIn.sessionId}
+          AND am_turn.engine_turn_id = ${payload.madeIn.turnId}
+          AND am_turn.finished_at IS NULL
+          AND am_session.retired_at IS NULL AND am_session.lost_at IS NULL
+      `;
+      return running.length > 0;
+    }, Effect.orDie);
+
     const OpeningState = Schema.Struct({
       id: Schema.String,
       unsent: Schema.BooleanFromBit,
@@ -1096,7 +1115,7 @@ export const layer = Layer.effect(
       const candidates =
         opening === undefined
           ? pending
-          : (yield* openingHeld(botId))
+          : (yield* openingHeld(botId)) || (yield* awaitsMaker(opening))
             ? others
             : [opening, ...others];
       let head: WakeRow | undefined;

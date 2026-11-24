@@ -9,6 +9,7 @@ import {
   type FailureClass,
   type MessageEntry,
   type Room,
+  type RoomId,
   type RosterItem,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
@@ -16,12 +17,15 @@ import type { OpeningHold } from "../presentation/engine.ts";
 import { firstLine } from "../presentation/roster.ts";
 import { millisBetween, shortDuration } from "../presentation/time.ts";
 import { permissionModeText } from "./details.ts";
+import { teamNoticeLine } from "./pairs.ts";
 import { timeInSentence, type TimeContext } from "./time.ts";
 import { activityText, workDoneText } from "./work.ts";
 
 export interface PresentationContext extends TimeContext {
   /** A bot's display name, or null if it no longer exists. */
   readonly botName: (id: BotId) => string | null;
+  /** A room's name as it is now, archived or not, or null if it no longer exists. */
+  readonly roomName: (id: RoomId) => string | null;
 }
 
 /**
@@ -204,6 +208,9 @@ export function noticeText(
         bot: ctx.botName(notice.botId) ?? t("bot.unknown"),
         name: notice.name,
       });
+    case "room-started":
+    case "made-for-room":
+      return teamNoticeLine(notice, ctx).text;
   }
 }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, BotId, Language } from "@j3-bots/contracts";
+import type { Bot, BotId, Language, Room, RoomId, RosterItem } from "@j3-bots/contracts";
 import { createContext, use, useEffect, useMemo, type ReactNode } from "react";
 import { createI18n, resolveLocale, type I18n } from "@j3-bots/i18n";
 import { usePreferences } from "../preferences/preferences";
@@ -23,17 +23,40 @@ export function I18nProvider({ locale, children }: { locale?: Language; children
 export const useI18n = () => use(I18nContext);
 
 const BotsContext = createContext<ReadonlyMap<BotId, Bot>>(new Map());
+const RoomsContext = createContext<ReadonlyMap<RoomId, Room>>(new Map());
 
-/** Every bot the operator has, so any entry can show who said or was asked something. */
-export function BotsProvider({
-  bots,
+/**
+ * Every bot and room the operator has, so any entry can show who said or was
+ * asked something, and a notice can name a room as it is called now.
+ */
+export function RosterProvider({
+  roster,
   children,
 }: {
-  bots: ReadonlyArray<Bot>;
+  roster: ReadonlyArray<RosterItem>;
   children: ReactNode;
 }) {
-  const byId = useMemo(() => new Map(bots.map((bot) => [bot.id, bot])), [bots]);
-  return <BotsContext value={byId}>{children}</BotsContext>;
+  const bots = useMemo(
+    () =>
+      new Map(
+        roster.flatMap((item) => (item._tag === "bot" ? [[item.bot.id, item.bot] as const] : [])),
+      ),
+    [roster],
+  );
+  const rooms = useMemo(
+    () =>
+      new Map(
+        roster.flatMap((item) =>
+          item._tag === "room" ? [[item.room.id, item.room] as const] : [],
+        ),
+      ),
+    [roster],
+  );
+  return (
+    <BotsContext value={bots}>
+      <RoomsContext value={rooms}>{children}</RoomsContext>
+    </BotsContext>
+  );
 }
 
 export const useBot = (id: BotId): Bot | null => use(BotsContext).get(id) ?? null;
@@ -43,8 +66,15 @@ export function usePresentation(): PresentationContext {
   const i18n = use(I18nContext);
   const { now, timeZone } = useClock();
   const bots = use(BotsContext);
+  const rooms = use(RoomsContext);
   return useMemo(
-    () => ({ i18n, now, timeZone, botName: (id: BotId) => bots.get(id)?.profile.name ?? null }),
-    [i18n, now, timeZone, bots],
+    () => ({
+      i18n,
+      now,
+      timeZone,
+      botName: (id: BotId) => bots.get(id)?.profile.name ?? null,
+      roomName: (id: RoomId) => rooms.get(id)?.name ?? null,
+    }),
+    [i18n, now, timeZone, bots, rooms],
   );
 }

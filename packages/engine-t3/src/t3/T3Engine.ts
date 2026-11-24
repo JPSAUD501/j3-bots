@@ -62,6 +62,7 @@ import {
   type ProviderInstance,
   type RequestResponse,
   type SecretAnswer,
+  type ToolBridge,
 } from "../Engine.ts";
 import { BrowserBridge } from "../Browser.ts";
 import {
@@ -122,6 +123,7 @@ import {
   instanceIdFor,
   provision,
   storeConnection,
+  TOOL_BRIDGE_VARIABLE,
   writeBasePrompt,
   type InstanceSpec,
 } from "./Provision.ts";
@@ -271,21 +273,35 @@ const decodeUploadInput = Schema.decodeUnknownEffect(AttachmentCreateUploadUrlIn
 const PairingResult = Schema.Struct({ pairUrl: Schema.String });
 const decodePairing = Schema.decodeUnknownEffect(Schema.fromJsonString(PairingResult));
 
-const instanceSpecOf = (provider: ProviderInstance): InstanceSpec => {
-  const common = {
-    instanceId: instanceIdFor(provider.id),
-    name: provider.name,
-    environment: provider.environment,
+const instanceSpecOf =
+  (toolBridge: ToolBridge) =>
+  (provider: ProviderInstance): InstanceSpec => {
+    const common = {
+      instanceId: instanceIdFor(provider.id),
+      name: provider.name,
+      environment: provider.environment,
+    };
+    switch (provider.harness) {
+      case "claude-code":
+        return { ...common, kind: "claude-code", home: provider.home };
+      case "codex":
+        return { ...common, kind: "codex", home: provider.home };
+      case "acp-command":
+        return {
+          ...common,
+          environment: [
+            ...provider.environment,
+            {
+              name: TOOL_BRIDGE_VARIABLE,
+              value: Redacted.make(JSON.stringify([toolBridge.command, ...toolBridge.args])),
+            },
+          ],
+          kind: "acp-local",
+          command: provider.command,
+          args: provider.args,
+        };
+    }
   };
-  switch (provider.harness) {
-    case "claude-code":
-      return { ...common, kind: "claude-code", home: provider.home };
-    case "codex":
-      return { ...common, kind: "codex", home: provider.home };
-    case "acp-command":
-      return { ...common, kind: "acp-local", command: provider.command, args: provider.args };
-  }
-};
 
 /** Input to one session's event loop: an engine stream item, a lost stream, or a synchronize call. */
 type LoopInput =
@@ -366,7 +382,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.provide(SecureRandom.layerWebCrypto),
   );
   const providerIds = new Set(options.providers.map((provider) => provider.id));
-  const instances = options.providers.map(instanceSpecOf);
+  const instances = options.providers.map(instanceSpecOf(options.toolBridge));
   /** The base prompt as last rendered, which each provisioning writes for Codex. */
   const basePrompt = yield* Ref.make(
     Option.getOrElse(yield* Stream.runHead(options.basePrompt), () => ""),

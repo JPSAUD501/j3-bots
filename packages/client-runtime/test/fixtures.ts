@@ -145,17 +145,19 @@ export function bot(
   };
 }
 
-/** What wording a moment needs, in São Paulo, with the bots' names by id. */
+/** What wording a moment needs, in São Paulo, with the bots' and the rooms' names by id. */
 export function context(
   now: string,
   locale: Language = "en",
   names: Record<string, string> = {},
+  roomNames: Record<string, string> = {},
 ): PresentationContext {
   return {
     i18n: createI18n(locale),
     timeZone: "America/Sao_Paulo",
     now: at(now),
     botName: (id) => names[id] ?? null,
+    roomName: (id) => roomNames[id] ?? null,
   };
 }
 
