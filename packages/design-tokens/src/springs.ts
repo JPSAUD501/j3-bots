@@ -144,3 +144,37 @@ export const lift = {
   /** ms */
   stepDelay: 40,
 } as const;
+
+/**
+ * The first run's choreography, drawn the same way by every surface. Times
+ * are in ms, distances in px; each move names the spring or ease it travels
+ * on where it is played.
+ */
+export const firstRun = {
+  /**
+   * A screen comes in from this far along the direction of travel on `slide`,
+   * and the one before leaves the same way on the `out` ease, in `leave` ms,
+   * so the new one is mostly in place when the old one is gone.
+   */
+  shift: 48,
+  leave: Math.round(springs.slide.duration / 2),
+  /** The cast pops in one bot after another, this far apart, on `pop`. */
+  stagger: 90,
+  /** Then each floats this high and back, on its own period, so no two move together. */
+  float: 6,
+  /** The bot being made hops this high at each step and change, and lands on `pop`. */
+  hop: 10,
+  /** Once it exists it drops this far and grows by this share, on `pop`. */
+  arrivalDrop: 56,
+  arrivalGrowth: 0.5,
+  /**
+   * Its rings start half a `pop` later, `gap` apart, and spread on the `out`
+   * ease from 0.8 to `reach` times the grown bot as they fade.
+   */
+  rings: { count: 3, gap: 220, duration: 1400, reach: 1.8 },
+  /** Its name pops in, then the line under it rises, this long after it starts to grow. */
+  nameDelay: 260,
+  lineDelay: 420,
+  /** The arrival stays at least this long, so the bot is seen arriving before its conversation opens. */
+  hold: 1600,
+} as const;

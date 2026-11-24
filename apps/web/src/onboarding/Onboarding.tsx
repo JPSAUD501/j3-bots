@@ -10,7 +10,7 @@ import {
   showsConnect,
   showsVault,
 } from "@j3-bots/client-runtime/presentation";
-import { avatarCast, springs } from "@j3-bots/design-tokens";
+import { avatarCast, firstRun, springs } from "@j3-bots/design-tokens";
 import { type IntentResult, refusedWith } from "@j3-bots/client-runtime";
 import { connectStepText, providerLine } from "@j3-bots/client-runtime/wording";
 import type { AvatarChoice, BotId, EngineStatus } from "@j3-bots/contracts";
@@ -33,17 +33,35 @@ import { type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetu
 import { Button } from "../components/ui/button";
 import { SetupVaultForm, type VaultAccess } from "../components/vault/VaultForms";
 import { cn } from "../lib/cn";
-import { Cast } from "./Cast";
+import { Cast, type Lead } from "./Cast";
+import { ARRIVING, openArrived } from "./handoff";
 import { BigButton, bigFieldClass, StepTitle } from "./parts";
-import { springAnimation, useReducedMotion } from "./motion";
-
-/** How long the arrival stays at least, so the bot is seen arriving before its conversation opens. */
-const ARRIVAL_MS = 1600;
+import {
+  type Box,
+  boxOf,
+  carryFrom,
+  carryTo,
+  playSpring,
+  springAnimation,
+  useReducedMotion,
+} from "./motion";
 
 const after = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 
-/** How far a step slides as it comes and goes, in px. */
-const SLIDE = 48;
+/** The bot above the steps, in px, and the room above and under it, which every step but the welcome leaves free. */
+const HERO_SIZE = 96;
+const HERO_ABOVE = 16;
+const HERO_BELOW = 24;
+const HERO_ROOM = HERO_ABOVE + HERO_SIZE + HERO_BELOW;
+/**
+ * Where the arrival's title starts under that room, below the farthest ring,
+ * so no ring crosses it: the ring's radius, less how far the grown bot's
+ * centre sits above the room's end, and a little space.
+ */
+const ARRIVAL_TITLE_TOP =
+  (HERO_SIZE * (1 + firstRun.arrivalGrowth) * firstRun.rings.reach) / 2 -
+  (HERO_SIZE / 2 + HERO_BELOW - firstRun.arrivalDrop) +
+  12;
 
 interface OnboardingProps {
   /** Null until the server has reported it. */
@@ -84,10 +102,12 @@ type Failure = "no-model" | "other";
 /**
  * The first run, from the welcome to the first bot's arrival, one thing per
  * screen. Each screen slides in from the side it comes from, and Back always
- * returns to the one before. The bot being made stays in place above the
- * screens and answers what the operator does. Continue always works: the
- * name and the look have defaults, and a provider that is not connected yet
- * never holds the bot back, which then says hello once one is.
+ * returns to the one before. The bot being made is the cast's first bot,
+ * carried from the welcome to its place above the screens and back; there it
+ * answers what the operator does, and once it exists it travels on into its
+ * conversation. Continue always works: the name and the look have defaults,
+ * and a provider that is not connected yet never holds the bot back, which
+ * then says hello once one is.
  */
 export function Onboarding({
   engine,
@@ -111,8 +131,7 @@ export function Onboarding({
   const [view, setView] = useState<{
     readonly step: OnboardingStep;
     readonly direction: Direction;
-    /** The step going away, while it does. */
-    /** The screen going away, a new one at each move, so its exit restarts even for the same step. */
+    /** The screen going away, while it does: a new one at each move, so its exit restarts even for the same step. */
     readonly leaving: { readonly step: OnboardingStep } | null;
     /** Counts moves, so each one's layers are new. */
     readonly move: number;
@@ -133,13 +152,20 @@ export function Onboarding({
     vault: vault !== undefined && showsVault(vault.view, vaultShown),
   };
 
+  // The cast's first bot is the bot being made: leaving the welcome, it is carried from where
+  // the cast has it to its place above the steps, and back again on the way back.
+  const leadRef = useRef<HTMLSpanElement>(null);
+  const heroRef = useRef<HTMLSpanElement>(null);
+  const stepsRef = useRef<HTMLDivElement>(null);
+  const liftOff = useRef<Box | null>(null);
   const go = (to: OnboardingStep, direction: Direction) => {
     if (to === "connect") setConnectShown(true);
     if (to === "vault") setVaultShown(true);
+    if (step === "welcome" && leadRef.current !== null) liftOff.current = boxOf(leadRef.current);
     setView((now) => ({
       step: to,
       direction,
-      leaving: reduced ? null : { step: now.step },
+      leaving: { step: now.step },
       move: now.move + 1,
     }));
     if (to !== "welcome") setPokes((count) => count + 1);
@@ -162,6 +188,24 @@ export function Onboarding({
     );
     return () => window.clearTimeout(done);
   }, [view.leaving]);
+  // Before the first frame of a move, so the bot never shows where it is not.
+  useLayoutEffect(() => {
+    const hero = heroRef.current;
+    if (reduced || hero === null || view.leaving === null) return;
+    if (view.leaving.step === "welcome") {
+      const from = liftOff.current;
+      liftOff.current = null;
+      if (from === null) return;
+      const carry = carryFrom(hero, from);
+      return () => carry.cancel();
+    }
+    const lead = leadRef.current;
+    const layer = currentRef.current;
+    const steps = stepsRef.current;
+    if (view.step !== "welcome" || lead === null || layer === null || steps === null) return;
+    const carry = carryTo(hero, restingBox(lead, layer, steps));
+    return () => carry.cancel();
+  }, [reduced, view.leaving, view.step, heroRef, liftOff, leadRef, stepsRef]);
 
   const forward = () => {
     const to = nextStep(step, flow);
@@ -193,7 +237,9 @@ export function Onboarding({
         }
         // The bot exists: it is seen arriving before its conversation opens.
         setCreated(true);
-        void after(reduced ? 0 : ARRIVAL_MS).then(() => onArrived(result.value));
+        void after(reduced ? 0 : firstRun.hold).then(() =>
+          openArrived(result.value, () => onArrived(result.value), !reduced),
+        );
       },
       () => failed("other"),
     );
@@ -201,6 +247,19 @@ export function Onboarding({
 
   const progress = makingProgress(step, flow);
   const canGoBack = previousStep(step, flow) !== null;
+  // The bot being made stays while a step it stands over goes away, so it can be carried home.
+  const heroShown =
+    step !== "welcome" || (view.leaving !== null && view.leaving.step !== "welcome");
+  // Where the bot being made stands for the cast's first bot, the cast leaves it out; it comes back
+  // once the bot being made is carried home. Under reduced motion the two only crossfade.
+  const castLead = (current: boolean): Lead =>
+    reduced
+      ? "pops"
+      : !current || view.leaving !== null
+        ? "away"
+        : view.move === 0
+          ? "pops"
+          : "still";
   const style: CSSProperties & Record<"--onboarding-bot", string> = {
     "--onboarding-bot": `var(--bot-${look.color})`,
   };
@@ -208,7 +267,15 @@ export function Onboarding({
   const screen = (at: OnboardingStep, current: boolean): ReactNode => {
     switch (at) {
       case "welcome":
-        return <Welcome onStart={forward} footer={footer} />;
+        return (
+          <Welcome
+            onStart={forward}
+            footer={footer}
+            lead={castLead(current)}
+            leadRef={leadRef}
+            rises={view.move === 0 && !reduced}
+          />
+        );
       case "name":
         return (
           <NameStep
@@ -285,12 +352,14 @@ export function Onboarding({
           </span>
           <span className="w-10" />
         </header>
-        {step !== "welcome" && (
-          <Hero look={look} pokes={pokes} arrived={step === "arrival" && created} />
-        )}
-        <div className="relative min-h-0 flex-1">
+        <div ref={stepsRef} className="relative min-h-0 flex-1">
           {view.leaving !== null && (
-            <Layer key={`out:${view.move}`} motion={`out-${view.direction}`}>
+            <Layer
+              key={`out:${view.move}`}
+              motion={`out-${view.direction}`}
+              reduced={reduced}
+              room={view.leaving.step !== "welcome"}
+            >
               {screen(view.leaving.step, false)}
             </Layer>
           )}
@@ -298,44 +367,89 @@ export function Onboarding({
             key={`in:${view.move}`}
             ref={currentRef}
             motion={view.move === 0 ? null : `in-${view.direction}`}
+            reduced={reduced}
+            room={step !== "welcome"}
           >
             {screen(step, true)}
           </Layer>
+          {heroShown && (
+            <Hero
+              ref={heroRef}
+              look={look}
+              pokes={pokes}
+              arrived={step === "arrival" && created}
+              reduced={reduced}
+              entrance={view.move === 0 ? "pop" : reduced ? "fade" : "carried"}
+              departing={reduced && step === "welcome"}
+            />
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-/** One screen of the first run; the one going away is hidden from everything but the eye. */
+/**
+ * Where the cast's first bot rests in the welcome coming in: where it is
+ * drawn, less how far the welcome's screen is from its place as it slides in.
+ */
+const restingBox = (lead: Element, layer: Element, steps: Element): Box => {
+  const box = boxOf(lead);
+  const layerBox = layer.getBoundingClientRect();
+  const stepsBox = steps.getBoundingClientRect();
+  return {
+    x: box.x - (layerBox.x - stepsBox.x),
+    y: box.y - (layerBox.y - stepsBox.y),
+    width: box.width,
+  };
+};
+
+/**
+ * One screen of the first run; the one going away is hidden from everything
+ * but the eye. A screen comes in from the side it comes from as the other
+ * leaves the same way; under reduced motion the two only crossfade. Every
+ * screen but the welcome leaves room at its top for the bot being made.
+ */
 function Layer({
   motion,
+  reduced,
+  room,
   children,
   ref,
 }: {
   readonly motion: `${"in" | "out"}-${Direction}` | null;
+  readonly reduced: boolean;
+  readonly room: boolean;
   readonly children: ReactNode;
   readonly ref?: Ref<HTMLDivElement>;
 }) {
   const leaving = motion?.startsWith("out") === true;
   const sign = motion?.endsWith("back") === true ? -1 : 1;
-  const style: CSSProperties =
+  const style: CSSProperties & Partial<Record<"--onboarding-shift", string>> =
     motion === null
       ? {}
-      : leaving
+      : reduced
         ? {
-            animation: "onboarding-out calc(var(--duration-slide) / 2) var(--ease-out) both",
-            ["--onboarding-shift" as string]: `${-sign * SLIDE}px`,
+            animation: `${leaving ? "onboarding-fade-out" : "onboarding-fade-in"} var(--duration-state) var(--ease-out) both`,
           }
-        : {
-            animation: springAnimation("onboarding-in"),
-            ["--onboarding-shift" as string]: `${sign * SLIDE}px`,
-          };
+        : leaving
+          ? {
+              animation: `onboarding-out ${firstRun.leave}ms var(--ease-out) both`,
+              "--onboarding-shift": `${-sign * firstRun.shift}px`,
+            }
+          : {
+              animation: springAnimation("onboarding-in"),
+              "--onboarding-shift": `${sign * firstRun.shift}px`,
+            };
   return (
     <div
       ref={ref}
-      className={cn("absolute inset-0 flex flex-col", leaving && "pointer-events-none")}
-      style={style}
+      className={cn(
+        "absolute inset-0 flex flex-col",
+        leaving && "pointer-events-none",
+        reduced && "crossfade",
+      )}
+      style={{ ...style, paddingTop: room ? HERO_ROOM : 0 }}
       {...(leaving ? { "aria-hidden": true, inert: true } : {})}
     >
       {children}
@@ -366,54 +480,95 @@ function Progress({ index, count }: { readonly index: number; readonly count: nu
 }
 
 /**
- * The bot being made, above the screens: it pops in, hops at every step and
- * every change, morphs into a new shape, and grows when it arrives, with rings
- * in its colour.
+ * The bot being made, over the top of the screens: carried there from the
+ * cast, it hops at every step and every change, morphs into a new shape, and
+ * grows when it arrives, with rings in its colour. From there it travels into
+ * its conversation (`openArrived`). Under reduced motion it fades in and out
+ * and keeps still.
  */
 function Hero({
   look,
   pokes,
   arrived,
+  reduced,
+  entrance,
+  departing,
+  ref,
 }: {
   readonly look: AvatarChoice;
   readonly pokes: number;
   readonly arrived: boolean;
+  readonly reduced: boolean;
+  /** Popping in where the first run starts past the welcome; otherwise carried, or faded in. */
+  readonly entrance: "pop" | "carried" | "fade";
+  /** Going away under reduced motion, as the welcome comes back. */
+  readonly departing: boolean;
+  /** What carries it to and from the cast. */
+  readonly ref: Ref<HTMLSpanElement>;
 }) {
   const bot = useRef<AvatarHandle>(null);
+  const hop = useRef<HTMLSpanElement>(null);
   const shape = useRef(look.shape);
   useEffect(() => {
     if (look.shape !== shape.current) bot.current?.poke("morph");
     shape.current = look.shape;
   }, [look.shape]);
+  useEffect(() => {
+    if (pokes === 0 || reduced || hop.current === null) return;
+    const landing = playSpring(
+      hop.current,
+      [{ transform: `translateY(${-firstRun.hop}px) scale(1.06, 0.95)` }, { transform: "none" }],
+      "pop",
+    );
+    return () => landing.cancel();
+  }, [pokes, reduced]);
+  const grown = `translateY(${firstRun.arrivalDrop}px) scale(${1 + firstRun.arrivalGrowth})`;
+  const rings: CSSProperties & Record<"--onboarding-reach", string> = {
+    color: "var(--onboarding-bot)",
+    "--onboarding-reach": String(firstRun.rings.reach),
+  };
   return (
     <div
       aria-hidden
-      className="relative flex shrink-0 justify-center pt-4 pb-6 [--avatar-cutout:var(--background)]"
+      className={cn(
+        "pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center [--avatar-cutout:var(--background)]",
+        (entrance === "fade" || departing) && "crossfade",
+      )}
+      style={{
+        paddingTop: HERO_ABOVE,
+        animation: departing
+          ? "onboarding-fade-out var(--duration-state) var(--ease-out) both"
+          : entrance === "fade"
+            ? "onboarding-fade-in var(--duration-state) var(--ease-out) both"
+            : undefined,
+      }}
     >
-      <span
-        className="relative block transition-transform duration-(--duration-pop) ease-pop"
-        style={{ transform: arrived ? "translateY(56px) scale(1.5)" : "none" }}
-      >
-        {arrived && (
-          <span className="absolute inset-0" style={{ color: "var(--onboarding-bot)" }}>
-            {[0, 1, 2].map((ring) => (
-              <span
-                key={ring}
-                className="absolute inset-0 rounded-full border-2 border-current"
-                style={{
-                  animation: `onboarding-ring 1400ms var(--ease-out) calc(var(--duration-pop) / 2 + ${ring * 220}ms) both`,
-                }}
-              />
-            ))}
-          </span>
-        )}
-        <span className="pop-in block">
-          <span
-            key={pokes}
-            className="block"
-            style={{ animation: springAnimation("onboarding-hop", "pop") }}
-          >
-            <BotAvatar ref={bot} avatar={look} seed="first-bot" state="idle" size={96} />
+      <span ref={ref} className="block">
+        <span
+          className="relative block transition-transform duration-(--duration-pop) ease-pop"
+          style={{ transform: arrived ? grown : "none" }}
+        >
+          {arrived && (
+            <span className="absolute inset-0" style={rings}>
+              {Array.from({ length: firstRun.rings.count }, (_, ring) => (
+                <span
+                  key={ring}
+                  className="absolute inset-0 rounded-full border-2 border-current"
+                  style={{
+                    animation: `onboarding-ring ${firstRun.rings.duration}ms var(--ease-out) calc(var(--duration-pop) / 2 + ${ring * firstRun.rings.gap}ms) both`,
+                  }}
+                />
+              ))}
+            </span>
+          )}
+          <span ref={hop} className={cn("block", entrance === "pop" && "pop-in")}>
+            {/* What travels into the conversation's header once the bot is there. */}
+            <span
+              className="block"
+              style={{ viewTransitionName: arrived && !reduced ? ARRIVING : undefined }}
+            >
+              <BotAvatar ref={bot} avatar={look} seed="first-bot" state="idle" size={HERO_SIZE} />
+            </span>
           </span>
         </span>
       </span>
@@ -440,26 +595,41 @@ function StepFrame({
   );
 }
 
+/**
+ * The first screen: the cast, what J3 Bots is, and the way in. When it `rises`,
+ * the first time it shows and only with motion, its words rise in after the
+ * cast has started popping in.
+ */
 function Welcome({
   onStart,
   footer,
+  lead,
+  leadRef,
+  rises,
 }: {
   readonly onStart: () => void;
   readonly footer: ReactNode;
+  readonly lead: Lead;
+  readonly leadRef: Ref<HTMLSpanElement>;
+  readonly rises: boolean;
 }) {
   const { t } = useI18n();
+  const rise = (order: number): CSSProperties =>
+    rises
+      ? { animation: springAnimation("onboarding-rise", "soft", firstRun.stagger * order) }
+      : {};
   return (
     <StepFrame
       actions={
-        <>
+        <div className="flex flex-col gap-3" style={rise(3)}>
           <BigButton onClick={onStart}>{t("onboarding.welcome.start")}</BigButton>
           {footer}
-        </>
+        </div>
       }
     >
       <div className="flex flex-1 flex-col items-center justify-center gap-6">
-        <Cast />
-        <div className="flex flex-col gap-3">
+        <Cast lead={lead} leadRef={leadRef} />
+        <div className="flex flex-col gap-3" style={rise(2)}>
           <StepTitle>
             <span className="display-type text-4xl">J3 Bots</span>
           </StepTitle>
@@ -757,11 +927,11 @@ function Arrival({
     engine !== null && engine.state._tag === "ready" && providerGate(engine)._tag === "ready";
   return (
     <StepFrame actions={null}>
-      <div className="mt-24 flex flex-col items-center gap-2">
+      <div className="flex flex-col items-center gap-2" style={{ marginTop: ARRIVAL_TITLE_TOP }}>
         {created && (
           <h1
             className="display-type text-4xl"
-            style={{ animation: springAnimation("pop-in", "pop", 260) }}
+            style={{ animation: springAnimation("pop-in", "pop", firstRun.nameDelay) }}
           >
             {t("onboarding.arrival.title", { name })}
           </h1>
@@ -771,7 +941,7 @@ function Arrival({
           {created && (
             <span
               className="block"
-              style={{ animation: springAnimation("onboarding-rise", "soft", 420) }}
+              style={{ animation: springAnimation("onboarding-rise", "soft", firstRun.lineDelay) }}
             >
               {ready ? t("onboarding.arrival.hello") : t("onboarding.arrival.waiting", { name })}
             </span>

@@ -10,6 +10,7 @@ import type { ReactNode, RefObject } from "react";
 import { useTurnAnnouncement } from "@j3-bots/client-runtime/react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
+import { useLanding } from "../onboarding/handoff";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
 import { RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
 import { LiveBotAvatar, useOffline } from "./avatar/mood";
@@ -76,6 +77,8 @@ export function ConversationHeader({
       : null;
   // Each change of state and each new line is said once, then how the turn ended; not the first.
   const offline = useOffline();
+  // A first bot arriving from the first run lands here.
+  const landing = useLanding(subject._tag === "bot" ? subject.bot.id : null);
   useTurnAnnouncement(subject._tag === "bot" ? subject.bot : null, folds, offline, ctx, onAnnounce);
 
   return (
@@ -94,7 +97,9 @@ export function ConversationHeader({
       <div className="relative flex min-w-0 items-center @max-tablet:min-h-(--layout-touch-target) gap-2.5 rounded-md px-1.5 py-1 has-[[data-title]:hover]:bg-muted has-[[data-title]:hover]:[--avatar-cutout:var(--muted)] has-[[data-title]:focus-visible]:outline-2 has-[[data-title]:focus-visible]:outline-accent">
         {subject._tag === "bot" ? (
           <PrimaryBadge primary={subject.bot.primary} size={32}>
-            <LiveBotAvatar bot={subject.bot} size={32} />
+            <span className="inline-flex" style={{ viewTransitionName: landing }}>
+              <LiveBotAvatar bot={subject.bot} size={32} />
+            </span>
           </PrimaryBadge>
         ) : (
           <RoomAvatar size={32} members={roomAvatarMembers(subject.room, bots)} />
