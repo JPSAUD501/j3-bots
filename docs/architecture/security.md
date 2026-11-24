@@ -203,6 +203,43 @@ The desktop app updates itself from the repository's GitHub releases with electr
 
 - **What leaves the device.** The mobile app's dictation uses the platform's speech recognizer ([Clients: mobile](clients.md#mobile)), and the microphone only from the press of Dictate until Stop, or until the conversation leaves the screen or the app leaves the foreground. Recognition on the device sends nothing; online, the operator's audio goes to the device's speech service (usually Google's on Android, Apple's on iOS) for as long as dictation is on. The app asks Android for the on-device recognizer where it has the device's language installed (**Read** in `expo-speech-recognition` 58.0.1, `ExpoSpeechService.kt`), and takes iOS to recognize online; that the on-device recognizer then sends nothing is **Assumed** from Android's own description of it. While it listens, the line under the composer says whether recognition may run online. Nothing goes to the J3 Bots server but the text, once the operator sends it.
 
+## Visuals on Android
+
+The Android app draws a bot's visual in its own native view (`apps/mobile/modules/visual-view`), a WebView configured for an untrusted page. The WebView loads `visualShell`'s page, which holds the visual's document in an `<iframe sandbox="allow-scripts">`, as the web does ([Visuals](#visuals)). The sandbox is the frame's: a WebView loads its own page unsandboxed, and a policy's `sandbox` in a `<meta>` does nothing.
+
+- **Opaque origins.** The shell is loaded as a `data:` URL, so its origin is `null`, and the visual's sandboxed frame has an opaque origin of its own. Neither has a cookie, `localStorage` or IndexedDB; each throws `SecurityError`. A frame the visual adds gets yet another origin, so the visual cannot borrow its globals, which the guard never touched.
+- **No network, twice.** The shell and the visual's document each carry the visual's policy, which allows no network, and the WebView blocks network loads and network images as well (`blockNetworkLoads`, `blockNetworkImage`).
+- **No way out.** The WebView refuses every navigation of its own page on its own thread, with no timeout, and opens no second window (multiple windows are off, and `onCreateWindow` refuses). The visual's frame cannot reach the shell or navigate it (`SecurityError`). It can navigate itself, by a link, `location`, a refresh or a form. The shell's policy refuses that, and the frame then shows the WebView's error page in place of the visual. Nothing loads, and nothing reaches the system browser.
+- **Nothing else of the device.** Off: file access, content URIs, DOM storage, the database, the cache, third-party cookies, saved form data and geolocation. Permission requests (camera, microphone) are denied, the file chooser does not open, and `alert`, `confirm`, `prompt` and `beforeunload` are cancelled, so no dialog draws over the app. Nothing a page logs reaches the device's log.
+- **One string in.** The app is reached only through `postMessage(string)` on `J3Visual` (`VISUAL_BRIDGE`). The shell passes on the visual's height through it. The WebView puts that object in every frame, the visual's sandboxed frame included, so the visual can also call it directly: it is the same channel. A string over 256 characters is dropped, and only the latest message waits for the app's main thread. The app reads only `{type: "j3-visual-height", height}` from it, clamped (`readVisualHeight`).
+- **WebRTC.** Android's WebView has no setting that turns WebRTC off, and blocking network loads does not cover a peer connection's sockets. What shuts it is the document's guard, which deletes the RTC interfaces and removes the frames a script adds, together with the sandbox, which keeps the visual out of any realm that still has them.
+- **A dead renderer, or no WebView,** shows "Couldn't show this visual" instead of taking the app down (`onRenderProcessGone`; the `AndroidRuntimeException` a WebView throws as it is made when the device has none, or is updating it).
+
+**Verified** on the Pixel 8 emulator (Android 16, WebView 133), with the shell, inline and full screen:
+- the visual's origin was `null`;
+- cookies, `localStorage` and IndexedDB threw `SecurityError`, and so did reading `parent.document` and setting `top.location`;
+- `eval` threw `EvalError`;
+- `fetch` failed, `sendBeacon` sent nothing, and the remote image fired `onerror`;
+- `window.open` returned `null`;
+- `alert` and `confirm` showed nothing;
+- the page recorded policy violations for `script-src`, `connect-src` and `img-src`;
+- a scripted `location` change and a real tap on a link were refused by the policy (`ERR_BLOCKED_BY_CSP`), and the app stayed in front;
+- messages with another `type`, with an extra field, and of 5,000 characters changed nothing;
+- a page with a frame or a declarative shadow root in its markup never reached the WebView: its card showed the failure line;
+- the `J3Visual` object was present in the shell, in a child frame and in a sandboxed child frame.
+
+**Verified** for WebRTC on the same emulator, with a capture on the device (`tcpdump`) and a STUN listener on the host:
+- with no guard, a visual's data channel sent 257 STUN and TURN packets to an address it chose, the binding requests carrying a username it chose;
+- with the guard but without the shell, a page took `attachShadow` from a new frame's `about:blank` window, which shared the page's origin, hid a `srcdoc` frame from the guard in a shadow root and sent 14 STUN requests from it;
+- with the shell, none left, over two minutes:
+  - from the visual's own realm, which has no RTC interface;
+  - from a `srcdoc` frame a script added, to the document or to a closed shadow root, or just before a 1.5-second busy loop;
+  - by borrowing a new frame's realm through `contentWindow`, `window[i]` or `contentDocument`, which threw `SecurityError` or found no document;
+  - by copying a shadow root asked for as clonable, with `cloneNode` or `importNode`: the root came back unclonable, and neither copy had one;
+- heights still arrived, a scripted chart in the same conversation still drew, and full screen still scrolled and pinch-zoomed.
+
+That a screen reader skips the inline page is **Assumed**. The view sets `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS` on the WebView, and its React parent does the same, but the test driver's accessibility tree still lists the page's nodes, and TalkBack was not run.
+
 ## Secrets
 
 - J3 Bots never asks the operator to paste a secret into a conversation, and the base prompt tells bots not to either.
