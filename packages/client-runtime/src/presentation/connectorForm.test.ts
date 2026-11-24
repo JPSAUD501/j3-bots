@@ -281,7 +281,7 @@ describe("an edit of a connector started by command", () => {
       line([
         { name: "API_KEY", value: "a" },
         { name: "TEAM", value: "t" },
-        { name: "REGION", value: "" },
+        { name: "REGION", value: "r" },
       ])._tag,
     ).toBe("command");
   });
@@ -302,8 +302,13 @@ describe("an edit of a connector started by command", () => {
     ]);
     if (refused._tag !== "invalid") throw new Error(refused._tag);
     expect(refused.problems.argsAgain).toBe(true);
-    // A new variable may be empty; one the command had cannot keep a value the client never saw.
-    expect(refused.problems.env).toEqual([{ index: 1, reason: "value-again" }]);
+    // Not yet a package at no version: the arguments that name it are still to come.
+    expect(refused.problems.pin).toBeNull();
+    // None keeps a value the client never saw, a renamed one included.
+    expect(refused.problems.env).toEqual([
+      { index: 0, reason: "value-again" },
+      { index: 1, reason: "value-again" },
+    ]);
   });
 
   it("refuses a changed command at no exact version", () => {

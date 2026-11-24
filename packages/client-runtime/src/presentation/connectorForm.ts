@@ -44,8 +44,8 @@ export interface ClientInput {
  * - `reserved`: its name is one the server reads to find and start the
  *   program, such as `PATH` ({@link reservedVariable});
  * - `twice`: another row has its name, in any case, as Windows reads them;
- * - `value-again`: a variable the command had, whose value must be given
- *   again since the whole command line is sent anew ({@link commandEdit}).
+ * - `value-again`: a variable left empty in a changed command line, which is
+ *   sent whole, so no value is kept ({@link commandEdit}).
  */
 export interface EnvProblem {
   readonly index: number;
@@ -426,8 +426,7 @@ export type CommandEdit =
  * An edit of a command connector, as its form holds it. Changing only
  * values keeps the command line, which the server holds and the client never
  * sees. Anything else sends a new one whole: its arguments typed again, and
- * every variable it already had given its value again, since the server
- * keeps none of the old line.
+ * every variable's value, since the server keeps none of the old line.
  */
 export function commandEdit(
   known: KnownCommand,
@@ -459,19 +458,19 @@ export function commandEdit(
     env: draft.env,
   });
   const base = line._tag === "invalid" ? line.problems : noProblems;
-  // A variable it had cannot keep a value the client never saw: a row with
-  // no problem of its own yet whose name it had and whose value is empty.
+  // No variable keeps a value the client never saw, a renamed one included,
+  // so an empty one would be saved empty: each is given again.
   const again = draft.env.flatMap((row, index): ReadonlyArray<EnvProblem> =>
-    !blank(row) &&
-    row.value === "" &&
-    known.names.includes(row.name.trim()) &&
-    !base.env.some((problem) => problem.index === index)
+    !blank(row) && row.value === "" && !base.env.some((problem) => problem.index === index)
       ? [{ index, reason: "value-again" }]
       : [],
   );
+  const kept = draft.args._tag === "kept";
   const problems: FormProblems = {
     ...base,
-    argsAgain: draft.args._tag === "kept",
+    argsAgain: kept,
+    // Which package runs is told by the arguments, which are still to be typed.
+    pin: kept ? null : base.pin,
     env: [...base.env, ...again].toSorted((a, b) => a.index - b.index),
   };
   if (line._tag === "invalid" || hasProblems(problems)) return { _tag: "invalid", problems };
