@@ -258,6 +258,13 @@ export class Observer extends Context.Service<
       sessionId: SessionRowId,
       engineSessionId: SessionId,
     ) => Effect.Effect<Synchronized, EngineDown | SessionNotFound | NotObserved>;
+    /**
+     * Adds a step the server took itself, which no engine event reports (a
+     * fill, `vault/Fill.ts`), to the fold of the session's running turn. A
+     * session with no running turn, or a routine run's, which has no fold,
+     * gets nothing.
+     */
+    readonly serverStep: (sessionId: SessionRowId, work: WorkStep) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/turns/Observer") {}
 
@@ -308,6 +315,14 @@ export const layer = Layer.effect(
         SELECT id, bot_id, purpose, engine_session_id, events_cursor FROM sessions
         WHERE id = ${id} AND engine_session_id IS NOT NULL AND lost_at IS NULL
           AND engine_retired_at IS NULL
+      `,
+    });
+
+    const admittedTurn = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Schema.Struct({ admitted_turn_id: TurnId }),
+      execute: (id) => sql`
+        SELECT admitted_turn_id FROM sessions WHERE id = ${id} AND admitted_turn_id IS NOT NULL
       `,
     });
 
@@ -1612,12 +1627,26 @@ export const layer = Layer.effect(
       }),
     );
 
+    const serverStep = (sessionId: SessionRowId, work: WorkStep) =>
+      transaction(
+        Effect.gen(function* () {
+          const session = yield* watchedRow(sessionId);
+          const admitted = yield* admittedTurn(sessionId);
+          if (Option.isNone(session) || Option.isNone(admitted)) return;
+          const turnId = admitted.value.admitted_turn_id;
+          const turn = yield* turnOf(sessionId, turnId);
+          if (Option.isNone(turn) || turn.value.finished_at !== null) return;
+          yield* step(session.value, turnId, work, yield* DateTime.now);
+        }),
+      ).pipe(Effect.orDie, Effect.withSpan("Observer.serverStep"));
+
     return Observer.of({
       watch,
       ready,
       close,
       watchAll,
       synchronize,
+      serverStep,
     });
   }),
 );

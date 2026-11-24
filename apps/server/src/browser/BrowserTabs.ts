@@ -75,6 +75,15 @@ export class BrowserTabs extends Context.Service<
     readonly open: Stream.Stream<ReadonlySet<EngineTabId>>;
     /** Every tab a device holds now, then again on every change. */
     readonly held: Stream.Stream<ReadonlyArray<HeldTab>>;
+    /**
+     * The front tab of an engine session: the one of its tabs that most
+     * recently opened or navigated, and whether a device holds it.
+     */
+    readonly frontOf: (
+      sessionId: SessionId,
+    ) => Effect.Effect<
+      Option.Option<{ readonly tab: EngineBrowserTab; readonly heldByDevice: boolean }>
+    >;
   }
 >()("@j3-bots/server/browser/BrowserTabs") {}
 
@@ -159,7 +168,7 @@ export const layer = Layer.effect(
             SubscriptionRef.changes(holders),
             (all, held): TabsFrame => {
               const mine = all.filter((known) => known.botId === botId);
-              const front = frontOf(mine);
+              const front = newestOf(mine);
               return {
                 tabs: mine.map((known): BrowserTab => ({
                   ref: known.ref,
@@ -199,7 +208,7 @@ export const layer = Layer.effect(
       SubscriptionRef.get(known).pipe(
         Effect.map((all) =>
           Option.map(
-            Option.fromUndefinedOr(frontOf(all.filter((known) => known.botId === botId))),
+            Option.fromUndefinedOr(newestOf(all.filter((known) => known.botId === botId))),
             (newest): FrontTab => ({ ref: newest.ref, tab: newest.tab.id, url: newest.tab.url }),
           ),
         ),
@@ -224,12 +233,21 @@ export const layer = Layer.effect(
         }),
     ).pipe(Stream.changesWith(sameHeld));
 
-    return BrowserTabs.of({ subscribe, resolve, holding, front, tabsOf, open, held });
+    const frontOf = Effect.fnUntraced(function* (sessionId: SessionId) {
+      const front = newestOf(
+        (yield* SubscriptionRef.get(known)).filter((known) => known.tab.sessionId === sessionId),
+      );
+      if (front === undefined) return Option.none();
+      const held = yield* SubscriptionRef.get(holders);
+      return Option.some({ tab: front.tab, heldByDevice: held.has(front.tab.id) });
+    });
+
+    return BrowserTabs.of({ subscribe, resolve, holding, front, frontOf, tabsOf, open, held });
   }),
 );
 
 /** The tab that most recently opened or navigated, among `tabs`. */
-const frontOf = (tabs: ReadonlyArray<KnownTab>): KnownTab | undefined =>
+const newestOf = (tabs: ReadonlyArray<KnownTab>): KnownTab | undefined =>
   tabs.reduce<KnownTab | undefined>(
     (newest, known) =>
       newest === undefined || known.tab.activeAt > newest.tab.activeAt ? known : newest,

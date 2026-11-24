@@ -19,7 +19,7 @@ import {
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
 import { RoutineTrigger } from "./routine.ts";
-import { CredentialId, SiteOrigin } from "./vault.ts";
+import { CredentialFill, CredentialId, SiteOrigin } from "./vault.ts";
 import { StepTool } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
@@ -455,6 +455,8 @@ export const WorkStep = Schema.Struct({
   status: Schema.Literals(["running", "completed", "failed"]),
   startedAt: Schema.DateTimeUtc,
   finishedAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** For a `login` step, the fill it made or refused. */
+  fill: Schema.optionalKey(CredentialFill),
 });
 export type WorkStep = typeof WorkStep.Type;
 

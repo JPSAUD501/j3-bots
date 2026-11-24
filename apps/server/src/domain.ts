@@ -36,6 +36,7 @@ import * as SettingsService from "./settings/SettingsService.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as Host from "./system/Host.ts";
 import * as BotTools from "./tools/BotTools.ts";
+import * as CredentialFills from "./vault/Fill.ts";
 import * as Vault from "./vault/Vault.ts";
 import * as BotStates from "./turns/BotStates.ts";
 import * as Cards from "./turns/Cards.ts";
@@ -66,6 +67,8 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
  * which run for as long as the layer's scope.
  */
 export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.layer).pipe(
+  // A fill is claimed for its call's turn, through `Speech`'s turn tools.
+  Layer.provideMerge(CredentialFills.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       Bots.layer,

@@ -53,6 +53,7 @@ export {
 export {
   BROWSER_HELP_REQUESTED,
   DECODE_OPTIONS,
+  FILL_NOTES,
   MAX_TOOL_INPUT_BYTES,
   type McpTool,
   NO_TURN_REFUSAL,

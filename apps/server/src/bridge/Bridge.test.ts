@@ -2,6 +2,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, it } from "@effect/vitest";
 import { CommandId } from "@j3-bots/contracts";
+import { tools } from "@j3-bots/prompts";
 import { SessionId } from "@j3-bots/engine-t3";
 import { toolList } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";

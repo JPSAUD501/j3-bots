@@ -366,6 +366,8 @@ export const en = {
   "tool.taskStop.doing": "Stopping a background task",
   "tool.secret.did": "Asked for a credential",
   "tool.secret.doing": "Asking for a credential",
+  "tool.login.did": "Filled a saved login",
+  "tool.login.doing": "Filling a saved login",
   "tool.browser.did": "Used the browser",
   "tool.browser.doing": "Using the browser",
   "tool.pullRequest.did": "Worked on a pull request",

@@ -486,6 +486,7 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
           permissionMode: "supervised",
           primary,
           browser: false,
+          vault: false,
           pinned: false,
           hidden: false,
           sectionId: null,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, CommandId, Profile, Routine } from "@j3-bots/contracts";
-import { DECODE_OPTIONS, type ToolName, tools } from "@j3-bots/prompts";
+import { BotId, CommandId, type FillOutcome, Profile, Routine } from "@j3-bots/contracts";
+import type { SessionId } from "@j3-bots/engine-t3";
+import { DECODE_OPTIONS, FILL_NOTES, type ToolName, tools } from "@j3-bots/prompts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,6 +13,7 @@ import { type BotSession, EngineSessions } from "../bots/EngineSessions.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
+import { CredentialFills, type ListAnswer } from "../vault/Fill.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import { type TurnToolCall, type TurnToolRetry, TurnTools } from "./TurnTools.ts";
 
@@ -20,6 +22,40 @@ class Refused extends Schema.TaggedError<Refused>()("Refused", { reason: Schema.
 
 const encodeJson = <S extends Schema.Top>(schema: S) =>
   Schema.encodeEffect(Schema.toCodecJson(schema));
+
+/** A fill's outcome as the bot reads it: a status and fixed words, never a value. */
+const fillAnswer = (outcome: FillOutcome): Schema.Json => {
+  switch (outcome._tag) {
+    case "filled":
+      return {
+        status: "filled",
+        submitted: outcome.submitted,
+        note: FILL_NOTES[outcome.submitted ? "submitted" : "filled"],
+      };
+    case "refused":
+      return { status: "refused", reason: outcome.reason, note: FILL_NOTES[outcome.reason] };
+    case "locked":
+      return { status: "locked", note: FILL_NOTES.locked };
+  }
+};
+
+const listAnswer = (answer: ListAnswer): Schema.Json => {
+  switch (answer._tag) {
+    case "listed":
+      return {
+        status: "listed",
+        credentials: answer.credentials.map((credential) => ({
+          name: credential.name,
+          origins: [...credential.origins],
+        })),
+        note: FILL_NOTES.listed,
+      };
+    case "refused":
+      return { status: "refused", reason: answer.reason, note: FILL_NOTES[answer.reason] };
+    case "locked":
+      return { status: "locked", note: FILL_NOTES.locked };
+  }
+};
 
 /**
  * The `j3` tools' server side. A call is accepted only from a live session of
@@ -43,6 +79,7 @@ export const layer = Layer.effect(
     const rooms = yield* Rooms;
     const routines = yield* Routines;
     const turnTools = yield* TurnTools;
+    const logins = yield* CredentialFills;
 
     /** A command id for a tool call, the same on every retry of its forward. */
     const commandIdOf = (requestId: string) => CommandId.make(`tool:${requestId}`);
@@ -61,6 +98,8 @@ export const layer = Layer.effect(
     interface Call {
       readonly requestId: string;
       readonly caller: BotSession;
+      /** The engine session the call came from. */
+      readonly sessionId: SessionId;
       readonly arguments: Schema.Json;
     }
 
@@ -105,6 +144,29 @@ export const layer = Layer.effect(
       ),
       request_credential: handler(tools.request_credential.input, (input, call) =>
         admit({ tool: "request_credential", input, ...call }),
+      ),
+      list_credentials: handler(tools.list_credentials.input, (_input, { caller }) =>
+        logins.list(caller.botId).pipe(Effect.map(listAnswer)),
+      ),
+      fill_credential: handler(tools.fill_credential.input, (input, call) =>
+        logins
+          .fillLogin({
+            requestId: call.requestId,
+            caller: call.caller,
+            engineSessionId: call.sessionId,
+            credential: input.credential,
+            field: input.field,
+            submit: input.submit ?? false,
+            arguments: call.arguments,
+          })
+          .pipe(
+            Effect.map(fillAnswer),
+            Effect.catchTags({
+              TurnEnded: (error) => new Refused({ reason: error.message }),
+              TurnToolRefused: (error) => new Refused({ reason: error.message }),
+              Conflict: (error) => new Refused({ reason: error.message }),
+            }),
+          ),
       ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory
@@ -213,6 +275,7 @@ export const layer = Layer.effect(
       return yield* handlers[request.tool]({
         requestId: request.requestId,
         caller: caller.value,
+        sessionId: request.sessionId,
         arguments: request.arguments,
       }).pipe(
         Effect.map((value): ToolCallResponse => ({ _tag: "result", value })),

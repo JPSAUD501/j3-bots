@@ -55,6 +55,12 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 
 - [Decision records](decisions/README.md)
 
+## Proposals
+
+Changes J3 Bots would like from T3 Code, drafted here. None has been sent.
+
+- [A typed secret in the engine's browser](proposals/engine-browser-secret-input.md): typing a saved login with the engine checking the field and its frame.
+
 ## Research
 
 - [T3 Code as an engine](research/t3-code.md): what was read and what was verified, with sources.

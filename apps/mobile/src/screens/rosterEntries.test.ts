@@ -23,6 +23,7 @@ const bot = (name: string): BotItem => ({
     settingsHeld: false,
     opening: false,
     browser: false,
+    vault: false,
     createdAt: DateTime.makeUnsafe(0),
   },
   lastEntry: null,

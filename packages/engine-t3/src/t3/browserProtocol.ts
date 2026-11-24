@@ -4,7 +4,7 @@ import { PreviewStreamHostSetup, type PreviewSessionSnapshot } from "@t3tools/co
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { EngineBrowserTab, ViewerOutput } from "../Browser.ts";
+import type { EngineBrowserTab, TabPage, ViewerOutput } from "../Browser.ts";
 import { ViewerClosed } from "../Browser.ts";
 import { EngineTabId, SessionId } from "../ids.ts";
 
@@ -187,6 +187,25 @@ export const tabOf = (
     loading: status._tag === "Loading",
     activeAt,
   });
+};
+
+/**
+ * The page a snapshot says its tab shows. **Read** at `59651c1`,
+ * `contracts/src/preview.ts` (`PreviewNavStatus`): `Success` carries the
+ * address the tab committed to; `Loading`, the one it is loading.
+ */
+export const pageOf = (snapshot: PreviewSessionSnapshot): TabPage => {
+  const status = snapshot.navStatus;
+  switch (status._tag) {
+    case "Idle":
+      return { _tag: "blank" };
+    case "Loading":
+      return { _tag: "loading", url: status.url };
+    case "Success":
+      return { _tag: "loaded", url: status.url };
+    case "LoadFailed":
+      return { _tag: "failed", url: status.url };
+  }
 };
 
 /** An engine timestamp in epoch milliseconds, or 0 when it does not parse. */

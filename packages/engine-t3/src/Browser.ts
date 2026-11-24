@@ -2,6 +2,7 @@
 import type { BrowserInput } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
@@ -20,6 +21,17 @@ export interface EngineBrowserTab {
   /** When it last opened or navigated, in epoch milliseconds: the newest is the bot's front tab. */
   readonly activeAt: number;
 }
+
+/**
+ * The page a tab shows, as the engine reports it when asked: nothing yet, a
+ * page still loading, the page it committed to, or one that failed to load.
+ * `url` is the tab's top-level address; the engine knows nothing of frames.
+ */
+export type TabPage =
+  | { readonly _tag: "blank" }
+  | { readonly _tag: "loading"; readonly url: string }
+  | { readonly _tag: "loaded"; readonly url: string }
+  | { readonly _tag: "failed"; readonly url: string };
 
 /**
  * Who acts on a viewer's tab, from that viewer's point of view: the bot that
@@ -110,6 +122,14 @@ export class BrowserBridge extends Context.Service<
      * `EngineUnavailable`: the engine is not ready, and nothing was opened.
      * A tab that is gone opens a viewer whose output ends at once.
      */
+    /**
+     * The page `tab` shows now, read from the engine at the call rather than
+     * from the followed list, which lags behind it. None when the tab is gone.
+     * `EngineUnavailable`: the engine did not answer, and nothing is known.
+     */
+    readonly readTab: (
+      tab: EngineTabId,
+    ) => Effect.Effect<Option.Option<TabPage>, EngineUnavailable>;
     readonly openViewer: (input: {
       readonly tab: EngineTabId;
       readonly maxWidth: number;

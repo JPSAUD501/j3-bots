@@ -365,6 +365,8 @@ const sentences = {
   "tool.taskStop.doing": "Parando uma tarefa em segundo plano",
   "tool.secret.did": "Pediu uma credencial",
   "tool.secret.doing": "Pedindo uma credencial",
+  "tool.login.did": "Preencheu um login salvo",
+  "tool.login.doing": "Preenchendo um login salvo",
   "tool.browser.did": "Usou o navegador",
   "tool.browser.doing": "Usando o navegador",
   "tool.pullRequest.did": "Trabalhou num pull request",

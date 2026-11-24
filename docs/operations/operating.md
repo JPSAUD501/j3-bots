@@ -206,8 +206,9 @@ The first writes the AppArmor profile that lets the browser J3 Bots' engine down
 
 The vault keeps the logins you save and what connectors need to reach their services, in `~/.j3-bots/vault/vault.sqlite`, sealed under your master password ([Server: the vault](../architecture/server.md#the-vault)). You create the password during onboarding, from the first save-login card a bot shows you, or in Settings → Vault.
 
-- **It is locked every time the server starts**, also after an update or a reboot, and stays locked until you unlock it from any of your devices: in Settings → Vault, or on a save-login card. Until then, no connector that needs a secret can reach its service, and no login can be saved or shown.
+- **It is locked every time the server starts**, also after an update or a reboot, and stays locked until you unlock it from any of your devices: in Settings → Vault, or on a save-login card. Until then, no connector that needs a secret can reach its service, and no login can be saved, shown or filled.
 - **Lock now** in Settings locks it for every device. Nothing locks it on a timer.
+- **A bot signs in with a saved login only if you let it**: turn on its vault access in the bot's details, next to its browser switch, and allow the bot on the login. The server then types the login into the bot's browser tab when the bot asks, without asking you each time, and the bot never sees it. Each fill shows in the bot's work. What a page could still do with it is in [Security: filling a login](../architecture/security.md#filling-a-login).
 - **After five wrong passwords**, unlocking waits, starting at 30 seconds and doubling up to an hour. The screen says until when. Restarting the server does not end the wait; the right password, or a day with no wrong one, starts the count over.
 - **If Settings says something in the vault does not open**, its file was changed or damaged. The server's log names the record. Restore the vault's folder from a backup taken under the same master password.
 - **A lost password cannot be recovered**, by you or anyone else. To start over without it, stop the service, move the vault's folder aside and start again:

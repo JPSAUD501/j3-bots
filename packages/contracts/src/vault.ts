@@ -2,7 +2,7 @@
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { BotId, DeviceId, Label, NonNegativeInt } from "./base.ts";
+import { BotId, DeviceId, Label, NonNegativeInt, OpenLiterals } from "./base.ts";
 
 // ---------------------------------------------------------------------------
 // The vault: the operator's saved logins, sealed under a key that comes from
@@ -169,3 +169,82 @@ export const TotpPreview = Schema.Struct({
   validUntil: Schema.DateTimeUtc,
 });
 export type TotpPreview = typeof TotpPreview.Type;
+
+// ---------------------------------------------------------------------------
+// Filling a saved login into a bot's browser tab (docs/architecture/server.md,
+// "Filling a login"). The bot names the login and the field; the server types
+// the value into the bot's tab while it holds the tab, and the bot learns only
+// how it went. Nothing below carries a value.
+// ---------------------------------------------------------------------------
+
+/**
+ * Why a fill did not finish. With every reason but `unavailable`, nothing was
+ * typed.
+ *
+ * - `no-access`: the bot's vault access or its browser is off.
+ * - `unknown-login`: no login of that name allows this bot.
+ * - `ambiguous`: more than one login of that name allows this bot for the page.
+ * - `no-value`: the login has no such value: no user name, or no one-time code.
+ * - `no-tab`: the bot has no tab open.
+ * - `held`: a person holds the tab.
+ * - `loading`: the page was still loading.
+ * - `insecure`: the page is plain `http:` on another computer.
+ * - `origin`: the page's origin is none of the login's.
+ * - `navigated`: the page changed while the server held the tab.
+ * - `refused-before`: a fill was refused on this tab earlier in this turn.
+ * - `stopped`: the bot's turn was stopped or ended before anything was typed.
+ * - `unavailable`: the browser or the vault could not be reached, or the
+ *   browser did not confirm that it ran the typing.
+ */
+export const FillRefusal = Schema.Literals([
+  "no-access",
+  "unknown-login",
+  "ambiguous",
+  "no-value",
+  "no-tab",
+  "held",
+  "loading",
+  "insecure",
+  "origin",
+  "navigated",
+  "refused-before",
+  "stopped",
+  "unavailable",
+]);
+export type FillRefusal = typeof FillRefusal.Type;
+
+/**
+ * How a fill went: typed (`submitted` when the server also pressed Enter,
+ * which it always does after a password), refused, or not tried because the
+ * vault is locked.
+ */
+export const FillOutcome = Schema.Union([
+  Schema.TaggedStruct("filled", { submitted: Schema.Boolean }),
+  Schema.TaggedStruct("refused", { reason: FillRefusal }),
+  Schema.TaggedStruct("locked", {}),
+]);
+export type FillOutcome = typeof FillOutcome.Type;
+
+/** A refusal's reason as a client receives it: one added after this build decodes as `unknown`. */
+const ReceivedFillOutcome = Schema.Union([
+  Schema.TaggedStruct("filled", { submitted: Schema.Boolean }),
+  Schema.TaggedStruct("refused", { reason: OpenLiterals(FillRefusal.literals) }),
+  Schema.TaggedStruct("locked", {}),
+]);
+
+/**
+ * One fill, as the work fold shows it (`WorkStep.fill`). The origin is the
+ * page's as the server checked it, in ASCII, so a lookalike name shows as
+ * its punycode.
+ */
+export const CredentialFill = Schema.Struct({
+  /** The login's name, as the bot asked for it. */
+  name: Label,
+  /** The login filled or refused, or null when none answered to the name. */
+  credentialId: Schema.NullOr(CredentialId),
+  field: CredentialField,
+  /** The page's origin, or null when there was no tab or its page has no `http:` or `https:` origin. */
+  origin: Schema.NullOr(SiteOrigin),
+  outcome: ReceivedFillOutcome,
+});
+export type CredentialFill = typeof CredentialFill.Type;

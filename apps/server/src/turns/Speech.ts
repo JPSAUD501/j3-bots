@@ -42,6 +42,7 @@ import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import {
+  type FillCall,
   TurnEnded,
   type TurnToolCall,
   TurnToolRefused,
@@ -162,14 +163,20 @@ type PinnedTool =
   | "message_bot"
   | "set_routine"
   | "set_operator_name"
-  | "request_credential";
+  | "request_credential"
+  | "fill_credential";
+
+/** What a request is matched by: its tool, its id, its caller and its arguments. */
+type MatchedRequest = Pick<TurnToolCall | FillCall, "requestId" | "caller" | "arguments"> & {
+  readonly tool: PinnedTool;
+};
 
 /** A request matched to its call, or one a forward of it already committed. */
 type Matched =
   | { readonly _tag: "pin"; readonly pin: Pin }
   | { readonly _tag: "stored"; readonly result: Schema.Json };
 
-const keyOf = (call: TurnToolCall) => ({
+const keyOf = (call: MatchedRequest) => ({
   requestId: call.requestId,
   sessionId: call.caller.id,
   tool: call.tool,
@@ -266,7 +273,7 @@ export const layer = Layer.effect(
      * the engine no longer has the session.
      */
     const match = Effect.fn("Speech.match")(function* (
-      call: TurnToolCall,
+      call: MatchedRequest,
       caller: BotSession,
     ): Effect.fn.Return<Matched, TurnEnded | TurnToolRetry> {
       const sessionId = caller.id;
@@ -1289,6 +1296,41 @@ export const layer = Layer.effect(
         }),
       );
 
-    return TurnTools.of({ call: admitted });
+    /**
+     * Pins a fill to the engine's record of its call, as `once` pins a turn
+     * tool's, in one transaction. The fill runs after, outside it: it holds
+     * a tab for seconds. Its result is stored by `settle`.
+     */
+    const claim = Effect.fn("TurnTools.claim")(
+      function* (fill: FillCall) {
+        const stored = yield* storedResult(keyOf(fill)).pipe(Effect.orDie);
+        if (Option.isSome(stored)) {
+          return { _tag: "stored", result: stored.value.result_json } as const;
+        }
+        const matched = yield* match(fill, fill.caller);
+        if (matched._tag === "stored") return matched;
+        const pinned = yield* transaction(pin("fill_credential", matched.pin));
+        if (pinned._tag === "stored") return pinned;
+        return {
+          _tag: "claimed",
+          turnId: matched.pin.turnId,
+          stillOpen: stillAdmitted(matched.pin),
+        } as const;
+      },
+      Effect.timeoutOrElse({
+        duration: ADMISSION_DEADLINE,
+        orElse: () => Effect.fail(new TurnToolRetry()),
+      }),
+    );
+
+    const settle = Effect.fn("TurnTools.settle")(function* (fill: FillCall, result: Schema.Json) {
+      yield* sql`
+        UPDATE tool_calls SET result_json = ${yield* encodeResult(result)}
+        WHERE id = ${fill.requestId} AND session_id = ${fill.caller.id}
+          AND tool = 'fill_credential'
+      `;
+    }, Effect.orDie);
+
+    return TurnTools.of({ call: admitted, claim, settle });
   }),
 );

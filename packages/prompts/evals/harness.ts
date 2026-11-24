@@ -21,7 +21,7 @@ import {
   tools,
   type Wake,
 } from "../src/index.ts";
-import { type BrowserStage, browserTools, isBrowserTool, StandInBrowser } from "./browser.ts";
+import { type BrowserSetup, browserTools, FixtureBrowser } from "./browser.ts";
 import type { FixtureEvent, ProgramEvent } from "./fixtures.ts";
 import { complete, type FunctionTool, type Message } from "./model.ts";
 import { localInstant, nextScheduled, plannedRun, type Trigger } from "./schedule.ts";
@@ -247,7 +247,7 @@ const functionTools = (
   commands: ReadonlyArray<string>,
   shell: string,
   engine: EngineInstance | undefined,
-  browser: BrowserStage | undefined,
+  browser: boolean,
 ): ReadonlyArray<FunctionTool> => [
   ...toolList.map((tool): FunctionTool => ({
     type: "function",
@@ -286,7 +286,7 @@ const functionTools = (
     },
   },
   ...(engine === undefined ? [] : engineTools),
-  ...(browser === undefined ? [] : browserTools),
+  ...(browser ? browserTools : []),
 ];
 
 /** A tool the model called, with its arguments as it sent them. */
@@ -320,6 +320,8 @@ export interface Turn {
   readonly text: ReadonlyArray<ReplyText>;
   readonly workspace: Workspace<ProgramEvent>;
   readonly routines: HeldRoutines;
+  /** The browser as the turn left it, with every fill and typing, when the scenario gave one. */
+  readonly browser: FixtureBrowser | undefined;
 }
 
 /**
@@ -390,8 +392,12 @@ export interface Scenario {
   readonly pastedSecretFails?: boolean;
   /** The engine instance whose own tools the bot gets; none offers them. */
   readonly engine?: EngineInstance;
-  /** The browser the bot has, and its instructions say so; none has no browser. */
-  readonly browser?: BrowserStage;
+  /**
+   * The bot's browser, which its instructions then mention, and the saved
+   * logins it may fill (`browser.ts`); none offers no browser tool, and
+   * `list_credentials` and `fill_credential` are then not available.
+   */
+  readonly browser?: BrowserSetup;
 }
 
 /** Model calls in one turn at most; a turn that needs more is a failure in itself. */
@@ -680,14 +686,13 @@ type Answer = Pick<Call, "output" | "events" | "refused">;
 const answer = (
   routines: HeldRoutines,
   workspace: Workspace<ProgramEvent>,
-  browser: StandInBrowser | undefined,
+  browser: FixtureBrowser | undefined,
   scenario: Scenario,
   request: Request,
 ): Answer => {
   const reply = (output: string): Answer => ({ output, events: [] });
-  if (browser !== undefined && isBrowserTool(request.name)) {
-    return reply(json(browser.answer(request.name, request.input)));
-  }
+  const browsed = browser?.answer(request.step, request.name, request.input);
+  if (browsed !== undefined) return reply(browsed);
   switch (request.name) {
     case "say":
       return reply(json({ status: "recorded" }));
@@ -830,14 +835,14 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const envelope = yield* renderWake(scenario.wake);
     const workspace = scenario.workspace();
     const routines = new HeldRoutines(scenario.wake);
-    const browser =
-      scenario.browser === undefined ? undefined : new StandInBrowser(scenario.browser);
     const tools = functionTools(
       workspace.commands,
       scenario.shell ?? GH_SIGNED_IN,
       scenario.engine,
-      scenario.browser,
+      scenario.browser !== undefined,
     );
+    const browser =
+      scenario.browser === undefined ? undefined : new FixtureBrowser(scenario.browser);
     const messages: Array<Message> = [
       {
         role: "system",
@@ -858,7 +863,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
     ];
     const calls: Array<Call> = [];
     const text: Array<ReplyText> = [];
-    const turn: Turn = { calls, text, workspace, routines };
+    const turn: Turn = { calls, text, workspace, routines, browser };
     for (let step = 1; step <= MAX_STEPS; step++) {
       const reply = yield* complete(model, messages, tools);
       if (reply.content !== null && reply.content.trim() !== "") {

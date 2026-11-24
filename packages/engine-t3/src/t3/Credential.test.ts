@@ -130,7 +130,12 @@ describe("ensureCredential", () => {
       const credential = yield* ensureWith(cli, {
         token: "current",
         expiresAt: yield* farFromExpiry,
-        scopes: ["orchestration:read", "orchestration:operate", "preview:operate", "settings:write"],
+        scopes: [
+          "orchestration:read",
+          "orchestration:operate",
+          "preview:operate",
+          "settings:write",
+        ],
       });
       assert.strictEqual(Redacted.value(credential.token), "current");
       assert.strictEqual(cli.calls.length, 0);
@@ -166,12 +171,18 @@ const accessWith = (permissions: ReadonlyArray<string>) =>
   );
 
 describe("checkAccess", () => {
-  it.effect("grants a token whose browser scopes the engine lists among its permissions only", () =>
+  it.effect("grants a token whose newer scopes the engine lists among its permissions only", () =>
     Effect.gen(function* () {
-      const all = ["orchestration:read", "orchestration:operate", "preview:operate", "settings:write"];
+      const all = [
+        "orchestration:read",
+        "orchestration:operate",
+        "preview:operate",
+        "settings:write",
+      ];
       assert.strictEqual(yield* accessWith(all), "granted");
-      assert.strictEqual(yield* accessWith(all.filter((scope) => scope !== "preview:operate")), "refused");
-      assert.strictEqual(yield* accessWith(all.filter((scope) => scope !== "settings:write")), "refused");
+      for (const missing of ["preview:operate", "settings:write"]) {
+        assert.strictEqual(yield* accessWith(all.filter((scope) => scope !== missing)), "refused");
+      }
     }),
   );
 });
