@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type Language, RoomId } from "@j3-bots/contracts";
+import { BotId, type Language, pairBotIds, RoomId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { context, teammateMessage, teammatePair } from "../../test/fixtures.ts";
-import { pairLine, pairTitle, teamNoticeLine } from "./pairs.ts";
+import { pairLine, pairOrder, pairTitle, teamNoticeLine } from "./pairs.ts";
 
 const NOW = "2026-11-20T12:00:00Z";
 const names = { scout: "Scout", wren: "Wren" };
@@ -18,6 +18,13 @@ describe("a pair's row", () => {
     expect(pairTitle(pair.botIds, ctx("en"))).toBe("Scout and Wren");
     expect(pairTitle(pair.botIds, ctx("pt-BR"))).toBe("Scout e Wren");
     expect(pairLine(pair, ctx("en"))).toBe("Wren: Done. All green.");
+  });
+
+  it("orders its bots by name, whatever their ids", () => {
+    const named = context(NOW, "en", { a: "Wren", b: "Scout" });
+    const botIds = pairBotIds(BotId.make("a"), BotId.make("b"));
+    expect(pairOrder(botIds, named)).toEqual([BotId.make("b"), BotId.make("a")]);
+    expect(pairTitle(botIds, named)).toBe("Scout and Wren");
   });
 });
 

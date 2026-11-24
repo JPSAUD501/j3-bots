@@ -179,6 +179,23 @@ export function filterRoster(items: ReadonlyArray<RosterItem>, query: string): R
   });
 }
 
+/** How many of a room's members its header draws before it counts the rest. */
+const HEADER_FACES = 3;
+
+/**
+ * A room's members as its header draws them: the first three, overlapped,
+ * then how many more it has ("+2"), or 0 when it shows them all.
+ */
+export function memberStack<A>(members: ReadonlyArray<A>): {
+  readonly shown: ReadonlyArray<A>;
+  readonly more: number;
+} {
+  return {
+    shown: members.slice(0, HEADER_FACES),
+    more: Math.max(0, members.length - HEADER_FACES),
+  };
+}
+
 /** The bots of a roster, by id. */
 const botsOf = (items: ReadonlyArray<RosterItem>): ReadonlyMap<BotId, Bot> =>
   new Map(items.flatMap((item) => (item._tag === "bot" ? [[item.bot.id, item.bot] as const] : [])));

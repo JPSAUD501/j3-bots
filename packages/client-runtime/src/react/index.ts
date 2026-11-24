@@ -9,6 +9,8 @@ import type {
   EntryTarget,
   MemoryFile,
   MemoryScope,
+  PairBotIds,
+  PairSeq,
   Routine,
   RoutineId,
 } from "@j3-bots/contracts";
@@ -25,6 +27,7 @@ import type {
   BrowserViewHandle,
   ConversationHandle,
   J3Client,
+  PairHandle,
   UsageHandle,
   WorkStepsHandle,
 } from "../client.ts";
@@ -35,6 +38,8 @@ import { type ConversationState, targetKey } from "../stores/Conversations.ts";
 import type { Draft } from "../stores/Drafts.ts";
 import type { RoutineRuns } from "../stores/Details.ts";
 import type { Loaded } from "../stores/reads.ts";
+import type { PairConversationState } from "../stores/TeammatePairs.ts";
+import { pairKeyText } from "../presentation/pairs.ts";
 import { type RecentTurnsState, turnsNotRead } from "../stores/Usage.ts";
 import type { WorkStepsState } from "../stores/WorkSteps.ts";
 
@@ -190,6 +195,31 @@ export const useConversation = (
   };
 };
 
+const doNothing = () => {};
+const revealNothing = () => Promise.resolve(null);
+
+/**
+ * A teammate conversation while the component is mounted: its state, or
+ * `null` for the first render or when `botIds` is null, and what to call on
+ * it. `reveal` resolves null while nothing is held.
+ */
+export const usePair = (
+  botIds: PairBotIds | null,
+): {
+  readonly state: PairConversationState | null;
+  readonly loadOlder: () => void;
+  readonly reveal: (entryId: EntryId) => Promise<PairSeq | null>;
+} => {
+  const handle: PairHandle | null = useHeld(botIds, pairKeyText, (client, value) =>
+    client.openPair(value),
+  );
+  return {
+    state: useHeldState(handle),
+    loadOlder: handle?.loadOlder ?? doNothing,
+    reveal: handle?.reveal ?? revealNothing,
+  };
+};
+
 /** The steps of a work fold while the component is mounted, or `null` for the first render. */
 export const useWorkSteps = (foldId: EntryId): WorkStepsState | null => {
   const handle: WorkStepsHandle | null = useHeld(foldId, same, (client, id) =>
@@ -197,8 +227,6 @@ export const useWorkSteps = (foldId: EntryId): WorkStepsState | null => {
   );
   return useHeldState(handle);
 };
-
-const doNothing = () => {};
 
 /**
  * The turns bots spent recently while `held`, read again each time it

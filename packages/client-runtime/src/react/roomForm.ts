@@ -3,7 +3,6 @@ import type { Bot, BotId, Room } from "@j3-bots/contracts";
 import { useState } from "react";
 import { type IntentFailure, refusedWith } from "../intents/Actions.ts";
 import {
-  blankRoomForm,
   followRoom,
   hostOf,
   ROOM_MEMBERS,
@@ -11,8 +10,8 @@ import {
   roomDraft,
   roomFormContext,
   type RoomFormMode,
-  roomFormOf,
   type RoomFormProblem,
+  roomFormStart,
   type RoomFormValues,
   sameRoomForm,
   withMember,
@@ -106,10 +105,8 @@ export function useRoomForm(options: {
   const { mode, bots, defaultHopLimit, connected, locale } = options;
   const room = mode._tag === "create" ? null : mode.room;
   const gone = mode._tag !== "create" && mode.gone;
-  // Where the form starts: the room as the server has it, or nothing.
-  const [start, setStart] = useState(
-    () => options.initial ?? (room === null ? blankRoomForm : roomFormOf(room)),
-  );
+  // Where the form starts: the room as the server has it, or the bots it was opened with.
+  const [start, setStart] = useState(() => options.initial ?? roomFormStart(mode));
   const [values, setValues] = useState(start);
   const primaryId = bots.find((bot) => bot.primary)?.id ?? null;
   const context = roomFormContext(room, primaryId, defaultHopLimit);

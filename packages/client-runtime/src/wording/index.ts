@@ -68,6 +68,7 @@ export {
   type LineName,
   type NamedLine,
   pairLine,
+  pairOrder,
   pairTitle,
   teammateChoice,
   type TeamLineContext,

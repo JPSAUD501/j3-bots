@@ -21,6 +21,7 @@ import {
   canStop,
   filterPairs,
   filterRoster,
+  memberStack,
   orderRoster,
   roomStop,
   roomStopFailed,
@@ -231,5 +232,12 @@ describe("the roster's pairs", () => {
     expect(filterPairs(pairs, items, "pip")).toEqual([scoutAndPip]);
     expect(filterPairs(pairs, items, "wre")).toEqual([scoutAndWren]);
     expect(filterPairs(pairs, items, " ")).toEqual([scoutAndWren]);
+  });
+});
+
+describe("memberStack", () => {
+  it("draws three members and counts the rest", () => {
+    expect(memberStack(["a", "b", "c"])).toEqual({ shown: ["a", "b", "c"], more: 0 });
+    expect(memberStack(["a", "b", "c", "d", "e"])).toEqual({ shown: ["a", "b", "c"], more: 2 });
   });
 });
