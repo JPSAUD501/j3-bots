@@ -80,6 +80,16 @@ interface Use {
   readonly lastUsed: number;
 }
 
+/**
+ * One start of a key's process, and the process it started. A stop, a start
+ * that failed and a process that ended each make the key's next use another
+ * attempt, so what is done about one attempt never reaches a later one.
+ */
+interface Attempt<K extends string> {
+  readonly key: K;
+  readonly number: number;
+}
+
 export const makeSupervisor = <K extends string>(
   options: SupervisorOptions<K>,
 ): Effect.Effect<Supervisor<K>, never, Scope.Scope> =>
@@ -87,15 +97,16 @@ export const makeSupervisor = <K extends string>(
     const scope = yield* Effect.scope;
     const backoffs = yield* Ref.make<ReadonlyMap<K, Backoff>>(new Map());
     const uses = yield* Ref.make<ReadonlyMap<K, Use>>(new Map());
-    /** Which start of each key is current, so a process stopped and started again is told apart from the one before. */
-    const generations = yield* Ref.make<ReadonlyMap<K, number>>(new Map());
+    /** The number of each key's current attempt: the one its next use joins or starts. */
+    const attempts = yield* Ref.make<ReadonlyMap<K, number>>(new Map());
     /** The restarts under way, which a stop ends. */
     const restarting = yield* FiberMap.make<K>();
     /**
-     * The scope each key's process runs in, a child of its entry's: a stop
-     * closes it at once, where the entry's closes only once no one holds it.
+     * The scope each attempt's process runs in, by key and attempt number, a
+     * child of the attempt's entry: a stop closes it at once, where the
+     * entry's closes only once no one holds it.
      */
-    const lives = yield* Ref.make<ReadonlyMap<K, Scope.Closeable>>(new Map());
+    const lives = yield* Ref.make<ReadonlyMap<K, ReadonlyMap<number, Scope.Closeable>>>(new Map());
 
     const initial = Duration.toMillis(options.backoff.initial);
     const max = Duration.toMillis(options.backoff.max);
@@ -127,15 +138,21 @@ export const makeSupervisor = <K extends string>(
       if (left > 0) yield* Effect.sleep(Duration.millis(left));
     });
 
-    /** A new generation of the key: a start or process of an earlier one is no longer its. */
-    const nextGeneration = (key: K) =>
-      Ref.modify(generations, (all): [number, ReadonlyMap<K, number>] => {
-        const next = (all.get(key) ?? 0) + 1;
-        return [next, new Map(all).set(key, next)];
-      });
+    const currentOf = (key: K) => Effect.map(Ref.get(attempts), (all) => all.get(key) ?? 0);
 
-    const isCurrent = (key: K, generation: number) =>
-      Effect.map(Ref.get(generations), (all) => all.get(key) === generation);
+    const isCurrent = (attempt: Attempt<K>) =>
+      Effect.map(currentOf(attempt.key), (current) => current === attempt.number);
+
+    /**
+     * Ends the attempt as the key's current one, if it still is: whether it
+     * was. Its next use starts another.
+     */
+    const retire = (attempt: Attempt<K>) =>
+      Ref.modify(attempts, (all): [boolean, ReadonlyMap<K, number>] =>
+        (all.get(attempt.key) ?? 0) === attempt.number
+          ? [true, new Map(all).set(attempt.key, attempt.number + 1)]
+          : [false, all],
+      );
 
     /**
      * Watches the key's process from the supervisor's scope, not the entry's,
@@ -143,51 +160,58 @@ export const makeSupervisor = <K extends string>(
      * stopped with what it started, and started again after its pause.
      */
     const watch = Effect.fn("Supervisor.watch")(function* (
-      key: K,
-      generation: number,
+      attempt: Attempt<K>,
       openedAt: number,
       stopping: Ref.Ref<boolean>,
       life: Scope.Closeable,
     ) {
+      const { key } = attempt;
       if (yield* Ref.get(stopping)) return;
-      if (!(yield* isCurrent(key, generation))) return;
+      if (!(yield* retire(attempt))) return;
       yield* Effect.logWarning("A command connector's process ended by itself.").pipe(
         Effect.annotateLogs({ connector: key }),
       );
       yield* failed(key, openedAt);
+      yield* RcMap.invalidate(processes, attempt);
       yield* Scope.close(life, Exit.void);
-      yield* RcMap.invalidate(processes, key);
       yield* options.onFailure(key, new CommandFailed({ reason: "exited" }));
       yield* FiberMap.run(restarting, key, restart(key));
     });
 
-    const lookup = Effect.fn("Supervisor.start")(function* (key: K) {
+    const lookup = Effect.fn("Supervisor.start")(function* (attempt: Attempt<K>) {
+      const { key } = attempt;
       // Its scope is known before the pause, so a stop during the pause or the start ends it.
-      const generation = yield* nextGeneration(key);
       const life = yield* Scope.fork(yield* Effect.scope);
-      yield* Ref.update(lives, (all) => new Map(all).set(key, life));
+      yield* Ref.update(lives, (all) =>
+        new Map(all).set(key, new Map(all.get(key)).set(attempt.number, life)),
+      );
       yield* Scope.addFinalizer(
         life,
         Ref.update(lives, (all) => {
-          if (all.get(key) !== life) return all;
+          const left = new Map(all.get(key));
+          left.delete(attempt.number);
           const rest = new Map(all);
-          rest.delete(key);
+          if (left.size === 0) rest.delete(key);
+          else rest.set(key, left);
           return rest;
         }),
       );
       /** A start a stop overtook: not a failure of the process's, so not counted or tried again. */
       const overtaken = new CommandFailed({ reason: "exited" });
       yield* waitOutBackoff(key);
-      if (!(yield* isCurrent(key, generation))) return yield* overtaken;
+      if (!(yield* isCurrent(attempt))) {
+        yield* Scope.close(life, Exit.void);
+        return yield* overtaken;
+      }
       const command = yield* options.start(key).pipe(
         Scope.provide(life),
         Effect.tapError(() =>
-          Effect.flatMap(isCurrent(key, generation), (current) =>
+          Effect.flatMap(isCurrent(attempt), (current) =>
             current ? failed(key, null) : Effect.void,
           ),
         ),
       );
-      if (!(yield* isCurrent(key, generation))) {
+      if (!(yield* isCurrent(attempt))) {
         yield* Scope.close(life, Exit.void);
         return yield* overtaken;
       }
@@ -209,14 +233,18 @@ export const makeSupervisor = <K extends string>(
         ),
       );
       yield* command.ended.pipe(
-        Effect.andThen(watch(key, generation, openedAt, stopping, life)),
+        Effect.andThen(watch(attempt, openedAt, stopping, life)),
         Effect.forkIn(scope),
       );
       return command.session;
     });
 
-    const processes: RcMap.RcMap<K, McpSession, ConnectorFailure | Cause.ExceededCapacityError> =
-      yield* RcMap.make({ lookup, idleTimeToLive: options.idle, capacity: options.capacity });
+    /** Each attempt's process, by its attempt: an attempt is never started twice. */
+    const processes: RcMap.RcMap<
+      Attempt<K>,
+      McpSession,
+      ConnectorFailure | Cause.ExceededCapacityError
+    > = yield* RcMap.make({ lookup, idleTimeToLive: options.idle, capacity: options.capacity });
 
     const held = Effect.fn("Supervisor.held")(function* (key: K, change: 1 | -1) {
       const now = yield* Clock.currentTimeMillis;
@@ -230,20 +258,23 @@ export const makeSupervisor = <K extends string>(
     const evictIdle = Effect.fn("Supervisor.evictIdle")(function* (key: K) {
       const all = yield* Ref.get(uses);
       const [oldest] = Array.from(yield* RcMap.keys(processes))
-        .filter((other) => other !== key && (all.get(other)?.holders ?? 0) === 0)
-        .toSorted((a, b) => (all.get(a)?.lastUsed ?? 0) - (all.get(b)?.lastUsed ?? 0));
+        .filter((other) => other.key !== key && (all.get(other.key)?.holders ?? 0) === 0)
+        .toSorted((a, b) => (all.get(a.key)?.lastUsed ?? 0) - (all.get(b.key)?.lastUsed ?? 0));
       if (oldest === undefined) return false;
+      yield* retire(oldest);
       yield* RcMap.invalidate(processes, oldest);
       return true;
     });
 
-    const acquire = (key: K) =>
-      RcMap.get(processes, key).pipe(
+    const acquire = Effect.fn("Supervisor.acquire")(function* (key: K) {
+      const attempt: Attempt<K> = { key, number: yield* currentOf(key) };
+      return yield* RcMap.get(processes, attempt).pipe(
         // A start that failed is not kept: the next use tries again, after its pause, as does
         // the supervisor by itself unless a restart is already under way. One a stop overtook
         // counted no failure, and is not tried again.
         Effect.tapError(() =>
-          RcMap.invalidate(processes, key).pipe(
+          retire(attempt).pipe(
+            Effect.andThen(RcMap.invalidate(processes, attempt)),
             Effect.andThen(Ref.get(backoffs)),
             Effect.flatMap((all) =>
               all.has(key)
@@ -253,6 +284,7 @@ export const makeSupervisor = <K extends string>(
           ),
         ),
       );
+    });
 
     const use = Effect.fn("Supervisor.use")(function* (key: K) {
       yield* Effect.acquireRelease(held(key, 1), () => held(key, -1));
@@ -285,17 +317,23 @@ export const makeSupervisor = <K extends string>(
         rest.delete(key);
         return rest;
       });
-      // A start under way, or waiting out its pause, is no longer the key's.
-      yield* nextGeneration(key);
-      const life = (yield* Ref.get(lives)).get(key);
+      // A start under way, or waiting out its pause, is no longer the key's: the next use starts
+      // another, which this stop leaves alone.
+      const number = yield* Ref.modify(attempts, (all): [number, ReadonlyMap<K, number>] => {
+        const current = all.get(key) ?? 0;
+        return [current, new Map(all).set(key, current + 1)];
+      });
+      yield* RcMap.invalidate(processes, { key, number });
+      const life = (yield* Ref.get(lives)).get(key)?.get(number);
       if (life !== undefined) yield* Scope.close(life, Exit.void);
-      yield* RcMap.invalidate(processes, key);
     });
 
     return {
       use,
       stop,
-      running: RcMap.keys(processes).pipe(Effect.map((keys) => [...keys])),
+      running: RcMap.keys(processes).pipe(
+        Effect.map((all) => [...new Set(Array.from(all, (attempt) => attempt.key))]),
+      ),
     } satisfies Supervisor<K>;
   });
 
