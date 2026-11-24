@@ -446,6 +446,8 @@ const sentences = {
 
   "entry.needsUpdate": "Isto precisa de uma versão mais nova do app.",
   "notice.chainHops": "Os bots pararam de responder uns aos outros aqui. A sala espera por você.",
+  "notice.chainRoom":
+    "Os bots pararam de responder uns aos outros depois de muita conversa sem você. A sala espera por você.",
   "notice.chainFanOut": "Nem todos os bots foram chamados: uma mensagem só pode acordar alguns.",
   "notice.undelivered": "Uma resposta não chegou",
   "notice.waitingInConversation": "{name} está esperando por você na própria conversa.",

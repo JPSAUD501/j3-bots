@@ -447,6 +447,8 @@ export const en = {
 
   "entry.needsUpdate": "This needs a newer version of the app.",
   "notice.chainHops": "Bots stopped replying to each other here. The room waits for you.",
+  "notice.chainRoom":
+    "Bots stopped answering each other after a long run without you. The room waits for you.",
   "notice.chainFanOut": "Not every bot was asked: one message may wake only a few.",
   "notice.undelivered": "A reply didn’t arrive",
   "notice.waitingInConversation": "{name} is waiting on you in its own conversation.",
