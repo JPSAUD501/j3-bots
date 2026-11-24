@@ -1425,6 +1425,14 @@ export const en = {
   "connector.status.refusedAddress":
     "Its address leads into your own network, which J3 Bots doesn't reach for it.",
   "connector.status.failingOther": "It doesn't answer as it should.",
+  "connector.status.notRunning": "Not running",
+  "connector.status.commandNotFound": "Its program isn't on the computer that runs J3 Bots.",
+  "connector.status.commandNotFound.next":
+    "Install it there, or change the command to name it by its full path.",
+  "connector.status.commandExited":
+    "Its program stopped on its own, or couldn't start. J3 Bots starts it again the next time a bot uses it, waiting longer each time it stops.",
+  "connector.status.commandExited.next":
+    "Check the command and its variables. Running it yourself on that computer shows why it stops.",
   "connector.status.since": "It started {when}.",
   "connector.status.vaultLockedDetail":
     "Its sign-in is in the vault, which is locked. Bots can use it once you unlock the vault.",
@@ -1453,10 +1461,25 @@ export const en = {
   "connector.signedInOn": "Signed in {when}",
   "connector.address": "Address",
   "connector.command": "Command",
+  "connector.editCommand": "Change command",
+  "connector.editCommand.hint":
+    "Changing only a value keeps the command as it is. Changing the program, the arguments or a variable's name asks you to confirm it again.",
+  "connector.editCommand.args.kept": "Not shown, since one can carry a key.",
+  "connector.editCommand.args.retype": "Type them again",
+  "connector.editCommand.args.keep": "Keep them",
+  "connector.editCommand.args.again":
+    "Type the arguments again: a changed command is saved whole. Leave them empty if it takes none.",
+  "connector.editCommand.value.kept": "Unchanged",
+  "connector.editCommand.save": "Save",
+  "connector.editCommand.saved":
+    "Saved. It starts again with the new command, and a new or changed tool waits for you here.",
+  "connector.editCommand.savedValues": "Saved. It starts again with the new values.",
   "connector.status": "Status",
   "connector.disconnect": "Disconnect",
   "connector.disconnect.title": "Disconnect {name}?",
   "connector.disconnect.body": "Bots lose access to {name}. Your account there isn't changed.",
+  "connector.disconnect.bodyCommand":
+    "Its program stops, bots lose access to {name}, and the values of its variables are deleted.",
   "connector.disconnect.cancel": "Keep it",
   "connector.disconnect.pending": "Disconnecting…",
   "connector.disconnect.failed": "Disconnecting didn't finish. Try again.",
@@ -1501,6 +1524,8 @@ export const en = {
   "connect.required": "Fill in {field}.",
   "connect.failed": "Connecting didn't work. Try again.",
   "connect.failed.fields": "One of the fields is missing or doesn't fit. Check them and try again.",
+  "connect.failed.unpinned":
+    "This command runs a package with no exact version. Name it at one, such as @scope/server@1.2.3 or server==1.2.3.",
   "connect.failed.vaultLocked": "The vault is locked. Unlock it, then connect.",
   "connect.failed.vaultNotSetUp":
     "Connectors keep their sign-in in the vault, which isn't set up yet. Set it up, then connect.",
@@ -1565,6 +1590,14 @@ export const en = {
   "addOwn.private.cancel": "Cancel",
   "addOwn.command": "Command",
   "addOwn.command.placeholder": "npx",
+  "addOwn.command.hint":
+    "A program on the computer that runs J3 Bots. Through npx or uvx, name the package at an exact version, such as @scope/server@1.2.3 or server==1.2.3.",
+  "addOwn.pin.floating":
+    "npx and uvx fetch the package each time it starts. Name it at an exact version, such as @scope/server@1.2.3 or server==1.2.3, so what runs is what you confirmed.",
+  "addOwn.pin.unclear":
+    "J3 Bots can't tell which package this runs. Put the package right after the launcher, at an exact version, without options J3 Bots doesn't know or npm_config_ and UV_ variables.",
+  "addOwn.pin.shell":
+    "npx -c runs a shell line, which can fetch anything. Name the package instead, at an exact version.",
   "addOwn.args": "Arguments",
   "addOwn.args.hint":
     "One per line. Put a key in an environment variable below, where it's masked, not here.",
@@ -1576,9 +1609,20 @@ export const en = {
   "addOwn.env.remove": "Remove variable",
   "addOwn.env.invalid":
     "A variable name takes letters, digits and _, and doesn't start with a digit.",
-  "addOwn.consent.title": "Run this on your server?",
+  "addOwn.env.reserved": "This one chooses which program runs, so J3 Bots sets it itself.",
+  "addOwn.env.twice": "Another variable has this name. Names count as the same in any case.",
+  "addOwn.env.valueAgain": "Give its value again: a changed command is saved whole.",
+  "addOwn.consent.title": "Run this on the computer that runs J3 Bots?",
+  "addOwn.consent.titleChanged": "Run the changed command?",
   "addOwn.consent.body":
-    "It runs on your server as your user, and can reach everything your user can. Bots use what it offers. Run only software you trust.",
+    "It runs there as your user, and can read and change everything your user can: files, other programs' keys, the network. Bots use what it offers. Run only software you trust.",
+  "addOwn.consent.commandLine": "Command line",
+  "addOwn.consent.variables": "Environment variables",
+  "addOwn.consent.variables.hint": "Their values aren't shown.",
+  "addOwn.consent.variables.none": "None",
+  "addOwn.consent.new": "New",
+  "addOwn.consent.removed": "No longer set: {names}",
+  "addOwn.consent.programChanged": "The program changed.",
   "addOwn.consent.confirm": "Run it",
   "addOwn.consent.cancel": "Cancel",
   "addOwn.submit": "Add",

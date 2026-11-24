@@ -1445,6 +1445,14 @@ const sentences = {
   "connector.status.refusedAddress":
     "O endereço dele leva à sua própria rede, que o J3 Bots não acessa para ele.",
   "connector.status.failingOther": "Ele não responde como deveria.",
+  "connector.status.notRunning": "Parado",
+  "connector.status.commandNotFound": "O programa dele não está no computador que roda o J3 Bots.",
+  "connector.status.commandNotFound.next":
+    "Instale-o lá, ou altere o comando para indicá-lo pelo caminho completo.",
+  "connector.status.commandExited":
+    "O programa dele parou sozinho, ou não conseguiu iniciar. O J3 Bots o inicia de novo na próxima vez que um bot o usar, esperando mais a cada vez que ele para.",
+  "connector.status.commandExited.next":
+    "Confira o comando e as variáveis dele. Executá-lo você mesmo naquele computador mostra por que ele para.",
   "connector.status.since": "Começou {when}.",
   "connector.status.vaultLockedDetail":
     "A entrada dele está no cofre, que está bloqueado. Os bots podem usá-lo quando você desbloquear o cofre.",
@@ -1474,10 +1482,25 @@ const sentences = {
   "connector.signedInOn": "Entrou {when}",
   "connector.address": "Endereço",
   "connector.command": "Comando",
+  "connector.editCommand": "Alterar comando",
+  "connector.editCommand.hint":
+    "Alterar só um valor mantém o comando como está. Alterar o programa, os argumentos ou o nome de uma variável pede que você o confirme de novo.",
+  "connector.editCommand.args.kept": "Não aparecem, porque um deles pode conter uma chave.",
+  "connector.editCommand.args.retype": "Digitar de novo",
+  "connector.editCommand.args.keep": "Manter",
+  "connector.editCommand.args.again":
+    "Digite os argumentos de novo: um comando alterado é salvo inteiro. Deixe em branco se ele não tiver nenhum.",
+  "connector.editCommand.value.kept": "Sem alteração",
+  "connector.editCommand.save": "Salvar",
+  "connector.editCommand.saved":
+    "Salvo. Ele inicia de novo com o novo comando, e uma ferramenta nova ou alterada espera por você aqui.",
+  "connector.editCommand.savedValues": "Salvo. Ele inicia de novo com os novos valores.",
   "connector.status": "Status",
   "connector.disconnect": "Desconectar",
   "connector.disconnect.title": "Desconectar {name}?",
   "connector.disconnect.body": "Os bots perdem o acesso a {name}. Sua conta lá não muda.",
+  "connector.disconnect.bodyCommand":
+    "O programa dele para, os bots perdem o acesso a {name} e os valores das variáveis dele são apagados.",
   "connector.disconnect.cancel": "Manter",
   "connector.disconnect.pending": "Desconectando…",
   "connector.disconnect.failed": "A desconexão não terminou. Tente de novo.",
@@ -1523,6 +1546,8 @@ const sentences = {
   "connect.required": "Preencha {field}.",
   "connect.failed": "Não deu para conectar. Tente de novo.",
   "connect.failed.fields": "Um dos campos está faltando ou não serve. Confira e tente de novo.",
+  "connect.failed.unpinned":
+    "Este comando roda um pacote sem versão exata. Indique uma, como @scope/server@1.2.3 ou server==1.2.3.",
   "connect.failed.vaultLocked": "O cofre está bloqueado. Desbloqueie e depois conecte.",
   "connect.failed.vaultNotSetUp":
     "Os conectores guardam a entrada no cofre, que ainda não foi configurado. Configure e depois conecte.",
@@ -1590,6 +1615,14 @@ const sentences = {
   "addOwn.private.cancel": "Cancelar",
   "addOwn.command": "Comando",
   "addOwn.command.placeholder": "npx",
+  "addOwn.command.hint":
+    "Um programa no computador que roda o J3 Bots. Pelo npx ou uvx, indique o pacote numa versão exata, como @scope/server@1.2.3 ou server==1.2.3.",
+  "addOwn.pin.floating":
+    "O npx e o uvx buscam o pacote cada vez que ele inicia. Indique-o numa versão exata, como @scope/server@1.2.3 ou server==1.2.3, para que rode o que você confirmou.",
+  "addOwn.pin.unclear":
+    "O J3 Bots não consegue saber qual pacote isto roda. Coloque o pacote logo depois do lançador, numa versão exata, sem opções que o J3 Bots não conhece nem variáveis npm_config_ e UV_.",
+  "addOwn.pin.shell":
+    "O npx -c roda uma linha de shell, que pode buscar qualquer coisa. Indique o pacote, numa versão exata.",
   "addOwn.args": "Argumentos",
   "addOwn.args.hint":
     "Um por linha. Coloque uma chave numa variável de ambiente abaixo, onde ela fica mascarada, não aqui.",
@@ -1601,9 +1634,20 @@ const sentences = {
   "addOwn.env.remove": "Remover variável",
   "addOwn.env.invalid":
     "O nome de uma variável aceita letras, números e _, e não começa com número.",
-  "addOwn.consent.title": "Executar isto no seu servidor?",
+  "addOwn.env.reserved": "Esta escolhe qual programa roda, então o próprio J3 Bots a define.",
+  "addOwn.env.twice": "Outra variável tem este nome. Maiúsculas e minúsculas contam como iguais.",
+  "addOwn.env.valueAgain": "Informe o valor de novo: um comando alterado é salvo inteiro.",
+  "addOwn.consent.title": "Executar isto no computador que roda o J3 Bots?",
+  "addOwn.consent.titleChanged": "Executar o comando alterado?",
   "addOwn.consent.body":
-    "Ele roda no seu servidor como o seu usuário, e alcança tudo o que o seu usuário alcança. Os bots usam o que ele oferece. Execute só software em que você confia.",
+    "Ele roda lá como o seu usuário, e pode ler e alterar tudo o que o seu usuário pode: arquivos, chaves de outros programas, a rede. Os bots usam o que ele oferece. Execute só software em que você confia.",
+  "addOwn.consent.commandLine": "Linha de comando",
+  "addOwn.consent.variables": "Variáveis de ambiente",
+  "addOwn.consent.variables.hint": "Os valores delas não aparecem.",
+  "addOwn.consent.variables.none": "Nenhuma",
+  "addOwn.consent.new": "Nova",
+  "addOwn.consent.removed": "Não definidas mais: {names}",
+  "addOwn.consent.programChanged": "O programa mudou.",
   "addOwn.consent.confirm": "Executar",
   "addOwn.consent.cancel": "Cancelar",
   "addOwn.submit": "Adicionar",

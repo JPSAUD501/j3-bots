@@ -58,10 +58,18 @@ export {
   withBot,
 } from "./connectors.ts";
 export {
+  type ArgumentsDraft,
   type ClientInput,
+  type CommandConsent,
+  type CommandEdit,
+  commandConsent,
+  commandEdit,
   commandSource,
+  type EnvProblem,
   fieldValues,
   type FormProblems,
+  type KnownCommand,
+  knownCommand,
   listingSource,
   withoutSecrets,
   type PairInput,

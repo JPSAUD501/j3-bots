@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type CommandLine,
+  type Connector,
   ConnectorCommand,
   type ConnectorField,
   type ConnectorFieldValue,
   ConnectorSource,
   EnvName,
-  type FieldKey,
+  FieldKey,
   HeaderName,
   Label,
   type Language,
   type ListingRef,
   OAuthClientInput,
+  pinRefusal,
+  type PinRefusal,
+  reservedVariable,
 } from "@j3-bots/contracts";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -34,20 +39,39 @@ export interface ClientInput {
 }
 
 /**
+ * Why the server would refuse one of a command's variables, by its row:
+ * - `invalid`: its name is not one a shell allows;
+ * - `reserved`: its name is one the server reads to find and start the
+ *   program, such as `PATH` ({@link reservedVariable});
+ * - `twice`: another row has its name, in any case, as Windows reads them;
+ * - `value-again`: a variable the command had, whose value must be given
+ *   again since the whole command line is sent anew ({@link commandEdit}).
+ */
+export interface EnvProblem {
+  readonly index: number;
+  readonly reason: "invalid" | "reserved" | "twice" | "value-again";
+}
+
+/**
  * What a form got wrong, each where the operator typed it: a field the
  * listing requires left empty (`missing`), an argument too long for a command
- * (`args`), a client's issuer that is not an https: address (`issuer`), or the rows of `headers` and `env` whose names do not fit.
+ * (`args`), a package a command runs at no exact version (`pin`), arguments
+ * kept where a changed command needs them again (`argsAgain`), a client's
+ * issuer that is not an https: address (`issuer`), the rows of `headers`
+ * whose names do not fit, and the rows of `env` the server would refuse.
  */
 export interface FormProblems {
   readonly name: boolean;
   readonly url: boolean;
   readonly command: boolean;
   readonly args: boolean;
+  readonly pin: PinRefusal | null;
+  readonly argsAgain: boolean;
   readonly issuer: boolean;
   readonly clientId: boolean;
   readonly missing: ReadonlyArray<FieldKey>;
   readonly headers: ReadonlyArray<number>;
-  readonly env: ReadonlyArray<number>;
+  readonly env: ReadonlyArray<EnvProblem>;
 }
 
 export type SourceDraft =
@@ -59,6 +83,8 @@ const noProblems: FormProblems = {
   url: false,
   command: false,
   args: false,
+  pin: null,
+  argsAgain: false,
   issuer: false,
   clientId: false,
   missing: [],
@@ -71,6 +97,8 @@ const hasProblems = (problems: FormProblems) =>
   problems.url ||
   problems.command ||
   problems.args ||
+  problems.pin !== null ||
+  problems.argsAgain ||
   problems.issuer ||
   problems.clientId ||
   problems.missing.length > 0 ||
@@ -84,6 +112,7 @@ const decodeArgs = Schema.decodeUnknownOption(commandFields.fields.args);
 const decodeHeaderName = Schema.decodeUnknownOption(HeaderName);
 const decodeEnvName = Schema.decodeUnknownOption(EnvName);
 const decodeIssuer = Schema.decodeUnknownOption(OAuthClientInput.fields.issuer);
+const decodeFieldKey = Schema.decodeUnknownOption(FieldKey);
 const isCommand = Schema.is(ConnectorCommand.fields.command);
 
 /** The host of an address the operator typed, read before it is redacted, or none when it is not one. */
@@ -266,9 +295,82 @@ export function remoteSource(input: {
   };
 }
 
+/** Arguments as the operator typed them: one per line, each trimmed, blank lines dropped. */
+const argumentsOf = (text: string): ReadonlyArray<string> =>
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+
+/**
+ * A command's variables as the server would take them: each row that names
+ * something, decoded, and each the server would refuse, with why.
+ */
+const variables = (
+  rows: ReadonlyArray<PairInput>,
+): {
+  readonly decoded: CommandLine["env"];
+  readonly problems: ReadonlyArray<EnvProblem>;
+} => {
+  const decoded: Array<CommandLine["env"][number]> = [];
+  const problems: Array<EnvProblem> = [];
+  const seen = new Set<string>();
+  rows.forEach((row, index) => {
+    if (blank(row)) return;
+    const name = decodeEnvName(row.name.trim());
+    if (Option.isNone(name)) {
+      problems.push({ index, reason: "invalid" });
+      return;
+    }
+    const folded = name.value.toUpperCase();
+    if (reservedVariable(name.value)) problems.push({ index, reason: "reserved" });
+    else if (seen.has(folded)) problems.push({ index, reason: "twice" });
+    seen.add(folded);
+    decoded.push({ name: name.value, value: Redacted.make(row.value) });
+  });
+  return { decoded, problems };
+};
+
+/**
+ * A command line as the operator typed it, as `connector.add` and
+ * `connector.update` take it, or what the server would refuse in it: a
+ * package `npx` or `uvx` would fetch at no exact version among them
+ * ({@link pinRefusal}).
+ */
+const commandLine = (input: {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly env: ReadonlyArray<PairInput>;
+}):
+  | { readonly _tag: "ready"; readonly command: CommandLine }
+  | { readonly _tag: "invalid"; readonly problems: FormProblems } => {
+  const command = input.command.trim();
+  const args = decodeArgs(input.args.map((arg) => Redacted.make(arg)));
+  const env = variables(input.env);
+  const program = isCommand(command);
+  const problems: FormProblems = {
+    ...noProblems,
+    command: !program,
+    args: Option.isNone(args),
+    pin: program
+      ? Option.getOrNull(
+          pinRefusal(
+            command,
+            input.args,
+            env.decoded.map((variable) => variable.name),
+          ),
+        )
+      : null,
+    env: env.problems,
+  };
+  if (hasProblems(problems) || Option.isNone(args)) return { _tag: "invalid", problems };
+  return { _tag: "ready", command: { command, args: args.value, env: env.decoded } };
+};
+
 /**
  * A connector the server starts by command: its arguments one per line, as
- * typed, each redacted, blank lines dropped, and its environment.
+ * typed, each redacted, blank lines dropped, and its environment. The
+ * operator confirms it ({@link commandConsent}) before it is sent.
  */
 export function commandSource(input: {
   readonly name: string;
@@ -276,33 +378,139 @@ export function commandSource(input: {
   readonly args: string;
   readonly env: ReadonlyArray<PairInput>;
 }): SourceDraft {
-  const command = input.command.trim();
   const name = decodeLabel(input.name.trim());
-  const args = input.args
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "")
-    .map((line) => Redacted.make(line));
-  const decodedArgs = decodeArgs(args);
-  const env = pairs(input.env, (text) => decodeEnvName(text));
+  const line = commandLine({ ...input, args: argumentsOf(input.args) });
   const problems: FormProblems = {
-    ...noProblems,
+    ...(line._tag === "invalid" ? line.problems : noProblems),
     name: Option.isNone(name),
-    command: !isCommand(command),
-    args: Option.isNone(decodedArgs),
-    env: env.refused,
   };
-  if (hasProblems(problems) || Option.isNone(name) || Option.isNone(decodedArgs)) {
-    return { _tag: "invalid", problems };
+  if (line._tag === "invalid" || Option.isNone(name)) return { _tag: "invalid", problems };
+  return { _tag: "ready", source: { _tag: "command", name: name.value, ...line.command } };
+}
+
+/**
+ * What the client knows of a command connector's command line: its program
+ * and its variables' names. Its arguments stay on the server, since one can
+ * carry a key, and so do its values.
+ */
+export interface KnownCommand {
+  readonly program: string;
+  readonly names: ReadonlyArray<string>;
+}
+
+/**
+ * The arguments in a command connector's edit form: those it runs with,
+ * which the client never sees, or a new list typed in full.
+ */
+export type ArgumentsDraft =
+  | { readonly _tag: "kept" }
+  | { readonly _tag: "typed"; readonly text: string };
+
+/**
+ * What an edit of a command connector sends:
+ * - `unchanged`: nothing;
+ * - `values`: new values for variables it has, each one left empty keeping
+ *   its own. The command line is the one the operator confirmed, so it runs
+ *   with no confirmation;
+ * - `command`: a new command line, sent whole, which the operator confirms
+ *   first, as when it was added: its program, its arguments or a variable's
+ *   name changed, or a variable was added or removed.
+ */
+export type CommandEdit =
+  | { readonly _tag: "unchanged" }
+  | { readonly _tag: "values"; readonly values: ReadonlyArray<ConnectorFieldValue> }
+  | { readonly _tag: "command"; readonly command: CommandLine }
+  | { readonly _tag: "invalid"; readonly problems: FormProblems };
+
+/**
+ * An edit of a command connector, as its form holds it. Changing only
+ * values keeps the command line, which the server holds and the client never
+ * sees. Anything else sends a new one whole: its arguments typed again, and
+ * every variable it already had given its value again, since the server
+ * keeps none of the old line.
+ */
+export function commandEdit(
+  known: KnownCommand,
+  draft: {
+    readonly command: string;
+    readonly args: ArgumentsDraft;
+    readonly env: ReadonlyArray<PairInput>;
+  },
+): CommandEdit {
+  const rows = draft.env.filter((row) => !blank(row));
+  const names = rows.map((row) => row.name.trim());
+  const sameLine =
+    draft.command.trim() === known.program &&
+    draft.args._tag === "kept" &&
+    names.length === known.names.length &&
+    known.names.every((name) => names.includes(name));
+  if (sameLine) {
+    const values = rows.flatMap((row): ReadonlyArray<ConnectorFieldValue> => {
+      const key = decodeFieldKey(row.name.trim());
+      return row.value === "" || Option.isNone(key)
+        ? []
+        : [{ key: key.value, value: Redacted.make(row.value) }];
+    });
+    return values.length === 0 ? { _tag: "unchanged" } : { _tag: "values", values };
   }
-  return {
-    _tag: "ready",
-    source: {
-      _tag: "command",
-      name: name.value,
-      command,
-      args: decodedArgs.value,
-      env: env.decoded,
-    },
+  const line = commandLine({
+    command: draft.command,
+    args: draft.args._tag === "typed" ? argumentsOf(draft.args.text) : [],
+    env: draft.env,
+  });
+  const base = line._tag === "invalid" ? line.problems : noProblems;
+  // A variable it had cannot keep a value the client never saw: a row with
+  // no problem of its own yet whose name it had and whose value is empty.
+  const again = draft.env.flatMap((row, index): ReadonlyArray<EnvProblem> =>
+    !blank(row) &&
+    row.value === "" &&
+    known.names.includes(row.name.trim()) &&
+    !base.env.some((problem) => problem.index === index)
+      ? [{ index, reason: "value-again" }]
+      : [],
+  );
+  const problems: FormProblems = {
+    ...base,
+    argsAgain: draft.args._tag === "kept",
+    env: [...base.env, ...again].toSorted((a, b) => a.index - b.index),
   };
+  if (line._tag === "invalid" || hasProblems(problems)) return { _tag: "invalid", problems };
+  return { _tag: "command", command: line.command };
+}
+
+/**
+ * What the operator confirms before a command line runs: the program and
+ * every argument, as they will run, and the name of every variable, never
+ * its value. `added` names the variables the command did not have before,
+ * none for a new connector.
+ */
+export interface CommandConsent {
+  readonly program: string;
+  readonly args: ReadonlyArray<string>;
+  readonly names: ReadonlyArray<string>;
+  readonly added: ReadonlyArray<string>;
+  readonly removed: ReadonlyArray<string>;
+  readonly programChanged: boolean;
+}
+
+/** The confirmation for `command`, against what the connector ran before, if it has run. */
+export function commandConsent(command: CommandLine, before: KnownCommand | null): CommandConsent {
+  const names = command.env.map((variable) => variable.name);
+  return {
+    program: command.command,
+    args: command.args.map(Redacted.value),
+    names,
+    added: before === null ? [] : names.filter((name) => !before.names.includes(name)),
+    removed: before === null ? [] : before.names.filter((name) => !names.includes(name)),
+    programChanged: before !== null && before.program !== command.command,
+  };
+}
+
+/** What the client knows of `connector`'s command line, for one started by command. */
+export function knownCommand(
+  connector: Pick<Connector, "transport" | "fields">,
+): KnownCommand | null {
+  return connector.transport._tag === "command"
+    ? { program: connector.transport.program, names: connector.fields.map((field) => field.key) }
+    : null;
 }

@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { FAILURE_REASONS, Invalid, SIGN_IN_REASONS } from "@j3-bots/contracts";
+import { describe, expect, it } from "vite-plus/test";
+import { at, context } from "../../test/fixtures.ts";
+import { connectFailureText, connectorStatusText } from "./connectors.ts";
+
+const languages = ["en", "pt-BR"] as const;
+const since = at("2026-11-20T14:00:00Z");
+
+describe("connectorStatusText", () => {
+  it.each(languages)(
+    "words every reason a connector fails for in its own sentence (%s)",
+    (lang) => {
+      const ctx = context("2026-11-20T15:00:00Z", lang);
+      const words = (reason: (typeof FAILURE_REASONS)[number] | "unknown") =>
+        connectorStatusText({ _tag: "failing", reason, since }, ctx);
+      const fallback = words("unknown").detail;
+      const details = FAILURE_REASONS.map((reason) => words(reason).detail);
+      // None falls back to the words for a reason this build does not know.
+      expect(details).not.toContain(fallback);
+      expect(new Set(details).size).toBe(FAILURE_REASONS.length);
+      for (const reason of FAILURE_REASONS) expect(words(reason).since).not.toBeNull();
+    },
+  );
+
+  it.each(languages)("says what to do about a command that cannot run (%s)", (lang) => {
+    const ctx = context("2026-11-20T15:00:00Z", lang);
+    const remote = connectorStatusText({ _tag: "failing", reason: "unreachable", since }, ctx);
+    for (const reason of ["command-not-found", "command-exited"] as const) {
+      const text = connectorStatusText({ _tag: "failing", reason, since }, ctx);
+      expect(text.next).not.toBeNull();
+      // It is not running, rather than out of reach.
+      expect(text.label).not.toBe(remote.label);
+    }
+  });
+
+  it.each(languages)("words every reason a connector needs a sign-in for (%s)", (lang) => {
+    const ctx = context("2026-11-20T15:00:00Z", lang);
+    const words = (reason: (typeof SIGN_IN_REASONS)[number] | "unknown") =>
+      connectorStatusText({ _tag: "needs-sign-in", reason }, ctx).detail;
+    const details = SIGN_IN_REASONS.map(words);
+    expect(details).not.toContain(words("unknown"));
+    expect(new Set(details).size).toBe(SIGN_IN_REASONS.length);
+  });
+});
+
+describe("connectFailureText", () => {
+  it.each(languages)(
+    "says a command was refused for a package at no exact version (%s)",
+    (lang) => {
+      const { i18n } = context("2026-11-20T15:00:00Z", lang);
+      const refused = (reason: "command-unpinned" | "connector-fields") =>
+        connectFailureText({ _tag: "refused", error: new Invalid({ reason }) }, i18n);
+      expect(refused("command-unpinned")).not.toBe(refused("connector-fields"));
+      expect(refused("command-unpinned")).toContain("@scope/server@1.2.3");
+    },
+  );
+});
