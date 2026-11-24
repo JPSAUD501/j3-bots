@@ -27,6 +27,7 @@ const toolWords: Record<WorkTool, { readonly did: Phrase; readonly doing: Phrase
   "task-stop": { did: "tool.taskStop.did", doing: "tool.taskStop.doing" },
   secret: { did: "tool.secret.did", doing: "tool.secret.doing" },
   login: { did: "tool.login.did", doing: "tool.login.doing" },
+  connector: { did: "tool.connector.did", doing: "tool.connector.doing" },
   browser: { did: "tool.browser.did", doing: "tool.browser.doing" },
   "pull-request": { did: "tool.pullRequest.did", doing: "tool.pullRequest.doing" },
   issue: { did: "tool.issue.did", doing: "tool.issue.doing" },

@@ -105,6 +105,7 @@ const englishLabel: Record<WorkTool, string> = {
   "task-stop": "Stopped a background task",
   secret: "Asked for a credential",
   login: "Filled a saved login",
+  connector: "Used a connector",
   browser: "Used the browser",
   "pull-request": "Worked on a pull request",
   issue: "Worked on an issue",

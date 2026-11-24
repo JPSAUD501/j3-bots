@@ -35,6 +35,9 @@ function previewText(entry: Entry): string {
       return entry.note;
     case "credential-request":
       return entry.origin;
+    case "connector-suggestion":
+    case "connector-auth":
+      return entry.name;
     case "routine-change":
       return entry.name;
     case "work-fold":

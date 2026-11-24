@@ -18,6 +18,7 @@ import {
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
+import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
 import { RoutineTrigger } from "./routine.ts";
 import { CredentialFill, CredentialId, SiteOrigin } from "./vault.ts";
 import { StepTool } from "./work.ts";
@@ -356,6 +357,7 @@ export const BrowserHelpEntry = Schema.TaggedStruct("browser-help", {
 });
 export type BrowserHelpEntry = typeof BrowserHelpEntry.Type;
 
+/**
  * A bot asks the operator to save a login in the vault. The client sends the
  * values the operator types with `vault.save`, naming this card, straight to
  * the vault: they never pass through the bot, and this entry has no field for
@@ -376,6 +378,53 @@ export const CredentialRequestEntry = Schema.TaggedStruct("credential-request", 
   ]),
 });
 export type CredentialRequestEntry = typeof CredentialRequestEntry.Type;
+
+/**
+ * A bot suggests a connector it would use for the task at hand: a gallery
+ * entry, or a connector the operator added that this bot may not use yet.
+ * Bots cannot add a connector or grant themselves one, so the card is all a
+ * bot can do. Its Connect adds the connector (`connector.add`, naming this
+ * card) or lets this bot use it (`connector.setBots`); either way, the server
+ * closes the card as `connected` once the bot can use it. Not now dismisses
+ * it (`card.answer` with `dismiss`), which the server takes as final for that
+ * connector in this conversation. Neither wakes the bot.
+ */
+export const ConnectorSuggestionEntry = Schema.TaggedStruct("connector-suggestion", {
+  ...entry,
+  author: BotAuthor,
+  subject: Schema.Union([
+    Schema.TaggedStruct("listing", { ref: ListingRef }),
+    Schema.TaggedStruct("connector", { connectorId: ConnectorId }),
+  ]),
+  /** The connector's name and glyph when the card was written, which it keeps. */
+  name: Label,
+  glyph: Schema.NullOr(ConnectorGlyph),
+  /** Why the bot needs it, in its own words: one line. */
+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    Schema.TaggedStruct("connected", { connectorId: ConnectorId }),
+    Schema.TaggedStruct("dismissed", {}),
+  ]),
+});
+export type ConnectorSuggestionEntry = typeof ConnectorSuggestionEntry.Type;
+
+/**
+ * A connector a bot called needs the operator to sign in again, in that bot's
+ * conversation: written once each time the connector's sign-in ends, by the
+ * first call that finds it so, and authored by that bot. Its button opens the
+ * sign-in. It closes as `signed-in` once the connector works again, and as
+ * `removed` when the operator removes it.
+ */
+export const ConnectorAuthEntry = Schema.TaggedStruct("connector-auth", {
+  ...entry,
+  author: BotAuthor,
+  connectorId: ConnectorId,
+  name: Label,
+  glyph: Schema.NullOr(ConnectorGlyph),
+  status: Schema.Literals(["pending", "signed-in", "removed"]),
+});
+export type ConnectorAuthEntry = typeof ConnectorAuthEntry.Type;
 
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
@@ -646,6 +695,8 @@ export const Entry = Schema.Union([
   SecretRequestEntry,
   BrowserHelpEntry,
   CredentialRequestEntry,
+  ConnectorSuggestionEntry,
+  ConnectorAuthEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -655,6 +706,9 @@ export type Entry = typeof Entry.Type;
 
 /** Every kind of entry this build knows. */
 const entryKinds = Entry.members.map((member) => member.fields._tag.schema.literal);
+
+/** The kind of an entry this build knows, as the server stores it beside the entry. */
+export const EntryKind = Schema.Literals(entryKinds);
 
 /** What keeps an entry in its place in a conversation. */
 const placement = { id: EntryId, order: EntryOrder, createdAt: Schema.DateTimeUtc };
@@ -696,6 +750,8 @@ export const ReceivedEntry = Schema.Union([
   SecretRequestEntry,
   BrowserHelpEntry,
   CredentialRequestEntry,
+  ConnectorSuggestionEntry,
+  ConnectorAuthEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -710,7 +766,8 @@ export const PREVIEW_LENGTH = 200;
 /**
  * The text an entry leads with, which its preview carries: the message, the
  * first question, the action, what is asked for (a credential's label, a
- * browser step's note), the site a login is asked for, the routine's name; empty
+ * browser step's note), the site a login is asked for, the connector a card is
+ * about, the routine's name; empty
  * for an entry with no text of its own.
  */
 export const entryText = (entry: Entry): string => {
@@ -728,6 +785,9 @@ export const entryText = (entry: Entry): string => {
       return entry.note;
     case "credential-request":
       return entry.origin;
+    case "connector-suggestion":
+    case "connector-auth":
+      return entry.name;
     case "routine-change":
       return entry.name;
     case "work-fold":

@@ -3,8 +3,8 @@ import {
   BotId,
   DeviceId,
   EntryId,
+  EntryKind,
   type EntryTarget,
-  NotificationKind,
   PushPlatform,
   PushProvider,
   PushToken,
@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Time, timeText } from "../persistence/columns.ts";
+import { notificationKindOf } from "../presence/Presence.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
 import { onePassAtATime, passOutcome, reconcileWithoutEngine } from "../turns/reconciler.ts";
@@ -69,7 +70,8 @@ const Due = Schema.Struct({
   title: Schema.String,
   body: Schema.String,
   plain_body: Schema.String,
-  kind: NotificationKind,
+  /** The kind of the entry the push is about, whose notification names the channel. */
+  kind: EntryKind,
   attempts: Schema.Int,
   generation: Schema.NullOr(Schema.String),
   conversation_bot_id: Schema.NullOr(BotId),
@@ -339,6 +341,8 @@ export const layer = Layer.effect(
             ? { _tag: "room", roomId }
             : null;
       if (target === null) return yield* Effect.die("An entry has a target");
+      const kind = notificationKindOf(delivery.kind);
+      if (kind === null) return yield* Effect.die("A delivery is about an entry that notifies");
       const claimed = yield* claim(delivery, generation);
       if (claimed === null) return false;
       const attempt: Attempt = { deviceId: delivery.device_id, generation };
@@ -350,7 +354,7 @@ export const layer = Layer.effect(
           platform,
           title: delivery.title,
           body: claimed.body,
-          kind: delivery.kind,
+          kind,
           data: { deviceId: delivery.device_id, target, entryId: delivery.entry_id },
         })
         .pipe(Effect.result);

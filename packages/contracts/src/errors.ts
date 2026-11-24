@@ -37,6 +37,10 @@ export const Resource = Schema.Literals([
   "section",
   /** A saved login, which only the vault's requests name. */
   "credential",
+  /** A connector, a gallery entry, or a sign-in to one: only connector requests name them. */
+  "connector",
+  "connector-listing",
+  "sign-in",
 ]);
 export type Resource = typeof Resource.Type;
 
@@ -87,6 +91,39 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      * and field, never the value. Restoring the vault from a backup fixes it.
      */
     "vault-damaged",
+    /**
+     * The connector's address is in the operator's own network. Nothing was
+     * added; the operator confirms it, and the client sends it again saying so.
+     */
+    "private-network",
+    /** The connector's tools changed again after the review the operator answered. */
+    "tool-review-stale",
+    /**
+     * The gallery's search of the MCP Registry, or its read of one entry
+     * there, did not answer; the curated list still does.
+     */
+    "registry-unavailable",
+    /**
+     * The server cannot be where the browser returns after a sign-in: its
+     * address is not `https:`, and it does not run on the device's computer.
+     */
+    "no-server-redirect",
+    /**
+     * The connector's service does not sign in as J3 Bots requires: no
+     * metadata to find it by, no PKCE with S256, an endpoint that is not
+     * `https:`.
+     */
+    "sign-in-unsupported",
+    /**
+     * The service did not answer while J3 Bots signed in (its metadata, its
+     * registration or its token endpoint): a network error, a timeout or an
+     * error of its own. Trying again may work.
+     */
+    "sign-in-unreachable",
+    /** The service refused to register J3 Bots as a client. */
+    "registration-refused",
+    /** The service answered the sign-in with an error, or refused its code. */
+    "sign-in-refused",
   ]),
 }) {
   override get message(): string {
@@ -115,6 +152,12 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "master-password",
     /** The one-time code setup is neither a base32 secret nor an `otpauth://totp/` address. */
     "totp",
+    /** A connect form's values: a required one missing, or one the form does not ask for. */
+    "connector-fields",
+    /** The gallery entry cannot be connected yet (`ConnectKind` `unsupported`). */
+    "connector-unsupported",
+    /** The address the browser returned to is not one this sign-in expects. */
+    "sign-in-url",
   ]),
 }) {
   override get message(): string {

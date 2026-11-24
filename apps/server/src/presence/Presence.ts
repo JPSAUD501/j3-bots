@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
+  ConnectorNotice,
   BotId,
   DeviceId,
   Entry,
@@ -46,24 +47,49 @@ const kindOf = (
   entry: Entry,
 ): { readonly kind: NotificationKind; readonly botId: BotId } | null => {
   if (entry.author._tag !== "bot") return null;
-  const { botId } = entry.author;
-  switch (entry._tag) {
+  // One notification for an urgent message: the sender's card.
+  if (entry._tag === "handoff" && !(entry.urgent && entry.direction === "sent")) return null;
+  const kind = notificationKindOf(entry._tag);
+  return kind === null ? null : { kind, botId: entry.author.botId };
+};
+
+/**
+ * The notification an entry of this kind makes when it notifies, which names
+ * the Android channel a push shows in: its own kind, or `connector` for either
+ * connector card. Null for a kind that never notifies. A push read back from
+ * its delivery takes its channel from here too, from the entry it is about.
+ */
+export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null => {
+  switch (kind) {
     case "message":
     case "question":
     case "approval":
     case "secret-request":
     case "browser-help":
-      return { kind: entry._tag, botId };
+    case "handoff":
+      return kind;
     // A save-login card asks for a credential too: it shows where the
     // engine's secret requests do, Android's channel for them included.
     case "credential-request":
-      return { kind: "secret-request", botId };
-    case "handoff":
-      // One notification for an urgent message: the sender's card.
-      return entry.urgent && entry.direction === "sent" ? { kind: entry._tag, botId } : null;
+      return "secret-request";
+    case "connector-suggestion":
+    case "connector-auth":
+      return "connector";
     case "work-fold":
     case "notice":
     case "routine-change":
+      return null;
+  }
+};
+
+/** Which connector card a `connector` notification is about; null for any other entry. */
+const connectorCard = (entry: Entry): ConnectorNotice | null => {
+  switch (entry._tag) {
+    case "connector-suggestion":
+      return "suggestion";
+    case "connector-auth":
+      return "sign-in";
+    default:
       return null;
   }
 };
@@ -191,6 +217,7 @@ export const layer = Layer.effect(
           botId: made.botId,
           kind: made.kind,
           preview: previewText(entry, notifications),
+          connector: connectorCard(entry),
         },
         live: paired.filter(({ id }) => sockets.has(id)).map(({ id }) => id),
         push: paired

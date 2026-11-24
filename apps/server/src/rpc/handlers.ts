@@ -43,8 +43,24 @@ import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 import { Vault } from "../vault/Vault.ts";
 
-/** The RPCs this server answers: every one of `J3Rpcs`. */
-export const ServedRpcs = J3Rpcs;
+/**
+ * The RPCs this server answers: every one of `J3Rpcs` but the connectors',
+ * whose contract came first. Until each is served, a client's call of one is
+ * answered with a defect, as an unknown request is.
+ */
+export const ServedRpcs = J3Rpcs.omit(
+  "connectors.list",
+  "connectors.search",
+  "connectors.get",
+  "connectors.subscribe",
+  "connector.add",
+  "connector.update",
+  "connector.remove",
+  "connector.setBots",
+  "connector.beginSignIn",
+  "connector.completeSignIn",
+  "connector.acceptToolChanges",
+);
 
 const operator = { _tag: "operator" } as const;
 
