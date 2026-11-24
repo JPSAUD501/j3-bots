@@ -19,6 +19,7 @@ import type {
   FieldKey,
   ListingRef,
 } from "@j3-bots/contracts";
+import { useAnswer } from "@j3-bots/client-runtime/react";
 import { ExternalLinkIcon } from "lucide-react";
 import { useId, useState } from "react";
 import { useI18n } from "../../app/context";
@@ -26,7 +27,7 @@ import { CommandLine } from "../CommandLine";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm";
 import { SkeletonRows } from "../ui/skeleton";
-import { type ConnectorsIntents, Failed, useAnswer } from "./screen";
+import { type ConnectorsIntents, Failed } from "./screen";
 import {
   BotsPicker,
   ConnectorTile,

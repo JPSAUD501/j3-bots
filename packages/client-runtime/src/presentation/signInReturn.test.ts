@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { arrival, landingPage, signInCatch } from "./loopback.ts";
+import { arrival, landingPage, signInCatch } from "./signInReturn.ts";
 
 const PORT = 51734;
 const host = `127.0.0.1:${PORT}`;

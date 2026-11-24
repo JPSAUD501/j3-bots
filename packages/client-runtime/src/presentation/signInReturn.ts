@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { SIGN_IN_CALLBACK_PATH as CALLBACK_PATH } from "@j3-bots/contracts";
-import { SIGN_IN_RETURN_MAX } from "@j3-bots/desktop-bridge";
+import { SIGN_IN_CALLBACK_PATH as CALLBACK_PATH, SIGN_IN_RETURN_MAX } from "@j3-bots/contracts";
 
-// What the app's loopback listener makes of a request, while it catches the
-// browser's return from a connector's sign-in (`signInRelay.ts`). Only the
-// return itself is taken: anything else that reaches the port, such as the
-// browser asking for a favicon, is turned away and the listener waits on.
+// What an app's loopback listener makes of a request, while it catches the
+// browser's return from a connector's sign-in: the desktop app's, in its main
+// process, and the Android app's, whose native listener asks this of each
+// request it reads. Only the return itself is taken: anything else that
+// reaches the port, such as the browser asking for a favicon, is turned away
+// and the listener waits on.
 
 /** An issuer's host, as the server writes it into a callback path: a name or an address, and a port. */
 const ISSUER_HOST = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*(?::\d{1,5})?$/;
@@ -74,7 +75,7 @@ const sameSecret = (a: string, b: string): boolean => {
 };
 
 /** What the listener answers a request with: the landing page, or an error that says nothing. */
-type Answer =
+export type LoopbackAnswer =
   | { readonly _tag: "returned" }
   | { readonly _tag: "refused"; readonly status: 400 | 404 | 405 };
 
@@ -88,7 +89,7 @@ type Answer =
  */
 export interface SignInCatch {
   readonly expect: (state: string) => void;
-  readonly answer: (request: LoopbackRequest) => Answer;
+  readonly answer: (request: LoopbackRequest) => LoopbackAnswer;
 }
 
 export const signInCatch = (

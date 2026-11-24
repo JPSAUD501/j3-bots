@@ -16,7 +16,12 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
-import { LOOPBACK_HEADERS, landingPage, type SignInCatch, signInCatch } from "./loopback.ts";
+import {
+  LOOPBACK_HEADERS,
+  landingPage,
+  type SignInCatch,
+  signInCatch,
+} from "@j3-bots/client-runtime/presentation";
 
 // The browser's return from a connector's sign-in, caught on this computer's
 // loopback and handed to the page, which relays it to the server. The server

@@ -13,6 +13,7 @@ import type {
 } from "@j3-bots/client-runtime";
 import {
   applyConnectorChange,
+  type ConnectorsOpening,
   fittedMarks,
   hasDefaultModel,
   insertMarks,
@@ -51,7 +52,6 @@ import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ClockProvider } from "../app/clock";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
-import type { ConnectorsOpening } from "../components/connectors/screen";
 import { ImageViewer } from "../components/ImageViewer";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";

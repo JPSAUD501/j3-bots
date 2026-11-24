@@ -156,6 +156,7 @@ const sentences = {
   "notification.channel.secret": "Pedidos de credencial",
   "notification.channel.handoff": "Mensagens urgentes a colegas",
   "notification.channel.connector": "Conectores",
+  "notification.channel.signIn": "Entradas",
 
   "time.yesterday": "Ontem",
   "time.yesterdayAt": "Ontem às {time}",
@@ -1414,6 +1415,7 @@ const sentences = {
   "connectors.retry": "Tentar de novo",
   "connectors.addOwn": "Adicionar o seu",
   "connectors.addOwn.hint": "Outro serviço, pelo endereço ou por um comando.",
+  "connectors.addOwn.hintPhone": "Outro serviço, pelo endereço.",
   "connectors.offline": "Conectar um serviço precisa do servidor, que está offline agora.",
   "connectors.bots.all": "Todos os bots",
   "connectors.bots.none": "Nenhum bot",
@@ -1458,6 +1460,12 @@ const sentences = {
   "connector.connect": "Conectar",
   "connector.setUp": "Configurar",
   "connector.unsupported": "O J3 Bots ainda não consegue conectar este.",
+  "connector.onComputer":
+    "Este roda um comando no seu servidor. Altere ou remova pelo J3 Bots no seu computador.",
+  "connect.commandOnComputer":
+    "Este roda um comando no seu servidor. Conecte pelo J3 Bots no seu computador.",
+  "addOwn.commandOnComputer":
+    "Para adicionar um que roda um comando, use o J3 Bots no seu computador.",
   "connector.bots": "Bots que podem usá-lo",
   "connector.bots.all": "Todos os bots, inclusive os que você criar depois",
   "connector.bots.saving": "Salvando…",
@@ -1544,8 +1552,8 @@ const sentences = {
   "signIn.paste.apps":
     "Os apps de computador e de celular trazem o navegador de volta sozinhos, sem nada para colar.",
   "signIn.failed.start": "A entrada não começou. Tente de novo.",
-  "signIn.failed.noRelay":
-    "Este app não conseguiu esperar o navegador neste computador. Tente de novo.",
+  "signIn.waitingNotice": "Esperando sua entrada no navegador",
+  "signIn.failed.noRelay": "Este app não conseguiu esperar a volta do navegador. Tente de novo.",
   "signIn.failed.unsupported": "Este serviço não faz a entrada do jeito que o J3 Bots precisa.",
   "signIn.failed.registration": "O serviço não deixou o J3 Bots se registrar para entrar.",
   "signIn.failed.unreachable": "O serviço não respondeu. Tente de novo daqui a pouco.",
