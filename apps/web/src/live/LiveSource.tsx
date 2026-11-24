@@ -1131,11 +1131,13 @@ function LiveShell({
 
   const signIns = useReadable(j3.signIns);
   const providerSetup = localProviderSetup(j3);
+  const vault = useReadable(j3.vault.view);
 
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
     signIns,
+    vault,
     roster,
     sections,
     conversation: (asked) =>
@@ -1353,6 +1355,7 @@ function LiveShell({
     // The viewer opens over the bot's conversation, on the tab the address names.
     openBrowser: (botId, tab) =>
       void navigate({ to: "/bots/$botId", params: { botId }, search: { browser: tab } }),
+    dismissLogin: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     retryNotice: (entryId) => void j3.retryNotice(entryId),
     retryMessage: (entryId) => void j3.retryMessage(entryId),
     resendMessage: (commandId, mentions) =>
@@ -1485,6 +1488,7 @@ function LiveShell({
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
     signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
+    vault: j3.vault,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,

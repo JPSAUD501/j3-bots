@@ -65,8 +65,10 @@ state/
   shipped-skills.json  the SHA-256 of each shipped skill text the server wrote
   runtime.json       the release this home's data was last handed to, whether by a rollback, and a transition under way
   release-feed.json  the newest release each channel last offered, whether it verified, and when the feed checks next
+vault/
+  vault.sqlite       the vault's sealed logins and connector secrets; in no snapshot
 backups/
-  <snapshot>/        the databases and settings a version transition copied before it changed release
+  <snapshot>/        the databases and settings a version transition copied before it changed release, the vault's never
   update.lock        held by the one version transition or rollback running
 ```
 
@@ -238,6 +240,56 @@ Two kinds of card wait on the operator, with separate lifecycles. A third, a bot
 
 **A secret request** comes from a bot calling the engine's `request_secret` tool. Its card shows the label, the reason, an optional link and a placeholder, never a value. The operator's answer travels in its own request (`secret.provide`), which hands the value straight to the engine. The value never enters an entry, a change, a log or a command receipt. The card records only that a value was provided, or declined, or that the request expired, from the request's resolution. `secret.provide` succeeds only when this call's own answer was the one the engine took. It has no receipt, so after a lost reply a retry may find the request closed: the server synchronizes the session and fails with `Conflict("card-closed")`, because the closing answer may have been another device's, or the request expired. A closed card is never reported as success; the card itself shows how it closed. The server takes one submission per card at a time, and so does the adapter per request, so a second device's submission waits for the first and then finds the card closed. Before calling the engine, the server writes a durable marker on the card that a submission is in flight, naming that submission and holding no value, and clears it on a definite answer; a cleanup removes only the marker of its own submission, so it never erases a newer one. A marker left by `EngineIndeterminate`, or found at start after a crash, means the outcome is unknown: the server synchronizes the session at start, and before it sends the next submission for that card. A request that is closed then shows how it closed; one still open takes a value again, and a submission that lands late only makes the next one find the card closed.
 
+## The vault
+
+The vault keeps what the operator wants kept secret on the server: the website logins they save (**credentials**), and what a connector needs to reach its service (**connector secrets**). It is a SQLite database of its own, `<J3_HOME>/vault/vault.sqlite`, apart from `j3.sqlite`. The key that opens it comes only from the operator's master password and lives only in the server's memory ([decision 0029](../decisions/0029-the-vault-key-comes-from-a-master-password-held-in-memory.md)).
+
+**Keys.** The master password is 8 to 1,024 characters, normalized to NFC. scrypt (N = 2^16, r = 8, p = 1, with a random 16-byte salt) derives a key-encryption key from it. That key wraps a random 256-bit data key with AES-256-GCM. The data key seals every value with AES-256-GCM and a random 96-bit nonce. The value's record id and field name are its associated data, so a sealed value copied to another record or field does not open. The keyring row holds the scrypt parameters, the salt and the wrapped data key. Nothing else derived from the password is stored: a wrong password is detected because the wrapped key fails GCM's check. Changing the password wraps the same data key again under a new salt and rewrites no record. At these parameters scrypt takes 64 MiB and about 0.7 s on a Raspberry Pi 4 (**Verified**, Node 24, against 1.25 s for N = 2^17). That cost is paid once per unlock, and again by every guess. The parameters are read back from the file, so they are checked before scrypt runs: N must be a power of two from 2^14 to 2^20, r from 1 to 32 and p from 1 to 16, using at most 256 MiB. Parameters outside that range are logged with their values and refused with `Conflict("vault-damaged")`, without counting a wrong password. Every buffer that holds a key or an opened value is zeroed once it is used, also when the request fails or is interrupted. An interrupted unlock waits for scrypt to finish, then zeroes the key it gave.
+
+**States.** The vault has four states:
+
+- `uninitialized`: no password exists yet.
+- `locked`.
+- `unlocked`.
+- `newer`: the file records a migration this release does not know, because a newer release wrote it. The server leaves the file as it is, starts anyway, and refuses every vault request with `Conflict("vault-newer")`.
+
+A value that does not open under the data key, or opens but does not decode as what its field holds, means the file was changed or damaged. The request fails with `Conflict("vault-damaged")`, and the server logs an error naming the record and the field, never the value or the decoder's message, which could quote it. Clients show it as damage to restore from a backup, never as a server without a vault.
+
+The vault's migrations are forward only and numbered apart from the database's. The vault starts locked after every server start, including one after an update. Any paired client can unlock it, and the key then stays in memory until a client presses Lock now or the server stops; it is zeroed at either. Nothing locks the vault on a timer. `vault.status` streams the state to every client, with a revision that changes with the saved logins and, while unlocking waits, the time it waits until.
+
+**Unlocking waits.** Five wrong passwords in a row cost nothing more than scrypt's time. Each one after that makes unlocking wait: 30 seconds after the sixth, doubling with each further wrong password, up to an hour. A refused attempt is checked before scrypt runs. The vault's file keeps the count, the last wrong password's time and the time unlocking waits until, so a restart neither resets the count nor ends a wait. The right password resets the count, and so does a day with no wrong one. Each wrong password is logged as a warning with the count, never with the text.
+
+**Credentials.** A credential holds:
+
+- a name;
+- the sites it is for: up to 10 origins;
+- a user name;
+- a password;
+- optionally, a one-time-code key. This is TOTP (RFC 6238) over HOTP (RFC 4226), read from a base32 key or an `otpauth://` address, with SHA-1, SHA-256 or SHA-512, 6 to 8 digits and a period of 15 to 120 seconds. It is computed with `node:crypto` and adds no dependency.
+
+Every one of these values is sealed, the name and the sites included. In the clear, the file holds only:
+
+- record ids and kinds;
+- creation and change times;
+- the ids of the bots allowed to use each login;
+- when each value was last shown, which field it was, and on which device.
+
+`vault.list` returns the logins with none of their values. `vault.reveal` returns one value to the client that asked, and in the same step records the time, the device and the field; the login shows this as when it was last shown. `vault.totpPreview` returns the current code and until when it holds. `allowedBots` records which bots may use a login, none by default. In this release no bot can read one: nothing fills a login into a page or hands a value to a bot.
+
+**The save-login card.** A bot that meets a website login its operator wants kept calls `request_credential`, with the page's origin and a note in its own words. The call puts a save-login card (`credential-request`) in the bot's own conversation, also during a room turn, since only the operator types into it. The bot gets back only that the card is shown. The operator types the login into the card. The client sends it to `vault.save` with the card's id. The server saves the login in the vault, then marks the card as saved, with the login's id and name. The vault is a separate database, so the two steps are not one transaction. The login is saved first, so a retry after a crash between them finds the login saved and still marks the card. `vault.save` carries the id the client chose for the login, so a retry after a lost reply adds nothing. A card that was closed in another way stays closed, and the login is saved anyway, since the operator typed it. A dismissal (`card.answer` with `dismiss`) closes the card. Neither a save nor a dismissal wakes the bot. While the vault is locked or has no password, the card offers unlock or setup in place. A card with any other answer is refused with `Invalid("answer")`.
+
+**Connector secrets.** A connector's secret is one record, `connector:<id>`, with three sealed fields:
+
+- `oauth`: the OAuth client (issuer, whether it was registered dynamically or by the operator, client id, optional client secret, how it authenticates, redirect URIs) and its tokens (access token, optional refresh token, expiry, scopes, resource);
+- `headers`: header values;
+- `env`: environment values.
+
+In the server these are typed records: every token, secret and value is a redacted type. Connectors read and write them through `Vault.connectorSecrets` (`get`, `put` of the whole secret, `remove`). That service is not reachable over RPC, and nothing it does changes the revision clients list logins by. **The master password locks connectors too.** While the vault is locked, every one of these calls fails with `Conflict("vault-locked")`. A connector reports that as its own state, "vault locked", and makes no call to its service until a client unlocks the vault; the status stream says when that happens. After a server restart, every connector waits for that unlock.
+
+**What carries a value.** Values travel as redacted types from the client to the vault and back, both in the contract and in the server, and are decoded as redacted types at the RPC boundary. The client gets a value only from `vault.reveal` and `vault.totpPreview`. No value reaches an entry, a change, a command receipt, a log line, an error or a tool result. None of the vault's requests takes a command id, so no receipt keeps one: `vault.save` is made safe to repeat by the login id it carries instead. A test drives every vault request over the socket and checks that no value appears in any log, error or answer except the one that reveals it.
+
+**Backups.** No update snapshot copies the vault, and no rollback puts an older one back ([decision 0016](../decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md)). A rollback to a release that predates the vault leaves the file in place, and a later update finds it as it was. A release that finds the vault `newer` leaves it alone. A copy of the file is useless without the master password, and so is the operator's data if the password is lost. Exporting the vault re-encrypted under a password of the export's own is planned with the operator's export ([#154](https://github.com/JPSAUD501/j3-bots/issues/154)).
+
 ## Attachments
 
 Files cross the server in both directions as attachments. Bytes and names are stored apart: a **blob** is the bytes, stored once under `<J3_HOME>/attachments` by their SHA-256; an **attachment** is a name and a media type over a blob. The same bytes sent twice, or under two names, are one blob and two attachments.
@@ -329,6 +381,7 @@ The `j3` tools are pre-approved in every permission mode, so they never raise an
 | `remember`, `forget`, `recall` | Write, remove and search memory, in the bot's own scope or the shared one. |
 | `set_routine` | Create, change, pause, resume or delete one of the bot's own routines, by the same commands, checks and routine-change entries as the operator's, with the bot as the author and no approval card. A schedule and a time without an offset, also in an update of a routine whose schedule kept another zone, are read in the operator's zone as it is set at the call: the operator speaks in their own zone. Returns the routine as saved. A webhook routine's address is a credential. It lives in the routine itself, which the operator is shown, also through their live subscription and an operator edit's command receipt; in the stored tool result, which answers a replayed request; and wherever the bot then puts it: the calling system, a private `say` (`to: "dm"` in a room), or a command it runs, whose text shows in that command's work step like any command. The server never adds it to entries, notices or logs on its own. In a routine's side session the only call taken is `pause` of the routine that session runs, so a routine can stop itself once its job is done; every other call is refused. |
 | `request_browser_help` | Ask the operator to do one step in the bot's browser that only they can, on its front tab, as a card. Ends the turn: the server stops it. Refused in a routine's side session, when the bot has no tab open, and on a tab whose last card the operator declined or let run out until they write. See [Help in the browser](#help-in-the-browser). |
+| `request_credential` | Show a save-login card for a site's origin, with a note, in the bot's own conversation. The operator saves the login from the card straight into [the vault](#the-vault); the bot never sees what they type and is not woken when they save. |
 | `list_routines` | The bot's own routines with their ids, instructions, triggers, whether each is paused, and their last runs. |
 | `list_teammates` | Names, titles and jobs of the operator's other bots and the rooms this bot is in. |
 | `create_bot`, `update_bot` | Primary bot only by default: create a teammate with a name and a job, or refine one. |

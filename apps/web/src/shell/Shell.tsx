@@ -373,6 +373,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         ) : (
           <Onboarding
             engine={data.engine}
+            vault={{ view: data.vault, intents: intents.vault }}
             footer={ways}
             providerSetup={
               intents.providerSetup === undefined
@@ -530,6 +531,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   submitting={data.submitting}
                   openingHold={item._tag === "bot" ? openingHeld(item.bot, data.engine) : null}
                   intents={intents}
+                  vault={{ view: data.vault, intents: intents.vault }}
                   arrived={arrived}
                   flyFrom={composerRef}
                   turnBot={

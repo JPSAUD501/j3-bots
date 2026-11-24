@@ -15,6 +15,7 @@ import type {
   SettingsSaves,
   SignInView,
   UpdateResult,
+  VaultView,
 } from "@j3-bots/client-runtime";
 import type {
   AvatarChoice,
@@ -54,6 +55,7 @@ import type {
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { TimelineIntents } from "../components/Timeline";
+import type { VaultIntents } from "../components/vault/VaultForms";
 
 /** One conversation or room as the shell shows it. */
 export interface ConversationView {
@@ -118,6 +120,8 @@ export interface ShellData {
   readonly settingsSaves: SettingsSaves;
   /** Settings is open. */
   readonly settingsOpen: boolean;
+  /** The server's vault: its state, and its saved logins while it is unlocked. */
+  readonly vault: VaultView;
   /** Every paired device; null until they load. */
   readonly devices: ReadonlyArray<Device> | null;
   /** The turns bots spent recently, read while Settings is open. */
@@ -237,6 +241,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly refreshSettings: () => void;
   /** Signs the bots' browser out of every site; resolves with whether it did. */
   readonly signOutBrowser: () => Promise<boolean>;
+  /** Sets up, unlocks, locks and changes the vault and its logins. */
+  readonly vault: VaultIntents;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
   /** Reads more of the recent turns, when `recentTurns` can take more. */

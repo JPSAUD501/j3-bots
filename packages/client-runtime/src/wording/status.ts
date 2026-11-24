@@ -120,6 +120,8 @@ function previewSummary(
       return t(current ? "summary.needsSecret" : "summary.askedSecret", { label: text });
     case "browser-help":
       return t(current ? "summary.needsBrowserHelp" : "summary.askedBrowserHelp", { note: text });
+    case "credential-request":
+      return t("summary.askedLogin", { origin: text });
     case "work-fold":
       return workDoneText(preview.step, preview.ending, ctx.i18n);
     case "notice":

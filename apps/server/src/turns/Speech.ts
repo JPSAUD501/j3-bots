@@ -7,6 +7,7 @@ import {
   MAX_ATTACHMENT_SIZE,
   type MessageEntry,
   RoomId,
+  siteOriginOf,
 } from "@j3-bots/contracts";
 import {
   attachmentLimitViolation,
@@ -160,7 +161,8 @@ type PinnedTool =
   | "request_browser_help"
   | "message_bot"
   | "set_routine"
-  | "set_operator_name";
+  | "set_operator_name"
+  | "request_credential";
 
 /** A request matched to its call, or one a forward of it already committed. */
 type Matched =
@@ -1194,6 +1196,47 @@ export const layer = Layer.effect(
       return result;
     });
 
+    /**
+     * `request_credential` (`docs/architecture/server.md`, The vault): a
+     * save-login card in the bot's own conversation, whatever audience the
+     * turn speaks for, since only the operator types into it. Its values go
+     * from the client to the vault; nothing of them reaches the bot.
+     */
+    const requestCredential = Effect.fn("Speech.requestCredential")(function* (
+      found: Pin,
+      input: ToolInput<"request_credential">,
+    ) {
+      const origin = siteOriginOf(input.origin);
+      if (Option.isNone(origin)) {
+        return yield* new TurnToolRefused({
+          reason:
+            "Nothing was shown: origin must be the http or https address of the page that asks for the login.",
+        });
+      }
+      return yield* once(
+        "request_credential",
+        found,
+      )(
+        Effect.gen(function* () {
+          const target = yield* requireTarget(found.botId, conversation);
+          yield* entries.append({
+            target,
+            entry: {
+              _tag: "credential-request",
+              author: { _tag: "bot", botId: found.botId },
+              origin: origin.value,
+              note: input.note,
+              status: { _tag: "pending" },
+            },
+          });
+          return {
+            status: "shown",
+            note: "Your user saves the login from the card when they choose. Its values never reach you, and nothing wakes you when it is saved.",
+          } satisfies Schema.Json;
+        }),
+      );
+    });
+
     const encodeValues = Schema.encodeEffect(
       json(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
     );
@@ -1225,6 +1268,8 @@ export const layer = Layer.effect(
           return yield* setRoutine(found, call.input, once("set_routine", found));
         case "set_operator_name":
           return yield* setOperatorName(found, call.input);
+        case "request_credential":
+          return yield* requestCredential(found, call.input);
       }
     });
 

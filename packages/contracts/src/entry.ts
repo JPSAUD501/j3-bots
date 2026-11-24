@@ -19,6 +19,7 @@ import {
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
 import { RoutineTrigger } from "./routine.ts";
+import { CredentialId, SiteOrigin } from "./vault.ts";
 import { StepTool } from "./work.ts";
 
 /** Where entries live: a bot's conversation with the operator, or a room. */
@@ -355,6 +356,27 @@ export const BrowserHelpEntry = Schema.TaggedStruct("browser-help", {
 });
 export type BrowserHelpEntry = typeof BrowserHelpEntry.Type;
 
+ * A bot asks the operator to save a login in the vault. The client sends the
+ * values the operator types with `vault.save`, naming this card, straight to
+ * the vault: they never pass through the bot, and this entry has no field for
+ * them. It stays open until the operator saves the login or dismisses it
+ * (`card.answer` with `dismiss`); neither wakes the bot.
+ */
+export const CredentialRequestEntry = Schema.TaggedStruct("credential-request", {
+  ...entry,
+  /** Where the bot needs to sign in, which the card offers to save the login for. */
+  origin: SiteOrigin,
+  /** What the bot says the login is for, in its own words. */
+  note: Schema.String.check(Schema.isMaxLength(500)),
+  status: Schema.Union([
+    Schema.TaggedStruct("pending", {}),
+    /** Saved as the login `credentialId`, under the name the operator gave it then. */
+    Schema.TaggedStruct("saved", { credentialId: CredentialId, name: Label }),
+    Schema.TaggedStruct("dismissed", {}),
+  ]),
+});
+export type CredentialRequestEntry = typeof CredentialRequestEntry.Type;
+
 /** How a turn ended, as the work fold shows it. */
 export const TurnEnding = Schema.Literals(["completed", "interrupted", "failed"]);
 export type TurnEnding = typeof TurnEnding.Type;
@@ -621,6 +643,7 @@ export const Entry = Schema.Union([
   ApprovalEntry,
   SecretRequestEntry,
   BrowserHelpEntry,
+  CredentialRequestEntry,
   WorkFoldEntry,
   NoticeEntry,
   HandoffEntry,
@@ -670,6 +693,7 @@ export const ReceivedEntry = Schema.Union([
   ApprovalEntry,
   SecretRequestEntry,
   BrowserHelpEntry,
+  CredentialRequestEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
   HandoffEntry,
@@ -684,7 +708,7 @@ export const PREVIEW_LENGTH = 200;
 /**
  * The text an entry leads with, which its preview carries: the message, the
  * first question, the action, what is asked for (a credential's label, a
- * browser step's note), the routine's name; empty
+ * browser step's note), the site a login is asked for, the routine's name; empty
  * for an entry with no text of its own.
  */
 export const entryText = (entry: Entry): string => {
@@ -700,6 +724,8 @@ export const entryText = (entry: Entry): string => {
       return entry.label;
     case "browser-help":
       return entry.note;
+    case "credential-request":
+      return entry.origin;
     case "routine-change":
       return entry.name;
     case "work-fold":

@@ -131,12 +131,14 @@ import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
 import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
+import { CredentialRequestCard } from "../components/CredentialRequestCard";
 import { SecretRequestCard } from "../components/SecretRequestCard";
 import { ShareTemplateContent, TemplateForm } from "../components/TemplateDialogs";
 import { Timeline, type TimelineIntents } from "../components/Timeline";
 import { EngineSection } from "../components/SettingsDialog";
 import type { LocalProviderSetup } from "../components/ProviderSetup";
 import { UsageSection } from "../components/UsageSection";
+import { VaultSection } from "../components/vault/VaultSection";
 import { WorkFold } from "../components/WorkFold";
 import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
@@ -154,6 +156,7 @@ import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
 import { useSampleSource } from "./sampleSource";
+import { SAMPLE_VAULT_PASSWORD, useSampleVault } from "./sampleVault";
 import { galleryVariants } from "./variants";
 import {
   appPhases,
@@ -239,6 +242,7 @@ export default function GalleryPage() {
                 <TemplatesSection />
                 <RoomsSection />
                 <EngineSettingsSection />
+                <VaultGallerySection />
                 <UsageGallerySection />
                 <FirstRunSection />
                 <LocalFirstRunSection />
@@ -926,6 +930,7 @@ const timelineIntents: TimelineIntents = {
   declineSecret: nothing,
   answerBrowserHelp: nothing,
   openBrowser: nothing,
+  dismissLogin: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
   openWorkFold: nothing,
@@ -942,6 +947,7 @@ const workSteps = (entryId: string) => team.workSteps[entryId] ?? null;
 const notSubmitting = () => false;
 
 function BubblesSection() {
+  const galleryVault = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
   const { bubbles } = variants;
   const { t } = useI18n();
   return (
@@ -1039,6 +1045,7 @@ function BubblesSection() {
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
+            vault={galleryVault}
             turnBot={{ bot: team.bots.scout, lastEntry: null }}
           />
         </div>
@@ -1051,6 +1058,7 @@ function BubblesSection() {
             workSteps={workSteps}
             submitting={notSubmitting}
             intents={timelineIntents}
+            vault={galleryVault}
           />
         </div>
       </Labeled>
@@ -1078,6 +1086,11 @@ function CardsSection() {
       <Labeled label="Approval becoming exact while it waits: the change arrives after the summary, and focus in the summary moves to it">
         <ApprovalBecomingExact />
       </Labeled>
+      <Labeled
+        label={`Save a login: with no vault password, locked (the password is “${SAMPLE_VAULT_PASSWORD}”), unlocked, saved, dismissed`}
+      >
+        <LoginCards />
+      </Labeled>
       <Labeled label="Credential: pending with a link, provided, declined, expired">
         <div className="flex flex-col gap-3">
           {variants.secrets.map((entry) => (
@@ -1104,6 +1117,25 @@ function CardsSection() {
         </div>
       </Labeled>
     </Section>
+  );
+}
+
+/** A bot's save-login card in each state, each with a vault of its own. */
+function LoginCards() {
+  const uninitialized = useSampleVault({ state: "uninitialized", now: () => SAMPLE_NOW });
+  const locked = useSampleVault({ state: "locked", now: () => SAMPLE_NOW });
+  const unlocked = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
+  const [first, ...closed] = variants.logins;
+  if (first === undefined) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      <CredentialRequestCard entry={first} vault={uninitialized} onDismiss={nothing} />
+      <CredentialRequestCard entry={first} vault={locked} onDismiss={nothing} />
+      <CredentialRequestCard entry={first} vault={unlocked} onDismiss={nothing} />
+      {closed.map((entry) => (
+        <CredentialRequestCard key={entry.id} entry={entry} vault={unlocked} onDismiss={nothing} />
+      ))}
+    </div>
   );
 }
 
@@ -2167,6 +2199,40 @@ function EngineSettingsSection() {
   );
 }
 
+function VaultGallerySection() {
+  const now = () => SAMPLE_NOW;
+  const none = useSampleVault({ state: "uninitialized", now });
+  const locked = useSampleVault({ state: "locked", now });
+  const unlocked = useSampleVault({ state: "unlocked", now, credentials: variants.credentials });
+  const empty = useSampleVault({ state: "unlocked", now });
+  const newer = useSampleVault({ state: "newer", now });
+  return (
+    <Section title="Settings: the vault">
+      <div className="flex flex-wrap gap-4">
+        <Frame label="No password yet" width={420} height={360}>
+          <VaultSection vault={none} />
+        </Frame>
+        <Frame
+          label={`Locked (the password is “${SAMPLE_VAULT_PASSWORD}”)`}
+          width={420}
+          height={260}
+        >
+          <VaultSection vault={locked} />
+        </Frame>
+        <Frame label="Unlocked, with saved logins" width={420} height={760}>
+          <VaultSection vault={unlocked} />
+        </Frame>
+        <Frame label="Unlocked, with none saved" width={420} height={220}>
+          <VaultSection vault={empty} />
+        </Frame>
+        <Frame label="Changed by a newer release" width={420} height={140}>
+          <VaultSection vault={newer} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
 function UsageGallerySection() {
   const usage = (
     engine: EngineStatus | null,
@@ -2263,9 +2329,11 @@ function FirstRunAt({
   engine?: EngineStatus | null;
   providerSetup?: LocalProviderSetup;
 }) {
+  const vault = useSampleVault({ state: "uninitialized", now: () => SAMPLE_NOW });
   return (
     <Onboarding
       engine={engine}
+      vault={vault}
       initialStep={step}
       initialName="Nova"
       providerSetup={providerSetup}
@@ -2287,8 +2355,15 @@ function FirstRunSection() {
         <Frame label="The first bot's name, with a default" width={390} height={760}>
           <FirstRunAt step="name" />
         </Frame>
-        <Frame label="Its look; with a provider, this step creates it" width={390} height={760}>
+        <Frame label="Its look" width={390} height={760}>
           <FirstRunAt step="look" />
+        </Frame>
+        <Frame
+          label="The vault's password, skippable; with a provider, this step creates the bot"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="vault" />
         </Frame>
         <Frame label="No provider connected: one command, live" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.connect} />

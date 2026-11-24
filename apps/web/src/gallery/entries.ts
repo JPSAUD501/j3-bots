@@ -33,6 +33,8 @@ function previewText(entry: Entry): string {
       return entry.label;
     case "browser-help":
       return entry.note;
+    case "credential-request":
+      return entry.origin;
     case "routine-change":
       return entry.name;
     case "work-fold":

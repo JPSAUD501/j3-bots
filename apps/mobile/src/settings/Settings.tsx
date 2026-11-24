@@ -25,6 +25,7 @@ import { usePhoneNotifications } from "./phoneNotifications.ts";
 import { NotificationsSection, YouSection } from "./Profile.tsx";
 import { ServerSection, ThisPhoneSection } from "./ThisPhone.tsx";
 import { UsageSection } from "./Usage.tsx";
+import { VaultSection } from "../vault/VaultSection.tsx";
 
 /**
  * Everything that is not about one bot. Coming to it reads the settings and
@@ -68,9 +69,10 @@ export function SettingsScreen() {
         paddingBottom: insets.bottom + 16,
       }}
     >
-      {/* The operator's own settings first, then the engine and what it spent, as on the web. */}
+      {/* The operator's own settings and vault first, then the engine and what it spent, as on the web. */}
       <YouSection connected={connected} />
       <NotificationsSection connected={connected} thisPhone={thisPhone} />
+      <VaultSection />
       <EngineSection engine={engine} stale={engineStale} />
       <UsageSection
         engine={engine}

@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type BotId,
   type CommandId,
   Conflict,
+  type Credential,
+  type CredentialDraft,
+  type CredentialId,
+  type CredentialRequestEntry,
   type Entry,
   EntryId,
   Invalid,
@@ -34,6 +39,7 @@ import { SettingsStore } from "../settings/SettingsStore.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
 import { Ids } from "../Ids.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { Vault } from "../vault/Vault.ts";
 import { askAnswer, fitsAlone, operatorZone, WIDEST_ROOM_NAME } from "./envelopes.ts";
 import { keyedLock } from "./keyedLock.ts";
 import { Ledger } from "./Ledger.ts";
@@ -173,6 +179,18 @@ export class Cards extends Context.Service<
       readonly entryId: EntryId;
       readonly answer: SecretAnswer;
     }) => Effect.Effect<void, NotFound | Conflict | Invalid>;
+    /**
+     * Saves a login in the vault, as `vault.save` does, and with `request`
+     * shows that bot's save-login card as saved. The card must be one; a card
+     * already closed another way stays as it is, and the login is saved all
+     * the same, since the operator typed it.
+     */
+    readonly saveCredential: (input: {
+      readonly id: CredentialId;
+      readonly draft: CredentialDraft;
+      readonly allowedBots: ReadonlyArray<BotId>;
+      readonly request: EntryId | null;
+    }) => Effect.Effect<Credential, NotFound | Conflict | Invalid>;
     /** Sends every recorded answer the engine has not taken, whose request is still open. */
     readonly respondPending: Effect.Effect<void>;
     /** Learns, for each submission marker a crash or a lost reply left, whether its card closed. */
@@ -196,6 +214,7 @@ export const layer = Layer.effect(
     const targetOf = liveTarget(sql);
     const readiness = yield* Readiness;
     const settings = yield* SettingsStore;
+    const vault = yield* Vault;
     const transaction = transactional(sql);
     const { sessionLost } = sessionLoss(sql, entries, yield* Ledger, yield* WorkSteps, signals);
 
@@ -314,6 +333,53 @@ export const layer = Layer.effect(
       yield* sql.afterCommit(signals.responses.fire);
     });
 
+    /**
+     * A save-login card takes only a dismissal through `card.answer`: its
+     * values go to the vault with `vault.save`. Neither wakes the bot.
+     */
+    const dismissLogin = Effect.fn("Cards.dismissLogin")(function* (
+      card: CredentialRequestEntry,
+      answer: CardAnswer,
+    ) {
+      if (card.status._tag !== "pending") return yield* new Conflict({ reason: "card-closed" });
+      if (answer._tag !== "dismiss") return yield* new Invalid({ reason: "answer" });
+      yield* entries.update({ ...card, status: { _tag: "dismissed" } });
+    });
+
+    const saveCredential = Effect.fn("Cards.saveCredential")(function* (input: {
+      readonly id: CredentialId;
+      readonly draft: CredentialDraft;
+      readonly allowedBots: ReadonlyArray<BotId>;
+      readonly request: EntryId | null;
+    }) {
+      const request = input.request;
+      if (request !== null) {
+        const found = yield* entries.find(request);
+        if (Option.isNone(found) || found.value.entry._tag !== "credential-request") {
+          return yield* new NotFound({ resource: "entry" });
+        }
+      }
+      // The vault is another database: the login is saved first, and the
+      // card marked after, so a retry of the same login after a crash between
+      // the two still marks it.
+      const { credential } = yield* vault.save(input);
+      if (request !== null) {
+        yield* transaction(
+          Effect.gen(function* () {
+            const found = yield* entries.find(request);
+            if (Option.isNone(found)) return;
+            const card = found.value.entry;
+            if (card._tag !== "credential-request" || card.status._tag !== "pending") return;
+            yield* entries.update({
+              ...card,
+              status: { _tag: "saved", credentialId: credential.id, name: credential.name },
+            });
+          }),
+        );
+      }
+      return credential;
+    });
+
     const answer = Effect.fn("Cards.answer")(function* (input: {
       readonly commandId: CommandId;
       readonly entryId: EntryId;
@@ -333,6 +399,7 @@ export const layer = Layer.effect(
           if (card._tag === "question" && card.origin === "ask") {
             return yield* answerAsk(card, input.answer);
           }
+          if (card._tag === "credential-request") return yield* dismissLogin(card, input.answer);
           return yield* answerRequest(input.entryId, input.commandId, input.answer);
         }),
       });
@@ -603,6 +670,7 @@ export const layer = Layer.effect(
     return Cards.of({
       answer,
       provideSecret,
+      saveCredential,
       respondPending,
       checkSubmissions,
       run,

@@ -17,5 +17,6 @@ export * from "./rpc.ts";
 export * from "./section.ts";
 export * from "./settings.ts";
 export * from "./template.ts";
+export * from "./vault.ts";
 export * from "./work.ts";
 export * from "./update.ts";

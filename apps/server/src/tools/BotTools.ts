@@ -103,6 +103,9 @@ export const layer = Layer.effect(
       set_operator_name: handler(tools.set_operator_name.input, (input, call) =>
         admit({ tool: "set_operator_name", input, ...call }),
       ),
+      request_credential: handler(tools.request_credential.input, (input, call) =>
+        admit({ tool: "request_credential", input, ...call }),
+      ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory
           .remember({

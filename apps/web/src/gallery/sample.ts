@@ -17,6 +17,7 @@ import {
   RoutineId,
   RoutineRunId,
   SectionId,
+  SiteOrigin,
   TimeZone,
   WorkStepId,
   type Attachment,
@@ -552,6 +553,15 @@ export function sampleTeam(now: DateTime.Utc) {
       "Thursday is clear after 10. I moved the car inspection to 3:30 like you asked.",
     ),
     message(operator, ago(60 * 5 - 2), "Thanks"),
+    {
+      _tag: "credential-request",
+      id: EntryId.make("otto-l1"),
+      author: by(ids.otto),
+      createdAt: ago(60 * 5 - 3),
+      origin: SiteOrigin.make("https://inspections.example"),
+      note: "The inspection site wants a login to change the booking. Save it, and next time I can check it there.",
+      status: { _tag: "pending" },
+    },
   ];
 
   const roomEntries: DraftEntry[] = [

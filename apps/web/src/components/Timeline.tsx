@@ -29,6 +29,7 @@ import { useBots, useI18n } from "../app/context";
 import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
+import { CredentialRequestCard } from "./CredentialRequestCard";
 import { HandoffCard } from "./HandoffCard";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
@@ -37,6 +38,7 @@ import { RoutineChangeCard } from "./RoutineChangeCard";
 import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimeDivider } from "./TimeDivider";
+import type { VaultAccess } from "./vault/VaultForms";
 import { type TurnBot, WorkFold } from "./WorkFold";
 
 /** What the operator can do from a timeline. Each is an intent; the client runtime carries it out. */
@@ -50,6 +52,8 @@ export interface TimelineIntents {
   readonly answerBrowserHelp: (entryId: EntryId, outcome: "done" | "declined") => void;
   /** Opens the bot's browser on `tab`, or on its front tab once that one closed. */
   readonly openBrowser: (botId: BotId, tab: BrowserTabRef | "front") => void;
+  /** Closes a save-login card without saving; saving goes to the vault itself. */
+  readonly dismissLogin: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
   /**
@@ -87,6 +91,8 @@ interface TimelineProps {
   /** What holds the bot's hello back, which the operator's messages behind it wait for (`openingHeld`). */
   readonly openingHold?: OpeningHold | null;
   readonly intents: TimelineIntents;
+  /** The vault, which a save-login card saves to, and unlocks or sets up in place. */
+  readonly vault: VaultAccess;
   /** The rows that just arrived at the end, by key: they settle into place as they mount. */
   readonly arrived?: ReadonlySet<string>;
   /** Where the operator's messages fly from as they arrive: the composer's field. */
@@ -111,6 +117,7 @@ export function Timeline({
   submitting,
   openingHold = null,
   intents,
+  vault,
   arrived,
   flyFrom,
   turnBot = null,
@@ -231,7 +238,7 @@ export function Timeline({
         const { entry } = item;
         return (
           <div key={item.key} data-seen-id={entry.id} className={settles}>
-            <Card entry={entry} submitting={submitting} intents={intents} />
+            <Card entry={entry} submitting={submitting} intents={intents} vault={vault} />
           </div>
         );
       })}
@@ -244,10 +251,12 @@ function Card({
   entry,
   submitting,
   intents,
+  vault,
 }: {
   entry: Exclude<Entry, MessageEntry | WorkFoldEntry>;
   submitting: TimelineProps["submitting"];
   intents: TimelineIntents;
+  vault: VaultAccess;
 }) {
   switch (entry._tag) {
     case "question":
@@ -283,6 +292,15 @@ function Card({
           onOpen={() => intents.openBrowser(entry.author.botId, entry.tab)}
           onDone={() => intents.answerBrowserHelp(entry.id, "done")}
           onDecline={() => intents.answerBrowserHelp(entry.id, "declined")}
+          submitting={submitting(entry.id)}
+        />
+      );
+    case "credential-request":
+      return (
+        <CredentialRequestCard
+          entry={entry}
+          vault={vault}
+          onDismiss={() => intents.dismissLogin(entry.id)}
           submitting={submitting(entry.id)}
         />
       );

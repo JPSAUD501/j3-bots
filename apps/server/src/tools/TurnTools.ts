@@ -14,6 +14,7 @@ const TurnToolName = Schema.Literals([
   "message_bot",
   "set_routine",
   "set_operator_name",
+  "request_credential",
 ]);
 type TurnToolName = typeof TurnToolName.Type;
 
@@ -62,7 +63,8 @@ export type TurnToolCall = {
  * the bot's browser, `message_bot` wakes or holds for a teammate,
  * `set_routine` changes a routine on the bot's behalf, and
  * `set_operator_name` saves what the operator asked to be called, only in a
- * turn they spoke in. Each call is first
+ * turn they spoke in, and `request_credential` shows a save-login card in the
+ * bot's conversation. Each call is first
  * matched to the engine's record of it in the session's admitted turn
  * (`docs/architecture/server.md`, Bot tools). The layer is the turn
  * machinery's (`turns/Speech.ts`).

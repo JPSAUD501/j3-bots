@@ -4,7 +4,13 @@
  * are decided, bots answer after a moment. A stand-in for the client runtime
  * in development only; nothing here reaches a server.
  */
-import type { Draft, DraftFile, SettingsSaves } from "@j3-bots/client-runtime";
+import type {
+  Draft,
+  DraftFile,
+  SettingsSaves,
+  VaultHandle,
+  VaultView,
+} from "@j3-bots/client-runtime";
 import {
   fittedMarks,
   hasDefaultModel,
@@ -47,6 +53,7 @@ import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
 import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleBrowser } from "./sampleBrowser";
+import { sampleVault } from "./sampleVault";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** Cards whose answer is on its way, as it would be to a server. */
@@ -215,7 +222,7 @@ const withoutBots = (state: State): State => ({
   memory: {},
 });
 
-function sampleIntents({ get, update }: Store): ShellIntents {
+function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents {
   /** The bot thinks for a moment, then says `text` in `key`. */
   const replyLater = (botId: BotId, key: string, text: string) => {
     update((s) =>
@@ -401,6 +408,13 @@ function sampleIntents({ get, update }: Store): ShellIntents {
       ),
     // The sample has no browser to open.
     openBrowser: nothing,
+    // Neither wakes the bot, which says nothing.
+    dismissLogin: (entryId) =>
+      update((s) =>
+        updateEntry(s, entryId, (e) =>
+          e._tag === "credential-request" ? { ...e, status: { _tag: "dismissed" } } : e,
+        ),
+      ),
     retryNotice: (entryId) =>
       update((s) =>
         updateEntry(s, entryId, (e) => (e._tag === "notice" ? { ...e, retryable: false } : e)),
@@ -664,6 +678,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
     freshStart: nothing,
     refreshSettings: nothing,
     signOutBrowser: () => Promise.resolve(true),
+    vault,
     refreshDevices: nothing,
     loadMoreTurns: nothing,
     retryTurns: nothing,
@@ -671,7 +686,7 @@ function sampleIntents({ get, update }: Store): ShellIntents {
   };
 }
 
-function toData(state: State): ShellData {
+function toData(state: State, vault: VaultView): ShellData {
   return {
     engine: state.engine,
     engineStale: false,
@@ -706,6 +721,7 @@ function toData(state: State): ShellData {
     },
     connected: true,
     signInUnencrypted: false,
+    vault,
   };
 }
 
@@ -729,11 +745,30 @@ export function useSampleSource({
     const started = firstRun ? withoutBots(team) : team;
     return createStore(engine === undefined ? started : { ...started, engine });
   });
+  // A login saved from a card closes it as the server would.
+  const [vault] = useState(() =>
+    sampleVault({
+      state: firstRun ? "uninitialized" : "locked",
+      now,
+      onSaved: (request, credential) =>
+        store.update((s) =>
+          updateEntry(s, request, (e) =>
+            e._tag === "credential-request"
+              ? {
+                  ...e,
+                  status: { _tag: "saved", credentialId: credential.id, name: credential.name },
+                }
+              : e,
+          ),
+        ),
+    }),
+  );
   const state = useSyncExternalStore(store.subscribe, store.get);
-  const intents = useMemo(() => sampleIntents(store), [store]);
+  const vaultView = useSyncExternalStore(vault.view.subscribe, vault.view.get);
+  const intents = useMemo(() => sampleIntents(store, vault), [store, vault]);
   // Scout shops in its browser.
   const [browser] = useState(() => sampleBrowser([ids.scout]));
-  return { data: toData(state), intents, browser };
+  return { data: toData(state, vaultView), intents, browser };
 }
 
 /**

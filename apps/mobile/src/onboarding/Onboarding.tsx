@@ -3,13 +3,15 @@ import {
   defaultBotName,
   makingProgress,
   nextStep,
+  type OnboardingFlow,
   type OnboardingStep,
   previousStep,
   providerGate,
   showsConnect,
+  showsVault,
 } from "@j3-bots/client-runtime/presentation";
-import { refusedWith } from "@j3-bots/client-runtime";
-import { useEngineStatus, useJ3Client } from "@j3-bots/client-runtime/react";
+import { refusedWith, type VaultHandle, type VaultView } from "@j3-bots/client-runtime";
+import { useEngineStatus, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { connectStepText } from "@j3-bots/client-runtime/wording";
 import {
   type AvatarChoice,
@@ -59,6 +61,8 @@ import { CommandLine } from "../components/CommandLine.tsx";
 import { useTint } from "../conversation/tint.ts";
 import { PressScale } from "../press.tsx";
 import { displaySpacing, Text, TextInput } from "../text.tsx";
+import { SetupVaultForm } from "../vault/VaultForms.tsx";
+import { Button } from "../ui.tsx";
 import { BigButton, bigFieldClass, Cast, StepTitle } from "./parts.tsx";
 
 const pop = reanimatedSpring(springs.pop);
@@ -129,6 +133,7 @@ export function Onboarding({
   const client = useJ3Client();
   const status = useEngineStatus();
   const engine = status._tag === "ready" ? status.value : null;
+  const vaultView = useReadable(client.vault.view);
   const reduced = useReducedMotion();
   const [fallbackName] = useState(() => defaultBotName(ExpoCrypto.getRandomBytes(1)[0] ?? 0));
   const [name, setName] = useState(fallbackName);
@@ -141,15 +146,21 @@ export function Onboarding({
   const [failure, setFailure] = useState<Failure | null>(null);
   // Whether the connect step was shown: from then on it stays in the flow (`showsConnect`).
   const [connectShown, setConnectShown] = useState(false);
+  // Likewise the vault step, so creating the password does not take it away under the operator.
+  const [vaultShown, setVaultShown] = useState(false);
   // Whether the bot exists: the arrival names it only then.
   const [created, setCreated] = useState(false);
   const [pokes, setPokes] = useState(0);
   const { step } = view;
   const botName = name.trim() === "" ? fallbackName : name.trim();
-  const connect = showsConnect(engine, connectShown);
+  const flow: OnboardingFlow = {
+    vault: showsVault(vaultView, vaultShown),
+    connect: showsConnect(engine, connectShown),
+  };
 
   const go = (to: OnboardingStep, direction: Direction) => {
     if (to === "connect") setConnectShown(true);
+    if (to === "vault") setVaultShown(true);
     setView((now) => ({ step: to, direction, move: now.move + 1 }));
     if (to !== "welcome") setPokes((count) => count + 1);
   };
@@ -173,23 +184,23 @@ export function Onboarding({
   };
 
   const forward = () => {
-    const to = nextStep(step, connect);
+    const to = nextStep(step, flow);
     if (to === null) return;
     if (to === "arrival") create();
     else go(to, "forward");
   };
   const back = () => {
-    const to = previousStep(step, connect);
+    const to = previousStep(step, flow);
     if (to !== null) go(to, "back");
   };
-  const canGoBack = previousStep(step, connect) !== null;
-  const progress = makingProgress(step, connect);
+  const canGoBack = previousStep(step, flow) !== null;
+  const progress = makingProgress(step, flow);
 
   // The system's Back goes to the step before, as the one on screen does, and
   // does nothing while the bot arrives; from the welcome it leaves the app.
   const onSystemBack = useEffectEvent((): boolean => {
     if (step === "arrival") return true;
-    if (previousStep(step, connect) === null) return false;
+    if (previousStep(step, flow) === null) return false;
     back();
     return true;
   });
@@ -225,7 +236,19 @@ export function Onboarding({
             setLook(next);
             setPokes((count) => count + 1);
           }}
-          ready={!connect}
+          ready={nextStep("look", flow) === "arrival"}
+          failure={failure}
+          onContinue={forward}
+        />
+      );
+      break;
+    case "vault":
+      screen = (
+        <VaultStep
+          view={vaultView}
+          vault={client.vault}
+          name={botName}
+          creates={nextStep("vault", flow) === "arrival"}
           failure={failure}
           onContinue={forward}
         />
@@ -526,6 +549,62 @@ function FailureLine({
     >
       {t(failure === "no-model" ? "onboarding.failedNoModel" : "onboarding.failed", { name })}
     </Text>
+  );
+}
+
+/**
+ * The vault's master password, created before the first bot so a login it
+ * asks for can be saved straight away. It can wait: Skip moves on, and the
+ * vault is set up later from Settings or from the first save-login card.
+ */
+function VaultStep({
+  view,
+  vault,
+  name,
+  creates,
+  failure,
+  onContinue,
+}: {
+  readonly view: VaultView;
+  readonly vault: VaultHandle;
+  readonly name: string;
+  /** Whether the next step is the arrival, so moving on creates the bot. */
+  readonly creates: boolean;
+  readonly failure: Failure | null;
+  readonly onContinue: () => void;
+}) {
+  const { t } = useI18n();
+  const set = view._tag === "ready" && view.status.state !== "uninitialized";
+  const next = creates ? t("onboarding.create", { name }) : t("onboarding.continue");
+  return (
+    <StepFrame
+      actions={
+        <>
+          {creates && <FailureLine failure={failure} name={name} />}
+          {set && <BigButton label={next} onPress={onContinue} />}
+        </>
+      }
+    >
+      <StepTitle>{t("onboarding.vault.title")}</StepTitle>
+      <Text className="max-w-xs text-center text-lg text-muted-foreground">
+        {t("onboarding.vault.body")}
+      </Text>
+      {set ? (
+        <Text accessibilityLiveRegion="polite" className="text-sm font-medium text-success">
+          {t("onboarding.vault.done")}
+        </Text>
+      ) : (
+        <View className="mt-2 w-full max-w-80">
+          <SetupVaultForm
+            vault={vault}
+            onDone={onContinue}
+            actions={
+              <Button variant="quiet" label={t("onboarding.vault.skip")} onPress={onContinue} />
+            }
+          />
+        </View>
+      )}
+    </StepFrame>
   );
 }
 
