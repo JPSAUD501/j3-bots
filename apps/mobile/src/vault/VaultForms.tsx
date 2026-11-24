@@ -9,10 +9,12 @@ import * as Schema from "effect/Schema";
 import { type ReactNode, useState } from "react";
 import { View } from "react-native";
 import { Problem } from "../components/form.tsx";
+import { QrScanner } from "../components/QrScanner.tsx";
 import { useI18n } from "../i18n.ts";
 import { usePresentation } from "../presentation.tsx";
 import { Text, TextInput } from "../text.tsx";
 import { Button } from "../ui.tsx";
+import { totpAddressOf } from "./totpQr.ts";
 
 const decodePassword = Schema.decodeUnknownOption(MasterPassword);
 
@@ -43,7 +45,7 @@ export function SecretField({
   readonly onChange: (value: string) => void;
   readonly invalid?: boolean;
   readonly editable?: boolean;
-  readonly onSubmit?: () => void;
+  readonly onSubmit?: (() => void) | undefined;
 }) {
   return (
     <View className="gap-1">
@@ -65,6 +67,73 @@ export function SecretField({
         onSubmitEditing={onSubmit}
         className={`min-h-11 rounded-md border bg-muted px-3 text-base text-foreground ${invalid ? "border-blocked" : "border-transparent"}`}
       />
+    </View>
+  );
+}
+
+/**
+ * A login's one-time code key: pasted, or read from the QR code the site
+ * shows, which fills the field with the address it carries. `hint` says what
+ * the key is, until a scan says where it came from.
+ */
+export function TotpField({
+  label,
+  hint,
+  value,
+  onChange,
+  editable = true,
+  onSubmit,
+}: {
+  readonly label: string;
+  readonly hint: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly editable?: boolean;
+  readonly onSubmit?: () => void;
+}) {
+  const { t } = useI18n();
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  return (
+    <View className="gap-2">
+      <SecretField
+        label={label}
+        value={value}
+        onChange={(typed) => {
+          setScanned(false);
+          onChange(typed);
+        }}
+        editable={editable}
+        onSubmit={onSubmit}
+      />
+      <Text accessibilityLiveRegion="polite" className="text-xs text-muted-foreground">
+        {scanned ? t("totp.scanned") : hint}
+      </Text>
+      <View className="flex-row">
+        <Button
+          variant="outline"
+          label={t("totp.scan")}
+          disabled={!editable}
+          onPress={() => setScanning(true)}
+        />
+      </View>
+      {scanning && (
+        <QrScanner
+          decode={totpAddressOf}
+          words={{
+            title: t("totp.scan.title"),
+            wrongCode: t("totp.scan.notKey"),
+            refused: t("totp.scan.refused"),
+            denied: t("totp.scan.denied"),
+          }}
+          onClose={() => setScanning(false)}
+          onScanned={(address) => {
+            setScanning(false);
+            setScanned(true);
+            onChange(address);
+          }}
+        />
+      )}
     </View>
   );
 }
@@ -153,6 +222,77 @@ export function SetupVaultForm({
       <View className="flex-row flex-wrap items-center justify-end gap-2">
         {actions}
         <Button variant="primary" label={t("vault.create")} onPress={submit} held={busy} />
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Replaces the master password: the current one, then the new one twice,
+ * with the line that says nobody can give it back.
+ */
+export function ChangePasswordForm({
+  vault,
+  onDone,
+  onCancel,
+}: {
+  readonly vault: VaultHandle;
+  readonly onDone: () => void;
+  readonly onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const failureText = useVaultFailureText();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const [tried, setTried] = useState(false);
+  const { busy, failure, run } = useVaultRequest();
+  // No master password is shorter than the minimum, so a shorter current one is wrong.
+  const wrongCurrent = current.length < MIN_MASTER_PASSWORD_LENGTH;
+  const short = next.length < MIN_MASTER_PASSWORD_LENGTH;
+  const mismatch = again !== next;
+  const problem = !tried
+    ? null
+    : wrongCurrent
+      ? t("vault.wrong")
+      : short
+        ? t("vault.tooShort", { count: MIN_MASTER_PASSWORD_LENGTH })
+        : mismatch
+          ? t("vault.mismatch")
+          : null;
+  const submit = () => {
+    setTried(true);
+    const was = masterPassword(current);
+    const becomes = masterPassword(next);
+    if (mismatch || Option.isNone(was) || Option.isNone(becomes)) return;
+    run(() => vault.changePassword(was.value, becomes.value), onDone);
+  };
+  return (
+    <View className="gap-3">
+      <SecretField
+        label={t("vault.current")}
+        value={current}
+        onChange={setCurrent}
+        invalid={(tried && wrongCurrent) || failure !== null}
+      />
+      <SecretField
+        label={t("vault.next")}
+        value={next}
+        onChange={setNext}
+        invalid={tried && short}
+      />
+      <SecretField
+        label={t("vault.confirm")}
+        value={again}
+        onChange={setAgain}
+        invalid={tried && !short && mismatch}
+        onSubmit={submit}
+      />
+      <Text className="text-xs text-muted-foreground">{t("vault.noRecovery")}</Text>
+      <Problem>{problem ?? (failure === null ? null : failureText(failure))}</Problem>
+      <View className="flex-row flex-wrap items-center justify-end gap-2">
+        <Button label={t("vault.cancel")} onPress={onCancel} />
+        <Button variant="primary" label={t("vault.changePassword")} onPress={submit} held={busy} />
       </View>
     </View>
   );

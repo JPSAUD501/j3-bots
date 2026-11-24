@@ -224,6 +224,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
   /** Gives the bot the browser, or takes it away; the shell says so if it was not saved. */
   readonly setBrowser: (bot: Bot, enabled: boolean) => void;
+  /** Lets the bot have its allowed logins filled, or stops it; the shell says so if it was not saved. */
+  readonly setVault: (bot: Bot, enabled: boolean) => void;
   /** `name` is the bot's as the operator asked, for what the shell says once it is done. */
   readonly freshStart: (botId: BotId, name: string) => void;
   readonly deleteBot: (botId: BotId) => void;

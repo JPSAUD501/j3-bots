@@ -54,7 +54,7 @@ export {
 export { windowText, type WindowText } from "./usage.ts";
 export { type Announcement, turnAnnouncement, turnLabel, turnLine } from "./turn.ts";
 export { unlockWaitsUntil, vaultFailureText } from "./vault.ts";
-export { stepText, workFoldTitle } from "./work.ts";
+export { fillDetail, stepText, workFoldTitle } from "./work.ts";
 export {
   type ServerUpdateLine,
   serverUpdateLine,

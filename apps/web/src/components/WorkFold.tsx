@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Collapsible } from "@base-ui/react/collapsible";
-import type { Bot, EntryPreview, WorkFoldEntry, WorkStep } from "@j3-bots/contracts";
+import type {
+  Bot,
+  CredentialFill,
+  EntryPreview,
+  WorkFoldEntry,
+  WorkStep,
+} from "@j3-bots/contracts";
 import {
   BotIcon,
   CheckIcon,
@@ -26,7 +32,13 @@ import { useSeconds } from "../app/clock";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
-import { stepText, turnLabel, turnLine, workFoldTitle } from "@j3-bots/client-runtime/wording";
+import {
+  fillDetail,
+  stepText,
+  turnLabel,
+  turnLine,
+  workFoldTitle,
+} from "@j3-bots/client-runtime/wording";
 import { LiveBotAvatar, useOffline } from "./avatar/mood";
 import { CodeLines } from "./CodeLines";
 import { toneClass } from "./RosterRow";
@@ -155,6 +167,8 @@ export function WorkFold({
                       <span className="min-w-0 flex-1 font-mono text-2xs whitespace-pre-wrap wrap-anywhere">
                         <CodeLines text={step.label} />
                       </span>
+                    ) : step.fill !== undefined ? (
+                      <FillLine step={step} fill={step.fill} />
                     ) : (
                       <span className="min-w-0 flex-1 wrap-break-word">
                         {stepText(step, ctx.i18n)}
@@ -169,6 +183,25 @@ export function WorkFold({
         </Collapsible.Panel>
       )}
     </Collapsible.Root>
+  );
+}
+
+/**
+ * A login's fill: which login and field, then where it was filled, or why it
+ * was not, in the blocked tone, with the page's origin as the server checked it.
+ */
+function FillLine({ step, fill }: { readonly step: WorkStep; readonly fill: CredentialFill }) {
+  const { i18n } = usePresentation();
+  const detail = fillDetail(fill, i18n);
+  return (
+    <span className="flex min-w-0 flex-1 flex-col wrap-break-word">
+      <span>{stepText(step, i18n)}</span>
+      {detail !== "" && (
+        <span className={fill.outcome._tag === "filled" ? "text-muted-foreground" : "text-blocked"}>
+          {detail}
+        </span>
+      )}
+    </span>
   );
 }
 

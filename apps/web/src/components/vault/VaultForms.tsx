@@ -255,9 +255,11 @@ function UnlockVaultForm({
 export function ChangePasswordForm({
   intents,
   onDone,
+  onCancel,
 }: {
   readonly intents: VaultIntents;
   readonly onDone: () => void;
+  readonly onCancel: () => void;
 }) {
   const { t } = useI18n();
   const failureText = useVaultFailureText();
@@ -267,14 +269,18 @@ export function ChangePasswordForm({
   const [again, setAgain] = useState("");
   const [tried, setTried] = useState(false);
   const { busy, failure, run } = useRequest();
+  // No master password is shorter than the minimum, so a shorter current one is wrong.
+  const wrongCurrent = current.length < MIN_MASTER_PASSWORD_LENGTH;
   const short = next.length < MIN_MASTER_PASSWORD_LENGTH;
   const mismatch = again !== next;
   const problem = tried
-    ? short
-      ? t("vault.tooShort", { count: MIN_MASTER_PASSWORD_LENGTH })
-      : mismatch
-        ? t("vault.mismatch")
-        : null
+    ? wrongCurrent
+      ? t("vault.wrong")
+      : short
+        ? t("vault.tooShort", { count: MIN_MASTER_PASSWORD_LENGTH })
+        : mismatch
+          ? t("vault.mismatch")
+          : null
     : null;
   return (
     <form
@@ -293,6 +299,7 @@ export function ChangePasswordForm({
         value={current}
         onChange={setCurrent}
         autoComplete="current-password"
+        invalid={tried && wrongCurrent}
         describedBy={problemId}
       />
       <PasswordField
@@ -316,7 +323,7 @@ export function ChangePasswordForm({
         {problem ?? (failure === null ? null : failureText(failure))}
       </Problem>
       <div className="flex justify-end gap-2">
-        <Button size="sm" onClick={onDone}>
+        <Button size="sm" onClick={onCancel}>
           {t("vault.cancel")}
         </Button>
         <Button type="submit" variant="primary" size="sm" aria-disabled={busy}>

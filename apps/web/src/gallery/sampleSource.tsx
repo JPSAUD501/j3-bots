@@ -426,6 +426,8 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     stopBot: (botId) => update((s) => updateBot(s, botId, setState({ _tag: "idle" }))),
     setBrowser: (bot, enabled) =>
       update((s) => updateBot(s, bot.id, (current) => ({ ...current, browser: enabled }))),
+    setVault: (bot, enabled) =>
+      update((s) => updateBot(s, bot.id, (current) => ({ ...current, vault: enabled }))),
     // The sample's members work only for the room, so its Stop ends whatever they run.
     stopRoom: (roomId) =>
       update((s) => {

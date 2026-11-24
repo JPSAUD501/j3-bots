@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { PairingFailure, ServerAddressProblem, UnpairedReason } from "@j3-bots/client-runtime";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
+import { PairingLink } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import * as Device from "expo-device";
 import { type ComponentRef, type Ref, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { PairingScanner } from "../components/PairingScanner.tsx";
+import { QrScanner } from "../components/QrScanner.tsx";
 import { useI18n } from "../i18n.ts";
 import { session } from "../platform/platform.ts";
 import { phoneTimeZone } from "../platform/timeZone.ts";
 import { bigFieldClass, BigButton, Cast, StepTitle } from "../onboarding/parts.tsx";
 import { Button } from "../ui.tsx";
+
+const decodeLink = Schema.decodeUnknownOption(PairingLink);
 
 type Problem =
   | { readonly _tag: "address"; readonly problem: ServerAddressProblem }
@@ -208,7 +212,14 @@ export function PairingScreen(props: {
         </View>
       </ScrollView>
       {scanning && (
-        <PairingScanner
+        <QrScanner
+          decode={decodeLink}
+          words={{
+            title: t("pairing.scan.title"),
+            wrongCode: t("pairing.scan.notPairing"),
+            refused: t("pairing.scan.refused"),
+            denied: t("pairing.scan.denied"),
+          }}
           onClose={() => setScanning(false)}
           onScanned={(target) => {
             setScanning(false);

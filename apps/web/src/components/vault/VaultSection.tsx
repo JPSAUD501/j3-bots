@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { VaultFailure, VaultResult } from "@j3-bots/client-runtime";
-import { clockTime } from "@j3-bots/client-runtime/presentation";
+import { clockTime, typedOrigins } from "@j3-bots/client-runtime/presentation";
 import { activityTime } from "@j3-bots/client-runtime/wording";
 import {
   type BotId,
@@ -10,9 +10,8 @@ import {
   type CredentialField,
   CredentialOrigins,
   type CredentialId,
-  siteOriginOf,
+  MAX_LABEL_LENGTH,
 } from "@j3-bots/contracts";
-import * as Arr from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -38,17 +37,6 @@ import {
 const SHOWN_FOR = 30_000;
 
 const decodeDraft = Schema.decodeUnknownOption(CredentialDraftSchema);
-const decodeOrigins = Schema.decodeUnknownOption(CredentialOrigins);
-
-/** The origins typed one per line, each as its origin; none when one of them names none. */
-const originsOf = (typed: string): Option.Option<CredentialOrigins> => {
-  const lines = typed
-    .split(/\s+/)
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-  const origins = Option.all(lines.map(siteOriginOf));
-  return Option.flatMap(origins, (found) => decodeOrigins(Arr.dedupe(found)));
-};
 
 /**
  * The vault in Settings: its state, locking it, its password, and every saved
@@ -93,6 +81,7 @@ export function VaultSection({ vault }: { readonly vault: VaultAccess }) {
           {changing ? (
             <ChangePasswordForm
               intents={intents}
+              onCancel={() => setChanging(false)}
               onDone={() => {
                 setChanging(false);
                 setChanged(true);
@@ -215,8 +204,8 @@ const fieldLabel = {
 
 /**
  * One value of a login, hidden until asked for. Shown, it stays for
- * `SHOWN_FOR` and then goes, as it does when the operator hides it or the
- * row goes away.
+ * `SHOWN_FOR` and then goes, as it does when the operator hides it, the
+ * page is hidden, or the row goes away with Settings.
  */
 function ShownValue({
   id,
@@ -235,7 +224,15 @@ function ShownValue({
   useEffect(() => {
     if (value === null) return;
     const hide = window.setTimeout(() => setValue(null), SHOWN_FOR);
-    return () => window.clearTimeout(hide);
+    // Like leaving Settings, leaving the page hides it.
+    const hidden = () => {
+      if (document.visibilityState === "hidden") setValue(null);
+    };
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      window.clearTimeout(hide);
+      document.removeEventListener("visibilitychange", hidden);
+    };
   }, [value]);
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -390,6 +387,7 @@ function CredentialEditor({
   const failureText = useVaultFailureText();
   const nameId = useId();
   const sitesId = useId();
+  const sitesHintId = useId();
   const userId = useId();
   const totpId = useId();
   const problemId = useId();
@@ -402,7 +400,7 @@ function CredentialEditor({
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<VaultFailure | null>(null);
-  const origins = originsOf(sites);
+  const origins = typedOrigins(sites);
   const editing = credential !== null;
 
   const settle = (result: VaultResult<unknown>) => {
@@ -457,7 +455,7 @@ function CredentialEditor({
         <input
           id={nameId}
           value={name}
-          maxLength={80}
+          maxLength={MAX_LABEL_LENGTH}
           autoComplete="off"
           aria-invalid={tried && name.trim() === ""}
           onChange={(event) => setName(event.currentTarget.value)}
@@ -466,7 +464,7 @@ function CredentialEditor({
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={sitesId} className="text-xs font-medium">
-          {t("login.site")}
+          {t("vault.sites")}
         </label>
         <textarea
           id={sitesId}
@@ -474,10 +472,13 @@ function CredentialEditor({
           rows={2}
           spellCheck={false}
           aria-invalid={tried && Option.isNone(origins)}
-          aria-describedby={problemId}
+          aria-describedby={`${sitesHintId} ${problemId}`}
           onChange={(event) => setSites(event.currentTarget.value)}
           className={cn(textField, "py-2")}
         />
+        <p id={sitesHintId} className="text-xs text-muted-foreground">
+          {t("vault.sitesHint")}
+        </p>
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={userId} className="text-xs font-medium">
