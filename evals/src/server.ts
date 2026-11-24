@@ -12,6 +12,7 @@ import {
   ServerInfo,
   type SignInHarness,
 } from "@j3-bots/contracts";
+import { inspectInstall } from "@j3-bots/engine-t3/live";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -284,3 +285,22 @@ export const readyProvider = (client: Client, harness: SignInHarness) =>
       }),
     ),
   );
+
+/**
+ * Keeps the engine a run installed under its `J3_HOME` (`home`) in `keep`,
+ * for the runs after it to start with `J3_ENGINE_BINARY`: the executable
+ * there, or none when the run installed no engine. The engine's adapter says
+ * where it installed it; the folder that holds the executable goes whole.
+ */
+export const keepEngine = Effect.fn("keepEngine")(function* (home: string, keep: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const install = yield* inspectInstall({
+    home: path.join(home, "engine"),
+    platform: process.platform,
+    arch: process.arch,
+  });
+  if (install._tag !== "installed") return Option.none<string>();
+  yield* fs.rename(path.dirname(install.executable), keep);
+  return Option.some(path.join(keep, path.basename(install.executable)));
+});

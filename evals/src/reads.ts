@@ -28,7 +28,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -38,6 +37,7 @@ import {
   connectClient,
   connectProviders,
   EvalFailure,
+  keepEngine,
   logTail,
   pair,
   readyProvider,
@@ -313,8 +313,6 @@ const row = (index: number, outcome: Run | Broken) => {
   return `| ${cells.join(" | ")} |`;
 };
 
-const EnginePin = Schema.fromJsonString(Schema.Struct({ version: Schema.String }));
-
 const main = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -328,24 +326,19 @@ const main = Effect.gen(function* () {
   const model = yield* Config.option(Config.String("J3_EVAL_MODEL"));
   const here = path.dirname(yield* path.fromFileUrl(new URL(import.meta.url)));
   const repo = path.resolve(here, "..", "..");
-  const { version } = yield* fs
-    .readFileString(path.join(repo, "engine.json"))
-    .pipe(Effect.flatMap(Schema.decodeUnknownEffect(EnginePin)));
 
   // Every run's home and log, and with them the stored connection, are gone when the eval ends.
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "j3-evals-reads-" });
-  const engineDir = path.join(root, "engine");
-  const engineBinary = path.join(engineDir, "t3");
+  let engineBinary = Option.none<string>();
   const outcomes: Array<Run | Broken> = [];
   for (let index = 1; index <= runs; index++) {
     const home = path.join(root, `run-${index}`);
     const log = `${home}.log`;
-    const installed = yield* fs.exists(engineBinary);
     const spec: ServerSpec = {
       repo,
       home,
       port,
-      engineBinary: installed ? Option.some(engineBinary) : Option.none(),
+      engineBinary,
     };
     yield* Console.log(`Run ${index} of ${runs} on ${signInHarnesses[harness].name}`);
     const outcome: Run | Broken = yield* runOnce(spec, log, endpoint, harness, model).pipe(
@@ -370,9 +363,8 @@ const main = Effect.gen(function* () {
       );
     }
     // The first run's engine serves the rest; each run's home, key included, goes now.
-    if (!installed) {
-      const fresh = path.join(home, "engine", "j3", "runtime", version);
-      if (yield* fs.exists(path.join(fresh, "t3"))) yield* fs.rename(fresh, engineDir);
+    if (Option.isNone(engineBinary)) {
+      engineBinary = yield* keepEngine(home, path.join(root, "engine"));
     }
     yield* removeHome(home);
     yield* Console.log(row(index, outcome));

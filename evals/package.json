@@ -13,6 +13,7 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/engine-t3": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
