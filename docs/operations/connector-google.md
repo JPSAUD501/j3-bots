@@ -1,6 +1,6 @@
 # A Google connector with your own app
 
-**Draft.** Connectors are being built for 0.4.0, and no step below has been run against Google yet. What this page says about Google comes from Google's documentation and is **Assumed** until a sign-in confirms it.
+**Draft.** Connectors are new in 0.4.0, and no step below has been run against Google yet. What this page says about Google comes from Google's documentation and is **Assumed** until a sign-in confirms it.
 
 Google does not let a client register itself (dynamic client registration), so J3 Bots cannot sign in to a Google MCP server on its own. You register an app of your own in Google Cloud and give J3 Bots its client ID and secret when you add the connector. J3 Bots keeps them in the vault and never replaces that app with one of its own ([Server: connectors](../architecture/server.md#connectors)).
 
