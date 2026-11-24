@@ -256,31 +256,33 @@ export function DictationButton({
   const { t } = useI18n();
   if (dictation.state._tag === "listening") {
     return (
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={t("composer.dictation.stop")}
-        onPress={dictation.stop}
-        style={composerButtonFrame}
-        hitSlop={composerButtonSlop}
-        className="size-8 items-center justify-center rounded-full bg-foreground"
-      >
-        <Icon icon={Square} size={12} color="accent-background" filled />
-      </Pressable>
+      <View style={composerButtonFrame}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t("composer.dictation.stop")}
+          onPress={dictation.stop}
+          hitSlop={composerButtonSlop}
+          className="size-8 items-center justify-center rounded-full bg-foreground"
+        >
+          <Icon icon={Square} size={12} color="accent-background" filled />
+        </Pressable>
+      </View>
     );
   }
   const disabled = unavailable || dictation.state._tag === "preparing";
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={t("composer.dictate")}
-      accessibilityState={{ disabled }}
-      onPress={disabled ? undefined : dictation.start}
-      style={composerButtonFrame}
-      hitSlop={composerButtonSlop}
-      className="size-8 items-center justify-center rounded-full active:bg-muted"
-    >
-      <Icon icon={Mic} size={18} color="accent-muted-foreground" />
-    </Pressable>
+    <View style={composerButtonFrame}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t("composer.dictate")}
+        accessibilityState={{ disabled }}
+        onPress={disabled ? undefined : dictation.start}
+        hitSlop={composerButtonSlop}
+        className="size-8 items-center justify-center rounded-full active:bg-muted"
+      >
+        <Icon icon={Mic} size={18} color="accent-muted-foreground" />
+      </Pressable>
+    </View>
   );
 }
 

@@ -313,6 +313,30 @@ export function ConversationView({
 
   return (
     <View className="flex-1 bg-background">
+      {/*
+        Over the conversation, which scrolls under it and shows through, faintly.
+        First, as a screen reader reads it; `zIndex` puts it on top.
+      */}
+      <View
+        onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}
+        className="bg-background/95"
+        style={{
+          position: "absolute",
+          start: 0,
+          end: 0,
+          top: 0,
+          zIndex: 1,
+          paddingTop: insets.top,
+        }}
+      >
+        <ConversationHeader
+          item={item}
+          onBack={onBack}
+          onOpenDetails={onOpenDetails}
+          onGoToWaiting={goTo}
+          folds={folds}
+        />
+      </View>
       {state?.phase === "not-found" ? (
         <View className="flex-1" style={{ paddingTop: headerHeight }}>
           <Gone onBack={onGone} />
@@ -428,20 +452,6 @@ export function ConversationView({
           </KeyboardStickyView>
         </AnimatedView>
       )}
-      {/* Over the conversation, which scrolls under it and shows through, faintly. */}
-      <View
-        onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}
-        className="bg-background/95"
-        style={{ position: "absolute", start: 0, end: 0, top: 0, paddingTop: insets.top }}
-      >
-        <ConversationHeader
-          item={item}
-          onBack={onBack}
-          onOpenDetails={onOpenDetails}
-          onGoToWaiting={goTo}
-          folds={folds}
-        />
-      </View>
     </View>
   );
 }

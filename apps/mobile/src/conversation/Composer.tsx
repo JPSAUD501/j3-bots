@@ -319,7 +319,7 @@ export function Composer({
       <AnimatedView
         // Focused, the border takes the bot's color, which reaches 3:1 on the surface.
         style={[settled, focused ? { borderColor: tint.color } : undefined]}
-        className="flex-row items-end gap-1 rounded-composer border border-input bg-surface px-1.5"
+        className="flex-row items-end rounded-composer border border-input bg-surface"
       >
         <PressScale
           depth="round"

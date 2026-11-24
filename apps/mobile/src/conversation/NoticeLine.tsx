@@ -14,9 +14,6 @@ import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { usePresentation } from "../presentation.tsx";
 
-/** An action on the line, at its text's height: a full touch target beyond it. */
-const LINE_ACTION_SLOP = { top: 8, bottom: 8 } as const;
-
 /**
  * A quiet line where something stopped, or where a bot changed something the
  * operator should know about, with Try again when the server still takes one.
@@ -67,8 +64,7 @@ export function NoticeLine({
         <Pressable
           accessibilityRole="button"
           onPress={onRetry}
-          hitSlop={LINE_ACTION_SLOP}
-          className="justify-center px-2 py-1"
+          className="min-h-11 justify-center px-2"
         >
           <Text className="text-xs text-accent">{t("notice.retry")}</Text>
         </Pressable>
@@ -77,8 +73,7 @@ export function NoticeLine({
         <Pressable
           accessibilityRole="button"
           onPress={onOpenConversation}
-          hitSlop={LINE_ACTION_SLOP}
-          className="flex-row items-center gap-1 px-2 py-1"
+          className="min-h-11 flex-row items-center gap-1 px-2"
         >
           <Icon icon={CornerDownRight} size={14} color="accent-accent" />
           <Text className="text-xs text-accent">{t("notice.openConversation")}</Text>
