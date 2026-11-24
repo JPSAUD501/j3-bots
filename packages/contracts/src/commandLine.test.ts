@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
 import * as Option from "effect/Option";
-import { pinRefusal } from "./pinning.ts";
+import { pinRefusal } from "./commandLine.ts";
 
 const refusal = (command: string) => {
   const [program = "", ...args] = command.split(" ");

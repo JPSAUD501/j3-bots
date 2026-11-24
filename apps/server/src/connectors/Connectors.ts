@@ -17,8 +17,6 @@ import {
   observe,
   openCommandSession,
   openSession,
-  pinRefusal,
-  reservedVariable,
   processCapacity,
   type SecretHeader,
   type SessionLimits,
@@ -52,7 +50,9 @@ import {
   type ListingRef,
   NotFound,
   type OAuthClientInput,
+  pinRefusal,
   remoteTransport,
+  reservedVariable,
   type ToolReviewRevision,
 } from "@j3-bots/contracts";
 import {
@@ -85,13 +85,7 @@ import type { NamedSecret } from "../vault/ConnectorSecret.ts";
 import { Vault } from "../vault/Vault.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
-import {
-  addressOf,
-  commandOf,
-  credentialsOf,
-  hiddenOf,
-  vaultIdOf,
-} from "./credentials.ts";
+import { addressOf, commandOf, credentialsOf, hiddenOf, vaultIdOf } from "./credentials.ts";
 import { headerFieldKeys, refill, resolve } from "./sources/form.ts";
 import { ConnectorSources } from "./sources/Sources.ts";
 import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
