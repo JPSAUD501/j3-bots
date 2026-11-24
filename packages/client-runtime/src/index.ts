@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 export {
+  type BrowserViewHandle,
   type ConversationHandle,
   createJ3Client,
   type DownloadResult,
@@ -147,3 +148,14 @@ export {
   type StartResult,
   type UpdateResult,
 } from "./update/ServerUpdate.ts";
+export {
+  Browser,
+  type BrowserControl,
+  type BrowserCursor,
+  type BrowserPicture,
+  type BrowserProbe,
+  type BrowserView,
+  type BrowserViewSize,
+  type BrowserViewState,
+  type BrowserViewStatus,
+} from "./stores/Browser.ts";

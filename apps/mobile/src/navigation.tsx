@@ -42,6 +42,7 @@ import { SettingsScreen } from "./settings/Settings.tsx";
 import { RosterScreen } from "./screens/Roster.tsx";
 import { ShareOpener, ShareScreen } from "./share/SharePicker.tsx";
 import { NewFromTemplateScreen, ShareTemplateScreen, TemplateOpener } from "./template/screens.tsx";
+import { BrowserScreen } from "./browser/BrowserScreen.tsx";
 import { useColor } from "./theme.ts";
 import { Toasts } from "./toast.tsx";
 import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
@@ -204,6 +205,12 @@ export function Main() {
                   name="share"
                   component={ShareScreen}
                   options={{ title: t("share.title"), presentation: "modal" }}
+                />
+                {/* The browser draws its own bar: the page's site and who acts on it. */}
+                <Stack.Screen
+                  name="browser"
+                  component={BrowserScreen}
+                  options={{ ...sheet, headerShown: false }}
                 />
                 {/* The forms, the memory file and a routine's runs set their own titles. */}
                 <Stack.Screen name="editBot" options={sheet} component={EditBotScreen} />

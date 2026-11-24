@@ -37,6 +37,15 @@ export {
   withChanges,
   withProfileEdit,
 } from "./botEdit.ts";
+export {
+  type DrawnRect,
+  dragWheel,
+  frontTab,
+  type PageSize,
+  pagePoint,
+  type Point,
+  siteOf,
+} from "./browser.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
 export {
   connectCommand,

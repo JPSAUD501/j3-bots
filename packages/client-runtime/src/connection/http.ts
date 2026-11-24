@@ -152,10 +152,18 @@ export const make = Effect.fnUntraced(function* (origin: URL, requestTimeout: Du
       answered,
     );
 
-  /** The RPC socket's address for one ticket: `ws:` beside `http:`, `wss:` beside `https:`. */
-  const socketUrl = (ticket: string) => {
-    const socket = new URL(HTTP_PATHS.rpc, origin);
+  /**
+   * A socket's address for one ticket, the RPC socket's unless `path` names
+   * another, with `query` besides: `ws:` beside `http:`, `wss:` beside `https:`.
+   */
+  const socketUrl = (
+    ticket: string,
+    path: string = HTTP_PATHS.rpc,
+    query: Readonly<Record<string, string>> = {},
+  ) => {
+    const socket = new URL(path, origin);
     socket.protocol = origin.protocol === "https:" ? "wss:" : "ws:";
+    for (const [name, value] of Object.entries(query)) socket.searchParams.set(name, value);
     socket.searchParams.set("ticket", ticket);
     return socket.toString();
   };

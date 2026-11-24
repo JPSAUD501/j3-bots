@@ -22,6 +22,7 @@ export { Bots } from "../bots/Bots.ts";
 export { Devices } from "../devices/Devices.ts";
 export { Entries } from "../entries/Entries.ts";
 export { Presence } from "../presence/Presence.ts";
+export { botHasTabs, type FakeViewer, TestBrowserControl, ViewerClosed } from "./browser.ts";
 
 /** The RPCs of the contract this server does not answer yet. */
 export type UnservedRpcs = Exclude<
