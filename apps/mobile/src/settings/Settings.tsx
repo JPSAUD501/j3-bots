@@ -9,14 +9,16 @@ import { connectCommand } from "@j3-bots/client-runtime/presentation";
 import { engineProblem } from "@j3-bots/client-runtime/wording";
 import type { EngineStatus } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
-import { useFocusEffect, useIsFocused } from "@react-navigation/native";
-import { useCallback } from "react";
+import { type RouteProp, useFocusEffect, useIsFocused, useRoute } from "@react-navigation/native";
+import { type ComponentRef, useCallback, useRef } from "react";
 import { ScrollView, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ConnectCommand, ProviderRow } from "../components/Engine.tsx";
 import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
+import type { Screens } from "../navigation.tsx";
+import { AboutSection } from "./About.tsx";
 import { BotBrowserSection } from "./BotBrowser.tsx";
 import { DevicesSection } from "./Devices.tsx";
 import { usePhoneNotifications } from "./phoneNotifications.ts";
@@ -39,6 +41,15 @@ export function SettingsScreen() {
   const connected = useConnection()._tag === "connected";
   const recent = useRecentTurns(useIsFocused());
   const thisPhone = usePhoneNotifications();
+  const section = useRoute<RouteProp<Screens, "settings">>().params?.section;
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+  // Opened for the updates, Settings starts at them, once they are laid out.
+  const scrolled = useRef(false);
+  const onUpdatesLaidOut = (y: number) => {
+    if (section !== "updates" || scrolled.current) return;
+    scrolled.current = true;
+    scroll.current?.scrollTo({ y, animated: false });
+  };
   useFocusEffect(
     useCallback(() => {
       client.refreshSettings();
@@ -47,6 +58,7 @@ export function SettingsScreen() {
   );
   return (
     <ScrollView
+      ref={scroll}
       className="flex-1 bg-background"
       keyboardShouldPersistTaps="handled"
       contentContainerStyle={{
@@ -70,6 +82,7 @@ export function SettingsScreen() {
       <DevicesSection connected={connected} />
       <BotBrowserSection connected={connected} />
       <ServerSection />
+      <AboutSection onLayout={onUpdatesLaidOut} />
       <ThisPhoneSection />
     </ScrollView>
   );

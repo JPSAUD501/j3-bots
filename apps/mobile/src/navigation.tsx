@@ -76,7 +76,8 @@ export type Screens = {
   browser: { readonly botId: BotId; readonly ref?: BrowserTabRef; readonly help?: EntryId };
   roomForm: { readonly form: RoomFormFor };
   newBot: undefined;
-  settings: undefined;
+  /** `section` scrolls to one section, as the roster's update notice does. */
+  settings: { readonly section?: "updates" } | undefined;
   hidden: undefined;
 };
 

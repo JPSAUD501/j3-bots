@@ -107,7 +107,7 @@ import {
 } from "../components/LocalMode";
 import { ServerAddress } from "../components/ServerAddress";
 import type { DesktopPhone, DesktopSystem } from "../shell/data";
-import { WhereSection } from "../components/SettingsDialog";
+import { SettingsButton, UpdatesSection, WhereSection } from "../components/SettingsDialog";
 import {
   type Pairing as PhonePairing,
   PairPhone,
@@ -148,12 +148,24 @@ import { LANGUAGE_NAMES, notificationText } from "@j3-bots/i18n";
 import { cn } from "../lib/cn";
 import { iconUrl, notificationIcon } from "../live/notificationIcon";
 import { addresseeLine } from "@j3-bots/client-runtime/wording";
+import type { DesktopLocal, DesktopUpdate, RemoteServerUpdate } from "../shell/data";
 import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
 import { useSampleSource } from "./sampleSource";
 import { galleryVariants } from "./variants";
+import {
+  appPhases,
+  appUpdate,
+  endedDone,
+  SAMPLE_NEXT,
+  SAMPLE_NIGHTLY,
+  said,
+  serverStatuses,
+  serverUpdate,
+  serverViews,
+} from "./updates";
 
 const team = sampleTeam(SAMPLE_NOW);
 const variants = galleryVariants(SAMPLE_NOW);
@@ -235,6 +247,7 @@ export default function GalleryPage() {
                 <ConnectionSection />
                 <WhereBotsLiveSection />
                 <PhoneAccessSection />
+                <UpdatesGallerySection />
                 <ShellSection />
               </div>
             </div>
@@ -2686,6 +2699,9 @@ function WhereSettings({ local }: { local: boolean }) {
           local
             ? {
                 stopUsing: () => Promise.resolve(false),
+                serverUpdate: undefined,
+                retryServerUpdate: nothing,
+                showUpdateDetails: nothing,
                 startWithSystem,
                 setStartWithSystem: (on) => {
                   setStartWithSystem(on);
@@ -2972,6 +2988,252 @@ const rowKey = (item: RosterItem): RosterItemKey =>
 
 /** In a frame there is no router: a roster row is a button that selects. */
 const rowButton = (onClick: () => void) => <button type="button" onClick={onClick} />;
+
+/** Settings' updates section alone, on a phone's width: the rest of Settings is in the shell's. */
+function UpdatesFrame({
+  label,
+  server,
+  app,
+  local,
+  height = 420,
+}: {
+  label: string;
+  server?: RemoteServerUpdate;
+  app?: DesktopUpdate;
+  local?: DesktopLocal;
+  height?: number;
+}) {
+  return (
+    <Frame label={label} width={390} height={height}>
+      <div className="h-full overflow-y-auto">
+        <UpdatesSection server={server} app={app} local={local} />
+      </div>
+    </Frame>
+  );
+}
+
+/** The bots on this computer, the app having done `serverUpdate` to them. */
+const localBots = (serverUpdate?: ServerUpdate): DesktopLocal => ({
+  stopUsing: () => Promise.resolve(false),
+  serverUpdate,
+  retryServerUpdate: nothing,
+  showUpdateDetails: nothing,
+  startWithSystem: false,
+  setStartWithSystem: (on) => Promise.resolve(on),
+  phone: galleryPhone(PHONE_OFF, "linux"),
+});
+
+const desktopServer = {
+  address: "https://j3.example.test",
+  forget: () => Promise.resolve(false),
+} as const;
+
+function UpdatesGallerySection() {
+  const s = serverStatuses;
+  const source = useSampleSource();
+  return (
+    <Section title="Updating the server and the app" stacked>
+      <Labeled label="The roster's footer with an update waiting">
+        <div className="w-72 rounded-md border border-border">
+          <SettingsButton
+            data={source.data}
+            intents={{ ...source.intents, serverUpdate: serverUpdate(said(s.available)) }}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="The connection line while an update restarts the server">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          <ConnectionBanner
+            state={{ _tag: "waiting", reason: "dropped", attempt: 3, retryAt }}
+            updatingTo={SAMPLE_NEXT}
+            everConnected
+            onRetryNow={nothing}
+          />
+        </div>
+      </Labeled>
+      <div className="flex flex-wrap gap-4">
+        <UpdatesFrame label="In a browser: up to date" server={serverUpdate(said(s.upToDate))} />
+        <UpdatesFrame
+          label="On the desktop: the server has an update, the app's is ready"
+          server={serverUpdate(said(s.available))}
+          app={appUpdate(appPhases.ready)}
+          height={640}
+        />
+        <UpdatesFrame label="Checking the feed" server={serverUpdate(said(s.checking))} />
+        <UpdatesFrame
+          label="The feed could not be checked"
+          server={serverUpdate(said(s.checkFailed))}
+        />
+        <UpdatesFrame label="Downloading" server={serverUpdate(said(s.downloading))} />
+        <UpdatesFrame label="Verifying the signature" server={serverUpdate(said(s.verifying))} />
+        <UpdatesFrame label="Installing" server={serverUpdate(said(s.installing))} />
+        <UpdatesFrame
+          label="Restarting: the server does not answer"
+          server={serverUpdate(serverViews.restarting)}
+        />
+        <UpdatesFrame label="No answer for ten minutes" server={serverUpdate(serverViews.lost)} />
+        <UpdatesFrame
+          label="Done, as this device saw it end"
+          server={serverUpdate(said(s.done), endedDone)}
+        />
+        <UpdatesFrame label="Done, a day later" server={serverUpdate(said(s.done))} />
+        <UpdatesFrame
+          label="Rolled back, with details"
+          server={serverUpdate(said(s.rolledBack))}
+          height={520}
+        />
+        <UpdatesFrame
+          label="Failed, the rollback unfinished"
+          server={serverUpdate(said(s.failed))}
+          height={560}
+        />
+        <UpdatesFrame
+          label="Cannot update from here: started by hand"
+          server={serverUpdate(said(s.startedByHand))}
+        />
+        <UpdatesFrame
+          label="Cannot update from here: inside the desktop app elsewhere"
+          server={serverUpdate(said(s.desktopManaged))}
+        />
+        <UpdatesFrame
+          label="Nightly, a newer one on offer"
+          server={serverUpdate(said(s.nightly))}
+        />
+        <UpdatesFrame
+          label="Moved to stable, waiting for a newer stable"
+          server={serverUpdate(said(s.waitingForStable))}
+        />
+        <UpdatesFrame
+          label="A release whose signature failed"
+          server={serverUpdate(said(s.refused))}
+        />
+        <UpdatesFrame
+          label="A server older than updates from the apps"
+          server={serverUpdate(serverViews.unsupported)}
+        />
+        <UpdatesFrame
+          label="The app: downloading"
+          app={appUpdate(appPhases.downloading)}
+          height={300}
+        />
+        <UpdatesFrame
+          label="The app: checking its download's signature"
+          app={appUpdate(appPhases.verifying)}
+          height={300}
+        />
+        <UpdatesFrame
+          label="The app: the download did not match"
+          app={appUpdate(appPhases.verifyFailed)}
+          height={300}
+        />
+        <UpdatesFrame
+          label="The app on nightly"
+          app={appUpdate(appPhases.upToDate, { current: SAMPLE_NIGHTLY, channel: "nightly" })}
+          height={300}
+        />
+        <UpdatesFrame
+          label="The app moved to stable, waiting for a newer stable"
+          app={appUpdate(appPhases.upToDate, { current: SAMPLE_NIGHTLY })}
+          height={300}
+        />
+        <UpdatesFrame
+          label="Local mode: the app updates the server it runs"
+          app={appUpdate(appPhases.ready)}
+          local={localBots()}
+          height={320}
+        />
+        <UpdatesFrame
+          label="Local mode: the app's update of its server was rolled back"
+          app={appUpdate(appPhases.upToDate, { current: "0.3.1" })}
+          local={localBots(rolledBack)}
+          height={360}
+        />
+        <UpdatesFrame
+          label="A deb or Mac build: the release to download"
+          app={appUpdate(appPhases.released)}
+          height={300}
+        />
+      </div>
+      <div className="flex flex-wrap gap-4">
+        <Frame label="Mismatch: the server is behind, one tap updates it" width={390} height={560}>
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(said(s.available))}
+          />
+        </Frame>
+        <Frame
+          label="Mismatch: the server is behind, asked to check for the release"
+          width={390}
+          height={560}
+        >
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(said(s.upToDate), null, false)}
+          />
+        </Frame>
+        <Frame
+          label="Mismatch: the server is behind, nothing newer on its channel"
+          width={390}
+          height={560}
+        >
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(said(s.upToDate))}
+          />
+        </Frame>
+        <Frame label="Mismatch: the server is behind, updating" width={390} height={560}>
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(serverViews.restarting)}
+          />
+        </Frame>
+        <Frame
+          label="Mismatch: the server is behind and cannot update itself"
+          width={390}
+          height={560}
+        >
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(said(s.startedByHand))}
+          />
+        </Frame>
+        <Frame
+          label="Mismatch: the server is behind, cannot update itself, and has nothing on offer"
+          width={390}
+          height={560}
+        >
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.1" }}
+            serverUpdate={serverUpdate(said({ ...s.startedByHand, available: null }))}
+          />
+        </Frame>
+        <Frame label="Mismatch: the server predates the update routes" width={390} height={560}>
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "server", serverVersion: "0.3.0" }}
+            serverUpdate={serverUpdate(serverViews.unsupported)}
+          />
+        </Frame>
+        <Frame label="Mismatch: the app is behind, it updates in place" width={390} height={560}>
+          <Incompatible
+            server={desktopServer}
+            mismatch={{ behind: "client", serverVersion: "0.5.0" }}
+            update={appUpdate(appPhases.ready)}
+          />
+        </Frame>
+        <Frame label="Mismatch in a browser: a stale page" width={390} height={360}>
+          <Incompatible />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
 
 /** A whole shell in a frame, with its own selection and its own copy of the sample team. */
 function ShellFrame({

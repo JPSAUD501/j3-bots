@@ -1384,6 +1384,50 @@ const sentences = {
   "updateChannel.nightly.hint":
     "Uma versão com as mudanças de cada dia, antes de saírem. Pode ter problemas que uma versão estável não tem.",
 
+  "about.server": "O servidor",
+  "about.thisApp": "Este app",
+  "phoneUpdate.unchecked": "Ainda não procurou atualizações.",
+  "phoneUpdate.available": "O J3 Bots {version} está disponível para este app.",
+  "phoneUpdate.available.hint":
+    "Ele é baixado neste celular e conferido com a assinatura do projeto; depois o Android pede para você instalar.",
+  "phoneUpdate.update": "Atualizar app",
+  "phoneUpdate.install": "Instalar",
+  "phoneUpdate.installing": "Instalando a {version}. O app fecha e abre de novo nela.",
+  "phoneUpdate.cancelled":
+    "A instalação foi cancelada. A {version} está baixada e conferida, pronta para instalar.",
+  "phoneUpdate.waitingForStable":
+    "Este app roda uma versão nightly, então espera uma versão estável mais nova que ela.",
+  "phoneUpdate.behind.noRelease": "Ainda não há uma versão mais nova deste app no canal dele.",
+  "phoneUpdate.behind.nightlyHint":
+    "Se o servidor roda uma versão nightly, escolha Nightly para este app abaixo.",
+  "phoneUpdate.permission.title": "Deixe o J3 Bots instalar a atualização",
+  "phoneUpdate.permission.body":
+    "O Android pede uma vez. Na próxima tela, Instalar apps desconhecidos, ative “Permitir desta fonte” e volte: a instalação continua. O J3 Bots só instala as próprias atualizações, depois de conferir com a assinatura do projeto.",
+  "phoneUpdate.permission.open": "Abrir configurações do Android",
+  "phoneUpdate.play": "O Google Play instalou este app e o mantém atualizado.",
+  "phoneUpdate.openPlay": "Abrir o Google Play",
+  "phoneUpdate.failure.unreachable": "Não deu para acessar as versões. Tente de novo mais tarde.",
+  "phoneUpdate.failure.digestMismatch":
+    "O download não é o arquivo que a versão assinou, então foi apagado e nada foi instalado.",
+  "phoneUpdate.failure.notThisApp":
+    "O download não é esta versão do J3 Bots, então foi apagado e nada foi instalado.",
+  "phoneUpdate.failure.notNewer":
+    "O download não é mais novo que este app, então foi apagado. O J3 Bots nunca volta de versão.",
+  "phoneUpdate.failure.conflict":
+    "O Android recusou: não está assinado como o app instalado aqui. Nada mudou.",
+  "phoneUpdate.failure.incompatible": "Esta versão não roda neste celular. Nada mudou.",
+  "phoneUpdate.failure.storage": "Não há espaço neste celular para a atualização.",
+  "phoneUpdate.failure.blocked":
+    "Algo neste celular, como a política de um perfil de trabalho, não deixa instalar apps.",
+  "phoneUpdate.failure.installFailed":
+    "O Android não conseguiu instalar a atualização. Nada mudou.",
+  "updateNotice.server": "O J3 Bots {version} está pronto para o servidor.",
+  "updateNotice.app": "O J3 Bots {version} está pronto para este app.",
+  "updateNotice.both": "O J3 Bots {version} está pronto para o servidor e este app.",
+  "updateNotice.open": "Abre as atualizações nas Configurações.",
+  "updateNotice.hide": "Ocultar até a próxima versão",
+  "updateNotice.ok": "OK",
+
   "update.version": "J3 Bots {version}",
   "update.unavailable": "Esta versão não se atualiza sozinha.",
   "update.upToDate": "Está na versão mais recente.",
@@ -1399,6 +1443,19 @@ const sentences = {
   "update.check": "Procurar atualizações",
   "update.retry": "Tentar de novo",
   "update.restart": "Reiniciar para atualizar",
+  "update.verifying": "Conferindo a assinatura da versão {version}…",
+  "update.verifyFailed":
+    "O download não bateu com a assinatura da versão, então não foi instalado. Esta versão continua em uso.",
+  "updates.app.heading": "Este app",
+  "updates.app.local": "Atualizar o app também atualiza os bots deste computador.",
+  "updates.notice": "Atualização disponível",
+  "updates.copyCommand": "Copiar o comando",
+  "updates.server.reading": "Lendo a versão do servidor…",
+  "updateChannel.app": "Atualizações deste app",
+  "updateChannel.server": "Atualizações do servidor",
+  "updateChannel.stable.hint": "Versões testadas e publicadas.",
+  "updateChannel.waitingForStable":
+    "Roda uma versão nightly ({version}). Passa para a estável quando sair uma estável mais nova.",
   "settings.signOut": "Sair deste dispositivo",
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
   "settings.signOut.pending": "Saindo…",
