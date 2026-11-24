@@ -247,7 +247,7 @@ export function Timeline({
                 position={item.position}
                 arriving={arriving}
                 tint={speaker?.profile.avatar ?? null}
-                speaker={room === null ? null : speaker}
+                speaker={room === null || author._tag !== "bot" ? null : author.botId}
                 // The server's entry keeps no names picked: its members go by their names now.
                 mentionable={highlighted(message.mentions, [])}
                 onOpenAttachment={intents.openAttachment}
