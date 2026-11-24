@@ -29,7 +29,7 @@ const fold = (status: WorkFoldEntry["status"]): WorkFoldEntry => ({
 });
 
 describe("turnLine", () => {
-  it("says what the bot is doing, as its header does, and only as last known once out of touch", () => {
+  it("says what the bot is doing, and only as last known once out of touch", () => {
     expect(turnLine(bot("Scout", working("git status")), false, ctx).text).toBe("git status");
     expect(turnLine(bot("Scout", working(null)), false, ctx).text).toBe("Working");
     expect(turnLine(bot("Scout", working("git status")), true, ctx)).toEqual({

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ArrowDownIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
+import type { CardPlace } from "@j3-bots/client-runtime/presentation";
 import type { ConversationEnd } from "@j3-bots/client-runtime/react";
 import { useEffect } from "react";
 import { useI18n } from "../app/context";
@@ -28,20 +29,27 @@ export const scrollToEnd = (element: HTMLElement | null) => {
 };
 
 /**
- * Over the end of a conversation scrolled up: "New messages" while others
- * wrote some, else a round button back to the newest entry once the operator
- * is well away from it. It pops in and out, and takes no focus while hidden.
+ * Over the end of a conversation. While its bot waits on a card out of view,
+ * "Waiting for you" with an arrow toward the card, which brings it into view.
+ * Otherwise, scrolled up: "New messages" while others wrote some, else a
+ * round button back to the newest entry once the operator is well away from
+ * it. It pops in and out, and takes no focus while hidden.
  */
 export function ToLatest({
   end,
   onPress,
+  waiting,
 }: {
   readonly end: ConversationEnd;
   readonly onPress: () => void;
+  /** The card the bot waits on, where it is, and the way to it; null while it waits on nothing. */
+  readonly waiting: { readonly place: CardPlace | null; readonly onPress: () => void } | null;
 }) {
   const { t } = useI18n();
-  const fresh = end.unseen > 0;
-  const shown = !end.atEnd && (fresh || end.away);
+  const toCard = waiting !== null && (waiting.place === "above" || waiting.place === "below");
+  const fresh = !toCard && end.unseen > 0;
+  const shown = toCard || (!end.atEnd && (fresh || end.away));
+  const worded = toCard || fresh;
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
       <div
@@ -52,16 +60,22 @@ export function ToLatest({
           type="button"
           inert={!shown}
           aria-hidden={!shown}
-          onClick={onPress}
-          aria-label={fresh ? undefined : t("timeline.toLatest")}
+          onClick={toCard ? waiting.onPress : onPress}
+          aria-label={toCard ? t("timeline.toWaiting") : fresh ? undefined : t("timeline.toLatest")}
           className={cn(
-            "pressable flex h-9 items-center justify-center gap-1.5 rounded-pill border border-border bg-surface text-sm font-medium text-foreground shadow-overlay",
+            "pressable flex h-9 items-center justify-center gap-1.5 rounded-pill border border-border bg-surface text-sm font-medium shadow-overlay",
+            toCard ? "text-waiting" : "text-foreground",
             shown && "pointer-events-auto",
-            fresh ? "ps-3.5 pe-3" : "pressable-round w-9",
+            worded ? "ps-3.5 pe-3" : "pressable-round w-9",
           )}
         >
+          {toCard && <span>{t("presence.waiting")}</span>}
           {fresh && <span>{t("timeline.newMessages")}</span>}
-          <ArrowDownIcon aria-hidden className="size-4" />
+          {toCard && waiting.place === "above" ? (
+            <ArrowUpIcon aria-hidden className="size-4" />
+          ) : (
+            <ArrowDownIcon aria-hidden className="size-4" />
+          )}
         </button>
       </div>
     </div>

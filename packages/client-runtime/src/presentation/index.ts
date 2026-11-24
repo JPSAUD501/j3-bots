@@ -250,6 +250,8 @@ export {
   arrivalCounts,
   arrivedRows,
   buildTimeline,
+  type CardPlace,
+  cardPlace,
   type GroupPosition,
   readThrough,
   rowOrder,

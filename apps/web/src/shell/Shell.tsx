@@ -70,6 +70,7 @@ import { Onboarding } from "../onboarding/Onboarding";
 import type { ShellData, ShellIntents } from "./data";
 import { cn } from "../lib/cn";
 import { isCovered, useCovered } from "../lib/covered";
+import { useCardPlace } from "../lib/useCardPlace";
 import { useSeenEntries } from "../lib/useSeenEntries";
 import { addresseeLine, botModelName } from "@j3-bots/client-runtime/wording";
 import { useShellLayout } from "./layout";
@@ -369,6 +370,11 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     scrollToEnd(timeline),
   );
   useScrollFollow(timeline, end.follow);
+  // The card the open conversation's bot waits on, and where it is.
+  const waitingOn = shownBot?.state._tag === "waiting" ? shownBot.state.entryId : null;
+  const waitingPlace = useCardPlace(timeline, waitingOn);
+  // While it is out of view the pill stands over the end: the timeline keeps its last entry clear of it.
+  const toCard = waitingPlace === "above" || waitingPlace === "below";
 
   if (data.roster === null || data.roster.length === 0 || openingFirstBot) {
     // Settings live in the roster's footer; before there is a roster, these are the way out: in
@@ -521,7 +527,6 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           detailsOpen={detailsOpen}
           onToggleDetails={toggleDetails}
           onBack={() => navigation.select(null)}
-          onGoToWaiting={goToEntry}
           folds={folds}
           titleRef={titleRef}
           onAnnounce={(text) =>
@@ -564,7 +569,12 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               ref={setTimeline}
               className="conversation-open flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
             >
-              <div className="mx-auto w-full max-w-(--layout-text-column) px-3 py-4 @tablet:px-6">
+              <div
+                className={cn(
+                  "mx-auto w-full max-w-(--layout-text-column) px-3 py-4 @tablet:px-6",
+                  toCard && "pb-14",
+                )}
+              >
                 {view.hasOlder && (
                   <div className="flex justify-center pb-2">
                     <Button
@@ -607,7 +617,15 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                 />
               </div>
             </div>
-            <ToLatest end={end} onPress={() => scrollToEnd(timeline)} />
+            <ToLatest
+              end={end}
+              onPress={() => scrollToEnd(timeline)}
+              waiting={
+                waitingOn === null
+                  ? null
+                  : { place: waitingPlace, onPress: () => goToEntry(waitingOn) }
+              }
+            />
           </div>
         )}
         <div

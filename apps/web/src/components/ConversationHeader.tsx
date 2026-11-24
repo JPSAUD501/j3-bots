@@ -1,22 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EntryId, Room, WorkFoldEntry } from "@j3-bots/contracts";
-import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  CornerDownRightIcon,
-  PanelRightIcon,
-} from "lucide-react";
+import type { Bot, Room, WorkFoldEntry } from "@j3-bots/contracts";
+import { ChevronLeftIcon, ChevronRightIcon, PanelRightIcon } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 import { useTurnAnnouncement } from "@j3-bots/client-runtime/react";
 import { useI18n, usePresentation } from "../app/context";
-import { cn } from "../lib/cn";
 import { useLanding } from "../onboarding/handoff";
-import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
+import { memberList } from "@j3-bots/client-runtime/wording";
 import { MemberStack } from "./avatar/TeamAvatars";
 import { LiveBotAvatar, useOffline } from "./avatar/mood";
 import { PrimaryBadge } from "./avatar/PrimaryBadge";
-import { toneClass } from "./RosterRow";
-import { SwapText } from "./SwapText";
 import { Button } from "./ui/button";
 
 interface ConversationHeaderProps {
@@ -27,15 +19,13 @@ interface ConversationHeaderProps {
   readonly onToggleDetails: () => void;
   /** Phones only: back to the roster. */
   readonly onBack: () => void;
-  /** Brings the card a waiting bot needs answered into view. */
-  readonly onGoToWaiting: (entryId: EntryId) => void;
   /** The conversation's work folds: when a turn ends, the line it folds into is said aloud. */
   readonly folds: ReadonlyArray<WorkFoldEntry>;
   /** The name's button, which opens the details. */
   readonly titleRef?: RefObject<HTMLButtonElement | null>;
   /**
-   * Told the status line at each change of state and each new line, then the
-   * line a turn folds into, for screen readers (`useTurnAnnouncement`). The
+   * Told what the bot is doing at each change of state and each new line, then
+   * the line a turn folds into, for screen readers (`useTurnAnnouncement`). The
    * region that speaks it lies outside the conversation, so a dialog over the
    * conversation hides all of it from assistive technology (see `isCovered`).
    */
@@ -45,10 +35,11 @@ interface ConversationHeaderProps {
 }
 
 /**
- * Who this is, and one line saying what it is doing now. The name opens the
- * details, where Stop is while there is work to stop; while the bot waits, the
- * line takes the operator to what it waits on. Changes of state are announced
- * through `onAnnounce`, once each.
+ * Who this is: a bot's face and name on one line, or a room's members, its
+ * name and, under it, who is in it. What a bot is doing is the conversation's
+ * to show, in the turn under way and its cards; the header only says it to
+ * screen readers, through `onAnnounce`, once at each change. The name opens
+ * the details, where Stop is while there is work to stop.
  *
  * Mount one per conversation, so moving to another conversation announces nothing.
  */
@@ -57,7 +48,6 @@ export function ConversationHeader({
   detailsOpen,
   onToggleDetails,
   onBack,
-  onGoToWaiting,
   folds,
   titleRef,
   onAnnounce,
@@ -66,14 +56,6 @@ export function ConversationHeader({
   const ctx = usePresentation();
   const { t } = useI18n();
   const name = subject._tag === "bot" ? subject.bot.profile.name : subject.room.name;
-  const line: StatusLine | null =
-    subject._tag === "bot"
-      ? presenceLine(subject.bot, ctx)
-      : { text: t("room.members", { names: memberList(subject.room, ctx) }), tone: "secondary" };
-  const waitingOn =
-    subject._tag === "bot" && subject.bot.state._tag === "waiting"
-      ? subject.bot.state.entryId
-      : null;
   // Each change of state and each new line is said once, then how the turn ended; not the first.
   const offline = useOffline();
   // A first bot arriving from the first run lands here.
@@ -120,43 +102,14 @@ export function ConversationHeader({
               className="size-3.5 shrink-0 text-muted-foreground @tablet:hidden"
             />
           </button>
-          {/* The line keeps its place when it says nothing, so the name never moves as the bot's
-              state changes. */}
-          {line === null ? (
-            <span aria-hidden className="min-h-[1lh] text-2xs" />
-          ) : waitingOn !== null ? (
-            // On touch screens this line is the button at the end of the header instead. Only a coarse
-            // pointer hides it: with no pointer at all (keyboard only, a TV), it stays.
-            <button
-              type="button"
-              onClick={() => onGoToWaiting(waitingOn)}
-              aria-label={t("presence.waiting.goTo")}
-              className={cn(
-                "relative z-10 block max-w-full truncate rounded-sm text-2xs underline underline-offset-2 pointer-coarse:invisible",
-                toneClass[line.tone],
-              )}
-            >
-              <SwapText text={line.text} />
-            </button>
-          ) : (
-            <SwapText text={line.text} className={cn("text-2xs", toneClass[line.tone])} />
+          {subject._tag === "room" && (
+            <span className="block max-w-full truncate text-2xs text-muted-foreground">
+              {t("room.members", { names: memberList(subject.room, ctx) })}
+            </span>
           )}
         </span>
       </div>
       <span className="ms-auto flex shrink-0 items-center gap-1">
-        {waitingOn !== null && (
-          // A finger needs a whole target, apart from the title that opens the details.
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => onGoToWaiting(waitingOn)}
-            aria-label={t("presence.waiting.goTo")}
-            className="hidden text-waiting pointer-coarse:inline-flex"
-          >
-            {t("presence.waiting")}
-            <CornerDownRightIcon aria-hidden />
-          </Button>
-        )}
         {actions}
         <Button
           variant="ghost-muted"

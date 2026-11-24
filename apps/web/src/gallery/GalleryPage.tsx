@@ -1481,7 +1481,7 @@ function ComposerDemo({
 function ComposerSection() {
   return (
     <Section title="Conversation header and composer">
-      <Labeled label="Headers: a working bot, a waiting bot (the line goes to the request), a blocked bot, a room with work under way, the same room while its work stops, a room at rest. None offers Stop: it is in the details">
+      <Labeled label="Headers: a working bot, a waiting bot and a blocked bot, each only its face and name; a room with work under way, the same room while its work stops, a room at rest. None offers Stop: it is in the details">
         <div className="flex flex-col gap-2">
           {(
             [
@@ -1499,7 +1499,6 @@ function ComposerSection() {
                 detailsOpen={false}
                 onToggleDetails={nothing}
                 onBack={nothing}
-                onGoToWaiting={nothing}
                 folds={[]}
                 onAnnounce={nothing}
               />

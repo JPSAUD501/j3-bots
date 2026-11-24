@@ -6,8 +6,8 @@ import { presenceLine, type PresentationContext, type StatusLine } from "./statu
 import { workFoldTitle } from "./work.ts";
 
 /**
- * The line beside a turn under way: what the bot is doing now, the same line
- * its header and roster row show. Out of touch with the server, the client
+ * The line beside a turn under way: what the bot is doing now, as its roster
+ * row says it. Out of touch with the server, the client
  * cannot know, so the line says it is only what it last knew, with no time
  * in it: a stall is only "No recent activity", since how long it has lasted
  * runs on past what the client knew.

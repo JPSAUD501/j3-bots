@@ -101,7 +101,6 @@ export const en = {
   "presence.thinking": "Thinking",
   "presence.working": "Working",
   "presence.waiting": "Waiting for you",
-  "presence.waiting.goTo": "Waiting for you: go to the request",
   "presence.stalled": "No activity for {duration}",
   "presence.stalledQuiet": "No recent activity",
 
@@ -891,6 +890,7 @@ export const en = {
   "timeline.loadingOlder": "Loading earlier messages…",
   "timeline.newMessages": "New messages",
   "timeline.toLatest": "Go to the latest message",
+  "timeline.toWaiting": "Waiting for you: go to the request",
 
   "composer.stillUploading": "Files are still uploading",
   "composer.file.uploading": "Uploading, {percent}",

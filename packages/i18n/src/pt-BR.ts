@@ -99,7 +99,6 @@ const sentences = {
   "presence.thinking": "Pensando",
   "presence.working": "Trabalhando",
   "presence.waiting": "Esperando por você",
-  "presence.waiting.goTo": "Esperando por você: ir para o pedido",
   "presence.stalled": "Sem atividade há {duration}",
   "presence.stalledQuiet": "Sem atividade recente",
 
@@ -897,6 +896,7 @@ const sentences = {
   "timeline.loadingOlder": "Carregando mensagens anteriores…",
   "timeline.newMessages": "Novas mensagens",
   "timeline.toLatest": "Ir para a mensagem mais recente",
+  "timeline.toWaiting": "Esperando por você: ir para o pedido",
 
   "composer.stillUploading": "Os arquivos ainda estão subindo",
   "composer.file.uploading": "Enviando, {percent}",

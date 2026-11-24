@@ -260,3 +260,27 @@ export function arrivalCounts(
   }
   return { own, others };
 }
+
+/**
+ * Where a card is against what its conversation shows: in view, above or
+ * below it.
+ */
+export type CardPlace = "shown" | "above" | "below";
+
+/**
+ * Where the card of `entryId` is among `rows`, given the keys of the rows
+ * `shown` now; null while there is no such card among them, as once its
+ * entry is older than what is loaded, or while nothing is known to show.
+ */
+export function cardPlace(
+  rows: ReadonlyArray<TimelineItem>,
+  shown: ReadonlySet<string>,
+  entryId: EntryId,
+): CardPlace | null {
+  const index = rows.findIndex((row) => row.kind === "card" && row.entry.id === entryId);
+  const card = rows[index];
+  if (card === undefined || shown.size === 0) return null;
+  if (shown.has(card.key)) return "shown";
+  const first = rows.findIndex((row) => shown.has(row.key));
+  return first !== -1 && index < first ? "above" : "below";
+}
