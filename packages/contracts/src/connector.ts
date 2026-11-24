@@ -327,7 +327,12 @@ export const SIGN_IN_REASONS = ["not-signed-in", "expired", "rejected"] as const
  * - `server-error`: it answered with an error of its own;
  * - `not-mcp`: what it answered is not an MCP server's answer;
  * - `refused-address`: its address leads into the operator's own network,
- *   which J3 Bots does not reach for a connector the operator did not allow so.
+ *   which J3 Bots does not reach for a connector the operator did not allow so;
+ * - `command-not-found`: a command connector's program is not on the server,
+ *   by its path or on the search path the server runs with;
+ * - `command-exited`: a command connector's process could not start, or
+ *   ended on its own; the next use starts it again, after a pause that grows
+ *   while it keeps ending.
  */
 export const FAILURE_REASONS = [
   "unreachable",
@@ -335,6 +340,8 @@ export const FAILURE_REASONS = [
   "server-error",
   "not-mcp",
   "refused-address",
+  "command-not-found",
+  "command-exited",
 ] as const;
 
 /**
@@ -508,6 +515,27 @@ export const OAuthClientInput = Schema.Struct({
 export type OAuthClientInput = typeof OAuthClientInput.Type;
 
 /**
+ * A command connector's command line and environment, as the operator
+ * confirmed them. The client shows the operator the program, every argument
+ * and the name of every variable, never a value, and sends this only once
+ * they confirmed it; the server runs nothing else under that consent. A
+ * program run through `npx` or `uvx` must name its package at an exact
+ * version, as `@scope/server@1.2.3` or `server==1.2.3`: the server refuses a
+ * tag, a range or no version (`Invalid("command-unpinned")`), so the code
+ * that runs is the version the operator saw. Through `npm exec`, which reads
+ * its own options after the package too, the package must follow `--`.
+ */
+export const CommandLine = Schema.Struct({
+  command: Program,
+  args: Schema.Array(CommandArgument).check(Schema.isMaxLength(64)),
+  // Each variable is one of the connector's fields, of which it has at most 32.
+  env: Schema.Array(Schema.Struct({ name: EnvName, value: secretValue(0, 10_000) })).check(
+    Schema.isMaxLength(32),
+  ),
+});
+export type CommandLine = typeof CommandLine.Type;
+
+/**
  * What a connector is added from:
  * - `listing`: a gallery entry, with the values its form asked for, the
  *   operator's OAuth client for an `own-app` one, and the language the
@@ -516,9 +544,10 @@ export type OAuthClientInput = typeof OAuthClientInput.Type;
  *   optional OAuth client. `privateNetwork` says the operator confirmed an
  *   address in their own network; without it the server refuses one;
  * - `command`: a command the operator confirmed, which runs on the server as
- *   its user, with its environment. Offered by the web and desktop apps only.
- *   A secret goes in `env`, which is masked as it is typed; the arguments are
- *   redacted and kept with the secrets all the same, in case one carries a key.
+ *   its user, with its environment ({@link CommandLine}). Offered by the web
+ *   and desktop apps only. A secret goes in `env`, which is masked as it is
+ *   typed; the arguments are redacted and kept with the secrets all the same,
+ *   in case one carries a key.
  */
 export const ConnectorSource = Schema.Union([
   Schema.TaggedStruct("listing", {
@@ -534,14 +563,7 @@ export const ConnectorSource = Schema.Union([
     oauthClient: Schema.NullOr(OAuthClientInput),
     privateNetwork: Schema.Boolean,
   }),
-  Schema.TaggedStruct("command", {
-    name: Label,
-    command: Program,
-    args: Schema.Array(CommandArgument).check(Schema.isMaxLength(64)),
-    env: Schema.Array(Schema.Struct({ name: EnvName, value: secretValue(0, 10_000) })).check(
-      Schema.isMaxLength(64),
-    ),
-  }),
+  Schema.TaggedStruct("command", { name: Label, ...CommandLine.fields }),
 ]);
 export type ConnectorSource = typeof ConnectorSource.Type;
 

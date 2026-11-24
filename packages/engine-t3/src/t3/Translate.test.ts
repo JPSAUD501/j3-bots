@@ -1150,6 +1150,161 @@ describe("a `j3` call recorded before its arguments", () => {
   );
 });
 
+describe("a connector's `j3` call", () => {
+  it.effect(
+    "is a call the server matches and a step of the bot's work, named without its input",
+    () =>
+      Effect.gen(function* () {
+        const args = { query: "the operator's private roadmap" };
+        const mirror = emptyMirror();
+        applyEvent(mirror, run("running", 1));
+        const { view } = replacement(mirror, false, at);
+        for (const [id, toolName, input] of [
+          ["item-say", "j3.say", { text: "Looking." }],
+          ["item-search", "j3.notion__search", args],
+        ] as const) {
+          applyEvent(
+            mirror,
+            item({ id, type: "dynamic_tool", toolName, input, status: "running" }),
+          );
+        }
+        yield* digestToolCalls(mirror);
+        const events = diff(mirror, view, at);
+
+        assert.deepStrictEqual(
+          events.flatMap((event) => (event._tag === "tool-call" ? [event.call.tool] : [])),
+          ["say", "notion__search"],
+        );
+        const steps = events.flatMap((event) => (event._tag === "step" ? [event.step] : []));
+        assert.deepStrictEqual(
+          steps.map(({ kind, tool, label }) => ({ kind, tool, label })),
+          [{ kind: "tool", tool: "connector", label: "Notion: search" }],
+        );
+        assert.notInclude(JSON.stringify(steps), "roadmap");
+      }),
+  );
+
+  it.effect("closed before anyone was told of it, is still listed with its running turn", () =>
+    Effect.gen(function* () {
+      // Codex's record of a call closes while the call waits on its approval.
+      const args = { query: "roadmap" };
+      const mirror = emptyMirror();
+      applyEvent(mirror, run("running", 1));
+      applyEvent(
+        mirror,
+        item({
+          id: "item-search",
+          type: "dynamic_tool",
+          toolName: "j3.notion__search",
+          input: args,
+          status: "completed",
+        }),
+      );
+      yield* digestToolCalls(mirror);
+
+      const [turn] = replacement(mirror, false, at).event.openTurns;
+      assert.deepStrictEqual(turn?.toolCalls, []);
+      assert.deepStrictEqual(
+        turn?.closedToolCalls.map(({ tool, inputDigest }) => ({ tool, inputDigest })),
+        [{ tool: "notion__search", inputDigest: yield* toolInputDigest(args) }],
+      );
+    }),
+  );
+
+  it.effect("held back by an approval, is the call the approval's request names", () =>
+    Effect.gen(function* () {
+      // Claude Code's approval and the call it holds share the tool use's id.
+      const ref = { driver: "claudeAgent", nativeId: "toolu-1", strength: "strong" };
+      const mirror = emptyMirror();
+      applyEvent(mirror, run("running", 1));
+      const { view } = replacement(mirror, false, at);
+      applyEvent(
+        mirror,
+        item({
+          id: "item-search",
+          type: "dynamic_tool",
+          toolName: "mcp__j3__notion__search",
+          input: { query: "roadmap" },
+          status: "running",
+          nativeItemRef: ref,
+        }),
+      );
+      applyEvent(
+        mirror,
+        item({
+          id: "item-approval",
+          type: "approval_request",
+          requestId: "request-1",
+          requestKind: "command",
+          prompt: "Search Notion",
+          status: "waiting",
+          nativeItemRef: ref,
+        }),
+      );
+      applyEvent(
+        mirror,
+        event("runtime-request.updated", {
+          id: "request-1",
+          nodeId: "node-1",
+          providerTurnId: null,
+          nativeRequestRef: ref,
+          kind: "command",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: at,
+          resolvedAt: null,
+        }),
+      );
+      yield* digestToolCalls(mirror);
+      const events = diff(mirror, view, at);
+
+      const calls = events.flatMap((event) => (event._tag === "tool-call" ? [event.call] : []));
+      const held = events.flatMap((event) =>
+        event._tag === "request-opened" ? [event.open.heldCall] : [],
+      );
+      assert.strictEqual(calls.length, 1);
+      assert.deepStrictEqual(
+        held,
+        calls.map((call) => call.callId),
+      );
+    }),
+  );
+
+  it.effect("named `send_to_user` is a connector's step, never the bot speaking", () =>
+    Effect.gen(function* () {
+      const mirror = emptyMirror();
+      applyEvent(mirror, run("running", 1));
+      const { view } = replacement(mirror, false, at);
+      for (const [id, toolName, message] of [
+        ["item-host", "send_to_user", "Shown to the operator."],
+        ["item-claude", "mcp__j3__example__send_to_user", "Sent through a connector."],
+        ["item-codex", "j3.example__send_to_user", "Sent through a connector."],
+      ] as const) {
+        applyEvent(
+          mirror,
+          item({ id, type: "dynamic_tool", toolName, input: { message }, status: "running" }),
+        );
+      }
+      yield* digestToolCalls(mirror);
+      const events = diff(mirror, view, at);
+
+      assert.deepStrictEqual(
+        events.flatMap((event) => (event._tag === "host-speech" ? [event.text] : [])),
+        ["Shown to the operator."],
+      );
+      assert.deepStrictEqual(
+        events.flatMap((event) =>
+          event._tag === "step" ? [{ tool: event.step.tool, label: event.step.label }] : [],
+        ),
+        [
+          { tool: "connector", label: "Example: send to user" },
+          { tool: "connector", label: "Example: send to user" },
+        ],
+      );
+    }),
+  );
+});
+
 describe("a turn the engine ran on recovered context", () => {
   // The engine records a `handoff` item in the run when the provider could not
   // resume its own conversation (**Read** at `db51b67`,

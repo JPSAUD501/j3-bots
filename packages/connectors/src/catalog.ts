@@ -117,6 +117,8 @@ const cleanJson = (
   clean: (text: string) => string,
 ): Schema.Json | undefined => {
   if (typeof value === "string") return clean(value);
+  // A number can be a secret too, as a key of digits: one cleaning would change leaves the tool out.
+  if (typeof value === "number") return clean(String(value)) === String(value) ? value : undefined;
   if (value === null || typeof value !== "object") return value;
   if (!isJsonArray(value)) return cleanObject(value, clean);
   const out: Array<Schema.Json> = [];

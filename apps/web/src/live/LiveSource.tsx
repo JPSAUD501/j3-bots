@@ -21,6 +21,7 @@ import {
   useWorkSteps,
 } from "@j3-bots/client-runtime/react";
 import type {
+  Attachment,
   AvatarChoice,
   Bot,
   BotId,
@@ -74,6 +75,7 @@ import {
   type OpenedNotification,
   type RoomFormMode,
   roomStopFailed,
+  showsImage,
   templateFileName,
   type TemplateRead,
   withBot,
@@ -82,7 +84,7 @@ import type { AppLink } from "@j3-bots/desktop-bridge";
 import { memoryFileName } from "@j3-bots/client-runtime/wording";
 import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
-import { ConnectionBanner } from "../components/ConnectionBanner";
+import { ConnectionBanner, updateHasDetails } from "../components/ConnectionBanner";
 import {
   ConnectInstead,
   LocalServerFailed,
@@ -98,6 +100,8 @@ import { cn } from "../lib/cn";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
 import type { ConnectorsIntents, ConnectorsOpening } from "../components/connectors/screen";
 import { EditBotDialog } from "../components/EditBotDialog";
+import { AttachmentImagesProvider } from "../components/attachmentImages";
+import { ImageViewer } from "../components/ImageViewer";
 import { MemoryViewer } from "../components/MemoryViewer";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import { NewBotDialog } from "../components/NewBotDialog";
@@ -139,7 +143,7 @@ import {
   useReportLanguage,
   useReportTray,
 } from "./desktopMenus";
-import { desktop } from "./desktop";
+import { desktop, systemOf } from "./desktop";
 import {
   asksSilently,
   localScreen,
@@ -380,10 +384,20 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
         </Screen>
       );
     case "incompatible":
+      // An update of the server on this computer rolled back to a release the
+      // app does not speak with still says so, with its Try again and details.
       return (
-        <Screen>
-          <Incompatible server={desktopServer} update={update} />
-        </Screen>
+        <ConnectionBanner
+          state={connection}
+          local={local?.line}
+          everConnected={everConnected}
+          onRetryNow={j3.reconnectNow}
+        >
+          <Screen>
+            <Incompatible server={desktopServer} update={update} />
+          </Screen>
+          {local?.details}
+        </ConnectionBanner>
       );
     case "storage-failed":
       return (
@@ -426,6 +440,24 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
 }
 
 /**
+ * While the bots live on this computer, the providers sign in from here. The
+ * page a sign-in waits on opens in the system's browser: the desktop app hands
+ * it a page `window.open` names. `undefined` when the bots live elsewhere.
+ */
+const localProviderSetup = (j3: J3Client): ProviderSetupIntents | undefined =>
+  desktop?.mode === "local"
+    ? {
+        signIn: (harness) =>
+          j3.signIn(harness, (url) => {
+            window.open(url, "_blank", "noopener");
+          }),
+        cancelSignIn: j3.cancelSignIn,
+        harnesses: j3.harnessLocations,
+        connectEndpoint: j3.connectEndpoint,
+      }
+    : undefined;
+
+/**
  * In local mode, what stands between the operator and the bots on this
  * computer, before the shell: signing this computer in, with no code, the
  * first time after it was chosen, and only when asked after it was signed
@@ -442,6 +474,7 @@ function useLocalHere(origin: URL) {
   const connection = useConnection();
   const roster = useReadable(j3.roster);
   const engine = useEngineStatus();
+  const signIns = useReadable(j3.signIns);
   const view = useLocalServer();
   const [signIn, setSignIn] = useState<LocalSignInState>({ _tag: "idle" });
   // The first run on this computer: from a sign-in without a code until the
@@ -456,6 +489,15 @@ function useLocalHere(origin: URL) {
   const readyNow = useRef(ready);
   useEffect(() => {
     readyNow.current = ready;
+  }, [ready]);
+  // A server that spoke another protocol is not asked again by itself: once
+  // the one on this computer is ready anew, as after Try again of an update
+  // that rolled back, the page tries it.
+  const wakeIncompatible = useEffectEvent(() => {
+    if (connection._tag === "incompatible") j3.reconnectNow();
+  });
+  useEffect(() => {
+    if (ready) wakeIncompatible();
   }, [ready]);
 
   const fresh = localMode !== null && connection._tag === "unpaired" && connection.reason === "new";
@@ -502,6 +544,8 @@ function useLocalHere(origin: URL) {
   if (localMode === null) return null;
   const desktopLocal = localMode;
 
+  const providerSetup = localProviderSetup(j3);
+
   const stopUsing = (): Promise<boolean> => {
     setStopping(true);
     // Signed out first, while the server runs, so the device it was ends there.
@@ -531,6 +575,25 @@ function useLocalHere(origin: URL) {
   // Signed out, the bots this computer has are still here: leaving them asks first.
   const stopInstead = <StopUsingComputer quiet onStop={stopUsing} />;
   const failed = view !== null && view.server.state === "failed" ? view.server : null;
+  const update = view?.server.state === "ready" ? view.server.update : undefined;
+  const rolledBack = update?._tag === "rolled-back" && updateHasDetails(update) ? update : null;
+  /** What the details dialog explains: the start that failed, or the update that was rolled back. */
+  const explained =
+    failed !== null
+      ? {
+          title: t("local.failed.title"),
+          lead: null,
+          failure: failed,
+          retry: desktopLocal.retryLocalServer,
+        }
+      : rolledBack !== null
+        ? {
+            title: t("local.update.title", { failed: rolledBack.failed }),
+            lead: t("local.update.body", { running: rolledBack.running }),
+            failure: rolledBack,
+            retry: desktopLocal.retryServerUpdate,
+          }
+        : null;
 
   const intents: DesktopLocal = {
     stopUsing,
@@ -541,6 +604,13 @@ function useLocalHere(origin: URL) {
         setStartWithSystem(held);
         return held;
       }),
+    phone: {
+      access: desktopLocal.phoneAccess,
+      follow: desktopLocal.onPhoneAccess,
+      system: systemOf(navigator.userAgent),
+      set: desktopLocal.setPhoneAccess,
+      pairingLink: desktopLocal.localPairingLink,
+    },
   };
 
   const createFirst = ({ name, avatar }: { name: string; avatar: AvatarChoice }) => {
@@ -574,6 +644,7 @@ function useLocalHere(origin: URL) {
       <Onboarding
         engine={engine._tag === "ready" ? engine.value : null}
         footer={connectInstead}
+        providerSetup={providerSetup === undefined ? undefined : { ...providerSetup, signIns }}
         waiting={reached ? null : t("local.waiting")}
         onCreate={createFirst}
         onArrived={(botId) => {
@@ -618,19 +689,26 @@ function useLocalHere(origin: URL) {
   };
 
   const details = (
-    <Dialog.Root open={detailsOpen && failed !== null} onOpenChange={setDetailsOpen}>
+    <Dialog.Root open={detailsOpen && explained !== null} onOpenChange={setDetailsOpen}>
       <Dialog.Portal>
         <Dialog.Backdrop className={dialogBackdrop} />
         <Dialog.Popup className={cn(alertDialog, "max-w-md gap-3 p-5")}>
-          <Dialog.Title className={dialogTitle}>{t("local.failed.title")}</Dialog.Title>
-          {failed !== null && (
-            <LocalServerFailedBody
-              server={failed}
-              onRetry={() => {
-                setDetailsOpen(false);
-                desktopLocal.retryLocalServer();
-              }}
-            />
+          {explained !== null && (
+            <>
+              <Dialog.Title className={dialogTitle}>{explained.title}</Dialog.Title>
+              {explained.lead !== null && (
+                <Dialog.Description className="text-sm text-pretty text-muted-foreground">
+                  {explained.lead}
+                </Dialog.Description>
+              )}
+              <LocalServerFailedBody
+                server={explained.failure}
+                onRetry={() => {
+                  setDetailsOpen(false);
+                  explained.retry();
+                }}
+              />
+            </>
           )}
         </Dialog.Popup>
       </Dialog.Portal>
@@ -648,6 +726,7 @@ function useLocalHere(origin: URL) {
             restartAt: view.restartAt,
             onRetry: desktopLocal.retryLocalServer,
             onDetails: () => setDetailsOpen(true),
+            onRetryUpdate: desktopLocal.retryServerUpdate,
           },
     intents,
     details,
@@ -803,6 +882,8 @@ function LiveShell({
   };
   const connectorsState = useConnectors();
   const connectors = connectorsState._tag === "ready" ? connectorsState.value : null;
+  // The image a file shows over everything, opened from a conversation.
+  const [viewing, setViewing] = useState<Attachment | null>(null);
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
   // Read each time Settings opens, and on every socket while it stays open.
@@ -839,6 +920,29 @@ function LiveShell({
   const rosterChanged = (result: IntentResult<unknown>) => {
     if (result._tag === "failed" && stillPaired()) say(t("roster.changeFailed"));
   };
+  /** Shows `attachment` in `reserved`, or saves it, once downloaded; or says why it cannot. */
+  const deliverAttachment = (attachment: Attachment, reserved: Window | null) =>
+    void j3.download(attachment).then((result) => {
+      if (result._tag === "done") {
+        deliverFile(attachment, result.value.bytes, reserved);
+        return;
+      }
+      reserved?.close();
+      say(
+        result.reason === "not-found"
+          ? t("file.gone", { name: attachment.name })
+          : t("file.unreachable", { name: attachment.name }),
+      );
+    });
+  // Only the image types a page draws without running anything get here (`showsImage`).
+  const imageOf = (attachment: Attachment) =>
+    j3
+      .download(attachment)
+      .then((result) =>
+        result._tag === "done"
+          ? new Blob([result.value.bytes], { type: attachment.mediaType })
+          : null,
+      );
 
   const view: ConversationView =
     conversation.state === null
@@ -1007,22 +1111,9 @@ function LiveShell({
 
   const storedUnencrypted = useReadable(signInUnencrypted);
 
-  // While the bots live on this computer, the providers sign in from here. The page a sign-in
-  // waits on opens in the system's browser: the desktop app hands it a page `window.open` names.
   const signIns = useReadable(j3.signIns);
   const vault = useReadable(j3.vault.view);
-  const providerSetup: ProviderSetupIntents | undefined =
-    desktop?.mode === "local"
-      ? {
-          signIn: (harness) =>
-            j3.signIn(harness, (url) => {
-              window.open(url, "_blank", "noopener");
-            }),
-          cancelSignIn: j3.cancelSignIn,
-          harnesses: j3.harnessLocations,
-          connectEndpoint: j3.connectEndpoint,
-        }
-      : undefined;
+  const providerSetup = localProviderSetup(j3);
 
   // A connector's sign-in comes back to the desktop app through its loopback; to a
   // browser, through a server reached over https, else as an address the operator pastes.
@@ -1282,21 +1373,10 @@ function LiveShell({
     openWorkFold: (entryId) => setOpenFolds((open) => new Set(open).add(entryId)),
     closeWorkFold: (entryId) =>
       setOpenFolds((open) => new Set([...open].filter((id) => id !== entryId))),
+    // An image shows here; any other file opens in its own window, or is saved.
     openAttachment: (attachment) => {
-      // Reserved now, while the click still lets the page open a window.
-      const reserved = reserveWindow(attachment);
-      j3.download(attachment).then((result) => {
-        if (result._tag === "done") {
-          deliverFile(attachment, result.value.bytes, reserved);
-          return;
-        }
-        reserved?.close();
-        say(
-          result.reason === "not-found"
-            ? t("file.gone", { name: attachment.name })
-            : t("file.unreachable", { name: attachment.name }),
-        );
-      });
+      if (showsImage(attachment)) setViewing(attachment);
+      else deliverAttachment(attachment, reserveWindow(attachment));
     },
     openHandoff: (entryId) => {
       const handoff = view.items.find((item) => item._tag === "handoff" && item.id === entryId);
@@ -1350,10 +1430,11 @@ function LiveShell({
     openConnectors,
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
     setDraftText: j3.setDraftText,
-    attachFiles: (asked, picked) =>
+    attachFiles: (asked, picked, at) =>
       j3.attachFiles(
         asked,
         picked.map((file) => ({ name: file.name, body: file })),
+        at,
       ),
     detachFile: j3.detachFile,
     restoreDraft: j3.restoreDraft,
@@ -1491,7 +1572,14 @@ function LiveShell({
 
   return (
     <ShellSourceProvider source={{ data, intents }}>
-      {children}
+      <AttachmentImagesProvider fetch={imageOf}>
+        {children}
+        <ImageViewer
+          attachment={viewing}
+          onClose={() => setViewing(null)}
+          onSave={(attachment) => deliverAttachment(attachment, null)}
+        />
+      </AttachmentImagesProvider>
       {[...openFolds].map((foldId) => (
         <FoldReader
           key={foldId}

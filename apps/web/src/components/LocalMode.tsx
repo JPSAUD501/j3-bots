@@ -108,11 +108,15 @@ export function BackToWhere({ onBack }: { readonly onBack: () => void }) {
   );
 }
 
+/** What a failure the app saw says of itself: as a start's, or an update's it rolled back from. */
+type Failure = Pick<LocalServerState, "reason" | "fix" | "logTail">;
+
 /**
- * Why the server on this computer did not start, in its own words, what
- * repairs it, and the lines it last wrote, shown on request.
+ * Why the server on this computer did not start, or the update it was
+ * rolled back from, in its own words, what repairs it, and the lines it last
+ * wrote, shown on request.
  */
-function FailureDetails({ server }: { readonly server: LocalServerState }) {
+function FailureDetails({ server }: { readonly server: Failure }) {
   const { t } = useI18n();
   const logId = useId();
   const [open, setOpen] = useState(false);
@@ -172,13 +176,13 @@ export function LocalServerFailed({
 
 /**
  * The same, in a dialog over the app, opened from the connection line once
- * there are bots to come back to.
+ * there are bots to come back to; also why an update was rolled back.
  */
 export function LocalServerFailedBody({
   server,
   onRetry,
 }: {
-  readonly server: LocalServerState;
+  readonly server: Failure;
   readonly onRetry: () => void;
 }) {
   const { t } = useI18n();

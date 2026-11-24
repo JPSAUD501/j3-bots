@@ -158,6 +158,12 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "connector-unsupported",
     /** The address the browser returned to is not one this sign-in expects. */
     "sign-in-url",
+    /**
+     * A command connector runs a package through `npx` or `uvx` with no exact
+     * version (a tag, a range, none), or the server cannot tell which package
+     * it runs: its command line names it at an exact version instead.
+     */
+    "command-unpinned",
   ]),
 }) {
   override get message(): string {

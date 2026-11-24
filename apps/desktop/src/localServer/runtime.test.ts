@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as TestClock from "effect/testing/TestClock";
 import * as Runtime from "./runtime.ts";
 
 /** A folder for the package's runtime and one for the copies, in a fresh directory. */
@@ -32,7 +30,7 @@ const packaged = (source: string, version: string) =>
     yield* fs.writeFileString(path.join(source, "server", "bin.mjs"), `server ${version}`);
     yield* fs.writeFileString(
       path.join(source, "release.json"),
-      JSON.stringify({ version, target: "linux-x64" }),
+      JSON.stringify({ version, engine: "t3-0.0.27", target: "linux-x64" }),
     );
   });
 
@@ -49,52 +47,52 @@ describe("putting the server runtime in place", () => {
       const path = yield* Path.Path;
       const { source, folder } = yield* folders;
       yield* packaged(source, "0.3.0");
-      const runtime = yield* Runtime.install({ source, folder, platform: "linux" });
-      assert.strictEqual(runtime.version, "0.3.0");
+      const release = yield* Runtime.install({ source, folder });
+      assert.deepStrictEqual(release, { version: "0.3.0", engine: "t3-0.0.27" });
+      const runtime = yield* Runtime.ready({ folder, version: "0.3.0", platform: "linux" });
       assert.strictEqual(runtime.node, path.join(folder, "0.3.0", "node", "bin", "node"));
       assert.strictEqual(runtime.entry, path.join(folder, "0.3.0", "server", "bin.mjs"));
       assert.strictEqual(yield* fs.readFileString(runtime.node), "node for 0.3.0");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps the version before the one that runs, and removes older ones", () =>
+  it.effect("keeps every version it copied until told which to keep", () =>
     Effect.gen(function* () {
       const { source, folder } = yield* folders;
       for (const version of ["0.3.0", "0.3.1", "0.3.2"]) {
         yield* packaged(source, version);
-        yield* Runtime.install({ source, folder, platform: "linux" });
-        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Runtime.install({ source, folder });
       }
-      assert.deepStrictEqual(yield* listed(folder), ["0.3.1", "0.3.2"]);
+      assert.deepStrictEqual((yield* Runtime.kept(folder)).sort(), ["0.3.0", "0.3.1", "0.3.2"]);
+      yield* Runtime.prune(folder, ["0.3.0", "0.3.2"]);
+      assert.deepStrictEqual(yield* listed(folder), ["0.3.0", "0.3.2"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps the version it rolled back from when an older one runs again", () =>
-    Effect.gen(function* () {
-      const { source, folder } = yield* folders;
-      for (const version of ["0.3.0", "0.3.1", "0.3.0"]) {
-        yield* packaged(source, version);
-        yield* Runtime.install({ source, folder, platform: "linux" });
-        yield* TestClock.adjust(Duration.seconds(1));
-      }
-      assert.deepStrictEqual(yield* listed(folder), ["0.3.0", "0.3.1"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("copies again a version whose copy was cut short", () =>
+  it.effect("copies again a version whose copy was cut short, and never runs one", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { source, folder } = yield* folders;
-      yield* packaged(source, "0.3.0");
       // An earlier copy, killed before it was whole: no `.complete`, no server.
       yield* fs.makeDirectory(path.join(folder, "0.3.0", "node", "bin"), { recursive: true });
       yield* fs.writeFileString(path.join(folder, "0.3.0", "node", "bin", "node"), "half");
       yield* fs.makeDirectory(path.join(folder, ".0.2.9.partial"), { recursive: true });
-      const runtime = yield* Runtime.install({ source, folder, platform: "linux" });
+      assert.deepStrictEqual(yield* Runtime.kept(folder), []);
+      const cutShort = yield* Effect.flip(
+        Runtime.ready({ folder, version: "0.3.0", platform: "linux" }),
+      );
+      assert.strictEqual(cutShort.reason, "not-kept");
+      // A release whose version ends as a copy's staging folder does is a release all the same.
+      yield* packaged(source, "0.2.9-rc.partial");
+      yield* Runtime.install({ source, folder });
+
+      yield* packaged(source, "0.3.0");
+      yield* Runtime.install({ source, folder });
+      const runtime = yield* Runtime.ready({ folder, version: "0.3.0", platform: "linux" });
       assert.strictEqual(yield* fs.readFileString(runtime.node), "node for 0.3.0");
       assert.strictEqual(yield* fs.readFileString(runtime.entry), "server 0.3.0");
-      assert.deepStrictEqual(yield* listed(folder), ["0.3.0"]);
+      assert.deepStrictEqual(yield* listed(folder), ["0.2.9-rc.partial", "0.3.0"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -103,11 +101,11 @@ describe("putting the server runtime in place", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { source, folder } = yield* folders;
-      const missing = yield* Effect.flip(Runtime.install({ source, folder, platform: "linux" }));
+      const missing = yield* Effect.flip(Runtime.install({ source, folder }));
       assert.strictEqual(missing.reason, "missing");
       yield* packaged(source, "0.3.0");
       yield* fs.writeFileString(path.join(source, "release.json"), '{"version": "../../etc"}');
-      const damaged = yield* Effect.flip(Runtime.install({ source, folder, platform: "linux" }));
+      const damaged = yield* Effect.flip(Runtime.install({ source, folder }));
       assert.strictEqual(damaged.reason, "damaged");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -119,18 +117,21 @@ describe("the runtime on Windows", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { source, folder } = yield* folders;
-      yield* packaged(source, "0.3.0");
-      const first = yield* Runtime.install({ source, folder, platform: "win32" });
-      assert.strictEqual(first.node, path.join(folder, "current", "node", "node.exe"));
-      assert.strictEqual(yield* fs.readFileString(first.node), "node.exe for 0.3.0");
+      for (const version of ["0.3.0", "0.3.1"]) {
+        yield* packaged(source, version);
+        yield* Runtime.install({ source, folder });
+      }
+      const newer = yield* Runtime.ready({ folder, version: "0.3.1", platform: "win32" });
+      assert.strictEqual(newer.node, path.join(folder, "current", "node", "node.exe"));
+      assert.strictEqual(yield* fs.readFileString(newer.node), "node.exe for 0.3.1");
 
-      yield* TestClock.adjust(Duration.seconds(1));
-      yield* packaged(source, "0.3.1");
-      const second = yield* Runtime.install({ source, folder, platform: "win32" });
-      assert.strictEqual(second.node, first.node);
-      assert.strictEqual(second.version, "0.3.1");
-      assert.strictEqual(yield* fs.readFileString(second.node), "node.exe for 0.3.1");
+      // A rollback runs the older version from the same path.
+      const older = yield* Runtime.ready({ folder, version: "0.3.0", platform: "win32" });
+      assert.strictEqual(older.node, newer.node);
+      assert.strictEqual(older.version, "0.3.0");
+      assert.strictEqual(yield* fs.readFileString(older.node), "node.exe for 0.3.0");
       assert.deepStrictEqual(yield* listed(folder), ["0.3.0", "0.3.1", "current"]);
+      assert.deepStrictEqual((yield* Runtime.kept(folder)).sort(), ["0.3.0", "0.3.1"]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

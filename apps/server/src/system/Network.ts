@@ -80,6 +80,17 @@ export const isPrivateAddress = (address: string): boolean => {
   return false;
 };
 
+/**
+ * The first public address among `addresses`, if any: what keeps `lan` from
+ * starting, since it would listen there too. Loopback is not counted.
+ */
+export const publicAddressOf = (
+  addresses: ReadonlyArray<InterfaceAddress>,
+): Option.Option<string> =>
+  Option.fromNullishOr(
+    addresses.find(({ address, internal }) => !internal && !isPrivateAddress(address))?.address,
+  );
+
 /** A `Host` header holds an authority alone: no user, path, query or fragment. */
 const AUTHORITY = /^[^\s@/\\?#]+$/;
 

@@ -87,6 +87,8 @@ const HOME_SUMMARIES: Record<Home.HomeNotPrivate["reason"], (home: string) => st
     `Other users on this machine can open ${home}, which holds the database, the engine's credential and the admin socket. The server refuses to start until only this user can.`,
   "closed-to-owner": (home) =>
     `This user's own permissions on ${home} do not let it read, write and open the files there. The server refuses to start until they do.`,
+  unverifiable: (home) =>
+    `Windows did not say who may open ${home}. The server refuses to start until it can check that only this user can.`,
 };
 
 const homeCheck = Effect.fn("doctor.home")(function* (home: string) {

@@ -12,7 +12,12 @@ import { hasAdminSocket } from "./admin/socket.ts";
 import { HOME_ENTRIES, homeLayout } from "./home/entries.ts";
 import * as Installation from "./installation.ts";
 import { isWithin, realLocation } from "./paths.ts";
-import { EVERY_IPV4_INTERFACE, isPrivateAddress, Network } from "./system/Network.ts";
+import {
+  EVERY_IPV4_INTERFACE,
+  isPrivateAddress,
+  Network,
+  publicAddressOf,
+} from "./system/Network.ts";
 import * as TlsCredentials from "./system/Tls.ts";
 import { isBuilt } from "./web/built.ts";
 
@@ -488,14 +493,12 @@ export const load = Effect.gen(function* () {
   // `lan` means private addresses only, with or without TLS.
   if (hostValue === LAN) {
     const network = yield* Network;
-    const exposed = (yield* network.ipv4Addresses).find(
-      ({ address, internal }) => !internal && !isPrivateAddress(address),
-    );
-    if (exposed !== undefined) {
+    const exposed = publicAddressOf(yield* network.ipv4Addresses);
+    if (Option.isSome(exposed)) {
       return yield* new ConfigRefused({
         setting: hostSetting,
         reason: "lan-has-public-address",
-        subject: exposed.address,
+        subject: exposed.value,
       });
     }
   } else if (Option.isNone(tls) && !isPrivateAddress(hostValue)) {

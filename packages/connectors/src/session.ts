@@ -6,6 +6,7 @@ import {
   Client,
   ProtocolError,
   SdkError,
+  SdkErrorCode,
   SdkHttpError,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
@@ -19,6 +20,7 @@ import type * as Scope from "effect/Scope";
 import { type CatalogTool, catalogOf, ListedTool, toolBytes } from "./catalog.ts";
 import {
   AuthFailing,
+  CommandFailed,
   type ConnectorFailure,
   type CredentialsUnavailable,
   NeedsSignIn,
@@ -273,6 +275,7 @@ const isConnectorFailure = Schema.is(
     ServerError,
     NotMcp,
     Withdrawn,
+    CommandFailed,
   ]),
 );
 
@@ -284,6 +287,10 @@ const isConnectorFailure = Schema.is(
 const failureOf = (error: unknown): ConnectorFailure => {
   if (isConnectorFailure(error)) return error;
   if (SdkHttpError.isInstance(error)) return new ServerError({ status: error.status });
+  // The connection ended under the request: a server that went away, not one that answered badly.
+  if (SdkError.isInstance(error) && error.code === SdkErrorCode.ConnectionClosed) {
+    return new Unreachable({ reason: "closed" });
+  }
   if (ProtocolError.isInstance(error)) return new ServerError({ status: null });
   if (SdkError.isInstance(error)) return new NotMcp();
   return new NotMcp();
@@ -296,7 +303,7 @@ interface Sent<A> {
 }
 
 /** One request to the server, with a deadline; interrupting it, or running out of time, aborts it. */
-const request = <A>(
+export const request = <A>(
   deadline: Duration.Duration,
   send: (signal: AbortSignal) => Promise<A>,
 ): Effect.Effect<Sent<A>, ConnectorFailure> =>
@@ -311,7 +318,7 @@ const request = <A>(
   }).pipe(Effect.timeoutOrElse({ duration: deadline, orElse: () => Effect.fail(new TimedOut()) }));
 
 /** Beyond any deadline here, so the SDK's own timer never fires first. */
-const sdkTimeout = (deadline: Duration.Duration) => Duration.toMillis(deadline) + 60_000;
+export const sdkTimeout = (deadline: Duration.Duration) => Duration.toMillis(deadline) + 60_000;
 
 const decodeListed = Schema.decodeUnknownResult(ListedTool);
 
@@ -364,27 +371,27 @@ const addressValues = (url: URL): ReadonlyArray<string> => [
   ...url.searchParams.values(),
 ];
 
+/** The values of the credentials requests were sent with. */
+const sentValues = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string> =>
+  sent.flatMap((credentials) =>
+    [
+      ...Option.toArray(credentials.bearer),
+      ...credentials.headers.map((h) => h.value),
+      ...credentials.hidden,
+    ].map(Redacted.value),
+  );
+
 /**
- * Replaces, in remote text, every exact value of the credentials a request
- * was sent with, those they were made from, and the address' path and query,
- * should the server echo one. Best effort: a value shorter than {@link MIN_SCRUBBED}, or one the
- * server changed (encoded, split, cased), is not found.
+ * Replaces, in a server's text, every exact one of `values`, should the
+ * server echo one: the credentials a request was sent with, the address'
+ * path and query, a command's environment. Each is also found as a JSON
+ * string holds it, since a structured answer is read as JSON. Best effort: a
+ * value shorter than {@link MIN_SCRUBBED}, or one the server changed
+ * otherwise (encoded, split, cased), is not found.
  */
-const scrubberOf = (
-  sent: ReadonlyArray<CallCredentials>,
-  address: ReadonlyArray<string>,
-): ((text: string) => string) => {
+export const scrubberOf = (values: ReadonlyArray<string>): ((text: string) => string) => {
   const secrets = [
-    ...new Set([
-      ...sent.flatMap((credentials) =>
-        [
-          ...Option.toArray(credentials.bearer),
-          ...credentials.headers.map((h) => h.value),
-          ...credentials.hidden,
-        ].map(Redacted.value),
-      ),
-      ...address,
-    ]),
+    ...new Set(values.flatMap((value) => [value, JSON.stringify(value).slice(1, -1)])),
   ]
     .filter((value) => value.length >= MIN_SCRUBBED)
     // The longest first, so a value that holds another is taken whole.
@@ -444,55 +451,66 @@ export const openSession = (
     );
 
     const address = addressValues(options.url);
+    return toolsOf(client, limits, (sent) => scrubberOf([...sentValues(sent), ...address]));
+  });
 
-    /**
-     * Every page of the server's tools, each cleaned as it comes so a listing
-     * holds no more than {@link SessionLimits.maxCatalogBytes} of them: a
-     * server that lists more, or more than `maxListPages` pages, fails it.
-     */
-    const listTools = Effect.gen(function* () {
-      if (client.getServerCapabilities()?.tools === undefined) return [];
-      const tooLarge = new ResponseTooLarge({ limit: limits.maxCatalogBytes });
-      let tools: ReadonlyArray<CatalogTool> = [];
-      let bytes = 0;
-      let cursor: string | undefined;
-      for (let pages = 0; pages < limits.maxListPages; pages++) {
-        const page = cursor === undefined ? {} : { params: { cursor } };
-        const answer = yield* request(limits.listDeadline, (signal) =>
-          client.request(
-            { method: "tools/list", ...page },
-            { signal, timeout: sdkTimeout(limits.listDeadline) },
-          ),
-        );
-        const before = tools.length;
-        tools = catalogOf(listedOf(answer.value.tools), {
-          earlier: tools,
-          redact: scrubberOf(answer.sent, address),
-        });
-        for (const tool of tools.slice(before)) bytes += toolBytes(tool);
-        if (bytes > limits.maxCatalogBytes) return yield* tooLarge;
-        cursor = answer.value.nextCursor;
-        if (cursor === undefined) return tools;
-      }
-      return yield* tooLarge;
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: limits.listDeadline,
-        orElse: () => Effect.fail(new TimedOut()),
-      }),
-    );
-
-    const callTool: McpSession["callTool"] = Effect.fn("McpSession.callTool")(function* (input) {
-      const answer = yield* request(limits.callDeadline, (signal) =>
-        client.callTool(
-          { name: input.name, arguments: { ...input.arguments } },
-          { signal, timeout: sdkTimeout(limits.callDeadline) },
+/**
+ * What a session does once its client is connected, over any transport:
+ * list the server's tools and call one. `scrub` gives what to take out of
+ * the server's text, from the credentials each request was sent with.
+ */
+export const toolsOf = (
+  client: Client,
+  limits: SessionLimits,
+  scrub: (sent: ReadonlyArray<CallCredentials>) => (text: string) => string,
+): McpSession => {
+  /**
+   * Every page of the server's tools, each cleaned as it comes so a listing
+   * holds no more than {@link SessionLimits.maxCatalogBytes} of them: a
+   * server that lists more, or more than `maxListPages` pages, fails it.
+   */
+  const listTools = Effect.gen(function* () {
+    if (client.getServerCapabilities()?.tools === undefined) return [];
+    const tooLarge = new ResponseTooLarge({ limit: limits.maxCatalogBytes });
+    let tools: ReadonlyArray<CatalogTool> = [];
+    let bytes = 0;
+    let cursor: string | undefined;
+    for (let pages = 0; pages < limits.maxListPages; pages++) {
+      const page = cursor === undefined ? {} : { params: { cursor } };
+      const answer = yield* request(limits.listDeadline, (signal) =>
+        client.request(
+          { method: "tools/list", ...page },
+          { signal, timeout: sdkTimeout(limits.listDeadline) },
         ),
       );
-      const scrub = scrubberOf(answer.sent, address);
-      const text = cut(scrub(answerText(answer.value)), limits.maxResultCharacters);
-      return { text: text.text, cut: text.cut, isError: answer.value.isError === true };
-    });
+      const before = tools.length;
+      tools = catalogOf(listedOf(answer.value.tools), {
+        earlier: tools,
+        redact: scrub(answer.sent),
+      });
+      for (const tool of tools.slice(before)) bytes += toolBytes(tool);
+      if (bytes > limits.maxCatalogBytes) return yield* tooLarge;
+      cursor = answer.value.nextCursor;
+      if (cursor === undefined) return tools;
+    }
+    return yield* tooLarge;
+  }).pipe(
+    Effect.timeoutOrElse({
+      duration: limits.listDeadline,
+      orElse: () => Effect.fail(new TimedOut()),
+    }),
+  );
 
-    return { listTools, callTool } satisfies McpSession;
+  const callTool: McpSession["callTool"] = Effect.fn("McpSession.callTool")(function* (input) {
+    const answer = yield* request(limits.callDeadline, (signal) =>
+      client.callTool(
+        { name: input.name, arguments: { ...input.arguments } },
+        { signal, timeout: sdkTimeout(limits.callDeadline) },
+      ),
+    );
+    const text = cut(scrub(answer.sent)(answerText(answer.value)), limits.maxResultCharacters);
+    return { text: text.text, cut: text.cut, isError: answer.value.isError === true };
   });
+
+  return { listTools, callTool };
+};

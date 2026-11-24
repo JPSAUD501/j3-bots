@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as EngineLive from "@j3-bots/engine-t3/live";
+import { toolList } from "@j3-bots/prompts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -25,6 +27,7 @@ import * as BasePrompt from "./settings/BasePrompt.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as SharedSkills from "./skills/SharedSkills.ts";
 import * as Network from "./system/Network.ts";
+import { CONNECTOR_CALL_DEADLINE } from "./tools/protocol.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 import * as WebClient from "./web/WebClient.ts";
 
@@ -55,6 +58,9 @@ const engine = Layer.unwrap(
       toolBridge: {
         command: process.execPath,
         args: [bridge, "--server", `http://127.0.0.1:${config.toolPort}`],
+        // J3 Bots' own tools run without asking; a connector's follow the bot's permission mode.
+        preApproved: toolList.map((tool) => tool.name),
+        callTimeoutSeconds: Duration.toSeconds(CONNECTOR_CALL_DEADLINE) + 60,
       },
       systemPromptFile: SYSTEM_PROMPT_FILE,
       basePrompt: basePrompt.text,

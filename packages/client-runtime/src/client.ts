@@ -306,16 +306,22 @@ export interface J3Client {
 
   /** Every conversation's draft, by `targetKey`. Kept on the device. */
   readonly drafts: Readable<ReadonlyMap<string, Drafts.Draft>>;
-  /** The draft's new text, with the mentions picked in it; none when left out. */
+  /**
+   * The draft's new text, with the mentions picked in it, none when left out,
+   * and, from a field that draws the files, the keys of the files its marks
+   * place, in order (`Drafts.setText`).
+   */
   readonly setDraftText: (
     target: EntryTarget,
     text: string,
     mentions?: ReadonlyArray<Drafts.DraftMention>,
+    order?: ReadonlyArray<string>,
   ) => void;
-  /** Adds files to the draft and uploads them. */
+  /** Adds files to the draft, placed at `at` in its text or after it, and uploads them. */
   readonly attachFiles: (
     target: EntryTarget,
     files: ReadonlyArray<{ readonly name: string; readonly body: Blob }>,
+    at?: number,
   ) => void;
   readonly detachFile: (target: EntryTarget, key: string) => void;
   /**
@@ -635,9 +641,9 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       ),
 
     drafts: services.drafts.state,
-    setDraftText: (target, text, mentions) =>
-      run.sync(services.drafts.setText(target, text, mentions)),
-    attachFiles: (target, files) => fire(services.drafts.attach(target, files)),
+    setDraftText: (target, text, mentions, order) =>
+      run.sync(services.drafts.setText(target, text, mentions, order)),
+    attachFiles: (target, files, at) => fire(services.drafts.attach(target, files, at)),
     detachFile: (target, key) => fire(services.drafts.detach(target, key)),
     sendDraft: (target, addressing) => run.promise(services.drafts.send(target, addressing)),
     onDraftChangedElsewhere: (listener) => listen(services.drafts.changedElsewhere, listener),

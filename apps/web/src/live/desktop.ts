@@ -9,11 +9,14 @@ import {
   ForgetResult,
   HostedBridge,
   LocalDeviceResult,
+  LocalPairingLink,
   LocalServerState,
   ModeChange,
   NetworkState,
   NotificationClick,
   type NotificationRequest,
+  PhoneAccess,
+  PhoneAccessChange,
   ShellCommand,
   ShortcutChange,
   ShortcutStatus,
@@ -30,6 +33,10 @@ import {
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+
+/** The system the desktop app runs on, from the user agent its window reports. */
+export const systemOf = (userAgent: string): "windows" | "mac" | "linux" =>
+  /Windows/.test(userAgent) ? "windows" : /Macintosh|Mac OS X/.test(userAgent) ? "mac" : "linux";
 
 /** A token as the desktop app sealed it, and how it is kept. */
 interface SealedToken {
@@ -135,6 +142,8 @@ export interface Desktop {
   readonly connectToServerInstead: () => Promise<ModeChange | null>;
   /** Starts the server on this computer again now, after it failed or while it waits to. */
   readonly retryLocalServer: () => void;
+  /** Tries the update the server on this computer was rolled back from again. */
+  readonly retryServerUpdate: () => void;
   /**
    * Calls `listener` with the state of the server on this computer now, then
    * each time it changes; answers a function that stops it.
@@ -166,6 +175,24 @@ export interface Desktop {
    * sign-in the app caught; answers a function that stops it.
    */
   readonly onSignInReturn: (listener: (url: string) => void) => () => void;
+  /** Whether phones on this network reach the server on this computer, as the page loaded. */
+  readonly phoneAccess: PhoneAccess;
+  /**
+   * Calls `listener` with phone access now, its addresses read again, then
+   * each time it changes; answers a function that stops it.
+   */
+  readonly onPhoneAccess: (listener: (access: PhoneAccess) => void) => () => void;
+  /**
+   * Turns phone access on or off; `stopWork`: the operator agreed that the
+   * server's restart stops the work bots have running. `null` when the app
+   * gave no answer the page understands.
+   */
+  readonly setPhoneAccess: (on: boolean, stopWork: boolean) => Promise<PhoneAccessChange | null>;
+  /**
+   * A pairing code for a phone; `unlock` lifts the lock wrong codes set
+   * first. `null` when the app gave no answer the page understands.
+   */
+  readonly localPairingLink: (unlock: boolean) => Promise<LocalPairingLink | null>;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -188,6 +215,9 @@ const decodeStartWithSystem = Schema.decodeUnknownOption(StartWithSystemChange);
 const decodeRelayStart = Schema.decodeUnknownOption(SignInRelayStart);
 const decodeExpected = Schema.decodeUnknownOption(Schema.Boolean);
 const decodeSignInReturn = Schema.decodeUnknownOption(SignInReturn);
+const decodePhoneAccess = Schema.decodeUnknownOption(PhoneAccess);
+const decodePhoneAccessChange = Schema.decodeUnknownOption(PhoneAccessChange);
+const decodePairingLink = Schema.decodeUnknownOption(LocalPairingLink);
 const hosted: unknown = Reflect.get(window, BRIDGE_KEY);
 
 /** What `call` answers, decoded; `null` when it throws, rejects or answers something else. */
@@ -305,6 +335,9 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     retryLocalServer: () => {
       bridge.retryLocalServer();
     },
+    retryServerUpdate: () => {
+      bridge.retryServerUpdate();
+    },
     onLocalServer: (listener) => {
       const stop: unknown = bridge.onLocalServer((state: unknown) =>
         Option.map(decodeLocalServer(state), listener),
@@ -334,5 +367,17 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
         if (typeof stop === "function") stop();
       };
     },
+    phoneAccess: bridge.state.phoneAccess,
+    onPhoneAccess: (listener) => {
+      const stop: unknown = bridge.onPhoneAccess((access: unknown) =>
+        Option.map(decodePhoneAccess(access), listener),
+      );
+      return () => {
+        if (typeof stop === "function") stop();
+      };
+    },
+    setPhoneAccess: (on, stopWork) =>
+      ask(() => bridge.setPhoneAccess({ on, stopWork }), decodePhoneAccessChange),
+    localPairingLink: (unlock) => ask(() => bridge.localPairingLink({ unlock }), decodePairingLink),
   }),
 });

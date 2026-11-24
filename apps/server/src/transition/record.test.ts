@@ -185,8 +185,11 @@ it.layer(NodeServices.layer)("a home's record", (it) => {
       if (back._tag !== "recorded") return;
       assert.strictEqual(back.record.version, "0.3.0");
       assert.deepStrictEqual(back.record.rollback, { from: "0.3.1" });
-      const file = path.join(home, "state", "runtime.json");
-      assert.strictEqual((yield* fs.stat(file)).mode & 0o777, 0o600);
+      // On Windows a mode means nothing: the home's access list keeps the record private.
+      if (process.platform !== "win32") {
+        const file = path.join(home, "state", "runtime.json");
+        assert.strictEqual((yield* fs.stat(file)).mode & 0o777, 0o600);
+      }
       // Starting the release rolled back to again keeps the rollback, so 0.3.1 is not retried.
       yield* recordReady(home, "0.3.0");
       const again = yield* readRuntimeRecord(home);

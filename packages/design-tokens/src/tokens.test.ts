@@ -101,6 +101,13 @@ describe.each(modes)("%s theme contrast", (mode) => {
     }
   });
 
+  it("keeps the image viewer's text readable on its canvas", () => {
+    const canvas = color("viewer");
+    for (const role of ["viewer-foreground", "viewer-muted-foreground"] as const) {
+      expect(contrastRatio(color(role, canvas), canvas)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("sets a switch's thumb apart from its track at 3:1, on and off", () => {
     for (const track of ["control-on", "control-off"] as const) {
       expect(contrastRatio(color("control-thumb"), color(track))).toBeGreaterThanOrEqual(3);

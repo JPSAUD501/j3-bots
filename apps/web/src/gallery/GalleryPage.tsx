@@ -34,6 +34,7 @@ import {
   type RosterItem,
   type RosterItemKey,
   type RoutineRun,
+  ServerOrigin,
   TEMPLATE_FORMAT,
   TEMPLATE_VERSION,
   TemplateTooLarge,
@@ -42,7 +43,12 @@ import {
   type SignInHarness,
   type UsageWindow,
 } from "@j3-bots/contracts";
-import type { LocalServerState } from "@j3-bots/desktop-bridge";
+import type {
+  LocalPairingLink,
+  LocalServerState,
+  PhoneAccess,
+  ServerUpdate,
+} from "@j3-bots/desktop-bridge";
 import {
   avatarCast,
   avatarShapeNames,
@@ -109,7 +115,13 @@ import {
   WhereBotsLive,
 } from "../components/LocalMode";
 import { ServerAddress } from "../components/ServerAddress";
+import type { DesktopPhone, DesktopSystem } from "../shell/data";
 import { WhereSection } from "../components/SettingsDialog";
+import {
+  type Pairing as PhonePairing,
+  PairPhone,
+  PhoneAccessSetting,
+} from "../components/PhoneAccess";
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
 import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
@@ -236,6 +248,7 @@ export default function GalleryPage() {
                 <EmptyStatesSection />
                 <ConnectionSection />
                 <WhereBotsLiveSection />
+                <PhoneAccessSection />
                 <ShellSection />
               </div>
             </div>
@@ -2454,7 +2467,7 @@ function FirstRunAt({
       vault={vault}
       initialStep={step}
       initialName="Nova"
-      {...(providerSetup === undefined ? {} : { providerSetup })}
+      providerSetup={providerSetup}
       onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
     />
@@ -2796,7 +2809,22 @@ const localLine = (server: LocalServerState): LocalLine => ({
   restartAt: server.state === "restarting" ? retryAt : null,
   onRetry: nothing,
   onDetails: nothing,
+  onRetryUpdate: nothing,
 });
+
+/** An update of the server on this computer that did not become ready, rolled back as the app reports it. */
+const rolledBack = {
+  _tag: "rolled-back",
+  running: "0.3.0",
+  failed: "0.3.1",
+  reason: "it stopped with exit code 1: The engine could not be started: its runtime is damaged.",
+  logTail: [
+    "starting J3 Bots 0.3.1",
+    "moving the bots' data to 0.3.1",
+    "error: the engine could not be started: its runtime is damaged",
+    "stopped",
+  ].join("\n"),
+} satisfies ServerUpdate;
 
 /** The first screen and, on its second choice, the server address screen with a way back. */
 function WhereFlow({ notice = null }: { notice?: string | null }) {
@@ -2814,6 +2842,41 @@ function WhereFlow({ notice = null }: { notice?: string | null }) {
     />
   );
 }
+
+const PHONE_OFF: PhoneAccess = { on: false, origins: [] };
+const LAN_ORIGIN = ServerOrigin.make("http://192.168.1.20:3747");
+const WIRED_ORIGIN = ServerOrigin.make("http://10.0.0.8:3747");
+const PHONE_ON: PhoneAccess = { on: true, origins: [LAN_ORIGIN] };
+
+/**
+ * Phone access as the gallery fakes it: it starts at `access`; turning it on
+ * or off asks first, as `bots` bots have work running (`null`: the server
+ * could not say), then holds at once.
+ */
+const galleryPhone = (
+  access: PhoneAccess,
+  system: DesktopSystem,
+  pairingLink: DesktopPhone["pairingLink"] = () => Promise.resolve({ _tag: "unavailable" }),
+  bots: number | null = 2,
+): DesktopPhone => ({
+  access,
+  follow: () => () => {},
+  system,
+  set: (on, stopWork) =>
+    Promise.resolve(
+      stopWork
+        ? { _tag: "changed", access: on ? PHONE_ON : PHONE_OFF }
+        : { _tag: "work-running", bots },
+    ),
+  pairingLink,
+});
+
+const grantedLink: Extract<LocalPairingLink, { readonly _tag: "granted" }> = {
+  _tag: "granted",
+  code: PairingCode.make("7KQ2M9XH4D"),
+  expiresAt: DateTime.add(SAMPLE_NOW, { minutes: 4, seconds: 32 }),
+  origins: [LAN_ORIGIN, WIRED_ORIGIN],
+};
 
 /** Settings' section for where the bots live, alone: the rest of Settings is in the shell's. */
 function WhereSettings({ local }: { local: boolean }) {
@@ -2839,6 +2902,7 @@ function WhereSettings({ local }: { local: boolean }) {
                   setStartWithSystem(on);
                   return Promise.resolve(on);
                 },
+                phone: galleryPhone(PHONE_OFF, "linux"),
               }
             : undefined
         }
@@ -2851,7 +2915,7 @@ function WhereBotsLiveSection() {
   const { t } = useI18n();
   return (
     <Section title="Where the bots live (desktop app)">
-      <Labeled label="The connection line on this computer: starting, stopped, restarting with a retry waiting, failed">
+      <Labeled label="The connection line on this computer: starting, stopped, restarting with a retry waiting, failed; updating, an update rolled back, a server newer than the app">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
           {(
             [
@@ -2859,10 +2923,13 @@ function WhereBotsLiveSection() {
               { state: "stopped" },
               { state: "restarting", attempt: 2, retryInSeconds: 30 },
               notStarted,
+              { state: "starting", update: { _tag: "updating", from: "0.3.0", to: "0.3.1" } },
+              { state: "ready", update: rolledBack },
+              { state: "ready", update: { _tag: "older-app", running: "0.3.1", app: "0.3.0" } },
             ] satisfies ReadonlyArray<LocalServerState>
           ).map((server) => (
             <ConnectionBanner
-              key={server.state}
+              key={`${server.state}-${server.update?._tag ?? "none"}`}
               state={{ _tag: "connected" }}
               local={localLine(server)}
               everConnected
@@ -2890,6 +2957,7 @@ function WhereBotsLiveSection() {
           <Onboarding
             engine={null}
             footer={<ConnectInstead onConnect={nothing} />}
+            providerSetup={localSetup(harnessesFound.both)}
             waiting={t("local.waiting")}
             onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
             onArrived={arrived}
@@ -2904,6 +2972,7 @@ function WhereBotsLiveSection() {
             engine={team.engine}
             initialStep="look"
             initialName="Nova"
+            providerSetup={localSetup(harnessesFound.both)}
             waiting={t("local.waiting")}
             onCreate={() => new Promise(() => {})}
             onArrived={arrived}
@@ -2924,6 +2993,21 @@ function WhereBotsLiveSection() {
           <div className="flex flex-col gap-3 p-5">
             <p className="text-lg font-semibold">{t("local.failed.title")}</p>
             <LocalServerFailedBody server={notStarted} onRetry={nothing} />
+          </div>
+        </Frame>
+        <Frame
+          label="An update rolled back, from the connection line: why, and Try again"
+          width={448}
+          height={460}
+        >
+          <div className="flex flex-col gap-3 p-5">
+            <p className="text-lg font-semibold">
+              {t("local.update.title", { failed: rolledBack.failed })}
+            </p>
+            <p className="text-sm text-pretty text-muted-foreground">
+              {t("local.update.body", { running: rolledBack.running })}
+            </p>
+            <LocalServerFailedBody server={rolledBack} onRetry={nothing} />
           </div>
         </Frame>
         <Frame label="This computer was signed out (signing in fails)" width={390} height={560}>
@@ -2970,6 +3054,112 @@ function WhereBotsLiveSection() {
           height={220}
         >
           <WhereSettings local={false} />
+        </Frame>
+      </div>
+    </Section>
+  );
+}
+
+/** "Use from your phone" alone, starting at `access`, as Settings shows it on this computer. */
+function PhoneSetting({
+  access,
+  system = "linux",
+  pairingLink,
+  bots,
+}: {
+  access: PhoneAccess;
+  system?: DesktopSystem;
+  pairingLink?: DesktopPhone["pairingLink"];
+  bots?: number | null;
+}) {
+  return (
+    <div className="p-4">
+      <PhoneAccessSetting phone={galleryPhone(access, system, pairingLink, bots)} />
+    </div>
+  );
+}
+
+function PhoneAccessSection() {
+  const pairing = (initial: PhonePairing) => (
+    <div className="p-4">
+      <PairPhone initial={initial} pairingLink={() => Promise.resolve(grantedLink)} />
+    </div>
+  );
+  return (
+    <Section title="Use from your phone (desktop app, on this computer)">
+      <div className="flex flex-wrap gap-4">
+        <Frame
+          label="Off: turning it on asks first here, as two bots are working, then holds"
+          width={420}
+          height={300}
+        >
+          <PhoneSetting access={PHONE_OFF} />
+        </Frame>
+        <Frame
+          label="Off: turning it on asks first here, as the server could not say whether bots are working"
+          width={420}
+          height={300}
+        >
+          <PhoneSetting access={PHONE_OFF} bots={null} />
+        </Frame>
+        <Frame label="Turning on: the bots restart on the network" width={420} height={300}>
+          <PhoneSetting access={{ on: true, origins: [] }} />
+        </Frame>
+        <Frame
+          label="On, on Linux: the address, Pair a phone (which shows a code), and ufw"
+          width={420}
+          height={460}
+        >
+          <PhoneSetting access={PHONE_ON} pairingLink={() => Promise.resolve(grantedLink)} />
+        </Frame>
+        <Frame label="On, on Windows: the firewall may ask" width={420} height={380}>
+          <PhoneSetting access={PHONE_ON} system="windows" />
+        </Frame>
+        <Frame label="On, on macOS" width={420} height={380}>
+          <PhoneSetting access={PHONE_ON} system="mac" />
+        </Frame>
+        <Frame
+          label="Refused: this network gives the computer a public address"
+          width={420}
+          height={360}
+        >
+          <PhoneSetting access={{ on: true, origins: [], refusedReason: "public-address" }} />
+        </Frame>
+        <Frame
+          label="Unavailable: the bots did not start on the network, and run on this computer only"
+          width={420}
+          height={380}
+        >
+          <PhoneSetting
+            access={{
+              on: true,
+              origins: [],
+              refusedReason: "unavailable",
+              detail: "Port 3747 is in use on 0.0.0.0.",
+            }}
+          />
+        </Frame>
+        <Frame label="On, with no local network" width={420} height={340}>
+          <PhoneSetting access={{ on: true, origins: [], refusedReason: "no-network" }} />
+        </Frame>
+        <Frame
+          label="A code for a phone: QR, address and code typed out, the time left; two addresses to pick from"
+          width={420}
+          height={340}
+        >
+          {pairing({ _tag: "answered", link: grantedLink })}
+        </Frame>
+        <Frame label="A code that expired" width={420} height={140}>
+          {pairing({
+            _tag: "answered",
+            link: { ...grantedLink, expiresAt: DateTime.subtract(SAMPLE_NOW, { seconds: 1 }) },
+          })}
+        </Frame>
+        <Frame label="Pairing locked by wrong codes: unlock from here" width={420} height={180}>
+          {pairing({
+            _tag: "answered",
+            link: { _tag: "locked", until: DateTime.add(SAMPLE_NOW, { minutes: 12 }) },
+          })}
         </Frame>
       </div>
     </Section>

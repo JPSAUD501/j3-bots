@@ -26,6 +26,8 @@ export interface TrayState {
   readonly pageReplaced: () => void;
   /** The server this computer runs, in local mode (`null` in any other); drawn when it changed. */
   readonly followLocalServer: (next: LocalServerState | null) => void;
+  /** Whether phones on the network reach the server this computer runs; drawn when it changed. */
+  readonly followPhoneAccess: (reaches: boolean) => void;
   /** The language the tray speaks. */
   readonly language: (next: I18n) => void;
   /** Draws again, as when the system's theme changed. */
@@ -40,8 +42,12 @@ export const makeTrayState = (options: {
   let i18n = options.i18n;
   let reported = NOTHING_REPORTED;
   let local: LocalServerState | null = null;
+  let phoneReaches = false;
   const redraw = () =>
-    options.draw({ model: trayModel(reported, local, i18n), pairing: reported.pairing });
+    options.draw({
+      model: trayModel(reported, local, phoneReaches, i18n),
+      pairing: reported.pairing,
+    });
   redraw();
   return {
     report: (next) => {
@@ -56,6 +62,11 @@ export const makeTrayState = (options: {
     followLocalServer: (next) => {
       if (sameLocalServer(local, next)) return;
       local = next;
+      redraw();
+    },
+    followPhoneAccess: (reaches) => {
+      if (reaches === phoneReaches) return;
+      phoneReaches = reaches;
       redraw();
     },
     language: (next) => {

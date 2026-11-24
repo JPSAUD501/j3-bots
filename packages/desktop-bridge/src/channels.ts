@@ -73,9 +73,18 @@ export const IPC_CHANNELS = {
   localServerChanged: "j3bots:local-server-changed",
   /** Starts the local server again now, after it failed or while it waits to restart. Not answered. */
   retryLocalServer: "j3bots:retry-local-server",
-  /** `PhoneAccessRequest`, answered with the `PhoneAccess` that holds after it. */
+  /**
+   * Tries again the update of the local server that failed and was rolled
+   * back (`LocalServerState.update` is `rolled-back`). Not answered.
+   */
+  retryServerUpdate: "j3bots:retry-server-update",
+  /** `PhoneAccessRequest`, answered with `PhoneAccessChange`. */
   setPhoneAccess: "j3bots:set-phone-access",
-  /** Answers `LocalPairingLink`. */
+  /** Answers `PhoneAccess`, its addresses read again from the server. */
+  phoneAccess: "j3bots:phone-access",
+  /** From the main process, each time phone access changes: `PhoneAccess`. */
+  phoneAccessChanged: "j3bots:phone-access-changed",
+  /** `LocalPairingRequest`, answered with `LocalPairingLink`. */
   localPairingLink: "j3bots:local-pairing-link",
   /** `StartWithSystemRequest`, answered with `StartWithSystemChange`. */
   setStartWithSystem: "j3bots:set-start-with-system",
@@ -141,8 +150,16 @@ export interface DesktopBridge {
    */
   readonly onLocalServer: (listener: (state: unknown) => void) => () => void;
   readonly retryLocalServer: () => void;
-  readonly setPhoneAccess: (on: boolean) => Promise<unknown>;
-  readonly localPairingLink: () => Promise<unknown>;
+  readonly retryServerUpdate: () => void;
+  /** Turns phone access on or off (a `PhoneAccessRequest`). */
+  readonly setPhoneAccess: (request: unknown) => Promise<unknown>;
+  /**
+   * Calls `listener` with phone access now, then each time it changes;
+   * answers a function that stops it.
+   */
+  readonly onPhoneAccess: (listener: (access: unknown) => void) => () => void;
+  /** A pairing code for a phone (a `LocalPairingRequest`). */
+  readonly localPairingLink: (request: unknown) => Promise<unknown>;
   readonly setStartWithSystem: (on: boolean) => Promise<unknown>;
   /**
    * Listens on this computer's loopback for the browser's return from a

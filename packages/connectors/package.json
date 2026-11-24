@@ -12,6 +12,10 @@
     "./testing": {
       "types": "./src/testing/fakeMcpServer.ts",
       "import": "./src/testing/fakeMcpServer.ts"
+    },
+    "./testing/stdio": {
+      "types": "./src/testing/stdioFixture.ts",
+      "import": "./src/testing/stdioFixture.ts"
     }
   },
   "scripts": {
@@ -20,6 +24,7 @@
   },
   "dependencies": {
     "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/processes": "workspace:*",
     "@j3-bots/prompts": "workspace:*",
     "@modelcontextprotocol/client": "2.4.0",
     "effect": "catalog:"

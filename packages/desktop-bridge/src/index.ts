@@ -60,6 +60,33 @@ export const LocalServerPhase = Schema.Literals([
 export type LocalServerPhase = typeof LocalServerPhase.Type;
 
 const Message = Schema.String.check(Schema.isMaxLength(4096));
+const LogTail = Schema.String.check(Schema.isMaxLength(8192));
+/** A J3 Bots release, as its `release.json` names it. */
+const ReleaseVersion = Schema.String.check(Schema.isPattern(/^[0-9A-Za-z.+-]{1,64}$/));
+
+/**
+ * What the server on this computer's version is going through, beyond its
+ * state. `updating`: the app carries a new release, `to`, and moves the
+ * bots' data from `from` to it: a copy first, then `to` started on it. While
+ * it does, the state is `starting`. `rolled-back`: `failed` did not become
+ * ready, so the data as it was before was put back and `running` runs on it;
+ * the app does not try `failed` again until the operator asks
+ * (`retryServerUpdate`). `reason` and `logTail` say why, when the app saw it
+ * fail since it started. `older-app`: this app carries `app`, older than
+ * `running`, which the data was last handed to and which reads it, so it
+ * runs `running` instead.
+ */
+export const ServerUpdate = Schema.Union([
+  Schema.TaggedStruct("updating", { from: ReleaseVersion, to: ReleaseVersion }),
+  Schema.TaggedStruct("rolled-back", {
+    running: ReleaseVersion,
+    failed: ReleaseVersion,
+    reason: Schema.optionalKey(Message),
+    logTail: Schema.optionalKey(LogTail),
+  }),
+  Schema.TaggedStruct("older-app", { running: ReleaseVersion, app: ReleaseVersion }),
+]);
+export type ServerUpdate = typeof ServerUpdate.Type;
 
 export const LocalServerState = Schema.Struct({
   state: LocalServerPhase,
@@ -72,27 +99,37 @@ export const LocalServerState = Schema.Struct({
   /** What repairs it, when that is known apart from `reason`. */
   fix: Schema.optionalKey(Message),
   /** The last lines the server wrote to its log, for the page to show on request. */
-  logTail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(8192))),
+  logTail: Schema.optionalKey(LogTail),
+  /** What its version is going through, if anything: see `ServerUpdate`. */
+  update: Schema.optionalKey(ServerUpdate),
 });
 export type LocalServerState = typeof LocalServerState.Type;
 
 /**
- * Why the server on this computer does not take phones: this network gives
- * the computer a public address (`public-address`), which the server will not
- * listen on without HTTPS, or this app does not offer it yet (`unavailable`).
+ * Why phones cannot reach the server on this computer while the operator
+ * wants them to: this network gives the computer a public address
+ * (`public-address`), which the server will not listen on without HTTPS, so
+ * it stays on this computer alone; the server did not start on the network,
+ * and runs on this computer alone until the operator tries again
+ * (`unavailable`); or it listens on the network, but this computer is on
+ * none with a private address (`no-network`).
  */
-export const PhoneAccessRefusal = Schema.Literals(["public-address", "unavailable"]);
+export const PhoneAccessRefusal = Schema.Literals(["public-address", "unavailable", "no-network"]);
 export type PhoneAccessRefusal = typeof PhoneAccessRefusal.Type;
 
 /**
  * Whether phones on this network can reach the server on this computer: the
- * operator's choice (`on`), the origins a phone can open while it holds
- * (best first, none while off), and why it does not hold, if it does not.
+ * operator's choice (`on`), kept between launches; the origins a phone can
+ * open while it holds (best first, private addresses only, none while off or
+ * while the server is being moved); and why it does not hold, if it does
+ * not, with what the server said (`detail`) when it did not start on the
+ * network.
  */
 export const PhoneAccess = Schema.Struct({
   on: Schema.Boolean,
   origins: Schema.Array(ServerOrigin).check(Schema.isMaxLength(16)),
   refusedReason: Schema.optionalKey(PhoneAccessRefusal),
+  detail: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4096))),
 });
 export type PhoneAccess = typeof PhoneAccess.Type;
 
@@ -159,25 +196,58 @@ export const LocalDeviceResult = Schema.Union([
 ]);
 export type LocalDeviceResult = typeof LocalDeviceResult.Type;
 
-export const PhoneAccessRequest = Schema.Struct({ on: Schema.Boolean });
+/**
+ * Turns phone access on or off. Either way the server on this computer
+ * starts again, on the network or on this computer alone, which stops the
+ * work bots have running: `stopWork` says the operator agreed to that.
+ * Asking for `on` while it is on, but not held, tries the network again.
+ */
+export const PhoneAccessRequest = Schema.Struct({ on: Schema.Boolean, stopWork: Schema.Boolean });
 export type PhoneAccessRequest = typeof PhoneAccessRequest.Type;
 
 /**
+ * How a `PhoneAccessRequest` ended: `changed`, and the server moves if it
+ * must, which `access` follows (`onPhoneAccess`); `work-running`, nothing
+ * changed, since `bots` bots have work running that the restart would stop,
+ * or, `null`, the server could not say whether any has, and the operator did
+ * not agree to it yet; `not-saved`, the choice could not be kept, as when the
+ * bots no longer live on this computer, and nothing changed. `access` is what
+ * holds after it.
+ */
+export const PhoneAccessChange = Schema.Union([
+  Schema.TaggedStruct("changed", { access: PhoneAccess }),
+  Schema.TaggedStruct("work-running", {
+    bots: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
+  Schema.TaggedStruct("not-saved", { access: PhoneAccess }),
+]);
+export type PhoneAccessChange = typeof PhoneAccessChange.Type;
+
+/**
+ * Asks for a pairing code for a phone. `unlock`: the operator, at this
+ * computer, lifts the lock that wrong codes put on pairing first.
+ */
+export const LocalPairingRequest = Schema.Struct({ unlock: Schema.Boolean });
+export type LocalPairingRequest = typeof LocalPairingRequest.Type;
+
+/**
  * A pairing code for a phone to scan, from the server on this computer.
- * `granted`: the code, when it expires, and the origins a phone reaches the
- * server at, best first, as `pairing.start` answers them. `phone-access-off`:
- * phones cannot reach the server, so no link can work. `locked`: too many
- * wrong codes were tried, until `until`. `unavailable`: the server is not
- * ready, or this app does not offer it yet.
+ * `granted`: the code, when it expires, and the private origins a phone
+ * reaches the server at, best first, never loopback: the link for the QR code
+ * is `<origins[0]>/pair#<code>`, and the others are alternatives.
+ * `phone-access-off`: phones cannot reach the server, so no link can work.
+ * `locked`: too many wrong codes were tried, until `until`. `unavailable`:
+ * the server on this computer is not running. Times cross the bridge as ISO
+ * strings: IPC's structured clone keeps no `DateTime`.
  */
 export const LocalPairingLink = Schema.Union([
   Schema.TaggedStruct("granted", {
     code: PairingCode,
-    expiresAt: Schema.DateTimeUtc,
-    origins: Schema.Array(ServerOrigin).check(Schema.isMaxLength(16)),
+    expiresAt: Schema.DateTimeUtcFromString,
+    origins: Schema.Array(ServerOrigin).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
   }),
   Schema.TaggedStruct("phone-access-off", {}),
-  Schema.TaggedStruct("locked", { until: Schema.DateTimeUtc }),
+  Schema.TaggedStruct("locked", { until: Schema.DateTimeUtcFromString }),
   Schema.TaggedStruct("unavailable", {}),
 ]);
 export type LocalPairingLink = typeof LocalPairingLink.Type;
@@ -575,7 +645,9 @@ export const HostedBridge = Schema.Struct({
   localDevice: Callable,
   onLocalServer: Callable,
   retryLocalServer: Callable,
+  retryServerUpdate: Callable,
   setPhoneAccess: Callable,
+  onPhoneAccess: Callable,
   localPairingLink: Callable,
   setStartWithSystem: Callable,
   catchSignIn: Callable,

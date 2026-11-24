@@ -90,8 +90,15 @@ describe("catalogOf", () => {
           },
         }),
         listed(secret),
+        // A key of digits, written as a number: it cannot be redacted in place, so the tool goes.
+        listed("lookup", {
+          inputSchema: {
+            type: "object",
+            properties: { pin: { type: "number", default: 5_093_817_264 } },
+          },
+        }),
       ],
-      { redact },
+      { redact: (text) => redact(text).replaceAll("5093817264", "[redacted]") },
     );
     expect(names(tools)).toEqual(["search"]);
     expect(JSON.stringify(tools)).not.toContain(secret);

@@ -7,7 +7,9 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { flushFile, flushFolder } from "../files.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
+import { isWithin } from "../paths.ts";
 
 // What `j3-bots update` copies before it starts another release, and puts back
 // if that release never becomes ready, or when the operator asks
@@ -53,7 +55,7 @@ const SnapshotManifest = Schema.Struct({
   from: SnapshotRelease,
   /** The release the update installed. */
   to: SnapshotRelease,
-  /** The files copied, by path relative to the home. */
+  /** The files copied, by path relative to the home, `/` between its parts on every system. */
   files: Schema.Array(Schema.String),
 });
 type SnapshotManifest = typeof SnapshotManifest.Type;
@@ -107,9 +109,10 @@ class SnapshotFailed extends Schema.TaggedError<SnapshotFailed>()("SnapshotFaile
 }
 
 /**
- * The files a snapshot copies when they exist, by path relative to the home:
- * the configuration, J3 Bots' database with its write-ahead log, and the
- * engine's own state (`stateFiles`).
+ * The files a snapshot copies when they exist, by path relative to the home,
+ * written with `/` on every system so that a manifest reads the same
+ * everywhere: the configuration, J3 Bots' database with its write-ahead log,
+ * and the engine's own state (`stateFiles`).
  */
 const snapshotFiles = (path: Path.Path, home: string): ReadonlyArray<string> => [
   HOME_ENTRIES.config,
@@ -117,7 +120,7 @@ const snapshotFiles = (path: Path.Path, home: string): ReadonlyArray<string> => 
   HOME_ENTRIES.databaseLog,
   HOME_ENTRIES.databaseLogIndex,
   ...EngineLive.stateFiles(path, path.join(home, HOME_ENTRIES.engine)).map((file) =>
-    path.relative(home, file),
+    path.relative(home, file).split(path.sep).join("/"),
   ),
 ];
 
@@ -134,8 +137,19 @@ const bytesOf = Effect.fnUntraced(function* (folder: string, files: ReadonlyArra
 });
 
 /** How many bytes the files a snapshot copies take now. */
-export const snapshotBytes = Effect.fn("snapshot.bytes")(function* (home: string) {
+const snapshotBytes = Effect.fn("snapshot.bytes")(function* (home: string) {
   return yield* bytesOf(home, snapshotFiles(yield* Path.Path, home));
+});
+
+/** Free space a change to the data directory keeps beyond the copies it makes there. */
+export const HOME_ROOM = 1024 ** 3;
+
+/**
+ * The free space a transition needs where `home` is: the snapshot it takes,
+ * the copies a rollback would put back, and `HOME_ROOM`.
+ */
+export const transitionRoom = Effect.fn("snapshot.transitionRoom")(function* (home: string) {
+  return 2 * (yield* snapshotBytes(home)) + HOME_ROOM;
 });
 
 /** A folder of the home's whose files a restore moves aside, on another filesystem than `backups/`. */
@@ -178,6 +192,35 @@ export const backupsElsewhere = Effect.fn("snapshot.backupsElsewhere")(function*
 });
 
 /**
+ * Why a rollback could not use `<home>/backups` when it is `elsewhere`: it
+ * moves the home's files into it, which never crosses filesystems.
+ */
+export const backupsElsewhereReason = ({ folder, backups, linkTo }: BackupsElsewhere): string =>
+  `${Option.match(linkTo, {
+    onSome: (target) => `${backups} is a link to ${target}, on another filesystem than ${folder}`,
+    onNone: () => `${backups} is on another filesystem than ${folder}`,
+  })}. A rollback moves the data directory's files into it, which cannot cross filesystems, so backups must be on the data directory's filesystem.`;
+
+/** `<home>/backups` is on another filesystem than files a rollback would move into it. */
+class BackupsNotBeside extends Schema.TaggedError<BackupsNotBeside>()("BackupsNotBeside", {
+  folder: Schema.String,
+  backups: Schema.String,
+  linkTo: Schema.Option(Schema.String),
+}) {
+  override get message(): string {
+    return `${backupsElsewhereReason(this)} Nothing was changed.`;
+  }
+}
+
+/** Fails when a rollback in `home` could not move its files into `backups/`. */
+export const requireBackupsBeside = Effect.fn("snapshot.requireBackupsBeside")(function* (
+  home: string,
+) {
+  const elsewhere = yield* backupsElsewhere(home);
+  if (Option.isSome(elsewhere)) return yield* new BackupsNotBeside(elsewhere.value);
+});
+
+/**
  * How many more bytes a rollback to `snapshot` copies into `home`: none once
  * its copies are made, and otherwise the snapshot's files less the copies a
  * cut-off rollback left, which it removes first.
@@ -195,23 +238,11 @@ export const restoreBytes = Effect.fn("snapshot.restoreBytes")(function* (
   return Math.max(0, (yield* bytesOf(snapshot.folder, files)) - left);
 });
 
-/**
- * Flushes `location`, a file or a folder, to the disk: what was written to
- * the file, or the names made or moved in the folder, survive a power cut.
- */
-const flush = (location: string) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const file = yield* (yield* FileSystem.FileSystem).open(location, { flag: "r" });
-      yield* file.sync;
-    }),
-  );
-
 /** Each folder from the folder of each of `files` up to `root`, `root` included. */
 const foldersUpTo = (path: Path.Path, root: string, files: ReadonlyArray<string>) => {
   const folders = new Set<string>([root]);
   for (const file of files) {
-    for (let folder = path.dirname(file); folder.startsWith(`${root}/`);) {
+    for (let folder = path.dirname(file); folder !== root && isWithin(root, folder);) {
       folders.add(folder);
       folder = path.dirname(folder);
     }
@@ -273,7 +304,7 @@ export const takeSnapshot = Effect.fn("snapshot.take")(function* (options: {
       if (info.value.type !== "File") return yield* failed(source)("not a plain file");
       const copy = path.join(folder, file);
       yield* copyPrivate(source, copy).pipe(
-        Effect.andThen(flush(copy)),
+        Effect.andThen(flushFile(copy)),
         Effect.mapError(failed(source)),
       );
       files.push(file);
@@ -283,7 +314,7 @@ export const takeSnapshot = Effect.fn("snapshot.take")(function* (options: {
     yield* Schema.encodeEffect(ManifestJson)(manifest).pipe(
       Effect.flatMap((text) => fs.writeFileString(manifestFile, text, { flag: "wx", mode: 0o600 })),
       Effect.andThen(fs.chmod(manifestFile, 0o600)),
-      Effect.andThen(flush(manifestFile)),
+      Effect.andThen(flushFile(manifestFile)),
       Effect.andThen(
         Effect.forEach(
           [
@@ -294,7 +325,7 @@ export const takeSnapshot = Effect.fn("snapshot.take")(function* (options: {
             ),
             backups,
           ],
-          flush,
+          flushFolder,
           { discard: true },
         ),
       ),
@@ -343,9 +374,9 @@ const writeMark = Effect.fnUntraced(function* (folder: string, mark: RestoreMark
   const next = `${marker}.next`;
   yield* Schema.encodeEffect(RestoreMarkJson)(mark).pipe(
     Effect.flatMap((text) => fs.writeFileString(next, text, { mode: 0o600 })),
-    Effect.andThen(flush(next)),
+    Effect.andThen(flushFile(next)),
     Effect.andThen(fs.rename(next, marker)),
-    Effect.andThen(flush(folder)),
+    Effect.andThen(flushFolder(folder)),
     Effect.mapError((cause) => new MarkFailed({ marker, cause })),
   );
 });
@@ -372,7 +403,7 @@ export const unmarkRestoring = Effect.fn("snapshot.unmarkRestoring")(function* (
   const path = yield* Path.Path;
   const marker = path.join(snapshot.folder, RESTORING);
   yield* fs.remove(marker, { force: true }).pipe(
-    Effect.andThen(flush(snapshot.folder)),
+    Effect.andThen(flushFolder(snapshot.folder)),
     Effect.mapError((cause) => new MarkFailed({ marker, cause })),
   );
 });
@@ -402,7 +433,7 @@ export const restoreSnapshot = Effect.fn("snapshot.restore")(function* (
   const failed = (location: string) => (cause: unknown) =>
     new SnapshotFailed({ action: "restore", location, cause });
   const flushAll = (folders: Iterable<string>) =>
-    Effect.forEach(folders, (folder) => flush(folder).pipe(Effect.mapError(failed(folder))), {
+    Effect.forEach(folders, (folder) => flushFolder(folder).pipe(Effect.mapError(failed(folder))), {
       discard: true,
     });
   const mark = Option.getOrElse(
@@ -429,7 +460,7 @@ export const restoreSnapshot = Effect.fn("snapshot.restore")(function* (
           .remove(copy, { force: true })
           .pipe(
             Effect.andThen(copyPrivate(source, copy)),
-            Effect.andThen(flush(copy)),
+            Effect.andThen(flushFile(copy)),
             Effect.mapError(failed(current)),
           ),
       { discard: true },

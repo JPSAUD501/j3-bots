@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
-import { BotFile, MessageAttachments } from "./attachment.ts";
+import { AttachmentOffsets, BotFile, MessageAttachments } from "./attachment.ts";
 import {
   AttachmentId,
   BotId,
@@ -20,6 +20,7 @@ import {
 } from "./base.ts";
 import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
 import {
+  CommandLine,
   Connector,
   ConnectorFieldValues,
   ConnectorGrant,
@@ -247,6 +248,12 @@ export const EntryRpcs = RpcGroup.make(
       target: EntryTarget,
       text: MessageText,
       attachments: MessageAttachments,
+      /**
+       * Where the operator placed each file in `text` (`AttachmentOffsets`).
+       * Left out, the files follow the text. Offsets that do not fit the
+       * text and the files fail with `Invalid("attachment")`.
+       */
+      attachmentOffsets: Schema.optionalKey(AttachmentOffsets),
       mentions: Schema.optionalKey(Mentions),
     },
     success: EntryId,
@@ -967,8 +974,12 @@ export const ConnectorRpcs = RpcGroup.make(
    * primary bot, else no bot. With `suggestion`, that bot's card closes once
    * the bot can use it. Fails with `Conflict("private-network")` for an
    * address in the operator's own network without `privateNetwork`,
-   * `Invalid("connector-fields")` for a form's values that do not fit it, and
-   * `Invalid("connector-unsupported")` for an entry J3 Bots cannot connect.
+   * `Invalid("connector-fields")` for a form's values that do not fit it, or
+   * a command's environment that names a variable twice,
+   * `Invalid("command-unpinned")` for a command that runs a package at no
+   * exact version, and `Invalid("connector-unsupported")` for an entry J3
+   * Bots cannot connect. A command connector's process starts when it is
+   * first used, which may be at once, to list its tools.
    * The connector returned, like every one after it, shows the address only
    * as its origin and the command only as its program (`displayTransport`):
    * the rest, which can carry a key, stays with the secrets.
@@ -985,14 +996,21 @@ export const ConnectorRpcs = RpcGroup.make(
   }),
   /**
    * Renames the connector, or replaces the values its form took, such as a
-   * token the service refused: fields left out keep their value, and so does
-   * each value `values` does not name.
+   * token the service refused, or a command connector's environment values:
+   * fields left out keep their value, and so does each value `values` does
+   * not name. `command` replaces a command connector's whole command line
+   * and environment, which the client sends only once the operator confirmed
+   * it as for an add: its process, if it runs, stops, and the next use runs
+   * the new one, whose tools wait on the operator's review where they differ.
+   * It fails with `Invalid("connector-unsupported")` for a connector that is
+   * not run by command, and as `connector.add` does for its command.
    */
   Rpc.make("connector.update", {
     payload: {
       connectorId: ConnectorId,
       name: Schema.optionalKey(Connector.fields.name),
       values: Schema.optionalKey(ConnectorFieldValues),
+      command: Schema.optionalKey(CommandLine),
     },
     success: Connector,
     error: CommandError,

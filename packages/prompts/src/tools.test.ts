@@ -2,7 +2,14 @@
 import { MAX_LABEL_LENGTH } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { DECODE_OPTIONS, MAX_TOOL_INPUT_BYTES, type ToolName, toolList, tools } from "./tools.ts";
+import {
+  DECODE_OPTIONS,
+  isConnectorTool,
+  MAX_TOOL_INPUT_BYTES,
+  type ToolName,
+  toolList,
+  tools,
+} from "./tools.ts";
 
 const decode = <N extends ToolName>(name: N, input: unknown) =>
   Schema.decodeUnknownExit(tools[name].input, DECODE_OPTIONS)(input);
@@ -17,6 +24,12 @@ describe("j3 tools", () => {
       expect(document.schema).toMatchObject({ type: "object", additionalProperties: false });
       expect(document.definitions).toEqual({});
     }
+  });
+
+  it("tells its own tools from connector tools by name", () => {
+    expect(toolList.filter((tool) => isConnectorTool(tool.name))).toEqual([]);
+    expect(isConnectorTool("notion__search")).toBe(true);
+    expect(isConnectorTool("__search")).toBe(false);
   });
 
   it("tells a delegated worker to report in its final reply instead of speaking", () => {

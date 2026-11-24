@@ -450,6 +450,34 @@ export const sendWithFile = (botId: BotId, text: string, name = "notes.txt") =>
     });
   });
 
+/**
+ * Sends the bot a message with a text file of each name, in that order, placed
+ * in the text at `offsets` when given.
+ */
+export const sendWithFiles = (
+  botId: BotId,
+  text: string,
+  names: ReadonlyArray<string>,
+  offsets?: ReadonlyArray<number>,
+) =>
+  Effect.gen(function* () {
+    const attachments = yield* Attachments;
+    const files = yield* Effect.forEach(names, (name) =>
+      attachments.store({
+        name,
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode(name),
+      }),
+    );
+    return yield* (yield* Pipeline).sendMessage({
+      commandId: command(),
+      target: { _tag: "conversation", botId },
+      text,
+      attachments: files.map((file) => file.id),
+      ...(offsets === undefined ? {} : { attachmentOffsets: offsets }),
+    });
+  });
+
 /** At most `n` turns run at once across all bots. */
 export const concurrentTurns = (n: number) =>
   Effect.gen(function* () {

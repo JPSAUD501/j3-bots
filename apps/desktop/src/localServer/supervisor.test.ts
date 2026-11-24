@@ -36,12 +36,15 @@ const fakeServer = (
   const status: StatusReply = {
     version: "0.3.0",
     pid: options.statusPid ?? pid,
-    listener: { port: 3747 },
+    listener: { address: "127.0.0.1", port: 3747 },
+    engine: { state: { _tag: "ready" } },
   };
   const whenAsked = options.whenAsked ?? "stops";
   const admin: AdminChannel = {
     status: () => (options.answers === false ? Effect.never : Effect.succeed(status)),
     localDevice: () => Effect.die("not used here"),
+    runningWork: Effect.die("not used here"),
+    pairing: () => Effect.die("not used here"),
     shutdown: Effect.suspend(() => {
       done.push("shutdown");
       switch (whenAsked) {

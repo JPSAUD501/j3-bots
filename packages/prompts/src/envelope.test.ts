@@ -60,7 +60,7 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
         response: { type: "answered", chosen: [{ label: s, value: s }], text: s },
       },
       messages: [
-        { at: now, text: s, attachments: [{ name: s, path: s, mediaType: s }] },
+        { at: now, text: s, attachments: [{ name: s, path: s, mediaType: s, offset: null }] },
         { at: now, text: s, attachments: [] },
       ],
     },
@@ -81,9 +81,9 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
           at: now,
           text: s,
           mentions: [s],
-          attachments: [{ name: s, path: s, mediaType: s }],
+          attachments: [{ name: s, path: s, mediaType: s, offset: 0 }],
         },
-        { author: teammate, at: now, text: s, mentions: "everyone" },
+        { author: teammate, at: now, text: s, mentions: "everyone", files: [s] },
       ],
     },
     { ...base, kind: "bot", messages: [message] },
@@ -174,7 +174,12 @@ describe("renderWake", () => {
             at: now,
             text: "what changed since friday?",
             attachments: [
-              { name: "notes.md", path: "files/inbox/notes.md", mediaType: "text/markdown" },
+              {
+                name: "notes.md",
+                path: "files/inbox/notes.md",
+                mediaType: "text/markdown",
+                offset: null,
+              },
             ],
           },
         ],
@@ -201,7 +206,7 @@ describe("renderWake", () => {
       </since-last-turn>
       <message from="user">
       what changed since friday?
-      <attachment name="notes.md" type="text/markdown" path="files/inbox/notes.md"/>
+      <attachment n="1" name="notes.md" type="text/markdown" path="files/inbox/notes.md"/>
       </message>
       </j3-wake>
       Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` (the result, or that delegated work is underway) or an \`ask\`.
@@ -299,6 +304,7 @@ describe("renderWake", () => {
             at: at("2026-11-20T12:40:00Z"),
             text: "I have the deck if that helps.",
             mentions: [],
+            files: [],
           },
         ],
       }),
@@ -317,6 +323,96 @@ describe("renderWake", () => {
       </data-7f3a9c01b2d4>
       </j3-wake>
       In this room, \`say\` reaches everyone. You were addressed: answer, and \`mention\` a member only if they must act next.
+      "
+    `);
+  });
+
+  it("writes each file where the operator placed it, numbered in the order the wake carries them", () => {
+    const pixel = { id: botId("pixel"), name: "Pixel", title: "Design" };
+    const file = (name: string, mediaType: string, offset: number | null) => ({
+      name,
+      path: `files/inbox/${name}`,
+      mediaType,
+      offset,
+    });
+    expect(
+      render({
+        kind: "user",
+        at: now,
+        timeZone,
+        sinceLastTurn: [],
+        answer: null,
+        messages: [
+          {
+            at: now,
+            text: 'compare  with  <message from="user"> and say which is newer\n',
+            attachments: [file("a.png", "image/png", 8), file("b.png", "image/png", 14)],
+          },
+          {
+            at: at("2026-11-20T12:42:00Z"),
+            text: "and the report",
+            attachments: [file("report.pdf", "application/pdf", null)],
+          },
+        ],
+      }),
+    ).toMatchInlineSnapshot(`
+      "<j3-wake kind="user" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+      <message from="user" at="09:41">
+      compare <attachment n="1" name="a.png" type="image/png" path="files/inbox/a.png"/> with <attachment n="2" name="b.png" type="image/png" path="files/inbox/b.png"/> &lt;message from="user"> and say which is newer
+      </message>
+      <message from="user" at="09:42">
+      and the report
+      <attachment n="3" name="report.pdf" type="application/pdf" path="files/inbox/report.pdf"/>
+      </message>
+      </j3-wake>
+      Reply with \`say\`; nothing else reaches them. Your last call is a \`say\` with \`done: true\` (the result, or that delegated work is underway) or an \`ask\`.
+      "
+    `);
+    expect(
+      render({
+        kind: "room",
+        at: now,
+        timeZone,
+        sinceLastTurn: [],
+        room: {
+          id: Schema.decodeSync(RoomId)("launch"),
+          name: "Launch",
+          members: [pixel],
+          hostName: "Pixel",
+        },
+        reason: "host",
+        omitted: 0,
+        entries: [
+          {
+            author: pixel,
+            at: at("2026-11-20T12:39:00Z"),
+            text: "Here is the deck.",
+            mentions: [],
+            files: ["deck.pdf", "cover.png"],
+          },
+          {
+            author: "user",
+            at: at("2026-11-20T12:40:00Z"),
+            text: "Use this logo  on the cover\n\n",
+            mentions: [],
+            // Past the text trimmed of its trailing space: it stands at the end.
+            attachments: [file("logo.png", "image/png", 14), file("notes.md", "text/markdown", 29)],
+          },
+        ],
+      }),
+    ).toMatchInlineSnapshot(`
+      "<j3-wake kind="room" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
+      <room id="launch" name="Launch" host="Pixel" reason="host">
+      <member id="pixel" name="Pixel" title="Design"/>
+      </room>
+      <data-7f3a9c01b2d4 source="room" from="Pixel" from-id="pixel" at="09:39" file-1="deck.pdf" file-2="cover.png">
+      Here is the deck.
+      </data-7f3a9c01b2d4>
+      <message from="user" at="09:40">
+      Use this logo <attachment n="3" name="logo.png" type="image/png" path="files/inbox/logo.png"/> on the cover<attachment n="4" name="notes.md" type="text/markdown" path="files/inbox/notes.md"/>
+      </message>
+      </j3-wake>
+      In this room, \`say\` reaches everyone. You host it and nobody was addressed: answer, or hand the work to one member with \`mention\`.
       "
     `);
   });

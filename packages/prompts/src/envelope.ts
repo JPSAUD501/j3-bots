@@ -33,12 +33,24 @@ export interface TeammateRef {
   readonly title: string;
 }
 
-/** A file the operator attached, already copied into the bot's workspace. */
+/**
+ * A file the operator attached, already copied into the bot's workspace. The
+ * envelope numbers every file a wake carries (`n`, from 1), in the order the
+ * engine hands them to the bot's harness, which is the order of the messages
+ * and, within one, of its files.
+ */
 export interface AttachmentRef {
   readonly name: string;
   /** Relative to the workspace. */
   readonly path: string;
   readonly mediaType: string;
+  /**
+   * Where the operator placed it in the message's text, in UTF-16 code units:
+   * the envelope writes it there. `null` for a file written after the text,
+   * as one sent without a place is. A message places all of its files or
+   * none, never decreasing, so their numbers follow the text.
+   */
+  readonly offset: number | null;
 }
 
 export interface OperatorMessage {
@@ -146,6 +158,11 @@ export type RoomEntry =
       readonly at: DateTime.Utc;
       readonly text: string;
       readonly mentions: RoomMentions;
+      /**
+       * The names of the files the teammate posted with it, which the wake
+       * carries and numbers like the operator's.
+       */
+      readonly files: ReadonlyArray<string>;
     };
 
 export interface RoomWake extends WakeBase {
@@ -308,6 +325,8 @@ class EnvelopeWriter {
   readonly nonce: string;
   readonly wake: Wake;
   dataBlocks = 0;
+  /** The files numbered so far: the next one is `files + 1`. */
+  files = 0;
 
   constructor(nonce: string, wake: Wake) {
     this.nonce = nonce;
@@ -338,6 +357,12 @@ class EnvelopeWriter {
     this.open(tag, attrs);
     this.line(defuseTags(trimEnd(text)));
     this.close(tag);
+  }
+
+  /** The number of the next file the wake carries. */
+  nextFile(): string {
+    this.files++;
+    return String(this.files);
   }
 
   data(attrs: Attributes, text: string): void {
@@ -389,14 +414,33 @@ const writeTeammateMessage = (w: EnvelopeWriter, message: TeammateMessage): void
     message.text,
   );
 
-const writeAttachments = (w: EnvelopeWriter, attachments: ReadonlyArray<AttachmentRef>): void => {
-  for (const file of attachments) {
-    w.empty("attachment", [
-      ["name", file.name],
-      ["type", file.mediaType],
-      ["path", file.path],
-    ]);
+/** A file as the envelope names it, numbered in the order the wake carries it. */
+const attachmentTag = (w: EnvelopeWriter, file: AttachmentRef): string =>
+  `<attachment${attributes([
+    ["n", w.nextFile()],
+    ["name", file.name],
+    ["type", file.mediaType],
+    ["path", file.path],
+  ])}/>`;
+
+/**
+ * The operator's words with each file they placed written where they placed
+ * it, and the text between them defused. An offset past the text trimmed of
+ * its trailing space stands at its end.
+ */
+const placedText = (
+  w: EnvelopeWriter,
+  text: string,
+  placed: ReadonlyArray<AttachmentRef & { readonly offset: number }>,
+): string => {
+  let written = "";
+  let cursor = 0;
+  for (const file of placed) {
+    const at = Math.min(Math.max(file.offset, cursor), text.length);
+    written += defuseTags(text.slice(cursor, at)) + attachmentTag(w, file);
+    cursor = at;
   }
+  return written + defuseTags(text.slice(cursor));
 };
 
 const writeProfileChanges = (w: EnvelopeWriter, changes: ReadonlyArray<ProfileChange>): void => {
@@ -452,7 +496,10 @@ const writeSinceLastTurn = (w: EnvelopeWriter, items: ReadonlyArray<CatchUpItem>
   w.close("since-last-turn");
 };
 
-/** The operator's words, with what they attached. */
+/**
+ * The operator's words, with what they attached: each file they placed where
+ * they placed it, and any other after the text.
+ */
 const writeOperatorMessage = (
   w: EnvelopeWriter,
   attrs: Attributes,
@@ -460,8 +507,11 @@ const writeOperatorMessage = (
   attachments: ReadonlyArray<AttachmentRef>,
 ): void => {
   w.open("message", [["from", "user"], ...attrs]);
-  w.line(defuseTags(trimEnd(text)));
-  writeAttachments(w, attachments);
+  const placed = attachments.flatMap((file) =>
+    file.offset === null ? [] : [{ ...file, offset: file.offset }],
+  );
+  w.line(placedText(w, trimEnd(text), placed));
+  for (const file of attachments) if (file.offset === null) w.line(attachmentTag(w, file));
   w.close("message");
 };
 
@@ -530,6 +580,11 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
               ["from-id", entry.author.id],
               ["at", w.time(entry.at)],
               ["to", to],
+              // One attribute per file, by its number in the wake.
+              ...entry.files.map((name): readonly [string, string] => [
+                `file-${w.nextFile()}`,
+                name,
+              ]),
             ],
             entry.text,
           );
