@@ -269,6 +269,7 @@ const envFieldsOf = (command: CommandLine): ReadonlyArray<ConnectorField> =>
     secret: true,
     required: false,
     placeholder: null,
+    choices: [],
   }));
 
 /**
@@ -1254,6 +1255,7 @@ export const layer = Layer.effect(
         headers: [],
         command: { program: source.command, args: source.args },
         env: source.env.map((variable) => ({ name: variable.name, value: variable.value })),
+        formSecrets: [],
       });
       const now = yield* DateTime.now;
       const fields = envFieldsOf(source);
