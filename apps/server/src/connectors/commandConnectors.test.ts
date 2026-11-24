@@ -105,16 +105,8 @@ const listed = (connector: Connector) =>
 
 const invalidOf = (error: CommandError) => (error._tag === "Invalid" ? error.reason : null);
 
-/**
- * How long a test may take for each process it starts. On Windows a start is Windows PowerShell 5.1
- * starting the job launcher and compiling its C# with `csc.exe`, then Node starting the fixture: about
- * 2 s on a Windows 11 VM, of which PowerShell takes 0.8 s and the compiler 0.7 s. A GitHub runner busy
- * with the rest of the suite takes about five times as long (the first test here: 3.6 s on the VM,
- * 17 s there).
- */
-const PER_START = process.platform === "win32" ? 20_000 : 5_000;
-/** The time a test that starts `starts` processes, one after another, may take. */
-const budget = (starts: number) => 20_000 + starts * PER_START;
+/** Starts, talks to and stops real processes. */
+const SLOW = 30_000;
 
 describe("Connectors started by command", () => {
   it.live(
@@ -153,7 +145,7 @@ describe("Connectors started by command", () => {
         assert.deepStrictEqual(yield* connectors.toolsFor(ana), []);
         yield* eventually(Effect.sync(() => !alive(pid)));
       }).pipe(Effect.scoped, Effect.provide(domain)),
-    budget(1),
+    SLOW,
   );
 
   it.live(
@@ -206,7 +198,7 @@ describe("Connectors started by command", () => {
         // Nothing of a refused command was kept.
         assert.isTrue(Option.isNone(yield* vault.connectorSecrets.get(vaultIdOf(ID))));
       }).pipe(Effect.scoped, Effect.provide(domain)),
-    budget(0),
+    SLOW,
   );
 
   it.live(
@@ -268,6 +260,6 @@ describe("Connectors started by command", () => {
         );
         assert.strictEqual(invalidOf(unpinned), "command-unpinned");
       }).pipe(Effect.scoped, Effect.provide(domain)),
-    budget(3),
+    SLOW,
   );
 });

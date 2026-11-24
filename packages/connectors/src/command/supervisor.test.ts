@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -237,6 +238,56 @@ describe("the command connectors' supervisor", () => {
         yield* supervisor.stop("notes");
         assert.isFalse(alive(fresh));
         assert.deepStrictEqual(yield* supervisor.running, []);
+      }).pipe(Effect.scoped),
+    SLOW,
+  );
+
+  it.live(
+    "keeps the process a use started after a stop when the start the stop overtook fails",
+    () =>
+      Effect.gen(function* () {
+        const gate = yield* Deferred.make<void>();
+        const starts = yield* Ref.make(0);
+        const supervisor = yield* makeSupervisor<string>({
+          // The first start fails only once the gate opens; every later one starts the fixture.
+          start: () =>
+            Ref.updateAndGet(starts, (n) => n + 1).pipe(
+              Effect.flatMap((start) =>
+                start === 1
+                  ? Deferred.await(gate).pipe(
+                      Effect.andThen(Effect.fail(new CommandFailed({ reason: "exited" }))),
+                    )
+                  : openCommandSession({ ...fixtureOptions(), onToolsChanged: Effect.void }),
+              ),
+            ),
+          onFailure: () => Effect.void,
+          idle: Duration.minutes(1),
+          capacity: 2,
+          backoff: {
+            initial: Duration.millis(10),
+            max: Duration.millis(10),
+            stable: Duration.seconds(30),
+          },
+          restarts: 0,
+        });
+        const pidOf = Effect.scoped(
+          Effect.flatMap(supervisor.use("notes"), (session) => answerOf(session, "whoami")),
+        );
+        const overtaken = yield* Effect.forkChild(Effect.scoped(supervisor.use("notes")));
+        yield* eventually(Effect.map(Ref.get(starts), (n) => n === 1));
+        yield* supervisor.stop("notes");
+        const pid = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const session = yield* supervisor.use("notes");
+            // The overtaken start fails while the new process is in use.
+            yield* Deferred.succeed(gate, undefined);
+            assert.isTrue(Exit.isFailure(yield* Fiber.await(overtaken)));
+            return yield* answerOf(session, "whoami");
+          }),
+        );
+        // The next use gets the same process: the late failure stopped nothing of the new start's.
+        assert.strictEqual(yield* pidOf, pid);
+        assert.strictEqual(yield* Ref.get(starts), 2);
       }).pipe(Effect.scoped),
     SLOW,
   );
