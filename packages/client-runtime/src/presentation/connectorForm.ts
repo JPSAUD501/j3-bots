@@ -494,7 +494,7 @@ export interface CommandConsent {
 
 /** The confirmation for `command`, against what the connector ran before, if it has run. */
 export function commandConsent(command: CommandLine, before: KnownCommand | null): CommandConsent {
-  const names = command.env.map((variable) => variable.name);
+  const names: ReadonlyArray<string> = command.env.map((variable) => variable.name);
   return {
     program: command.command,
     args: command.args.map(Redacted.value),
