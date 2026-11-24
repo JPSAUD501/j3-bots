@@ -26,13 +26,6 @@ export const RoomName = Label;
 export const RoomHopLimit = PositiveInt;
 
 /**
- * A room's hop limit when none is given. Every message wakes every other
- * member, so each hop can be a round of every member's turns: with two,
- * what the operator writes runs at most three rounds.
- */
-export const DEFAULT_ROOM_HOP_LIMIT = 2;
-
-/**
  * Whether work addressed to an active room is under way, so a client offers
  * its Stop: `running` while a turn for the room is admitted or runs, a wake
  * or dispatch for it waits, or work a turn of the room left running in the

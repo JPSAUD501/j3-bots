@@ -67,8 +67,7 @@ export const keepsUtcClock = (timeZone: string, year: number): boolean => {
 
 /**
  * The limits that keep bots from spending the operator's allowance on each
- * other. A room has a hop limit of its own instead of `hops`
- * (`DEFAULT_ROOM_HOP_LIMIT` unless given).
+ * other. A room's own hop limit overrides `hops` for that room.
  */
 export const Budgets = Schema.Struct({
   /** Consecutive bot-caused wakes in one chain since the operator last spoke. */
