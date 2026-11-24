@@ -59,7 +59,7 @@ export function ConversationHeader({
   useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
 
   return (
-    <View className="min-h-12 flex-row items-center gap-1 px-2">
+    <View className="min-h-12 flex-row items-center gap-1 border-b border-border px-2">
       {onBack !== null && (
         <Pressable
           accessibilityRole="button"
