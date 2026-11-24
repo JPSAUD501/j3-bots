@@ -47,6 +47,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 - [Release notes for 0.3.0](releases/v0.3.0.md), a draft until it is released: the bots on your own computer, what changes on updating and what does not work yet.
 - [Release notes for 0.3.1](releases/v0.3.1.md), a draft until it is released: signed releases, updates from the apps and the nightly channel, what changes on updating and what is not verified yet.
 - [Release notes for 0.4.0](releases/v0.4.0.md), a draft until it is released: the bot's browser, the vault, connectors and visuals, what changes on updating and what is not verified yet.
+- [Release notes for 0.5.0](releases/v0.5.0.md), a draft until it is released: a conversation for each pair of bots, teams bots build on your word, events as one line and the first run's motion, what changes on updating and what is not verified yet.
 - [The every-surface check](operations/every-surface-check.md): the desktop app and the Android app against one server, run by hand: continuity, cards resolved across devices, the desktop's surfaces, and what it does not prove.
 
 ## Engineering
