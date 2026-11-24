@@ -97,7 +97,7 @@ export function WorkFold({
   const folding = live === null && wasLive;
   const toggle = () => setOpen((was) => !was);
   return (
-    <View className="mt-3 px-4">
+    <View className="mt-2 px-4">
       {live !== null ? (
         <LiveLine
           turn={live}

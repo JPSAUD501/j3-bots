@@ -184,7 +184,7 @@ export function MessageBubble({
   return (
     <AnimatedView
       style={[motion.row, { transformOrigin: fromOperator ? "right bottom" : "left bottom" }]}
-      className={`gap-1 px-4 ${fromOperator ? "items-end" : "items-start"} ${startsGroup ? "mt-3" : "mt-1"}`}
+      className={`gap-1 px-4 ${fromOperator ? "items-end" : "items-start"} ${startsGroup ? "mt-2" : "mt-0.5"}`}
     >
       {speaker !== null && startsGroup && (
         <View className="flex-row items-center gap-1.5 ps-1 pt-1">

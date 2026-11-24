@@ -99,14 +99,14 @@ export function CardFrame({
     );
   }, [pulse, scale]);
   return (
-    <View className="mt-3 px-4">
+    <View className="mt-2 px-4">
       <AnimatedView
         layout={LinearTransition.springify()
           .mass(slide.mass)
           .stiffness(slide.stiffness)
           .damping(slide.damping)}
         style={[pulsing, full ? undefined : { maxWidth: widths.card }]}
-        className={`gap-3 rounded-bubble border bg-surface p-3.5 ${full ? "self-stretch" : "self-start"} ${attention ? "border-waiting/45" : "border-border"}`}
+        className={`gap-2.5 rounded-bubble border bg-surface p-3 ${full ? "self-stretch" : "self-start"} ${attention ? "border-waiting/45" : "border-border"}`}
       >
         <View className="flex-row items-center gap-2.5">
           <View

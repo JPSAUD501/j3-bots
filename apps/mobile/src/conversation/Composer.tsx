@@ -38,6 +38,7 @@ import { ChipField, type FieldEdit, type FieldHandle, type FieldStatus } from ".
 import { DictationButton, DictationLine, useDictation } from "./Dictation.tsx";
 import { useFileOpener } from "./FileOpener.tsx";
 import { AnimatedView } from "./animated.ts";
+import { composerButtonFrame, composerButtonSlop } from "./composerButton.ts";
 import { PressScale } from "../press.tsx";
 import { useTint } from "./tint.ts";
 
@@ -318,7 +319,7 @@ export function Composer({
       <AnimatedView
         // Focused, the border takes the bot's color, which reaches 3:1 on the surface.
         style={[settled, focused ? { borderColor: tint.color } : undefined]}
-        className="flex-row items-end gap-1 rounded-composer border border-input bg-surface p-1"
+        className="flex-row items-end rounded-composer border border-input bg-surface"
       >
         <PressScale
           depth="round"
@@ -327,9 +328,11 @@ export function Composer({
           accessibilityState={{ disabled: frozen }}
           ref={attachButton}
           onPress={frozen ? undefined : openPicker}
-          className="size-11 items-center justify-center rounded-full active:bg-muted"
+          frame={composerButtonFrame}
+          hitSlop={composerButtonSlop}
+          className="size-8 items-center justify-center rounded-full active:bg-muted"
         >
-          <Icon icon={Plus} size={20} color="accent-muted-foreground" />
+          <Icon icon={Plus} size={18} color="accent-muted-foreground" />
         </PressScale>
         <ChipField
           ref={field}
@@ -428,7 +431,7 @@ function SendButton({
   const lift = useSharedValue(0);
   const arrow = useAnimatedStyle(() => ({
     opacity: 1 - lift.get(),
-    transform: [{ translateY: -14 * lift.get() }, { scale: scale.get() }],
+    transform: [{ translateY: -10 * lift.get() }, { scale: scale.get() }],
   }));
   useEffect(() => {
     if (state === "ready") {
@@ -451,13 +454,15 @@ function SendButton({
       accessibilityHint={hint}
       accessibilityState={{ disabled: state !== "ready", busy: state === "sending" }}
       onPress={state === "ready" ? onSend : undefined}
+      frame={composerButtonFrame}
+      hitSlop={composerButtonSlop}
       style={filled ? { backgroundColor: tint } : undefined}
-      className={`size-11 items-center justify-center rounded-full ${filled ? "" : "bg-muted"}`}
+      className={`size-8 items-center justify-center rounded-full ${filled ? "" : "bg-muted"}`}
     >
       <Animated.View style={arrow}>
         <Icon
           icon={ArrowUp}
-          size={20}
+          size={18}
           color={filled ? "accent-avatar-ink" : "accent-muted-foreground"}
         />
       </Animated.View>

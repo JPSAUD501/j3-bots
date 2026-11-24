@@ -57,7 +57,7 @@ export function NoticeLine({
           ? UserRoundCheck
           : CircleAlert;
   return (
-    <View className="my-2 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
+    <View className="my-1 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
       <Icon icon={icon} size={14} color={iconTone} />
       <Text className={`text-center text-xs ${textTone}`}>{noticeText(notice, ctx)}</Text>
       {entry.retryable && (
@@ -87,7 +87,7 @@ export function NoticeLine({
 export function NeedsUpdateLine() {
   const { t } = usePresentation().i18n;
   return (
-    <View className="my-2 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
+    <View className="my-1 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
       <Icon icon={CircleArrowUp} size={14} color="accent-muted-foreground" />
       <Text className="text-center text-xs text-muted-foreground">{t("entry.needsUpdate")}</Text>
     </View>

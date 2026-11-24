@@ -398,7 +398,7 @@ export function ConversationView({
                   keyboardOffset={insets.bottom}
                   keyboardDismissMode="interactive"
                   keyboardShouldPersistTaps="handled"
-                  contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+                  contentContainerStyle={{ paddingTop: 4, paddingBottom: 8 }}
                 />
               )}
             </EntryWidths>
@@ -580,7 +580,7 @@ function Row({
     case "divider":
       return (
         <AnimatedView {...entering}>
-          <Text className="py-3 text-center text-2xs text-muted-foreground">
+          <Text className="py-2 text-center text-2xs text-muted-foreground">
             {dividerTime(row.at, ctx)}
           </Text>
         </AnimatedView>
