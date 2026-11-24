@@ -245,6 +245,8 @@ Protocol 6 is the first whose clients pass over the open sets: from protocol 6 o
 
 Protocol 7 came with the twelve silhouettes and twelve colors (migration 20). Its clients send them whenever a bot is created or its look is edited, the look the picker starts on included. A server of protocol 6, J3 Bots 0.1.1 among them, refuses a token it does not have. Teal is the only one it shares, a color, so every look a new client sends carries a shape it refuses. A client of protocol 6 against a newer server draws every bot as a circle, gray unless its color is teal. Either way the client shows the server as incompatible instead, which asks the operator to update the app or the server so they match.
 
+Protocol 8 came with the bot's browser: the `browser.subscribe` RPC, which lists a bot's tabs and who holds each, and the media socket at `HTTP_PATHS.browser`, which shows one tab and passes on what the operator does in it ([Server: the bot's browser](server.md#the-bots-browser)). A client of protocol 8 relies on both, and a server of protocol 7 has neither. The media socket's frames are closed sets the client acts on: who holds a tab, a dialog that waits for an answer, why a tab cannot be shown. So a client of either version shows a server of the other as incompatible.
+
 ### Updates, outside the protocol
 
 A client that cannot open the socket, because the server speaks another protocol, still has to see both versions and bring the one behind up to date. So the update routes are plain HTTP beside the protocol, not part of it ([decision 0032](../decisions/0032-updates-are-served-outside-the-protocol.md)):

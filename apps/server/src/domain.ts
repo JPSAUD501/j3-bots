@@ -4,6 +4,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Attachments from "./attachments/Attachments.ts";
 import * as DeviceAuth from "./auth/DeviceAuth.ts";
 import * as Bots from "./bots/Bots.ts";
+import * as BrowserTabs from "./browser/BrowserTabs.ts";
+import * as BrowserViewers from "./browser/BrowserViewers.ts";
 import * as BotStore from "./bots/BotStore.ts";
 import * as EngineSessions from "./bots/EngineSessions.ts";
 import * as Templates from "./bots/Templates.ts";
@@ -56,8 +58,8 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 
 /**
  * Every service of the server's domain, over a migrated database, the server's
- * configuration, the filesystem, an `Engine` and a `PushSender`. Which engine
- * and which sender are the caller's: the real ones in `server.ts`, in-memory
+ * configuration, the filesystem, an `Engine` with its `BrowserBridge`, and a
+ * `PushSender`. Which engine and which sender are the caller's: the real ones in `server.ts`, in-memory
  * ones in tests. Building it starts the turn machinery and the push worker,
  * which run for as long as the layer's scope.
  */
@@ -65,6 +67,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
   Layer.provideMerge(
     Layer.mergeAll(
       Bots.layer,
+      BrowserViewers.layer.pipe(Layer.provideMerge(BrowserTabs.layer)),
       Templates.layer,
       Roster.layer,
       Speech.layer,

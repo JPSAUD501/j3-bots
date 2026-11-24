@@ -31,6 +31,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -59,6 +60,7 @@ import {
   type RequestResponse,
   type SecretAnswer,
 } from "../Engine.ts";
+import { BrowserBridge } from "../Browser.ts";
 import {
   AnswerRejected,
   BackgroundWorkRunning,
@@ -86,6 +88,7 @@ import {
   type SyncToken,
 } from "../ids.ts";
 import { boundedCommand } from "./Command.ts";
+import { makeBrowserBridge } from "./BrowserBridge.ts";
 import { makeEngineRpc } from "./Connection.ts";
 import {
   checkAccess,
@@ -507,6 +510,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   );
 
   const rpc = yield* makeEngineRpc({ port: options.port, token: currentToken });
+  const browser = makeBrowserBridge({
+    rpc,
+    state,
+    port: options.port,
+    token: currentToken,
+    http,
+  });
 
   /** What every session's streams emitted, for resuming one by replay or by replacement. */
   const batches = makeBatches(BATCHES_KEPT);
@@ -1828,7 +1838,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       .pairUrl;
   }).pipe(Effect.withSpan("Engine.consoleLink"));
 
-  return Engine.of({
+  const engine = Engine.of({
     status,
     connectProviders,
     connectedEndpoint: connectedNow,
@@ -1849,10 +1859,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     events,
     synchronize,
   });
+  return Context.make(Engine, engine).pipe(Context.add(BrowserBridge, browser));
 });
 
 /**
  * The engine, installed, provisioned, supervised and connected for as long as
- * the layer lives. Closing it stops the engine.
+ * the layer lives, and its browser. Closing it stops the engine.
  */
-export const layer = (options: EngineOptions) => Layer.effect(Engine, make(options));
+export const layer = (options: EngineOptions) => Layer.effectContext(make(options));

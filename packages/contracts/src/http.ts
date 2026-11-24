@@ -14,10 +14,12 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
  * previous version. Clients compare it with `GET /api/server` before anything
  * else. 6 is the first whose clients pass over a kind of entry or notice, or a
  * failure class, they do not know: from 6 on, adding one needs no bump. 7
- * widened the avatars a client sends to twelve shapes and twelve colors.
- * docs/architecture/clients.md, "Protocol compatibility", says what does.
+ * widened the avatars a client sends to twelve shapes and twelve colors. 8
+ * added the bot's browser: `browser.subscribe` and the media socket at
+ * `HTTP_PATHS.browser`. docs/architecture/clients.md, "Protocol
+ * compatibility", says what does.
  */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export const HTTP_PATHS = {
   /** `GET`, no credential. Answers `ServerInfo`. */
@@ -57,6 +59,16 @@ export const HTTP_PATHS = {
    * upgrade without a valid one is answered 401 and never becomes a socket.
    */
   rpc: "/ws",
+  /**
+   * The media socket for one tab of a bot's browser: pictures of the page as
+   * binary JPEG messages, and `BrowserServerFrame` and `BrowserClientFrame`
+   * as JSON text. The upgrade carries the device token as a bearer or a
+   * ticket, as the RPC socket's does, and `BrowserViewQuery`. An upgrade
+   * without a valid credential is answered 401; one for a tab that is gone
+   * becomes a socket that sends `gone` and closes, since a browser cannot
+   * read why an upgrade was refused. `BROWSER_CLOSE_CODES` lists the rest.
+   */
+  browser: "/api/browser/ws",
 } as const;
 
 /**

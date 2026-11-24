@@ -157,15 +157,25 @@ const reportUsage = (turn: Turn) => {
   });
 };
 
+/** What a host tool answered: its text, and whether the call failed. */
+interface HostToolResult {
+  readonly failed: boolean;
+  readonly text: string;
+}
+
 /**
  * Calls one of the engine's own MCP tools over the HTTP server the engine gave
  * the session, and reports the call the way an agent reports an MCP tool call.
  */
-const callHostTool = async (turn: Turn, tool: string, input: Record<string, unknown>) => {
+const callHostTool = async (
+  turn: Turn,
+  tool: string,
+  input: Record<string, unknown>,
+): Promise<HostToolResult> => {
   const server = turn.session.hostTools;
   if (Option.isNone(server)) {
     await say(turn, `No host tools: cannot call ${tool}.`);
-    return Option.none<string>();
+    return { failed: true, text: "" };
   }
   const toolCallId = `${tool}-${NodeCrypto.randomUUID()}`;
   const rawInput = { server: server.value.name, tool, arguments: input };
@@ -232,7 +242,7 @@ const callHostTool = async (turn: Turn, tool: string, input: Record<string, unkn
     _meta: { is_mcp_tool_call: true },
     content: [{ type: "content", content: { type: "text", text } }],
   });
-  return failed ? Option.none<string>() : Option.some(text);
+  return { failed, text };
 };
 
 /** The commands the `steps` script runs, in turn. */
@@ -251,6 +261,11 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  *   (default 3) of `each` ms (default 4000), then speaks `text` as `speak`
  *   does. For a turn's work as a client shows it while it runs.
  * - `secret`: asks for a secret through the engine's `request_secret` tool.
+ * - `browse`: opens `url` in the engine's browser (`preview_open`), then acts
+ *   on the tab every `every` ms (default 1000) for up to `for` ms (default
+ *   60000). It speaks, as `speak` does, the first time an action is refused,
+ *   with the engine's reason, and the first time one works again after, and
+ *   ends then.
  * - `delegate`: hands a task to a child agent through the engine's
  *   `delegate_task` tool, then ends; the engine wakes the session when the
  *   child's task ends. The child runs `plain`, or with `child=slow`, `slow`
@@ -403,9 +418,38 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
       reason: "The conformance suite asks for a secret.",
     });
     if (turn.signal.aborted) return "cancelled";
-    await say(turn, Option.isSome(result) ? "Secret request finished." : "Secret request failed.");
+    await say(turn, result.failed ? "Secret request failed." : "Secret request finished.");
     reportUsage(turn);
     return "end_turn";
+  },
+  browse: async (turn) => {
+    const every = Number(turn.args.get("every") ?? "1000");
+    const until = Date.now() + Number(turn.args.get("for") ?? "60000");
+    const speak = (message: string) => callHostTool(turn, "send_to_user", { message });
+    const opened = await callHostTool(turn, "preview_open", {
+      url: turn.args.get("url") ?? "about:blank",
+    });
+    if (opened.failed) {
+      await speak(`Browser failed: ${opened.text}`);
+      reportUsage(turn);
+      return "end_turn";
+    }
+    let refused = false;
+    while (!turn.signal.aborted && Date.now() < until) {
+      await sleep(every, turn.signal);
+      if (turn.signal.aborted) break;
+      // A scroll the page does not notice: an action, which needs the tab.
+      const acted = await callHostTool(turn, "preview_act", { action: "scroll", deltaY: 1 });
+      if (acted.failed && !refused) {
+        refused = true;
+        await speak(`Browser refused: ${acted.text}`);
+      } else if (!acted.failed && refused) {
+        await speak("Browser acted again.");
+        break;
+      }
+    }
+    reportUsage(turn);
+    return turn.signal.aborted ? "cancelled" : "end_turn";
   },
 };
 

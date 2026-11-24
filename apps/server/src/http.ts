@@ -32,6 +32,7 @@ import { DeviceAuth } from "./auth/DeviceAuth.ts";
 import { readBody, readText } from "./body.ts";
 import { ServerConfig } from "./config.ts";
 import { Devices } from "./devices/Devices.ts";
+import * as MediaSocket from "./browser/MediaSocket.ts";
 import * as Webhook from "./routines/webhook.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
@@ -291,10 +292,11 @@ export const routes = Layer.mergeAll(
   UpdateRoutes.routes,
 );
 
-/** Every route, the RPC socket and the web client: what clients are served. */
+/** Every route, the RPC and media sockets and the web client: what clients are served. */
 export const app = Layer.mergeAll(
   routes,
   RpcSocket.layer(Rpc.ServedRpcs, Rpc.handlers),
+  MediaSocket.route,
   WebClient.layer,
 );
 

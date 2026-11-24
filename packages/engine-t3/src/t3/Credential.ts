@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { AuthSessionState } from "@t3tools/contracts";
+import { AuthSessionState, sessionGrantsScope } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -20,27 +20,57 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 // engine's own CLI against the engine's data directory, so no pairing step and
 // no person is involved, and it is kept next to that data with mode 0600.
 
-/** The scopes the adapter needs: read threads and projects, and operate them. */
-const CREDENTIAL_SCOPES = ["orchestration:read", "orchestration:operate"] as const;
+/**
+ * The scopes the adapter needs: read threads and projects, and operate them,
+ * and act on a bot's browser tab for a person who took control of it (without
+ * `preview:operate` the engine silently drops a viewer's input; **Read** at
+ * `59651c1`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77).
+ */
+const CREDENTIAL_SCOPES = [
+  "orchestration:read",
+  "orchestration:operate",
+  "preview:operate",
+] as const;
 
 /** Renew this long before the token expires, so a running engine never sees an expired one. */
 const RENEW_BEFORE = Duration.days(2);
 /** How long a minted token lives. */
 const TOKEN_LIFETIME = "30d";
+/** The label the engine keeps with each session J3 Bots minted, to find them again. */
+const SESSION_LABEL = "J3 Bots";
 
 /** What `t3 auth session issue --json` prints. **Verified** at the pin. */
 const IssuedSession = Schema.Struct({
+  sessionId: Schema.String.check(Schema.isNonEmpty()),
   token: Schema.String.check(Schema.isNonEmpty()),
   expiresAt: Schema.DateTimeUtcFromString,
 });
 
+/**
+ * What `t3 auth session list --json` prints, as far as the adapter reads it: no
+ * token, only each session's id and the label it was issued with (**Read** at
+ * `59651c1`, `apps/server/src/cliAuthFormat.ts` `formatSessionList`).
+ */
+const ListedSessions = Schema.Array(
+  Schema.Struct({
+    sessionId: Schema.String.check(Schema.isNonEmpty()),
+    client: Schema.optionalKey(Schema.Struct({ label: Schema.optionalKey(Schema.String) })),
+  }),
+);
+
+/**
+ * What `credential.json` holds. `scopes` is what the token was minted with; a
+ * file written before it was recorded has none, and its token is minted again.
+ */
 const StoredCredential = Schema.Struct({
   token: Schema.String.check(Schema.isNonEmpty()),
   expiresAt: Schema.DateTimeUtcFromString,
+  scopes: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 const decodeSession = HttpClientResponse.schemaBodyJson(AuthSessionState);
 const decodeIssued = Schema.decodeUnknownEffect(Schema.fromJsonString(IssuedSession));
+const decodeListed = Schema.decodeUnknownEffect(Schema.fromJsonString(ListedSessions));
 const decodeStored = Schema.decodeUnknownOption(Schema.fromJsonString(StoredCredential));
 const encodeStored = Schema.encodeEffect(Schema.fromJsonString(StoredCredential));
 
@@ -64,24 +94,25 @@ class CredentialMintFailed extends Schema.TaggedError<CredentialMintFailed>()(
 const credentialFile = (path: Path.Path, home: string) =>
   path.join(engineFolders(path, home).j3, "credential.json");
 
-const mint = Effect.fnUntraced(function* (executable: string, home: string) {
+/** Runs the engine's CLI, `auth session` and `args`, against the engine's data directory. */
+const authSession = Effect.fnUntraced(function* (
+  executable: string,
+  home: string,
+  args: ReadonlyArray<string>,
+) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const issue = boundedCommand(executable, [
+  const [command, ...rest] = args;
+  const run = boundedCommand(executable, [
     "auth",
     "session",
-    "issue",
+    ...(command === undefined ? [] : [command]),
     "--base-dir",
     home,
-    ...CREDENTIAL_SCOPES.flatMap((scope) => ["--scope", scope]),
-    "--ttl",
-    TOKEN_LIFETIME,
-    "--label",
-    "J3 Bots",
-    "--json",
+    ...rest,
   ]);
-  const output = yield* Effect.scoped(
+  return yield* Effect.scoped(
     Effect.gen(function* () {
-      const handle = yield* spawner.spawn(issue);
+      const handle = yield* spawner.spawn(run);
       const [stdout, exitCode] = yield* Effect.all(
         [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
         { concurrency: "unbounded" },
@@ -89,38 +120,96 @@ const mint = Effect.fnUntraced(function* (executable: string, home: string) {
       return { stdout, exitCode: Number(exitCode) };
     }),
   ).pipe(Effect.orElseSucceed(() => ({ stdout: "", exitCode: -1 })));
+});
+
+const mint = Effect.fnUntraced(function* (executable: string, home: string) {
+  const output = yield* authSession(executable, home, [
+    "issue",
+    ...CREDENTIAL_SCOPES.flatMap((scope) => ["--scope", scope]),
+    "--ttl",
+    TOKEN_LIFETIME,
+    "--label",
+    SESSION_LABEL,
+    "--json",
+  ]);
   if (output.exitCode !== 0) return yield* new CredentialMintFailed({ stage: "mint" });
-  const issued = yield* decodeIssued(output.stdout).pipe(
+  return yield* decodeIssued(output.stdout).pipe(
     Effect.mapError(() => new CredentialMintFailed({ stage: "mint" })),
   );
-  return issued;
 });
 
 /**
- * Mints a new token and stores it in place of the old one, whatever the old
- * one's state: for renewal, and when the engine refused the stored one.
+ * Revokes every session J3 Bots minted before `kept`, so a token it no longer
+ * uses stops working at once instead of at its expiry. Only while the engine is
+ * stopped: the CLI then changes the engine's data directly, and no connection
+ * that still uses an older token is cut. A failure leaves the older tokens to
+ * expire, and is logged without any of them.
  */
-export const issueCredential = Effect.fn("engine.issueCredential")(function* (input: {
+const revokeOlderSessions = Effect.fnUntraced(
+  function* (executable: string, home: string, kept: string) {
+    const listed = yield* authSession(executable, home, ["list", "--json"]);
+    if (listed.exitCode !== 0) return yield* Effect.fail("list" as const);
+    const sessions = yield* decodeListed(listed.stdout).pipe(
+      Effect.mapError(() => "list" as const),
+    );
+    for (const session of sessions) {
+      if (session.client?.label !== SESSION_LABEL || session.sessionId === kept) continue;
+      const revoked = yield* authSession(executable, home, ["revoke", session.sessionId]);
+      if (revoked.exitCode !== 0) return yield* Effect.fail("revoke" as const);
+    }
+  },
+  Effect.catch((stage) =>
+    Effect.logWarning(
+      `The engine's older J3 Bots tokens could not be revoked (${stage}); they expire on their own.`,
+    ),
+  ),
+);
+
+/** Mints a token and stores it, answering it and the engine's id for its session. */
+const mintAndStore = Effect.fnUntraced(function* (input: {
   readonly executable: string;
   readonly home: string;
   readonly files: PrivateFiles;
 }) {
   const path = yield* Path.Path;
   const issued = yield* mint(input.executable, input.home);
-  const text = yield* encodeStored(issued).pipe(Effect.orDie);
+  const text = yield* encodeStored({
+    token: issued.token,
+    expiresAt: issued.expiresAt,
+    scopes: CREDENTIAL_SCOPES,
+  }).pipe(Effect.orDie);
   yield* input.files
     .write(credentialFile(path, input.home), text)
     .pipe(Effect.mapError(() => new CredentialMintFailed({ stage: "store" })));
-  return {
+  const credential: Credential = {
     token: Redacted.make(issued.token),
     expiresAt: issued.expiresAt,
-  } satisfies Credential;
+  };
+  return { credential, sessionId: issued.sessionId };
 });
 
 /**
- * A token that is valid for at least `RENEW_BEFORE`: the stored one, or a new
- * one minted and stored. The engine's data directory must exist; the engine
- * does not have to be running.
+ * Mints a new token and stores it in place of the old one, whatever the old
+ * one's state: for renewal, and when the engine refused the stored one. It
+ * revokes nothing, because the engine is running: the older token expires
+ * within `RENEW_BEFORE`, or the engine refused it.
+ */
+export const issueCredential = Effect.fn("engine.issueCredential")(function* (input: {
+  readonly executable: string;
+  readonly home: string;
+  readonly files: PrivateFiles;
+}) {
+  const { credential } = yield* mintAndStore(input);
+  return credential;
+});
+
+/**
+ * A token that is valid for at least `RENEW_BEFORE` and carries every scope
+ * of `CREDENTIAL_SCOPES`: the stored one, or a new one minted and stored. A
+ * stored token minted with fewer scopes, by an older J3 Bots, is replaced
+ * before the engine ever sees it. A new token revokes every one J3 Bots
+ * minted before it. The engine's data directory must exist, and the engine
+ * must be stopped.
  */
 export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (input: {
   readonly executable: string;
@@ -136,6 +225,7 @@ export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (
   );
   if (
     Option.isSome(stored) &&
+    CREDENTIAL_SCOPES.every((scope) => stored.value.scopes?.includes(scope) === true) &&
     DateTime.isGreaterThan(stored.value.expiresAt, DateTime.addDuration(now, RENEW_BEFORE))
   ) {
     return {
@@ -143,18 +233,23 @@ export const ensureCredential = Effect.fn("engine.ensureCredential")(function* (
       expiresAt: stored.value.expiresAt,
     } satisfies Credential;
   }
-  return yield* issueCredential(input);
+  const { credential, sessionId } = yield* mintAndStore(input);
+  yield* revokeOlderSessions(input.executable, input.home, sessionId);
+  return credential;
 });
 
 /** What the engine makes of a token. */
 export type Access = "granted" | "refused" | "unreachable";
 
 /**
- * Whether the engine accepts `token` with both scopes the adapter needs. It
+ * Whether the engine accepts `token` with every scope the adapter needs. It
  * answers `GET /api/auth/session` for any caller, with `authenticated: false`
  * for a token it does not accept, so a refusal is definitive and a failed
  * request only says the engine was not reached. **Read** at `db51b67`,
  * `packages/contracts/src/environmentHttp.ts` (`session`, `OptionalBearerHeaders`).
+ * The answer's `scopes` holds only the engine's older scopes, and `preview:operate`
+ * is in its `permissions` alone, so the engine's own `sessionGrantsScope` reads
+ * it (**Read** at `59651c1`, `packages/contracts/src/auth.ts`, `authScopeResponse`).
  */
 export const checkAccess = Effect.fn("engine.checkAccess")(function* (input: {
   readonly baseUrl: string;
@@ -172,13 +267,11 @@ export const checkAccess = Effect.fn("engine.checkAccess")(function* (input: {
         if (response.status === 401 || response.status === 403) return Effect.succeed("refused");
         return HttpClientResponse.filterStatusOk(response).pipe(
           Effect.flatMap(decodeSession),
-          Effect.map((session): Access => {
-            const scopes = session.scopes ?? [];
-            return session.authenticated &&
-              CREDENTIAL_SCOPES.every((scope) => scopes.includes(scope))
+          Effect.map((session): Access =>
+            CREDENTIAL_SCOPES.every((scope) => sessionGrantsScope(session, scope))
               ? "granted"
-              : "refused";
-          }),
+              : "refused",
+          ),
         );
       }),
       Effect.timeout(Duration.seconds(5)),

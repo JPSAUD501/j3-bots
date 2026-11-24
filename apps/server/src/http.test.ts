@@ -100,7 +100,7 @@ const ask = (method: string, path: string, headers: Record<string, string>) =>
 
 const pairRequest = (name: string, code = "0000000000") => JSON.stringify({ code, name });
 
-/** The headers of a WebSocket upgrade to `HTTP_PATHS.rpc`, as a browser sends them. */
+/** The headers of a WebSocket upgrade, as a browser sends them. */
 const upgrade = {
   connection: "Upgrade",
   upgrade: "websocket",
@@ -269,7 +269,9 @@ it.layer(served((config) => config))("http", (it) => {
         "content-type": "application/json",
       });
       assert.strictEqual(pairing.status, 403);
-      assert.strictEqual((yield* ask("GET", HTTP_PATHS.rpc, { ...upgrade, host })).status, 403);
+      for (const socket of [HTTP_PATHS.rpc, HTTP_PATHS.browser]) {
+        assert.strictEqual((yield* ask("GET", socket, { ...upgrade, host })).status, 403, socket);
+      }
       // The desktop app's origin does not get a preflight answered either.
       const preflight = yield* ask("OPTIONS", HTTP_PATHS.socketTicket, {
         host,
