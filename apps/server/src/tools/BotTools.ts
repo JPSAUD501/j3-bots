@@ -23,7 +23,7 @@ import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import { CredentialFills, type ListAnswer } from "../vault/Fill.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
-import { type TurnToolCall, type TurnToolRetry, TurnTools } from "./TurnTools.ts";
+import { type TurnToolCall, TurnToolRefused, type TurnToolRetry, TurnTools } from "./TurnTools.ts";
 
 /** Why a call did nothing, in words the bot reads. */
 class Refused extends Schema.TaggedError<Refused>()("Refused", { reason: Schema.String }) {}
@@ -241,13 +241,36 @@ export const layer = Layer.effect(
           return { teammates, rooms: joined } satisfies Schema.Json;
         }),
       ),
+      start_room: handler(tools.start_room.input, (input, call) =>
+        admit({ tool: "start_room", input, ...call }),
+      ),
+      // A turn tool of its own: the bot is saved with the call's pin on its
+      // turn, which only this service's `Bots` can do.
       create_bot: handler(tools.create_bot.input, (input, call) =>
         Effect.gen(function* () {
           yield* requirePrimary(call.caller);
-          const bot = yield* bots
-            .create({ commandId: commandIdOf(call.requestId), draft: input })
-            .pipe(refuseFailure);
-          return { id: bot.id } satisfies Schema.Json;
+          return yield* turnTools
+            .createBot({
+              requestId: call.requestId,
+              caller: call.caller,
+              arguments: call.arguments,
+              create: (madeBy) =>
+                bots.create({ commandId: commandIdOf(call.requestId), draft: input, madeBy }).pipe(
+                  Effect.map((bot) => bot.id),
+                  Effect.catchTags({
+                    NotFound: (error) => new TurnToolRefused({ reason: error.message }),
+                    Invalid: (error) => new TurnToolRefused({ reason: error.message }),
+                    Conflict: (error) => new TurnToolRefused({ reason: error.message }),
+                  }),
+                ),
+            })
+            .pipe(
+              Effect.catchTags({
+                TurnEnded: (error) => new Refused({ reason: error.message }),
+                TurnToolRefused: (error) => new Refused({ reason: error.message }),
+                Conflict: (error) => new Refused({ reason: error.message }),
+              }),
+            );
         }),
       ),
       update_bot: handler(tools.update_bot.input, (input, call) =>

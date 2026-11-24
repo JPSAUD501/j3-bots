@@ -8,6 +8,7 @@ import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { toolList } from "@j3-bots/prompts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -28,10 +29,10 @@ import { Bots } from "../bots/Bots.ts";
 import * as Ports from "../system/Ports.ts";
 import { fakeConnector, reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { createBot, engineSession, nextTurn, sendToBot } from "../testing/turns.ts";
+import { createBot, engineSession, nextTurn, sendToBot, until } from "../testing/turns.ts";
 import * as ToolEndpoint from "../tools/ToolEndpoint.ts";
 import { CONNECTOR_CALL_DEADLINE, TOOL_CALL_PATH, TOOL_CHANGES_PATH } from "../tools/protocol.ts";
-import { serve } from "./Bridge.ts";
+import { FORWARD_RETRY_PAUSE, serve } from "./Bridge.ts";
 
 /** The endpoint over the whole domain, and Node's own HTTP client, which the bridge runs with. */
 const endpoint = Layer.merge(
@@ -173,8 +174,7 @@ const sessionOf = (botId: string) =>
     return Option.fromNullishOr(row?.engine_session_id).pipe(Option.map(SessionId.make));
   });
 
-// The real clock: a forward is retried after a pause.
-it.layer(endpoint, { excludeTestServices: true })("j3 bridge", (it) => {
+it.layer(endpoint)("j3 bridge", (it) => {
   it.effect("lists the tools and answers a call for the bot whose session started it", () =>
     Effect.gen(function* () {
       const bots = yield* Bots;
@@ -203,11 +203,24 @@ it.layer(endpoint, { excludeTestServices: true })("j3 bridge", (it) => {
 
   it.effect("acts once on a call whose reply was lost and sent again", () =>
     Effect.gen(function* () {
-      const bots = yield* Bots;
       const store = yield* BotStore;
-      const primary = yield* bots.create({
-        commandId: CommandId.make("lead"),
-        draft: { name: "Lead", primary: true },
+      // The primary bot, in a turn the operator asked it for a teammate in,
+      // whose call the engine recorded.
+      const primary = yield* createBot("Lead");
+      yield* (yield* Bots).update({
+        commandId: CommandId.make("lead-primary"),
+        botId: primary.id,
+        changes: { primary: true },
+      });
+      const session = yield* engineSession(primary.id);
+      yield* sendToBot(primary.id, "Make me a bot that watches the repository.");
+      const args = { name: "Scout", job: "Watches the repository." };
+      yield* (yield* TestEngineControl).toolCall({
+        sessionId: session,
+        turnId: yield* nextTurn(primary.id),
+        tool: "create_bot",
+        input: args,
+        recorded: "now",
       });
       const attempts = yield* Ref.make(0);
       const losingFirstReply = (yield* HttpClient.HttpClient).pipe(
@@ -222,9 +235,14 @@ it.layer(endpoint, { excludeTestServices: true })("j3 bridge", (it) => {
         ),
       );
 
-      const replies = yield* runBridge(yield* sessionOf(primary.id), [
-        call(1, "create_bot", { name: "Scout", job: "Watches the repository." }),
-      ]).pipe(Effect.provideService(HttpClient.HttpClient, losingFirstReply));
+      const bridge = yield* runBridge(Option.some(session), [call(1, "create_bot", args)]).pipe(
+        Effect.provideService(HttpClient.HttpClient, losingFirstReply),
+        Effect.forkChild,
+      );
+      // The bridge forwards the request again after a pause.
+      yield* until(Effect.map(Ref.get(attempts), (n) => n > 0));
+      yield* TestClock.adjust(FORWARD_RETRY_PAUSE);
+      const replies = yield* Fiber.join(bridge);
 
       assert.isFalse(replies.get(1)?.isError);
       assert.strictEqual(yield* Ref.get(attempts), 2);

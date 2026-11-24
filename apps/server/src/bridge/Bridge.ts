@@ -39,6 +39,9 @@ const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 /** How long a call to one of J3 Bots' own tools keeps trying to reach the server before it gives up. */
 const FORWARD_DEADLINE = Duration.seconds(30);
 
+/** How long the bridge waits before it forwards a request again, after the server could not be reached. */
+export const FORWARD_RETRY_PAUSE = Duration.millis(250);
+
 /** How long listing the session's tools may take before the bridge lists J3 Bots' own. */
 const LIST_DEADLINE = Duration.seconds(10);
 
@@ -116,7 +119,7 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
   const client = once.pipe(
     HttpClient.retryTransient({
       // Until the request's deadline, which ends the retries.
-      schedule: Schedule.spaced("250 millis"),
+      schedule: Schedule.spaced(FORWARD_RETRY_PAUSE),
     }),
   );
 

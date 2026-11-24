@@ -10,6 +10,7 @@ import {
   MIN_VISUAL_HEIGHT,
   OperatorName,
   Profile,
+  RoomName,
   RoutineInstruction,
 } from "@j3-bots/contracts";
 import { visualVariables } from "@j3-bots/design-tokens";
@@ -186,15 +187,47 @@ const AskInput = toolInput({
   ),
 });
 
+/** The most bots one turn may create: a room's six members, less the bot that creates them. */
+export const MAX_BOTS_PER_TURN = 5;
+
 const MessageBotInput = toolInput({
-  to: described(Id, "The teammate's bot id, from `list_teammates`."),
+  to: described(
+    Id,
+    "A teammate's bot id, or the id of a room you are a member of, from `list_teammates`.",
+  ),
   text: described(
     text(1, MAX_SPOKEN_TEXT),
     `The actionable point, in at most ${MAX_SPOKEN_TEXT} characters.`,
   ),
-  urgent: described(
-    Schema.Boolean,
-    "True when they must act now or someone is waiting: it wakes them. Otherwise it waits for their next turn.",
+  urgent: Schema.optionalKey(
+    described(
+      Schema.Boolean,
+      "To a teammate only: true when they must act now or someone is waiting, which wakes them. Otherwise it waits for their next turn.",
+    ),
+  ),
+  mention: Schema.optionalKey(
+    described(
+      Schema.Array(Id).check(Schema.isMaxLength(6)),
+      "To a room only: the bot ids of the members who must act next, each woken in turn. Leave it out when nobody needs to act.",
+    ),
+  ),
+});
+
+const StartRoomInput = toolInput({
+  name: described(RoomName, "The room's name, as your user will see it in their list."),
+  members: described(
+    Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_TURN)),
+    `The teammates who join, by bot id: one to ${MAX_BOTS_PER_TURN}, besides you. You join as the host.`,
+  ),
+  kickoff: described(
+    text(1, MAX_SPOKEN_TEXT),
+    "The room's first message, yours: what the room is for, what your user needs, who owns which part, the rules, and who opens.",
+  ),
+  mention: Schema.optionalKey(
+    described(
+      Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_TURN)),
+      "The members the kickoff wakes, each in turn, in this order. Leave it out to wake every member, in the order of `members`.",
+    ),
   ),
 });
 
@@ -449,8 +482,9 @@ export const tools = {
   message_bot: define(
     "message_bot",
     [
-      "Send a message to one teammate, by a bot id from `list_teammates`. Your user can read what you two send each other, but is not alerted to it: if they need to know, tell them with `say`.",
-      "Only an `urgent` message wakes the teammate now. Any other is queued until the teammate's next turn begins, however long that takes.",
+      "Send a message to one teammate, by a bot id from `list_teammates`, or post in a room you are a member of, by its room id. Your user can read what you send a teammate, but is not alerted to it: if they need to know, tell them with `say`.",
+      "In a room the message lands at once, and the members you list in `mention` are woken to answer, each in turn; nobody else is. It is how you bring work for several teammates back to a room they share.",
+      "To a teammate, only an `urgent` message wakes them now. Any other is queued until the teammate's next turn begins, however long that takes.",
       "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender. Answer a question once; an FYI or a thanks needs no answer.",
       "Returns an acknowledgement only. Any reply comes in a later turn of yours.",
       "Every message spends your user's allowance: send it only when it serves what your user wants. Your user limits how long a chain of messages between bots may run since they last spoke, and how many teammates a turn may bring in besides those it answers; past either, nothing is sent.",
@@ -521,16 +555,29 @@ export const tools = {
     "list_teammates",
     [
       "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members.",
-      "Use the ids with `message_bot`.",
+      "Use the ids with `message_bot` and `start_room`.",
     ],
     NoInput,
+  ),
+  start_room: define(
+    "start_room",
+    [
+      "Start a room: a group chat where you and the teammates you name work on something together, and where your user reads along and writes too. Only when your user asked for group work in this turn's message. When they asked for a group or a team of bots, first create the teammates it lacks with `create_bot`, in this same turn.",
+      "You join as the host. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and who opens.",
+      "The kickoff wakes the members in `mention`, every other member by default, one at a time: each answers in the room and sees the replies before it. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
+      "A room holds two to six bots, you included. Your user's limit on how long a chain of turns between bots may run since they last spoke holds here too.",
+      "Returns the room's id. Then tell your user, in a `say`, what you set up and who owns what.",
+      BOT_ONLY,
+    ],
+    StartRoomInput,
   ),
   create_bot: define(
     "create_bot",
     [
-      "Create a new teammate for your user. Only the primary bot can, and only when your user asked for one or agreed to it.",
+      `Create a new teammate for your user. Only the primary bot can, only in a turn whose message from your user asked for one or agreed to it, and at most ${MAX_BOTS_PER_TURN} in one turn.`,
       "The job says what the bot is for and where its limits end, in a few sentences; how every bot behaves comes from J3 Bots, not the job.",
       "No tool deletes a bot; your user can delete one in the app.",
+      "A bot you create greets your user in its own conversation once your turn ends, unless `start_room` puts it in a room in this same turn: then it opens there.",
       "Returns the new bot's id.",
     ],
     CreateBotInput,

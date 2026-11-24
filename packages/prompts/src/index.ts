@@ -59,6 +59,7 @@ export {
   BROWSER_HELP_REQUESTED,
   DECODE_OPTIONS,
   FILL_NOTES,
+  MAX_BOTS_PER_TURN,
   MAX_TOOL_INPUT_BYTES,
   inputCapRefusal,
   isConnectorTool,

@@ -204,6 +204,10 @@ export function noticeText(
         bot: ctx.botName(notice.botId) ?? t("bot.unknown"),
         name: notice.name,
       });
+    case "room-started":
+      return t("notice.roomStarted", { name: ctx.botName(notice.botId) ?? t("bot.unknown") });
+    case "made-for-room":
+      return t("notice.madeForRoom", { name: ctx.botName(notice.botId) ?? t("bot.unknown") });
   }
 }
 

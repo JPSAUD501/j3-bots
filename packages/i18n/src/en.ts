@@ -469,6 +469,8 @@ export const en = {
   "notice.routinePaused":
     "{name} was paused: its schedule couldn’t be read. Edit it to turn it back on.",
   "notice.operatorNamed": "{bot} saved your name: your bots now call you {name}.",
+  "notice.roomStarted": "{name} started a room.",
+  "notice.madeForRoom": "Made by {name} for a room.",
   "notice.retry": "Try again",
   "notice.openConversation": "Open",
 

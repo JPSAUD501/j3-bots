@@ -9,6 +9,7 @@ import {
   RoutineId,
   RoutineRunId,
 } from "@j3-bots/contracts";
+import { TurnId } from "@j3-bots/engine-t3";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
@@ -32,6 +33,10 @@ export type DispatchSeq = typeof DispatchSeq.Type;
 /** J3 Bots' own id of a session row; the engine's id for it is a `SessionId`. */
 export const SessionRowId = Schema.String.pipe(Schema.brand("SessionRowId"));
 export type SessionRowId = typeof SessionRowId.Type;
+
+/** The turn a bot's `create_bot` made a bot in: its session row and the engine's turn. */
+export const MadeIn = Schema.Struct({ sessionId: SessionRowId, turnId: TurnId });
+export type MadeIn = typeof MadeIn.Type;
 
 /**
  * A broken invariant of the turn machinery: a bug, never a state a caller
@@ -134,8 +139,12 @@ export const WakePayload = Schema.Union([
   }),
   /** The `user` dispatch this one follows up, whose turn delivered nothing. */
   Schema.TaggedStruct("undelivered", { dispatchId: DispatchRowId }),
-  /** The bot was just created: its first turn opens its conversation. */
-  Schema.TaggedStruct("first-run", {}),
+  /**
+   * The bot was just created: its first turn opens its conversation. A bot
+   * another bot's `create_bot` made waits for the turn that made it
+   * (`madeIn`) to end, which may place it in a room instead (`start_room`).
+   */
+  Schema.TaggedStruct("first-run", { madeIn: Schema.optionalKey(MadeIn) }),
   /** A run of a routine; for a webhook, the run holds the request's body. */
   Schema.TaggedStruct("routine", { routineId: RoutineId, runId: RoutineRunId }),
   /** A teammate's urgent message, read from the handoff card it put in this bot's conversation. */

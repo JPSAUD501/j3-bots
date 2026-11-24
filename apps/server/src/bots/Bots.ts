@@ -48,7 +48,7 @@ import { Ledger } from "../turns/Ledger.ts";
 import { rotationRequests } from "../turns/rotationRequests.ts";
 import { Signals } from "../turns/Signals.ts";
 import { Stops } from "../turns/Stops.ts";
-import { conversation } from "../turns/model.ts";
+import { conversation, type MadeIn } from "../turns/model.ts";
 import { openingUnsentSql } from "../turns/openings.ts";
 import { Wakes } from "../turns/Wakes.ts";
 import { freeAvatar } from "@j3-bots/design-tokens/names";
@@ -88,6 +88,20 @@ const offered = (status: EngineStatus, model: ModelChoice) =>
   );
 
 /**
+ * A bot that another bot's `create_bot` makes, in the turn that called it
+ * (`turns/Speech.ts`).
+ */
+export interface MadeBy<E> {
+  /** That turn: the bot's hello waits for it to end (`WakePayload`, `first-run`). */
+  readonly turn: MadeIn;
+  /**
+   * Runs in the transaction that saves the bot, once it has its id: a failure
+   * saves nothing, and leaves no workspace behind.
+   */
+  readonly claim: (botId: BotId) => Effect.Effect<void, E>;
+}
+
+/**
  * Bots: creating, changing and deleting them, with what each of those means
  * for the bot's workspace, its engine project and its rooms.
  */
@@ -96,12 +110,14 @@ export class Bots extends Context.Service<
   {
     /**
      * Saves the bot with a `first-run` system wake, so its first turn opens
-     * its conversation, then opens its main session if the engine can.
+     * its conversation, then opens its main session if the engine can. A bot
+     * another bot makes (`madeBy`) is saved with that bot's claim on its turn.
      */
-    readonly create: (input: {
+    readonly create: <E = never>(input: {
       readonly commandId: CommandId;
       readonly draft: BotDraft;
-    }) => Effect.Effect<Bot, CommandError>;
+      readonly madeBy?: MadeBy<E>;
+    }) => Effect.Effect<Bot, CommandError | E>;
     /**
      * Creates a bot from a template as `create` creates one, in the same
      * transaction as the template's routines, each created paused, and its
@@ -467,9 +483,10 @@ export const layer = Layer.effect(
      * Saves a new bot, and what `furnish` adds to it in the same transaction,
      * under one receipt. `draft` is decided there, from the engine's status
      * then; a permission mode it leaves out is `permissionMode`'s, for the
-     * model the bot gets.
+     * model the bot gets. A bot made in a bot's turn (`madeIn`) has its hello
+     * wait for that turn to end.
      */
-    const insert = Effect.fn("Bots.insert")(function* (input: {
+    const insert = <E>(input: {
       readonly commandId: CommandId;
       readonly method: "bot.create" | "bot.createFromTemplate";
       readonly payload: unknown;
@@ -477,94 +494,103 @@ export const layer = Layer.effect(
       readonly permissionMode: (status: EngineStatus, model: ModelChoice) => PermissionMode;
       /** Who a permission mode is recorded as chosen by. */
       readonly permissionModeChooser: (draft: BotDraft) => Chooser;
-      readonly furnish: (botId: BotId) => Effect.Effect<void, CommandError>;
-    }) {
-      // The bot being saved, once it has an id: a creation that fails leaves
-      // no workspace behind, whatever had begun to fill it.
-      const started = yield* Ref.make(Option.none<BotId>());
-      const bot = yield* receipts
-        .once({
-          commandId: input.commandId,
-          method: input.method,
-          payload: input.payload,
-          result: Bot,
-          apply: Effect.gen(function* () {
-            const status = yield* engineState.current;
-            const draft = input.draft(status);
-            const model = draft.model ?? Option.getOrNull(defaultModelIn(status));
-            if (model === null) return yield* new Invalid({ reason: "model" });
-            yield* checkModel(status, model);
-            const at = yield* DateTime.now;
-            const id = BotIdSchema.make(yield* ids.make("bot"));
-            yield* Ref.set(started, Option.some(id));
-            if (draft.primary === true) yield* makePrimary(at);
-            yield* store.insert({
-              id,
-              profile: {
-                name: draft.name,
-                title: draft.title ?? "",
-                avatar: draft.avatar ?? freeAvatar(yield* store.avatars),
-                job: draft.job ?? "",
-              },
-              model,
-              modelChooser: draft.model === undefined ? "server" : "operator",
-              permissionMode: draft.permissionMode ?? input.permissionMode(status, model),
-              permissionModeChooser: input.permissionModeChooser(draft),
-              primary: draft.primary === true,
-              workspacePath: layout.workspace(id),
-              at,
-            });
-            yield* input.furnish(id);
-            // The bot opens its conversation: its first turn is this wake's,
-            // written once, with the bot, and dispatched like any other. Its
-            // cause is the operator's, as the creation is, also when the primary
-            // bot's `create_bot` carried their word: it follows from no
-            // dispatch's work, so no Stop of earlier work can drop it unwritten.
-            yield* wakes.record([
-              {
-                botId: id,
-                kind: "system",
-                audience: conversation,
-                payload: { _tag: "first-run" },
-                sourceEntryId: null,
-                hops: 0,
-                retryOf: null,
-                cause: { _tag: "operator" },
-              },
-            ]);
-            yield* changes.touch({ _tag: "bot", botId: id });
-            return (yield* require(id).pipe(Effect.orDie)).bot;
-          }),
-        })
-        .pipe(
-          Effect.onError(() =>
-            Ref.get(started).pipe(
-              Effect.flatMap(
-                Option.match({
-                  onNone: () => Effect.void,
-                  onSome: (id) => fs.remove(layout.workspace(id), { recursive: true }),
-                }),
+      readonly furnish: (botId: BotId) => Effect.Effect<void, CommandError | E>;
+      readonly madeIn: MadeIn | null;
+    }): Effect.Effect<Bot, CommandError | E> =>
+      Effect.gen(function* () {
+        // The bot being saved, once it has an id: a creation that fails leaves
+        // no workspace behind, whatever had begun to fill it.
+        const started = yield* Ref.make(Option.none<BotId>());
+        const bot = yield* receipts
+          .once({
+            commandId: input.commandId,
+            method: input.method,
+            payload: input.payload,
+            result: Bot,
+            apply: Effect.gen(function* () {
+              const status = yield* engineState.current;
+              const draft = input.draft(status);
+              const model = draft.model ?? Option.getOrNull(defaultModelIn(status));
+              if (model === null) return yield* new Invalid({ reason: "model" });
+              yield* checkModel(status, model);
+              const at = yield* DateTime.now;
+              const id = BotIdSchema.make(yield* ids.make("bot"));
+              yield* Ref.set(started, Option.some(id));
+              if (draft.primary === true) yield* makePrimary(at);
+              yield* store.insert({
+                id,
+                profile: {
+                  name: draft.name,
+                  title: draft.title ?? "",
+                  avatar: draft.avatar ?? freeAvatar(yield* store.avatars),
+                  job: draft.job ?? "",
+                },
+                model,
+                modelChooser: draft.model === undefined ? "server" : "operator",
+                permissionMode: draft.permissionMode ?? input.permissionMode(status, model),
+                permissionModeChooser: input.permissionModeChooser(draft),
+                primary: draft.primary === true,
+                workspacePath: layout.workspace(id),
+                at,
+              });
+              yield* input.furnish(id);
+              // The bot opens its conversation: its first turn is this wake's,
+              // written once, with the bot, and dispatched like any other. Its
+              // cause is the operator's, as the creation is, also when the primary
+              // bot's `create_bot` carried their word: it follows from no
+              // dispatch's work, so no Stop of earlier work can drop it unwritten.
+              yield* wakes.record([
+                {
+                  botId: id,
+                  kind: "system",
+                  audience: conversation,
+                  payload:
+                    input.madeIn === null
+                      ? { _tag: "first-run" }
+                      : { _tag: "first-run", madeIn: input.madeIn },
+                  sourceEntryId: null,
+                  hops: 0,
+                  retryOf: null,
+                  cause: { _tag: "operator" },
+                },
+              ]);
+              yield* changes.touch({ _tag: "bot", botId: id });
+              return (yield* require(id).pipe(Effect.orDie)).bot;
+            }),
+          })
+          .pipe(
+            Effect.onError(() =>
+              Ref.get(started).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () => Effect.void,
+                    onSome: (id) => fs.remove(layout.workspace(id), { recursive: true }),
+                  }),
+                ),
+                Effect.ignore,
               ),
-              Effect.ignore,
             ),
+          );
+        // Also after a retry: a creation that crashed before this point finishes now.
+        yield* provision(bot.id);
+        // A provider may have become ready while the bot was saved, after the
+        // default was read. Only this bot: the others' moves are not this
+        // command's, and nothing of one fails it.
+        yield* adoptDefaults(bot.id).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) => Effect.logWarning("A new bot could not move to the default model", cause),
           ),
         );
-      // Also after a retry: a creation that crashed before this point finishes now.
-      yield* provision(bot.id);
-      // A provider may have become ready while the bot was saved, after the
-      // default was read. Only this bot: the others' moves are not this
-      // command's, and nothing of one fails it.
-      yield* adoptDefaults(bot.id).pipe(
-        Effect.catchCauseIf(
-          (cause) => !Cause.hasInterruptsOnly(cause),
-          (cause) => Effect.logWarning("A new bot could not move to the default model", cause),
-        ),
-      );
-      return bot;
-    });
+        return bot;
+      }).pipe(Effect.withSpan("Bots.insert"));
 
-    const create = (input: { readonly commandId: CommandId; readonly draft: BotDraft }) =>
-      insert({
+    const create = <E = never>(input: {
+      readonly commandId: CommandId;
+      readonly draft: BotDraft;
+      readonly madeBy?: MadeBy<E>;
+    }) =>
+      insert<E>({
         commandId: input.commandId,
         method: "bot.create",
         payload: input.draft,
@@ -572,7 +598,8 @@ export const layer = Layer.effect(
         permissionMode: defaultPermissionMode,
         permissionModeChooser: (draft) =>
           draft.permissionMode === undefined ? "server" : "operator",
-        furnish: () => Effect.void,
+        furnish: input.madeBy?.claim ?? (() => Effect.void),
+        madeIn: input.madeBy?.turn ?? null,
       });
 
     /** A template's trigger as the operator's routine runs it: a schedule in their time zone. */
@@ -642,6 +669,7 @@ export const layer = Layer.effect(
         // What the operator saw before creating it: a later move to the default model keeps it.
         permissionModeChooser: () => "operator",
         furnish: furnishFrom(template),
+        madeIn: null,
       });
     };
 
