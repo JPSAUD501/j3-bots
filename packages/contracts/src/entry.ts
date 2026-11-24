@@ -51,15 +51,14 @@ export const MAX_MESSAGE_LENGTH = 100_000;
 export const MessageText = Schema.String.check(Schema.isMaxLength(MAX_MESSAGE_LENGTH));
 
 /**
- * Who a room message addresses. In a conversation it is always `bots` with no
- * ids. The server routes room wakes from it, never from the text.
+ * The members a room message addresses, in the order named; no ids addresses
+ * nobody in particular. Every member reads every room message, so mentions
+ * wake nobody: each member named is told the message is addressed to it. In
+ * a conversation there are never ids.
  */
-export const Mentions = Schema.Union([
-  /** These members, in this order. No ids: nobody in particular. From the operator it wakes every member, one at a time in member order; from a bot, nobody. */
-  Schema.TaggedStruct("bots", { ids: Schema.Array(BotId).check(Schema.isMaxLength(6)) }),
-  /** Every member, one at a time in member order. */
-  Schema.TaggedStruct("everyone", {}),
-]);
+export const Mentions = Schema.TaggedStruct("bots", {
+  ids: Schema.Array(BotId).check(Schema.isMaxLength(6)),
+});
 export type Mentions = typeof Mentions.Type;
 
 const entry = {

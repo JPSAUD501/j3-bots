@@ -233,8 +233,9 @@ export const EntryRpcs = RpcGroup.make(
   }),
   /**
    * Returns the new message entry. `attachments` are uploaded first with
-   * `POST /attachments`. `mentions` only applies in a room; leaving it out
-   * mentions nobody. Fails with `Invalid("attachment")`, writing nothing, when
+   * `POST /attachments`. `mentions` only applies in a room, and names
+   * members only; leaving it out addresses nobody in particular. Every
+   * member reads the message either way. Fails with `Invalid("attachment")`, writing nothing, when
    * the files break a limit of the engine that runs the bot: an empty file, an
    * inline image (`INLINE_IMAGE_MEDIA_TYPES`) over `MAX_INLINE_IMAGE_SIZE`, or
    * inline images over `MAX_INLINE_IMAGES_SIZE` together. Fails with

@@ -17,7 +17,8 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
  * widened the avatars a client sends to twelve shapes and twelve colors. 8
  * added the bot's browser: `browser.subscribe` and the media socket at
  * `HTTP_PATHS.browser`. 9 added teammate conversations (`TeammatePairRpcs`). 10 took the host out
- * of a room: `Room`, `room.create` and `room.update` have no `hostId`.
+ * of a room: `Room`, `room.create` and `room.update` have no `hostId`, and
+ * `Mentions` has no `everyone`, as every room message reaches every member.
  * docs/architecture/clients.md, "Protocol compatibility", says what does.
  */
 export const PROTOCOL_VERSION = 10;

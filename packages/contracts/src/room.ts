@@ -7,8 +7,8 @@ import { BotId, Label, PositiveInt, RoomId } from "./base.ts";
 export const MAX_ROOM_MEMBERS = 6;
 
 /**
- * Two to six bots, all equal. Order matters: a message that wakes several
- * members wakes them one at a time in this order.
+ * Two to six bots, all equal. A room message wakes every member but its
+ * author, in this order.
  */
 export const RoomMembers = Schema.Array(BotId).check(
   Schema.isMinLength(2),
@@ -17,8 +17,20 @@ export const RoomMembers = Schema.Array(BotId).check(
 
 export const RoomName = Label;
 
-/** Consecutive bot-caused turns allowed before the room waits for the operator. */
+/**
+ * How far bots may talk among themselves in a room before it waits for the
+ * operator. A bot's message is one hop further from the operator than the
+ * furthest message its turn read, the first reply to the operator being one;
+ * past the limit it is posted, and wakes nobody.
+ */
 export const RoomHopLimit = PositiveInt;
+
+/**
+ * A room's hop limit when none is given. Every message wakes every other
+ * member, so each hop can be a round of every member's turns: with two,
+ * what the operator writes runs at most three rounds.
+ */
+export const DEFAULT_ROOM_HOP_LIMIT = 2;
 
 /**
  * Whether work addressed to an active room is under way, so a client offers
