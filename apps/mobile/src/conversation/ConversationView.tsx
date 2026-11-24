@@ -5,6 +5,7 @@ import {
   addresseeOf,
   arrivalCounts,
   buildTimeline,
+  type CardPlace,
   cardPlace,
   liveTurn,
   mentionedNames,
@@ -125,6 +126,9 @@ function useInView(): boolean {
  */
 const SEEN_PERCENT = 50;
 
+/** The room the pill over the conversation's end takes: its 44 dp and the 8 dp under it. */
+const PILL_ROOM = 52;
+
 /**
  * Marks read through the latest entry the operator can see, and tells the server the
  * conversation is in view, while it is `inView`. Otherwise what arrives
@@ -191,24 +195,63 @@ function useReadMark(
 }
 
 /**
- * The keys of the rows the conversation shows now, by the rule an entry
- * counts as seen by, with the list's viewability pair that follows them,
- * which never changes.
+ * Where the card of `entryId` is against what the conversation shows, by the
+ * rules an entry counts as seen by: half of it shows, or it covers half the
+ * list. Null while there is no such card, or nothing is known to show yet.
+ * Returns the list's viewability pairs too, which never change. The rows
+ * shown are followed without drawing the conversation again: only a new
+ * place does.
  */
-function useShownRows(): {
-  readonly shown: ReadonlySet<string>;
-  readonly pair: ViewabilityConfigCallbackPairs<TimelineItem>[number];
+function useCardPlaceInList(
+  rows: ReadonlyArray<TimelineItem>,
+  entryId: EntryId | null,
+): {
+  readonly place: CardPlace | null;
+  readonly pairs: ViewabilityConfigCallbackPairs<TimelineItem>;
 } {
-  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
-  const pair = useMemo(
-    () => ({
-      viewabilityConfig: { id: "shown", itemVisiblePercentThreshold: SEEN_PERCENT },
-      onViewableItemsChanged: ({ viewableItems }: OnViewableItemsChangedInfo<TimelineItem>) =>
-        setShown(new Set(viewableItems.map((token) => token.key))),
-    }),
-    [],
-  );
-  return { shown, pair };
+  const [place, setPlace] = useState<CardPlace | null>(null);
+  // The list reads its viewability callbacks once: they reach what is current through here.
+  const latest = useRef({ rows, entryId });
+  const follow = useMemo(() => {
+    const seen: Record<"half" | "covering", ReadonlySet<string>> = {
+      half: new Set(),
+      covering: new Set(),
+    };
+    const place = () => {
+      const { rows: now, entryId: card } = latest.current;
+      setPlace(
+        card === null ? null : cardPlace(now, new Set([...seen.half, ...seen.covering]), card),
+      );
+    };
+    const pair =
+      (which: "half" | "covering") =>
+      ({ viewableItems }: OnViewableItemsChangedInfo<TimelineItem>) => {
+        seen[which] = new Set(viewableItems.map((token) => token.key));
+        place();
+      };
+    return {
+      place,
+      pairs: [
+        {
+          viewabilityConfig: { id: "card-half", itemVisiblePercentThreshold: SEEN_PERCENT },
+          onViewableItemsChanged: pair("half"),
+        },
+        {
+          viewabilityConfig: {
+            id: "card-covering",
+            viewAreaCoveragePercentThreshold: SEEN_PERCENT,
+          },
+          onViewableItemsChanged: pair("covering"),
+        },
+      ],
+    };
+  }, [latest]);
+  // A new card, or rows that moved, may put it elsewhere with no change in what shows.
+  useLayoutEffect(() => {
+    latest.current = { rows, entryId };
+    follow.place();
+  }, [latest, rows, entryId, follow]);
+  return { place, pairs: follow.pairs };
 }
 
 /**
@@ -273,9 +316,13 @@ export function ConversationView({
   const turnBot = useMemo(() => (bot === null ? null : { bot, lastEntry }), [bot, lastEntry]);
   const inView = useInView();
   const readPairs = useReadMark(target, rows, markRead, inView);
-  const { shown, pair: shownPair } = useShownRows();
+  // The card the bot waits on, which the end of the conversation leads to while it is out of view.
+  const waitingOn = bot?.state._tag === "waiting" ? bot.state.entryId : null;
+  const waiting = useCardPlaceInList(rows, waitingOn);
+  // While it does, the pill stands over the end: the list keeps its last entry clear of it.
+  const toCard = waiting.place === "above" || waiting.place === "below";
   // The list reads its viewability pairs once: both parts never change.
-  const pairs = useMemo(() => [...readPairs, shownPair], [readPairs, shownPair]);
+  const pairs = useMemo(() => [...readPairs, ...waiting.pairs], [readPairs, waiting.pairs]);
   // What arrives at the end settles in, and is counted while the operator reads above it.
   const [scope] = useState(() => rosterKeyText(rosterKeyOf(item)));
   const arrived = useArrivals(
@@ -345,9 +392,6 @@ export function ConversationView({
     if (index !== -1)
       void list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
   };
-
-  // The card the bot waits on, which the end of the conversation leads to while it is out of view.
-  const waitingOn = bot?.state._tag === "waiting" ? bot.state.entryId : null;
 
   const archived = room !== null && room.status === "archived";
   const quiet = state?.phase === "ready" && state.items.length === 0;
@@ -434,7 +478,10 @@ export function ConversationView({
                   keyboardOffset={insets.bottom}
                   keyboardDismissMode="interactive"
                   keyboardShouldPersistTaps="handled"
-                  contentContainerStyle={{ paddingTop: 4, paddingBottom: 8 }}
+                  contentContainerStyle={{
+                    paddingTop: 4,
+                    paddingBottom: toCard ? 8 + PILL_ROOM : 8,
+                  }}
                 />
               )}
             </EntryWidths>
@@ -452,7 +499,7 @@ export function ConversationView({
                 waiting={
                   waitingOn === null
                     ? null
-                    : { place: cardPlace(rows, shown, waitingOn), onPress: () => goTo(waitingOn) }
+                    : { place: waiting.place, onPress: () => goTo(waitingOn) }
                 }
               />
             </KeyboardStickyView>

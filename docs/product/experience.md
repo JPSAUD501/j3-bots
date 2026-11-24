@@ -24,7 +24,7 @@ The operator picks a bot in the roster and types.
 
 - The bot acknowledges within a second or two, in a few words, then works.
 - While it works, a row where its reply will appear shows its face in that state, one line saying what it is doing right now, and how long the turn has run. The operator can open the work to see every step, but nothing forces them to.
-- The conversation's header shows only the bot, its face and name, never what it is doing: that is the conversation's to show, in the row of the turn under way and in its cards.
+- The conversation's header shows the bot's face and name, with no line under the name about what it is doing: that is the conversation's to show, in the row of the turn under way and in its cards.
 - The answer arrives as a short message. Longer material arrives as a file or a card.
 - The operator can send another message at any time. It reaches the bot mid-turn and can redirect it.
 - "Stop" ends the work. It does not undo what was already done, and the bot says what was left running, if anything. It sits in the bot's details, one press from the conversation's header, while there is work to stop; the conversation itself stays about what the bot is doing. On a computer, `Ctrl+.` (`⌘.` on macOS) stops it from the conversation.
@@ -163,7 +163,7 @@ Answers: what did we say, what is it doing, what does it need from me.
 
 - Messages as bubbles, the operator's on one side and the bot's on the other, with timestamps between groups.
 - In a room, each bot's name stands over its run of messages and its avatar beside the last, as in a teammate conversation. The header shows the members' avatars, three at most and "+2" for the rest, the room's name and, under it, who is in it.
-- In a bot's conversation, the header shows the bot's face and name on one line, and nothing of what it is doing.
+- In a bot's conversation, the header shows the bot's face and name on one line, with no line about what it is doing under it.
 - Cards inline for what needs the operator (questions, approvals, credentials, a step in the bot's browser, a connector to add or sign in to) and for files.
 - What only happened takes one quiet line, as small as a time between messages: messages with teammates ("Talked with Wren · 3 messages"), a routine created or changed ("Routine Morning digest created"; several in a row, "3 routines created"), the name a bot saved for the operator. Tapping one shows the rest: the teammate conversation, the routine, or the routines to pick from.
 - A finished turn's work folds into one line ("Worked for 2m") that opens to show the steps.
