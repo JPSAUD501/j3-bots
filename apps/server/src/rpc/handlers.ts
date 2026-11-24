@@ -41,25 +41,21 @@ import { SendPause } from "../turns/SendPause.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
+import { Connectors } from "../connectors/Connectors.ts";
 import { Vault } from "../vault/Vault.ts";
 
 /**
- * The RPCs this server answers: every one of `J3Rpcs` but the connectors',
- * whose contract came first. Until each is served, a client's call of one is
- * answered with a defect, as an unknown request is.
+ * The RPCs this server answers: every one of `J3Rpcs` but the connector
+ * gallery's and the connector sign-in's, whose contract came first. Until
+ * each is served, a client's call of one is answered with a defect, as an
+ * unknown request is.
  */
 export const ServedRpcs = J3Rpcs.omit(
   "connectors.list",
   "connectors.search",
   "connectors.get",
-  "connectors.subscribe",
-  "connector.add",
-  "connector.update",
-  "connector.remove",
-  "connector.setBots",
   "connector.beginSignIn",
   "connector.completeSignIn",
-  "connector.acceptToolChanges",
 );
 
 const operator = { _tag: "operator" } as const;
@@ -95,6 +91,7 @@ export const handlers = ServedRpcs.toLayer(
     const signIns = yield* SignIns;
     const browserTabs = yield* BrowserTabs;
     const vault = yield* Vault;
+    const connectors = yield* Connectors;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
 
     /**
@@ -218,6 +215,13 @@ export const handlers = ServedRpcs.toLayer(
       "vault.delete": ({ id }) => vault.remove(id),
       "vault.setAllowedBots": ({ id, bots }) => vault.setAllowedBots(id, bots),
       "vault.totpPreview": ({ id }) => vault.totpPreview(id),
+      // A connector's add and update carry its secrets, redacted: none is logged, and neither has a receipt.
+      "connectors.subscribe": () => connectors.subscribe,
+      "connector.add": (input) => connectors.add(input),
+      "connector.update": (input) => connectors.update(input),
+      "connector.remove": (input) => connectors.remove(input),
+      "connector.setBots": (input) => connectors.setBots(input),
+      "connector.acceptToolChanges": (input) => connectors.acceptToolChanges(input),
     };
   }),
 );

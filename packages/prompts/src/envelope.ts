@@ -3,8 +3,8 @@ import type { BotId, RoomId, RoutineId } from "@j3-bots/contracts";
 import { SecureRandom } from "effect/crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { defuseTags, type EnvelopeTag, escapeAttribute, foldForMatching } from "./text.ts";
+import { NONCE_BYTES, withFreshNonce } from "./nonce.ts";
+import { defuseTags, type EnvelopeTag, escapeAttribute } from "./text.ts";
 
 /**
  * Wake envelopes: the one format in which every dispatched message reaches a
@@ -342,9 +342,6 @@ const eventLine = (event: SystemEvent): string => {
       return BROWSER_HELP_LINES[event.outcome];
   }
 };
-
-const NONCE_BYTES = 6;
-const NONCE_ATTEMPTS = 8;
 
 type Attributes = ReadonlyArray<readonly [string, string | null]>;
 
@@ -721,28 +718,11 @@ export const renderWakeWithNonce = (wake: Wake, nonce: string): string => write(
 export const renderWakeForSize = (wake: Wake): string =>
   write(wake, "0".repeat(NONCE_BYTES * 2)).text;
 
-const hex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-
-/** The random source kept returning nonces that already occur in the envelope. */
-class NonceUnavailable extends Schema.TaggedError<NonceUnavailable>()("NonceUnavailable", {}) {}
-
 /**
  * Renders a wake as the message dispatched to the bot's session.
  *
- * The nonce for `data-` blocks comes from {@link SecureRandom}. It is drawn
- * again if it already occurs anywhere in the envelope, look-alikes included,
- * so no content can quote it. A source that keeps repeating such nonces is
- * broken, and the effect dies rather than render.
+ * The nonce for `data-` blocks comes from {@link SecureRandom}, drawn so that
+ * no content quotes it ({@link withFreshNonce}).
  */
 export const renderWake = (wake: Wake): Effect.Effect<string, never, SecureRandom.SecureRandom> =>
-  Effect.gen(function* () {
-    const random = yield* SecureRandom.SecureRandom;
-    for (let attempt = 0; attempt < NONCE_ATTEMPTS; attempt++) {
-      const nonce = hex(yield* random.randomBytes(NONCE_BYTES));
-      const envelope = write(wake, nonce);
-      const uses = foldForMatching(envelope.text).split(nonce).length - 1;
-      if (uses === envelope.nonceUses) return envelope.text;
-    }
-    return yield* Effect.die(new NonceUnavailable());
-  });
+  withFreshNonce((nonce) => write(wake, nonce));

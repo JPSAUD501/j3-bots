@@ -33,6 +33,7 @@ import Migration0025 from "./migrations/0025_bot_browser.ts";
 import Migration0026 from "./migrations/0026_credential_requests.ts";
 import Migration0027 from "./migrations/0027_bot_vault.ts";
 import Migration0028 from "./migrations/0028_connector_cards.ts";
+import Migration0029 from "./migrations/0029_connectors.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -67,6 +68,7 @@ const migrations = SqliteMigrator.fromRecord({
   "26_credential_requests": Migration0026,
   "27_bot_vault": Migration0027,
   "28_connector_cards": Migration0028,
+  "29_connectors": Migration0029,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

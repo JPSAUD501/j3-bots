@@ -19,7 +19,6 @@ import {
 } from "./base.ts";
 import { AvatarChoice, Bot, ModelChoice, PermissionMode, Profile } from "./bot.ts";
 import { BrowserTabs } from "./browser.ts";
-import { Device, PairingCode, PushRegistration } from "./device.ts";
 import {
   Connector,
   ConnectorFieldValues,

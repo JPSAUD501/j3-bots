@@ -12,6 +12,9 @@ import * as EngineSessions from "./bots/EngineSessions.ts";
 import * as Templates from "./bots/Templates.ts";
 import * as Workspaces from "./bots/Workspaces.ts";
 import * as CommandReceipts from "./commands/CommandReceipts.ts";
+import * as ConnectorSignIns from "./connectors/auth.ts";
+import * as ConnectorStore from "./connectors/ConnectorStore.ts";
+import * as Connectors from "./connectors/Connectors.ts";
 import * as Devices from "./devices/Devices.ts";
 import * as EngineState from "./engine/EngineState.ts";
 import * as Entries from "./entries/Entries.ts";
@@ -94,6 +97,7 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
       EngineSessions.layer,
       SettingsService.layer,
       Routines.layer,
+      Connectors.layer,
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(Workspaces.layer, Stops.roomWorkLayer, Scheduler.layer)),
@@ -123,6 +127,8 @@ export const layer = Layer.mergeAll(BotTools.layer, Turns.layer, PushWorker.laye
       Layout.layer,
       ChangeLog.layer,
       CommandReceipts.layer,
+      ConnectorStore.layer,
+      ConnectorSignIns.layerNone,
       SettingsStore.layer,
       EngineState.layer,
       Usage.layer,

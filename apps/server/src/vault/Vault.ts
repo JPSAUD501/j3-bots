@@ -143,11 +143,12 @@ type CredentialSealedField = "name" | "origins" | "username" | "password" | "tot
 
 const OriginsJson = json(CredentialOrigins);
 const TotpJson = json(TotpConfig);
+const ConnectorAddressJson = json(ConnectorSecret.fields.address);
 const ConnectorOAuthJson = json(ConnectorSecret.fields.oauth);
 const NamedSecretsJson = json(Schema.Array(NamedSecret));
 
 /** The fields a connector's record seals, one value each. */
-const CONNECTOR_FIELDS = ["oauth", "headers", "env"] as const;
+const CONNECTOR_FIELDS = ["address", "oauth", "headers", "env"] as const;
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const bytesOf = (text: string) => Buffer.from(text, "base64");
@@ -970,6 +971,11 @@ export const layer = Layer.effect(
               ? damaged(recordId, field)
               : Effect.map(openRow(key, row), text);
           };
+          const address = yield* readBack(
+            recordId,
+            "address",
+            Schema.decodeEffect(ConnectorAddressJson)(yield* opened("address")),
+          );
           const oauth = yield* readBack(
             recordId,
             "oauth",
@@ -985,7 +991,7 @@ export const layer = Layer.effect(
             "env",
             Schema.decodeEffect(NamedSecretsJson)(yield* opened("env")),
           );
-          return Option.some<ConnectorSecret>({ connectorId: id, oauth, headers, env });
+          return Option.some<ConnectorSecret>({ connectorId: id, address, oauth, headers, env });
         }),
       );
 
@@ -994,10 +1000,12 @@ export const layer = Layer.effect(
         Effect.gen(function* () {
           const { sql, key } = yield* unlocked;
           const recordId = connectorRecordId(secret.connectorId);
+          const address = yield* Schema.encodeEffect(ConnectorAddressJson)(secret.address);
           const oauth = yield* Schema.encodeEffect(ConnectorOAuthJson)(secret.oauth);
           const headers = yield* Schema.encodeEffect(NamedSecretsJson)(secret.headers);
           const env = yield* Schema.encodeEffect(NamedSecretsJson)(secret.env);
           const rows = [
+            yield* sealedRow(key, recordId, "address", utf8(address)),
             yield* sealedRow(key, recordId, "oauth", utf8(oauth)),
             yield* sealedRow(key, recordId, "headers", utf8(headers)),
             yield* sealedRow(key, recordId, "env", utf8(env)),
