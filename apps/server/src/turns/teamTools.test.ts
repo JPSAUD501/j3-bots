@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type Bot, BotId, type Notice, RoomId } from "@j3-bots/contracts";
+import { type Bot, BotId, type ModelChoice, type Notice, RoomId } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Duration from "effect/Duration";
@@ -40,6 +40,7 @@ import {
   flushed,
   messageTeammate,
   nextTurn,
+  providerIs,
   received,
   sendToBot,
   turnEnded,
@@ -92,9 +93,9 @@ const refusalOf = (response: ToolCallResponse) =>
     : assert.fail(`expected a refusal, got ${JSON.stringify(response)}`);
 
 /** The operator's primary bot, past its opening, with an idle session. */
-const primaryBot = (name: string) =>
+const primaryBot = (name: string, model?: ModelChoice) =>
   Effect.gen(function* () {
-    const bot = yield* createBot(name);
+    const bot = yield* createBot(name, model);
     yield* (yield* Bots).update({
       commandId: command(),
       botId: bot.id,
@@ -168,6 +169,28 @@ it.effect("creates a bot on the operator's word, and holds its hello until that 
     yield* nextTurn(created.id);
     assert.deepStrictEqual(yield* hellos(created.id), ["dispatched"]);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "makes a bot on its maker's model, and on the default while that provider is not ready",
+  () =>
+    Effect.gen(function* () {
+      const scout = yield* primaryBot("Scout", TestDomain.OTHER_PROVIDER_MODEL);
+      const { session, turnId } = yield* operatorAsks(scout, "Make me two bots for the shop.");
+      const store = yield* BotStore;
+      const modelOf = (id: BotId) =>
+        Effect.map(store.find(id), (found) => Option.getOrThrow(found).bot.model);
+
+      const ledger = decodeCreated(resultOf(yield* createIn(session, turnId, "Ledger")));
+      assert.deepStrictEqual(yield* modelOf(ledger.id), TestDomain.OTHER_PROVIDER_MODEL);
+
+      yield* providerIs(TestDomain.OTHER_PROVIDER_MODEL.providerId, {
+        _tag: "sign-in-required",
+        command: "connect",
+      });
+      const mole = decodeCreated(resultOf(yield* createIn(session, turnId, "Mole")));
+      assert.deepStrictEqual(yield* modelOf(mole.id), TestDomain.DEFAULT_MODEL);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("creates no bot in a turn the operator did not speak in", () =>

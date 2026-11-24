@@ -1605,6 +1605,7 @@ export const layer = Layer.effect(
       const botId = yield* call.create({
         turn: { sessionId: found.sessionId, turnId: found.turnId },
         claim: Effect.fn("Speech.createBot.claim")(function* (id: BotId) {
+        maker: found.botId,
           yield* requireUnclaimed(found);
           yield* requireTarget(found.botId, found.audience).pipe(
             Effect.catchTag(

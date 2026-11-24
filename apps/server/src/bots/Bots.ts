@@ -92,6 +92,8 @@ const offered = (status: EngineStatus, model: ModelChoice) =>
  * (`turns/Speech.ts`).
  */
 export interface MadeBy<E> {
+  /** The bot that calls it, whose model the new bot takes (`Bots.create`). */
+  readonly maker: BotId;
   /** That turn: the bot's hello waits for it to end (`WakePayload`, `first-run`). */
   readonly turn: MadeIn;
   /**
@@ -111,7 +113,11 @@ export class Bots extends Context.Service<
     /**
      * Saves the bot with a `first-run` system wake, so its first turn opens
      * its conversation, then opens its main session if the engine can. A bot
-     * another bot makes (`madeBy`) is saved with that bot's claim on its turn.
+     * another bot makes (`madeBy`) is saved with that bot's claim on its turn,
+     * and, when its draft names no model, runs on its maker's: the same
+     * provider and model, while the engine offers that model and its provider
+     * is ready. Otherwise it takes the default, as any bot created without a
+     * model does.
      */
     readonly create: <E = never>(input: {
       readonly commandId: CommandId;
@@ -482,15 +488,17 @@ export const layer = Layer.effect(
     /**
      * Saves a new bot, and what `furnish` adds to it in the same transaction,
      * under one receipt. `draft` is decided there, from the engine's status
-     * then; a permission mode it leaves out is `permissionMode`'s, for the
-     * model the bot gets. A bot made in a bot's turn (`madeIn`) has its hello
-     * wait for that turn to end.
+     * then; a model it leaves out is `serverModel`'s, and a permission mode
+     * `permissionMode`'s, for the model the bot gets. A bot made in a bot's
+     * turn (`madeIn`) has its hello wait for that turn to end.
      */
     const insert = <E>(input: {
       readonly commandId: CommandId;
       readonly method: "bot.create" | "bot.createFromTemplate";
       readonly payload: unknown;
       readonly draft: (status: EngineStatus) => BotDraft;
+      /** The model the server chooses for a draft that names none, or none to choose. */
+      readonly serverModel: (status: EngineStatus) => Effect.Effect<Option.Option<ModelChoice>>;
       readonly permissionMode: (status: EngineStatus, model: ModelChoice) => PermissionMode;
       /** Who a permission mode is recorded as chosen by. */
       readonly permissionModeChooser: (draft: BotDraft) => Chooser;
@@ -510,7 +518,7 @@ export const layer = Layer.effect(
             apply: Effect.gen(function* () {
               const status = yield* engineState.current;
               const draft = input.draft(status);
-              const model = draft.model ?? Option.getOrNull(defaultModelIn(status));
+              const model = draft.model ?? Option.getOrNull(yield* input.serverModel(status));
               if (model === null) return yield* new Invalid({ reason: "model" });
               yield* checkModel(status, model);
               const at = yield* DateTime.now;
@@ -585,6 +593,22 @@ export const layer = Layer.effect(
         return bot;
       }).pipe(Effect.withSpan("Bots.insert"));
 
+    /**
+     * The model of a bot `maker` makes: `maker`'s own, while the engine
+     * offers it and its provider is ready, so a team runs where the bot that
+     * made it does; otherwise the default.
+     */
+    const makerModel = Effect.fn("Bots.makerModel")(function* (status: EngineStatus, maker: BotId) {
+      const found = yield* store.find(maker);
+      if (Option.isSome(found)) {
+        const { model } = found.value.bot;
+        if (offered(status, model) && providerReady(status, model.providerId)) {
+          return Option.some(model);
+        }
+      }
+      return defaultModelIn(status);
+    });
+
     const create = <E = never>(input: {
       readonly commandId: CommandId;
       readonly draft: BotDraft;
@@ -595,6 +619,10 @@ export const layer = Layer.effect(
         method: "bot.create",
         payload: input.draft,
         draft: () => input.draft,
+        serverModel: (status) =>
+          input.madeBy === undefined
+            ? Effect.succeed(defaultModelIn(status))
+            : makerModel(status, input.madeBy.maker),
         permissionMode: defaultPermissionMode,
         permissionModeChooser: (draft) =>
           draft.permissionMode === undefined ? "server" : "operator",
@@ -664,6 +692,7 @@ export const layer = Layer.effect(
             ...(permissionMode === undefined ? {} : { permissionMode }),
           };
         },
+        serverModel: (status) => Effect.succeed(defaultModelIn(status)),
         permissionMode: (status, botModel) =>
           templatePermissionMode(template.permissionMode, defaultPermissionMode(status, botModel)),
         // What the operator saw before creating it: a later move to the default model keeps it.
