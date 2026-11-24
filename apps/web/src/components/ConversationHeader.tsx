@@ -6,7 +6,7 @@ import {
   CornerDownRightIcon,
   PanelRightIcon,
 } from "lucide-react";
-import type { RefObject } from "react";
+import type { ReactNode, RefObject } from "react";
 import { useTurnAnnouncement } from "@j3-bots/client-runtime/react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
@@ -39,6 +39,8 @@ interface ConversationHeaderProps {
    * conversation hides all of it from assistive technology (see `isCovered`).
    */
   readonly onAnnounce: (text: string) => void;
+  /** Before the details' toggle: in a bot's conversation, the way into its browser while it has a tab. */
+  readonly actions?: ReactNode;
 }
 
 /**
@@ -58,6 +60,7 @@ export function ConversationHeader({
   folds,
   titleRef,
   onAnnounce,
+  actions,
 }: ConversationHeaderProps) {
   const ctx = usePresentation();
   const { t } = useI18n();
@@ -150,6 +153,7 @@ export function ConversationHeader({
             <CornerDownRightIcon aria-hidden />
           </Button>
         )}
+        {actions}
         <Button
           variant="ghost-muted"
           size="icon"

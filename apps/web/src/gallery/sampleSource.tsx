@@ -45,7 +45,8 @@ import { ImageViewer } from "../components/ImageViewer";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
-import { SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
+import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
+import { sampleBrowser } from "./sampleBrowser";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** Cards whose answer is on its way, as it would be to a server. */
@@ -726,7 +727,9 @@ export function useSampleSource({
   });
   const state = useSyncExternalStore(store.subscribe, store.get);
   const intents = useMemo(() => sampleIntents(store), [store]);
-  return { data: toData(state), intents };
+  // Scout shops in its browser.
+  const [browser] = useState(() => sampleBrowser([ids.scout]));
+  return { data: toData(state), intents, browser };
 }
 
 /**

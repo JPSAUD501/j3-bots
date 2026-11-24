@@ -1492,7 +1492,7 @@ function LiveShell({
   }
 
   return (
-    <ShellSourceProvider source={{ data, intents }}>
+    <ShellSourceProvider source={{ data, intents, browser: j3 }}>
       <AttachmentImagesProvider fetch={imageOf}>
         {children}
         <ImageViewer

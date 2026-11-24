@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createContext, use, type ReactNode } from "react";
 import { OperatorTimeZone } from "../app/clock";
+import type { BrowserSource } from "../browser/source";
 import type { ShellData, ShellIntents } from "./data";
 
 export interface ShellSource {
   readonly data: ShellData;
   readonly intents: ShellIntents;
+  readonly browser: BrowserSource;
 }
 
 /** Where the shell's data and intents come from: the server, or in development a sample team. */

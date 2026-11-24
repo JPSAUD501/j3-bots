@@ -1425,6 +1425,18 @@ const sentences = {
   "browser.dialog.leave": "Sair desta página?",
   "browser.dialog.accept": "OK",
   "browser.dialog.dismiss": "Cancelar",
+  "browser.header.open": "Abrir o navegador de {name}",
+  "browser.panel.open": "Abrir o navegador em {site}",
+  "browser.panel.newTab": "Página nova",
+  "browser.viewer.title": "Navegador",
+  "browser.viewer.address": "Endereço",
+  "browser.viewer.badAddress": "Isso não é um endereço da web.",
+  "browser.viewer.back": "Voltar",
+  "browser.viewer.forward": "Avançar",
+  "browser.viewer.reload": "Recarregar",
+  "browser.viewer.leaveKey": "{key} sai da página",
+  "browser.viewer.heldElsewhere":
+    "Alguém está no controle em outro aparelho. Você pode assumir quando terminar.",
 } as const satisfies Catalog;
 
 export const ptBR: AddingNone<typeof sentences> = sentences;
