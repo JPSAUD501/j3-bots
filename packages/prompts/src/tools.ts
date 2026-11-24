@@ -558,6 +558,7 @@ export const tools = {
       "Returns `filled`, `refused` with the reason, or `locked`. Never the value.",
     ],
     FillCredentialInput,
+  ),
   suggest_connector: define(
     "suggest_connector",
     [
