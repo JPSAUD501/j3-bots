@@ -6,9 +6,14 @@ import {
   type ConnectorGlyph,
   type EntryTarget,
   MAX_ATTACHMENT_SIZE,
+  MAX_VISUAL_BYTES,
   type MessageEntry,
   RoomId,
   siteOriginOf,
+  type Visual,
+  visualEscapesGuard,
+  VisualHtml,
+  VisualTitle,
 } from "@j3-bots/contracts";
 import {
   attachmentLimitViolation,
@@ -185,6 +190,12 @@ interface WorkspaceFile {
   readonly mediaType: string;
   readonly bytes: Uint8Array;
 }
+
+type SayVisual = NonNullable<ToolInput<"say">["visual"]>;
+
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
+const decodeVisualHtml = Schema.decodeUnknownOption(VisualHtml);
+const decodeVisualTitle = Schema.decodeUnknownOption(VisualTitle);
 
 /** The turn tools a request is pinned for. */
 type PinnedTool =
@@ -668,6 +679,79 @@ export const layer = Layer.effect(
     });
 
     /**
+     * The bot's workspace folder as provisioning resolved it: resolving
+     * `workspacePath` now would follow a link the bot put in its folder's place.
+     */
+    const workspaceRootOf = Effect.fn("Speech.workspaceRootOf")(function* (botId: BotId) {
+      const bot = yield* bots.find(botId);
+      if (Option.isNone(bot)) return yield* new TurnEnded();
+      if (Option.isNone(bot.value.workspaceRoot)) {
+        return yield* new TurnToolRefused({
+          reason: "Your workspace is not ready, so nothing can be attached or shown yet.",
+        });
+      }
+      return bot.value.workspaceRoot.value;
+    });
+
+    /**
+     * Reads the page a `say` shows from the bot's workspace, as
+     * `workspaceFiles` reads a file: an `.html` file inside the workspace, at
+     * most `MAX_VISUAL_BYTES`, of which no more than that is read, and UTF-8
+     * text. It is kept as text and never run here; only a client's sandboxed
+     * frame renders it.
+     */
+    const workspaceVisual = Effect.fn("Speech.workspaceVisual")(function* (
+      botId: BotId,
+      visual: SayVisual,
+    ) {
+      const refuse = (reason: string) => new TurnToolRefused({ reason });
+      const given = visual.path;
+      const title = Option.getOrUndefined(decodeVisualTitle(visual.title.trim()));
+      if (title === undefined) return yield* refuse("Nothing was sent: the visual needs a title.");
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(given)) {
+        return yield* refuse(
+          `Nothing was sent: ${given} is a URL. Save the page into your workspace first, then show its path.`,
+        );
+      }
+      if (!/\.html?$/i.test(given)) {
+        return yield* refuse(`Nothing was sent: ${given} is not an .html file.`);
+      }
+      const root = yield* workspaceRootOf(botId);
+      const read = yield* readWorkspaceFile(root, given, MAX_VISUAL_BYTES);
+      switch (read._tag) {
+        case "missing":
+          return yield* refuse(`Nothing was sent: there is no file at ${given} in your workspace.`);
+        case "outside":
+          return yield* refuse(
+            `Nothing was sent: ${given} is outside your workspace. Save it under files/ first.`,
+          );
+        case "not-a-file":
+          return yield* refuse(`Nothing was sent: ${given} is not a file.`);
+        case "too-large":
+          return yield* refuse(
+            `Nothing was sent: ${given} is larger than ${MAX_VISUAL_BYTES / 1024} KB. Make the page smaller (fewer or smaller inlined images, less data), or attach it as a file.`,
+          );
+        case "unreadable":
+          return yield* refuse(`Nothing was sent: ${given} could not be read.`);
+        case "read": {
+          const text = yield* Effect.try({
+            try: () => strictUtf8.decode(read.bytes),
+            catch: () => refuse(`Nothing was sent: ${given} is not UTF-8 text.`),
+          });
+          const html = Option.getOrUndefined(decodeVisualHtml(text));
+          if (html === undefined)
+            return yield* refuse(`Nothing was sent: ${given} has no content.`);
+          if (visualEscapesGuard(html)) {
+            return yield* refuse(
+              `Nothing was sent: ${given} embeds another page (an <iframe>, <frame>, <object> or <embed>) or has a declarative shadow root (a shadowrootmode attribute), which a visual cannot hold. Draw everything in the page itself, and attach a shadow root from a script if you need one.`,
+            );
+          }
+          return { title, html, height: visual.height ?? null } satisfies Visual;
+        }
+      }
+    });
+
+    /**
      * Reads the files a `say` attaches from the bot's workspace;
      * they are copied into the attachment store once the request is admitted,
      * so the operator can open them after the bot changes or removes its copy.
@@ -685,15 +769,8 @@ export const layer = Layer.effect(
       paths: ReadonlyArray<string>,
     ) {
       if (paths.length === 0) return [];
-      const bot = yield* bots.find(botId);
-      if (Option.isNone(bot)) return yield* new TurnEnded();
+      const root = yield* workspaceRootOf(botId);
       const refuse = (reason: string) => new TurnToolRefused({ reason });
-      // The real path kept from provisioning: resolving `workspacePath` now
-      // would follow a link the bot put in its folder's place.
-      if (Option.isNone(bot.value.workspaceRoot)) {
-        return yield* refuse("Your workspace is not ready, so nothing can be attached yet.");
-      }
-      const root = bot.value.workspaceRoot.value;
       const files: Array<WorkspaceFile> = [];
       let total = 0;
       for (const given of paths) {
@@ -799,6 +876,8 @@ export const layer = Layer.effect(
               : "Nothing was sent: `mention` works only in a room turn, and this turn speaks to your user.",
         });
       }
+      const shown =
+        input.visual === undefined ? null : yield* workspaceVisual(found.botId, input.visual);
       const read = yield* workspaceFiles(found.botId, input.attachments ?? []);
       // The file lock, then the transaction: the order every writer of the
       // attachment store takes them in. Admission and publication stay one
@@ -832,6 +911,7 @@ export const layer = Layer.effect(
                 mentions: { _tag: "bots", ids: mention },
                 delivery: { _tag: "delivered" },
                 commandId: null,
+                ...(shown === null ? {} : { visual: shown }),
               },
             });
             if (files.length > 0) {

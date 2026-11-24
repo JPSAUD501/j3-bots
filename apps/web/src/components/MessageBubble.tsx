@@ -18,6 +18,7 @@ import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { BotAvatar } from "./avatar/BotAvatar";
 import { FileCard } from "./FileCard";
 import { MessageText } from "./MessageText";
+import { VisualCard } from "./VisualCard";
 import { Button } from "./ui/button";
 
 // On the speaker's side, the bottom corner tightens, pointing at who spoke, and so does the top
@@ -189,6 +190,9 @@ export function MessageBubble({
           />
           <span className="text-xs font-medium">{speaker.profile.name}</span>
         </div>
+      )}
+      {message._tag === "message" && message.visual !== undefined && (
+        <VisualCard visual={message.visual} />
       )}
       {message.text !== "" && (
         <div

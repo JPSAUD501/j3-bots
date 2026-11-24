@@ -6,6 +6,7 @@ import {
   MAX_ATTACHMENT_NAME_LENGTH,
   MAX_ATTACHMENT_SIZE,
   MAX_INLINE_IMAGE_SIZE,
+  MAX_VISUAL_BYTES,
 } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
@@ -555,6 +556,99 @@ it.effect("refuses a say with an image larger than the engine takes inline", () 
     assert.deepStrictEqual(yield* storedBlobs, []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+/** The bot's turn calls `say` with a visual of `file`, written at `name` in its workspace first. */
+const sayWithVisual = (
+  name: string,
+  file: Uint8Array,
+  visual: { readonly title: string; readonly height?: number } = { title: "Spending by month" },
+) =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { bot, session, turnId } = yield* working("Chart my spending.");
+    const workspace = Option.getOrThrow(yield* (yield* BotStore).find(bot.id)).workspacePath;
+    yield* fs.makeDirectory(path.join(workspace, "files"), { recursive: true });
+    yield* fs.writeFile(path.join(workspace, "files", name), file);
+    const args = { text: "March was the peak.", visual: { path: `files/${name}`, ...visual } };
+    yield* control.toolCall({
+      sessionId: session,
+      turnId,
+      tool: "say",
+      input: args,
+      recorded: "now",
+    });
+    const reply = yield* (yield* BotTools).call({
+      requestId: "call-1",
+      sessionId: session,
+      tool: "say",
+      arguments: args,
+    });
+    return { bot, reply };
+  });
+
+const page = "<!doctype html><svg width=200 height=100><rect width=50 height=80 /></svg>";
+
+it.effect("shows a say's visual above its message, as the bot wrote it", () =>
+  Effect.gen(function* () {
+    const { bot, reply } = yield* sayWithVisual("chart.html", new TextEncoder().encode(page), {
+      title: "  Spending by month ",
+      height: 240,
+    });
+
+    assert.deepStrictEqual(reply, { _tag: "result", value: { status: "recorded" } });
+    const said = (yield* conversation(bot.id)).flatMap((entry) =>
+      entry._tag === "message" && entry.author._tag === "bot" ? [entry] : [],
+    );
+    assert.deepStrictEqual(
+      said.map(({ text, visual }) => ({ text, visual })),
+      [
+        {
+          text: "March was the peak.",
+          visual: { title: "Spending by month", html: page, height: 240 },
+        },
+      ],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+for (const [why, name, file, reason] of [
+  ["a file that is not HTML", "chart.svg", new TextEncoder().encode(page), "not an .html file"],
+  [
+    "a page that is not UTF-8",
+    "chart.html",
+    new Uint8Array([0x3c, 0x70, 0x3e, 0xff]),
+    "not UTF-8 text",
+  ],
+  ["a blank page", "chart.html", new TextEncoder().encode(" \n"), "has no content"],
+  [
+    "a page that embeds another",
+    "chart.html",
+    new TextEncoder().encode("<p>Chart</p><iframe srcdoc='<p>'></iframe>"),
+    "embeds another page",
+  ],
+  [
+    "a page with a declarative shadow root",
+    "chart.html",
+    new TextEncoder().encode('<div><template shadowrootmode="open"><p>Chart</p></template></div>'),
+    "declarative shadow root",
+  ],
+  [
+    "a page over the cap",
+    "chart.html",
+    new Uint8Array(MAX_VISUAL_BYTES + 1).fill(0x61),
+    "larger than 512 KB",
+  ],
+] as const) {
+  it.effect(`refuses a say whose visual is ${why}, and sends nothing`, () =>
+    Effect.gen(function* () {
+      const { bot, reply } = yield* sayWithVisual(name, file);
+      assert.include(reply._tag === "refused" ? reply.message : "", reason);
+      assert.deepStrictEqual(yield* botSaid(bot.id), []);
+    }).pipe(Effect.provide(TestDomain.layer)),
+  );
+}
 
 /** Where each teammate message the bot's conversation shows stands, oldest first. */
 const handoffStates = (botId: BotId) =>

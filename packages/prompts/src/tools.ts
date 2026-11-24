@@ -2,12 +2,17 @@
 import {
   AvatarChoice,
   BrowserHelpReason,
-  MAX_BROWSER_HELP_NOTE_LENGTH,
   type FillRefusal,
+  MAX_BROWSER_HELP_NOTE_LENGTH,
+  MAX_VISUAL_BYTES,
+  MAX_VISUAL_HEIGHT,
+  MAX_VISUAL_TITLE_LENGTH,
+  MIN_VISUAL_HEIGHT,
   OperatorName,
   Profile,
   RoutineInstruction,
 } from "@j3-bots/contracts";
+import { visualVariables } from "@j3-bots/design-tokens";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -90,6 +95,30 @@ const NoInput = Schema.Record(Schema.String, Schema.Never);
 
 const MemoryScope = Schema.Literals(["bot", "shared"]);
 
+/** The CSS variables a visual is given, as the bot reads them. */
+const VISUAL_VARIABLE_NAMES = Object.keys(visualVariables("light"))
+  .map((name) => `--${name}`)
+  .join(", ");
+
+const SayVisual = Schema.Struct({
+  path: described(
+    text(1, 1_024),
+    `An .html file in your workspace, usually under files/, at most ${MAX_VISUAL_BYTES / 1024} KB. Self-contained: inline <style> and <script>, images as data: URLs. It runs with no network, so remote scripts, fonts, images and fetches fail, and it cannot embed another page (no iframe, frame, object or embed) or declare a shadow root in markup (no shadowrootmode; attach one from a script). It is shown in your user's light or dark theme: color it with these CSS variables, set on its :root, so it matches either: ${VISUAL_VARIABLE_NAMES}.`,
+  ),
+  title: described(
+    text(1, MAX_VISUAL_TITLE_LENGTH),
+    "What it shows, in a few words: its caption, and its name for screen readers.",
+  ),
+  height: Schema.optionalKey(
+    described(
+      Schema.Int.check(
+        Schema.isBetween({ minimum: MIN_VISUAL_HEIGHT, maximum: MAX_VISUAL_HEIGHT }),
+      ),
+      `Its height in CSS pixels, ${MIN_VISUAL_HEIGHT} to ${MAX_VISUAL_HEIGHT}, such as html_preview's contentHeight. The frame then fits the page.`,
+    ),
+  ),
+});
+
 const SayInput = toolInput({
   text: described(
     text(1, MAX_SPOKEN_TEXT),
@@ -99,6 +128,12 @@ const SayInput = toolInput({
     described(
       Schema.Array(text(1, 1_024)).check(Schema.isMaxLength(10)),
       "Files to attach: paths in your workspace, usually under files/.",
+    ),
+  ),
+  visual: Schema.optionalKey(
+    described(
+      SayVisual,
+      "A page shown above this message: a chart, a table, a diagram or a mockup. Your text then says what it means, without describing it.",
     ),
   ),
   to: Schema.optionalKey(

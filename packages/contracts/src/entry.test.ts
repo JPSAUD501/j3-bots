@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { EntryId, EntryOrder } from "./base.ts";
 import { BotState } from "./bot.ts";
 import { EntryPreview, MessageDelivery, ReceivedEntry } from "./entry.ts";
+import { MAX_VISUAL_BYTES, visualEscapesGuard } from "./visual.ts";
 
 // As the socket carries them: JSON, which a client decodes with the contract.
 const EntriesJson = Schema.toCodecJson(Schema.Array(ReceivedEntry));
@@ -125,5 +126,65 @@ describe("a message held behind a bot's hello across versions", () => {
   it("reads an older server's pending message as waiting behind nothing", () => {
     const older = Schema.encodeSync(Before)({ _tag: "pending" });
     assert.deepStrictEqual(Schema.decodeSync(MessageDelivery)(older), { _tag: "pending" });
+  });
+});
+
+describe("a message's visual", () => {
+  const shown = (visual: Record<string, unknown>) => ({
+    ...said(1),
+    author: { _tag: "bot", botId: "b1" },
+    visual: { title: "Spending by month", html: "<p>Chart</p>", height: 320, ...visual },
+  });
+
+  it("is refused when its page is blank, over the cap or not well-formed text", () => {
+    assert.isFalse(refused([shown({})]));
+    assert.isTrue(refused([shown({ html: " \n" })]));
+    // 'é' is two bytes in UTF-8: under the cap in characters, over it in bytes.
+    assert.isTrue(refused([shown({ html: "é".repeat(MAX_VISUAL_BYTES / 2 + 1) })]));
+    assert.isFalse(refused([shown({ html: "é".repeat(MAX_VISUAL_BYTES / 2) })]));
+    assert.isTrue(refused([shown({ html: "<p>\ud800</p>" })]));
+  });
+});
+
+describe("a visual's page", () => {
+  it("escapes the guard wherever its text has a frame's start tag, in any case", () => {
+    for (const html of [
+      "<iframe srcdoc='<p>'></iframe>",
+      "<IFRAME\tsrc=x>",
+      "<div><template shadowrootmode=closed><iframe></iframe></template></div>",
+      "<frame/>",
+      '<object data="data:text/html,x">',
+      "<embed>",
+      "<script>const tag = '<iframe>';</script>",
+    ]) {
+      assert.isTrue(visualEscapesGuard(html), html);
+    }
+  });
+
+  it("escapes the guard wherever its text gives an element a declarative shadow root", () => {
+    for (const html of [
+      '<div><template shadowrootmode="open"></template></div>',
+      "<x-a><TEMPLATE SHADOWROOTMODE=closed></TEMPLATE></x-a>",
+      "<template/shadowrootmode=open>",
+      '<template id="a"shadowrootmode="open">',
+      "<template\nshadowrootmode = 'open'>",
+      '<template shadowroot="open">',
+    ]) {
+      assert.isTrue(visualEscapesGuard(html), html);
+    }
+  });
+
+  it("keeps to the guard when it only names one, holds a longer tag that starts the same, or reads a shadow root in a script", () => {
+    for (const html of [
+      "<p>&lt;iframe&gt; is not allowed</p>",
+      "<frameset></frameset>",
+      "<objective-list></objective-list>",
+      "<embedded-chart></embedded-chart>",
+      "<svg><text>iframe</text></svg>",
+      "<script>if (host.shadowRoot == null) host.attachShadow({ mode: 'open' });</script>",
+      "<p>A shadowrootmode attribute is not used here.</p>",
+    ]) {
+      assert.isFalse(visualEscapesGuard(html), html);
+    }
   });
 });

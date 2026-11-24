@@ -25,6 +25,25 @@ const say = (botId: BotId, text: string, by: "bot" | "operator" = "bot") =>
     });
   });
 
+/** A message with a visual of about half a megabyte, the most one may be. */
+const show = (botId: BotId, text: string) =>
+  Effect.gen(function* () {
+    const entries = yield* Entries;
+    return yield* entries.append({
+      target: { _tag: "conversation", botId },
+      entry: {
+        _tag: "message",
+        author: { _tag: "bot", botId },
+        text,
+        attachments: [],
+        mentions: { _tag: "bots", ids: [] },
+        delivery: { _tag: "delivered" },
+        commandId: null,
+        visual: { title: "Chart", html: `<p>${"x".repeat(500_000)}</p>`, height: null },
+      },
+    });
+  });
+
 const textsOf = (frame: EntryFrame) =>
   (frame._tag === "snapshot" ? frame.entries : frame.upsert).map((entry) =>
     entry._tag === "message" ? entry.text : entry._tag,
@@ -142,4 +161,41 @@ it.effect("applies a mark as unread once: sent again after a later read, it leav
     assert.isTrue(marked);
     assert.isFalse(yield* unread);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "sends no more large entries at once than a frame holds: the rest by history, a large replay as a snapshot",
+  () =>
+    Effect.gen(function* () {
+      const bots = yield* Bots;
+      const entries = yield* Entries;
+      const bot = yield* bots.create({
+        commandId: CommandId.make("create"),
+        draft: { name: "Ana" },
+      });
+      const target = { _tag: "conversation", botId: bot.id } as const;
+      yield* say(bot.id, "before");
+      const [before] = yield* entries
+        .subscribe(target, null)
+        .pipe(Stream.take(1), Stream.runCollect);
+      const shown = Array.from({ length: 20 }, (_, index) => `chart ${index}`);
+      yield* Effect.forEach(shown, (text) => show(bot.id, text), { discard: true });
+
+      const [resumed] = yield* entries
+        .subscribe(target, before?.sequence ?? null)
+        .pipe(Stream.take(1), Stream.runCollect);
+      if (resumed?._tag !== "snapshot") return assert.fail("a replay this large starts over");
+      const first = resumed.entries;
+      const oldest = first[0];
+      if (oldest === undefined) return assert.fail("a snapshot holds at least one entry");
+      const rest = yield* entries.history({ target, before: oldest.order, limit: 100 });
+
+      assert.isBelow(first.length, shown.length);
+      assert.isTrue(resumed.hasOlder);
+      assert.deepStrictEqual(
+        [...rest.entries, ...first].map((entry) => (entry._tag === "message" ? entry.text : "")),
+        ["before", ...shown],
+      );
+      assert.isFalse(rest.hasOlder);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );

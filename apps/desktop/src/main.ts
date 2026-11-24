@@ -51,7 +51,7 @@ import { desktopIcon, renderAppIcon } from "@j3-bots/design-tokens/raster";
 import * as Appearance from "./appearance.ts";
 import * as AppLinks from "./appLinks.ts";
 import * as Autostart from "./autostart.ts";
-import { contentSecurityPolicy, inlineScriptSources, resolveAsset } from "./assets.ts";
+import { inlineScriptSources, policyFor, resolveAsset } from "./assets.ts";
 import { electronFetch } from "./electronFetch.ts";
 import { APP_ID, appOrigin, schemeOf } from "./identity.ts";
 import * as LinkHandler from "./linkHandler.ts";
@@ -60,7 +60,7 @@ import * as PhoneAccessControl from "./localServer/phoneAccess.ts";
 import { quitGate } from "./localServer/quitGate.ts";
 import { thisComputer } from "./localServer/thisComputer.ts";
 import * as Menus from "./menus.ts";
-import { externalUrl, isAppUrl } from "./navigation.ts";
+import { externalUrl, isAppUrl, isVisualFrameUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
 import { restartApp } from "./restart.ts";
 import * as SignInRelay from "./signInRelay.ts";
@@ -174,6 +174,11 @@ const lockNavigation = (contents: WebContents) => {
   };
   contents.on("will-navigate", stay);
   contents.on("will-redirect", stay);
+  // A frame inside the page: only a bot's visual, in the app's visual page.
+  // Whatever the visual does then, it does not take its frame anywhere else.
+  contents.on("will-frame-navigate", (event) => {
+    if (!event.isMainFrame && !isVisualFrameUrl(event.url, APP_ORIGIN)) event.preventDefault();
+  });
   contents.on("will-attach-webview", (event) => event.preventDefault());
   contents.setWindowOpenHandler(({ url }) => {
     const external = externalUrl(url);
@@ -221,7 +226,7 @@ const program = Effect.gen(function* () {
       if (answer._tag === "refused") return new Response(null, { status: answer.status });
       const { server } = yield* settings.get;
       const headers = {
-        "content-security-policy": contentSecurityPolicy(server, scriptSources),
+        "content-security-policy": policyFor(answer.segments, server, scriptSources),
         "x-content-type-options": "nosniff",
       };
       // The file's real path, links resolved, must lie inside the build.
@@ -455,12 +460,18 @@ const program = Effect.gen(function* () {
       }),
   );
 
+  // The app's page only, never a frame in it: a bot's visual is on the app's
+  // scheme, though sandboxed.
   session.defaultSession.setPermissionRequestHandler((_contents, permission, grant, details) =>
-    grant(PERMISSIONS.has(permission) && isAppUrl(details.requestingUrl, APP_ORIGIN)),
+    grant(
+      PERMISSIONS.has(permission) &&
+        details.isMainFrame &&
+        isAppUrl(details.requestingUrl, APP_ORIGIN),
+    ),
   );
   session.defaultSession.setPermissionCheckHandler(
-    (_contents, permission, requestingOrigin) =>
-      PERMISSIONS.has(permission) && isAppUrl(requestingOrigin, APP_ORIGIN),
+    (_contents, permission, requestingOrigin, details) =>
+      PERMISSIONS.has(permission) && details.isMainFrame && isAppUrl(requestingOrigin, APP_ORIGIN),
   );
   app.on("web-contents-created", (_event, contents) => lockNavigation(contents));
 

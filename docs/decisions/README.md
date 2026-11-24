@@ -35,6 +35,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0027](0027-connector-tools-reach-a-bot-through-the-j3-bridge.md) | Connector tools reach a bot through the `j3` bridge, under the bot's permission mode | Accepted |
 | [0028](0028-one-secret-store-for-logins-and-connector-secrets.md) | One secret store for logins and connector secrets | Proposed |
 | [0029](0029-the-vault-key-comes-from-a-master-password-held-in-memory.md) | The vault's key comes from a master password, held in memory | Proposed |
+| [0030](0030-a-visual-is-part-of-say.md) | A visual is part of `say`, drawn by J3 Bots' clients in a sandbox | Proposed |
 | [0031](0031-a-release-is-signed-and-a-nightly-is-a-pre-release-of-the-next-patch.md) | A release is signed, and a nightly is a pre-release of the next patch | Accepted |
 | [0032](0032-updates-are-served-outside-the-protocol.md) | Updates are served outside the protocol, and offer only a signed, newer release | Proposed |
 | [0033](0033-a-client-update-runs-in-a-transient-unit.md) | A client's update runs in a transient unit, and the home records how it ended | Proposed |

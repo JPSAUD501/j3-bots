@@ -5,6 +5,7 @@
  */
 import {
   EntryOrder,
+  entryText,
   foldEnding,
   PREVIEW_LENGTH,
   type Entry,
@@ -20,38 +21,12 @@ export type DraftEntry = WithoutOrder<Entry>;
 export const ordered = (drafts: ReadonlyArray<DraftEntry>, first = 0): Entry[] =>
   drafts.map((draft, index) => ({ ...draft, order: EntryOrder.make(first + index) }));
 
-function previewText(entry: Entry): string {
-  switch (entry._tag) {
-    case "message":
-    case "handoff":
-      return entry.text;
-    case "question":
-      return entry.questions[0].prompt;
-    case "approval":
-      return entry.action;
-    case "secret-request":
-      return entry.label;
-    case "browser-help":
-      return entry.note;
-    case "credential-request":
-      return entry.origin;
-    case "connector-suggestion":
-    case "connector-auth":
-      return entry.name;
-    case "routine-change":
-      return entry.name;
-    case "work-fold":
-    case "notice":
-      return "";
-  }
-}
-
 export const previewOf = (entry: Entry): EntryPreview => ({
   entryId: entry.id,
   order: entry.order,
   kind: entry._tag,
   author: entry.author,
-  text: previewText(entry).slice(0, PREVIEW_LENGTH),
+  text: entryText(entry).slice(0, PREVIEW_LENGTH),
   recipientId: entry._tag === "handoff" ? entry.recipientId : null,
   step: null,
   ending: foldEnding(entry),

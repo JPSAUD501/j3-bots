@@ -9,6 +9,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Mime from "effect/http/Mime";
+import { VISUAL_FRAME_PATH, VISUAL_FRAME_POLICY } from "@j3-bots/contracts";
 import type { AdminStatus } from "../admin/protocol.ts";
 import { ServerConfig } from "../config.ts";
 import { isWithin } from "../paths.ts";
@@ -30,11 +31,19 @@ const IMMUTABLE = "public, max-age=31536000, immutable";
 /** Everything else, `index.html` above all, is checked on every load, so an update shows at once. */
 const REVALIDATE = "no-cache";
 
-/** No other site may frame the client: it answers approvals in one click. */
+/**
+ * No other site may frame the client: it answers approvals in one click. The
+ * client frames only its own visual page, so a bot's visual that navigates
+ * its frame elsewhere, by script or a refresh, is stopped
+ * (docs/architecture/security.md, "Visuals").
+ */
 const HTML_HEADERS = {
-  "content-security-policy": "frame-ancestors 'none'",
+  "content-security-policy": "frame-ancestors 'none'; frame-src 'self'",
   "x-frame-options": "DENY",
 };
+
+/** The page a visual is drawn in: its own policy, sandboxed, framed only by the client. */
+const VISUAL_FRAME_HEADERS = { "content-security-policy": VISUAL_FRAME_POLICY };
 
 /** API paths are never the client's, so an unknown one is a 404, not the app. */
 const API_PREFIX = "/api/";
@@ -172,7 +181,11 @@ export const routes = (root: string) =>
               "cache-control":
                 decoded.value.startsWith(ASSETS_PREFIX) && !html ? IMMUTABLE : REVALIDATE,
               "x-content-type-options": "nosniff",
-              ...(html ? HTML_HEADERS : {}),
+              ...(!html
+                ? {}
+                : decoded.value === VISUAL_FRAME_PATH
+                  ? VISUAL_FRAME_HEADERS
+                  : HTML_HEADERS),
             });
             if (!stillFresh(request, response)) return response;
             const { etag, "last-modified": lastModified } = response.headers;

@@ -132,6 +132,7 @@ import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
+import { VisualTheme } from "../components/VisualCard";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { Roster } from "../components/Roster";
@@ -301,7 +302,9 @@ function Section({
               {theme}
             </p>
             <div className="flex flex-col gap-6">
-              {typeof children === "function" ? children(theme) : children}
+              <VisualTheme value={theme}>
+                {typeof children === "function" ? children(theme) : children}
+              </VisualTheme>
             </div>
           </div>
         ))}
@@ -965,7 +968,7 @@ const notSubmitting = () => false;
 
 function BubblesSection() {
   const galleryVault = useSampleVault({ state: "unlocked", now: () => SAMPLE_NOW });
-  const { bubbles } = variants;
+  const { bubbles, visualBubbles, escapingVisual, embeddingVisual } = variants;
   const { t } = useI18n();
   return (
     <Section title="Bubbles">
@@ -1045,6 +1048,39 @@ function BubblesSection() {
           />
           <MessageBubble
             message={bubbles.withFiles}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="A bot's visuals, each above its message: a chart, a table and a diagram">
+        <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+          {visualBubbles.map((visualMessage) => (
+            <MessageBubble
+              key={visualMessage.id}
+              message={visualMessage}
+              position="single"
+              onOpenAttachment={nothing}
+              onRetry={nothing}
+            />
+          ))}
+        </div>
+      </Labeled>
+      <Labeled label="A visual that tries to get out of its frame: the client's storage and API, the window around it, a popup, the network, a peer connection, a frame of its own and spoofed messages; Leave takes its frame elsewhere, and Hang never ends">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={escapingVisual}
+            position="single"
+            onOpenAttachment={nothing}
+            onRetry={nothing}
+          />
+        </div>
+      </Labeled>
+      <Labeled label="A visual that embeds another page, which a client never shows">
+        <div className="max-w-(--layout-text-column)">
+          <MessageBubble
+            message={embeddingVisual}
             position="single"
             onOpenAttachment={nothing}
             onRetry={nothing}

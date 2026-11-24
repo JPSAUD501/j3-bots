@@ -41,6 +41,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { ids } from "./sample";
 import type { SampleValues } from "./sampleVault";
+import { sampleVisuals } from "./visuals";
 
 export function galleryVariants(now: DateTime.Utc) {
   const ago = (minutes: number) =>
@@ -59,7 +60,7 @@ export function galleryVariants(now: DateTime.Utc) {
     name: string,
     author: Author,
     text: string,
-    extra: Partial<Pick<MessageEntry, "attachments" | "delivery">> = {},
+    extra: Partial<Pick<MessageEntry, "attachments" | "delivery" | "visual">> = {},
   ): MessageEntry => ({
     _tag: "message",
     ...base(name, author),
@@ -68,6 +69,7 @@ export function galleryVariants(now: DateTime.Utc) {
     mentions: { _tag: "bots", ids: [] },
     delivery: extra.delivery ?? { _tag: "delivered" },
     commandId: null,
+    ...(extra.visual === undefined ? {} : { visual: extra.visual }),
   });
 
   /** A message still on this device, on its way or refused. */
@@ -137,6 +139,46 @@ export function galleryVariants(now: DateTime.Utc) {
       ],
     }),
   };
+
+  /** A bot's visuals, above its words. */
+  const visualBubbles = [
+    message(
+      "visual-chart",
+      scout,
+      "March was the peak: the bike repair and the conference trip landed in the same month.",
+      {
+        visual: sampleVisuals.chart,
+      },
+    ),
+    message(
+      "visual-table",
+      scout,
+      "The Torra goes furthest. The Aro costs least, if 41 km covers your week.",
+      {
+        visual: sampleVisuals.table,
+      },
+    ),
+    message(
+      "visual-diagram",
+      scout,
+      "Two steps done. Staging is next, and I check the totals before anything touches production.",
+      {
+        visual: sampleVisuals.diagram,
+      },
+    ),
+  ];
+
+  /** A visual that tries every way out of its frame. */
+  const escapingVisual = message("visual-escape", scout, "Each line is what one attempt got.", {
+    visual: sampleVisuals.escape,
+  });
+
+  const embeddingVisual = message(
+    "visual-embedding",
+    scout,
+    "This page held a frame of its own, so it is not shown.",
+    { visual: sampleVisuals.embedding },
+  );
 
   const option = (
     oid: string,
@@ -826,6 +868,9 @@ export function galleryVariants(now: DateTime.Utc) {
 
   return {
     bubbles,
+    visualBubbles,
+    escapingVisual,
+    embeddingVisual,
     questions,
     approvals,
     approvalBecomingExact,
