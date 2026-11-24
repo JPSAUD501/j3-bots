@@ -177,11 +177,7 @@ export function Timeline({
         if (item.kind === "event") {
           return (
             <div key={item.key} data-seen-id={latestOfLine(item.line).id} className={settles}>
-              <EventLine
-                line={item.line}
-                onOpenRoutine={intents.openRoutine}
-                onOpenConversation={intents.openConversation}
-              />
+              <EventLine line={item.line} onOpenRoutine={intents.openRoutine} />
             </div>
           );
         }

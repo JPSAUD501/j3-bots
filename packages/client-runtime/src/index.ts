@@ -9,6 +9,7 @@ export {
   type J3Client,
   layer,
   type LoadedHandle,
+  type PairHandle,
   type PairResult,
   type Platform,
   type ServerUpdateHandle,
@@ -139,6 +140,11 @@ export {
   type SettingsSaves,
 } from "./stores/Settings.ts";
 export type { Synced } from "./stores/synced.ts";
+export {
+  type PairConversation,
+  type PairConversationState,
+  TeammatePairs,
+} from "./stores/TeammatePairs.ts";
 export {
   type CredentialChanges,
   type NewCredential,

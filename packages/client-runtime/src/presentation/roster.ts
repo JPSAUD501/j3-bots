@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
   Bot,
+  BotId,
   EntryTarget,
   Room,
   RosterItem,
   RosterItemKey,
   Section,
   SectionId,
+  TeammatePair,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { type IntentResult, refusedWith } from "../intents/Actions.ts";
@@ -174,6 +176,55 @@ export function filterRoster(items: ReadonlyArray<RosterItem>, query: string): R
     const names =
       item._tag === "bot" ? [item.bot.profile.name, item.bot.profile.title] : [item.room.name];
     return names.some((n) => fold(n).includes(q));
+  });
+}
+
+/** The bots of a roster, by id. */
+const botsOf = (items: ReadonlyArray<RosterItem>): ReadonlyMap<BotId, Bot> =>
+  new Map(items.flatMap((item) => (item._tag === "bot" ? [[item.bot.id, item.bot] as const] : [])));
+
+/**
+ * The pairs the roster's "Between bots" section lists, after the bots and
+ * rooms, latest first as `pairs` are: those whose two bots the roster still
+ * shows. A pair with a hidden or deleted bot leaves it; the other bot's
+ * details still reach it (`teammatesOf`).
+ */
+export function betweenBots(
+  pairs: ReadonlyArray<TeammatePair>,
+  items: ReadonlyArray<RosterItem>,
+): ReadonlyArray<TeammatePair> {
+  const bots = botsOf(items);
+  const shown = (id: BotId) => {
+    const bot = bots.get(id);
+    return bot !== undefined && !bot.hidden;
+  };
+  return pairs.filter(({ botIds: [low, high] }) => shown(low) && shown(high));
+}
+
+/**
+ * The pairs to show for a search: those where either bot's name or title
+ * matches, as `filterRoster` finds the bot.
+ * Like `filterRoster`, a query finds a hidden bot's pairs too; a deleted
+ * bot's are only in the other bot's details.
+ */
+export function filterPairs(
+  pairs: ReadonlyArray<TeammatePair>,
+  items: ReadonlyArray<RosterItem>,
+  query: string,
+): ReadonlyArray<TeammatePair> {
+  const q = fold(query.trim());
+  if (q === "") return betweenBots(pairs, items);
+  const bots = botsOf(items);
+  return pairs.filter(({ botIds }) => {
+    const found = botIds.map((id) => bots.get(id));
+    return (
+      found.every((bot) => bot !== undefined) &&
+      found.some(
+        (bot) =>
+          bot !== undefined &&
+          [bot.profile.name, bot.profile.title].some((name) => fold(name).includes(q)),
+      )
+    );
   });
 }
 

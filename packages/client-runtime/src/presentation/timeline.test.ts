@@ -4,14 +4,13 @@ import {
   CommandId,
   EntryId,
   EntryOrder,
-  type HandoffEntry,
   type NoticeEntry,
   type RoutineChangeEntry,
   RoutineId,
 } from "@j3-bots/contracts";
 import type { OutgoingMessage } from "../stores/Conversations.ts";
 import { describe, expect, it } from "vite-plus/test";
-import { at, message } from "../../test/fixtures.ts";
+import { at, handoff, message } from "../../test/fixtures.ts";
 import { arrivalCounts, arrivedRows, buildTimeline, readThrough, rowOrder } from "./timeline.ts";
 
 const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
@@ -221,41 +220,50 @@ describe("buildTimeline", () => {
   });
 
   describe("teammate messages", () => {
-    let order = 100;
-    const handoff = (
-      iso: string,
-      direction: HandoffEntry["direction"],
-      peer: typeof wren | typeof scout = wren,
-    ): HandoffEntry => {
-      order += 1;
-      // This conversation is Scout's: it sends to its peer, and receives from it.
-      return {
-        _tag: "handoff",
-        id: EntryId.make(`handoff-${order}`),
-        order: EntryOrder.make(order),
-        author: direction === "sent" ? scout : peer,
-        createdAt: at(iso),
-        recipientId: direction === "sent" ? peer.botId : scout.botId,
-        direction,
-        text: `Message ${order}`,
-        urgent: false,
-        state: "sent",
-      };
-    };
-    it("tells each message in a line of its own, whichever way it went", () => {
-      const first = handoff("2026-11-20T10:00:00Z", "sent");
+    /** The runs of teammate messages among `items`, each as how many messages it tells. */
+    const runs = (items: ReturnType<typeof buildTimeline>) =>
+      items.map((i) =>
+        i.kind === "event" && i.line._tag === "teammates"
+          ? `teammates×${i.line.run.entries.length}`
+          : i.kind,
+      );
+
+    it("tells consecutive messages in one line, which anything between them ends", () => {
+      const items = buildTimeline([
+        message("2026-11-20T10:00:00Z"),
+        handoff("2026-11-20T10:01:00Z", "scout", "wren", "sent"),
+        handoff("2026-11-20T10:02:00Z", "scout", "wren", "received"),
+        message("2026-11-20T10:03:00Z", scout),
+        handoff("2026-11-20T10:04:00Z", "scout", "wren", "sent"),
+      ]);
+      expect(runs(items)).toEqual(["divider", "message", "teammates×2", "message", "teammates×1"]);
+    });
+
+    it("keeps one line across a time, under the first message's key", () => {
+      const first = handoff("2026-11-20T10:00:00Z", "scout", "wren", "sent");
       const items = buildTimeline([
         first,
-        handoff("2026-11-20T10:00:10Z", "received"),
-        handoff("2026-11-20T10:00:20Z", "sent", { _tag: "bot", botId: BotId.make("ada") }),
+        handoff("2026-11-20T13:00:00Z", "scout", "wren", "received"),
+        message("2026-11-20T18:00:00Z"),
       ]);
-      expect(
-        items.flatMap((i) =>
-          i.kind === "event" && i.line._tag === "handoff"
-            ? [`${i.key} ${i.line.peer} ${i.line.entry.direction}`]
-            : [],
-        ),
-      ).toEqual([`${first.id} wren sent`, "handoff-102 wren received", "handoff-103 ada sent"]);
+      expect(runs(items)).toEqual(["divider", "teammates×2", "divider", "message"]);
+      expect(items[1]?.key).toBe(first.id);
+    });
+
+    it("lists each teammate once, in the order met, with where its conversation opens", () => {
+      const toWren = handoff("2026-11-20T10:00:00Z", "scout", "wren", "sent");
+      const fromPip = handoff("2026-11-20T10:01:00Z", "scout", "pip", "received", "not-delivered");
+      const last = handoff("2026-11-20T10:02:00Z", "scout", "wren", "received", "stopped");
+      const row = buildTimeline([toWren, fromPip, last]).find((i) => i.kind === "event");
+      if (row?.kind !== "event" || row.line._tag !== "teammates")
+        return expect.fail("The messages were not told in one line");
+      expect(row.line.run).toMatchObject({ direction: "both", undelivered: 2 });
+      expect(row.line.run.pairs).toEqual([
+        { peer: "wren", botIds: ["scout", "wren"], first: toWren.id, count: 2 },
+        { peer: "pip", botIds: ["pip", "scout"], first: fromPip.id, count: 1 },
+      ]);
+      // The line is read through its newest message.
+      expect(rowOrder(row)).toBe(last.order);
     });
   });
 

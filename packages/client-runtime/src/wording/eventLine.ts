@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, HandoffEntry, RoutineChangeEntry } from "@j3-bots/contracts";
+import type { BotId, HandoffState, RoutineChangeEntry } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
-import type { EventLine, RoutineChanges } from "../presentation/eventLine.ts";
+import type { EventLine, RoutineChanges, TeammateRun } from "../presentation/eventLine.ts";
 import { scheduleInWords } from "./schedule.ts";
 import type { PresentationContext } from "./status.ts";
 
@@ -61,9 +61,15 @@ const runsOf = <K extends string>(
 
 const textOf = (runs: ReadonlyArray<EventRun>) => runs.map((run) => run.text).join("");
 
+/** A teammate message's urgency and where it stands: a card in a bot's conversation, or a message between two. */
+interface TeammateMessageMarks {
+  readonly urgent: boolean;
+  readonly state: HandoffState;
+}
+
 /** Where a teammate message stands, when that is anything but sent. */
-function stateMark(entry: HandoffEntry, i18n: I18n): EventMark | null {
-  switch (entry.state) {
+function stateMark(state: HandoffState, i18n: I18n): EventMark | null {
+  switch (state) {
     case "sent":
       return null;
     case "not-delivered":
@@ -76,19 +82,12 @@ function stateMark(entry: HandoffEntry, i18n: I18n): EventMark | null {
 }
 
 /** The marks a teammate message carries: urgent, and where it stands (`stateMark`). */
-export function handoffMarks(entry: HandoffEntry, i18n: I18n): ReadonlyArray<EventMark> {
-  const state = stateMark(entry, i18n);
+export function handoffMarks(message: TeammateMessageMarks, i18n: I18n): ReadonlyArray<EventMark> {
+  const state = stateMark(message.state, i18n);
   return [
-    ...(entry.urgent ? [{ text: i18n.t("handoff.urgent"), tone: "waiting" } as const] : []),
+    ...(message.urgent ? [{ text: i18n.t("handoff.urgent"), tone: "waiting" } as const] : []),
     ...(state === null ? [] : [state]),
   ];
-}
-
-/** One teammate message, as the messages it opens head it: "To Wren", "From Scout". */
-export function handoffHeading(entry: HandoffEntry, peerName: string, i18n: I18n): string {
-  return entry.direction === "sent"
-    ? i18n.t("eventLine.to", { name: peerName })
-    : i18n.t("eventLine.from", { name: peerName });
 }
 
 /**
@@ -105,29 +104,62 @@ export function routineChangeDetail(
   return scheduleInWords(trigger, ctx) ?? (trigger._tag === "schedule" ? trigger.cron : null);
 }
 
-function handoffWords(
-  line: Extract<EventLine, { _tag: "handoff" }>,
-  ctx: PresentationContext,
-): Omit<EventLineWords, "label"> {
+type RunKey = "teammates.wrote" | "teammates.heard" | "teammates.heardSeveral" | "teammates.talked";
+
+/** The sentence a run's line says, by what the bot did in it. */
+const runKey = (run: TeammateRun): RunKey => {
+  switch (run.direction) {
+    case "sent":
+      return "teammates.wrote";
+    case "received":
+      return run.pairs.length === 1 ? "teammates.heard" : "teammates.heardSeveral";
+    case "both":
+      return "teammates.talked";
+  }
+};
+const NAMES: Slot<"names"> = { key: "names" };
+
+/**
+ * A run of teammate messages: "Wrote to Wren", "Wren wrote", "Talked with
+ * Wren and Pip · 4 messages", each teammate's name strong, led by the first
+ * one's face. Its status counts the messages that never reached their
+ * teammate.
+ */
+function teammateWords(run: TeammateRun, ctx: PresentationContext): Omit<EventLineWords, "label"> {
   const { i18n } = ctx;
-  const { entry } = line;
-  const peerName = ctx.botName(line.peer);
-  const key =
-    entry.direction === "sent"
-      ? entry.urgent
-        ? "eventLine.urgentMessageTo"
-        : "eventLine.messageTo"
-      : entry.urgent
-        ? "eventLine.urgentMessageFrom"
-        : "eventLine.messageFrom";
+  const [first] = run.pairs;
+  const sentence = i18n.pluralParts<RunKey, Slot<"names">>(runKey(run), run.entries.length, {
+    names: NAMES,
+  });
+  // A deleted teammate that opens the sentence is named as a sentence starts.
+  const opens = sentence[0] === NAMES;
+  const names = run.pairs.map(
+    (pair, index) =>
+      ctx.botName(pair.peer) ??
+      i18n.t(opens && index === 0 ? "bot.unknown" : "eventLine.deletedBot"),
+  );
+  const list = new Intl.ListFormat(i18n.locale, { type: "conjunction" }).formatToParts(names);
+  const runs: EventRun[] = [];
+  let at = 0;
+  const add = (text: string, strong: boolean) => {
+    runs.push({ text, strong, at });
+    at += text.length;
+  };
+  for (const part of sentence) {
+    if (typeof part === "string") add(part, false);
+    else for (const item of list) add(item.value, item.type === "element");
+  }
   return {
     // A deleted teammate has no face to show.
-    lead: peerName === null ? { _tag: "icon", icon: "message" } : { _tag: "bot", botId: line.peer },
-    runs: runsOf(i18n.parts<typeof key, Slot<"name">>(key, { name: NAME }), {
-      name: peerName ?? i18n.t("eventLine.deletedBot"),
-    }),
-    // Urgent is in the sentence; how the message stands follows it.
-    status: stateMark(entry, i18n),
+    lead:
+      ctx.botName(first.peer) === null
+        ? { _tag: "icon", icon: "message" }
+        : { _tag: "bot", botId: first.peer },
+    runs,
+    status:
+      run.undelivered === 0
+        ? null
+        : { text: i18n.plural("teammates.undelivered", run.undelivered), tone: "blocked" },
   };
 }
 
@@ -191,8 +223,8 @@ export function eventLineWords(line: EventLine, ctx: PresentationContext): Event
 function linePieces(line: EventLine, ctx: PresentationContext): Omit<EventLineWords, "label"> {
   const { i18n } = ctx;
   switch (line._tag) {
-    case "handoff":
-      return handoffWords(line, ctx);
+    case "teammates":
+      return teammateWords(line.run, ctx);
     case "routines":
       return routineWords(line.changes, ctx);
     case "routine-paused": {

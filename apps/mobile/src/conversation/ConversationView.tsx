@@ -627,7 +627,7 @@ function Row({
     case "event":
       return (
         <AnimatedView {...entering}>
-          <EventLine line={row.line} onOpenBot={onOpenBot} onOpenRoutine={onOpenRoutine} />
+          <EventLine line={row.line} onOpenRoutine={onOpenRoutine} />
         </AnimatedView>
       );
     case "unknown":

@@ -5,12 +5,18 @@ import {
   EntryId,
   EntryOrder,
   ModelId,
+  PairSeq,
+  pairBotIds,
   ProviderId,
   type Bot,
   type BotState,
   type EntryPreview,
+  type HandoffEntry,
+  type HandoffState,
   type Language,
   type MessageEntry,
+  type TeammateMessage,
+  type TeammatePair,
 } from "@j3-bots/contracts";
 import { createI18n } from "@j3-bots/i18n";
 import * as DateTime from "effect/DateTime";
@@ -39,6 +45,58 @@ export function message(
     commandId: null,
     ...extra,
   };
+}
+
+/**
+ * A teammate card in `owner`'s conversation: one it sent `peer`, or one
+ * `peer` sent it.
+ */
+export function handoff(
+  createdAt: string,
+  owner: string,
+  peer: string,
+  direction: HandoffEntry["direction"],
+  state: HandoffState = "sent",
+): HandoffEntry {
+  const [from, to] = direction === "sent" ? [owner, peer] : [peer, owner];
+  return {
+    _tag: "handoff",
+    id: EntryId.make(`h${++next}`),
+    order: EntryOrder.make(next),
+    author: { _tag: "bot", botId: BotId.make(from) },
+    recipientId: BotId.make(to),
+    direction,
+    createdAt: at(createdAt),
+    text: "Can you check the build?",
+    urgent: false,
+    state,
+  };
+}
+
+/** A message `from` sent `to`, as their teammate conversation lists it. */
+export function teammateMessage(
+  seq: number,
+  createdAt: string,
+  from: string,
+  to: string,
+  text = "Can you check the build?",
+): TeammateMessage {
+  return {
+    seq: PairSeq.make(seq),
+    from: BotId.make(from),
+    to: BotId.make(to),
+    sentEntryId: EntryId.make(`sent-${seq}`),
+    receivedEntryId: EntryId.make(`received-${seq}`),
+    text,
+    urgent: false,
+    state: "sent",
+    createdAt: at(createdAt),
+  };
+}
+
+/** The pair whose latest message is `last`, holding `count` messages. */
+export function teammatePair(last: TeammateMessage, count = 1): TeammatePair {
+  return { botIds: pairBotIds(last.from, last.to), lastMessage: last, count };
 }
 
 /** A roster row's view of an entry. */

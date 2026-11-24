@@ -12,12 +12,14 @@ import {
   type RosterItem,
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { at, bot, preview } from "../../test/fixtures.ts";
+import { at, bot, preview, teammateMessage, teammatePair } from "../../test/fixtures.ts";
 import type { IntentResult } from "../intents/Actions.ts";
 import {
   arrangedOrder,
   arrangeRoster,
+  betweenBots,
   canStop,
+  filterPairs,
   filterRoster,
   orderRoster,
   roomStop,
@@ -211,5 +213,23 @@ describe("roomStopFailed", () => {
     expect(roomStopFailed(refused(new Conflict({ reason: "engine-unavailable" })))).toBe(true);
     expect(roomStopFailed(refused(new NotFound({ resource: "room" })))).toBe(true);
     expect(roomStopFailed({ _tag: "failed", failure: { _tag: "unexpected" } })).toBe(true);
+  });
+});
+
+describe("the roster's pairs", () => {
+  const scoutAndWren = teammatePair(teammateMessage(3, "2026-11-20T10:00:00Z", "wren", "scout"));
+  const scoutAndPip = teammatePair(teammateMessage(2, "2026-11-20T09:00:00Z", "scout", "pip"));
+  const wrenAndGone = teammatePair(teammateMessage(1, "2026-11-20T08:00:00Z", "wren", "gone"));
+  const pairs = [scoutAndWren, scoutAndPip, wrenAndGone];
+  const items = [row(bot("Scout")), row(bot("Wren")), row(bot("Pip", undefined, { hidden: true }))];
+
+  it("lists only pairs whose two bots the roster shows, latest first", () => {
+    expect(betweenBots(pairs, items)).toEqual([scoutAndWren]);
+  });
+
+  it("finds a pair by either name, a hidden bot's too, never a deleted bot's", () => {
+    expect(filterPairs(pairs, items, "pip")).toEqual([scoutAndPip]);
+    expect(filterPairs(pairs, items, "wre")).toEqual([scoutAndWren]);
+    expect(filterPairs(pairs, items, " ")).toEqual([scoutAndWren]);
   });
 });

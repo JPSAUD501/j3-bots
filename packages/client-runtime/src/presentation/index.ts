@@ -162,11 +162,23 @@ export {
   withoutDeleted,
 } from "./roomForm.ts";
 export {
+  buildPairTimeline,
+  inPair,
+  pairKeyText,
+  pairMessageKey,
+  type PairTimelineItem,
+  peerOf,
+  type Teammate,
+  teammatesOf,
+} from "./pairs.ts";
+export {
   arrangedOrder,
   arrangeRoster,
   type ArrangedRoster,
+  betweenBots,
   type BotItem,
   canStop,
+  filterPairs,
   filterRoster,
   firstLine,
   orderRoster,
@@ -227,6 +239,8 @@ export {
   type NonMessageEntry,
   placeOf,
   type RoutineChanges,
+  type TeammateRun,
+  type TeammateRunPair,
 } from "./eventLine.ts";
 export {
   type ArrivalCounts,
