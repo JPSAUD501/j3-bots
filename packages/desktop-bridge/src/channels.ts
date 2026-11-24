@@ -32,6 +32,11 @@ export const IPC_CHANNELS = {
   checkForUpdates: "j3bots:check-for-updates",
   /** Restarts into the downloaded update once no save is under way. Not answered. */
   restartToUpdate: "j3bots:restart-to-update",
+  /**
+   * `UpdateChannelRequest`: the releases the app follows from now on, unless a
+   * version is on its way or installing. Answers the `UpdateStatus` after it.
+   */
+  setUpdateChannel: "j3bots:set-update-channel",
   /** `SavingReport`: whether a save is under way in the page. Not answered. */
   saving: "j3bots:saving",
   /** `NotificationRequest`: shows a notification on the system's screen. Not answered. */
@@ -58,7 +63,7 @@ export const IPC_CHANNELS = {
   shortcut: "j3bots:shortcut",
   /** `ShortcutRequest`, answered with `ShortcutChange`. */
   setShortcut: "j3bots:set-shortcut",
-  /** Runs the bots on this computer, and loads the page again on its server. Answers `ModeChange`. */
+  /** Runs the bots on this computer, and loads the page again on its server. Answers `UseThisComputerResult`. */
   useThisComputer: "j3bots:use-this-computer",
   /**
    * Stops the server on this computer, its data kept, forgets it, and loads
@@ -108,6 +113,8 @@ export interface DesktopBridge {
   readonly onUpdate: (listener: (status: unknown) => void) => () => void;
   readonly checkForUpdates: () => void;
   readonly restartToUpdate: () => void;
+  /** Chooses the releases the app follows (an `UpdateChannelRequest`). */
+  readonly setUpdateChannel: (channel: string) => Promise<unknown>;
   readonly reportSaving: (saving: boolean) => void;
   /** Shows a notification (a `NotificationRequest`) on the system's screen. */
   readonly notify: (request: unknown) => void;

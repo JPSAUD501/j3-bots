@@ -50,6 +50,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  behind,
   cardAction,
   createJ3Client,
   memorySaveKey,
@@ -66,6 +67,7 @@ import {
   type J3Client,
   type Loaded,
   type MemoryEdit,
+  type UpdateResult,
 } from "@j3-bots/client-runtime";
 import {
   handoffPeer,
@@ -78,10 +80,11 @@ import {
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
 import type { AppLink } from "@j3-bots/desktop-bridge";
-import { memoryFileName } from "@j3-bots/client-runtime/wording";
+import { memoryFileName, updateResultLine } from "@j3-bots/client-runtime/wording";
 import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
 import { ConnectionBanner, updateHasDetails } from "../components/ConnectionBanner";
+import { restartingTo } from "../components/ServerUpdate";
 import {
   ConnectInstead,
   LocalServerFailed,
@@ -132,6 +135,7 @@ import { onAppLink } from "./appLinks";
 import { deliverFile, reserveWindow, saveText } from "./openFile";
 import { readTemplate, useTemplateDrop } from "./templateFiles";
 import { updatable, useDesktopUpdate, useReportSaving } from "./appUpdate";
+import { useRemoteServerUpdate } from "./serverUpdate";
 import {
   useDesktopShortcut,
   useReportAppearance,
@@ -300,7 +304,8 @@ function Screen({ children }: { children: ReactNode }) {
 
 function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   const j3 = useJ3Client();
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const say = useSay();
   const connection = useConnection();
   // An update offered beside what the app cannot do with this server.
@@ -352,6 +357,19 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
   }, [j3, pairing]);
 
   const local = useLocalHere(origin);
+  // Updating a server this device does not run; the app updates the one it runs.
+  const remote = useRemoteServerUpdate();
+  const serverUpdate = local === null ? remote : undefined;
+  const updatingTo = serverUpdate === undefined ? null : restartingTo(serverUpdate);
+  // How an update this device saw under way ended, said once as it comes in.
+  // It stays in Settings until the operator closes Settings after it.
+  const ended = serverUpdate?.ended ?? null;
+  const tellEnded = useEffectEvent((result: UpdateResult) => {
+    say(updateResultLine(result, i18n).text);
+  });
+  useEffect(() => {
+    if (ended !== null) tellEnded(ended);
+  }, [ended]);
   if (local !== null) {
     const screen = local.screen(connection);
     if (screen !== null) return <Screen>{screen}</Screen>;
@@ -389,7 +407,15 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
           onRetryNow={j3.reconnectNow}
         >
           <Screen>
-            <Incompatible server={desktopServer} update={update} />
+            <Incompatible
+              server={desktopServer}
+              update={update}
+              mismatch={{
+                behind: behind(connection.serverProtocol),
+                serverVersion: connection.serverVersion,
+              }}
+              serverUpdate={serverUpdate}
+            />
           </Screen>
           {local?.details}
         </ConnectionBanner>
@@ -421,6 +447,7 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
         <ConnectionBanner
           state={connection}
           local={local?.line}
+          updatingTo={updatingTo}
           everConnected={everConnected}
           onRetryNow={j3.reconnectNow}
         >
@@ -592,6 +619,9 @@ function useLocalHere(origin: URL) {
 
   const intents: DesktopLocal = {
     stopUsing,
+    serverUpdate: view?.server.update,
+    retryServerUpdate: desktopLocal.retryServerUpdate,
+    showUpdateDetails: () => setDetailsOpen(true),
     startWithSystem,
     setStartWithSystem: (on) =>
       desktopLocal.setStartWithSystem(on).then((change) => {
@@ -880,6 +910,8 @@ function LiveShell({
   const memorySaves = useReadable(j3.memorySaves);
   // In the desktop app, a restart into an update waits until no save is under way.
   const update = useDesktopUpdate();
+  // The server's own update, for a server this device does not run: in local mode the app updates it.
+  const serverUpdate = useRemoteServerUpdate();
   const shortcut = useDesktopShortcut();
   useReportSaving(
     savesUnderWay({
@@ -1459,7 +1491,7 @@ function LiveShell({
         return result._tag !== "failed";
       }),
     ...(desktopServer === undefined ? {} : { server: desktopServer }),
-    ...(local === undefined ? {} : { local }),
+    ...(local === undefined ? { serverUpdate } : { local }),
     ...(update === undefined ? {} : { update }),
     ...(shortcut === undefined ? {} : { shortcut }),
     ...(providerSetup === undefined ? {} : { providerSetup }),

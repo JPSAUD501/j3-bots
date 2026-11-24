@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Hex from "effect/encoding/Hex";
+import { judgeWriteAcl, readFolderAcl, repairCommand } from "../home/windowsAcl.ts";
 import { type Installation, RELEASE_MANIFEST } from "../installation.ts";
 
 // Where `scripts/install.sh` puts J3 Bots on a host, outside the data
@@ -188,21 +189,40 @@ export const installedVersions = Effect.fn("install.installedVersions")(function
 /** A folder of the install that another account could change what runs from. */
 class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
   "InstallFolderExposed",
-  { folder: Schema.String, reason: Schema.Literals(["not-owned", "writable-by-all"]) },
+  {
+    folder: Schema.String,
+    reason: Schema.Literals(["not-owned", "writable-by-all", "unverifiable"]),
+    /**
+     * On Windows, the `icacls` command that leaves the folder to this user,
+     * SYSTEM and the Administrators: a mode does not say who may write there.
+     */
+    windowsRepair: Schema.optionalKey(Schema.String),
+    /** For `unverifiable`, what Windows said instead of who may change the folder. */
+    detail: Schema.optionalKey(Schema.String),
+  },
 ) {
   override get message(): string {
-    return this.reason === "not-owned"
-      ? `${this.folder} belongs to another account, which could change what runs from it. Nothing was changed.`
-      : `${this.folder} can be written by every account, which could change what runs from it. Take that away with \`chmod o-w ${this.folder}\`, then run this again. Nothing was changed.`;
+    switch (this.reason) {
+      case "not-owned":
+        return `${this.folder} belongs to another account, which could change what runs from it. Nothing was changed.`;
+      case "writable-by-all":
+        return this.windowsRepair === undefined
+          ? `${this.folder} can be written by every account, which could change what runs from it. Take that away with \`chmod o-w ${this.folder}\`, then run this again. Nothing was changed.`
+          : `${this.folder} can be written by other accounts, which could change what runs from it. In PowerShell, run \`${this.windowsRepair}\`, then run this again. Nothing was changed.`;
+      case "unverifiable":
+        return `Windows did not say who may change ${this.folder} (${this.detail ?? "no answer"}), so what runs from it cannot be trusted. Check that Windows PowerShell runs, then run this again. Nothing was changed.`;
+    }
   }
 }
 
 /**
  * Fails unless `folder` is this user's and not writable by every account, as
  * install.sh checks the install folder, its `versions/` and the command's
- * folder: what is in them runs as this user. Its group may write.
+ * folder: what is in them runs as this user. Its group may write. On Windows,
+ * where a mode means nothing, its access list is judged instead.
  */
 export const checkOwnFolder = Effect.fn("install.checkOwnFolder")(function* (folder: string) {
+  if (process.platform === "win32") return yield* checkOwnFolderOnWindows(folder);
   const fs = yield* FileSystem.FileSystem;
   const info = yield* fs.stat(folder);
   const uid = process.getuid?.();
@@ -211,6 +231,26 @@ export const checkOwnFolder = Effect.fn("install.checkOwnFolder")(function* (fol
   }
   if ((info.mode & 0o002) !== 0) {
     return yield* new InstallFolderExposed({ folder, reason: "writable-by-all" });
+  }
+});
+
+const checkOwnFolderOnWindows = Effect.fnUntraced(function* (folder: string) {
+  const acl = yield* readFolderAcl(folder).pipe(
+    Effect.mapError(
+      (error) => new InstallFolderExposed({ folder, reason: "unverifiable", detail: error.detail }),
+    ),
+  );
+  switch (judgeWriteAcl(acl)) {
+    case "own":
+      return;
+    case "not-owned":
+      return yield* new InstallFolderExposed({ folder, reason: "not-owned" });
+    case "writable-by-others":
+      return yield* new InstallFolderExposed({
+        folder,
+        reason: "writable-by-all",
+        windowsRepair: repairCommand(folder, acl),
+      });
   }
 });
 

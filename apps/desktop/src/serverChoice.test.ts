@@ -8,6 +8,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import type * as Home from "./localServer/home.ts";
+import * as LocalHost from "./localServer/localHost.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import * as Settings from "./settings.ts";
 
@@ -21,14 +23,19 @@ const DEVICE = "device-1";
  * and a page that records what is done to it, with the server kept as it
  * happens.
  */
-const setUp = (file: string, answer: ConnectRefusal | null = null, localAvailable = true) =>
+const setUp = (
+  file: string,
+  answer: ConnectRefusal | null = null,
+  localAvailable = true,
+  prepare: ServerChoice.LocalServer["prepare"] = Effect.succeed(LOCAL),
+) =>
   Effect.gen(function* () {
     const settings = yield* Settings.DesktopSettings;
     const done: Array<string> = [];
     const checked: Array<string> = [];
     const local: ServerChoice.LocalServer = {
       available: localAvailable,
-      prepare: Effect.succeed(LOCAL),
+      prepare,
       start: Effect.sync(() => done.push("start local server")),
       stop: Effect.sync(() => done.push("stop local server")),
     };
@@ -160,6 +167,48 @@ describe("running the bots on this computer", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "answers why the bots' folder is refused and how to repair it, changing nothing, and goes on once it is repaired",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = path.join(
+          yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-home-" }),
+          "home",
+        );
+        yield* fs.makeDirectory(home, { mode: 0o700 });
+        yield* fs.chmod(home, 0o750);
+        const unix: Home.HomeSystem = {
+          platform: "linux",
+          acl: {
+            read: () => Effect.die("the ACL is asked on Windows only"),
+            createPrivate: () => Effect.die("the ACL is set on Windows only"),
+          },
+        };
+        const file = yield* settingsFile(JSON.stringify({ server: SERVER }));
+        const { choice, page, done, settings } = yield* setUp(
+          file,
+          null,
+          true,
+          LocalHost.prepareChosen(home, unix).pipe(Effect.provide(NodeServices.layer)),
+        );
+
+        assert.deepStrictEqual(yield* choice.useThisComputer(page), {
+          _tag: "home-refused",
+          reason: `Other users on this computer can open ${home}, where this computer's bots keep their data and their keys.`,
+          fix: `Close it to others (\`chmod 700 '${home}'\`), then try again.`,
+        });
+        assert.deepStrictEqual(done, []);
+        assert.strictEqual((yield* settings.get).server, SERVER);
+
+        yield* fs.chmod(home, 0o700);
+        assert.strictEqual(yield* choice.useThisComputer(page), "changed");
+        assert.strictEqual((yield* settings.get).mode, "local");
+        assert.include(done, "start local server");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("changes nothing where this computer cannot run the server", () =>
     Effect.gen(function* () {
       const file = yield* settingsFile(JSON.stringify({ server: SERVER }));
@@ -249,6 +298,7 @@ describe("the settings file", () => {
     localDevice: null,
     startWithSystem: false,
     phoneAccess: false,
+    updateChannel: "stable",
   } as const;
   const NONE = {
     mode: null,
@@ -256,9 +306,10 @@ describe("the settings file", () => {
     localDevice: null,
     startWithSystem: false,
     phoneAccess: false,
+    updateChannel: "stable",
   } as const;
 
-  it("reads the server, the window, the shortcut, the appearance, starting with the system and phone access each on its own", () => {
+  it("reads the server, the window, the shortcut, the appearance, starting with the system, phone access and the update channel each on its own", () => {
     const window = { x: 10, y: 20, width: 800, height: 600, maximized: false };
     const shortcut = "Control+Alt+K";
     assert.deepStrictEqual(
@@ -313,6 +364,17 @@ describe("the settings file", () => {
       Settings.decodeSettings(JSON.stringify({ mode: "local", phoneAccess: true })).settings
         .phoneAccess,
     );
+    assert.deepStrictEqual(
+      Settings.decodeSettings(JSON.stringify({ server: SERVER, updateChannel: "beta" })),
+      {
+        settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
+        dropped: ["updateChannel"],
+      },
+    );
+    assert.strictEqual(
+      Settings.decodeSettings(JSON.stringify({ updateChannel: "nightly" })).settings.updateChannel,
+      "nightly",
+    );
     assert.deepStrictEqual(Settings.decodeSettings("{ not json"), {
       settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
       dropped: [],
@@ -338,6 +400,7 @@ describe("the settings file", () => {
         appearance: "system",
         startWithSystem: false,
         phoneAccess: false,
+        updateChannel: "stable",
       },
     );
   });

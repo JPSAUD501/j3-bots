@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { DeviceId } from "@j3-bots/contracts";
+import { DeviceId, UpdateChannel } from "@j3-bots/contracts";
 import { Accelerator, Appearance, DesktopMode, ServerOrigin } from "@j3-bots/desktop-bridge";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -40,9 +40,10 @@ const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
  * the window's place, the global shortcut the operator chose (`null` for the
  * default), the appearance the page last reported, which the window takes
  * before the page paints, whether the app starts with the system, off
- * until the operator turns it on, and whether phones on the network may reach
+ * until the operator turns it on, whether phones on the network may reach
  * the server on this computer (`phoneAccess`), off until the operator turns
- * it on. None is a secret.
+ * it on, and the releases the app updates to (`updateChannel`), stable ones
+ * until the operator chooses nightly builds too. None is a secret.
  */
 export const Settings = Schema.Struct({
   mode: Schema.NullOr(DesktopMode),
@@ -53,6 +54,7 @@ export const Settings = Schema.Struct({
   appearance: Appearance,
   startWithSystem: Schema.Boolean,
   phoneAccess: Schema.Boolean,
+  updateChannel: UpdateChannel,
 });
 export type Settings = typeof Settings.Type;
 
@@ -65,6 +67,7 @@ const EMPTY: Settings = {
   appearance: "system",
   startWithSystem: false,
   phoneAccess: false,
+  updateChannel: "stable",
 };
 
 const decodeStored = Schema.decodeUnknownOption(
@@ -77,6 +80,7 @@ const decodeWindow = Schema.decodeUnknownOption(WindowState);
 const decodeShortcut = Schema.decodeUnknownOption(Accelerator);
 const decodeAppearance = Schema.decodeUnknownOption(Appearance);
 const decodeFlag = Schema.decodeUnknownOption(Schema.Boolean);
+const decodeChannel = Schema.decodeUnknownOption(UpdateChannel);
 const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Settings));
 
 /**
@@ -92,8 +96,17 @@ export const decodeSettings = (
 ): { readonly settings: Settings; readonly dropped: ReadonlyArray<keyof Settings> } => {
   const stored = decodeStored(text);
   if (Option.isNone(stored)) return { settings: EMPTY, dropped: [] };
-  const { mode, server, localDevice, window, shortcut, appearance, startWithSystem, phoneAccess } =
-    stored.value;
+  const {
+    mode,
+    server,
+    localDevice,
+    window,
+    shortcut,
+    appearance,
+    startWithSystem,
+    phoneAccess,
+    updateChannel,
+  } = stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
     return Result.isSuccess(checked) && checked.success === origin
@@ -107,6 +120,7 @@ export const decodeSettings = (
   const keptAppearance = decodeAppearance(appearance);
   const keptStartWithSystem = decodeFlag(startWithSystem);
   const keptPhoneAccess = decodeFlag(phoneAccess);
+  const keptChannel = decodeChannel(updateChannel);
   const dropped: Array<keyof Settings> = [];
   if (mode !== undefined && mode !== null && Option.isNone(keptMode)) dropped.push("mode");
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
@@ -122,6 +136,7 @@ export const decodeSettings = (
     dropped.push("startWithSystem");
   }
   if (phoneAccess !== undefined && Option.isNone(keptPhoneAccess)) dropped.push("phoneAccess");
+  if (updateChannel !== undefined && Option.isNone(keptChannel)) dropped.push("updateChannel");
   return {
     settings: {
       mode: Option.getOrElse(keptMode, () =>
@@ -134,6 +149,7 @@ export const decodeSettings = (
       appearance: Option.getOrElse(keptAppearance, () => EMPTY.appearance),
       startWithSystem: Option.getOrElse(keptStartWithSystem, () => EMPTY.startWithSystem),
       phoneAccess: Option.getOrElse(keptPhoneAccess, () => EMPTY.phoneAccess),
+      updateChannel: Option.getOrElse(keptChannel, () => EMPTY.updateChannel),
     },
     dropped,
   };

@@ -9,9 +9,12 @@ import type {
   PairingOffer,
   RecentTurnsState,
   SectionChanges,
+  ServerUpdateStart,
+  ServerUpdateView,
   SettingsChange,
   SettingsSaves,
   SignInView,
+  UpdateResult,
 } from "@j3-bots/client-runtime";
 import type {
   AvatarChoice,
@@ -25,6 +28,7 @@ import type {
   EntryTarget,
   MemoryFile,
   MemoryPath,
+  ReleaseVersion,
   RoomId,
   RosterItem,
   Routine,
@@ -32,15 +36,17 @@ import type {
   SectionId,
   Settings,
   SignInHarness,
+  UpdateChannel,
   WorkStep,
 } from "@j3-bots/contracts";
 import type {
   Accelerator,
   LocalPairingLink,
-  ModeChange,
+  UseThisComputerResult,
   PhoneAccess,
   PhoneAccessChange,
   ShortcutChange,
+  ServerUpdate as LocalServerUpdate,
   ShortcutStatus,
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
@@ -247,6 +253,12 @@ export interface ShellIntents extends TimelineIntents {
   readonly local?: DesktopLocal;
   /** In the desktop app, updating it. Absent in a browser, whose page is the server's own. */
   readonly update?: DesktopUpdate;
+  /**
+   * Updating the server from here. Absent where the server has no update
+   * routes (older than J3 Bots 0.3.1), and in the desktop app's local mode,
+   * where updating the app updates the server it runs.
+   */
+  readonly serverUpdate?: RemoteServerUpdate;
   /** In the desktop app, the global shortcut that shows it. Absent in a browser. */
   readonly shortcut?: DesktopShortcut;
   /**
@@ -270,7 +282,7 @@ export interface DesktopServer {
    * Leaves it for this computer: forgets it as `forget` does, then runs the
    * bots here. Absent where this computer cannot run them.
    */
-  readonly chooseThisComputer?: () => Promise<ModeChange | null>;
+  readonly chooseThisComputer?: () => Promise<UseThisComputerResult | null>;
 }
 
 /** The bots on this computer, as the desktop app runs them. */
@@ -285,6 +297,16 @@ export interface DesktopLocal {
   readonly startWithSystem: boolean;
   /** Changes it; resolves with what holds once the app answered. */
   readonly setStartWithSystem: (on: boolean) => Promise<boolean>;
+  /**
+   * What the version of the server on this computer is going through, as
+   * the app reports it: the app moves it to the release it carries, rolled
+   * an update back, or is older than it. None when nothing moves it.
+   */
+  readonly serverUpdate: LocalServerUpdate | undefined;
+  /** Tries the update it was rolled back from again. */
+  readonly retryServerUpdate: () => void;
+  /** Shows why that update was rolled back. */
+  readonly showUpdateDetails: () => void;
   /** Phones on this computer's network reaching the bots. */
   readonly phone: DesktopPhone;
 }
@@ -321,6 +343,25 @@ export interface DesktopShortcut {
   readonly change: (accelerator: Accelerator) => Promise<ShortcutChange | null>;
 }
 
+/**
+ * Updating a server this device connects to but does not run, through its
+ * update routes outside the protocol, as the shared client follows it.
+ */
+export interface RemoteServerUpdate {
+  readonly view: ServerUpdateView;
+  /** How an update this device saw under way ended, until `dismissEnded`. */
+  readonly ended: UpdateResult | null;
+  readonly dismissEnded: () => void;
+  /** Reads the status again, as when the screen that shows it opens. */
+  readonly refresh: () => void;
+  /** Has the server check its release feed now; settles once the check has ended. */
+  readonly check: () => Promise<void>;
+  /** Sets the server's channel; the view follows. */
+  readonly setChannel: (channel: UpdateChannel) => void;
+  /** Starts the update to `version`, stopping the bots' running work only with `stopWork`. */
+  readonly start: (version: ReleaseVersion, stopWork: boolean) => Promise<ServerUpdateStart>;
+}
+
 /** Updating the desktop app, which carries its own page. */
 export interface DesktopUpdate {
   readonly status: UpdateStatus;
@@ -328,4 +369,6 @@ export interface DesktopUpdate {
   readonly check: () => void;
   /** Restarts into the downloaded update, as soon as no save is under way. */
   readonly restart: () => void;
+  /** Chooses the releases the app follows, unless a version is on its way or installing. */
+  readonly setChannel: (channel: UpdateChannel) => void;
 }

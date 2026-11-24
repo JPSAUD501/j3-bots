@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { DeviceId, Language, PairingCode, PairingLinkTarget } from "@j3-bots/contracts";
+import type {
+  DeviceId,
+  Language,
+  PairingCode,
+  PairingLinkTarget,
+  UpdateChannel,
+} from "@j3-bots/contracts";
 import {
   type Appearance,
   AppLink,
@@ -12,6 +18,7 @@ import {
   LocalPairingLink,
   LocalServerState,
   ModeChange,
+  UseThisComputerResult,
   NetworkState,
   NotificationClick,
   type NotificationRequest,
@@ -89,6 +96,11 @@ export interface Desktop {
   readonly checkForUpdates: () => void;
   /** Restarts into the downloaded update, as soon as no save is under way. */
   readonly restartToUpdate: () => void;
+  /**
+   * Chooses the releases the app follows; answers the status after it, which
+   * keeps the channel it had while a version is on its way or installing.
+   */
+  readonly setUpdateChannel: (channel: UpdateChannel) => Promise<UpdateStatus | null>;
   /** Tells the app whether a save is under way, which a restart waits for. */
   readonly reportSaving: (saving: boolean) => void;
   /** Shows a notification with the system's own notifications. */
@@ -131,7 +143,7 @@ export interface Desktop {
    * has, the app loads the page again. `null` when the app gave no answer the
    * page understands.
    */
-  readonly chooseThisComputer: () => Promise<ModeChange | null>;
+  readonly chooseThisComputer: () => Promise<UseThisComputerResult | null>;
   /**
    * Stops the bots on this computer, their data kept, for a server elsewhere;
    * once it has, the app loads the page again on the server address screen.
@@ -188,6 +200,7 @@ const decodeShortcut = Schema.decodeUnknownOption(ShortcutStatus);
 const decodeShortcutChange = Schema.decodeUnknownOption(ShortcutChange);
 const decodeTheme = Schema.decodeUnknownOption(Theme);
 const decodeModeChange = Schema.decodeUnknownOption(ModeChange);
+const decodeUseThisComputer = Schema.decodeUnknownOption(UseThisComputerResult);
 const decodeLocalServer = Schema.decodeUnknownOption(Schema.NullOr(LocalServerState));
 const decodeLocalDevice = Schema.decodeUnknownOption(LocalDeviceResult);
 const decodeStartWithSystem = Schema.decodeUnknownOption(StartWithSystemChange);
@@ -300,13 +313,14 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     restartToUpdate: () => {
       bridge.restartToUpdate();
     },
+    setUpdateChannel: (channel) => ask(() => bridge.setUpdateChannel(channel), decodeStatus),
     reportSaving: (saving) => {
       bridge.reportSaving(saving);
     },
     localAvailable: bridge.state.localAvailable,
     localServer: bridge.state.localServer,
     startWithSystem: bridge.state.startWithSystem,
-    chooseThisComputer: () => ask(() => bridge.useThisComputer(), decodeModeChange),
+    chooseThisComputer: () => ask(() => bridge.useThisComputer(), decodeUseThisComputer),
     connectToServerInstead: () => ask(() => bridge.connectToServerInstead(), decodeModeChange),
     retryLocalServer: () => {
       bridge.retryLocalServer();

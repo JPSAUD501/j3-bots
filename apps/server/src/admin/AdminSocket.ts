@@ -28,6 +28,7 @@ import { Network, reachableOrigins } from "../system/Network.ts";
 import * as Ports from "../system/Ports.ts";
 import { ServerStop } from "../ServerStop.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
+import { SendPause } from "../turns/SendPause.ts";
 import { WebClientStatus } from "../web/WebClient.ts";
 import * as Pipe from "./pipe.ts";
 import { hasAdminSocket } from "./socket.ts";
@@ -57,6 +58,13 @@ import {
  * A code for a new device, or while pairing is locked, until when. The answer
  * is never logged: the request log records the method, path and status only.
  */
+/**
+ * How long first sends stay held once `runningWork` found none, when the
+ * server is not stopped first: past `j3-bots update`'s steps up to the stop,
+ * and the stop itself, which the unit bounds (`TimeoutStopSec`).
+ */
+const IDLE_HOLD = "2 minutes";
+
 const offerPairing = Effect.gen(function* () {
   const devices = yield* Devices;
   const locked = yield* devices.lockedUntil;
@@ -145,10 +153,14 @@ const routes = Layer.mergeAll(
     }),
   ),
   HttpRouter.add(
-    "GET",
+    "POST",
     ADMIN_PATHS.runningWork,
     Effect.gen(function* () {
-      const working = yield* (yield* RunningWork).bots;
+      const working = yield* (yield* SendPause).held(
+        (yield* RunningWork).bots,
+        (bots) => bots.length === 0,
+        IDLE_HOLD,
+      );
       return yield* HttpServerResponse.schemaJson(RunningWorkReply)({ bots: working.length }).pipe(
         Effect.orDie,
       );

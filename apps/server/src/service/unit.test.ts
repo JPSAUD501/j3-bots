@@ -31,7 +31,8 @@ const settings = (unit: string) => {
 };
 
 /** `ExecStart=`'s words as systemd reads them, `$$` undone too. */
-const command = (value: string) => words(value).map((word) => word.replaceAll("$$", "$"));
+const command = (value: string) =>
+  words(value).map((word, index) => (index === 0 ? word : word.replaceAll("$$", "$")));
 
 /** One setting's words as systemd reads them: quotes grouped, escapes and `%%` undone. */
 const words = (value: string) => {
@@ -96,6 +97,7 @@ it.effect("keeps paths with spaces, quotes, percent and dollar signs intact", ()
   Effect.gen(function* () {
     const plan: UnitPlan = {
       ...PI,
+      node: "/opt/node$1/bin/node",
       entryPoint: '/home/pi/my "bots"/100% sure/$HOME/${USER}/bin.mjs',
       home: "/home/pi/J3 data/50%",
       searchPath: "/opt/my tools/bin:/usr/bin",
@@ -107,6 +109,12 @@ it.effect("keeps paths with spaces, quotes, percent and dollar signs intact", ()
       plan.entryPoint,
       "serve",
     ]);
+    // systemd expands `$NAME` and `${NAME}` in `ExecStart=`'s arguments, where `$$` is a `$`,
+    // and takes the program's path as it is.
+    assert.match(
+      single(unit, "ExecStart"),
+      /^\/opt\/node\$1\/bin\/node .*\/\$\$HOME\/\$\$\{USER\}\//,
+    );
     // What `doctor` reads back from the installed unit.
     assert.strictEqual(environmentOf(text).get("PATH"), plan.searchPath);
     assert.strictEqual(single(unit, "WorkingDirectory").replaceAll("%%", "%"), plan.home);

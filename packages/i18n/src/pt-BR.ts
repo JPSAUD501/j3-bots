@@ -1189,7 +1189,7 @@ const sentences = {
   "settings.phone.restart": "Reiniciar",
   "settings.phone.restart.cancel": "Agora não",
   "settings.phone.firewall.windows":
-    "O Windows pode perguntar se o J3 Bots pode usar redes privadas. Permita, ou o celular não conecta.",
+    "O Windows pode perguntar se redes públicas e privadas podem acessar o “Node.js JavaScript Runtime”: são os seus bots. Escolha Permitir, ou o celular não conecta.",
   "settings.phone.firewall.mac":
     "O macOS pode perguntar se o J3 Bots pode aceitar conexões. Permita, ou o celular não conecta.",
   "settings.phone.firewall.linux":
@@ -1405,6 +1405,19 @@ const sentences = {
   "update.check": "Procurar atualizações",
   "update.retry": "Tentar de novo",
   "update.restart": "Reiniciar para atualizar",
+  "update.verifying": "Conferindo a assinatura da versão {version}…",
+  "update.verifyFailed":
+    "O download não bateu com a assinatura da versão, então não foi instalado. Esta versão continua em uso.",
+  "updates.app.heading": "Este app",
+  "updates.app.local": "Atualizar o app também atualiza os bots deste computador.",
+  "updates.notice": "Atualização disponível",
+  "updates.copyCommand": "Copiar o comando",
+  "updates.server.reading": "Lendo a versão do servidor…",
+  "updateChannel.app": "Atualizações deste app",
+  "updateChannel.server": "Atualizações do servidor",
+  "updateChannel.stable.hint": "Versões testadas e publicadas.",
+  "updateChannel.waitingForStable":
+    "Roda uma versão nightly ({version}). Passa para a estável quando sair uma estável mais nova.",
   "settings.signOut": "Sair deste dispositivo",
   "settings.signOut.hint": "Sair encerra o acesso deste dispositivo e apaga o que ele guarda aqui.",
   "settings.signOut.pending": "Saindo…",

@@ -87,6 +87,16 @@ What a template holds and leaves out is in [Concepts](concepts.md) and [decision
 - A routine that fires often shows its run count next to its schedule.
 - When a provider's limit is reached, affected bots show as blocked with the reset time, and their routines wait instead of failing repeatedly.
 
+### Keeping J3 Bots up to date
+
+- A newer release never interrupts the operator. A dot on the Settings button and "Update available" under it are the whole notice. Settings → About and updates names the version, links to what's new, says the bots stop for a minute or two and that the server goes back on its own if the new version doesn't start.
+- One press updates the server: "Update the server". It asks first only when bots have work running, as that work stops. The same line then says how it is going: downloading, checking the download against the project's signature, getting it ready, restarting. While the server restarts, the connection line says "Updating your bots to {version}…", not that the connection was lost, and the app reconnects by itself.
+- How it ended is said once in a toast, and shows in Settings until the operator closes it after: "Your bots run {version}", or that the update didn't go through and the bots are back on the version before, with their data as it was. A rollback stays in Settings, with why, its details and "Try again", for as long as the server runs the version it rolled back to.
+- A server that cannot update itself from a client (started by hand, run from a source checkout, run inside the desktop app elsewhere) says so, with the one command to run on its machine instead. No button is ever offered that cannot work.
+- Each side has a channel, Stable or Nightly, chosen in the same place: the server's for the server, the app's for the desktop app. Moving back to Stable never installs an older version: a nightly build stays until a stable release is newer, and Settings says so.
+- The desktop app updates itself the same way, with "Restart to update" once the download has matched the project's signature. On this computer the app carries the bots' server, so updating the app updates both.
+- When the app and the server speak different versions, the screen says which one is behind. A server behind the app offers "Update the server" right there, after asking it to look for a newer release once, as it may not have looked since this app's release came out; a server that cannot update from here gives the command to run on its machine; an app behind the server updates itself, or a browser reloads. The operator is never left on a broken screen.
+
 ## Screens
 
 The interface is the same three regions on every surface. On a phone they are three screens; on a wide window they sit side by side.
@@ -126,7 +136,7 @@ Answers: what is this bot, and what runs without me.
 ### Outside those three
 
 - **Command palette** on desktop and web: jump to a bot, a room or a message; run any action by name.
-- **Settings**: engine and provider status, usage, the operator's name and time zone, devices, notifications, appearance.
+- **Settings**: engine and provider status, usage, the operator's name and time zone, devices, notifications, appearance, and about and updates: the server's version and channel, and in the desktop app, the app's.
 - **Updates on the phone.** When the server or the app has an update, one quiet line over the roster says so, never a dialog. It opens Settings → About and updates, and hides until the next release. While the server updates, the same line shows how far it has come, its restart included, in place of the line that says the server cannot be reached. It then says once how the update ended. The app's own update is a tap too: the app downloads the release and checks it against the project's signature, and Android asks to install it. The first time, the app explains Android's "Install unknown apps" before it opens that page, and goes on when the operator comes back. A phone whose server speaks another protocol shows the side that is behind, with the update that brings it forward. A server behind the app is first asked to look for releases, so the phone says none is out yet only after it has looked. An app behind its server looks for its own release as the screen opens, and has its check and its channel there, since the server may run a nightly.
 
 ## States the interface must always show

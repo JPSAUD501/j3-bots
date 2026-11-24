@@ -25,6 +25,7 @@ import * as Http from "../http.ts";
 import * as ServerStop from "../ServerStop.ts";
 import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
+import * as TestUpdates from "../testing/update.ts";
 import * as WebClient from "../web/WebClient.ts";
 import * as AdminClient from "./AdminClient.ts";
 import * as AdminSocket from "./AdminSocket.ts";
@@ -259,7 +260,7 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))(
               Layer.mergeAll(
                 adminServer,
                 Http.serve(NodeHttpServer.layerTest, { logAddress: false }),
-              ).pipe(Layer.provide(WebClient.statusLayer)),
+              ).pipe(Layer.provide(Layer.merge(WebClient.statusLayer, TestUpdates.layer))),
             ),
             Effect.scoped,
           );

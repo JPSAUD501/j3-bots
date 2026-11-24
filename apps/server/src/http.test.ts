@@ -22,6 +22,7 @@ import { ServerConfig, type ServerConfigShape } from "./config.ts";
 import { Devices } from "./devices/Devices.ts";
 import * as Http from "./http.ts";
 import * as TestDomain from "./testing/domain.ts";
+import * as TestUpdates from "./testing/update.ts";
 import * as WebClient from "./web/WebClient.ts";
 
 /**
@@ -139,6 +140,7 @@ const served = (configure: (config: ServerConfigShape) => ServerConfigShape) =>
       ),
     ),
     Layer.provide(WebClient.statusLayer),
+    Layer.provide(TestUpdates.layer),
     Layer.provideMerge(TestDomain.layer),
   );
 

@@ -240,6 +240,9 @@ importers:
       '@j3-bots/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n
+      '@j3-bots/release':
+        specifier: workspace:*
+        version: link:../../packages/release
       '@j3-bots/server':
         specifier: workspace:*
         version: link:../server
@@ -479,6 +482,9 @@ importers:
       '@j3-bots/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n
+      '@j3-bots/release':
+        specifier: workspace:*
+        version: link:../../packages/release
       '@tanstack/react-router':
         specifier: 1.170.10
         version: 1.170.10(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -610,6 +616,9 @@ importers:
       '@j3-bots/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@j3-bots/release':
+        specifier: workspace:*
+        version: link:../release
       effect:
         specifier: 4.1.3
         version: 4.1.3
