@@ -28,8 +28,9 @@ export class RoomWork extends Context.Service<
      * count them no more, as for a deleted bot: no wake of theirs for the room
      * that did not finish, failed ones included. Their room notices offer no
      * Retry, their open `ask` cards for the room expire, and a room Stop ends
-     * what they still run for it. When anything was cancelled or released,
-     * the dispatcher is nudged once the transaction commits.
+     * what they still run for it. When a room dispatch of theirs was
+     * released, the dispatcher is nudged once the transaction commits: their
+     * other wakes may have waited behind it.
      */
     readonly leave: (roomId: RoomId, botIds: ReadonlyArray<BotId>) => Effect.Effect<void>;
   }

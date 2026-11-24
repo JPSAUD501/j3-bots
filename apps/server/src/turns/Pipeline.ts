@@ -87,7 +87,6 @@ import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
 import { automatedSql, providerLimit } from "./providerLimit.ts";
 import { Readiness } from "./Readiness.ts";
-import { roomLiveSql } from "./roomLive.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
 import { takesNewWorkSql } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
@@ -165,16 +164,6 @@ const strongestReason = (reasons: ReadonlyArray<RoomReason>): RoomReason =>
   (["kickoff", "addressed", "everyone", "user"] as const).find((reason) =>
     reasons.includes(reason),
   ) ?? "member";
-
-/** The room's queue as planning reads it. */
-const RoomQueue = Schema.Struct({
-  /** The bot is a member of the room. */
-  member: Schema.BooleanFromBit,
-  /** A dispatch or turn of the room is live: it runs one turn at a time. */
-  busy: Schema.BooleanFromBit,
-  /** The bot whose wake for the room goes first, by priority, then as written. */
-  next_bot_id: Schema.NullOr(BotId),
-});
 
 /** A planned wake's part of a user or bot envelope; `null` when its message or card is gone. */
 type WakePart =
@@ -995,73 +984,6 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The room's queue: whether a dispatch or turn of it is live
-     * (`roomLiveSql`), and whose wake for it goes first among its members.
-     * A member whose permission mode the engine refuses (`modeRefusedSql`)
-     * has no place in it: nothing can be planned into its main session until
-     * the operator acts, so its wakes wait out of the way, and take their
-     * place again, as written, once the refusal is gone. Read from durable
-     * rows, never a flag kept aside.
-     */
-    const roomQueue = SqlSchema.findOne({
-      Request: Schema.Struct({ roomId: RoomId, botId: BotId }),
-      Result: RoomQueue,
-      execute: ({ roomId, botId }) => sql`
-        SELECT
-          EXISTS (
-            SELECT 1 FROM room_members rq_self
-            WHERE rq_self.room_id = ${roomId} AND rq_self.bot_id = ${botId}
-          ) AS member,
-          ${roomLiveSql(sql, sql`${roomId}`)} AS busy,
-          (
-            SELECT rq_wake.bot_id FROM wakes rq_wake
-            WHERE rq_wake.audience_room_id = ${roomId} AND rq_wake.status = 'pending'
-              AND rq_wake.kind <> 'routine'
-              AND rq_wake.bot_id IN (
-                SELECT rq_member.bot_id FROM room_members rq_member
-                WHERE rq_member.room_id = ${roomId}
-              )
-              AND NOT ${modeRefusedSql(sql, sql`rq_wake.bot_id`)}
-            ORDER BY rq_wake.priority, rq_wake.rowid LIMIT 1
-          ) AS next_bot_id
-      `,
-    });
-
-    /**
-     * Whether the wake may start the next turn of the bot's main session
-     * `sessionId`. A room runs one turn at a time
-     * (`docs/architecture/server.md`, Rooms): a wake for a room may start a
-     * turn only while nothing of the room is live and it is the room's first
-     * wake, by priority and then as written, so members answer one after
-     * another in the order they were addressed, each seeing the replies
-     * before it, a member whose permission mode the engine refuses left out
-     * (`roomQueue`). While that first wake's bot cannot get a turn slot, the
-     * operator's room wake to a member whose session already holds one (its
-     * continuation is pending, say) goes first instead, rather than wait
-     * behind it for a slot it holds itself. A wake of a bot that left the
-     * room goes on to the transaction that cancels it (`roomPlan`). Any other
-     * wake may start one as before.
-     */
-    const mayStart = Effect.fn("Pipeline.mayStart")(function* (
-      botId: BotId,
-      wake: WakeRow,
-      sessionId: SessionRowId,
-    ) {
-      const audience = audienceOf(wake);
-      if (audience._tag !== "room" || audience.roomId === null) return true;
-      const queue = yield* roomQueue({ roomId: audience.roomId, botId }).pipe(Effect.orDie);
-      if (!queue.member) return true;
-      if (queue.busy || queue.next_bot_id === null) return false;
-      if (queue.next_bot_id === botId) return true;
-      if (wake.priority !== PRIORITY.user || !(yield* admitsStart(sessionId))) return false;
-      const first = yield* mainSession({
-        botId: queue.next_bot_id,
-        now: timeText(yield* DateTime.now),
-      }).pipe(Effect.orDie);
-      return Option.isSome(first) && !(yield* admitsStart(first.value.id));
-    });
-
-    /**
      * Whether the wake is the operator's word for a running turn with this
      * audience, which steers it so they can redirect it: an `ask` answer
      * waits for the turn that asked to finish, and starts the next.
@@ -1122,13 +1044,9 @@ export const layer = Layer.effect(
           : (yield* openingHeld(botId)) || (yield* awaitsMaker(opening))
             ? others
             : [opening, ...others];
-      let head: WakeRow | undefined;
-      for (const wake of candidates) {
-        if (yield* mayStart(botId, wake, session.value.id)) {
-          head = wake;
-          break;
-        }
-      }
+      // A room wake starts a turn as any other: the members of a room run in
+      // parallel, each in its own session, one turn at a time there.
+      const [head] = candidates;
       if (head === undefined) return null;
       if (head.payload_json._tag !== "first-run" && head.priority !== PRIORITY.user) {
         // Every automated wake waits for the reset, a bot's room message too.
@@ -1653,8 +1571,6 @@ export const layer = Layer.effect(
      * dispatch: the room must still be active, or its wakes have nowhere to
      * go and are cancelled; the bot must still be a member, or its wakes for
      * the room are cancelled, so it reads nothing said there since it left;
-     * a start must still find nothing of the room live, and its wake first
-     * in the room's queue (`mayStart`), as the room runs one turn at a time;
      * and every room wake of the bot pending now goes together, so an entry written
      * since the plan was made, which the envelope carries, leaves no wake
      * behind for an envelope with nothing new.
@@ -1676,11 +1592,6 @@ export const layer = Layer.effect(
         return { _tag: "done", result: "stale" } as const;
       }
       const [head] = plan.wakes;
-      if (plan.delivery._tag === "start" && head !== undefined) {
-        if (!(yield* mayStart(plan.botId, head, plan.sessionId))) {
-          return { _tag: "done", result: "stale" } as const;
-        }
-      }
       if (head?.kind !== "room") return { _tag: "plan", plan, room: room.value } as const;
       const wakes = forRoom.filter((wake) => wake.kind === "room");
       return { _tag: "plan", plan: { ...plan, wakes }, room: room.value } as const;
@@ -1807,9 +1718,10 @@ export const layer = Layer.effect(
      * Sends the dispatches written and not yet sent: a start is admitted when
      * it is sent, like a new one. A room start that cannot be sent now, for
      * want of a turn slot or held by a usage limit, goes to its send all the
-     * same, which releases it rather than let it hold the room, and so does a
-     * main session's start the limit holds, rather than hold back the
-     * operator's word (`Sender`). Whether the engine refused a command.
+     * same, which releases it, so its envelope is written again with what the
+     * room said while it waited, and so does a main session's start the limit
+     * holds, rather than hold back the operator's word (`Sender`). Whether the
+     * engine refused a command.
      */
     const sendUnsent = Effect.fn("Pipeline.sendUnsent")(function* (
       rows: ReadonlyArray<typeof Unsent.Type>,
