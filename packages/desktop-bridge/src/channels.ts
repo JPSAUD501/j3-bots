@@ -93,6 +93,14 @@ export const IPC_CHANNELS = {
   localPairingLink: "j3bots:local-pairing-link",
   /** `StartWithSystemRequest`, answered with `StartWithSystemChange`. */
   setStartWithSystem: "j3bots:set-start-with-system",
+  /** `SignInRelayRequest`, answered with `SignInRelayStart`. */
+  catchSignIn: "j3bots:catch-sign-in",
+  /** `SignInExpectation`, answered with whether a listener on that port takes it. */
+  expectSignIn: "j3bots:expect-sign-in",
+  /** `SignInRelayStop`: stops catching on that port, if the app still is. Not answered. */
+  stopCatchingSignIn: "j3bots:stop-catching-sign-in",
+  /** From the main process, as the browser comes back from a sign-in: `SignInReturn`. */
+  signInReturned: "j3bots:sign-in-returned",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -160,4 +168,15 @@ export interface DesktopBridge {
   /** A pairing code for a phone (a `LocalPairingRequest`). */
   readonly localPairingLink: (request: unknown) => Promise<unknown>;
   readonly setStartWithSystem: (on: boolean) => Promise<unknown>;
+  /**
+   * Listens on this computer's loopback for the browser's return from a
+   * connector's sign-in (a `SignInRelayRequest`), in place of any listener before.
+   */
+  readonly catchSignIn: (request: unknown) => Promise<unknown>;
+  /** Tells the listener the sign-in's state (a `SignInExpectation`), before the browser opens it. */
+  readonly expectSignIn: (request: unknown) => Promise<unknown>;
+  /** Stops the listener on a port (a `SignInRelayStop`). */
+  readonly stopCatchingSignIn: (request: unknown) => void;
+  /** Calls `listener` with each return from a sign-in (a `SignInReturn`); answers a function that stops it. */
+  readonly onSignInReturn: (listener: (signInReturn: unknown) => void) => () => void;
 }

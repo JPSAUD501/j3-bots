@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 export {
   type BrowserViewHandle,
+  type ConnectorsClient,
   type ConversationHandle,
   type VaultHandle,
   createJ3Client,
@@ -27,6 +28,12 @@ export {
   type ReconnectSettings,
   type UnpairedReason,
 } from "./connection/Connection.ts";
+export {
+  type ConnectorAddition,
+  type ConnectorChanges,
+  Connectors,
+  type ConnectorSearch,
+} from "./stores/Connectors.ts";
 export { type Download } from "./files/Files.ts";
 export {
   admitFiles,

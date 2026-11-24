@@ -8,6 +8,9 @@ import {
   AttachmentId,
   BotId,
   BrowserTabRef,
+  ConnectorGlyph,
+  ConnectorId,
+  CuratedKey,
   DeviceId,
   EntryId,
   MemoryPath,
@@ -471,6 +474,17 @@ export function sampleTeam(now: DateTime.Utc) {
     },
   ];
 
+  const atlasAuth: DraftEntry = {
+    _tag: "connector-auth",
+    id: EntryId.make("atlas-c1"),
+    author: by(ids.atlas),
+    createdAt: ago(8),
+    connectorId: ConnectorId.make("conn_samplelinear00000"),
+    name: "Linear",
+    glyph: ConnectorGlyph.make("board"),
+    status: "pending",
+  };
+
   const atlasEntries: DraftEntry[] = [
     message(operator, ago(30), "Run the invoice migration on staging once the backup finishes."),
     message(
@@ -491,6 +505,7 @@ export function sampleTeam(now: DateTime.Utc) {
       sessionGrant: { covers: "every-command" },
       status: { _tag: "pending" },
     },
+    atlasAuth,
   ];
 
   const wrenEntries: DraftEntry[] = [
@@ -561,6 +576,21 @@ export function sampleTeam(now: DateTime.Utc) {
       createdAt: ago(60 * 5 - 3),
       origin: SiteOrigin.make("https://inspections.example"),
       note: "The inspection site wants a login to change the booking. Save it, and next time I can check it there.",
+      status: { _tag: "pending" },
+    },
+    message(operator, ago(12), "Can you block two hours for the tax paperwork next week?"),
+    {
+      _tag: "connector-suggestion",
+      id: EntryId.make("otto-c1"),
+      author: by(ids.otto),
+      createdAt: ago(11),
+      subject: {
+        _tag: "listing",
+        ref: { _tag: "curated", key: CuratedKey.make("google-calendar") },
+      },
+      name: "Google Calendar",
+      glyph: ConnectorGlyph.make("calendar"),
+      reason: "I'd need your calendar to find two free hours and hold them for you.",
       status: { _tag: "pending" },
     },
   ];

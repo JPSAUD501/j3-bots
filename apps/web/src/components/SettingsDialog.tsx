@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import {
+  type Connector,
   type Device,
   type DeviceId,
   type EngineStatus,
@@ -15,7 +16,12 @@ import * as Schema from "effect/Schema";
 import { SettingsIcon, XIcon } from "lucide-react";
 import { useId, useState } from "react";
 import type { PairingOffer, SettingsSaves } from "@j3-bots/client-runtime";
-import { clockTime, connectCommand } from "@j3-bots/client-runtime/presentation";
+import {
+  clockTime,
+  connectCommand,
+  connectorNeedsYou,
+  connectorTone,
+} from "@j3-bots/client-runtime/presentation";
 import { type ProfileEdits, useProfileEdits, useProfileForm } from "@j3-bots/client-runtime/react";
 import { useI18n, usePresentation } from "../app/context";
 import { type KeyWith, LANGUAGE_NAMES } from "@j3-bots/i18n";
@@ -73,6 +79,7 @@ type SettingsIntents = Pick<
   ShellIntents,
   | "updateSettings"
   | "setSettingsOpen"
+  | "openConnectors"
   | "startPairing"
   | "revokeDevice"
   | "refreshSettings"
@@ -105,6 +112,7 @@ interface SettingsButtonProps {
     | "recentTurns"
     | "signInUnencrypted"
     | "vault"
+    | "connectors"
   >;
   readonly intents: SettingsIntents;
 }
@@ -203,6 +211,12 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 {...(intents.providerSetup === undefined
                   ? {}
                   : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
+              />
+              <ConnectorsSection
+                connectors={data.connectors}
+                onOpen={() =>
+                  intents.openConnectors({ at: { _tag: "home" }, forBot: null, suggestion: null })
+                }
               />
               <UsageSection
                 engine={data.engine}
@@ -308,6 +322,46 @@ export function EngineSection({
         ) : (
           <ConnectProviders engine={engine} />
         ))}
+    </Section>
+  );
+}
+
+/**
+ * The services bots can use: how many work and how many wait on the
+ * operator, and the screen that manages them.
+ */
+export function ConnectorsSection({
+  connectors,
+  onOpen,
+}: {
+  connectors: ReadonlyArray<Connector> | null;
+  onOpen: () => void;
+}) {
+  const { t, plural } = useI18n();
+  const working =
+    connectors?.filter((connector) => connectorTone(connector) === "connected").length ?? 0;
+  const needYou = connectors?.filter(connectorNeedsYou).length ?? 0;
+  return (
+    <Section title={t("settings.connectors")}>
+      <p className="text-sm text-muted-foreground">{t("settings.connectors.hint")}</p>
+      {connectors === null ? (
+        <SkeletonRows count={1} />
+      ) : connectors.length === 0 ? (
+        <p className="text-sm">{t("settings.connectors.none")}</p>
+      ) : (
+        <p className="text-sm">
+          {plural("settings.connectors.connected", working)}
+          {needYou > 0 && (
+            <span className="text-waiting">
+              {" "}
+              · {plural("settings.connectors.needsYou", needYou)}
+            </span>
+          )}
+        </p>
+      )}
+      <Button size="sm" className="self-start" onClick={onOpen}>
+        {t("settings.connectors.open")}
+      </Button>
     </Section>
   );
 }

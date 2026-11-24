@@ -93,6 +93,24 @@ The operator has a bot that does its job well and wants someone else to have it,
 
 What a template holds and leaves out is in [Concepts](concepts.md) and [decision 0023](../decisions/0023-a-bot-template-is-a-file.md).
 
+### Giving a bot a service
+
+The operator wants a bot to reach something it cannot yet: their notes, their tracker, their calendar.
+
+- **Connectors**, in Settings and in a bot's details, opens one screen: the operator's connectors first, each with its status and who may use it, then the gallery's featured entries and a search of it. "Add your own" is the last row. A bot can suggest one in its conversation, with a card that says why; Connect on the card opens the same screen at that entry, for that bot.
+- An entry's page says what the connector lets bots do, in J3 Bots' own words for a curated one and its publisher's for one from the registry, and who published it. It connects the way the service asks:
+  - **Sign in**: one press opens the system browser at the service. On the desktop app the browser comes back to the app, which hands the sign-in to the server, and the page says it is done. On the web, served over plain HTTP, the browser ends on a page that does not load; the screen says to copy that page's address and paste it, and that the desktop or phone app does this without the step. Served over `https:`, the server takes the browser back itself.
+  - **A key or token**: where to make one, with a button that opens that page, then masked fields, with what each is for. One that takes one of a few values is a list to pick from.
+  - **An app of the operator's own**, for a service that asks for one: the steps to register it, a button that opens where to do so, and the issuer it is registered at, its client ID and its secret. J3 Bots uses that app only with the issuer the operator named.
+  - **A command**, for a registry entry the server runs: the whole command line, and a confirmation that it runs on the operator's server, as their user, before it is added.
+- Who may use it starts as the bot that suggested it, or the primary bot, and widens to some bots or all of them, those made later included.
+- **Add your own** takes an `https:` address, with any headers and an OAuth client the service gave the operator (its issuer, client ID and secret), or a command with its arguments and environment. A key belongs in the environment, where it is masked, never in an argument. An address in the operator's own network is added only once they confirm they meant it.
+- A connector's page shows its status and what fixes it: connected; needs signing in again (Sign in again); can't reach it, and why; or the vault locked (Unlock, which opens Settings over the screen; closing Settings returns to the page as it was, with anything typed in it). Its tools are listed once it is connected. It says which bots use it, changed in place, and the origin of its address or the program it runs, never the whole address or the arguments, which can carry a key. Disconnect asks first.
+- When a connector's tools change, its page shows what is new or changed, and bots get none of those until the operator accepts them; its other tools work as before. "Not now" leaves them held, without a badge, and Accept stays on the page.
+- A bot that finds its connector signed out says so with a card in its conversation, whose Sign in again opens the connector's page and starts the sign-in, or opens its form again for one that takes a key.
+
+What a connector is, and what a bot can and cannot do with one, is in [Concepts](concepts.md); how its secrets are kept is in [Security: connectors](../architecture/security.md#connectors).
+
 ### Knowing what it costs
 
 - A usage view shows each provider's limit windows as the engine reports them, and which bots and routines used turns recently.
@@ -144,12 +162,13 @@ Answers: what is this bot, and what runs without me.
 - Routines with their schedule, next run, last result, and a pause switch.
 - Files the bot produced.
 - Memory, readable and editable.
+- Connectors this bot may use, each with its status, and a way to the connectors screen.
 - Model and permission mode.
 
 ### Outside those three
 
 - **Command palette** on desktop and web: jump to a bot, a room or a message; run any action by name.
-- **Settings**: engine and provider status, usage, the operator's name and time zone, devices, notifications, appearance, and about and updates: the server's version and channel, and in the desktop app, the app's.
+- **Settings**: engine and provider status, connectors, usage, the operator's name and time zone, devices, notifications, appearance, and about and updates: the server's version and channel, and in the desktop app, the app's.
 - **Updates on the phone.** When the server or the app has an update, one quiet line over the roster says so, never a dialog. It opens Settings → About and updates, and hides until the next release. While the server updates, the same line shows how far it has come, its restart included, in place of the line that says the server cannot be reached. It then says once how the update ended. The app's own update is a tap too: the app downloads the release and checks it against the project's signature, and Android asks to install it. The first time, the app explains Android's "Install unknown apps" before it opens that page, and goes on when the operator comes back. A phone whose server speaks another protocol shows the side that is behind, with the update that brings it forward. A server behind the app is first asked to look for releases, so the phone says none is out yet only after it has looked. An app behind its server looks for its own release as the screen opens, and has its check and its channel there, since the server may run a nightly.
 
 ## States the interface must always show

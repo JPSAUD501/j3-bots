@@ -5,7 +5,9 @@ import {
   type RoomSubmission,
   useActions,
   useBotFiles,
+  type SignInRoute,
   useConnection,
+  useConnectors,
   useConversation,
   useDevices,
   useEngineStatus,
@@ -78,6 +80,7 @@ import {
   showsImage,
   templateFileName,
   type TemplateRead,
+  withBot,
 } from "@j3-bots/client-runtime/presentation";
 import type { AppLink } from "@j3-bots/desktop-bridge";
 import { memoryFileName, updateResultLine } from "@j3-bots/client-runtime/wording";
@@ -97,6 +100,8 @@ import {
 import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
 import { Onboarding } from "../onboarding/Onboarding";
 import { cn } from "../lib/cn";
+import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
+import type { ConnectorsIntents, ConnectorsOpening } from "../components/connectors/screen";
 import { EditBotDialog } from "../components/EditBotDialog";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ImageViewer } from "../components/ImageViewer";
@@ -900,6 +905,15 @@ function LiveShell({
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The image a file shows over everything, opened from a conversation.
   const [viewing, setViewing] = useState<Attachment | null>(null);
+  // The connectors screen, and what opened it; null while it is closed.
+  const [connectorsOpening, setConnectorsOpening] = useState<ConnectorsOpening | null>(null);
+  const openConnectors = (opening: ConnectorsOpening) => {
+    setSettingsOpen(false);
+    // A screen put aside under Settings comes back as it was, with what opened it.
+    if (connectorsOpening === null) setConnectorsOpening(opening);
+  };
+  const connectorsState = useConnectors();
+  const connectors = connectorsState._tag === "ready" ? connectorsState.value : null;
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
   // Read each time Settings opens, and on every socket while it stays open.
@@ -1133,6 +1147,32 @@ function LiveShell({
   const providerSetup = localProviderSetup(j3);
   const vault = useReadable(j3.vault.view);
 
+  // A connector's sign-in comes back to the desktop app through its loopback; to a
+  // browser, through a server reached over https, else as an address the operator pastes.
+  const desktopApp = desktop;
+  const signInRoute: SignInRoute =
+    desktopApp !== null
+      ? {
+          _tag: "relay",
+          listen: () => desktopApp.catchSignIn(i18n.locale),
+          expect: desktopApp.expectSignIn,
+          onReturn: desktopApp.onSignInReturn,
+          stop: desktopApp.stopCatchingSignIn,
+        }
+      : window.location.protocol === "https:"
+        ? { _tag: "server" }
+        : { _tag: "paste" };
+  const { state: _connectorsState, ...connectorsClient } = j3.connectors;
+  const connectorsIntents: ConnectorsIntents = {
+    ...connectorsClient,
+    signInRoute,
+    openPage: (url) => {
+      window.open(url, "_blank", "noopener");
+    },
+    // The vault is unlocked and set up in Settings, over the connectors, which wait as they were.
+    openVault: () => setSettingsOpen(true),
+  };
+
   const data: ShellData = {
     engine: engine._tag === "ready" ? engine.value : null,
     engineStale: engine._tag === "ready" && engine.stale,
@@ -1153,6 +1193,7 @@ function LiveShell({
     routines: (botId) => (botId === detailsBotId ? loadedList(routines) : null),
     files: (botId) => (botId === detailsBotId ? loadedList(files) : null),
     memory: (botId) => (botId === detailsBotId ? loadedList(memory) : null),
+    connectors,
     settings: settings._tag === "ready" ? settings.value : null,
     settingsSaves: { profile: profileSave, notifications: notificationsSave },
     settingsOpen,
@@ -1385,6 +1426,45 @@ function LiveShell({
         search: (prev) => ({ ...prev, details: true, routine: routineId }),
       }),
     openConversation: (botId) => void goToBot(botId),
+    connectSuggested: (entry) => {
+      const { botId } = entry.author;
+      if (entry.subject._tag === "listing") {
+        openConnectors({
+          at: { _tag: "listing", ref: entry.subject.ref, name: entry.name, glyph: entry.glyph },
+          forBot: botId,
+          suggestion: entry.id,
+        });
+        return;
+      }
+      // A connector the operator added: the bot is let in at once, and its page
+      // opens when it waits on the operator too, for a sign-in or the vault.
+      const { connectorId } = entry.subject;
+      const connector = connectors?.find((candidate) => candidate.id === connectorId);
+      if (connector === undefined) {
+        openConnectors({ at: { _tag: "home" }, forBot: botId, suggestion: entry.id });
+        return;
+      }
+      void j3.connectors
+        .setBots(connectorId, withBot(connector.grant, botId, true, bots))
+        .then((result) => {
+          if (result._tag === "failed") say(t("connectorCard.failed"));
+        });
+      if (connector.status._tag !== "connected") {
+        openConnectors({
+          at: { _tag: "connector", connectorId, signIn: false, added: false },
+          forBot: botId,
+          suggestion: entry.id,
+        });
+      }
+    },
+    dismissSuggestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
+    signInConnector: (entry) =>
+      openConnectors({
+        at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
+        forBot: entry.author.botId,
+        suggestion: null,
+      }),
+    openConnectors,
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
     setDraftText: j3.setDraftText,
     attachFiles: (asked, picked, at) =>
@@ -1619,6 +1699,15 @@ function LiveShell({
           event.currentTarget.value = "";
           if (file !== undefined) openTemplate(file);
         }}
+      />
+      <ConnectorsDialog
+        opening={connectorsOpening}
+        aside={settingsOpen}
+        connectors={connectors}
+        bots={bots}
+        connected={data.connected}
+        intents={connectorsIntents}
+        onClose={() => setConnectorsOpening(null)}
       />
       <RoomDialog
         mode={roomFormMode}
