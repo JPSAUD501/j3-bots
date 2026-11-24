@@ -2,7 +2,7 @@
 
 A record exists for a decision that would be expensive to reverse. Each one states the context, the decision, what it costs, and what was rejected.
 
-**Accepted** records are settled. **Proposed** records are recommendations waiting for the project owner.
+**Accepted** records are settled. **Proposed** records are recommendations waiting for the project owner. A **Superseded** record says what it decided, why it was dropped, and which record replaced it.
 
 | # | Decision | Status |
 | --- | --- | --- |
@@ -16,7 +16,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0008](0008-license.md) | License: AGPL-3.0-or-later with an app-store permission, contributions signed off | Accepted |
 | [0009](0009-a-wake-is-sent-at-most-once.md) | A wake is sent at most once, and uncertainty fails visibly | Proposed |
 | [0010](0010-workers-reconcile-durable-state.md) | The turn machinery's workers reconcile durable state | Accepted |
-| [0011](0011-a-room-runs-one-turn-at-a-time.md) | A room runs one turn at a time | Accepted |
+| [0011](0011-a-room-runs-one-turn-at-a-time.md) | A room runs one turn at a time | Superseded by [0040](0040-the-members-of-a-room-run-in-parallel.md) |
 | [0012](0012-desktop-reaches-the-server-directly.md) | The desktop renders the bundled web build and calls the server from its own origin | Proposed |
 | [0013](0013-background-work-belongs-to-the-turn-that-started-it.md) | Background work belongs to the turn that started it | Accepted |
 | [0014](0014-push-goes-through-a-push-sender.md) | Push goes through a push sender, and Expo's service is the first | Proposed |
@@ -45,5 +45,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0037](0037-the-server-types-a-saved-login-into-the-bots-tab.md) | The server types a saved login into the bot's tab, unattended | Proposed |
 | [0038](0038-a-teammate-conversation-is-a-view-of-teammate-messages.md) | A teammate conversation is a view of the teammate messages that already exist | Accepted |
 | [0039](0039-a-room-has-no-host.md) | A room has no host, and a message for nobody wakes everyone | Accepted |
+| [0040](0040-the-members-of-a-room-run-in-parallel.md) | The members of a room run in parallel | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

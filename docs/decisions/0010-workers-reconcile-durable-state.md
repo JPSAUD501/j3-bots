@@ -25,7 +25,6 @@ Each worker is supervised where its loop meets one item, every send in the dispa
 - An answer or a resume the engine never takes is sent again every ten minutes for as long as its request is open or its hold current; a dispatch still fails visibly at its bounds, because the operator must learn that it may never arrive.
 - One bot's broken session never delays another bot's message, and a defect in settling one dispatch never stalls another bot's recovery.
 - A staging retry never takes a turn past the budget.
-- Whether a room may start a turn is read from its dispatches and turns in the same way, again in the transaction that writes the dispatch, never kept as a flag that a crash could leave set ([0011](0011-a-room-runs-one-turn-at-a-time.md)).
 - A worker does a little more reading than one that acts only on what it was told, and passes of one worker run one at a time.
 
 ## Rejected
