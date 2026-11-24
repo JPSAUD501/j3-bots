@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   arrangeRoster,
+  betweenBots,
   type BotItem,
+  filterPairs,
   filterRoster,
   orderRoster,
   ROOM_MEMBERS,
   rosterKeyOf,
   rosterKeyText,
 } from "@j3-bots/client-runtime/presentation";
-import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
-import type { RosterItemKey, Section } from "@j3-bots/contracts";
+import { useJ3Client, usePairs, useReadable } from "@j3-bots/client-runtime/react";
+import { pairTitle } from "@j3-bots/client-runtime/wording";
+import type { PairBotIds, RosterItemKey, Section } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -45,8 +48,9 @@ import {
   useKeptPlace,
   useRowMotion,
 } from "../components/Reorder.tsx";
+import { PairRow } from "../components/PairRow.tsx";
 import { RosterRow } from "../components/RosterRow.tsx";
-import { SectionEmpty, SectionHeader } from "../components/SectionHeader.tsx";
+import { BetweenHeader, SectionEmpty, SectionHeader } from "../components/SectionHeader.tsx";
 import { SettingsEntry } from "../components/SettingsEntry.tsx";
 import { UpdateNotice } from "../update/UpdateNotice.tsx";
 import { ConversationView, Gone } from "../conversation/ConversationView.tsx";
@@ -55,7 +59,7 @@ import { Onboarding } from "../onboarding/Onboarding.tsx";
 import { useSideBySide } from "../layout.ts";
 import { asItWas, type Navigation, type Screens, useOpenConversation } from "../navigation.tsx";
 import { pickTemplate } from "../template/opened.ts";
-import { useBots } from "../presentation.tsx";
+import { useBots, usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { useColor } from "../theme.ts";
 import { useNotificationTaps } from "../notificationTaps.ts";
@@ -64,6 +68,7 @@ import { useTextLines } from "../lines.tsx";
 import { toggleFolded, useFolded } from "./folded.ts";
 import { useSectionActions } from "./placing.ts";
 import { useRosterItem } from "./rosterItem.ts";
+import { usePairMenu } from "./pairMenu.ts";
 import { foundEntries, type RosterEntry, rosterEntries, rosterSizes } from "./rosterEntries.ts";
 
 type Props = NativeStackScreenProps<Screens, "roster">;
@@ -162,18 +167,27 @@ interface PressedSection {
   readonly anchor: MenuAnchor;
 }
 
+/** A pair whose row the operator long-pressed, and where that row is. */
+interface PressedPair {
+  readonly botIds: PairBotIds;
+  readonly anchor: MenuAnchor;
+}
+
 /**
  * The roster's own header, with its search and New, and under it, under the
  * status bar, what the operator arranged: the pinned bots as a band of large
- * avatars, then the rows in no section, then each section, then the way to
- * the hidden bots. A search lists only what matches, hidden bots too, as
- * rows. A long press on a bot or a section's header opens its menu.
+ * avatars, then the rows in no section, then each section, then the pairs of
+ * bots that wrote each other under "Between bots", then the way to the
+ * hidden bots. A search lists only what matches, hidden bots too, as rows,
+ * then the pairs either of whose bots matches. A long press on a bot, a
+ * pair or a section's header opens its menu.
  */
 function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const { t } = useI18n();
   const client = useJ3Client();
   const roster = useReadable(client.roster);
   const sections = useReadable(client.sections);
+  const pairs = usePairs();
   const folded = useFolded();
   const sectionActions = useSectionActions();
   const insets = useSafeAreaInsets();
@@ -207,13 +221,20 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   // Each entry is as tall as its text needs at the operator's font size, once the lines are read.
   const lines = useTextLines();
   const sizes = lines === null ? null : rosterSizes(lines);
+  // The pairs come with the roster's bots, and wait for them; until they are read there are none.
+  const allPairs = pairs._tag === "ready" ? pairs.value : [];
   const entries =
     roster._tag === "loading" || sizes === null
       ? null
       : searching
-        ? foundEntries(orderRoster(filterRoster(roster.value, query)), sizes)
+        ? foundEntries(
+            orderRoster(filterRoster(roster.value, query)),
+            filterPairs(allPairs, roster.value, query),
+            sizes,
+          )
         : rosterEntries(
             arrangeRoster(orderRoster(roster.value), sections ?? []),
+            betweenBots(allPairs, roster.value),
             width,
             folded,
             sizes,
@@ -224,6 +245,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   // away as they go; a row the list no longer has needs nothing more.
   const [pressed, setPressed] = useState<PressedBot | null>(null);
   const [pressedSection, setPressedSection] = useState<PressedSection | null>(null);
+  const [pressedPair, setPressedPair] = useState<PressedPair | null>(null);
   const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set());
   const listed = new Set(entries?.map((entry) => entry.key));
   if ([...leaving].some((key) => !listed.has(key))) {
@@ -375,6 +397,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
               ),
             })}
       />
+      <PairMenu pressed={pressedPair} onClose={() => setPressedPair(null)} />
       <AvatarHold held={scrolling}>
         <RowMoves motion={motion} keeper={keeping.keeper} leaving={leaving}>
           <FlatList
@@ -464,6 +487,17 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                   );
                 case "empty":
                   return <SectionEmpty height={entry.height} />;
+                case "between":
+                  return <BetweenHeader height={entry.height} />;
+                case "pair":
+                  return (
+                    <PairRow
+                      pair={entry.pair}
+                      height={entry.height}
+                      onOpen={() => navigation.navigate("pair", { botIds: entry.pair.botIds })}
+                      onMenu={(anchor) => setPressedPair({ botIds: entry.pair.botIds, anchor })}
+                    />
+                  );
                 case "hidden":
                   return (
                     <HiddenRow
@@ -491,6 +525,32 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
         </RowMoves>
       </AvatarHold>
     </View>
+  );
+}
+
+/**
+ * A pair's menu, over the row the operator long-pressed. It keeps showing the
+ * last pair pressed while it closes.
+ */
+function PairMenu({
+  pressed,
+  onClose,
+}: {
+  readonly pressed: PressedPair | null;
+  readonly onClose: () => void;
+}) {
+  const ctx = usePresentation();
+  const [shown, setShown] = useState(pressed?.botIds ?? null);
+  if (pressed !== null && pressed.botIds !== shown) setShown(pressed.botIds);
+  const entries = usePairMenu(shown);
+  return (
+    <Menu
+      anchor={pressed?.anchor ?? null}
+      onClose={onClose}
+      label={shown === null ? "" : ctx.i18n.t("roster.menu", { name: pairTitle(shown, ctx) })}
+      entries={entries}
+      edge="start"
+    />
   );
 }
 

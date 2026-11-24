@@ -2,10 +2,11 @@
 import {
   type ArrangedRoster,
   type BotItem,
+  pairKeyText,
   rosterKeyOf,
   rosterKeyText,
 } from "@j3-bots/client-runtime/presentation";
-import type { RosterItem, Section, SectionId } from "@j3-bots/contracts";
+import type { RosterItem, Section, SectionId, TeammatePair } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import type { TextLines } from "../lines.tsx";
 
@@ -98,6 +99,22 @@ export type RosterEntry =
       readonly key: string;
       readonly height: number;
     }
+  /**
+   * The header of the "Between bots" section, listed while any pair is: the
+   * bots' own, which the operator does not arrange.
+   */
+  | {
+      readonly kind: "between";
+      readonly key: "between";
+      readonly height: number;
+    }
+  /** The teammate conversation of two bots, under "Between bots", as tall as a row. */
+  | {
+      readonly kind: "pair";
+      readonly key: string;
+      readonly height: number;
+      readonly pair: TeammatePair;
+    }
   /** The way to the hidden bots, listed while any is. */
   | {
       readonly kind: "hidden";
@@ -129,6 +146,23 @@ const row =
     item,
   });
 
+/** The "Between bots" section: its header, then each pair, as `pairs` are ordered, or nothing. */
+const betweenEntries = (
+  pairs: ReadonlyArray<TeammatePair>,
+  sizes: RosterSizes,
+): ReadonlyArray<RosterEntry> =>
+  pairs.length === 0
+    ? []
+    : [
+        { kind: "between", key: "between", height: sizes.section },
+        ...pairs.map((pair): RosterEntry => ({
+          kind: "pair",
+          key: pairKeyText(pair.botIds),
+          height: sizes.row,
+          pair,
+        })),
+      ];
+
 /**
  * A section's header, then its bots unless it is folded, or, open with none,
  * the line that says so. A bot keeps its row's key wherever it is, so moving
@@ -157,11 +191,13 @@ const sectionEntries = (
 
 /**
  * What the roster lists in a list `width` px wide: the pinned bots' band,
- * the rows in no section, each section in the operator's order, and the way
- * to the hidden bots last. `folded` are the sections folded on this phone.
+ * the rows in no section, each section in the operator's order, the pairs
+ * of bots that wrote each other (`betweenBots`), and the way to the hidden
+ * bots last. `folded` are the sections folded on this phone.
  */
 export const rosterEntries = (
   arranged: ArrangedRoster,
+  pairs: ReadonlyArray<TeammatePair>,
   width: number,
   folded: ReadonlySet<SectionId>,
   sizes: RosterSizes,
@@ -185,12 +221,17 @@ export const rosterEntries = (
     ...arranged.sections.flatMap((each) =>
       sectionEntries(each, folded.has(each.section.id), sizes),
     ),
+    ...betweenEntries(pairs, sizes),
     ...hidden,
   ];
 };
 
-/** What a search lists: only the rows that match, as rows. */
+/**
+ * What a search lists: only the rows that match, as rows, then the pairs
+ * that match (`filterPairs`) under "Between bots".
+ */
 export const foundEntries = (
   found: ReadonlyArray<RosterItem>,
+  pairs: ReadonlyArray<TeammatePair>,
   sizes: RosterSizes,
-): ReadonlyArray<RosterEntry> => found.map(row(sizes));
+): ReadonlyArray<RosterEntry> => [...found.map(row(sizes)), ...betweenEntries(pairs, sizes)];

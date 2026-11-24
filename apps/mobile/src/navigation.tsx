@@ -8,6 +8,7 @@ import type {
   EntryId,
   ListingRef,
   MemoryPath,
+  PairBotIds,
   RoomId,
   RosterItemKey,
   RoutineId,
@@ -44,6 +45,7 @@ import { EditBotScreen } from "./screens/EditBot.tsx";
 import { HiddenScreen } from "./screens/Hidden.tsx";
 import { MemoryFileScreen } from "./screens/MemoryFile.tsx";
 import { NewBotScreen } from "./screens/NewBot.tsx";
+import { PairScreen } from "./screens/Pair.tsx";
 import { RoomFormScreen } from "./screens/RoomForm.tsx";
 import { RoutineRunsScreen } from "./screens/RoutineRuns.tsx";
 import { SettingsScreen } from "./settings/Settings.tsx";
@@ -61,8 +63,8 @@ import { FlightHost } from "./onboarding/handoff.tsx";
 
 /**
  * One route per screen. On a phone they stack: the roster, a bot's or room's
- * conversation, its details, and over those the forms, a memory file and a
- * routine's runs;
+ * conversation, its details, a teammate conversation, and over those the
+ * forms, a memory file and a routine's runs;
  * Settings and the hidden bots open from the roster. From the tablet width up the roster's route
  * shows the conversation `item` names beside the roster, and the
  * conversation's route is not used. Each route after the roster names the
@@ -81,6 +83,11 @@ export type Screens = {
   /** `arriving` while the first bot travels in from the first run: the screen fades in, holding still. */
   conversation: { readonly item: RosterItemKey; readonly arriving?: true | undefined };
   details: { readonly item: RosterItemKey };
+  /**
+   * The teammate conversation of two bots, read-only, opened at its latest
+   * message or, with `at`, at the message one of whose cards that entry is.
+   */
+  pair: { readonly botIds: PairBotIds; readonly at?: EntryId };
   share: undefined;
   shareTemplate: { readonly botId: BotId };
   newFromTemplate: undefined;
@@ -120,11 +127,13 @@ export type Screens = {
 };
 
 /**
- * What the room form is open for: a new room, or one the roster has, named by
- * id, to edit or to give what it needs to take messages again.
+ * What the room form is open for: a new room, with `members` picked already
+ * when a teammate conversation starts one with its two bots, or one the
+ * roster has, named by id, to edit or to give what it needs to take messages
+ * again.
  */
 type RoomFormFor =
-  | { readonly _tag: "create" }
+  | { readonly _tag: "create"; readonly members?: ReadonlyArray<BotId> }
   | { readonly _tag: "edit" | "unarchive"; readonly roomId: RoomId };
 
 export type Navigation = NativeStackNavigationProp<Screens>;
@@ -243,6 +252,8 @@ export function Main() {
                   })}
                 />
                 <Stack.Screen name="details" component={DetailsScreen} />
+                {/* Draws its own header: both bots' faces, their names and its menu. */}
+                <Stack.Screen name="pair" component={PairScreen} options={{ headerShown: false }} />
                 {/* Sets its own title. */}
                 <Stack.Screen name="hidden" component={HiddenScreen} />
                 <Stack.Screen

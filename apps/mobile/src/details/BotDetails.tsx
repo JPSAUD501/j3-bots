@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Loaded } from "@j3-bots/client-runtime";
-import { canStop, connectorsOf } from "@j3-bots/client-runtime/presentation";
+import {
+  canStop,
+  connectorsOf,
+  type Teammate,
+  teammatesOf,
+} from "@j3-bots/client-runtime/presentation";
 import {
   useBotFiles,
   useConnectors,
   useEngineStatus,
   useJ3Client,
   useMemory,
+  usePairs,
   useRoutines,
 } from "@j3-bots/client-runtime/react";
 import {
@@ -14,6 +20,7 @@ import {
   botModelName,
   fileSize,
   memoryFileName,
+  pairLine,
   permissionModeText,
   routineLines,
 } from "@j3-bots/client-runtime/wording";
@@ -35,6 +42,7 @@ import { type ReactElement, useMemo } from "react";
 import { ScrollView, useWindowDimensions, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { DeleteButton, Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { useConfirm } from "../confirm.tsx";
@@ -42,7 +50,7 @@ import { PressScale } from "../press.tsx";
 import { Apart, Profile, ProfileLine } from "./Profile.tsx";
 import { Icon } from "../components/Icon.tsx";
 import type { Navigation } from "../navigation.tsx";
-import { usePresentation } from "../presentation.tsx";
+import { useBots, usePresentation } from "../presentation.tsx";
 import { useSay } from "../toast.tsx";
 import { Button, Switch } from "../ui.tsx";
 import { FileCard } from "../conversation/FileCard.tsx";
@@ -59,8 +67,9 @@ const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<
 
 /**
  * Answers: what is this bot, and what runs without me. Its profile, Stop
- * while it has work to stop, its routines with a switch to pause each, the files it sent, its memory, the
- * model it runs on, a fresh start, and, last and apart, deleting it.
+ * while it has work to stop, its routines with a switch to pause each, the
+ * files it sent, its memory, its connectors, the teammates it wrote with,
+ * the model it runs on, a fresh start, and, last and apart, deleting it.
  */
 export function BotDetails({ bot }: { readonly bot: Bot }) {
   const ctx = usePresentation();
@@ -78,6 +87,8 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const files = loadedList(useBotFiles(bot.id));
   const memory = loadedList(useMemory({ _tag: "bot", botId: bot.id }));
   const connectors = useConnectors();
+  const pairs = usePairs();
+  const teammates = pairs._tag === "ready" ? teammatesOf(bot.id, pairs.value) : [];
   const { name, title, job } = bot.profile;
   const mode = permissionModeText(bot.permissionMode, ctx.i18n);
   const modelName = botModelName(engine._tag === "ready" ? engine.value : null, bot);
@@ -170,6 +181,19 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
           <BotConnectors bot={bot} connectors={connectorsOf(connectors.value, bot.id)} />
         )}
       </Section>
+
+      {/* Only a bot that wrote with a teammate has this section. */}
+      {teammates.length > 0 && (
+        <Section open title={t("pairs.teammates")}>
+          {teammates.map((teammate) => (
+            <TeammateRow
+              key={teammate.peer}
+              teammate={teammate}
+              onOpen={() => navigation.navigate("pair", { botIds: teammate.pair.botIds })}
+            />
+          ))}
+        </Section>
+      )}
 
       <Section open title={t("details.model")}>
         <View className="flex-row items-start gap-3">
@@ -385,6 +409,52 @@ function VaultRow({ bot }: { readonly bot: Bot }) {
         }
       />
     </View>
+  );
+}
+
+/**
+ * A teammate the bot wrote with: its face and name, then the latest message
+ * between them after who wrote it, and when. It opens their conversation.
+ * A deleted teammate is named so, its face left blank.
+ */
+function TeammateRow({
+  teammate,
+  onOpen,
+}: {
+  readonly teammate: Teammate;
+  readonly onOpen: () => void;
+}) {
+  const ctx = usePresentation();
+  const peer = useBots().get(teammate.peer);
+  const name = peer?.profile.name ?? ctx.i18n.t("bot.unknown");
+  const line = pairLine(teammate.pair, ctx);
+  const time = activityTime(teammate.pair.lastMessage.createdAt, ctx);
+  return (
+    <PressScale
+      depth="row"
+      accessibilityRole="button"
+      accessibilityLabel={[name, time, line].join(", ")}
+      onPress={onOpen}
+      className="-mx-2 min-h-11 flex-row items-center gap-3 rounded-md px-2 py-1 active:bg-muted"
+    >
+      {peer === undefined ? (
+        <View className="size-7 rounded-pill bg-muted" />
+      ) : (
+        <BotAvatar avatar={peer.profile.avatar} seed={peer.id} state="idle" size={28} still />
+      )}
+      <View className="min-w-0 flex-1 gap-0.5">
+        <View className="flex-row items-baseline gap-2">
+          <Text numberOfLines={1} className="min-w-0 flex-1 text-base text-foreground">
+            {name}
+          </Text>
+          <Text className="text-xs text-muted-foreground">{time}</Text>
+        </View>
+        <Text numberOfLines={1} className="text-sm text-muted-foreground">
+          {line}
+        </Text>
+      </View>
+      <Icon icon={ChevronRight} size={14} color="accent-muted-foreground" />
+    </PressScale>
   );
 }
 

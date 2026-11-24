@@ -498,6 +498,8 @@ const sentences = {
 
   "pairs.section": "Entre bots",
   "pairs.readOnly": "Somente leitura",
+  "pairs.back": "Voltar",
+  "pairs.readOnlyHint": "Só os dois bots escrevem aqui.",
   "pairs.talkTo": "Falar com {name}",
   "pairs.startRoom": "Criar uma sala com os dois",
   "pairs.empty": "Esses dois ainda não trocaram mensagens.",
