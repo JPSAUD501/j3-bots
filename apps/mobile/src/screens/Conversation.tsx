@@ -34,6 +34,14 @@ export function ConversationScreen({ navigation, route }: Props) {
       routes: [{ key: roster.key, name: "roster", params: { item: key } }, ...above],
     });
   }, [sideBySide, navigation, route.key, key]);
+  // Arrived from the first run: once in place, the screen goes back to sliding like the others.
+  const arriving = route.params.arriving === true;
+  useEffect(() => {
+    if (!arriving) return;
+    return navigation.addListener("transitionEnd", () =>
+      navigation.setParams({ arriving: undefined }),
+    );
+  }, [arriving, navigation]);
   if (found._tag === "loading") return <Connecting />;
   if (found._tag === "gone") {
     return (

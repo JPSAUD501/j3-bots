@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { AvatarChoice } from "@j3-bots/contracts";
-import { avatarCast } from "@j3-bots/design-tokens";
-import { type ComponentRef, type ReactNode, useEffect, useRef } from "react";
+import { avatarCast, firstRun, springs } from "@j3-bots/design-tokens";
+import { type ComponentRef, type ReactNode, type Ref, useEffect, useRef } from "react";
 import { AccessibilityInfo, View } from "react-native";
 import Animated, {
   Easing,
+  FadeIn,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -103,10 +104,30 @@ const cast: ReadonlyArray<CastMember> = [
 ];
 
 /**
- * The team still to come: each bot pops in after the one before, then floats
- * on its own clock. `compact` is for screens with a form under it.
+ * How the cast's first bot is shown: popping in with the rest, not at all
+ * while the bot being made stands for it, or once the bot being made has been
+ * carried back into its place.
  */
-export function Cast({ compact = false }: { readonly compact?: boolean }) {
+export type Lead = "pops" | "away" | "after";
+
+/** The cast's first bot showing in its place, the moment the bot being made lands there. */
+const landed = FadeIn.delay(springs.slide.duration).duration(1);
+
+/**
+ * The team still to come: each bot pops in after the one before, then floats
+ * on its own clock. `compact` is for screens with a form under it. `leadRef`
+ * is the first bot's place, which the bot being made leaves from and comes
+ * back to.
+ */
+export function Cast({
+  compact = false,
+  lead = "pops",
+  leadRef,
+}: {
+  readonly compact?: boolean;
+  readonly lead?: Lead;
+  readonly leadRef?: Ref<ComponentRef<typeof View>>;
+}) {
   const reduced = useReducedMotion();
   const scale = compact ? 0.72 : 1;
   return (
@@ -117,18 +138,25 @@ export function Cast({ compact = false }: { readonly compact?: boolean }) {
     >
       {cast.map((member, index) => {
         const size = Math.round(member.size * scale);
+        const first = index === 0;
         return (
           <View
             key={`${member.look.shape}/${member.look.color}`}
+            ref={first ? leadRef : undefined}
             className="absolute"
             style={{
               left: `${member.x}%`,
               top: `${member.y}%`,
               marginLeft: -size / 2,
               marginTop: -size / 2,
+              width: size,
+              height: size,
+              opacity: first && lead === "away" ? 0 : 1,
             }}
           >
-            <Animated.View entering={popIn(90 * index)}>
+            <Animated.View
+              entering={first && lead === "after" ? landed : popIn(firstRun.stagger * index)}
+            >
               <Float period={member.float} still={reduced}>
                 <BotAvatar
                   avatar={member.look}
@@ -163,7 +191,7 @@ function Float({
     y.set(
       withRepeat(
         withSequence(
-          withTiming(-6, { duration: period / 2, easing: Easing.inOut(Easing.sin) }),
+          withTiming(-firstRun.float, { duration: period / 2, easing: Easing.inOut(Easing.sin) }),
           withTiming(0, { duration: period / 2, easing: Easing.inOut(Easing.sin) }),
         ),
         -1,

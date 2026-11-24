@@ -120,7 +120,7 @@ export function RosterScreen({ navigation, route }: Props) {
     return (
       <Onboarding
         onCreating={setOpeningFirstBot}
-        onArrived={(botId) => openConversation({ _tag: "bot", botId })}
+        onArrived={(botId) => openConversation({ _tag: "bot", botId }, true)}
       />
     );
   }

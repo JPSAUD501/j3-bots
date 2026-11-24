@@ -57,6 +57,7 @@ import { CredentialScreen } from "./vault/CredentialScreen.tsx";
 import { VaultScreen } from "./vault/VaultScreen.tsx";
 import { Toasts } from "./toast.tsx";
 import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
+import { FlightHost } from "./onboarding/handoff.tsx";
 
 /**
  * One route per screen. On a phone they stack: the roster, a bot's or room's
@@ -77,7 +78,8 @@ import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
-  conversation: { readonly item: RosterItemKey };
+  /** `arriving` while the first bot travels in from the first run: the screen fades in, holding still. */
+  conversation: { readonly item: RosterItemKey; readonly arriving?: true | undefined };
   details: { readonly item: RosterItemKey };
   share: undefined;
   shareTemplate: { readonly botId: BotId };
@@ -142,12 +144,14 @@ const Stack = createNativeStackNavigator<Screens>();
 /**
  * Opens a bot's or room's conversation where this layout shows one: on its
  * own screen on a phone, over the one shown now unless that is it already,
- * or beside the roster.
+ * or beside the roster. `arriving` is for the first bot coming from the
+ * first run, whose screen fades in rather than slides, so the bot can travel
+ * into its header (`sendOff`).
  */
-export function useOpenConversation(): (item: RosterItemKey) => void {
+export function useOpenConversation(): (item: RosterItemKey, arriving?: boolean) => void {
   const navigation = useNavigation<Navigation>();
   const sideBySide = useSideBySide();
-  return (item) => {
+  return (item, arriving = false) => {
     if (sideBySide) {
       navigation.popTo("roster", { item });
       return;
@@ -158,7 +162,7 @@ export function useOpenConversation(): (item: RosterItemKey) => void {
     const params = shown?.name === "conversation" ? shown.params : undefined;
     const shownItem = params !== undefined && "item" in params ? params.item : undefined;
     if (shownItem === undefined || rosterKeyText(shownItem) !== rosterKeyText(item)) {
-      navigation.push("conversation", { item });
+      navigation.push("conversation", arriving ? { item, arriving: true } : { item });
     }
   };
 }
@@ -233,7 +237,10 @@ export function Main() {
                 <Stack.Screen
                   name="conversation"
                   component={ConversationScreen}
-                  options={{ headerShown: false }}
+                  options={({ route }) => ({
+                    headerShown: false,
+                    ...(route.params.arriving === true ? { animation: "fade" } : {}),
+                  })}
                 />
                 <Stack.Screen name="details" component={DetailsScreen} />
                 {/* Sets its own title. */}
@@ -290,6 +297,7 @@ export function Main() {
               </Stack.Navigator>
             </NavigationContainer>
           </FileOpenerProvider>
+          <FlightHost />
           <ShareOpener navigation={navigation} ready={ready} />
           <TemplateOpener navigation={navigation} ready={ready} />
         </Toasts>

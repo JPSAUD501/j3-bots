@@ -11,6 +11,7 @@ import { LiveBotAvatar, useOffline } from "../components/avatar/mood.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";
 import { SwapText } from "../components/SwapText.tsx";
+import { useLandingSpot } from "../onboarding/handoff.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
 
@@ -56,6 +57,8 @@ export function ConversationHeader({
 
   // Each change of state and each new line is said once, then how the turn ended; not the first.
   const offline = useOffline();
+  // A first bot arriving from the first run lands here.
+  const landing = useLandingSpot(item._tag === "bot" ? item.bot.id : null);
   useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
 
   return (
@@ -80,13 +83,15 @@ export function ConversationHeader({
         className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-md px-1.5 active:bg-muted"
       >
         {item._tag === "bot" ? (
-          <LiveBotAvatar
-            bot={item.bot}
-            lastEntry={item.lastEntry}
-            size={28}
-            ground={ground}
-            markPrimary
-          />
+          <View onLayout={landing.onLayout} style={{ opacity: landing.hidden ? 0 : 1 }}>
+            <LiveBotAvatar
+              bot={item.bot}
+              lastEntry={item.lastEntry}
+              size={28}
+              ground={ground}
+              markPrimary
+            />
+          </View>
         ) : (
           <RoomAvatar size={28} ground={ground} members={roomAvatarMembers(item.room, bots)} />
         )}

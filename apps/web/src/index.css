@@ -310,8 +310,10 @@
 
 /*
  * The first run's motion. Each animation is drawn along a spring the element's
- * style names (`springAnimation`); these say only where it starts or ends.
+ * style names (`springAnimation`), with its distances from the design tokens'
+ * `firstRun` in custom properties; these say only where it starts or ends.
  * A step slides along the reading direction, so it reverses in right-to-left.
+ * Under reduced motion its screens crossfade (`crossfade`, below).
  */
 @layer components {
   .onboarding {
@@ -348,15 +350,21 @@
   }
 }
 
-@keyframes onboarding-hop {
+@keyframes onboarding-fade-in {
   from {
-    transform: translateY(-10px) scale(1.06, 0.95);
+    opacity: 0;
+  }
+}
+
+@keyframes onboarding-fade-out {
+  to {
+    opacity: 0;
   }
 }
 
 @keyframes onboarding-float {
   50% {
-    transform: translateY(-6px);
+    transform: translateY(var(--onboarding-float, 0px));
   }
 }
 
@@ -367,8 +375,25 @@
   }
   to {
     opacity: 0;
-    transform: scale(2.2);
+    transform: scale(var(--onboarding-reach, 1));
   }
+}
+
+/*
+ * The first bot's avatar travels from its arrival into its conversation's
+ * header (`openArrived`) on `slide`, as the first run and the conversation
+ * crossfade around it. Under reduced motion nothing travels: the page only
+ * crossfades.
+ */
+::view-transition-group(arriving-bot) {
+  animation-duration: var(--duration-slide);
+  animation-timing-function: var(--ease-slide);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--duration-state);
+  animation-timing-function: var(--ease-out);
 }
 
 @keyframes onboarding-pulse {
@@ -459,6 +484,11 @@
   ::after {
     transition-duration: 0s !important;
     animation-duration: 0s !important;
+  }
+
+  /* A crossfade moves nothing, so it stays: the first run's screens give way to each other. */
+  .crossfade {
+    animation-duration: var(--duration-state) !important;
   }
 }
 
