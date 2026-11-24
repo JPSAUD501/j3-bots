@@ -66,16 +66,6 @@ Sending something to another person is not reversible. The base prompt holds bot
 - A declined send is final. The bot does not retry it, reword it or find another route.
 - Purchases, deletions, publishing and changes to accounts need the operator's explicit yes in the conversation.
 
-## The browser
-
-A bot whose browser switch is on can open pages in the engine's browser on the host and act in them ([Concepts](../product/concepts.md#controls)). That browser keeps one profile, shared by every bot with the switch on, and the operator signs in to sites in it. So each of those bots acts on those sites with the operator's sessions: what it can do there is what the operator's account can do, and the site cannot tell the bot from the operator. The rules in [Acting on the operator's behalf](#acting-on-the-operators-behalf) apply to what a bot does in a page as to any other send.
-
-- The switch is off for every bot until the operator turns it on, and the engine's browser access is off engine-wide besides it ([Engine: the browser](engine.md#the-browser)).
-- Turning it off takes the browser from the bot at once: its work is stopped, and every thread of its project, a delegated task's or another agent's included, loses it before it runs again.
-- A page is untrusted content, like any tool output: what a page says is never the operator's instruction.
-- **Sign out of all sites**, in Settings, deletes the engine's `default` profile, the one bots use: every session in it ends, for every bot.
-- The profile holds live session cookies, and a backup of the data directory holds them with it ([Back up](../operations/operating.md#back-up)).
-
 ## Running on a machine that matters
 
 The first deployment of J3 Bots is on a host that has SSH access to the rest of its owner's network. That is common for a home server and it changes the stakes: a misled bot on that host can reach every machine the host can.
@@ -150,6 +140,43 @@ A visual is a page a bot wrote ([decision 0030](../decisions/0030-a-visual-is-pa
 
 **Proof** (**Verified**, the server's own headers, in Chrome 151 headless and in the desktop app on Electron 44): a visual that tries each way out got a `SecurityError` reading `document.cookie`, `localStorage`, `sessionStorage`, `indexedDB` and `parent.document` and setting `top.location`; `window.open` returned `null`; `fetch` to the server's API and to a remote address failed under the policy; a remote image was refused without a request; a form submit was blocked; messages posted to the client and to its other frames changed no height; navigating itself away, by script and by a refresh, left the frame on an error page with no request answered. In the desktop app the visual was also denied notifications and the clipboard while the app held notifications, and a frame navigation to the app's own settings page was refused. Against WebRTC (**Verified**, Chrome 151, the visual page and policies as served, the document as `visualDocument` builds it, a STUN and TURN address on the test machine, every packet to its port captured): a page that opens a data channel from its own realm and from a nested document made each of fifteen ways (a `srcdoc` frame in its markup, one in a closed declarative shadow root, one added by script, one given its `srcdoc` once in the page, one added by `innerHTML`, `insertAdjacentHTML`, `setHTMLUnsafe`, `Document.parseHTMLUnsafe`, `document.write`, a template's clone, into a closed shadow root, after replacing `Element.prototype.remove` or `MutationRecord.prototype.addedNodes`, while busy right after adding it, and later from a timer) sent 187 packets without the guard and none with it: its markup frames refused, `RTCPeerConnection` not defined, the parsing APIs gone, no frame left in the page, while its script still drew its chart and its height reached the client. A frame put in the copy of a clonable shadow root, made by `cloneNode` or `importNode`, opened a peer connection without the guard; with it, no root was copied. A frame a script added to a declarative shadow root of the page's own markup, open or closed (through `attachInternals`), sent 22 packets until such a page was refused. A page that borrowed `attachShadow` and `RTCPeerConnection` from the empty document of a frame it had just added, through `contentWindow`, `window[i]` and `contentDocument`, sent 33 packets when its document was loaded unsandboxed, as a WebView would load it, and none in the sandboxed frame, where each way was refused.
 
+## Visuals on Android
+
+The Android app draws a bot's visual in its own native view (`apps/mobile/modules/visual-view`), a WebView configured for an untrusted page. The WebView loads `visualShell`'s page, which holds the visual's document in an `<iframe sandbox="allow-scripts">`, as the web does ([Visuals](#visuals)). The sandbox is the frame's: a WebView loads its own page unsandboxed, and a policy's `sandbox` in a `<meta>` does nothing.
+
+- **Opaque origins.** The shell is loaded as a `data:` URL, so its origin is `null`, and the visual's sandboxed frame has an opaque origin of its own. Neither has a cookie, `localStorage` or IndexedDB; each throws `SecurityError`. A frame the visual adds gets yet another origin, so the visual cannot borrow its globals, which the guard never touched.
+- **No network, twice.** The shell and the visual's document each carry the visual's policy, which allows no network, and the WebView blocks network loads and network images as well (`blockNetworkLoads`, `blockNetworkImage`).
+- **No way out.** The WebView refuses every navigation of its own page on its own thread, with no timeout, and opens no second window (multiple windows are off, and `onCreateWindow` refuses). The visual's frame cannot reach the shell or navigate it (`SecurityError`). It can navigate itself, by a link, `location`, a refresh or a form. The shell's policy refuses that, and the frame then shows the WebView's error page in place of the visual. Nothing loads, and nothing reaches the system browser.
+- **Nothing else of the device.** Off: file access, content URIs, DOM storage, the database, the cache, third-party cookies, saved form data and geolocation. Permission requests (camera, microphone) are denied, the file chooser does not open, and `alert`, `confirm`, `prompt` and `beforeunload` are cancelled, so no dialog draws over the app. Nothing a page logs reaches the device's log.
+- **One string in.** The app is reached only through `postMessage(string)` on `J3Visual` (`VISUAL_BRIDGE`). The shell passes on the visual's height through it. The WebView puts that object in every frame, the visual's sandboxed frame included, so the visual can also call it directly: it is the same channel. A string over 256 characters is dropped, and only the latest message waits for the app's main thread. The app reads only `{type: "j3-visual-height", height}` from it, clamped (`readVisualHeight`).
+- **WebRTC.** Android's WebView has no setting that turns WebRTC off, and blocking network loads does not cover a peer connection's sockets. What shuts it is the document's guard, which deletes the RTC interfaces and removes the frames a script adds, together with the sandbox, which keeps the visual out of any realm that still has them.
+- **A dead renderer, or no WebView,** shows "Couldn't show this visual" instead of taking the app down (`onRenderProcessGone`; the `AndroidRuntimeException` a WebView throws as it is made when the device has none, or is updating it).
+
+**Verified** on the Pixel 8 emulator (Android 16, WebView 133), with the shell, inline and full screen:
+- the visual's origin was `null`;
+- cookies, `localStorage` and IndexedDB threw `SecurityError`, and so did reading `parent.document` and setting `top.location`;
+- `eval` threw `EvalError`;
+- `fetch` failed, `sendBeacon` sent nothing, and the remote image fired `onerror`;
+- `window.open` returned `null`;
+- `alert` and `confirm` showed nothing;
+- the page recorded policy violations for `script-src`, `connect-src` and `img-src`;
+- a scripted `location` change and a real tap on a link were refused by the policy (`ERR_BLOCKED_BY_CSP`), and the app stayed in front;
+- messages with another `type`, with an extra field, and of 5,000 characters changed nothing;
+- a page with a frame or a declarative shadow root in its markup never reached the WebView: its card showed the failure line;
+- the `J3Visual` object was present in the shell, in a child frame and in a sandboxed child frame.
+
+**Verified** for WebRTC on the same emulator, with a capture on the device (`tcpdump`) and a STUN listener on the host:
+- with no guard, a visual's data channel sent 257 STUN and TURN packets to an address it chose, the binding requests carrying a username it chose;
+- with the guard but without the shell, a page took `attachShadow` from a new frame's `about:blank` window, which shared the page's origin, hid a `srcdoc` frame from the guard in a shadow root and sent 14 STUN requests from it;
+- with the shell, none left, over two minutes:
+  - from the visual's own realm, which has no RTC interface;
+  - from a `srcdoc` frame a script added, to the document or to a closed shadow root, or just before a 1.5-second busy loop;
+  - by borrowing a new frame's realm through `contentWindow`, `window[i]` or `contentDocument`, which threw `SecurityError` or found no document;
+  - by copying a shadow root asked for as clonable, with `cloneNode` or `importNode`: the root came back unclonable, and neither copy had one;
+- heights still arrived, a scripted chart in the same conversation still drew, and full screen still scrolled and pinch-zoomed.
+
+That a screen reader skips the inline page is **Assumed**. The view sets `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS` on the WebView, and its React parent does the same, but the test driver's accessibility tree still lists the page's nodes, and TalkBack was not run.
+
 ## Push notifications
 
 A phone in the background is reached through a push service: Expo's, for now, which hands each notification to Apple's or Google's ([decision 0014](../decisions/0014-push-goes-through-a-push-sender.md)).
@@ -203,43 +230,6 @@ The desktop app updates itself from the repository's GitHub releases with electr
 
 - **What leaves the device.** The mobile app's dictation uses the platform's speech recognizer ([Clients: mobile](clients.md#mobile)), and the microphone only from the press of Dictate until Stop, or until the conversation leaves the screen or the app leaves the foreground. Recognition on the device sends nothing; online, the operator's audio goes to the device's speech service (usually Google's on Android, Apple's on iOS) for as long as dictation is on. The app asks Android for the on-device recognizer where it has the device's language installed (**Read** in `expo-speech-recognition` 58.0.1, `ExpoSpeechService.kt`), and takes iOS to recognize online; that the on-device recognizer then sends nothing is **Assumed** from Android's own description of it. While it listens, the line under the composer says whether recognition may run online. Nothing goes to the J3 Bots server but the text, once the operator sends it.
 
-## Visuals on Android
-
-The Android app draws a bot's visual in its own native view (`apps/mobile/modules/visual-view`), a WebView configured for an untrusted page. The WebView loads `visualShell`'s page, which holds the visual's document in an `<iframe sandbox="allow-scripts">`, as the web does ([Visuals](#visuals)). The sandbox is the frame's: a WebView loads its own page unsandboxed, and a policy's `sandbox` in a `<meta>` does nothing.
-
-- **Opaque origins.** The shell is loaded as a `data:` URL, so its origin is `null`, and the visual's sandboxed frame has an opaque origin of its own. Neither has a cookie, `localStorage` or IndexedDB; each throws `SecurityError`. A frame the visual adds gets yet another origin, so the visual cannot borrow its globals, which the guard never touched.
-- **No network, twice.** The shell and the visual's document each carry the visual's policy, which allows no network, and the WebView blocks network loads and network images as well (`blockNetworkLoads`, `blockNetworkImage`).
-- **No way out.** The WebView refuses every navigation of its own page on its own thread, with no timeout, and opens no second window (multiple windows are off, and `onCreateWindow` refuses). The visual's frame cannot reach the shell or navigate it (`SecurityError`). It can navigate itself, by a link, `location`, a refresh or a form. The shell's policy refuses that, and the frame then shows the WebView's error page in place of the visual. Nothing loads, and nothing reaches the system browser.
-- **Nothing else of the device.** Off: file access, content URIs, DOM storage, the database, the cache, third-party cookies, saved form data and geolocation. Permission requests (camera, microphone) are denied, the file chooser does not open, and `alert`, `confirm`, `prompt` and `beforeunload` are cancelled, so no dialog draws over the app. Nothing a page logs reaches the device's log.
-- **One string in.** The app is reached only through `postMessage(string)` on `J3Visual` (`VISUAL_BRIDGE`). The shell passes on the visual's height through it. The WebView puts that object in every frame, the visual's sandboxed frame included, so the visual can also call it directly: it is the same channel. A string over 256 characters is dropped, and only the latest message waits for the app's main thread. The app reads only `{type: "j3-visual-height", height}` from it, clamped (`readVisualHeight`).
-- **WebRTC.** Android's WebView has no setting that turns WebRTC off, and blocking network loads does not cover a peer connection's sockets. What shuts it is the document's guard, which deletes the RTC interfaces and removes the frames a script adds, together with the sandbox, which keeps the visual out of any realm that still has them.
-- **A dead renderer, or no WebView,** shows "Couldn't show this visual" instead of taking the app down (`onRenderProcessGone`; the `AndroidRuntimeException` a WebView throws as it is made when the device has none, or is updating it).
-
-**Verified** on the Pixel 8 emulator (Android 16, WebView 133), with the shell, inline and full screen:
-- the visual's origin was `null`;
-- cookies, `localStorage` and IndexedDB threw `SecurityError`, and so did reading `parent.document` and setting `top.location`;
-- `eval` threw `EvalError`;
-- `fetch` failed, `sendBeacon` sent nothing, and the remote image fired `onerror`;
-- `window.open` returned `null`;
-- `alert` and `confirm` showed nothing;
-- the page recorded policy violations for `script-src`, `connect-src` and `img-src`;
-- a scripted `location` change and a real tap on a link were refused by the policy (`ERR_BLOCKED_BY_CSP`), and the app stayed in front;
-- messages with another `type`, with an extra field, and of 5,000 characters changed nothing;
-- a page with a frame or a declarative shadow root in its markup never reached the WebView: its card showed the failure line;
-- the `J3Visual` object was present in the shell, in a child frame and in a sandboxed child frame.
-
-**Verified** for WebRTC on the same emulator, with a capture on the device (`tcpdump`) and a STUN listener on the host:
-- with no guard, a visual's data channel sent 257 STUN and TURN packets to an address it chose, the binding requests carrying a username it chose;
-- with the guard but without the shell, a page took `attachShadow` from a new frame's `about:blank` window, which shared the page's origin, hid a `srcdoc` frame from the guard in a shadow root and sent 14 STUN requests from it;
-- with the shell, none left, over two minutes:
-  - from the visual's own realm, which has no RTC interface;
-  - from a `srcdoc` frame a script added, to the document or to a closed shadow root, or just before a 1.5-second busy loop;
-  - by borrowing a new frame's realm through `contentWindow`, `window[i]` or `contentDocument`, which threw `SecurityError` or found no document;
-  - by copying a shadow root asked for as clonable, with `cloneNode` or `importNode`: the root came back unclonable, and neither copy had one;
-- heights still arrived, a scripted chart in the same conversation still drew, and full screen still scrolled and pinch-zoomed.
-
-That a screen reader skips the inline page is **Assumed**. The view sets `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS` on the WebView, and its React parent does the same, but the test driver's accessibility tree still lists the page's nodes, and TalkBack was not run.
-
 ## Secrets
 
 - J3 Bots never asks the operator to paste a secret into a conversation, and the base prompt tells bots not to either.
@@ -252,32 +242,54 @@ That a screen reader skips the inline page is **Assumed**. The view sets `IMPORT
 - **The operator's own provider setup stays out, and stays as it is.** The harnesses run with homes of their own, and the engine starts with an allowlist of the server's environment (the system's basics, locale, proxy and certificate variables), so a server started from the operator's shell does not hand bots the operator's harness configuration, sign-ins or keys. No harness the engine runs uses the operator's `~/.claude` or `~/.codex`: the engine's own default Claude Code and Codex instances are turned off, and any other harness run gets empty folders of J3 Bots' own. On Linux and macOS, Codex runs with a home folder of J3 Bots' own too, so a Codex bot is not offered the operator's `~/.agents/skills`, while its commands keep the operator's `HOME` and profile ([Engine: isolation](engine.md#isolation), [decision 0019](../decisions/0019-codex-runs-with-a-home-of-its-own.md)); on Windows it still is (known gaps, below). This matters most where J3 Bots runs as the operator on their own computer, next to the Claude Code and Codex they use themselves.
 - **The trust boundary is the operator's user.** A bot's harness runs as the user the server runs as, and the commands it runs inherit the harness environment. So the connection's key, the engine's secret store and every file that user can read, the operator's own sign-ins included, are within reach of a bot that runs a command to look; the allowlist keeps configuration from leaking in by accident, and is not a wall. The key reaches those commands: a Codex command's environment holding it is **Verified** with Codex 0.171.0, through `exec_command`; a Claude Code command's is **Assumed**. Codex's shell snapshot, a file that held it too, is turned off ([decision 0019](../decisions/0019-codex-runs-with-a-home-of-its-own.md)).
 
-## The bot's browser
+## The browser, the vault and connectors
 
-A bot's browser is signed in wherever the bot or the operator signed it in, and it shows whatever its pages show ([Server: the bot's browser](server.md#the-bots-browser)).
+New in 0.4.0. Three things put the operator's accounts within a bot's reach: the bot's browser, signed in to sites as the operator; the vault, which holds their logins and connectors' secrets; and connectors, which act in their accounts at services. The parts below share three rules and one limit.
 
+- **What they bring in is untrusted.** A page, a connector's tool description and its result are text a bot reads, never the operator's instruction ([Who can give instructions](#who-can-give-instructions)). A bot reports a request it finds there and does not carry it out, and it sends, buys, deletes, shares or changes an account through any of them only with the operator's yes ([Acting on the operator's behalf](#acting-on-the-operators-behalf)), in every permission mode. These are rules of the bot's prompt; what enforces anything is said part by part below.
+- **J3 Bots never writes a secret it holds where it keeps or shows things.** A password, a one-time code key, a token, a client secret or a header value that J3 Bots holds is never put into a log line, an entry, a change, a command receipt, an error, a tool result or a prompt. Values travel as redacted types from the client to the vault and from the vault to the request, and the requests that carry one take no command id, so no receipt keeps it. Tests drive the vault's requests, the fill tools and the connectors' requests, and check the logs, the errors, the work steps and the answers. What a bot reads from elsewhere is another matter: a page shows what it shows, a token it prints or an unmasked field included ([The bot's browser](#the-bots-browser)); a filled one-time code, or a password in the wrong field, sits where the bot reads it ([Filling a login](#filling-a-login)); and a connector's server that echoes a secret in a form the redaction does not match reaches the bot's result ([Connectors](#connectors)).
+- **Each is off, empty or locked until the operator acts.** No bot has the browser until its switch is on. The vault has no password until the operator sets one, and is locked at every start. No connector exists until the operator adds one, and it reaches only the bots they grant. A bot never grants itself any of them: it can ask the operator to save a login on a card (`request_credential`), and to connect a service on another (`suggest_connector`).
+
+### What a bot's shell can still reach
+
+Every part of this runs as the server's user, and so does every bot's shell ([Trust model](#trust-model), [Secrets](#secrets)). The browser switch and the vault keep values out of prompts, transcripts and logs. They are not a wall against a bot that runs a command to look, which only its permission mode governs:
+
+- **The browser's profile**, its session cookies included, is a folder in the engine's data directory. A bot's shell can read it whether that bot's switch is on or not: the switch decides whether the engine takes the bot's calls to the browser's tools, not who reads the files.
+- **J3 Bots' engine token** carries `preview:operate` and is a file of that user, so a process that reads it can open a viewer on any tab of the engine's browser and act in it ([The engine's credentials](#the-engines-credentials)).
+- **The vault's key**, while the vault is unlocked, is in the server's memory. Whether another process of the same user can read that memory depends on the system's debugging policy, such as Linux's `ptrace_scope` (**Assumed**). That user can also replace the server's own files, so that a later unlock gives the master password away. Connectors' secrets are in the vault, so all of this holds for them too ([decision 0028](../decisions/0028-one-secret-store-for-logins-and-connector-secrets.md)).
+- **A filled login** can end up where the bot reads it ([Filling a login](#filling-a-login)).
+
+A [dedicated user](#running-on-a-machine-that-matters) limits what else is in reach. Inside it, the protections here keep secrets from being exposed by accident, and from a model that only reads.
+
+### The bot's browser
+
+A bot whose browser switch is on opens pages in the engine's browser on the host and acts in them ([Server: the bot's browser](server.md#the-bots-browser), [Engine: the browser](engine.md#the-browser)).
+
+- **Shared logins.** The browser keeps one profile, the engine's `default`, shared by every bot whose switch is on, and the operator signs in to sites in it. Each of those bots acts on those sites with the operator's sessions: what it can do there is what the operator's account can do, and the site cannot tell the bot from the operator. So the switch is off for every bot until the operator turns it on, and the engine's browser access is off engine-wide besides it. Turning the switch off takes the browser from the bot at once: its work is stopped, and every thread of its project, a delegated task's or another agent's included, loses it before it runs again. **Sign out of all sites**, in Settings, deletes the `default` profile: every session in it ends, for every bot.
+- **The profile holds live session cookies**, so a copy of it lets whoever has it act on those sites as the operator. The documented backup leaves it out ([Back up](../operations/operating.md#back-up)).
+- **Help, not a way around.** A bot that meets a check that a person is there, a sign-in, a second factor, a QR code or a passkey asks the operator with a help card instead of getting around it, and the server stops the turn that asked, so the bot cannot go on using the browser while the card waits. Asking is the prompt's rule; stopping the turn is the server's.
 - **The stream shows secrets.** A picture of a page is the page: an account's details, a token a settings page prints, a one-time code, what the operator types into a field that does not mask it. J3 Bots does not try to tell a secret on a page from the rest, so every rule about who may see a picture is a rule about who may see those.
 - **A paired device is a remote control.** Any paired device can watch every bot's tabs and take one over: click, type, go to an address, answer the page's dialogs, as the bot's browser, with its sign-ins. This is the operator's authority, which a paired device already holds ([Trust model](#trust-model)). A device that is lost is revoked: its viewers close at once, a tab it held included, without the 60 s a dropped connection keeps.
 - **The media socket is authenticated as the RPC socket is**, with the device token or a one-use ticket, behind the same `Host` check, and the ticket is not logged.
 - **Pictures stay in memory.** The server keeps at most three pictures per viewer: the one in flight, the newest waiting and the last one drawn. It holds them only while the viewer is open. It never writes one to disk or to the database, logs one, caches one or sends one in a push. What the operator types goes to the engine and is not logged.
 - **What a page can reach on a device.** The media socket carries pictures and the frames the contract lists, and nothing a page could use to reach the device. The engine's clipboard, downloads, uploads and file pickers are dropped. An address a device sends is `http` or `https` only. A dialog's text is the page's: a client shows it as plain text, as it does any text a page or a bot wrote.
-- **The bot can still read a tab the operator holds.** While a person holds a tab, the bot's actions on it fail, but its reads (status, snapshot, waiting for something on the page) still work ([Engine: the bot's browser](engine.md#the-bots-browser)). So the bot can read what the page shows meanwhile, what the operator typed into a field that does not mask it included. A password field is masked in a snapshot as it is on screen: **Assumed**. To keep a value from the bot, the operator uses the engine's secret request, not the browser.
+- **The bot can still read a tab the operator holds.** While a person holds a tab, the bot's actions on it fail, but its reads (status, snapshot, waiting for something on the page) still work ([Engine: the bot's browser](engine.md#the-bots-browser)). So the bot can read what the page shows meanwhile, what the operator typed into a field that does not mask it included. A password field is masked in a snapshot as it is on screen: **Assumed**. Every bot with the browser also has the engine's `preview_evaluate`, on Claude Code and on Codex, and a script it runs reads any field's value, masked or not; for a filled login, the owner accepted that ([Filling a login](#filling-a-login)). To keep a value from the bot, the operator uses a card, not the browser.
 
-## The vault
+### The vault
 
-The vault seals the operator's saved logins and connectors' secrets under a key that comes only from the master password ([Server: the vault](server.md#the-vault), [decision 0029](../decisions/0029-the-vault-key-comes-from-a-master-password-held-in-memory.md)). It protects what is on disk. It does not protect against the server's own user while the vault is unlocked: that user, a bot's shell included, is inside the trust boundary, as for everything else here.
+The vault seals the operator's saved logins and connectors' secrets under a key that comes only from the master password ([Server: the vault](server.md#the-vault), [decision 0029](../decisions/0029-the-vault-key-comes-from-a-master-password-held-in-memory.md)). It protects what is on disk. While the vault is unlocked, it does not protect against the server's own user ([What a bot's shell can still reach](#what-a-bots-shell-can-still-reach)).
 
 | Threat | What stands in its way | What does not |
 | --- | --- | --- |
 | A copy of the vault's file leaves the machine: a backup, a disk, a synced folder | Every value is sealed with AES-256-GCM under a data key that only the master password unwraps, and every guess at the password costs scrypt's 64 MiB and about 0.7 s on a Raspberry Pi 4. Updates never copy the file into a snapshot. | A weak password: offline, nothing but scrypt slows the guessing. What the file keeps in the clear: record ids, times, which bots each login allows, and when and on which device each value was last shown. |
 | Someone guesses the password through a paired client | Five wrong passwords in a row, then waits that double from 30 seconds up to an hour, across every client. A wrong password and a refusal say nothing of how close the guess came. | The count starts over only after a day with no wrong password, so guessing without a pause is held to one try an hour, and a day's pause buys five quick ones. The vault's file keeps the count and the wait, so a restart does not reset them; the server's user can still edit that file, but that user is inside the boundary anyway. |
 | A paired device falls into other hands | Each unlock needs the password. Revoking the device closes its sockets at once. | While the vault is unlocked, any paired client can read any value: a device token carries the operator's authority. Nothing locks the vault on a timer; the operator locks it with Lock now. |
-| A bot, or anything running as the server's user | While the vault is locked, the key is nowhere on disk, and the file alone gives nothing. No tool returns a value, and the card tells the bot only that it is shown. | While it is unlocked, the key is in the server's memory. Whether another process of that user can read that memory depends on the system's debugging policy, such as Linux's `ptrace_scope` (**Assumed**). That user can also replace the server's own files, so that a later unlock gives away the password. |
+| A bot, or anything running as the server's user | While the vault is locked, the key is nowhere on disk, and the file alone gives nothing. No tool returns a value, and the card tells the bot only that it is shown. | While it is unlocked, the key is in the server's memory, within that user's reach ([What a bot's shell can still reach](#what-a-bots-shell-can-still-reach)). |
 | A page a bot reads talks it into asking for a login | The card shows the operator the site's origin and the bot's note. The operator chooses whether to save anything, and the bot never sees what they type. | A login saved for the wrong site, if the operator does not check the origin: the server then fills it wherever that origin's page asks, for every bot the login allows ([Filling a login](#filling-a-login)). |
 | A value leaks into what J3 Bots keeps or shows | Values are redacted types from the client to the vault, and from the vault to the page a fill types into. No vault request takes a command id, so no receipt keeps one, and no value reaches an entry, a change, a work step, a log line, an error or a tool result. Tests drive every vault request over the socket, and the fill tools through the bot tools, and check the logs, the errors, the steps and the answers. | What a client does with a value it was asked to show. The web hides a shown value after 30 seconds. Copy puts it on the system clipboard, which other apps can read and which J3 Bots does not clear. |
 | The master password is forgotten | — | Nothing recovers the logins or the connectors' secrets: no reset and no recovery key. Setup and every password change say so. |
 
-## Filling a login
+### Filling a login
 
 A bot whose vault access is on can have the server type a saved login into its browser tab, unattended: there is no confirmation for each fill ([Server: filling a login](server.md#filling-a-login), [decision 0037](../decisions/0037-the-server-types-a-saved-login-into-the-bots-tab.md)). The bot is never handed the value: no tool result, work step, entry or log line carries it. It can still read it from the page, which the owner accepted (the row on reading the value back). What keeps a page from taking it, and what does not:
 
@@ -291,9 +303,9 @@ A bot whose vault access is on can have the server type a saved login into its b
 
 **What would close the residual.** The two things J3 Bots cannot tell, which element has focus and in which frame, the engine knows. A proposal for T3 Code to say so, or to type a secret it never hands to a viewer at all, is in [Proposal: a typed secret in the engine's browser](../proposals/engine-browser-secret-input.md). It has not been sent anywhere.
 
-## Connectors
+### Connectors
 
-New in 0.4.0, and being built ([Server: connectors](server.md#connectors)). A connector acts in the operator's account at a service, from text a remote server writes, so each part of it has a rule.
+A connector acts in the operator's account at a service, from text a remote server writes, so each part of it has a rule ([Server: connectors](server.md#connectors)).
 
 | Risk | What stands against it |
 | --- | --- |
@@ -323,12 +335,10 @@ New in 0.4.0, and being built ([Server: connectors](server.md#connectors)). A co
 
 - No isolation between bots at the filesystem level, and none between a bot and the operator's user.
 - Whoever can read the service's log, or binds the tool port in the moment the server stops while a bridge forwards a call, can learn a session's id and, until the server retires that session, use the bot tools that do not act for a turn as that session's bot; the one who binds the port can also answer that call ([J3 Bots' own surface](#j3-bots-own-surface)). With the id, such a user can also claim a connector call of that session's running turn whose input they know while its approval waits, or on Codex after the operator declined it, and the connector makes it ([Connectors](#connectors)). A bridge waiting for its list to change sends the id once per wait and stops at the first the server does not answer, so an idle bridge sends nothing to a port the server let go. Signing each request with a secret the bridge alone holds would close this; it is not done in 0.4.
-- A bot's shell can read the browser's profile, its session cookies included, whether that bot's browser switch is on or not: the profile is a folder in the engine's data directory, and every bot runs as the same user. The switch controls whether the engine takes the bot's calls to the browser's tools, not the files.
 - A bot can send a message to another bot's session through the engine's own `t3_thread_send`, which reaches any thread of the engine that runs in no broader a mode than the sender's (**Read** at `59651c1`, `mcp/toolkits/orchestrator/tools.ts`). That message goes around J3 Bots' teammate messages and their limits, and the turn it starts shows as background work the server did not dispatch. So a bot without the browser can ask one with it to use it. This predates the browser switch.
 - No protection against a compromised paired device beyond revocation.
-- A fill types where the bot's focus is: J3 Bots cannot tell a password field from a text field, nor the top frame from a cross-origin frame, so a page on the login's own origin can receive the value in a field of its choosing ([Filling a login](#filling-a-login)).
+- The browser, the vault and connectors keep secrets out of what J3 Bots keeps and shows, not out of reach of the server's user: a bot's shell can read the browser's profile and the engine token, and the vault's key is in the server's memory while it is unlocked ([What a bot's shell can still reach](#what-a-bots-shell-can-still-reach)). A login filled into the wrong field on the right site can reach the bot ([Filling a login](#filling-a-login)).
 - A bot with vault access can read a value it filled back out of the page with a script (the engine's `preview_evaluate`, which every bot keeps), so the model may see it. The owner accepted this to keep page scripts ([Filling a login](#filling-a-login)).
-- The vault protects its file, not a running server. While it is unlocked, its key is in the server's memory, within reach of anything that can act as the server's user ([The vault](#the-vault)).
 - On Linux without a keyring the desktop app can use, its device token is stored obscured, not encrypted. The app says so rather than refuse to pair, and the token stays obscured until the device is paired again.
 - Desktop builds carry no code signature: an update is checked against the release key's signature over `SHA256SUMS`, but the first install is trusted as far as the page it was downloaded from, and Windows and macOS do not check who published it ([Desktop updates](#desktop-updates)).
 - A nightly is signed with the release key with no review: whatever reaches `main` reaches every server and app on the nightly channel the next day ([Release signing](#release-signing)).
