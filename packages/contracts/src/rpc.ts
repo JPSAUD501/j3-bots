@@ -414,8 +414,8 @@ export const BotRpcs = RpcGroup.make(
   Rpc.make("bot.freshStart", { payload: { ...command, botId: BotId }, error: CommandError }),
   /**
    * Removes the bot, its conversation, memory and routines. What it said in rooms
-   * stays, shown as from a deleted bot. A room it hosted passes to another
-   * member; a room left with fewer than two members is archived.
+   * stays, shown as from a deleted bot. A room left with fewer than two
+   * members is archived.
    */
   Rpc.make("bot.delete", {
     payload: { ...command, botId: BotId, deleteFiles: Schema.Boolean },
@@ -505,7 +505,6 @@ export const RoomRpcs = RpcGroup.make(
       ...command,
       name: RoomName,
       members: RoomMembers,
-      hostId: BotId,
       hopLimit: Schema.optionalKey(RoomHopLimit),
     },
     success: Room,
@@ -516,7 +515,7 @@ export const RoomRpcs = RpcGroup.make(
    * running work is stopped as `bot.stop` stops it, and its open `ask` cards
    * expire. An archived room takes only `pinned` and `archived: false`, and
    * fails with `Conflict("room-archived")` for anything else; unarchiving
-   * needs two to six members and a host, which the same update may give.
+   * needs two to six members, which the same update may give.
    */
   Rpc.make("room.update", {
     payload: {
@@ -524,7 +523,6 @@ export const RoomRpcs = RpcGroup.make(
       roomId: RoomId,
       name: Schema.optionalKey(RoomName),
       members: Schema.optionalKey(RoomMembers),
-      hostId: Schema.optionalKey(BotId),
       hopLimit: Schema.optionalKey(RoomHopLimit),
       pinned: Schema.optionalKey(Schema.Boolean),
       archived: Schema.optionalKey(Schema.Boolean),

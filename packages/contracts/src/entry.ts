@@ -55,7 +55,7 @@ export const MessageText = Schema.String.check(Schema.isMaxLength(MAX_MESSAGE_LE
  * ids. The server routes room wakes from it, never from the text.
  */
 export const Mentions = Schema.Union([
-  /** These members, in this order. No ids: nobody in particular, which wakes the host. */
+  /** These members, in this order. No ids: nobody in particular. From the operator it wakes every member, one at a time in member order; from a bot, nobody. */
   Schema.TaggedStruct("bots", { ids: Schema.Array(BotId).check(Schema.isMaxLength(6)) }),
   /** Every member, one at a time in member order. */
   Schema.TaggedStruct("everyone", {}),
