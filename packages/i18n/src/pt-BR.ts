@@ -469,8 +469,6 @@ const sentences = {
   "notice.routinePaused":
     "A rotina {name} foi pausada: não deu para ler a programação dela. Edite a rotina para ligá-la de novo.",
   "notice.operatorNamed": "{bot} salvou seu nome: seus bots agora te chamam de {name}.",
-  "notice.roomStarted": "{name} criou uma sala.",
-  "notice.madeForRoom": "Criado por {name} para uma sala.",
   "notice.retry": "Tentar de novo",
   "notice.openConversation": "Abrir",
 

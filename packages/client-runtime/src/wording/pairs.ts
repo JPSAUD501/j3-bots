@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, PairBotIds, RoomId, TeammatePair } from "@j3-bots/contracts";
+import type { BotId, Notice, PairBotIds, RoomId, TeammatePair } from "@j3-bots/contracts";
 import type { TeammateRunPair } from "../presentation/eventLine.ts";
 import { firstLine } from "../presentation/roster.ts";
 import type { PresentationContext } from "./status.ts";
@@ -69,23 +69,14 @@ export function teammateChoice(
  * (`room-started`, in the room and in its own conversation), or it made this
  * bot for one (`made-for-room`, in the made bot's conversation).
  */
-export interface TeamNotice {
-  readonly _tag: "room-started" | "made-for-room";
-  readonly botId: BotId;
-  readonly roomId: RoomId;
-}
-
-export interface TeamLineContext extends PresentationContext {
-  /** A room's name, or null if it no longer exists. */
-  readonly roomName: (id: RoomId) => string | null;
-}
+export type TeamNotice = Extract<Notice, { readonly _tag: "room-started" | "made-for-room" }>;
 
 /**
  * A team notice as its line says it: "Scout started Support", "Made by Scout
- * for Support", with the bot's and the room's names drawn apart. A room
- * deleted since is "a room".
+ * for Support", with the bot's and the room's names drawn apart. The room is
+ * named as it is now, so a rename shows; a room deleted since is "a room".
  */
-export function teamNoticeLine(notice: TeamNotice, ctx: TeamLineContext): NamedLine {
+export function teamNoticeLine(notice: TeamNotice, ctx: PresentationContext): NamedLine {
   const { i18n } = ctx;
   const bot = botPart(notice.botId, ctx);
   const roomName = ctx.roomName(notice.roomId);

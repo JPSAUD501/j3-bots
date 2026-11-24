@@ -70,6 +70,21 @@ describe("rosterLine", () => {
     expect(rosterLine(row(bot("Scout"), toWren), ctx).text).toBe("To Wren: Which bike?");
   });
 
+  it("names the room a bot was made for as it is called now, and a deleted one as a room", () => {
+    const made: EntryPreview = {
+      ...preview("2026-11-20T14:50:00Z", "notice", "", { _tag: "system" }),
+      notice: { _tag: "made-for-room", botId: bot("Scout").id, roomId: RoomId.make("launch") },
+    };
+    const renamed = context(
+      "2026-11-20T15:00:00Z",
+      "en",
+      { scout: "Scout" },
+      { launch: "Go-live" },
+    );
+    expect(rosterLine(row(bot("Wren"), made), renamed).text).toBe("Made by Scout for Go-live");
+    expect(rosterLine(row(bot("Wren"), made), ctx).text).toBe("Made by Scout for a room");
+  });
+
   it("says a waiting bot needs the operator when its last entry is not what it waits on", () => {
     const waiting = bot("Scout", {
       _tag: "waiting",

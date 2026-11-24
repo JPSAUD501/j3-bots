@@ -37,7 +37,7 @@ import {
   withLiveTurn,
 } from "@j3-bots/client-runtime/presentation";
 import { useArrivals, useConversationEnd } from "@j3-bots/client-runtime/react";
-import { BotsProvider, useI18n } from "../app/context";
+import { RosterProvider, useI18n } from "../app/context";
 import { BrowserIndicator } from "../browser/BrowserIndicator";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import { BrowserViewer, type BrowserViewerHandle } from "../browser/BrowserViewer";
@@ -754,7 +754,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   }
 
   return (
-    <BotsProvider bots={bots}>
+    <RosterProvider roster={rosterItems}>
       <BrowserProvider source={browser}>
         <AvatarConnection connected={data.connected}>
           <AppShell
@@ -776,7 +776,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
       <span className="sr-only" aria-live="polite">
         {announcement !== null && <span key={announcement.id}>{announcement.text}</span>}
       </span>
-    </BotsProvider>
+    </RosterProvider>
   );
 }
 
