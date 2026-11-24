@@ -25,6 +25,7 @@ import { Attachments } from "../attachments/Attachments.ts";
 import { EngineState, providerReady } from "../engine/EngineState.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Layout } from "../Layout.ts";
+import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { recordRunFailure } from "../routines/runFailure.ts";
@@ -171,7 +172,7 @@ export const layer = Layer.effect(
     const entries = yield* Entries;
     const readiness = yield* Readiness;
     const { sessionLost } = sessionLoss(sql, entries, ledger, yield* WorkSteps, signals);
-    const refusals = modeRefusals(sql, entries, readiness, signals);
+    const refusals = modeRefusals(sql, entries, readiness, signals, yield* ChangeLog);
     const runFailed = recordRunFailure(sql);
 
     const files = SqlSchema.findAll({

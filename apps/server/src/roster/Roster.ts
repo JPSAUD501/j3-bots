@@ -4,7 +4,6 @@ import type {
   Entry,
   Room,
   RoomId,
-  RoomWorkState,
   RosterItem,
   RosterItemKey,
   Section,
@@ -21,7 +20,7 @@ import { previewOf } from "../entries/preview.ts";
 import { ChangeLog, type ChangeScope } from "../persistence/ChangeLog.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Sections } from "../sections/Sections.ts";
-import { RoomStates } from "../turns/RoomStates.ts";
+import { type RoomActivity, RoomStates } from "../turns/RoomStates.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 
 export type RosterFrame =
@@ -79,6 +78,12 @@ export class Roster extends Context.Service<
   }
 >()("@j3-bots/server/roster/Roster") {}
 
+/** Whether a room's work and who answers there read the same. */
+const sameActivity = (a: RoomActivity, b: RoomActivity) =>
+  a.work === b.work &&
+  a.answering.length === b.answering.length &&
+  a.answering.every((id, index) => id === b.answering[index]);
+
 export const layer = Layer.effect(
   Roster,
   Effect.gen(function* () {
@@ -133,25 +138,29 @@ export const layer = Layer.effect(
         const signals = yield* changes.subscribe;
         const snapshot = yield* items;
         const sectionsNow = yield* sections.list;
-        // The work each active room was last sent with, to this subscriber.
-        const sentWork = new Map<RoomId, RoomWorkState>();
+        // The activity each active room was last sent with, to this subscriber.
+        const sentActivity = new Map<RoomId, RoomActivity>();
         const sent = (item: RosterItem) => {
           if (item._tag !== "room") return item;
-          if (item.room.status === "active") sentWork.set(item.room.id, item.room.work);
-          else sentWork.delete(item.room.id);
+          if (item.room.status === "active") {
+            const { work, answering } = item.room;
+            sentActivity.set(item.room.id, { work, answering });
+          } else sentActivity.delete(item.room.id);
           return item;
         };
 
         /**
-         * The rooms whose work changed for this subscriber, among the bot's.
-         * The turns, wakes and Stops that make a room's work are its members'
-         * work, so a change of a member is when the room's may change too.
+         * The rooms whose activity changed for this subscriber, among the
+         * bot's. The turns, wakes and Stops that make a room's work, and who
+         * answers there, are its members' work, so a change of a member is
+         * when the room's may change too.
          */
         const roomsOfBot = Effect.fn("Roster.roomsOfBot")(function* (bot: Bot) {
-          const working = yield* roomStates.workOfBot(bot.id);
+          const activities = yield* roomStates.activityOfBot(bot.id);
           const changed: Array<RosterItem> = [];
-          for (const [roomId, work] of working) {
-            if (sentWork.get(roomId) === work) continue;
+          for (const [roomId, activity] of activities) {
+            const before = sentActivity.get(roomId);
+            if (before !== undefined && sameActivity(before, activity)) continue;
             const room = yield* rooms.find(roomId);
             if (Option.isSome(room)) changed.push(sent(yield* roomItem(room.value)));
           }
@@ -179,7 +188,7 @@ export const layer = Layer.effect(
                 remove: [],
               } satisfies RosterFrame;
             }
-            sentWork.delete(scope.roomId);
+            sentActivity.delete(scope.roomId);
             return {
               _tag: "changed",
               upsert: [],

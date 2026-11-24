@@ -259,8 +259,8 @@ export const layer = Layer.effect(
     const entries = yield* Entries;
     const readiness = yield* Readiness;
     const { notify } = notices(sql, entries);
-    const refusals = modeRefusals(sql, entries, readiness, signals);
     const changes = yield* ChangeLog;
+    const refusals = modeRefusals(sql, entries, readiness, signals, changes);
     // One provisioning at a time: a bot's creation and the rotator may both
     // find its session missing.
     const provisioning = yield* Semaphore.make(1);
@@ -452,9 +452,15 @@ export const layer = Layer.effect(
       Effect.orDie,
     );
 
-    const engineStarted = sql`
-      UPDATE bots SET mode_refused_revision = NULL WHERE mode_refused_revision IS NOT NULL
-    `.pipe(Effect.orDie, Effect.asVoid, Effect.withSpan("EngineSessions.engineStarted"));
+    // Each bot cleared is touched: its rooms are read again, where a member
+    // whose wake waited out of the room for its refusal answers again.
+    const engineStarted = Effect.gen(function* () {
+      const cleared = yield* sql<{ readonly id: string }>`
+        UPDATE bots SET mode_refused_revision = NULL WHERE mode_refused_revision IS NOT NULL
+        RETURNING id
+      `;
+      for (const { id } of cleared) yield* changes.touch({ _tag: "bot", botId: BotId.make(id) });
+    }).pipe(transaction, Effect.orDie, Effect.withSpan("EngineSessions.engineStarted"));
 
     /**
      * Marks the session aligned, with the browser setting its tools have now,

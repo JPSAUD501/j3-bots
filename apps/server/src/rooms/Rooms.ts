@@ -143,7 +143,7 @@ export const layer = Layer.effect(
       if (rows.length === 0) return [];
       const roomIds = rows.map((row) => row.id);
       const members = yield* memberRows(roomIds);
-      const working = yield* states.workOf(roomIds);
+      const activity = yield* states.activityOf(roomIds);
       return yield* Effect.forEach(rows, (row) =>
         decodeRoom({
           id: row.id,
@@ -153,17 +153,25 @@ export const layer = Layer.effect(
           status: row.status,
           members: members.filter((member) => member.room_id === row.id).map((m) => m.bot_id),
           ...(row.archived_at === null
-            ? { work: working.get(row.id) ?? "none" }
+            ? {
+                work: activity.get(row.id)?.work ?? "none",
+                answering: activity.get(row.id)?.answering ?? [],
+              }
             : { archivedAt: row.archived_at }),
         }),
       );
     }, Effect.orDie);
 
+    /**
+     * The rooms, their members and what runs in them, read in one transaction,
+     * so a frame never pairs members in one order with who is answering read
+     * after a reorder.
+     */
     const select = Effect.fn("Rooms.select")(function* (filter: {
       readonly id: RoomId | null;
       readonly botId: BotId | null;
     }) {
-      return yield* toRooms(yield* roomRows(filter).pipe(Effect.orDie));
+      return yield* transaction(Effect.flatMap(roomRows(filter), toRooms)).pipe(Effect.orDie);
     });
 
     const find = Effect.fn("Rooms.find")(function* (id: RoomId) {
