@@ -18,12 +18,19 @@ export const RoomMembers = Schema.Array(BotId).check(
 export const RoomName = Label;
 
 /**
- * How far bots may talk among themselves in a room before it waits for the
- * operator. A bot's message is one hop further from the operator than the
- * furthest message its turn read, the first reply to the operator being one;
- * past the limit it is posted, and wakes nobody.
+ * After this many bots' messages in a room since the operator last wrote there
+ * (or a bot's kickoff started it), every member's envelope says the
+ * conversation is closing: answer only if it is essential.
  */
-export const RoomHopLimit = PositiveInt;
+export const ROOM_CLOSING_AFTER = 6;
+
+/**
+ * After this many bots' messages in a room since the operator last wrote there
+ * (or a bot's kickoff started it), a bot's message there is posted but wakes
+ * nobody, and the room shows one `chain-stopped` notice (`room`), until the
+ * operator writes again.
+ */
+export const ROOM_QUIET_AFTER = 12;
 
 /**
  * Whether work addressed to an active room is under way, so a client offers
@@ -38,7 +45,6 @@ export type RoomWorkState = typeof RoomWorkState.Type;
 const roomFields = {
   id: RoomId,
   name: RoomName,
-  hopLimit: RoomHopLimit,
   pinned: Schema.Boolean,
   createdAt: Schema.DateTimeUtc,
 };

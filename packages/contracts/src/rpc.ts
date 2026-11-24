@@ -59,7 +59,7 @@ import {
   MemoryText,
 } from "./memory.ts";
 import { PairBotIds, PairSeq, TeammateMessage, TeammatePair } from "./pair.ts";
-import { Room, RoomHopLimit, RoomMembers, RoomName } from "./room.ts";
+import { Room, RoomMembers, RoomName } from "./room.ts";
 import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
 import {
   HarnessLocation,
@@ -234,8 +234,8 @@ export const EntryRpcs = RpcGroup.make(
   /**
    * Returns the new message entry. `attachments` are uploaded first with
    * `POST /attachments`. `mentions` only applies in a room, and names
-   * members only; leaving it out addresses nobody in particular. Every
-   * member reads the message either way. Fails with `Invalid("attachment")`, writing nothing, when
+   * members only; leaving it out wakes every member, as `bots` with no ids
+   * does. Fails with `Invalid("attachment")`, writing nothing, when
    * the files break a limit of the engine that runs the bot: an empty file, an
    * inline image (`INLINE_IMAGE_MEDIA_TYPES`) over `MAX_INLINE_IMAGE_SIZE`, or
    * inline images over `MAX_INLINE_IMAGES_SIZE` together. Fails with
@@ -506,7 +506,6 @@ export const RoomRpcs = RpcGroup.make(
       ...command,
       name: RoomName,
       members: RoomMembers,
-      hopLimit: Schema.optionalKey(RoomHopLimit),
     },
     success: Room,
     error: CommandError,
@@ -524,7 +523,6 @@ export const RoomRpcs = RpcGroup.make(
       roomId: RoomId,
       name: Schema.optionalKey(RoomName),
       members: Schema.optionalKey(RoomMembers),
-      hopLimit: Schema.optionalKey(RoomHopLimit),
       pinned: Schema.optionalKey(Schema.Boolean),
       archived: Schema.optionalKey(Schema.Boolean),
     },

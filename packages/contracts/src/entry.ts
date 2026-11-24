@@ -51,14 +51,20 @@ export const MAX_MESSAGE_LENGTH = 100_000;
 export const MessageText = Schema.String.check(Schema.isMaxLength(MAX_MESSAGE_LENGTH));
 
 /**
- * The members a room message addresses, in the order named; no ids addresses
- * nobody in particular. Every member reads every room message, so mentions
- * wake nobody: each member named is told the message is addressed to it. In
- * a conversation there are never ids.
+ * Whom a room message is for. In a conversation it is always `bots` with no
+ * ids. Every member reads every room message in its next turn; the mentions
+ * say whom it wakes now.
  */
-export const Mentions = Schema.TaggedStruct("bots", {
-  ids: Schema.Array(BotId).check(Schema.isMaxLength(6)),
-});
+export const Mentions = Schema.Union([
+  /**
+   * These members, in the order named, and only they are woken, each told it
+   * is addressed. No ids: nobody in particular, which wakes every member but
+   * the author.
+   */
+  Schema.TaggedStruct("bots", { ids: Schema.Array(BotId).check(Schema.isMaxLength(6)) }),
+  /** Every member but the author is woken and asked to answer. */
+  Schema.TaggedStruct("everyone", {}),
+]);
 export type Mentions = typeof Mentions.Type;
 
 const entry = {
@@ -526,8 +532,15 @@ export type StepSummary = typeof StepSummary.Type;
  */
 const notices = <Failure extends Schema.Top>(failure: Failure) =>
   [
-    /** A chain of bot-to-bot wakes hit a budget. */
-    Schema.TaggedStruct("chain-stopped", { limit: Schema.Literals(["hops", "fan-out"]) }),
+    /**
+     * Bots talking among themselves hit a limit: a chain of teammate
+     * messages its `hops` or `fan-out` budget, or a room `ROOM_QUIET_AFTER`
+     * bots' messages since the operator last wrote there (`room`), after
+     * which their messages there wake nobody until the operator writes.
+     */
+    Schema.TaggedStruct("chain-stopped", {
+      limit: Schema.Literals(["hops", "fan-out", "room"]),
+    }),
     /** A turn failed. Retryable with `notice.retry`. */
     Schema.TaggedStruct("turn-failed", { failure }),
     /**
