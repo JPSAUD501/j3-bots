@@ -405,7 +405,6 @@ it.effect("coalesces waiting wakes only with wakes of the same kind and audience
       commandId: command(),
       name: "Launch",
       members: [bot.id, other.id],
-      hostId: bot.id,
     });
     const inConversation = { _tag: "conversation", botId: bot.id } as const;
     const first = yield* writeMessage(inConversation, "First in private.");

@@ -6,7 +6,6 @@ import {
   Conflict,
   Invalid,
   NotFound,
-  PositiveInt,
   Room,
   RoomId,
 } from "@j3-bots/contracts";
@@ -25,7 +24,6 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Flag, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
-import { SettingsStore } from "../settings/SettingsStore.ts";
 import { roomRefusals } from "../turns/modeRefusals.ts";
 import { RoomStates } from "../turns/RoomStates.ts";
 import { RoomWork } from "./RoomWork.ts";
@@ -34,8 +32,6 @@ const RoomRow = Schema.Struct({
   id: RoomId,
   name: Schema.String,
   status: Schema.Literals(["active", "archived"]),
-  host_bot_id: Schema.NullOr(BotId),
-  hop_limit: PositiveInt,
   pinned: Flag,
   archived_at: Schema.NullOr(Time),
   created_at: Time,
@@ -49,16 +45,14 @@ const decodeRoom = Schema.decodeUnknownEffect(Room);
 export interface RoomChanges {
   readonly name?: string;
   readonly members?: ReadonlyArray<BotId>;
-  readonly hostId?: BotId;
-  readonly hopLimit?: number;
   readonly pinned?: boolean;
   readonly archived?: boolean;
 }
 
 /**
- * Rooms: their members, host and status. An active room has two to six
- * members and a host among them; an archived room takes no changes but
- * `pinned` and unarchiving (`docs/architecture/server.md`, Rooms).
+ * Rooms: their members and status. An active room has two to six members,
+ * all equal; an archived room takes no changes but `pinned` and unarchiving
+ * (`docs/architecture/server.md`, Rooms).
  */
 export class Rooms extends Context.Service<
   Rooms,
@@ -72,18 +66,14 @@ export class Rooms extends Context.Service<
       readonly commandId: CommandId;
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
-      readonly hostId: BotId;
-      readonly hopLimit?: number;
     }) => Effect.Effect<Room, CommandError>;
     /**
-     * Creates a room as `create` does, with the operator's default hop limit,
-     * in the caller's transaction and under no receipt: for a bot's
+     * Creates a room as `create` does, in the caller's transaction and under no receipt: for a bot's
      * `start_room`, which its turn tool's pin applies once.
      */
     readonly open: (input: {
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
-      readonly hostId: BotId;
     }) => Effect.Effect<Room, Invalid>;
     readonly update: (input: {
       readonly commandId: CommandId;
@@ -104,8 +94,7 @@ export class Rooms extends Context.Service<
     }) => Effect.Effect<void, CommandError>;
     /**
      * Takes `botId` out of every room before it is deleted, in the caller's
-     * transaction: a room it hosted passes to the member who joined first
-     * among the rest, and an active room left with fewer than two members is
+     * transaction: an active room left with fewer than two members is
      * archived.
      */
     readonly releaseBot: (botId: BotId) => Effect.Effect<void>;
@@ -119,7 +108,6 @@ export const layer = Layer.effect(
     const transaction = transactional(sql);
     const changes = yield* ChangeLog;
     const receipts = yield* CommandReceipts;
-    const settings = yield* SettingsStore;
     const work = yield* RoomWork;
     const states = yield* RoomStates;
     const ids = yield* Ids;
@@ -127,7 +115,7 @@ export const layer = Layer.effect(
     const refusals = roomRefusals(sql, yield* Entries);
 
     const SELECT = sql.literal(`
-      SELECT id, name, status, host_bot_id, hop_limit, pinned, archived_at, created_at
+      SELECT id, name, status, pinned, archived_at, created_at
       FROM rooms
     `);
     const roomRows = SqlSchema.findAll({
@@ -160,12 +148,10 @@ export const layer = Layer.effect(
         decodeRoom({
           id: row.id,
           name: row.name,
-          hopLimit: row.hop_limit,
           pinned: row.pinned,
           createdAt: row.created_at,
           status: row.status,
           members: members.filter((member) => member.room_id === row.id).map((m) => m.bot_id),
-          hostId: row.host_bot_id,
           ...(row.archived_at === null
             ? { work: working.get(row.id) ?? "none" }
             : { archivedAt: row.archived_at }),
@@ -191,11 +177,8 @@ export const layer = Layer.effect(
       return room.value;
     });
 
-    /** Two to six distinct bots that exist, with the host among them. */
-    const checkMembers = Effect.fn("Rooms.checkMembers")(function* (
-      members: ReadonlyArray<BotId>,
-      hostId: BotId,
-    ) {
+    /** Two to six distinct bots that exist. */
+    const checkMembers = Effect.fn("Rooms.checkMembers")(function* (members: ReadonlyArray<BotId>) {
       const distinct = new Set(members);
       const known = yield* sql<{ readonly id: string }>`
         SELECT id FROM bots WHERE ${sql.in("id", [...distinct])}
@@ -204,8 +187,7 @@ export const layer = Layer.effect(
         distinct.size !== members.length ||
         members.length < 2 ||
         members.length > 6 ||
-        known.length !== distinct.size ||
-        !distinct.has(hostId)
+        known.length !== distinct.size
       ) {
         return yield* new Invalid({ reason: "room-members" });
       }
@@ -236,16 +218,13 @@ export const layer = Layer.effect(
     const open = Effect.fn("Rooms.open")(function* (input: {
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
-      readonly hostId: BotId;
-      readonly hopLimit?: number;
     }) {
-      yield* checkMembers(input.members, input.hostId);
+      yield* checkMembers(input.members);
       const id = RoomId.make(yield* ids.make("room"));
       const at = timeText(yield* DateTime.now);
-      const hopLimit = input.hopLimit ?? (yield* settings.get).budgets.hops;
       yield* sql`
-        INSERT INTO rooms (id, name, host_bot_id, hop_limit, created_at, updated_at)
-        VALUES (${id}, ${input.name}, ${input.hostId}, ${hopLimit}, ${at}, ${at})
+        INSERT INTO rooms (id, name, created_at, updated_at)
+        VALUES (${id}, ${input.name}, ${at}, ${at})
       `.pipe(Effect.orDie);
       yield* writeMembers(id, input.members);
       yield* refusals.joined(id, input.members);
@@ -257,8 +236,6 @@ export const layer = Layer.effect(
       readonly commandId: CommandId;
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
-      readonly hostId: BotId;
-      readonly hopLimit?: number;
     }) {
       return yield* receipts.once({
         commandId: input.commandId,
@@ -282,29 +259,21 @@ export const layer = Layer.effect(
         result: Room,
         apply: Effect.gen(function* () {
           const room = yield* require(input.roomId);
-          const changesMore =
-            change.name !== undefined ||
-            change.members !== undefined ||
-            change.hostId !== undefined ||
-            change.hopLimit !== undefined;
+          const changesMore = change.name !== undefined || change.members !== undefined;
           if (room.status === "archived" && change.archived !== false && changesMore) {
             return yield* new Conflict({ reason: "room-archived" });
           }
           const now = yield* DateTime.now;
           const at = timeText(now);
           const members = change.members ?? room.members;
-          const hostId = change.hostId ?? room.hostId;
           const active =
             change.archived === undefined ? room.status === "active" : !change.archived;
           if (active && (changesMore || room.status === "archived")) {
-            if (hostId === null) return yield* new Invalid({ reason: "room-members" });
-            yield* checkMembers(members, hostId);
+            yield* checkMembers(members);
           }
           yield* sql`
             UPDATE rooms SET ${sql.update({
               name: change.name ?? room.name,
-              host_bot_id: hostId,
-              hop_limit: change.hopLimit ?? room.hopLimit,
               pinned: (change.pinned ?? room.pinned) ? 1 : 0,
               updated_at: at,
               ...(active ? { status: "active", archived_at: null } : {}),
@@ -379,17 +348,13 @@ export const layer = Layer.effect(
       const now = yield* DateTime.now;
       for (const room of yield* select({ id: null, botId })) {
         const rest = room.members.filter((member) => member !== botId);
-        const archives = room.status === "active" && rest.length < 2;
-        // A room that stays active passes to the member who joined first; one
-        // archived here keeps no host.
-        const nextHost = room.hostId !== botId ? room.hostId : archives ? null : (rest[0] ?? null);
         yield* writeMembers(room.id, rest);
-        // Archived first: the database refuses an active room without a host.
-        if (archives) yield* archive(room.id, now);
-        yield* sql`
-          UPDATE rooms SET host_bot_id = ${nextHost}, updated_at = ${timeText(now)}
-          WHERE id = ${room.id}
-        `.pipe(Effect.orDie);
+        if (room.status === "active" && rest.length < 2) yield* archive(room.id, now);
+        else {
+          yield* sql`UPDATE rooms SET updated_at = ${timeText(now)} WHERE id = ${room.id}`.pipe(
+            Effect.orDie,
+          );
+        }
         yield* changes.touch({ _tag: "room", roomId: room.id });
       }
     }, transaction);

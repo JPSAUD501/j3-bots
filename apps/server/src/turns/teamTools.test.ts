@@ -25,11 +25,13 @@ import {
   roomWakeStatuses,
   roomWith,
   running,
+  sawText,
   say,
   stopRoom,
   to,
 } from "../testing/rooms.ts";
 import {
+  admittedTurn,
   answerFirstOption,
   askRegion,
   awaitEntry,
@@ -37,6 +39,7 @@ import {
   conversation,
   createBot,
   engineSession,
+  eventually,
   flushed,
   messageTeammate,
   nextTurn,
@@ -392,7 +395,7 @@ it.effect("goes on from the bots a failed room turn made when the operator retri
 );
 
 it.effect(
-  "starts a room whose kickoff wakes the members one at a time, the bots made for it with no hello",
+  "starts a room whose kickoff every other member reads in member order, the bots made for it with no hello",
   () =>
     Effect.gen(function* () {
       const scout = yield* primaryBot("Scout");
@@ -400,8 +403,8 @@ it.effect(
       const { session, turnId } = yield* operatorAsks(scout, "Make me a support group.");
       const pip = yield* madeMember(session, turnId, "Pip");
       const mole = yield* madeMember(session, turnId, "Mole");
-      const host: Member = { bot: scout, session };
-      const team = [host, pip, mole, wren];
+      const caller: Member = { bot: scout, session };
+      const team = [caller, pip, mole, wren];
 
       const started = yield* call(session, turnId, "start_room", {
         name: "Support",
@@ -415,7 +418,6 @@ it.effect(
         room.members,
         team.map((one) => one.bot.id),
       );
-      assert.strictEqual(room.hostId, scout.id);
       const startedNotice = { _tag: "room-started", botId: scout.id, roomId } as const;
       const [notice, kickoff, ...rest] = yield* roomEntries(roomId);
       assert.deepStrictEqual(notice?._tag === "notice" ? notice.notice : notice, startedNotice);
@@ -435,9 +437,10 @@ it.effect(
       assert.deepStrictEqual(yield* noticesOf(wren.bot.id), []);
 
       // It tells its user what it set up, which ends its turn.
-      yield* say(host, turnId, { text: "Pip, Mole and Wren are on it in Support.", done: true });
-      yield* finish(host, turnId, team);
-      // The members answer in the order the kickoff named them, one at a time.
+      yield* say(caller, turnId, { text: "Pip, Mole and Wren are on it in Support.", done: true });
+      yield* finish(caller, turnId, team);
+      // The other members read the kickoff in member order, one at a time.
+      // Pip opens, as it asks; Mole and Wren read Pip's reply with it.
       for (const next of [pip, mole, wren]) {
         const turn = yield* nextTurn(next.bot.id);
         assert.deepStrictEqual(yield* running(team), [next.bot.profile.name]);
@@ -445,14 +448,106 @@ it.effect(
         assert.include(envelope, "Pip takes billing");
         // It reads as the kickoff, which names its part, not as any message that mentions it.
         assert.include(envelope, 'reason="kickoff"');
-        yield* say(next, turn, { text: "On it.", done: true });
+        if (next === pip) yield* say(next, turn, { text: "On it.", done: true });
+        else assert.include(envelope, "On it.");
         yield* finish(next, turn, team);
       }
+      // Scout reads Pip's reply last, as a member's message to it.
+      const reply = yield* nextTurn(scout.id, turnId);
+      assert.include(yield* lastEnvelope(caller), 'reason="member"');
+      yield* finish(caller, reply, team);
       assert.deepStrictEqual(yield* running(team), []);
       for (const made of [pip, mole]) {
         assert.deepStrictEqual(yield* hellos(made.bot.id), ["cancelled"]);
-        // Its first turn was the room's: nothing came to its own conversation.
-        assert.deepStrictEqual(yield* roomWakeStatuses(made.bot.id, roomId), ["finished"]);
+      }
+      // Their first turn was the room's: nothing came to their own conversations.
+      assert.deepStrictEqual(yield* roomWakeStatuses(pip.bot.id, roomId), ["finished"]);
+      assert.deepStrictEqual(yield* roomWakeStatuses(mole.bot.id, roomId), [
+        "finished",
+        "finished",
+      ]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "lets every member's answer to a kickoff reach the others, and the room go quiet on its own",
+  () =>
+    Effect.gen(function* () {
+      const scout = yield* primaryBot("Scout");
+      const [pip, mole, wren] = [
+        yield* member("Pip"),
+        yield* member("Mole"),
+        yield* member("Wren"),
+      ];
+      const { session, turnId } = yield* operatorAsks(scout, "Make me a launch group.");
+      const caller: Member = { bot: scout, session };
+      const team = [caller, pip, mole, wren];
+      const roomId = decodeStarted(
+        resultOf(
+          yield* call(session, turnId, "start_room", {
+            name: "Launch",
+            members: [pip.bot.id, mole.bot.id, wren.bot.id],
+            kickoff: "Each of you says what you take on.",
+          }),
+        ),
+      ).id;
+      yield* finish(caller, turnId, team);
+
+      // Each member answers once; a turn after its answer ends without a word.
+      const answered = new Set<Member>();
+      const ran: Array<string> = [];
+      while (true) {
+        const next = yield* eventually(
+          Effect.gen(function* () {
+            for (const one of team) {
+              const admitted = yield* admittedTurn(one.bot.id);
+              if (Option.isSome(admitted) && !(one === caller && admitted.value === turnId)) {
+                return Option.some(Option.some({ one, turn: admitted.value }));
+              }
+            }
+            return (yield* running(team)).length === 0 &&
+              !(yield* roomWakeStatuses(scout.id, roomId)).includes("pending") &&
+              (yield* Effect.forEach([pip, mole, wren], (one) =>
+                roomWakeStatuses(one.bot.id, roomId),
+              )).every((statuses) => !statuses.includes("pending"))
+              ? Option.some(Option.none())
+              : Option.none();
+          }),
+        );
+        if (Option.isNone(next)) break;
+        const { one, turn } = next.value;
+        ran.push(one.bot.profile.name);
+        assert.isAtMost(ran.length, 12, `the room never went quiet: ${ran.join(", ")}`);
+        if (one !== caller && !answered.has(one)) {
+          answered.add(one);
+          yield* say(one, turn, { text: `${one.bot.profile.name} takes a part.`, done: true });
+        }
+        yield* finish(one, turn, team);
+      }
+
+      // Every answer was posted and woke the others, far below the room's limit.
+      assert.deepStrictEqual(
+        (yield* roomEntries(roomId)).flatMap((entry) =>
+          entry._tag === "message" && entry.author._tag === "bot" ? [entry.text] : [],
+        ),
+        [
+          "Each of you says what you take on.",
+          "Pip takes a part.",
+          "Mole takes a part.",
+          "Wren takes a part.",
+        ],
+      );
+      assert.deepStrictEqual(
+        (yield* noticesIn(roomId)).filter((notice) => notice._tag === "chain-stopped"),
+        [],
+      );
+      for (const one of team) {
+        for (const other of [pip, mole, wren].filter((answering) => answering !== one)) {
+          assert.isTrue(
+            yield* sawText(one, `${other.bot.profile.name} takes a part.`),
+            `${one.bot.profile.name} never read ${other.bot.profile.name}'s answer`,
+          );
+        }
       }
     }).pipe(Effect.provide(TestDomain.layer)),
 );
@@ -464,7 +559,7 @@ it.effect(
       const scout = yield* primaryBot("Scout");
       const { session, turnId } = yield* operatorAsks(scout, "Make me a deploy group.");
       const pip = yield* madeMember(session, turnId, "Pip");
-      const host: Member = { bot: scout, session };
+      const caller: Member = { bot: scout, session };
       const roomId = decodeStarted(
         resultOf(
           yield* call(session, turnId, "start_room", {
@@ -474,8 +569,8 @@ it.effect(
           }),
         ),
       ).id;
-      yield* say(host, turnId, { text: "Pip is on it in Deploy.", done: true });
-      yield* finish(host, turnId, [host, pip]);
+      yield* say(caller, turnId, { text: "Pip is on it in Deploy.", done: true });
+      yield* finish(caller, turnId, [caller, pip]);
       const turn = yield* nextTurn(pip.bot.id);
 
       const asked = yield* call(pip.session, turn, "ask", {

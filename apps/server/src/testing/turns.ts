@@ -407,7 +407,7 @@ export const timesSent = (sessionId: SessionId, text: string) =>
     return received.filter((dispatch) => dispatch.text.includes(text)).length;
   });
 
-/** A room of the bot and a second member, which the bot hosts. */
+/** A room of the bot, first, and a second member. */
 export const roomOf = (botId: BotId) =>
   Effect.gen(function* () {
     const other = yield* createBot("Bia");
@@ -415,7 +415,6 @@ export const roomOf = (botId: BotId) =>
       commandId: command(),
       name: "Launch",
       members: [botId, other.id],
-      hostId: botId,
     });
   });
 

@@ -20,14 +20,13 @@ const insertBot = (id: string) =>
   );
 
 it.layer(TestDatabase.layer)("database", (it) => {
-  it.effect("keeps a room's host until the room is handed over, and a deleted bot's words", () =>
+  it.effect("keeps a deleted bot's words in a room", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* insertBot("scout");
-      yield* insertBot("quill");
       yield* sql`
-        INSERT INTO rooms (id, name, host_bot_id, hop_limit, created_at, updated_at)
-        VALUES ('launch', 'Launch', 'scout', 4, ${now}, ${now})
+        INSERT INTO rooms (id, name, created_at, updated_at)
+        VALUES ('launch', 'Launch', ${now}, ${now})
       `;
       yield* sql`
         INSERT INTO entries (
@@ -36,21 +35,11 @@ it.layer(TestDatabase.layer)("database", (it) => {
         ) VALUES ('entry-1', 'launch', 0, 'message', 'bot', 'scout', '{}', ${now}, ${now})
       `;
 
-      const refused = yield* sql`DELETE FROM bots WHERE id = 'scout'`.pipe(Effect.flip);
-      assert.strictEqual(refused.reason._tag, "ConstraintError");
-
-      yield* sql`UPDATE rooms SET host_bot_id = 'quill' WHERE id = 'launch'`;
       yield* sql`DELETE FROM bots WHERE id = 'scout'`;
       const authors = yield* sql<{ readonly author: string }>`
         SELECT author_bot_id AS author FROM entries WHERE id = 'entry-1'
       `;
       assert.deepStrictEqual(authors, [{ author: "scout" }]);
-
-      // Archived, the room no longer needs a host.
-      yield* sql`
-        UPDATE rooms SET status = 'archived', archived_at = ${now} WHERE id = 'launch'
-      `;
-      yield* sql`DELETE FROM bots WHERE id = 'quill'`;
     }),
   );
 

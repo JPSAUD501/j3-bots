@@ -18,7 +18,6 @@ import {
   lastEnvelope,
   type Member,
   member,
-  nobody,
   noticesIn,
   operatorWrites,
   roomEntries,
@@ -33,13 +32,11 @@ import {
 } from "../testing/rooms.ts";
 import {
   admittedTurn,
-  chainLimits,
   command,
   conversation,
   deliveryIs,
   failedAs,
   mainSessionId,
-  messageTeammate,
   nextTurn,
   noticesOf,
   sendToBot,
@@ -148,7 +145,7 @@ it.effect(
       const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
       const members = [hal, ana, bo];
       const room = yield* roomWith(hal, [ana, bo]);
-      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
       const failing = yield* nextTurn(hal.bot.id);
       yield* control.finishTurn({
         sessionId: hal.session,
@@ -197,7 +194,7 @@ it.effect("writes no room wake for a room that takes no messages, whatever cause
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     const members = [hal, ana];
     const room = yield* roomWith(hal, [ana]);
-    const message = yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+    const message = yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
     const turn = yield* nextTurn(hal.bot.id);
     yield* finish(hal, turn, members);
     yield* archive(room.id, true);
@@ -215,7 +212,7 @@ it.effect("writes no room wake for a room that takes no messages, whatever cause
           botId: ana.bot.id,
           kind: "room",
           audience,
-          payload: { _tag: "room", entryId: message, reason: "mentioned" },
+          payload: { _tag: "room", entryId: message, reason: "addressed" },
           sourceEntryId: message,
           hops: 0,
           retryOf: null,
@@ -236,7 +233,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -271,7 +268,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -306,39 +303,39 @@ it.effect(
 );
 
 it.effect(
-  "speaks in the room from a turn its room turn's background work started, counting its hops from that turn",
+  "speaks in the room from a turn its room turn's background work started, and wakes the member it addresses",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
       const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
       const members = [ana, bo];
-      const room = yield* roomWith(ana, [bo], 1);
+      const room = yield* roomWith(ana, [bo]);
       yield* operatorWrites(room.id, members, "Ana, get Bo to run the build.", to(ana));
       const asking = yield* nextTurn(ana.bot.id);
       yield* say(ana, asking, { text: "Bo, run the build.", mention: [bo.bot.id] });
       yield* finish(ana, asking, members);
 
-      // Bo's turn, the chain's first hop, starts the build and ends.
+      // Bo's room turn starts the build and ends.
       const building = yield* nextTurn(bo.bot.id);
       yield* control.startBackgroundWork({ sessionId: bo.session, turnId: building });
       yield* finish(bo, building, members);
 
-      // The build wakes Bo's session with a turn of the room's, which counts
-      // as the same hop: its mention would be the second.
+      // The build wakes Bo's session with a turn that goes on with the room's
+      // work: what it says goes to the room, not to Bo's conversation.
       const done = yield* control.startEngineTurn(bo.session, building);
       yield* nextTurn(bo.bot.id, building);
-      const response = yield* say(bo, done, { text: "Ana, it passed.", mention: [ana.bot.id] });
-      assert.include(JSON.stringify(response), "limit of 1");
+      yield* say(bo, done, { text: "Ana, it passed.", mention: [ana.bot.id] });
       yield* finish(bo, done, members);
       const said = (yield* roomEntries(room.id)).flatMap((entry) =>
         entry._tag === "message" ? [entry.text] : [],
       );
       assert.include(said, "Ana, it passed.");
-      assert.strictEqual(yield* roomWakesOf(ana.bot.id, room.id), 1);
       assert.deepStrictEqual(
         (yield* conversation(bo.bot.id)).filter((entry) => entry._tag === "message"),
         [],
       );
+      yield* nextTurn(ana.bot.id, asking);
+      assert.include(yield* lastEnvelope(ana), "Ana, it passed.");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -413,7 +410,7 @@ it.effect("clears a room turn's background flag once the engine no longer lists 
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     const members = [hal, ana];
     const room = yield* roomWith(hal, [ana]);
-    yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+    yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
     const watching = yield* nextTurn(hal.bot.id);
     yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
     yield* finish(hal, watching, members);
@@ -438,7 +435,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -479,7 +476,7 @@ it.effect("holds a room's Stop while the engine starts a private turn no event s
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     const members = [hal, ana];
     const room = yield* roomWith(hal, [ana]);
-    yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+    yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
     const watching = yield* nextTurn(hal.bot.id);
     yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
     yield* finish(hal, watching, members);
@@ -521,7 +518,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -554,7 +551,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -581,7 +578,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -619,7 +616,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -666,7 +663,7 @@ it.effect("holds a room's Stop past its bound while a private turn visibly runs"
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     const members = [hal, ana];
     const room = yield* roomWith(hal, [ana]);
-    yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+    yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
     const watching = yield* nextTurn(hal.bot.id);
     yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
     yield* finish(hal, watching, members);
@@ -708,7 +705,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -746,7 +743,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -786,7 +783,7 @@ it.effect(
         const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
         const members = [hal, ana];
         const room = yield* roomWith(hal, [ana]);
-        yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+        yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
         const watching = yield* nextTurn(hal.bot.id);
         yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
         yield* finish(hal, watching, members);
@@ -828,7 +825,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
@@ -869,7 +866,7 @@ it.effect(
       const deploying = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: deploying });
       yield* finish(hal, deploying, members);
-      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
       const planning = yield* nextTurn(hal.bot.id, deploying);
 
       // Hal's stream stalls. The room's turn ends, and the deploy's
@@ -917,7 +914,7 @@ it.effect(
       const startup = yield* control.holdNextStartup(hal.session);
       yield* control.endBackgroundWork(hal.session);
       yield* control.startEngineTurnDuringNextDispatch(hal.session, deploying);
-      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
       yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
       yield* (yield* Stops).runPending;
       assert.strictEqual(yield* issuedRounds, 0);
@@ -940,7 +937,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Run the migration.", nobody);
+      yield* operatorWrites(room.id, members, "Run the migration.", to(hal));
       const migrating = yield* nextTurn(hal.bot.id);
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: migrating });
       yield* finish(hal, migrating, members);
@@ -975,46 +972,6 @@ it.effect(
 );
 
 it.effect(
-  "counts a harness's wake from a room chain's pending work, also once the operator's turn left work",
-  () =>
-    Effect.gen(function* () {
-      const control = yield* TestEngineControl;
-      yield* chainLimits({ hops: 1, fanOut: 1 });
-      const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
-      const members = [ana, bo];
-      const room = yield* roomWith(ana, [bo]);
-      yield* operatorWrites(room.id, members, "Ana, get Bo to run the build.", to(ana));
-      const asking = yield* nextTurn(ana.bot.id);
-      yield* say(ana, asking, { text: "Bo, run the build.", mention: [bo.bot.id] });
-      yield* finish(ana, asking, members);
-
-      // Bo's turn, a hop of the room's chain, starts the build, which runs on.
-      const building = yield* nextTurn(bo.bot.id);
-      yield* control.startBackgroundWork({ sessionId: bo.session, turnId: building });
-      yield* finish(bo, building, members);
-      yield* TestClock.adjust("1 minute");
-
-      // The operator asks Bo for a check in private, which leaves work too.
-      // A harness's wake follows, naming no turn: it may be the build's.
-      yield* sendToBot(bo.bot.id, "Check the logs, and tell Ana.");
-      const checking = yield* nextTurn(bo.bot.id, building);
-      yield* control.startBackgroundWork({ sessionId: bo.session, turnId: checking });
-      yield* control.startEngineTurn(bo.session);
-      yield* finish(bo, checking, members);
-      const woken = yield* nextTurn(bo.bot.id, checking);
-
-      const reply = yield* messageTeammate(bo.session, woken, {
-        to: ana.bot.id,
-        text: "The logs are clean.",
-        urgent: false,
-      });
-      const refused = reply._tag === "refused" ? reply.message : "";
-      assert.include(refused, "limit of 1");
-      assert.include(refused, "background work");
-    }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect(
   "shows a retryable notice when the operator's Retry of a bot's room mention fails again",
   () =>
     Effect.gen(function* () {
@@ -1023,7 +980,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
       const planning = yield* nextTurn(hal.bot.id);
       yield* say(hal, planning, { text: "Ana, the numbers?", mention: [ana.bot.id] });
       yield* control.rejectNextDispatch;

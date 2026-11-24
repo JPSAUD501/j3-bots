@@ -785,12 +785,11 @@ it.layer(services, { excludeTestServices: true })("upgrade check", (it) => {
             });
             yield* quiet;
 
-            // A room, where the host answers.
+            // A room, where the member the message mentions answers.
             const room = yield* client["room.create"]({
               commandId: CommandId.make("upgrade-check-room"),
               name: "Upgrade room",
               members: [keeper.id, second.id],
-              hostId: keeper.id,
             });
             const inRoom = { _tag: "room", roomId: room.id } as const;
             yield* client["message.send"]({

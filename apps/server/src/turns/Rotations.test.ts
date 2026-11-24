@@ -862,14 +862,14 @@ it.effect(
 );
 
 it.effect(
-  "starts the host's room turn while the engine refuses another member's permission mode, and tells the room once",
+  "starts a member's room turn while the engine refuses another member's permission mode, and tells the room once",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
       const bots = yield* Bots;
-      const host = yield* createBot("Ana");
-      const room = yield* roomOf(host.id);
-      const member = room.members.find((id) => id !== host.id);
+      const ana = yield* createBot("Ana");
+      const room = yield* roomOf(ana.id);
+      const member = room.members.find((id) => id !== ana.id);
       assert.isDefined(member);
       // The member works in Full access, and a policy that allows less is
       // installed while it is in the room.
@@ -888,8 +888,8 @@ it.effect(
       yield* sendInRoom(member, room.id, "Bia, check the numbers.");
       yield* modeRefused(1);
       yield* until(Effect.map(refusalRecorded(member), (recorded) => recorded));
-      yield* sendInRoom(host.id, room.id, "Ana, draft the plan.");
-      yield* nextTurn(host.id);
+      yield* sendInRoom(ana.id, room.id, "Ana, draft the plan.");
+      yield* nextTurn(ana.id);
       yield* anHourOfPasses;
       assert.deepStrictEqual(
         [yield* membersRefused(room.id), yield* control.modeRefusals],
@@ -904,9 +904,9 @@ it.effect(
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
       const bots = yield* Bots;
-      const host = yield* createBot("Ana");
-      const room = yield* roomOf(host.id);
-      const member = room.members.find((id) => id !== host.id);
+      const ana = yield* createBot("Ana");
+      const room = yield* roomOf(ana.id);
+      const member = room.members.find((id) => id !== ana.id);
       assert.isDefined(member);
       const session = yield* engineSession(member);
       yield* bots.update({
@@ -944,8 +944,8 @@ it.effect(
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
       const bots = yield* Bots;
-      const host = yield* createBot("Ana");
-      const room = yield* roomOf(host.id);
+      const ana = yield* createBot("Ana");
+      const room = yield* roomOf(ana.id);
       const late = yield* createBot("Caio");
       yield* bots.update({
         commandId: command(),
@@ -977,8 +977,8 @@ it.effect(
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
       const bots = yield* Bots;
-      const host = yield* createBot("Ana");
-      const room = yield* roomOf(host.id);
+      const ana = yield* createBot("Ana");
+      const room = yield* roomOf(ana.id);
       const late = yield* createBot("Caio");
       yield* bots.update({
         commandId: command(),

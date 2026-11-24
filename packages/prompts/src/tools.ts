@@ -146,7 +146,7 @@ const SayInput = toolInput({
   mention: Schema.optionalKey(
     described(
       Schema.Array(Id).check(Schema.isMaxLength(6)),
-      "Only with a message to the room: the bot ids of the members who must act next, each woken in turn. Leave it out when nobody needs to act.",
+      "Only with a message to the room: the bot ids of the members you speak to, who alone are woken to answer; the others read it in their next turn. Leave it out to wake every other member.",
     ),
   ),
   done: Schema.optionalKey(
@@ -211,7 +211,7 @@ const MessageBotInput = toolInput({
   mention: Schema.optionalKey(
     described(
       Schema.Array(Id).check(Schema.isMaxLength(6)),
-      "To a room only: the bot ids of the members who must act next, each woken in turn. Leave it out when nobody needs to act.",
+      "To a room only: the bot ids of the members you speak to, who alone are woken to answer. Leave it out to wake every other member.",
     ),
   ),
 });
@@ -220,16 +220,16 @@ const StartRoomInput = toolInput({
   name: described(RoomName, "The room's name, as your user will see it in their list."),
   members: described(
     Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_REQUEST)),
-    `The teammates who join, by bot id: one to ${MAX_BOTS_PER_REQUEST}, besides you. You join as the host.`,
+    `The teammates who join, by bot id: one to ${MAX_BOTS_PER_REQUEST}, besides you. You join as the first member.`,
   ),
   kickoff: described(
     text(1, MAX_SPOKEN_TEXT),
-    "The room's first message, yours: what the room is for, what your user needs, who owns which part, the rules, and what each member you mention should answer first.",
+    "The room's first message, yours: what the room is for, what your user needs, who owns which part, the rules, and what each member should answer first.",
   ),
   mention: Schema.optionalKey(
     described(
       Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_REQUEST)),
-      "The members the kickoff wakes, each in turn, in this order: the one who opens first. Leave it out to wake every member, in the order of `members`.",
+      "The members the kickoff wakes; the others read it in their next turn. Leave it out to wake every member.",
     ),
   ),
 });
@@ -450,7 +450,7 @@ export const tools = {
     [
       "Send a message to your user. Nothing else you write reaches them: reply text outside this tool goes nowhere.",
       'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead.',
-      "In a room, the members you list in `mention` are woken to answer; nobody else is. Mention a member only to hand them work they must do next, usually one: your user limits how many one message may mention, and how long a chain of turns between bots may run since they last spoke. Mentioning nobody lets the room settle. A name typed with @ in the text is only shown; `mention` is what wakes a member.",
+      "In a room, the members you list in `mention` are woken to answer; with none listed, every other member is, and each reads what you said in its next turn either way. Your user limits how much bots may say in a room since they last wrote, so speak there only when the room needs it, and mention the one who must act next when there is one. A name typed with @ in the text is only shown; `mention` is what wakes a member.",
       "Attach files you produced, rather than linking workspace paths they cannot open.",
       "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a `pause` the instruction asks for may follow it. Then end your turn.",
       "Returns once the message is recorded.",
@@ -486,7 +486,7 @@ export const tools = {
     "message_bot",
     [
       "Send a message to one teammate, by a bot id from `list_teammates`, or post in a room you are a member of, by its room id. Your user can read what you send a teammate, but is not alerted to it: if they need to know, tell them with `say`.",
-      "In a room the message lands at once, and the members you list in `mention` are woken to answer, each in turn; nobody else is. It is how you bring work for several teammates back to a room they share.",
+      "In a room the message lands at once, and wakes the members you list in `mention`, or every other member with none listed. It is how you bring work for several teammates back to a room they share.",
       "To a teammate, only an `urgent` message wakes them now. Any other is queued until the teammate's next turn begins, however long that takes.",
       "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender. Answer a question once; an FYI or a thanks needs no answer.",
       "Returns an acknowledgement only. Any reply comes in a later turn of yours.",
@@ -566,9 +566,9 @@ export const tools = {
     "start_room",
     [
       "Start a room: a group chat where you and the teammates you name work on something together, and where your user reads along and writes too. Only when your user asked for group work in this turn's message. When they asked for a group or a team of bots, first create the teammates it lacks with `create_bot`, in this same turn.",
-      "You join as the host. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and what each member you mention should answer first.",
-      "The kickoff wakes the members in `mention`, every other member by default, one at a time in that order, so list first the one who opens: each answers in the room and sees the replies before it, and none waits for you or your user to speak first. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
-      "A room holds two to six bots, you included. Your user's limit on how long a chain of turns between bots may run since they last spoke holds here too.",
+      "You join as its first member. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and what each member should answer first.",
+      "The kickoff wakes the members in `mention`, every other member by default, and each answers in the room what it asks of them; none waits for you or your user to speak first. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
+      "A room holds two to six bots, you included. Your user's limit on how much bots may say in a room since they last wrote holds here too, and starts with your kickoff.",
       "Returns the room's id. Then tell your user, in a `say`, what you set up and who owns what.",
       BOT_ONLY,
     ],

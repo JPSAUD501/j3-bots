@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { CommandId, EntryOrder, MemoryPath, type Room } from "@j3-bots/contracts";
+import { CommandId, EntryOrder, MemoryPath } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
@@ -34,9 +34,7 @@ const createBot = (name: string, job = "") =>
     return yield* bots.create({ commandId: command(), draft: { name, job } });
   });
 
-const activeMembers = (room: Room) => (room.status === "active" ? room.hostId : null);
-
-it.effect("hands a room the deleted bot hosted to the member who joined first among the rest", () =>
+it.effect("takes a deleted bot out of a room that keeps two members, which stays active", () =>
   Effect.gen(function* () {
     const bots = yield* Bots;
     const rooms = yield* Rooms;
@@ -45,7 +43,6 @@ it.effect("hands a room the deleted bot hosted to the member who joined first am
       commandId: command(),
       name: "Launch",
       members: [a.id, b.id, c.id],
-      hostId: a.id,
     });
 
     yield* bots.remove({ commandId: command(), botId: a.id, deleteFiles: false });
@@ -53,7 +50,6 @@ it.effect("hands a room the deleted bot hosted to the member who joined first am
     const after = Option.getOrThrow(yield* rooms.find(room.id));
     assert.strictEqual(after.status, "active");
     assert.deepStrictEqual(after.members, [b.id, c.id]);
-    assert.strictEqual(activeMembers(after), b.id);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -67,7 +63,6 @@ it.effect("archives a room left with fewer than two members, keeping what was sa
       commandId: command(),
       name: "Pair",
       members: [a.id, b.id],
-      hostId: b.id,
     });
     const said = yield* entries.append({
       target: { _tag: "room", roomId: room.id },
@@ -86,7 +81,6 @@ it.effect("archives a room left with fewer than two members, keeping what was sa
 
     const after = Option.getOrThrow(yield* rooms.find(room.id));
     assert.strictEqual(after.status, "archived");
-    assert.strictEqual(after.hostId, null);
     assert.deepStrictEqual(after.members, [a.id]);
     const kept = Option.getOrThrow(yield* entries.find(said.id));
     assert.deepStrictEqual(kept.entry.author, { _tag: "bot", botId: b.id });

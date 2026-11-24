@@ -6,7 +6,13 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
-import { CLOSING_LINES, renderWake, ROOM_CLOSING_LINES, type Wake } from "./envelope.ts";
+import {
+  CLOSING_LINES,
+  renderWake,
+  ROOM_CLOSING_LINES,
+  ROOM_CLOSING_NOTE,
+  type Wake,
+} from "./envelope.ts";
 import { foldForMatching } from "./text.ts";
 
 /** A random source that returns the given nonces, as bytes, in order, then repeats the last. */
@@ -71,9 +77,9 @@ const wakesWith = (s: string): ReadonlyArray<Wake> => {
         id: Schema.decodeSync(RoomId)("launch"),
         name: s,
         members: [teammate],
-        hostName: s,
       },
-      reason: "mentioned",
+      reason: "addressed",
+      closing: false,
       omitted: 2,
       entries: [
         {
@@ -288,9 +294,9 @@ describe("renderWake", () => {
           id: Schema.decodeSync(RoomId)("launch"),
           name: "Launch",
           members: [{ id: botId("scout"), name: "Scout", title: "Research" }, pixel],
-          hostName: "Pixel",
         },
-        reason: "mentioned",
+        reason: "addressed",
+        closing: false,
         omitted: 3,
         entries: [
           {
@@ -311,7 +317,7 @@ describe("renderWake", () => {
       }),
     ).toMatchInlineSnapshot(`
       "<j3-wake kind="room" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      <room id="launch" name="Launch" host="Pixel" reason="mentioned">
+      <room id="launch" name="Launch" reason="addressed">
       <member id="scout" name="Scout" title="Research"/>
       <member id="pixel" name="Pixel" title="Design"/>
       </room>
@@ -323,7 +329,7 @@ describe("renderWake", () => {
       I have the deck if that helps.
       </data-7f3a9c01b2d4>
       </j3-wake>
-      In this room, \`say\` reaches everyone. You were addressed: answer, and \`mention\` a member only if they must act next.
+      In this room, \`say\` reaches everyone. You were addressed: read what the others already said, then answer.
       "
     `);
   });
@@ -379,9 +385,9 @@ describe("renderWake", () => {
           id: Schema.decodeSync(RoomId)("launch"),
           name: "Launch",
           members: [pixel],
-          hostName: "Pixel",
         },
-        reason: "host",
+        reason: "user",
+        closing: false,
         omitted: 0,
         entries: [
           {
@@ -403,7 +409,7 @@ describe("renderWake", () => {
       }),
     ).toMatchInlineSnapshot(`
       "<j3-wake kind="room" at="2026-11-20T09:41:00-03:00" weekday="Friday" tz="America/Sao_Paulo">
-      <room id="launch" name="Launch" host="Pixel" reason="host">
+      <room id="launch" name="Launch" reason="user">
       <member id="pixel" name="Pixel" title="Design"/>
       </room>
       <data-7f3a9c01b2d4 source="room" from="Pixel" from-id="pixel" at="09:39" file-1="deck.pdf" file-2="cover.png">
@@ -413,7 +419,7 @@ describe("renderWake", () => {
       Use this logo <attachment n="3" name="logo.png" type="image/png" path="files/inbox/logo.png"/> on the cover<attachment n="4" name="notes.md" type="text/markdown" path="files/inbox/notes.md"/>
       </message>
       </j3-wake>
-      In this room, \`say\` reaches everyone. You host it and nobody was addressed: answer, or hand the work to one member with \`mention\`.
+      In this room, \`say\` reaches everyone. Your user wrote to the whole room. Read what the others already said, then answer if the message is for you or you have something to add that nobody said; otherwise end your turn without a word.
       "
     `);
   });
@@ -626,12 +632,18 @@ describe("renderWake", () => {
 
   it("ends every envelope with its kind's closing line, a room's chosen by why the bot was woken", () => {
     for (const wake of wakesWith("text")) {
-      const lines =
+      const lines: ReadonlyArray<{ readonly wake: Wake; readonly line: string }> =
         wake.kind === "room"
-          ? (["host", "kickoff", "mentioned", "everyone"] as const).map((reason) => ({
-              wake: { ...wake, reason },
-              line: ROOM_CLOSING_LINES[reason],
-            }))
+          ? [
+              ...(["kickoff", "addressed", "everyone", "user", "member"] as const).map(
+                (reason) => ({ wake: { ...wake, reason }, line: ROOM_CLOSING_LINES[reason] }),
+              ),
+              // A closing conversation asks for an answer only if it is essential.
+              {
+                wake: { ...wake, reason: "member", closing: true },
+                line: `${ROOM_CLOSING_LINES.member} ${ROOM_CLOSING_NOTE}`,
+              },
+            ]
           : [{ wake, line: CLOSING_LINES[wake.kind] }];
       for (const { wake: rendered, line } of lines) {
         expect(render(rendered).endsWith(`</j3-wake>\n${line}\n`)).toBe(true);

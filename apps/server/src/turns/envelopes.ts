@@ -25,8 +25,8 @@ import { inboxPath } from "./inbox.ts";
  * text alone: what can render longer when the wake is dispatched later. The
  * wake's zone (an IANA name, at most about 30 characters), its weekday, the
  * message's time, which gains its date once the day has changed, take well
- * under this. What a room may change meanwhile (its name, members and host,
- * and their names) is checked at its widest instead (`widestRoomHeader`).
+ * under this. What a room may change meanwhile (its name, members and their
+ * names) is checked at its widest instead (`widestRoomHeader`).
  */
 const DISPATCH_VARIANCE = 1_000;
 
@@ -61,8 +61,8 @@ export const widestTeammate = (id: BotId): TeammateRef => ({
 /**
  * The room as an envelope names it at its widest: its name, as many members
  * as a room can have, and every name and id as long as they can be. A wake
- * for the room may be dispatched after the room was renamed, given members or
- * a new host, or its members renamed, so a writer of operator text into a
+ * for the room may be dispatched after the room was renamed, given members,
+ * or its members renamed, so a writer of operator text into a
  * room's wake checks its size with this rather than the room as it is now.
  */
 export const widestRoomHeader = (roomId: RoomId): RoomWake["room"] => {
@@ -71,7 +71,6 @@ export const widestRoomHeader = (roomId: RoomId): RoomWake["room"] => {
     id: roomId,
     name: WIDEST_ROOM_NAME,
     members: Array.from({ length: MAX_ROOM_MEMBERS }, () => member),
-    hostName: member.name,
   };
 };
 

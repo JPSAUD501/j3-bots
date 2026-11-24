@@ -546,7 +546,7 @@ export const layer = Layer.effect(
           if (state !== null) yield* showHandoff(shown, state);
           continue;
         }
-        // A bot's room message wakes the members it mentions, but it was
+        // A bot's room message wakes the other members, but it was
         // delivered when it was said: only the operator's waits on its wakes.
         if (shown._tag !== "message" || shown.author._tag !== "operator") continue;
         // It shows the delivery of the recipients it still counts, and

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { BotId, Label, PositiveInt, RoomId } from "./base.ts";
+import { BotId, Label, RoomId } from "./base.ts";
 
 /** The most bots a room has. */
 export const MAX_ROOM_MEMBERS = 6;

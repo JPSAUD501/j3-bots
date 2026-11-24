@@ -1,25 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, PositiveInt, RoomId } from "@j3-bots/contracts";
+import { BotId, RoomId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-/** An active room as routing reads it: who is in it, in member order, who hosts it, its hop limit. */
+/**
+ * An active room as routing reads it: who is in it, in member order, and how
+ * many messages its bots have said since the operator last wrote there.
+ */
 export interface LiveRoom {
   readonly id: RoomId;
   readonly name: string;
-  readonly hostId: BotId;
-  readonly hopLimit: number;
+  readonly botStreak: number;
   readonly members: ReadonlyArray<BotId>;
 }
 
 const RoomRow = Schema.Struct({
   id: RoomId,
   name: Schema.String,
-  host_bot_id: BotId,
-  hop_limit: PositiveInt,
+  bot_streak: Schema.Int,
 });
 
 /**
@@ -32,8 +33,7 @@ export const liveRoom = (sql: SqlClient.SqlClient) => {
     Request: RoomId,
     Result: RoomRow,
     execute: (id) => sql`
-      SELECT id, name, host_bot_id, hop_limit FROM rooms
-      WHERE id = ${id} AND status = 'active' AND host_bot_id IS NOT NULL
+      SELECT id, name, bot_streak FROM rooms WHERE id = ${id} AND status = 'active'
     `,
   });
   const members = SqlSchema.findAll({
@@ -48,8 +48,7 @@ export const liveRoom = (sql: SqlClient.SqlClient) => {
       return Option.some({
         id: found.value.id,
         name: found.value.name,
-        hostId: found.value.host_bot_id,
-        hopLimit: found.value.hop_limit,
+        botStreak: found.value.bot_streak,
         members: (yield* members(roomId)).map((row) => row.bot_id),
       });
     }).pipe(Effect.orDie);

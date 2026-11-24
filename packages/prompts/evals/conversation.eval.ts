@@ -1034,9 +1034,9 @@ const roomWake: Wake = {
     id: Schema.decodeSync(RoomId)("room-launch"),
     name: "Launch",
     members: [{ id: JUNIPER_ID, name: "Juniper", title: "Docs" }, ANA, BO],
-    hostName: "Ana",
   },
-  reason: "mentioned",
+  reason: "addressed",
+  closing: false,
   omitted: 0,
   entries: [{ author: "user", at, text: ROOM_ASKED, mentions: ["Juniper"], attachments: [] }],
 };

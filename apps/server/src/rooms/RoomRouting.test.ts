@@ -5,10 +5,13 @@ import {
   type BotId,
   MAX_MESSAGE_LENGTH,
   type Mentions,
+  ROOM_CLOSING_AFTER,
+  ROOM_QUIET_AFTER,
   type RoomId,
 } from "@j3-bots/contracts";
 import { ENGINE_INPUT_LIMIT, type TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import { ROOM_CLOSING_NOTE } from "@j3-bots/prompts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -45,7 +48,6 @@ import {
 } from "../testing/rooms.ts";
 import {
   admittedTurn,
-  chainLimits,
   command,
   concurrentTurns,
   conversation,
@@ -61,14 +63,28 @@ import {
   turnEnded,
   until,
 } from "../testing/turns.ts";
+import type { ToolCallResponse } from "../tools/protocol.ts";
 import { inboxPath } from "../turns/inbox.ts";
 import { MAX_INDETERMINATE_ANSWERS, recoveryBackoff } from "../turns/model.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
 import { Stops } from "../turns/Stops.ts";
 import { Rooms } from "./Rooms.ts";
 
+/** What the tool answers a room message the quiet room posted without waking anyone. */
+const RoomQuiet = Schema.Struct({ stopped: Schema.Literal("room") });
+
+/** Whether the room was quiet: the message is posted, and the tool says it woke nobody. */
+const wokeNobody = (response: ToolCallResponse) =>
+  response._tag === "result" && Schema.is(RoomQuiet)(response.value);
+
+/** The room's messages, oldest first: their text. */
+const roomTexts = (roomId: RoomId) =>
+  Effect.map(roomEntries(roomId), (entries) =>
+    entries.flatMap((entry) => (entry._tag === "message" ? [entry.text] : [])),
+  );
+
 it.effect(
-  "runs a room's work through its host, handing it on by mention, one turn at a time, without waking a bystander",
+  "hands a room's work on by mention, one turn at a time, waking only the member mentioned while the others read it in their next envelope",
   () =>
     Effect.gen(function* () {
       const [hal, ana, bo, cy] = [
@@ -77,34 +93,41 @@ it.effect(
         yield* member("Bo"),
         yield* member("Cy"),
       ];
-      const members = [hal, ana, bo, cy];
-      const room = yield* roomWith(hal, [ana, bo, cy]);
+      const members = [hal, ana, bo];
+      const room = yield* roomWith(hal, [ana, bo]);
 
-      // The operator addresses nobody: the host answers.
-      const asked = yield* operatorWrites(room.id, members, "Write the launch note.", nobody);
+      // The operator addresses Hal, who alone is woken.
+      const asked = yield* operatorWrites(room.id, members, "Write the launch note.", to(hal));
       const halFirst = yield* nextTurn(hal.bot.id);
       assert.deepStrictEqual(yield* running(members), ["Hal"]);
-      assert.include(yield* lastEnvelope(hal), 'reason="host"');
+      assert.include(yield* lastEnvelope(hal), 'reason="addressed"');
       yield* say(hal, halFirst, { text: "Ana, find the numbers.", mention: [ana.bot.id] });
       yield* finish(hal, halFirst, members);
+      assert.strictEqual(yield* roomWakesOf(bo.bot.id, room.id), 0);
 
-      const anaTurn = yield* nextTurn(ana.bot.id);
+      // Ana reads the operator's message with Hal's, which woke her.
+      const anaFirst = yield* nextTurn(ana.bot.id);
       assert.deepStrictEqual(yield* running(members), ["Ana"]);
-      assert.include(yield* lastEnvelope(ana), "Ana, find the numbers.");
-      yield* say(ana, anaTurn, {
+      const anaEnvelope = yield* lastEnvelope(ana);
+      assert.include(anaEnvelope, "Write the launch note.");
+      assert.include(anaEnvelope, "Ana, find the numbers.");
+      assert.include(anaEnvelope, 'reason="addressed"');
+      yield* say(ana, anaFirst, {
         text: "Revenue grew 12%. Bo, write it up.",
         mention: [bo.bot.id],
       });
-      yield* finish(ana, anaTurn, members);
+      yield* finish(ana, anaFirst, members);
 
-      const boTurn = yield* nextTurn(bo.bot.id);
+      // Bo, woken only now, reads everything said before it.
+      const boFirst = yield* nextTurn(bo.bot.id);
       assert.deepStrictEqual(yield* running(members), ["Bo"]);
-      // Bo sees what was said before it, the operator's message included.
       const boEnvelope = yield* lastEnvelope(bo);
       assert.include(boEnvelope, "Write the launch note.");
+      assert.include(boEnvelope, "Ana, find the numbers.");
       assert.include(boEnvelope, "Revenue grew 12%.");
-      yield* say(bo, boTurn, { text: "Draft in files/note.md. Hal?", mention: [hal.bot.id] });
-      yield* finish(bo, boTurn, members);
+      assert.include(boEnvelope, 'reason="addressed"');
+      yield* say(bo, boFirst, { text: "Draft in files/note.md. Hal?", mention: [hal.bot.id] });
+      yield* finish(bo, boFirst, members);
 
       const halLast = yield* nextTurn(hal.bot.id, halFirst);
       assert.deepStrictEqual(yield* running(members), ["Hal"]);
@@ -113,58 +136,227 @@ it.effect(
       assert.notInclude(halEnvelope, "Write the launch note.");
       assert.include(halEnvelope, "Revenue grew 12%.");
       assert.include(halEnvelope, "Draft in files/note.md.");
+      assert.include(halEnvelope, 'reason="addressed"');
       yield* say(hal, halLast, { text: "Done: the note is ready.", done: true });
       yield* finish(hal, halLast, members);
 
-      // Mentioning nobody wakes nobody: the room is quiet.
+      // Hal's last word mentions nobody, so it wakes the others, who have
+      // nothing to add.
+      for (const [one, previous] of [
+        [ana, anaFirst],
+        [bo, boFirst],
+      ] as const) {
+        const turnId = yield* nextTurn(one.bot.id, previous);
+        assert.deepStrictEqual(yield* running(members), [one.bot.profile.name]);
+        const envelope = yield* lastEnvelope(one);
+        assert.include(envelope, "Done: the note is ready.");
+        assert.include(envelope, 'reason="member"');
+        yield* finish(one, turnId, members);
+      }
+
+      // Silence wakes nobody: the room is quiet.
       assert.deepStrictEqual(yield* running(members), []);
       assert.strictEqual(yield* liveRoomWork(room.id), 0);
       const sql = yield* SqlClient.SqlClient;
       const turns = yield* sql<{ readonly n: number }>`
         SELECT COUNT(*) AS n FROM turns WHERE audience_room_id = ${room.id}
       `.pipe(Effect.orDie);
-      assert.strictEqual(turns[0]?.n, 4);
-      assert.strictEqual(yield* roomWakesOf(cy.bot.id, room.id), 0);
+      assert.strictEqual(turns[0]?.n, 6);
       assert.deepStrictEqual(yield* received(cy.session), []);
       yield* deliveryIs(asked, "delivered");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(
-  "wakes the members the operator mentions in the order mentioned, and everyone in member order, each seeing the replies before it",
+  "wakes every other member for a message that mentions nobody, in member order, each seeing the replies before it, and goes quiet once the rest stay silent",
+  () =>
+    Effect.gen(function* () {
+      const [hal, ana, bo, cy] = [
+        yield* member("Hal"),
+        yield* member("Ana"),
+        yield* member("Bo"),
+        yield* member("Cy"),
+      ];
+      const members = [hal, ana, bo];
+      const room = yield* roomWith(hal, [ana, bo]);
+
+      const asked = yield* operatorWrites(room.id, members, "Who has the revenue numbers?", nobody);
+      // Hal reads it first and leaves it to the others.
+      const halFirst = yield* nextTurn(hal.bot.id);
+      assert.deepStrictEqual(yield* running(members), ["Hal"]);
+      const halEnvelope = yield* lastEnvelope(hal);
+      assert.include(halEnvelope, 'reason="user"');
+      assert.include(halEnvelope, "Who has the revenue numbers?");
+      yield* finish(hal, halFirst, members);
+
+      // Ana's part: she answers.
+      const anaTurn = yield* nextTurn(ana.bot.id);
+      assert.deepStrictEqual(yield* running(members), ["Ana"]);
+      assert.include(yield* lastEnvelope(ana), 'reason="user"');
+      yield* say(ana, anaTurn, { text: "I do: revenue grew 12%." });
+      yield* finish(ana, anaTurn, members);
+
+      // Bo reads Ana's reply with the question, and has nothing to add. The
+      // operator's message asks more of it than Ana's, so its reason is theirs.
+      const boTurn = yield* nextTurn(bo.bot.id);
+      assert.deepStrictEqual(yield* running(members), ["Bo"]);
+      const boEnvelope = yield* lastEnvelope(bo);
+      assert.include(boEnvelope, 'reason="user"');
+      assert.include(boEnvelope, "Who has the revenue numbers?");
+      assert.include(boEnvelope, "I do: revenue grew 12%.");
+      yield* finish(bo, boTurn, members);
+
+      // Ana's reply reaches Hal too, as a member's word, and Hal stays silent.
+      const halLast = yield* nextTurn(hal.bot.id, halFirst);
+      assert.deepStrictEqual(yield* running(members), ["Hal"]);
+      const halReply = yield* lastEnvelope(hal);
+      assert.include(halReply, 'reason="member"');
+      assert.include(halReply, "I do: revenue grew 12%.");
+      assert.notInclude(halReply, "Who has the revenue numbers?");
+      yield* finish(hal, halLast, members);
+
+      // Nothing more: silence wakes nobody.
+      assert.deepStrictEqual(yield* running(members), []);
+      assert.strictEqual(yield* liveRoomWork(room.id), 0);
+      assert.strictEqual(yield* roomWakesOf(hal.bot.id, room.id), 2);
+      assert.strictEqual(yield* roomWakesOf(ana.bot.id, room.id), 1);
+      assert.strictEqual(yield* roomWakesOf(bo.bot.id, room.id), 2);
+      assert.deepStrictEqual(yield* received(cy.session), []);
+      yield* deliveryIs(asked, "delivered");
+      assert.deepStrictEqual(yield* roomTexts(room.id), [
+        "Who has the revenue numbers?",
+        "I do: revenue grew 12%.",
+      ]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "wakes only the members the operator's message mentions, and every member for one to everyone, in member order",
   () =>
     Effect.gen(function* () {
       const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
       const members = [hal, ana, bo];
       const room = yield* roomWith(hal, [ana, bo]);
 
-      yield* operatorWrites(room.id, members, "Bo, then Ana: one line each.", {
-        _tag: "bots",
-        ids: [bo.bot.id, ana.bot.id],
-      });
-      const boTurn = yield* nextTurn(bo.bot.id);
-      assert.deepStrictEqual(yield* running(members), ["Bo"]);
-      yield* finish(bo, boTurn, members);
-      const anaTurn = yield* nextTurn(ana.bot.id);
-      assert.deepStrictEqual(yield* running(members), ["Ana"]);
-      yield* finish(ana, anaTurn, members);
-      // The host was not mentioned, so it was not woken.
+      yield* operatorWrites(room.id, members, "Bo, then Ana: one line each.", to(bo, ana));
+      for (const one of [ana, bo]) {
+        const turnId = yield* nextTurn(one.bot.id);
+        assert.deepStrictEqual(yield* running(members), [one.bot.profile.name]);
+        const envelope = yield* lastEnvelope(one);
+        assert.include(envelope, "Bo, then Ana: one line each.");
+        assert.include(envelope, 'reason="addressed"');
+        yield* finish(one, turnId, members);
+      }
+      // Hal was not mentioned, so it was not woken.
       assert.strictEqual(yield* roomWakesOf(hal.bot.id, room.id), 0);
+      assert.deepStrictEqual(yield* received(hal.session), []);
 
       yield* operatorWrites(room.id, members, "Everyone: your status?", { _tag: "everyone" });
-      const replies: Array<string> = [];
-      for (const member of members) {
-        const turnId = yield* nextTurn(member.bot.id, null);
-        assert.deepStrictEqual(yield* running(members), [member.bot.profile.name]);
-        const envelope = yield* lastEnvelope(member);
+      for (const one of members) {
+        const turnId = yield* nextTurn(one.bot.id);
+        assert.deepStrictEqual(yield* running(members), [one.bot.profile.name]);
+        const envelope = yield* lastEnvelope(one);
+        assert.include(envelope, "Everyone: your status?");
         assert.include(envelope, 'reason="everyone"');
-        for (const reply of replies) assert.include(envelope, reply);
-        const reply = `${member.bot.profile.name} is on track.`;
-        yield* say(member, turnId, { text: reply });
-        replies.push(reply);
-        yield* finish(member, turnId, members);
+        yield* finish(one, turnId, members);
       }
+      // Hal reads the message it was not woken for with the one that woke it.
+      assert.include(yield* lastEnvelope(hal), "Bo, then Ana: one line each.");
       assert.strictEqual(yield* liveRoomWork(room.id), 0);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "says in every room envelope that the conversation is closing once the bots said enough since the operator wrote, until the operator writes again",
+  () =>
+    Effect.gen(function* () {
+      const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
+      const members = [ana, bo];
+      const room = yield* roomWith(ana, [bo]);
+      yield* operatorWrites(room.id, members, "Ana, settle the date with Bo.", to(ana));
+
+      // One message short of closing: Ana's, then Bo's turn reads them.
+      const anaFirst = yield* nextTurn(ana.bot.id);
+      assert.notInclude(yield* lastEnvelope(ana), ROOM_CLOSING_NOTE);
+      for (let n = 1; n < ROOM_CLOSING_AFTER; n++) {
+        yield* say(ana, anaFirst, { text: `Bo, option ${n}?`, mention: [bo.bot.id] });
+      }
+      yield* finish(ana, anaFirst, members);
+      const boTurn = yield* nextTurn(bo.bot.id);
+      assert.notInclude(yield* lastEnvelope(bo), ROOM_CLOSING_NOTE);
+
+      // Bo's answer is the bots' sixth message: the conversation is closing.
+      yield* say(bo, boTurn, { text: "Ana, option 3.", mention: [ana.bot.id] });
+      yield* finish(bo, boTurn, members);
+      const anaLast = yield* nextTurn(ana.bot.id, anaFirst);
+      const closing = yield* lastEnvelope(ana);
+      assert.include(closing, "Ana, option 3.");
+      assert.include(closing, ROOM_CLOSING_NOTE);
+      yield* finish(ana, anaLast, members);
+
+      // The operator's word opens it again.
+      yield* operatorWrites(room.id, members, "Bo, book it.", to(bo));
+      yield* nextTurn(bo.bot.id, boTurn);
+      const reopened = yield* lastEnvelope(bo);
+      assert.include(reopened, "Bo, book it.");
+      assert.notInclude(reopened, ROOM_CLOSING_NOTE);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "posts the bots' messages past the room's quiet limit without waking anyone, with one notice for the run, until the operator writes again",
+  () =>
+    Effect.gen(function* () {
+      const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
+      const members = [ana, bo];
+      const room = yield* roomWith(ana, [bo]);
+      yield* operatorWrites(room.id, members, "Ana, settle the date with Bo.", to(ana));
+
+      // Ana says as much as the room takes, then two messages more.
+      const anaFirst = yield* nextTurn(ana.bot.id);
+      for (let n = 1; n <= ROOM_QUIET_AFTER; n++) {
+        const said = yield* say(ana, anaFirst, { text: `Bo, option ${n}?`, mention: [bo.bot.id] });
+        assert.strictEqual(said._tag, "result");
+        assert.isFalse(wokeNobody(said));
+      }
+      for (const text of ["Bo, one more?", "Bo, the last?"]) {
+        assert.isTrue(wokeNobody(yield* say(ana, anaFirst, { text, mention: [bo.bot.id] })));
+      }
+      yield* finish(ana, anaFirst, members);
+
+      // Bo reads them all, the two that woke nobody included; its own answer
+      // wakes nobody either.
+      const boTurn = yield* nextTurn(bo.bot.id);
+      assert.include(yield* lastEnvelope(bo), "Bo, the last?");
+      const answer = yield* say(bo, boTurn, { text: "Ana, option 3.", mention: [ana.bot.id] });
+      assert.isTrue(wokeNobody(answer));
+      yield* finish(bo, boTurn, members);
+
+      assert.deepStrictEqual(yield* running(members), []);
+      assert.strictEqual(yield* liveRoomWork(room.id), 0);
+      assert.strictEqual(yield* roomWakesOf(ana.bot.id, room.id), 1);
+      assert.strictEqual(yield* roomWakesOf(bo.bot.id, room.id), ROOM_QUIET_AFTER);
+      assert.includeMembers(yield* roomTexts(room.id), [
+        "Bo, one more?",
+        "Bo, the last?",
+        "Ana, option 3.",
+      ]);
+      const stopped = { _tag: "chain-stopped", limit: "room" } as const;
+      assert.deepStrictEqual(yield* noticesIn(room.id), [stopped]);
+
+      // The operator writes: the bots' messages wake again, and a run past
+      // the limit shows a notice of its own.
+      yield* operatorWrites(room.id, members, "Pick one, both of you.", nobody);
+      const anaLast = yield* nextTurn(ana.bot.id, anaFirst);
+      const again = yield* say(ana, anaLast, { text: "Bo, option 3 it is.", mention: [bo.bot.id] });
+      assert.isFalse(wokeNobody(again));
+      assert.strictEqual(yield* roomWakesOf(bo.bot.id, room.id), ROOM_QUIET_AFTER + 2);
+      for (let n = 2; n <= ROOM_QUIET_AFTER; n++) {
+        yield* say(ana, anaLast, { text: `Bo, still option 3 (${n}).`, mention: [bo.bot.id] });
+      }
+      const past = yield* say(ana, anaLast, { text: "Bo, really.", mention: [bo.bot.id] });
+      assert.isTrue(wokeNobody(past));
+      assert.deepStrictEqual(yield* noticesIn(room.id), [stopped, stopped]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -177,17 +369,11 @@ it.effect("coalesces a room's waiting wakes into one envelope, never with anothe
     const all = [hal, ana, bo];
 
     // Ana is busy with a private turn while three room messages arrive for her.
-    yield* (yield* Pipeline).sendMessage({
-      commandId: command(),
-      target: { _tag: "conversation", botId: ana.bot.id },
-      text: "Check the build.",
-      attachments: [],
-    });
+    yield* sendToBot(ana.bot.id, "Check the build.");
     const privateTurn = yield* nextTurn(ana.bot.id);
-    const toAna: Mentions = { _tag: "bots", ids: [ana.bot.id] };
-    yield* operatorWrites(room.id, all, "First launch question.", toAna);
-    yield* operatorWrites(other.id, all, "An ops question.", toAna);
-    yield* operatorWrites(room.id, all, "Second launch question.", toAna);
+    yield* operatorWrites(room.id, all, "First launch question.", to(ana));
+    yield* operatorWrites(other.id, all, "An ops question.", to(ana));
+    yield* operatorWrites(room.id, all, "Second launch question.", to(ana));
     const before = (yield* received(ana.session)).length;
     yield* control.finishTurn({
       sessionId: ana.session,
@@ -217,9 +403,9 @@ it.effect("steers the operator's room message into the bot's running turn for th
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     const members = [hal, ana];
     const room = yield* roomWith(hal, [ana]);
-    yield* operatorWrites(room.id, members, "Draft the agenda.", nobody);
+    yield* operatorWrites(room.id, members, "Draft the agenda.", to(hal));
     const turnId = yield* nextTurn(hal.bot.id);
-    yield* operatorWrites(room.id, members, "Keep it short.", nobody);
+    yield* operatorWrites(room.id, members, "Keep it short.", to(hal));
 
     const [first, steer] = yield* received(hal.session);
     assert.strictEqual(first?.delivery._tag, "start");
@@ -230,56 +416,18 @@ it.effect("steers the operator's room message into the bot's running turn for th
 );
 
 it.effect(
-  "stops a chain of mentions at the room's hop limit, with one notice and no wake to report it",
+  "refuses a mention of itself, of a non-member or outside a room turn, writing nothing",
   () =>
     Effect.gen(function* () {
-      const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
-      const members = [ana, bo];
-      const room = yield* roomWith(ana, [bo], 2);
-      yield* operatorWrites(room.id, members, "Ana, settle the date with Bo.", {
-        _tag: "bots",
-        ids: [ana.bot.id],
-      });
-
-      // Ana and Bo hand the work back and forth: hops 1 and 2 are taken.
-      const first = yield* nextTurn(ana.bot.id);
-      yield* say(ana, first, { text: "Bo, Tuesday?", mention: [bo.bot.id] });
-      yield* finish(ana, first, members);
-      const boTurn = yield* nextTurn(bo.bot.id);
-      yield* say(bo, boTurn, { text: "Ana, Wednesday?", mention: [ana.bot.id] });
-      yield* finish(bo, boTurn, members);
-      const second = yield* nextTurn(ana.bot.id, first);
-      const stopped = yield* say(ana, second, { text: "Bo, Thursday?", mention: [bo.bot.id] });
-      const again = yield* say(ana, second, { text: "Bo, Friday?", mention: [bo.bot.id] });
-      yield* finish(ana, second, members);
-
-      // The messages are in the room; the third hop woke nobody.
-      for (const response of [stopped, again]) {
-        assert.strictEqual(response._tag, "result");
-        assert.include(JSON.stringify(response), "limit of 2");
-      }
-      assert.strictEqual(yield* roomWakesOf(bo.bot.id, room.id), 1);
-      assert.deepStrictEqual(yield* noticesIn(room.id), [{ _tag: "chain-stopped", limit: "hops" }]);
-      assert.deepStrictEqual(yield* running(members), []);
-      assert.strictEqual(yield* liveRoomWork(room.id), 0);
-    }).pipe(Effect.provide(TestDomain.layer)),
-);
-
-it.effect(
-  "refuses a mention past the fan-out limit, of itself, of a non-member or outside a room turn, writing nothing",
-  () =>
-    Effect.gen(function* () {
-      yield* chainLimits({ hops: 4, fanOut: 1 });
       const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
       const members = [hal, ana, bo];
       const room = yield* roomWith(hal, [ana, bo]);
       const outsider = yield* createBot("Cy");
-      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
       const turnId = yield* nextTurn(hal.bot.id);
       const entriesBefore = (yield* roomEntries(room.id)).length;
 
       const refusals = [
-        { mention: [ana.bot.id, bo.bot.id], says: "at most 1 member" },
         { mention: [hal.bot.id], says: "your own" },
         { mention: [outsider.id], says: "not a member" },
       ];
@@ -305,12 +453,7 @@ it.effect("refuses a mention in a turn that speaks to the operator", () =>
   Effect.gen(function* () {
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     yield* roomWith(hal, [ana]);
-    yield* (yield* Pipeline).sendMessage({
-      commandId: command(),
-      target: { _tag: "conversation", botId: hal.bot.id },
-      text: "Ask Ana for the numbers.",
-      attachments: [],
-    });
+    yield* sendToBot(hal.bot.id, "Ask Ana for the numbers.");
     const turnId = yield* nextTurn(hal.bot.id);
     const response = yield* say(hal, turnId, { text: "Asking.", mention: [ana.bot.id] });
     assert.strictEqual(response._tag, "refused");
@@ -328,18 +471,10 @@ it.effect(
       const room = yield* roomWith(hal, [ana]);
       // Ana is busy elsewhere when the operator asks her, and the room then
       // fills with more than one envelope can carry.
-      yield* (yield* Pipeline).sendMessage({
-        commandId: command(),
-        target: { _tag: "conversation", botId: ana.bot.id },
-        text: "Check the build.",
-        attachments: [],
-      });
+      yield* sendToBot(ana.bot.id, "Check the build.");
       const privateTurn = yield* nextTurn(ana.bot.id);
       const question = "Ana, what did Hal decide?";
-      const asked = yield* operatorWrites(room.id, members, question, {
-        _tag: "bots",
-        ids: [ana.bot.id],
-      });
+      const asked = yield* operatorWrites(room.id, members, question, to(ana));
       const entries = yield* Entries;
       const said = 40;
       for (let n = 1; n <= said; n++) {
@@ -386,34 +521,23 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Deploy the site.", nobody);
+      yield* operatorWrites(room.id, members, "Deploy the site.", to(hal));
       const turnId = yield* nextTurn(hal.bot.id);
-      yield* (yield* TestEngineControl).openRequest({
-        sessionId: hal.session,
-        turnId,
-        request: {
-          _tag: "approval",
-          kind: "command",
-          action: "deploy --prod",
-          detail: null,
-          reason: null,
-          exact: true,
-          sessionGrant: null,
-        },
-      });
-      yield* (yield* TestEngineControl).openRequest({
-        sessionId: hal.session,
-        turnId,
-        request: {
-          _tag: "approval",
-          kind: "command",
-          action: "deploy --staging",
-          detail: null,
-          reason: null,
-          exact: true,
-          sessionGrant: null,
-        },
-      });
+      for (const action of ["deploy --prod", "deploy --staging"]) {
+        yield* (yield* TestEngineControl).openRequest({
+          sessionId: hal.session,
+          turnId,
+          request: {
+            _tag: "approval",
+            kind: "command",
+            action,
+            detail: null,
+            reason: null,
+            exact: true,
+            sessionGrant: null,
+          },
+        });
+      }
       // The cards are in Hal's own conversation; the room says once that Hal
       // waits there.
       yield* until(
@@ -427,6 +551,20 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+/** The member's room turn fails at the usage limit, with a continuation pending for hours. */
+const limitedAt = (one: Member, turnId: TurnId, members: ReadonlyArray<Member>) =>
+  Effect.gen(function* () {
+    const at = DateTime.addDuration(yield* DateTime.now, Duration.hours(5));
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: one.session,
+      turnId,
+      outcome: { _tag: "failed", failure: "usage-limit", retryAt: at },
+      continuation: { resumesAt: at },
+    });
+    yield* turnEnded(one.bot.id);
+    yield* settle(members);
+  });
+
 it.effect(
   "runs other members while one's room turn waits for a usage limit's reset, and still takes the operator's word to it",
   () =>
@@ -436,19 +574,7 @@ it.effect(
       const room = yield* roomWith(hal, [ana, bo]);
       yield* operatorWrites(room.id, members, "Ana, translate the docs.", to(ana));
       const limited = yield* nextTurn(ana.bot.id);
-      const at = yield* DateTime.now;
-      yield* (yield* TestEngineControl).finishTurn({
-        sessionId: ana.session,
-        turnId: limited,
-        outcome: {
-          _tag: "failed",
-          failure: "usage-limit",
-          retryAt: DateTime.addDuration(at, Duration.hours(5)),
-        },
-        continuation: { resumesAt: DateTime.addDuration(at, Duration.hours(5)) },
-      });
-      yield* turnEnded(ana.bot.id);
-      yield* settle(members);
+      yield* limitedAt(ana, limited, members);
 
       // Ana's turn waits hours for the reset; Bo answers meanwhile.
       yield* operatorWrites(room.id, members, "Bo, check the links.", to(bo));
@@ -459,6 +585,7 @@ it.effect(
       // The operator's word to Ana goes now, as it does in private.
       const skip = yield* operatorWrites(room.id, members, "Ana, skip the appendix.", to(ana));
       yield* nextTurn(ana.bot.id, limited);
+      assert.deepStrictEqual(yield* running(members), ["Ana"]);
       assert.include(yield* lastEnvelope(ana), "Ana, skip the appendix.");
       yield* deliveryIs(skip, "delivered");
     }).pipe(Effect.provide(TestDomain.layer)),
@@ -471,11 +598,11 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Draft the agenda.", nobody);
+      yield* operatorWrites(room.id, members, "Draft the agenda.", to(hal));
       yield* nextTurn(hal.bot.id);
       // Older, and for Hal's conversation: it waits for the room turn to end.
       const flight = yield* sendToBot(hal.bot.id, "Book my flight.");
-      yield* operatorWrites(room.id, members, "Keep it short.", nobody);
+      yield* operatorWrites(room.id, members, "Keep it short.", to(hal));
 
       const sent = yield* received(hal.session);
       assert.deepStrictEqual(
@@ -500,7 +627,7 @@ it.effect(
       ];
       const members = [hal, ana, bo, cy];
       const room = yield* roomWith(hal, [ana, bo, cy]);
-      yield* operatorWrites(room.id, members, "Plan the offsite.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the offsite.", to(hal));
       const first = yield* nextTurn(hal.bot.id);
 
       // Ana's wake waits for Hal's turn, and Ana leaves the room meanwhile.
@@ -538,7 +665,7 @@ it.effect("settles a room message whose only recipient was deleted before it rec
     const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
     const members = [hal, ana, bo];
     const room = yield* roomWith(hal, [ana, bo]);
-    yield* operatorWrites(room.id, members, "Plan the offsite.", nobody);
+    yield* operatorWrites(room.id, members, "Plan the offsite.", to(hal));
     yield* nextTurn(hal.bot.id);
     // Ana's wake waits for Hal's turn when Ana is deleted.
     const forAna = yield* operatorWrites(room.id, members, "Ana, book the venue.", to(ana));
@@ -554,7 +681,7 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
       const halTurn = yield* nextTurn(hal.bot.id);
       yield* say(hal, halTurn, { text: "Ana, find the numbers.", mention: [ana.bot.id] });
       yield* (yield* TestEngineControl).rejectNextDispatch;
@@ -581,7 +708,7 @@ it.effect("shows a member again the entries of a room dispatch a Stop released u
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     const members = [hal, ana];
     const room = yield* roomWith(hal, [ana]);
-    yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+    yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
     const halTurn = yield* nextTurn(hal.bot.id);
     yield* say(hal, halTurn, { text: "Ana, find the numbers.", mention: [ana.bot.id] });
 
@@ -641,10 +768,13 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
+      // Ana is busy elsewhere throughout, so only Hal takes the room's turns.
+      yield* sendToBot(ana.bot.id, "Check the docs.");
+      yield* nextTurn(ana.bot.id);
       yield* sendToBot(hal.bot.id, "Check the build.");
       const privateTurn = yield* nextTurn(hal.bot.id);
       // Two messages for Hal, too long to share one envelope: the first
-      // mentions Hal, the second addresses nobody, so Hal hosts it.
+      // mentions Hal, the second nobody.
       const long = "y".repeat(70_000);
       yield* operatorWrites(room.id, members, `Hal, read this. ${long}`, to(hal));
       yield* operatorWrites(room.id, members, `Anyone? ${long}`, nobody);
@@ -656,17 +786,18 @@ it.effect(
       yield* turnEnded(hal.bot.id);
       yield* settle(members);
 
-      const mentioned = yield* nextTurn(hal.bot.id, privateTurn);
-      const first = yield* lastEnvelope(hal);
-      assert.include(first, "Hal, read this.");
-      assert.notInclude(first, "Anyone?");
-      assert.include(first, 'reason="mentioned"');
-      yield* finish(hal, mentioned, members);
-
-      yield* nextTurn(hal.bot.id, mentioned);
-      const second = yield* lastEnvelope(hal);
-      assert.include(second, "Anyone?");
-      assert.include(second, 'reason="host"');
+      // The first starts Hal's room turn, and the second, the operator's
+      // word for the room it works for, steers that turn.
+      yield* nextTurn(hal.bot.id, privateTurn);
+      yield* until(Effect.map(received(hal.session), (all) => all.length === 3));
+      const [, first, second] = yield* received(hal.session);
+      assert.strictEqual(first?.delivery._tag, "start");
+      assert.include(first?.text ?? "", "Hal, read this.");
+      assert.notInclude(first?.text ?? "", "Anyone?");
+      assert.include(first?.text ?? "", 'reason="addressed"');
+      assert.strictEqual(second?.delivery._tag, "steer");
+      assert.include(second?.text ?? "", "Anyone?");
+      assert.include(second?.text ?? "", 'reason="user"');
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
@@ -679,20 +810,6 @@ const roomDispatchStatuses = (botId: BotId, roomId: RoomId) =>
       ORDER BY seq
     `.pipe(Effect.orDie);
     return rows.map((row) => row.status);
-  });
-
-/** The member's room turn fails at the usage limit, with a continuation pending for hours. */
-const limitedAt = (one: Member, turnId: TurnId, members: ReadonlyArray<Member>) =>
-  Effect.gen(function* () {
-    const at = DateTime.addDuration(yield* DateTime.now, Duration.hours(5));
-    yield* (yield* TestEngineControl).finishTurn({
-      sessionId: one.session,
-      turnId,
-      outcome: { _tag: "failed", failure: "usage-limit", retryAt: at },
-      continuation: { resumesAt: at },
-    });
-    yield* turnEnded(one.bot.id);
-    yield* settle(members);
   });
 
 it.effect(
@@ -781,6 +898,7 @@ it.effect("sends no room dispatch written for a member that left before it was s
     ];
     const members = [hal, ana, bo, cy];
     const room = yield* roomWith(hal, [ana, bo, cy]);
+    /** The operator writes to the member, whose start waits at its gate. */
     const writeTo = (one: Member, text: string) =>
       Effect.gen(function* () {
         const gate = yield* holdGate(one.bot.id);
@@ -827,13 +945,13 @@ it.effect("sends no room dispatch written for a member that left before it was s
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("holds a bot's room mention while the provider is at its usage limit", () =>
+it.effect("holds a bot's room message while the provider is at its usage limit", () =>
   Effect.gen(function* () {
     const { providerId } = TestDomain.DEFAULT_MODEL;
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     const members = [hal, ana];
     const room = yield* roomWith(hal, [ana]);
-    yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+    yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
     const halTurn = yield* nextTurn(hal.bot.id);
     yield* say(hal, halTurn, { text: "Ana, find the numbers.", mention: [ana.bot.id] });
     yield* providerIs(providerId, {
@@ -865,7 +983,7 @@ it.effect(
       const pipeline = yield* Pipeline;
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, [hal, ana], "Plan the launch.", nobody);
+      yield* operatorWrites(room.id, [hal, ana], "Plan the launch.", to(hal));
       const halTurn = yield* nextTurn(hal.bot.id);
 
       // Text that reads as envelope tags renders longer than it is written,
@@ -932,7 +1050,7 @@ it.effect(
       const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
       const members = [hal, ana, bo];
       const room = yield* roomWith(hal, [ana, bo]);
-      yield* operatorWrites(room.id, members, "Plan the offsite.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the offsite.", to(hal));
       const halTurn = yield* nextTurn(hal.bot.id);
       const both = yield* operatorWrites(room.id, members, "Ana and Bo, pick a date.", to(ana, bo));
       yield* (yield* Rooms).update({
@@ -954,10 +1072,10 @@ it.effect(
       const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
       const members = [hal, ana];
       const room = yield* roomWith(hal, [ana]);
-      yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+      yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
       const halTurn = yield* nextTurn(hal.bot.id);
       yield* say(hal, halTurn, { text: "Ana, find the numbers.", mention: [ana.bot.id] });
-      // Ana's wakes, Hal's mention and the operator's word, go together.
+      // Ana's wakes, Hal's message and the operator's word, go together.
       const asked = yield* operatorWrites(room.id, members, "Ana, use last year's too.", to(ana));
       yield* (yield* TestEngineControl).rejectNextDispatch;
       yield* finish(hal, halTurn, members);
@@ -1050,8 +1168,8 @@ it.effect(
       const halTurn = yield* nextTurn(hal.bot.id);
       yield* say(hal, halTurn, { text: "Ana, check the plan's numbers.", mention: [ana.bot.id] });
 
-      // Ana's start carries the operator's file, and the limit is reached
-      // while the engine holds its stage.
+      // Ana's start carries the operator's file, which she has not seen, and
+      // the limit is reached while the engine holds its stage.
       const staging = yield* control.holdNext("stageAttachment");
       yield* control.finishTurn({
         sessionId: hal.session,
@@ -1077,12 +1195,12 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("plans a teammate's room mention held by a usage limit at the limit's reset", () =>
+it.effect("plans a teammate's room message held by a usage limit at the limit's reset", () =>
   Effect.gen(function* () {
     const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
     const members = [hal, ana];
     const room = yield* roomWith(hal, [ana]);
-    yield* operatorWrites(room.id, members, "Plan the launch.", nobody);
+    yield* operatorWrites(room.id, members, "Plan the launch.", to(hal));
     const halTurn = yield* nextTurn(hal.bot.id);
     yield* say(hal, halTurn, { text: "Ana, find the numbers.", mention: [ana.bot.id] });
     // Hal's turn ends at the usage limit, which resets in half a minute.
@@ -1111,6 +1229,7 @@ it.effect(
       const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
       const members = [hal, ana, bo];
       const room = yield* roomWith(hal, [ana, bo]);
+      // Ana comes first of those it wakes, so the refused dispatch is hers.
       yield* (yield* TestEngineControl).rejectNextDispatch;
       const both = yield* operatorWrites(room.id, members, "Ana and Bo, pick a date.", to(ana, bo));
       const boTurn = yield* nextTurn(bo.bot.id);
@@ -1229,7 +1348,7 @@ it.effect(
       assert.include(yield* lastEnvelope(bo), "Bo, any news?");
       assert.deepStrictEqual(yield* roomDispatchStatuses(ana.bot.id, room.id), ["released"]);
 
-      // Once Bo's turn ends, Ana's slot is free and her message goes.
+      // Once Bo's turn ends, Ana's slot is free and her message goes, once.
       yield* finish(bo, boTurn, members);
       yield* nextTurn(ana.bot.id);
       assert.include(yield* lastEnvelope(ana), "Ana, read the notes.");

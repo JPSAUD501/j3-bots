@@ -10,7 +10,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Roster } from "../roster/Roster.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { finish, member, nobody, operatorWrites, roomWith } from "../testing/rooms.ts";
+import { finish, member, operatorWrites, roomWith, to } from "../testing/rooms.ts";
 import { command, nextTurn, sendToBot, stopSettled, until } from "../testing/turns.ts";
 import { RETRY_TICK } from "./reconciler.ts";
 
@@ -60,7 +60,7 @@ it.effect(
       yield* shows(seen, room.id, "none");
 
       // Hal's room turn runs, and starts a build it leaves running.
-      yield* operatorWrites(room.id, members, "Watch the build.", nobody);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
       const watching = yield* nextTurn(hal.bot.id);
       yield* shows(seen, room.id, "running");
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
@@ -94,7 +94,7 @@ it.effect("shows a room's work none once a waiting wake for it is cancelled", ()
     // Hal is busy for the operator, so the room's wake for Hal waits.
     yield* sendToBot(hal.bot.id, "What is left today?");
     const privately = yield* nextTurn(hal.bot.id);
-    yield* operatorWrites(room.id, members, "Hal, the date?", nobody);
+    yield* operatorWrites(room.id, members, "Hal, the date?", to(hal));
     yield* shows(seen, room.id, "running");
 
     yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });

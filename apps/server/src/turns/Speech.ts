@@ -9,6 +9,7 @@ import {
   MAX_VISUAL_BYTES,
   type MessageEntry,
   pairBotIds,
+  ROOM_QUIET_AFTER,
   RoomId,
   siteOriginOf,
   type Visual,
@@ -108,10 +109,10 @@ const MATCH_WITHIN = Duration.seconds(2);
  * count borrowed from background work (`hopCounts.borrow`) says where it came
  * from, so the limit does not look arbitrary to a turn that started on its own.
  */
-const chainReached = (borrowed: boolean, what: "turns" | "messages", limit: number) =>
+const chainReached = (borrowed: boolean, limit: number) =>
   borrowed
-    ? `this turn started on its own while background work that a chain of ${what} between bots started was still running in your session, so it counts as part of that chain, which reached your user's limit of ${limit} since they last spoke.`
-    : `this chain of ${what} between bots reached your user's limit of ${limit} since they last spoke.`;
+    ? `this turn started on its own while background work that a chain of messages between bots started was still running in your session, so it counts as part of that chain, which reached your user's limit of ${limit} since they last spoke.`
+    : `this chain of messages between bots reached your user's limit of ${limit} since they last spoke.`;
 
 /** A request pinned to the engine's record of its call, and so to a turn and an audience. */
 interface Pin {
@@ -187,14 +188,10 @@ interface Suggested extends OfferedService {
 }
 
 /**
- * What became of a room message's mentions (`routeMentions`): `null` when it
- * mentioned nobody or the work that spoke was stopped.
+ * What became of a bot's room message's wakes (`routeRoomMessage`): `null`
+ * when the work that spoke was stopped.
  */
-type RoutedMentions =
-  | null
-  | { readonly _tag: "untraced" }
-  | { readonly _tag: "routed" }
-  | { readonly _tag: "hop-limit"; readonly limit: number; readonly borrowed: boolean };
+type RoutedRoomMessage = null | { readonly _tag: "routed" } | { readonly _tag: "quiet" };
 
 /** A request as its stored result is looked up: under its id, for its caller and its tool. */
 const RequestKey = Schema.Struct({
@@ -676,24 +673,8 @@ export const layer = Layer.effect(
       );
 
     /**
-     * Whether a room message of the pinned turn (a `say`, a `message_bot` to a
-     * room or a kickoff) already found its mentions past the room's hop limit.
-     */
-    const roomChainStopped = (found: Pin) =>
-      sql`
-        SELECT 1 FROM tool_calls
-        WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
-          AND tool IN ('say', 'message_bot', 'start_room')
-          AND json_extract(result_json, '$.stopped') = 'hops'
-      `.pipe(
-        Effect.orDie,
-        Effect.map((rows) => rows.length > 0),
-      );
-
-    /**
      * The members a room `say` mentions, each once, checked against the room
-     * and the fan-out limit in the caller's transaction. A refusal sends
-     * nothing.
+     * in the caller's transaction. A refusal sends nothing.
      */
     const mentionedIn = Effect.fn("Speech.mentionedIn")(function* (
       found: Pin,
@@ -715,12 +696,6 @@ export const layer = Layer.effect(
           );
         }
         if (!mention.includes(botId)) mention.push(botId);
-      }
-      const { budgets } = yield* settings.get;
-      if (mention.length > budgets.fanOut) {
-        return yield* refuse(
-          `Nothing was sent: one message may mention at most ${budgets.fanOut} ${budgets.fanOut === 1 ? "member" : "members"}. Mention only who must act next, or tell your user who else should.`,
-        );
       }
       return mention;
     });
@@ -897,66 +872,52 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Wakes the members a room `say`, or a kickoff, mentioned, unless the
-     * operator stopped the work that spoke. Past the room's hop limit nobody
-     * is woken, and the room shows one `chain-stopped` notice for the turn,
-     * however often it tries; nobody is woken to hear of it either.
+     * Wakes the members a bot's room message wakes, a `say`, a `message_bot`
+     * to the room or a kickoff, unless the operator stopped the work that
+     * spoke. Once the room's bots have said `ROOM_QUIET_AFTER` messages since
+     * the operator last wrote, nobody is woken, and the room shows one
+     * `chain-stopped` notice until the operator writes again; nobody is woken
+     * to hear of it either.
      */
-    const routeMentions = Effect.fn("Speech.routeMentions")(function* (
+    const routeRoomMessage = Effect.fn("Speech.routeRoomMessage")(function* (
       found: Pin,
       room: LiveRoom,
       message: MessageEntry,
-      mention: ReadonlyArray<BotId>,
-      reason: "kickoff" | "mentioned",
-    ): Effect.fn.Return<RoutedMentions> {
-      if (mention.length === 0) return null;
+      kickoff: boolean,
+    ): Effect.fn.Return<RoutedRoomMessage> {
       const work = yield* workStopped(found);
       if (work.stopped) return null;
-      // A chain that cannot be traced wakes nobody.
-      const counted = yield* hopCount(found);
-      if (counted === null) return { _tag: "untraced" } as const;
       const routed = yield* routing.botMessage({
         room,
         botId: found.botId,
         message,
-        mention,
-        reason,
-        hops: counted.hops,
+        kickoff,
         seq: work.seq,
       });
-      if (routed._tag === "hop-limit" && !(yield* roomChainStopped(found))) {
+      if (routed._tag === "routed") return routed;
+      if (routed.first) {
         yield* notify(
           found.botId,
           { _tag: "room", roomId: room.id },
-          { _tag: "chain-stopped", limit: "hops" },
+          { _tag: "chain-stopped", limit: "room" },
           null,
         );
       }
-      return routed._tag === "hop-limit" ? { ...routed, borrowed: counted.borrowed } : routed;
+      return { _tag: "quiet" } as const;
     });
 
     /**
-     * What the bot is told when a message it put in a room woke nobody it
-     * mentioned, or `null` when it was routed as asked. A stored `say` result
-     * carries `stopped`, which `roomChainStopped` reads.
+     * What the bot is told when a message it put in a room woke nobody, or
+     * `null` when it woke the members it wakes.
      */
-    const roomPosted = (routed: RoutedMentions) => {
-      if (routed?._tag === "untraced") {
-        return {
-          status: "recorded",
-          stopped: "untraced",
-          note: "Your message is in the room, but nobody was woken: this turn started on its own, and what started it cannot be traced, so it may not wake members. Do not mention anyone again for it. If your user is waiting on it, say so in the room.",
-        } satisfies Schema.Json;
-      }
-      if (routed?._tag === "hop-limit") {
-        return {
-          status: "recorded",
-          stopped: "hops",
-          note: `Your message is in the room, but nobody was woken: ${chainReached(routed.borrowed, "turns", routed.limit)} Do not mention anyone again for it. If your user is waiting on it, say so in the room.`,
-        } satisfies Schema.Json;
-      }
-      return null;
-    };
+    const roomPosted = (routed: RoutedRoomMessage) =>
+      routed?._tag === "quiet"
+        ? ({
+            status: "recorded",
+            stopped: "room",
+            note: `Your message is in the room, but nobody was woken: the bots here have said ${ROOM_QUIET_AFTER} messages since your user last wrote, so the room waits for your user. Do not try to wake anyone for it again.`,
+          } satisfies Schema.Json)
+        : null;
 
     const say = Effect.fn("Speech.say")(function* (found: Pin, input: ToolInput<"say">) {
       // `to: "dm"` speaks to the operator in private, also from a room turn.
@@ -1025,7 +986,7 @@ export const layer = Layer.effect(
             });
             const routed =
               Option.isSome(room) && entry._tag === "message"
-                ? yield* routeMentions(found, room.value, entry, mention, "mentioned")
+                ? yield* routeRoomMessage(found, room.value, entry, false)
                 : null;
             if (input.done === true) {
               for (const { id } of yield* deliveredBy(found))
@@ -1279,9 +1240,9 @@ export const layer = Layer.effect(
     /**
      * A message to a room the bot is a member of (`docs/architecture/server.md`,
      * Rooms), from a turn of any audience: posted there at once as the bot's,
-     * and routed as a room `say` is, its `mention` checked against the room and
-     * the fan-out limit, and its wakes held to the room's hop limit. Refused,
-     * with nothing written, for an archived room, one the bot is not in, and
+     * and routed as a room `say` is, its `mention` checked against the room,
+     * and counted with the room's other bots' messages. Refused, with nothing
+     * written, for an archived room, one the bot is not in, and
      * work the operator stopped. `null` when no room has the id.
      */
     const messageRoom = Effect.fn("Speech.messageRoom")(function* (
@@ -1341,17 +1302,12 @@ export const layer = Layer.effect(
         text: input.text,
       });
       const routed =
-        entry._tag === "message"
-          ? yield* routeMentions(found, live.value, entry, mention, "mentioned")
-          : null;
+        entry._tag === "message" ? yield* routeRoomMessage(found, live.value, entry, false) : null;
       return (
         roomPosted(routed) ??
         ({
           status: "posted",
-          note:
-            mention.length === 0
-              ? "It is in the room. Nobody was woken."
-              : "It is in the room, and wakes the members you mentioned, one at a time.",
+          note: "It is in the room, and every member reads it in their next turn.",
         } satisfies Schema.Json)
       );
     });
@@ -1435,7 +1391,7 @@ export const layer = Layer.effect(
               reason:
                 counted === null
                   ? "Nothing was sent: this turn started on its own, and what started it cannot be traced, so it may not message teammates. Do not try again. If your user is waiting on it, tell them with `say`."
-                  : `Nothing was sent: ${chainReached(counted.borrowed, "messages", budgets.hops)} Do not try again. If your user is waiting on it, tell them with \`say\`.`,
+                  : `Nothing was sent: ${chainReached(counted.borrowed, budgets.hops)} Do not try again. If your user is waiting on it, tell them with \`say\`.`,
             } satisfies typeof StoredRefusal.Type;
           }
           const card = (target: EntryTarget, direction: "sent" | "received") =>
@@ -1635,13 +1591,13 @@ export const layer = Layer.effect(
 
     /**
      * `start_room` (`docs/architecture/server.md`, Rooms): only in a turn the
-     * operator spoke in, so its kickoff's wakes take the fan-out exemption
-     * the operator's word gives (`messageBot`). In the transaction that pins
-     * the request it creates the room with the caller as its host, shows a
-     * `room-started` notice there and in the caller's conversation, posts the
-     * kickoff as the caller's message, and routes it as a room `say` is,
-     * within the room's hop limit: the members it mentions answer one at a
-     * time. A member this turn's `create_bot` made opens in the room: its
+     * operator spoke in, as only the operator asks for a room. In the
+     * transaction that pins the request it creates the room with the caller
+     * as its first member, shows a `room-started` notice there and in the
+     * caller's conversation, posts the kickoff as the caller's message, and
+     * routes it as the operator's word: it starts the room's count of its
+     * bots' messages, and wakes the members it mentions, or every member when
+     * it mentions none. A member this turn's `create_bot` made opens in the room: its
      * hello, which waits for this turn (`MadeBy`), is cancelled, and its
      * conversation shows a `made-for-room` notice instead.
      */
@@ -1660,7 +1616,7 @@ export const layer = Layer.effect(
         const botId = Option.getOrNull(Schema.decodeOption(BotId)(id));
         if (botId === found.botId) {
           return yield* refuse(
-            "Nothing was started: that id in `members` is your own. You join as the host; list only your teammates.",
+            "Nothing was started: that id in `members` is your own. You join as the first member; list only your teammates.",
           );
         }
         if (botId === null) {
@@ -1700,7 +1656,7 @@ export const layer = Layer.effect(
             return yield* refuse("Your user stopped this work, so nothing was started.");
           }
           const room = yield* rooms
-            .open({ name: input.name, members: [found.botId, ...members], hostId: found.botId })
+            .open({ name: input.name, members: [found.botId, ...members] })
             .pipe(
               Effect.catchTag("Invalid", () =>
                 refuse("Nothing was started: a room holds two to six bots, you included."),
@@ -1740,7 +1696,7 @@ export const layer = Layer.effect(
           const live = yield* roomOf(room.id);
           const routed =
             Option.isSome(live) && kickoff._tag === "message"
-              ? yield* routeMentions(found, live.value, kickoff, mention, "kickoff")
+              ? yield* routeRoomMessage(found, live.value, kickoff, true)
               : null;
           const posted = roomPosted(routed);
           return {
@@ -1748,7 +1704,7 @@ export const layer = Layer.effect(
             id: room.id,
             note:
               posted?.note ??
-              "The room is in your user's list, and the kickoff wakes the members you mentioned, one at a time. Tell your user what you set up.",
+              "The room is in your user's list, and the members the kickoff wakes answer it there. Tell your user what you set up.",
             ...(posted === null ? {} : { stopped: posted.stopped }),
           } satisfies Schema.Json;
         }),
