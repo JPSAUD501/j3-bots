@@ -498,6 +498,8 @@ export const en = {
 
   "pairs.section": "Between bots",
   "pairs.readOnly": "Read-only",
+  "pairs.back": "Back",
+  "pairs.readOnlyHint": "Only the two bots write here.",
   "pairs.talkTo": "Talk to {name}",
   "pairs.startRoom": "Start a room with both",
   "pairs.empty": "These two haven’t written each other yet.",

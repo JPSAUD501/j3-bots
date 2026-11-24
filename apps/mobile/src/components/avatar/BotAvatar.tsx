@@ -5,6 +5,7 @@ import {
   avatarSeed,
   type AvatarState,
   createAvatar,
+  memberStack,
   pokeAvatar,
   plainTraits,
   setAvatarState,
@@ -58,6 +59,7 @@ import Animated, {
 import Svg, { Circle, Ellipse, G, type GProps, Path } from "react-native-svg";
 import { useUniwind } from "uniwind";
 import { useReducedMotion } from "../../motion.ts";
+import { Text } from "../../text.tsx";
 import { useColor } from "../../theme.ts";
 import { join } from "./scheduler.ts";
 
@@ -729,6 +731,59 @@ export function RoomAvatar({
             cutout
             ground={ground}
           />
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** How much of each face in a stack the next one leaves showing. */
+const stackStep = 0.62;
+
+/**
+ * Faces side by side, each over the one before it, as a header shows a room's
+ * members or the two bots of a teammate conversation: up to three, then how
+ * many more ("+2"). Still, and hidden from screen readers: the name beside it
+ * says who.
+ */
+export function AvatarStack({
+  members,
+  size,
+  ground = "background",
+}: {
+  readonly members: ReadonlyArray<{ readonly id: string; readonly avatar: Avatar }>;
+  readonly size: number;
+  readonly ground?: AvatarGround;
+}) {
+  const { shown, more } = memberStack(members);
+  const state = useContext(AvatarsAsleep) ? "offline" : "idle";
+  const overlap = size - Math.round(size * stackStep);
+  return (
+    <View
+      className="flex-row items-center"
+      style={{ height: size }}
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+    >
+      {shown.map((member, index) => (
+        <View key={member.id} style={{ marginStart: index === 0 ? 0 : -overlap }}>
+          <BotAvatar
+            avatar={member.avatar}
+            seed={member.id}
+            state={state}
+            size={size}
+            still
+            cutout={index > 0}
+            ground={ground}
+          />
+        </View>
+      ))}
+      {more > 0 && (
+        <View
+          className="ms-0.5 items-center justify-center rounded-pill bg-muted px-1"
+          style={{ height: size, minWidth: size }}
+        >
+          <Text className="text-2xs font-medium text-muted-foreground">+{more}</Text>
         </View>
       )}
     </View>

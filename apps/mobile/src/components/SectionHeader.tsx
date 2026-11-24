@@ -107,3 +107,23 @@ export function SectionEmpty({ height }: { readonly height: number }) {
     </View>
   );
 }
+
+/**
+ * The header of "Between bots", in a section header's place and type: the
+ * bots' own section, which the operator does not arrange, so it neither folds
+ * nor has a menu.
+ */
+export function BetweenHeader({ height }: { readonly height: number }) {
+  const { t } = useI18n();
+  return (
+    <View className="mx-2 flex-row items-end px-3 pb-2" style={{ height }}>
+      <Text
+        accessibilityRole="header"
+        numberOfLines={1}
+        className="min-w-0 shrink text-sm font-semibold text-muted-foreground"
+      >
+        {t("pairs.section")}
+      </Text>
+    </View>
+  );
+}

@@ -77,6 +77,8 @@ export const useDevices = () => useReadable(useJ3Client().devices);
 export const useServerUpdate = () => useReadable(useJ3Client().serverUpdate.view);
 export const useServerUpdateEnded = () => useReadable(useJ3Client().serverUpdate.ended);
 export const useConnectors = () => useReadable(useJ3Client().connectors.state);
+/** Every pair of bots that wrote each other, latest first. */
+export const usePairs = () => useReadable(useJ3Client().pairs);
 
 /** Where an action on a card stands, to disable its buttons while it runs. */
 export const useCardAction = (entryId: EntryId): ActionState | undefined =>

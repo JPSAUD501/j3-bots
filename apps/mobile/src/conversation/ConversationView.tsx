@@ -15,6 +15,7 @@ import {
   rosterKeyText,
   rosterTarget,
   rowOrder,
+  type TeammateRunPair,
   type TimelineItem,
   withLiveTurn,
 } from "@j3-bots/client-runtime/presentation";
@@ -226,6 +227,9 @@ export function ConversationView({
       navigation.navigate("routineRuns", { botId: target.botId, routineId });
     }
   };
+  /** A run of teammate messages opens their conversation at the run's first message with that teammate. */
+  const openPair = (pair: TeammateRunPair) =>
+    navigation.push("pair", { botIds: pair.botIds, at: pair.first });
   const { state, loadOlder, markRead } = useConversation(target);
   // In a bot's conversation, its turn under way shows in the timeline, once.
   const bot = item._tag === "bot" ? item.bot : null;
@@ -365,6 +369,7 @@ export function ConversationView({
                         onOpenBot={onOpenBot}
                         onOpenRoutine={openRoutine}
                         onOpenBrowser={openBrowser}
+                        onOpenPair={openPair}
                       />
                     </View>
                   )}
@@ -557,6 +562,7 @@ function Row({
   onOpenBot,
   onOpenRoutine,
   onOpenBrowser,
+  onOpenPair,
 }: {
   readonly row: TimelineItem;
   /** In a room, its members and host now; null in a bot's conversation. */
@@ -570,6 +576,7 @@ function Row({
   readonly onOpenBot: (botId: BotId) => void;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
   readonly onOpenBrowser: (card: BrowserHelpEntry) => void;
+  readonly onOpenPair: (pair: TeammateRunPair) => void;
 }) {
   const ctx = usePresentation();
   const client = useJ3Client();
@@ -627,7 +634,7 @@ function Row({
     case "event":
       return (
         <AnimatedView {...entering}>
-          <EventLine line={row.line} onOpenRoutine={onOpenRoutine} />
+          <EventLine line={row.line} onOpenRoutine={onOpenRoutine} onOpenPair={onOpenPair} />
         </AnimatedView>
       );
     case "unknown":
@@ -731,14 +738,14 @@ function ServerMessage({
     (actions) => actions.get(retryAction(message.id))?._tag === "submitting",
   );
   const { author } = message;
-  const speaker = author._tag === "bot" ? (bots.get(author.botId) ?? null) : null;
+  const sender = author._tag === "bot" ? (bots.get(author.botId) ?? null) : null;
   return (
     <MessageBubble
       message={message}
       position={row.position}
       arriving={arriving}
-      tint={speaker?.profile.avatar ?? null}
-      speaker={room === null ? null : speaker}
+      tint={sender?.profile.avatar ?? null}
+      speaker={room !== null && author._tag === "bot" ? author.botId : null}
       // The server's entry keeps no names picked: its members go by their names now.
       mentionable={highlighted(message.mentions, [])}
       onRetry={() => void client.retryMessage(message.id)}

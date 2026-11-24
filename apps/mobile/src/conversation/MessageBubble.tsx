@@ -6,7 +6,7 @@ import {
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
 import { deliveryLine } from "@j3-bots/client-runtime/wording";
-import type { Avatar, Bot } from "@j3-bots/contracts";
+import type { Avatar, BotId } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { AccessibilityInfo, Pressable, View } from "react-native";
@@ -18,11 +18,11 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { Text } from "../text.tsx";
-import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { usePresentation } from "../presentation.tsx";
 
 import { FileCard } from "./FileCard.tsx";
 import { MessageText } from "./MessageText.tsx";
+import { Speaker, speakerGutter } from "./Speaker.tsx";
 import { VisualCard } from "./VisualCard.tsx";
 import { AnimatedView } from "./animated.ts";
 import { useTint } from "./tint.ts";
@@ -141,8 +141,11 @@ export function MessageBubble({
 }: {
   readonly message: TimelineMessage;
   readonly position: GroupPosition;
-  /** In a room, who said a bot's message: shown above the first bubble of its group. */
-  readonly speaker?: Bot | null;
+  /**
+   * In a room, the bot that said a bot's message: its name over the first
+   * bubble of its group and its face beside the last, a deleted bot's too.
+   */
+  readonly speaker?: BotId | null;
   /** The names the message addressed, which `@Name` highlights. */
   readonly mentionable?: ReadonlyArray<string>;
   readonly onRetry: () => void;
@@ -181,23 +184,9 @@ export function MessageBubble({
   useAnnounced(delivery);
   const bubble = useTint(tint).bubble;
   const motion = useArrival(arriving, fromOperator, message.text);
-  return (
-    <AnimatedView
-      style={[motion.row, { transformOrigin: fromOperator ? "right bottom" : "left bottom" }]}
-      className={`gap-1 px-4 ${fromOperator ? "items-end" : "items-start"} ${startsGroup ? "mt-2" : "mt-0.5"}`}
-    >
-      {speaker !== null && startsGroup && (
-        <View className="flex-row items-center gap-1.5 ps-1 pt-1">
-          <BotAvatar
-            avatar={speaker.profile.avatar}
-            seed={speaker.id}
-            state="idle"
-            size={24}
-            still
-          />
-          <Text className="text-xs font-medium text-foreground">{speaker.profile.name}</Text>
-        </View>
-      )}
+  const bubbleWidth = speaker === null ? widths.bubble : Math.max(0, widths.bubble - speakerGutter);
+  const said = (
+    <>
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard id={message.id} visual={message.visual} />
       )}
@@ -205,8 +194,8 @@ export function MessageBubble({
         <View
           style={
             fromOperator
-              ? { maxWidth: widths.bubble }
-              : { maxWidth: widths.bubble, backgroundColor: bubble }
+              ? { maxWidth: bubbleWidth }
+              : { maxWidth: bubbleWidth, backgroundColor: bubble }
           }
           className={`rounded-bubble px-3.5 py-2 ${
             fromOperator ? `bg-bubble-operator ${operatorCorners[position]}` : botCorners[position]
@@ -239,6 +228,24 @@ export function MessageBubble({
         message.attachments.map((attachment) => (
           <FileCard key={attachment.id} attachment={attachment} />
         ))}
+    </>
+  );
+  return (
+    <AnimatedView
+      style={[motion.row, { transformOrigin: fromOperator ? "right bottom" : "left bottom" }]}
+      className={`gap-1 px-4 ${fromOperator ? "items-end" : "items-start"} ${startsGroup ? "mt-2" : "mt-0.5"}`}
+    >
+      {speaker === null ? (
+        said
+      ) : (
+        // One child of the row, so its gap stays out of the speaker's name and face, and as wide
+        // as the row, so a visual stretches across it as in a bot's own conversation.
+        <View className="self-stretch">
+          <Speaker botId={speaker} position={position}>
+            {said}
+          </Speaker>
+        </View>
+      )}
       {delivery !== null && (
         <View
           style={{ maxWidth: widths.bubble }}

@@ -6,7 +6,7 @@ import { ChevronLeft, ChevronRight, CornerDownRight } from "lucide-react-native"
 import { useState } from "react";
 import { AccessibilityInfo, Pressable, View } from "react-native";
 import { Text } from "../text.tsx";
-import { RoomAvatar, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
+import { AvatarStack, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar, useOffline } from "../components/avatar/mood.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { toneClass } from "../components/RosterRow.tsx";
@@ -16,7 +16,8 @@ import { useBots, usePresentation } from "../presentation.tsx";
 import { itemName } from "../screens/rosterItem.ts";
 
 /**
- * Who this is, and one line saying what it is doing now. The block with the
+ * Who this is, and one line saying what it is doing now: a bot's face, or a
+ * room's members side by side, up to three and then how many more. The block with the
  * name opens the details, where Stop is while there is work to stop. While the bot waits, "Waiting for you" at the end
  * brings the card it waits on into view. Each change of state and each new
  * line is announced once, as it happens, then how the turn ended
@@ -93,7 +94,7 @@ export function ConversationHeader({
             />
           </View>
         ) : (
-          <RoomAvatar size={28} ground={ground} members={roomAvatarMembers(item.room, bots)} />
+          <AvatarStack size={28} ground={ground} members={roomAvatarMembers(item.room, bots)} />
         )}
         <View className="min-w-0 flex-1">
           <View className="flex-row items-center gap-0.5">

@@ -62,6 +62,7 @@ The operator says "every weekday morning, tell me what changed in the repo" or "
 
 The operator creates a room, adds two to six bots, and writes.
 
+- The room's header shows its members' avatars side by side, up to three, then how many more ("+2"), and its name. The composer reads "Message Support".
 - Writing without addressing anyone goes to the host. The host answers or hands the request to the right bot by mentioning it.
 - `@Name` gives a request one owner. `@everyone` asks each member in turn and is meant to be rare.
 - Bots answer each other in the room. The chain stops when a bot has nothing to add, or when the room's budget for consecutive bot turns runs out; then the room waits for the operator.
@@ -72,7 +73,7 @@ The operator creates a room, adds two to six bots, and writes.
 
 - The operator asks, or the bot offers ("want me to ask Scout?").
 - What the two bots say to each other goes in their **teammate conversation**, "Scout and Wren", one per pair of bots. It reads like a room: each bot's name over its messages, its avatar in its tint, the time between them, and each message that never reached the other bot marked so. The operator reads it and cannot write in it: in place of a composer, a "Read-only" mark. Its menu offers "Talk to Scout", "Talk to Wren" and "Start a room with both".
-- In each bot's own conversation, a run of messages with teammates, with nothing else between them, however long it lasted, is one small line led by the first teammate's small avatar ("Wrote to Wren", "Wren wrote", "Talked with Wren · 3 messages"), which opens the teammate conversation at the run. A run with several teammates ("Talked with Wren and Pip · 4 messages") first asks which conversation to open. A line whose messages did not all reach their teammate says how many did not, quietly ("1 not delivered"). An urgent message that never reached the teammate still shows the recipient's conversation a card that offers to send it again.
+- In each bot's own conversation, a run of messages with teammates, with nothing else between them, however long it lasted, is one small line led by the first teammate's small avatar ("Wrote to Wren", "Wren wrote", "Talked with Wren · 3 messages"), which opens the teammate conversation at the run. A run with several teammates ("Talked with Wren and Pip · 4 messages") first asks which conversation to open, in a sheet on the phone. A line whose messages did not all reach their teammate says how many did not, quietly ("1 not delivered"). An urgent message that never reached the teammate still shows the recipient's conversation a card that offers to send it again.
 - The reply comes back later, as its own turn. Messages between bots never make a conversation unread, never become its last line in the roster and never notify: the operator is told only when a bot has something new for them, and a bot that needs them says so.
 
 ### Changing a bot
