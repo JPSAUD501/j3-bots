@@ -48,17 +48,22 @@ export {
 } from "./browser.ts";
 export {
   addedFrom,
+  addedPlace,
   applyConnectorChange,
   awaitsReview,
   connectorNeedsYou,
+  type ConnectorsOpening,
   connectorsOf,
+  type ConnectorsPlace,
   connectorTone,
   type ConnectorTone,
   grantsBot,
   initialGrant,
   listingKey,
+  listingPlace,
   sameGrant,
   type SignInProblem,
+  suggestionConnect,
   withBot,
 } from "./connectors.ts";
 export {
@@ -230,4 +235,14 @@ export {
   type WindowState,
   windowState,
 } from "./usage.ts";
+export {
+  type Arrival,
+  arrival,
+  landingPage,
+  LOOPBACK_HEADERS,
+  type LoopbackAnswer,
+  type LoopbackRequest,
+  type SignInCatch,
+  signInCatch,
+} from "./signInReturn.ts";
 export { typedOrigins } from "./vault.ts";

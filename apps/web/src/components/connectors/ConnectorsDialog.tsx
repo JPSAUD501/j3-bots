@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Dialog } from "@base-ui/react/dialog";
 import type { ConnectorSearch } from "@j3-bots/client-runtime";
-import { addedFrom, listingKey } from "@j3-bots/client-runtime/presentation";
+import {
+  addedFrom,
+  addedPlace,
+  type ConnectorsOpening,
+  type ConnectorsPlace,
+  listingKey,
+  listingPlace,
+} from "@j3-bots/client-runtime/presentation";
+import { useAnswer } from "@j3-bots/client-runtime/react";
 import { grantText } from "@j3-bots/client-runtime/wording";
 import type { Bot, Connector, ConnectorId, ConnectorListing } from "@j3-bots/contracts";
 import type { KeyWith } from "@j3-bots/i18n";
@@ -18,13 +26,7 @@ import { AddOwnConnector } from "./AddOwnConnector";
 import { ConnectorPage } from "./ConnectorPage";
 import { ListingPage } from "./ListingPage";
 import { ConnectorTile, StatusWord } from "./parts";
-import {
-  type ConnectorsIntents,
-  type ConnectorsOpening,
-  type ConnectorsPlace,
-  Failed,
-  useAnswer,
-} from "./screen";
+import { type ConnectorsIntents, Failed } from "./screen";
 
 interface ConnectorsDialogProps {
   /** Null while it is closed. */
@@ -141,14 +143,7 @@ export function ConnectorsScreen({ titleId, opening, onClose, ...props }: Connec
             bots={props.bots}
             connected={props.connected}
             intents={props.intents}
-            onOpenListing={(listing) => {
-              const added = addedFrom(props.connectors ?? [], listing.ref);
-              go(
-                added === undefined
-                  ? { _tag: "listing", ref: listing.ref, name: listing.name, glyph: listing.glyph }
-                  : { _tag: "connector", connectorId: added.id, signIn: false, added: false },
-              );
-            }}
+            onOpenListing={(listing) => go(listingPlace(props.connectors ?? [], listing))}
             onOpenConnector={(connectorId) =>
               go({ _tag: "connector", connectorId, signIn: false, added: false })
             }
@@ -197,14 +192,6 @@ export function ConnectorsScreen({ titleId, opening, onClose, ...props }: Connec
     </>
   );
 }
-
-/** The page a connector just added opens on: its sign-in started, when it has one to do. */
-const addedPlace = (connector: Connector): ConnectorsPlace => ({
-  _tag: "connector",
-  connectorId: connector.id,
-  signIn: connector.signIn === "oauth" && connector.status._tag === "needs-sign-in",
-  added: true,
-});
 
 /** How long a search waits for the operator to stop typing. */
 const SEARCH_PAUSE_MS = 250;

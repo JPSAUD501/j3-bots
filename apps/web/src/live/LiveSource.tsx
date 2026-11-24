@@ -72,15 +72,16 @@ import {
   type UpdateResult,
 } from "@j3-bots/client-runtime";
 import {
+  type ConnectorsOpening,
   handoffPeer,
   notificationOpening,
   type OpenedNotification,
   type RoomFormMode,
   roomStopFailed,
   showsImage,
+  suggestionConnect,
   templateFileName,
   type TemplateRead,
-  withBot,
 } from "@j3-bots/client-runtime/presentation";
 import type { AppLink } from "@j3-bots/desktop-bridge";
 import { memoryFileName, updateResultLine } from "@j3-bots/client-runtime/wording";
@@ -101,7 +102,7 @@ import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialo
 import { Onboarding } from "../onboarding/Onboarding";
 import { cn } from "../lib/cn";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
-import type { ConnectorsIntents, ConnectorsOpening } from "../components/connectors/screen";
+import type { ConnectorsIntents } from "../components/connectors/screen";
 import { EditBotDialog } from "../components/EditBotDialog";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ImageViewer } from "../components/ImageViewer";
@@ -1427,35 +1428,13 @@ function LiveShell({
       }),
     openConversation: (botId) => void goToBot(botId),
     connectSuggested: (entry) => {
-      const { botId } = entry.author;
-      if (entry.subject._tag === "listing") {
-        openConnectors({
-          at: { _tag: "listing", ref: entry.subject.ref, name: entry.name, glyph: entry.glyph },
-          forBot: botId,
-          suggestion: entry.id,
-        });
-        return;
-      }
-      // A connector the operator added: the bot is let in at once, and its page
-      // opens when it waits on the operator too, for a sign-in or the vault.
-      const { connectorId } = entry.subject;
-      const connector = connectors?.find((candidate) => candidate.id === connectorId);
-      if (connector === undefined) {
-        openConnectors({ at: { _tag: "home" }, forBot: botId, suggestion: entry.id });
-        return;
-      }
-      void j3.connectors
-        .setBots(connectorId, withBot(connector.grant, botId, true, bots))
-        .then((result) => {
+      const { letIn, open } = suggestionConnect(entry, connectors ?? [], bots);
+      if (letIn !== null) {
+        void j3.connectors.setBots(letIn.connectorId, letIn.grant).then((result) => {
           if (result._tag === "failed") say(t("connectorCard.failed"));
         });
-      if (connector.status._tag !== "connected") {
-        openConnectors({
-          at: { _tag: "connector", connectorId, signIn: false, added: false },
-          forBot: botId,
-          suggestion: entry.id,
-        });
       }
+      if (open !== null) openConnectors(open);
     },
     dismissSuggestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     signInConnector: (entry) =>

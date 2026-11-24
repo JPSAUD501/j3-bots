@@ -86,6 +86,7 @@ import {
   avatarSeed,
   avatarStates,
   buildTimeline,
+  type ConnectorsPlace,
   liveTurn,
   withLiveTurn,
   mentionOptions,
@@ -100,7 +101,6 @@ import {
   ConnectorSuggestionCard,
 } from "../components/connectors/ConnectorCards";
 import { ConnectorsScreen } from "../components/connectors/ConnectorsDialog";
-import type { ConnectorsPlace } from "../components/connectors/screen";
 import { AvatarPicker } from "../components/avatar/AvatarPicker";
 import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
 import { Composer, type MentionCandidate, MentionList } from "../components/Composer";

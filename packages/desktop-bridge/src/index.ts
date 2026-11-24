@@ -9,6 +9,7 @@ import {
   PairingCode,
   PairingLinkTarget,
   ServerOrigin,
+  SIGN_IN_RETURN_MAX,
   UpdateChannel,
 } from "@j3-bots/contracts";
 import { releaseTag } from "@j3-bots/release";
@@ -596,9 +597,6 @@ export type ShortcutChange = typeof ShortcutChange.Type;
  */
 export const SignInRelayRequest = Schema.Struct({ language: Language });
 export type SignInRelayRequest = typeof SignInRelayRequest.Type;
-
-/** The longest address a browser's return from a sign-in may be. */
-export const SIGN_IN_RETURN_MAX = 8192;
 
 /** An `http://127.0.0.1:<port>/…` address on this computer's loopback, as the app listens on one. */
 export const LoopbackAddress = Schema.String.check(

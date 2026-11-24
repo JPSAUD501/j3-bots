@@ -2,8 +2,11 @@
 import type {
   BotId,
   BrowserTabRef,
+  ConnectorGlyph,
+  ConnectorId,
   CredentialId,
   EntryId,
+  ListingRef,
   MemoryPath,
   RoomId,
   RosterItemKey,
@@ -28,6 +31,10 @@ import {
 import { useState } from "react";
 import { useColorScheme } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { AddConnectorScreen } from "./connectors/AddConnectorScreen.tsx";
+import { ConnectorScreen } from "./connectors/ConnectorScreen.tsx";
+import { ConnectorsScreen } from "./connectors/ConnectorsScreen.tsx";
+import { ListingScreen } from "./connectors/ListingScreen.tsx";
 import { useI18n } from "./i18n.ts";
 import { useSideBySide } from "./layout.ts";
 import { PresentationProvider } from "./presentation.tsx";
@@ -63,6 +70,10 @@ import { FileOpenerProvider } from "./conversation/FileOpener.tsx";
  * `shareTemplate` shows a bot as a template before it is shared, and
  * `newFromTemplate` the template file opened, before a bot is made from it.
  * The vault's saved logins open from Settings, then one login, then its form.
+ * The connectors' screens open from Settings, a bot's details and a card:
+ * their list and the gallery, a gallery entry, one connector, and adding one
+ * of the operator's own. `forBot` is the bot a new connector is for at first,
+ * and `suggestion` the card that suggested it.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
@@ -88,6 +99,22 @@ export type Screens = {
   credential: { readonly id: CredentialId };
   /** A new login with `id` null; otherwise the one to change. */
   credentialForm: { readonly id: CredentialId | null };
+  connectors: { readonly forBot: BotId | null; readonly suggestion: EntryId | null } | undefined;
+  connectorListing: {
+    readonly ref: ListingRef;
+    readonly name: string;
+    readonly glyph: ConnectorGlyph | null;
+    readonly forBot: BotId | null;
+    readonly suggestion: EntryId | null;
+  };
+  connector: {
+    readonly connectorId: ConnectorId;
+    /** Start its sign-in as the screen opens, as a card's Sign in asks. */
+    readonly signIn: boolean;
+    /** It was just added: the screen says who can use it from now. */
+    readonly added: boolean;
+  };
+  addConnector: { readonly forBot: BotId | null };
 };
 
 /**
@@ -255,6 +282,11 @@ export function Main() {
                   options={sheet}
                   component={CredentialFormScreen}
                 />
+                {/* The connectors' screens set their own titles. */}
+                <Stack.Screen name="connectors" component={ConnectorsScreen} />
+                <Stack.Screen name="connectorListing" component={ListingScreen} />
+                <Stack.Screen name="connector" component={ConnectorScreen} />
+                <Stack.Screen name="addConnector" options={sheet} component={AddConnectorScreen} />
               </Stack.Navigator>
             </NavigationContainer>
           </FileOpenerProvider>

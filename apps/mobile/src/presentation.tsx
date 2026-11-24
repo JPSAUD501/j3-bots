@@ -73,3 +73,9 @@ export const usePresentation = (): PresentationContext => {
 
 /** Every bot the operator has, by id, hidden ones included. */
 export const useBots = (): ReadonlyMap<BotId, Bot> => use(BotsContext);
+
+/** Every bot the operator has, hidden ones included, in the roster's order. */
+export const useBotList = (): ReadonlyArray<Bot> => {
+  const bots = useBots();
+  return useMemo(() => [...bots.values()], [bots]);
+};

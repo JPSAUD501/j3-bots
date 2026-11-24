@@ -13,6 +13,7 @@ import type {
 } from "@j3-bots/client-runtime";
 import {
   applyConnectorChange,
+  type ConnectorsOpening,
   fittedMarks,
   hasDefaultModel,
   insertMarks,
@@ -52,7 +53,6 @@ import { ClockProvider } from "../app/clock";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
 import { ImageViewer } from "../components/ImageViewer";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
-import type { ConnectorsOpening } from "../components/connectors/screen";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";

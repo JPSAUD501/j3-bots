@@ -10,6 +10,7 @@ import type {
 } from "@j3-bots/contracts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { BrowserHelpCard } from "./BrowserHelpCard.tsx";
+import { ConnectorAuthCard, ConnectorSuggestionCard } from "./ConnectorCards.tsx";
 import { CredentialRequestCard } from "./CredentialRequestCard.tsx";
 import { HandoffCard } from "./HandoffCard.tsx";
 import { QuestionCard } from "./QuestionCard.tsx";
@@ -45,6 +46,10 @@ export function Card({
       return <BrowserHelpCard entry={entry} onOpen={() => onOpenBrowser(entry)} />;
     case "credential-request":
       return <CredentialRequestCard entry={entry} />;
+    case "connector-suggestion":
+      return <ConnectorSuggestionCard entry={entry} />;
+    case "connector-auth":
+      return <ConnectorAuthCard entry={entry} />;
     case "handoff":
       return <HandoffCard entry={entry} onOpenBot={onOpenBot} />;
     case "routine-change":

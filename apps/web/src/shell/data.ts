@@ -17,6 +17,7 @@ import type {
   UpdateResult,
   VaultView,
 } from "@j3-bots/client-runtime";
+import type { ConnectorsOpening } from "@j3-bots/client-runtime/presentation";
 import type {
   AvatarChoice,
   Bot,
@@ -53,7 +54,6 @@ import type {
   ShortcutStatus,
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
-import type { ConnectorsOpening } from "../components/connectors/screen";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { TimelineIntents } from "../components/Timeline";

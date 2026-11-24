@@ -3,9 +3,13 @@ import type {
   Bot,
   BotId,
   Connector,
+  ConnectorGlyph,
   ConnectorGrant,
   ConnectorId,
   ConnectorListing,
+  ConnectorSuggestionEntry,
+  EntryId,
+  ListingRef,
 } from "@j3-bots/contracts";
 
 /**
@@ -142,3 +146,99 @@ export type SignInProblem =
   | "vault-locked"
   | "vault-not-set-up"
   | "not-paired";
+
+/** A page of the connectors screen. */
+export type ConnectorsPlace =
+  | { readonly _tag: "home" }
+  | {
+      readonly _tag: "listing";
+      readonly ref: ListingRef;
+      /** Its name and glyph, shown while its page loads. */
+      readonly name: string;
+      readonly glyph: ConnectorGlyph | null;
+    }
+  | {
+      readonly _tag: "connector";
+      readonly connectorId: ConnectorId;
+      /** Start its sign-in as the page opens, as a card's Sign in asks. */
+      readonly signIn: boolean;
+      /** It was just added here: the page says who can use it from now. */
+      readonly added: boolean;
+    }
+  | { readonly _tag: "add-own" };
+
+/**
+ * What opens the connectors screen: where it opens, the bot a new connector
+ * is for at first (the one whose details or card opened it; null for the
+ * primary bot), and the card that suggested it, which the server closes once
+ * it is added.
+ */
+export interface ConnectorsOpening {
+  readonly at: ConnectorsPlace;
+  readonly forBot: BotId | null;
+  readonly suggestion: EntryId | null;
+}
+
+/** The page a connector just added opens on: its sign-in started, when it has one to do. */
+export const addedPlace = (connector: Connector): ConnectorsPlace => ({
+  _tag: "connector",
+  connectorId: connector.id,
+  signIn: connector.signIn === "oauth" && connector.status._tag === "needs-sign-in",
+  added: true,
+});
+
+/** The page a gallery entry opens: the connector added from it, if any, else its own. */
+export const listingPlace = (
+  connectors: ReadonlyArray<Connector>,
+  listing: Pick<ConnectorListing, "ref" | "name" | "glyph">,
+): ConnectorsPlace => {
+  const added = addedFrom(connectors, listing.ref);
+  return added === undefined
+    ? { _tag: "listing", ref: listing.ref, name: listing.name, glyph: listing.glyph }
+    : { _tag: "connector", connectorId: added.id, signIn: false, added: false };
+};
+
+/**
+ * What a suggestion card's Connect does: the bots a connector the operator
+ * added now lets in (`letIn`), and the connectors screen it opens (`open`).
+ * A gallery entry opens its page, for the bot that asked. A connector the
+ * operator added lets that bot in at once, and opens its page only when it
+ * waits on the operator too, for a sign-in or the vault; one this client
+ * does not hold opens the screen's first page.
+ */
+export const suggestionConnect = (
+  entry: ConnectorSuggestionEntry,
+  connectors: ReadonlyArray<Connector>,
+  bots: ReadonlyArray<Bot>,
+): {
+  readonly letIn: { readonly connectorId: ConnectorId; readonly grant: ConnectorGrant } | null;
+  readonly open: ConnectorsOpening | null;
+} => {
+  const forBot = entry.author.botId;
+  const suggestion = entry.id;
+  if (entry.subject._tag === "listing") {
+    const at: ConnectorsPlace = {
+      _tag: "listing",
+      ref: entry.subject.ref,
+      name: entry.name,
+      glyph: entry.glyph,
+    };
+    return { letIn: null, open: { at, forBot, suggestion } };
+  }
+  const { connectorId } = entry.subject;
+  const connector = connectors.find((candidate) => candidate.id === connectorId);
+  if (connector === undefined) {
+    return { letIn: null, open: { at: { _tag: "home" }, forBot, suggestion } };
+  }
+  return {
+    letIn: { connectorId, grant: withBot(connector.grant, forBot, true, bots) },
+    open:
+      connector.status._tag === "connected"
+        ? null
+        : {
+            at: { _tag: "connector", connectorId, signIn: false, added: false },
+            forBot,
+            suggestion,
+          },
+  };
+};
