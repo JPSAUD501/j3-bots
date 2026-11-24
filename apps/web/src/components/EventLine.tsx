@@ -49,16 +49,13 @@ const markTone: Record<EventMark["tone"], string> = {
 };
 
 /**
- * A line's own box is as tall as its text; on a touch screen it takes the
- * minimum touch target through a box around it that adds no height, so a run
- * of lines stays as close as the times between messages.
+ * A line's box is as tall as its text. On a touch screen it is the touch
+ * target's height instead, and its row loses its padding, so a target never
+ * reaches into the row next to it.
  */
-const hitSlop =
-  "relative pointer-coarse:before:absolute pointer-coarse:before:inset-x-0 pointer-coarse:before:top-[calc(50%-var(--layout-touch-target)/2)] pointer-coarse:before:h-(--layout-touch-target)";
-
 const control = cn(
   "inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-center transition-colors duration-(--duration-fast) hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent data-popup-open:text-foreground",
-  hitSlop,
+  touchTarget,
 );
 
 /**
@@ -98,9 +95,11 @@ export function EventLine({
     </Popover.Root>
   );
   return (
-    <div className="flex justify-center px-4 py-1.5 text-2xs text-muted-foreground">
+    <div className="flex justify-center px-4 py-1.5 text-2xs text-muted-foreground pointer-coarse:py-0">
       {opens === null ? (
-        <p className="inline-flex max-w-full items-center gap-1.5 text-center">{sentence}</p>
+        <p className="inline-flex max-w-full items-center gap-1.5 text-center pointer-coarse:min-h-(--layout-touch-target)">
+          {sentence}
+        </p>
       ) : opens._tag === "routine" ? (
         <button
           type="button"

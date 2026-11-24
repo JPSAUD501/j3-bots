@@ -54,9 +54,9 @@ const markTone: Record<EventMark["tone"], string> = {
  * The line's own height. Its touch target grows past it by `SLOP` on every
  * side, to the touch target's height. A view takes no touch beyond its own
  * box, so the slop sits inside a frame grown by as much, which its negative
- * margin keeps out of the layout. Lines stand `SLOP` apart, about a time
- * row's height from one to the next: two lines' targets meet only in the gap
- * between them and never reach the other's words.
+ * margin keeps out of the layout; the row is padded by `SLOP` too, so the
+ * target ends where the row does and never reaches into the next one, which
+ * the list may stack over or under it.
  */
 const LINE_HEIGHT = 24;
 const SLOP = (layout.touchTarget - LINE_HEIGHT) / 2;
@@ -86,7 +86,7 @@ export function EventLine({
   const sentence = <Sentence words={words} />;
   const title = words.runs.map((run) => run.text).join("");
   return (
-    <View className="items-center px-4" style={{ paddingVertical: SLOP / 2 }}>
+    <View className="items-center px-4" style={{ paddingVertical: SLOP }}>
       {opens === null ? (
         <View
           accessible
