@@ -187,8 +187,11 @@ const AskInput = toolInput({
   ),
 });
 
-/** The most bots one turn may create: a room's six members, less the bot that creates them. */
-export const MAX_BOTS_PER_TURN = 5;
+/**
+ * The most bots one request of the operator's may create, over every turn that
+ * answers it: a room's six members, less the bot that creates them.
+ */
+export const MAX_BOTS_PER_REQUEST = 5;
 
 const MessageBotInput = toolInput({
   to: described(
@@ -216,8 +219,8 @@ const MessageBotInput = toolInput({
 const StartRoomInput = toolInput({
   name: described(RoomName, "The room's name, as your user will see it in their list."),
   members: described(
-    Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_TURN)),
-    `The teammates who join, by bot id: one to ${MAX_BOTS_PER_TURN}, besides you. You join as the host.`,
+    Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_REQUEST)),
+    `The teammates who join, by bot id: one to ${MAX_BOTS_PER_REQUEST}, besides you. You join as the host.`,
   ),
   kickoff: described(
     text(1, MAX_SPOKEN_TEXT),
@@ -225,7 +228,7 @@ const StartRoomInput = toolInput({
   ),
   mention: Schema.optionalKey(
     described(
-      Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_TURN)),
+      Schema.Array(Id).check(Schema.isMinLength(1), Schema.isMaxLength(MAX_BOTS_PER_REQUEST)),
       "The members the kickoff wakes, each in turn, in this order. Leave it out to wake every member, in the order of `members`.",
     ),
   ),
@@ -574,7 +577,7 @@ export const tools = {
   create_bot: define(
     "create_bot",
     [
-      `Create a new teammate for your user. Only the primary bot can, only in a turn whose message from your user asked for one or agreed to it, and at most ${MAX_BOTS_PER_TURN} in one turn.`,
+      `Create a new teammate for your user. Only the primary bot can, only in a turn whose message from your user asked for one or agreed to it, and at most ${MAX_BOTS_PER_REQUEST} for one request of theirs, counting those made before a retry of it.`,
       "The job says what the bot is for and where its limits end, in a few sentences; how every bot behaves comes from J3 Bots, not the job.",
       "No tool deletes a bot; your user can delete one in the app.",
       "A bot you create greets your user in its own conversation once your turn ends, unless `start_room` puts it in a room in this same turn: then it opens there.",

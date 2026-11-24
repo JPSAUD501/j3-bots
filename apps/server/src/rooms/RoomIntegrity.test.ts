@@ -83,8 +83,8 @@ const backgroundRuns = (one: Member) =>
 
 let asks = 0;
 
-/** The member asks, in its running room turn, which region to deploy to: the card. */
-const askInRoom = (one: Member, turnId: TurnId, roomId: RoomId) =>
+/** The member asks, in its running room turn, which region to deploy to: the card, in its own conversation. */
+const askInRoom = (one: Member, turnId: TurnId) =>
   Effect.gen(function* () {
     const args = {
       prompt: "Which region?",
@@ -104,7 +104,7 @@ const askInRoom = (one: Member, turnId: TurnId, roomId: RoomId) =>
       tool: "ask",
       arguments: args,
     });
-    const found = (yield* roomEntries(roomId)).findLast(
+    const found = (yield* conversation(one.bot.id)).findLast(
       (entry): entry is QuestionEntry => entry._tag === "question",
     );
     return Option.getOrThrow(Option.fromNullishOr(found));
@@ -351,7 +351,7 @@ it.effect(
       const room = yield* roomWith(hal, [ana, bo]);
       yield* operatorWrites(room.id, members, "Ana, pick a region.", to(ana));
       const turn = yield* nextTurn(ana.bot.id);
-      const card = yield* askInRoom(ana, turn, room.id);
+      const card = yield* askInRoom(ana, turn);
 
       yield* (yield* Rooms).update({
         commandId: command(),
@@ -367,11 +367,13 @@ it.effect(
       assert.isFalse(
         entries.some((entry) => entry._tag === "message" && entry.text === "Europe it is."),
       );
-      const question = entries.find((entry) => entry.id === card.id);
+      const question = (yield* conversation(ana.bot.id)).find((entry) => entry.id === card.id);
       assert.deepStrictEqual(question?._tag === "question" ? question.status : null, {
         _tag: "expired",
       });
-      assert.deepStrictEqual(yield* noticesIn(room.id), []);
+      assert.deepStrictEqual(yield* noticesIn(room.id), [
+        { _tag: "waiting-in-conversation", botId: ana.bot.id },
+      ]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

@@ -319,7 +319,11 @@ export const layer = Layer.effect(
       const [anyFenceable] = yield* sql<{ readonly n: number }>`
         SELECT COUNT(*) AS n FROM dispatches WHERE ${fenceable}
       `;
-      if (sessionIds.length > 0 || (anyFenceable?.n ?? 0) > 0) {
+      // A room Stop is recorded even when none of the bot's work there is
+      // live: it still covers what work the bot began before it would post
+      // to the room, as a turn of its own conversation (`Wakes.record`,
+      // `Speech.messageRoom`).
+      if (sessionIds.length > 0 || (anyFenceable?.n ?? 0) > 0 || scope._tag === "room") {
         const stopId = yield* ids.make("stop");
         // It covers the work of every dispatch written before it, and of none after.
         yield* sql`
@@ -1229,17 +1233,20 @@ export const roomWorkLayer = Layer.effect(
     const signals = yield* Signals;
 
     /**
-     * Each bot that had work addressed to the room gets a room Stop, which
-     * selects what is still in scope: its turns and dispatches, and the
-     * background work its turns started. When nothing is, it records no
-     * Stop, and still cancels the bot's pending wakes in scope and fires the
-     * Stop signal. Every wake still held for the room is cancelled.
+     * Each member of the room, and each bot that had work addressed to it,
+     * gets a room Stop, which selects what is still in scope: its turns and
+     * dispatches, and the background work its turns started. A member with
+     * none gets one all the same: its mark covers what the member's work
+     * begun before it, as a turn of its own conversation, would still post to
+     * the room. Every wake still held for the room is cancelled.
      */
     const stop = Effect.fn("RoomWork.stop")(function* (roomId: RoomId) {
       const working = yield* SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ bot_id: BotId }),
         execute: () => sql`
+          SELECT bot_id FROM room_members WHERE room_id = ${roomId}
+          UNION
           SELECT bot_id FROM dispatches WHERE audience = 'room' AND audience_room_id = ${roomId}
           UNION
           SELECT s.bot_id FROM turns t JOIN sessions s ON s.id = t.session_id

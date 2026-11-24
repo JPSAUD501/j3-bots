@@ -145,8 +145,8 @@ export class TurnTools extends Context.Service<
     ) => Effect.Effect<Schema.Json, TurnEnded | TurnToolRefused | TurnToolRetry | Conflict>;
     /**
      * `create_bot`: matched and pinned as the other turn tools are, in the
-     * transaction that saves the bot, so a turn makes at most
-     * `MAX_BOTS_PER_TURN` and `start_room` finds the bots it made.
+     * transaction that saves the bot, so one request of the operator's makes
+     * at most `MAX_BOTS_PER_REQUEST`, and `start_room` finds the bots made for it.
      */
     readonly createBot: (
       call: CreateBotCall,

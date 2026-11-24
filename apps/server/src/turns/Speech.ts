@@ -26,7 +26,7 @@ import {
 } from "@j3-bots/engine-t3";
 import {
   BROWSER_HELP_REQUESTED,
-  MAX_BOTS_PER_TURN,
+  MAX_BOTS_PER_REQUEST,
   SUGGESTION_REFUSED,
   SUGGESTION_SHOWN,
   type ToolInput,
@@ -165,6 +165,13 @@ const StoredResult = Schema.Struct({ result_json: json(Schema.Json) });
  * replayed forward refuses the same way.
  */
 const StoredRefusal = Schema.TaggedStruct("refused", { reason: Schema.String });
+
+/**
+ * Why a message the operator sent while a turn ran does not count in it
+ * (`operatorSpokeIn`), and what the bot does instead.
+ */
+const LATE_WORD =
+  "A message they sent while this turn was running does not count: if they asked for it there, tell them with `say` to ask again once you have finished.";
 const storedRefusal = Schema.decodeUnknownOption(StoredRefusal);
 
 /** The answer a stored result gives the bot: a refusal fails, anything else is the result. */
@@ -515,12 +522,17 @@ export const layer = Layer.effect(
     const hopCount = (found: Pin) => chains.hopCount(found.sessionId, found.turnId);
 
     /**
-     * Whether the operator spoke in the pinned turn itself: a wake of theirs
-     * started it, or the engine took a steer of theirs into it (`steered`
-     * into this very turn). A continuation, or a turn the engine started for
-     * a turn's background work, inherits no such word: its chain's hops
-     * start again from the operator, but its fan-out counts. So does the
-     * continuation of a steer the engine made a turn of its own (`new-turn`).
+     * Whether the operator spoke in the pinned turn itself: what opened it was
+     * the operator's, a message of theirs (sent again by a Retry or not) or
+     * their answer to an `ask` card. A dismissed card says nothing, so the
+     * wake it gives does not count. Neither does a steer riding the turn: the
+     * engine tells whether the agent took it only once the turn has ended. A
+     * steer the engine requeued as a turn of its own, or ran as one
+     * (`new-turn`), opened that turn, and counts there. A continuation, or a
+     * turn the engine started for a turn's background work, inherits no such
+     * word: its chain's hops start again from the operator, but its fan-out
+     * counts. So does the continuation of a steer the engine made a turn of
+     * its own.
      */
     const operatorSpokeIn = (found: Pin) =>
       SqlSchema.findAll({
@@ -532,18 +544,22 @@ export const layer = Layer.effect(
             JOIN wakes os_wake ON os_wake.dispatch_id = os_dispatch.id
             JOIN turns os_turn ON os_turn.session_id = os_dispatch.session_id
               AND os_turn.engine_turn_id = os_dispatch.engine_turn_id
+            JOIN entries os_source ON os_source.id = os_wake.source_entry_id
             WHERE os_dispatch.session_id = ${found.sessionId}
               AND os_dispatch.engine_turn_id = ${found.turnId}
               AND os_dispatch.status IN ('accepted', 'delivered', 'finished')
+              AND os_turn.origin_turn_id IS NULL
               AND (
-                (os_dispatch.disposition = 'steered'
-                  AND os_dispatch.disposition_turn_id = ${found.turnId})
-                OR os_turn.origin_turn_id IS NULL
+                os_dispatch.disposition IS NOT 'steered'
+                OR os_dispatch.disposition_turn_id IS NOT os_dispatch.engine_turn_id
               )
-              AND (os_wake.kind = 'user' OR EXISTS (
-                SELECT 1 FROM entries os_entry
-                WHERE os_entry.id = os_wake.source_entry_id AND os_entry.author_kind = 'operator'
-              ))
+              AND (
+                os_source.author_kind = 'operator'
+                OR (
+                  json_extract(os_wake.payload_json, '$._tag') = 'answer'
+                  AND json_extract(os_source.body_json, '$.status._tag') = 'answered'
+                )
+              )
           ) AS spoke
         `,
       })(undefined).pipe(
@@ -570,13 +586,17 @@ export const layer = Layer.effect(
 
     /**
      * Whether a Stop covers the pinned turn's work: one recorded while a turn
-     * of its chain ran, or after the dispatch that began the chain's work
-     * was written. A turn the engine started on its own goes on with the work
-     * of the turn it names, so a Stop that covers that work covers it too,
+     * of its chain ran, or, of the bot or of `audience` (the turn's own by
+     * default), after the dispatch that began the chain's work was written.
+     * A turn the engine started on its own goes on with the work of the turn
+     * it names, so a Stop that covers that work covers it too,
      * also one recorded before it began; for work it does not name, only the
      * first counts.
      */
-    const workStopped = Effect.fn("Speech.workStopped")(function* (found: Pin) {
+    const workStopped = Effect.fn("Speech.workStopped")(function* (
+      found: Pin,
+      audience: Audience = found.audience,
+    ) {
       const [turn] = yield* SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ stopped: Schema.BooleanFromBit, seq: Schema.NullOr(DispatchSeq) }),
@@ -597,7 +617,7 @@ export const layer = Layer.effect(
       if (turn === undefined) return { stopped: false, seq: null };
       const stopped =
         turn.stopped ||
-        (turn.seq !== null && (yield* stops.covers(found.botId, found.audience, turn.seq)));
+        (turn.seq !== null && (yield* stops.covers(found.botId, audience, turn.seq)));
       return { stopped, seq: turn.seq };
     });
 
@@ -1012,9 +1032,13 @@ export const layer = Layer.effect(
         found,
       )(
         Effect.gen(function* () {
-          const target = yield* requireTarget(found.botId, found.audience);
+          // Only the operator answers it, so its card waits in the bot's own
+          // conversation, also from a room turn, as an engine request's does;
+          // the room is told once a turn where to look. Its answer still
+          // wakes the bot for the audience that asked.
+          yield* requireTarget(found.botId, found.audience);
           const card = yield* entries.append({
-            target,
+            target: { _tag: "conversation", botId: found.botId },
             entry: {
               _tag: "question",
               author: { _tag: "bot", botId: found.botId },
@@ -1045,6 +1069,21 @@ export const layer = Layer.effect(
               ${yield* encodeValues(values).pipe(Effect.orDie)}
             )
           `.pipe(Effect.orDie);
+          if (found.audience._tag === "room") {
+            const told = yield* sql`
+              SELECT 1 FROM engine_requests
+              WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
+              LIMIT 1
+            `.pipe(Effect.orDie);
+            if (told.length === 0) {
+              yield* notify(
+                found.botId,
+                found.audience,
+                { _tag: "waiting-in-conversation", botId: found.botId },
+                null,
+              );
+            }
+          }
           // The bot ends its turn after asking; the answer wakes it again.
           for (const { id } of yield* deliveredBy(found)) yield* ledger.closeDelivery(id, "ask");
           return {
@@ -1225,7 +1264,7 @@ export const layer = Layer.effect(
       const known = yield* rooms.find(roomId);
       if (Option.isNone(known)) return null;
       const room = known.value;
-      if (input.urgent !== undefined) {
+      if (input.urgent === true) {
         return yield* refuse(
           "Nothing was sent: `urgent` goes with a message to a teammate. In a room, the members you `mention` are woken.",
         );
@@ -1243,8 +1282,12 @@ export const layer = Layer.effect(
       const live = yield* roomOf(roomId);
       if (Option.isNone(live)) return yield* new Conflict({ reason: "room-archived" });
       const mention = yield* mentionedIn(found, live.value, input.mention ?? []);
-      const work = yield* workStopped(found);
-      if (work.stopped) return yield* refuse("Your user stopped this work, so nothing was sent.");
+      // A Stop of the room covers this turn's post there, whatever audience
+      // the turn speaks for: it is recorded for every member.
+      const there = { _tag: "room", roomId } as const;
+      if ((yield* workStopped(found)).stopped || (yield* workStopped(found, there)).stopped) {
+        return yield* refuse("Your user stopped this work, so nothing was sent.");
+      }
       const entry = yield* entries.append({
         target: { _tag: "room", roomId },
         entry: {
@@ -1439,8 +1482,7 @@ export const layer = Layer.effect(
       // record no result, so a retried request is checked again.
       if (!(yield* operatorSpokeIn(found))) {
         return yield* new TurnToolRefused({
-          reason:
-            "Nothing was saved: only your user can say what they want to be called, in a message of theirs that this turn answers.",
+          reason: `Nothing was saved: only your user can say what they want to be called, in a message of theirs that this turn answers. ${LATE_WORD}`,
         });
       }
       const changes = { operatorName: input.name };
@@ -1466,16 +1508,36 @@ export const layer = Layer.effect(
       return result;
     });
 
-    /** The bots the pinned turn's `create_bot` calls made, in the order made. */
-    const madeThisTurn = (found: Pin) =>
+    /**
+     * The bots made for the operator's request the pinned turn answers, in the
+     * order made: by its `create_bot` calls, and by those of every turn of the
+     * bot that answered the same message or card before, as one that failed
+     * and was retried. A Retry then goes on from the bots already made, to
+     * `start_room`, instead of making a second set.
+     */
+    const madeForRequest = (found: Pin) =>
       SqlSchema.findAll({
         Request: Schema.Void,
         Result: Schema.Struct({ id: BotId }),
         execute: () => sql`
-          SELECT json_extract(result_json, '$.id') AS id FROM tool_calls
-          WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
-            AND tool = 'create_bot' AND result_json IS NOT NULL
-          ORDER BY created_at, rowid
+          SELECT json_extract(made.result_json, '$.id') AS id FROM tool_calls made
+          WHERE made.tool = 'create_bot' AND made.result_json IS NOT NULL
+            AND (
+              (made.session_id = ${found.sessionId} AND made.engine_turn_id = ${found.turnId})
+              OR EXISTS (
+                SELECT 1 FROM dispatches earlier
+                JOIN wakes earlier_wake ON earlier_wake.dispatch_id = earlier.id
+                JOIN wakes here_wake ON here_wake.source_entry_id = earlier_wake.source_entry_id
+                  AND here_wake.bot_id = earlier_wake.bot_id
+                JOIN dispatches here ON here.id = here_wake.dispatch_id
+                WHERE earlier.session_id = made.session_id
+                  AND earlier.engine_turn_id = made.engine_turn_id
+                  AND earlier_wake.kind = 'user' AND here_wake.kind = 'user'
+                  AND here.session_id = ${found.sessionId}
+                  AND here.engine_turn_id = ${found.turnId}
+              )
+            )
+          ORDER BY made.created_at, made.rowid
         `,
       })(undefined).pipe(
         Effect.orDie,
@@ -1486,7 +1548,8 @@ export const layer = Layer.effect(
      * `create_bot` (`docs/architecture/server.md`, Bot tools): only in a turn
      * the operator spoke in (`operatorSpokeIn`), so a teammate, a room member
      * or a routine run cannot have bots made through the primary bot, and at
-     * most `MAX_BOTS_PER_TURN` in one turn. The call is pinned, and counted,
+     * most `MAX_BOTS_PER_REQUEST` for one request of the operator's, counted
+     * across the turns that answered it (`madeForRequest`). The call is pinned, and counted,
      * in the transaction that saves the bot (`MadeBy.claim`), whose hello waits
      * for this turn to end: `start_room` may still place it in a room.
      */
@@ -1495,8 +1558,7 @@ export const layer = Layer.effect(
       // the call settled the turn's dispatches, and a refusal records nothing.
       if (!(yield* operatorSpokeIn(found))) {
         return yield* new TurnToolRefused({
-          reason:
-            "Nothing was created: only your user can ask for a new bot, in a message of theirs that this turn answers. If a teammate or a routine needs one, tell your user.",
+          reason: `Nothing was created: only your user can ask for a new bot, in a message of theirs that this turn answers. ${LATE_WORD} If a teammate or a routine needs one, tell your user.`,
         });
       }
       const botId = yield* call.create({
@@ -1513,9 +1575,9 @@ export const layer = Layer.effect(
                 }),
             ),
           );
-          if ((yield* madeThisTurn(found)).length >= MAX_BOTS_PER_TURN) {
+          if ((yield* madeForRequest(found)).length >= MAX_BOTS_PER_REQUEST) {
             return yield* new TurnToolRefused({
-              reason: `Nothing was created: one turn may create at most ${MAX_BOTS_PER_TURN} bots, and this one has.`,
+              reason: `Nothing was created: one request of your user's may create at most ${MAX_BOTS_PER_REQUEST} bots, and this one has, in this turn or one that answered it before.`,
             });
           }
           yield* insertPin("create_bot", found);
@@ -1544,7 +1606,7 @@ export const layer = Layer.effect(
       const refuse = (reason: string) => new TurnToolRefused({ reason });
       if (!(yield* operatorSpokeIn(found))) {
         return yield* refuse(
-          "Nothing was started: only your user can ask for a room, in a message of theirs that this turn answers. If teammates should work on something together, tell your user.",
+          `Nothing was started: only your user can ask for a room, in a message of theirs that this turn answers. ${LATE_WORD} If teammates should work on something together, tell your user.`,
         );
       }
       const members: Array<BotId> = [];
@@ -1613,7 +1675,7 @@ export const layer = Layer.effect(
               commandId: null,
             },
           });
-          const made = yield* madeThisTurn(found);
+          const made = yield* madeForRequest(found);
           for (const botId of members.filter((id) => made.includes(id))) {
             const hello = yield* sql<{ readonly id: string }>`
               SELECT id FROM wakes
