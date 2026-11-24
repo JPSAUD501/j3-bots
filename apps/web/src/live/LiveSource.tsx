@@ -73,7 +73,6 @@ import {
 } from "@j3-bots/client-runtime";
 import {
   type ConnectorsOpening,
-  handoffPeer,
   notificationOpening,
   type OpenedNotification,
   type RoomFormMode,
@@ -1415,10 +1414,6 @@ function LiveShell({
     openAttachment: (attachment) => {
       if (showsImage(attachment)) setViewing(attachment);
       else deliverAttachment(attachment, reserveWindow(attachment));
-    },
-    openHandoff: (entryId) => {
-      const handoff = view.items.find((item) => item._tag === "handoff" && item.id === entryId);
-      if (handoff?._tag === "handoff") goToBot(handoffPeer(handoff));
     },
     // Over its bot's details, which list it with the bot's other routines.
     openRoutine: (routineId) =>

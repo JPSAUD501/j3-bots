@@ -256,8 +256,6 @@ export const layout = {
    * keep a share of it free, so the two sides of a conversation stay apart.
    */
   entryWidth: { max: 576, bubbleShare: 0.85, cardShare: 0.92 },
-  /** Compact cards in the timeline: a handoff, a routine change. */
-  compactCardWidth: 448,
   /** The composer grows with its text up to this height, then scrolls. */
   composerMaxHeight: 240,
   /** Below `tablet` one region shows at a time; from `wide` the details pane sits beside the conversation. */

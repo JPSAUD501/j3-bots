@@ -645,7 +645,6 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     openWorkFold: nothing,
     closeWorkFold: nothing,
     openAttachment: nothing,
-    openHandoff: nothing,
     openRoutine: nothing,
     openConversation: nothing,
     openMemoryFile: nothing,

@@ -69,10 +69,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const insets = useSafeAreaInsets();
   // The details take the window's width; a section is inset 20 px on each side.
   const column = useWindowDimensions().width - 40;
-  const fileWidths = useMemo(
-    () => ({ bubble: column, card: column, compactCard: column, column }),
-    [column],
-  );
+  const fileWidths = useMemo(() => ({ bubble: column, card: column, column }), [column]);
   const navigation = useNavigation<Navigation>();
   const actions = useBotActions();
   const shareTemplate = useShareBotTemplate();

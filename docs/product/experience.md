@@ -154,7 +154,8 @@ Answers: who do I have, who needs me, what is each of them doing.
 Answers: what did we say, what is it doing, what does it need from me.
 
 - Messages as bubbles, the operator's on one side and the bot's on the other, with timestamps between groups.
-- Cards inline: questions, approvals, files, handoffs, routines created or changed.
+- Cards inline for what needs the operator (questions, approvals, credentials, a step in the bot's browser, a connector to add or sign in to) and for files.
+- What only happened takes one quiet line, as small as a time between messages: a message to or from a teammate, a routine created or changed ("Routine Morning digest created"; several in a row, "3 routines created"), the name a bot saved for the operator. Tapping one shows the rest: the message in full, the routine, or the routines to pick from.
 - A finished turn's work folds into one line ("Worked for 2m") that opens to show the steps.
 - While the bot has a page open in its browser, a globe in the header, and a picture of the page under the turn under way, open the browser.
 - A composer labeled with the bot's name. Attachments and dictation are in the composer; nothing else is. A file stands in the message where the operator put it ("compare [image] with [image]"), and the bot reads it there, numbered and named as in the harness's list of files. A tap on a file shows it: an image in a viewer, anything else in the app that opens it.

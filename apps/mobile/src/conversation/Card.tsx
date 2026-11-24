@@ -1,37 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  BotId,
-  BrowserHelpEntry,
-  Entry,
-  MessageEntry,
-  NoticeEntry,
-  RoutineId,
-  WorkFoldEntry,
-} from "@j3-bots/contracts";
+import type { CardEntry as TimelineCard } from "@j3-bots/client-runtime/presentation";
+import type { BrowserHelpEntry, NoticeEntry } from "@j3-bots/contracts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { BrowserHelpCard } from "./BrowserHelpCard.tsx";
 import { ConnectorAuthCard, ConnectorSuggestionCard } from "./ConnectorCards.tsx";
 import { CredentialRequestCard } from "./CredentialRequestCard.tsx";
-import { HandoffCard } from "./HandoffCard.tsx";
 import { QuestionCard } from "./QuestionCard.tsx";
-import { RoutineChangeCard } from "./RoutineChangeCard.tsx";
 import { SecretRequestCard } from "./SecretRequestCard.tsx";
 
-/** The entries that are cards: what the bot asks, a teammate message, a routine changed. */
-export type CardEntry = Exclude<Entry, MessageEntry | NoticeEntry | WorkFoldEntry>;
+/** The entries that are cards: what the bot asks of the operator. Notices have a line of their own. */
+export type CardEntry = Exclude<TimelineCard, NoticeEntry>;
 
 /** One card of the conversation. Each answers through the runtime itself. */
 export function Card({
   entry,
-  onOpenBot,
-  onOpenRoutine,
   onOpenBrowser,
 }: {
   readonly entry: CardEntry;
-  /** Opens a bot's own conversation, as a teammate message offers. */
-  readonly onOpenBot: (botId: BotId) => void;
-  /** Opens a routine's runs, over its bot's details. */
-  readonly onOpenRoutine: (routineId: RoutineId) => void;
   /** Opens the bot's browser for a browser help card. */
   readonly onOpenBrowser: (card: BrowserHelpEntry) => void;
 }) {
@@ -50,9 +35,5 @@ export function Card({
       return <ConnectorSuggestionCard entry={entry} />;
     case "connector-auth":
       return <ConnectorAuthCard entry={entry} />;
-    case "handoff":
-      return <HandoffCard entry={entry} onOpenBot={onOpenBot} />;
-    case "routine-change":
-      return <RoutineChangeCard entry={entry} onOpen={() => onOpenRoutine(entry.routineId)} />;
   }
 }
