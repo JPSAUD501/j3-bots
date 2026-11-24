@@ -100,7 +100,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
       { author: teammate, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
     ],
   },
-  ...(["mentioned", "everyone"] as const).map((reason): Wake => ({
+  ...(["kickoff", "mentioned", "everyone"] as const).map((reason): Wake => ({
     ...base,
     kind: "room",
     room: {

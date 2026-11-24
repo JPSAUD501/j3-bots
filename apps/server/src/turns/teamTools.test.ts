@@ -441,7 +441,10 @@ it.effect(
       for (const next of [pip, mole, wren]) {
         const turn = yield* nextTurn(next.bot.id);
         assert.deepStrictEqual(yield* running(team), [next.bot.profile.name]);
-        assert.include(yield* lastEnvelope(next), "Pip takes billing");
+        const envelope = yield* lastEnvelope(next);
+        assert.include(envelope, "Pip takes billing");
+        // It reads as the kickoff, which names its part, not as any message that mentions it.
+        assert.include(envelope, 'reason="kickoff"');
         yield* say(next, turn, { text: "On it.", done: true });
         yield* finish(next, turn, team);
       }

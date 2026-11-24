@@ -628,7 +628,7 @@ describe("renderWake", () => {
     for (const wake of wakesWith("text")) {
       const lines =
         wake.kind === "room"
-          ? (["host", "mentioned", "everyone"] as const).map((reason) => ({
+          ? (["host", "kickoff", "mentioned", "everyone"] as const).map((reason) => ({
               wake: { ...wake, reason },
               line: ROOM_CLOSING_LINES[reason],
             }))
