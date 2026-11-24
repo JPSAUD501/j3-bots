@@ -236,6 +236,7 @@ const fieldOf = (header: SecretHeader): ConnectorField => ({
   secret: true,
   required: true,
   placeholder: null,
+  choices: [],
 });
 
 /** Whether a connector's sign-in is as it was: a change is told to subscribers. */

@@ -26,6 +26,7 @@ import { Templates } from "../bots/Templates.ts";
 import { Devices } from "../devices/Devices.ts";
 import { Entries, type EntryFrame } from "../entries/Entries.ts";
 import { ServerConfig } from "../config.ts";
+import { ConnectorSources } from "../connectors/sources/Sources.ts";
 import { Listener } from "../listener.ts";
 import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
@@ -47,12 +48,8 @@ import { WorkSteps } from "../turns/WorkSteps.ts";
 import { Connectors } from "../connectors/Connectors.ts";
 import { Vault } from "../vault/Vault.ts";
 
-/**
- * The RPCs this server answers: every one of `J3Rpcs` but the connector
- * gallery's, whose contract came first. Until each is served, a client's
- * call of one is answered with a defect, as an unknown request is.
- */
-export const ServedRpcs = J3Rpcs.omit("connectors.list", "connectors.search", "connectors.get");
+/** The RPCs this server answers: every one of `J3Rpcs`. */
+export const ServedRpcs = J3Rpcs;
 
 const operator = { _tag: "operator" } as const;
 
@@ -89,6 +86,7 @@ export const handlers = ServedRpcs.toLayer(
     const vault = yield* Vault;
     const connectors = yield* Connectors;
     const connectorAuth = yield* ConnectorAuth;
+    const connectorSources = yield* ConnectorSources;
     const connectContext = yield* Effect.context<Engine | RunningWork | SendPause>();
 
     /**
@@ -233,6 +231,9 @@ export const handlers = ServedRpcs.toLayer(
         connectorAuth
           .complete({ _tag: "device", deviceId: device.id, url })
           .pipe(Effect.asVoid, Effect.mapError(toCommandError)),
+      "connectors.list": ({ language }) => Effect.succeed(connectorSources.list(language)),
+      "connectors.search": (input) => connectorSources.search(input),
+      "connectors.get": ({ ref, language }) => connectorSources.get(ref, language),
     };
   }),
 );

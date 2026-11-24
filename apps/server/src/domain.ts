@@ -16,6 +16,7 @@ import * as ConnectorStore from "./connectors/ConnectorStore.ts";
 import * as Connectors from "./connectors/Connectors.ts";
 import * as ConnectorAuth from "./connectors/oauth/ConnectorAuth.ts";
 import * as OAuthSignIns from "./connectors/oauth/signIns.ts";
+import * as ConnectorSources from "./connectors/sources/Sources.ts";
 import * as Devices from "./devices/Devices.ts";
 import * as EngineState from "./engine/EngineState.ts";
 import * as Entries from "./entries/Entries.ts";
@@ -67,10 +68,11 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
 /**
  * Every service of the server's domain, over a migrated database, the server's
  * configuration, the filesystem, an `Engine` with its `BrowserBridge`, a
- * `PushSender` and the HTTP client connectors' sign-ins use (`OAuthHttp`).
- * Which engine, sender and client are the caller's: the real ones in
- * `server.ts`, in-memory ones in tests. Building it starts the turn machinery
- * and the push worker, which run for as long as the layer's scope.
+ * `PushSender`, the HTTP client connectors' sign-ins use (`OAuthHttp`) and
+ * an `McpRegistry`. Which engine, sender, client and registry are the
+ * caller's: the real ones in `server.ts`, in-memory ones in tests. Building
+ * it starts the turn machinery and the push worker, which run for as long as
+ * the layer's scope.
  */
 export const layer = Layer.mergeAll(
   BotTools.layer,
@@ -146,6 +148,7 @@ export const layer = Layer.mergeAll(
       SendPause.layer,
       Readiness.layer,
       DeviceAuth.layer,
+      ConnectorSources.layer,
     ),
   ),
 );

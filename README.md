@@ -48,3 +48,5 @@ Later, `j3-bots update` moves to a newer release and puts the one before back by
 J3 Bots is free software under the [GNU Affero General Public License, version 3 or later](LICENSE), with an [additional permission](APP-STORE-PERMISSION) for distribution through app stores. The reasoning is in [decision 0008](docs/decisions/0008-license.md). To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 T3 Code is MIT licensed and is not affiliated with this project.
+
+The connector gallery's search uses data from the [official MCP Registry](https://registry.modelcontextprotocol.io), which its terms dedicate to the public domain (CC0). J3 Bots is not affiliated with the registry or with the services it lists, whose names are their owners' trademarks.
