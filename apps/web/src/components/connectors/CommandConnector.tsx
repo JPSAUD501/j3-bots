@@ -209,13 +209,10 @@ export function CommandConsentDialog({
                 <h3 className="text-xs font-medium text-muted-foreground">
                   {t("addOwn.consent.commandLine")}
                 </h3>
-                <ol className="flex flex-col gap-0.5 rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
-                  <li className="font-semibold">{shown.program}</li>
-                  {shown.args.map((arg, index) => (
-                    // An argument may repeat, so its place keys it.
-                    <li key={index}>{arg}</li>
-                  ))}
-                </ol>
+                {/* One argument a line, as typed: an argument holds spaces of its own. */}
+                <pre className="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap">
+                  {[shown.program, ...shown.args].join("\n")}
+                </pre>
                 {shown.programChanged && (
                   <p className="text-xs text-waiting">{t("addOwn.consent.programChanged")}</p>
                 )}
