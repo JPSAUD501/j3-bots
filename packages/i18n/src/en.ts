@@ -660,10 +660,6 @@ export const en = {
   "room.memberCount.other": "{count} bots",
   "room.archivedBadge": "Archived",
   "room.archiveSection": "Archive",
-  "room.budget": "Replies between bots",
-  "room.hopLimit.one": "Bots may reply to each other once before the room waits for you.",
-  "room.hopLimit.other":
-    "Bots may reply to each other {count} times in a row before the room waits for you.",
 
   "room.edit": "Edit {name}",
   "room.archivedLine": "Archived. What was said stays, and it takes no messages.",
@@ -700,13 +696,6 @@ export const en = {
   "roomForm.members": "Bots",
   "roomForm.members.hint": "Pick two to six.",
   "roomForm.members.invalid": "Pick two to six bots.",
-  "roomForm.hopLimit": "Bot replies in a row",
-  "roomForm.hopLimit.hint":
-    "How many times bots may reply to each other before the room waits for you.",
-  "roomForm.hopLimit.default": "Leave it empty for the default, {count}.",
-  "roomForm.hopLimit.fewer": "One reply fewer",
-  "roomForm.hopLimit.more": "One reply more",
-  "roomForm.hopLimit.invalid": "Use a whole number from 1 up.",
   "roomForm.cancel": "Cancel",
   "roomForm.create": "Create room",
   "roomForm.creating": "Creating…",
@@ -725,7 +714,7 @@ export const en = {
   "roomForm.createFailedClosed": "The room {name} wasn’t created.",
 
   "mention.label": "Mention a bot",
-  "mention.everyone": "Each member, in turn",
+  "mention.everyone": "Every member answers",
 
   "settings.title": "Settings",
   "settings.appearance": "Appearance",
@@ -870,7 +859,7 @@ export const en = {
   "empty.quiet.waitingForReset": "{name} says hello when the usage limit resets.",
   "empty.quiet.waitingForResetAt": "{name} says hello when the usage limit resets {when}.",
   "empty.quiet.room":
-    "No messages yet. Everyone here reads what you write: whoever has something to add answers, and an @ tells a bot you mean it.",
+    "No messages yet. Everyone here reads what you write: with no @, whoever has something to add answers; an @ speaks to the bots you name.",
   "empty.quiet.connectHint": "To connect one, run this on the machine where J3 Bots is installed.",
 
   "message.sending": "Sending…",

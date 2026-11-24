@@ -70,7 +70,7 @@ export interface RoomForm {
 }
 
 /**
- * A room's name, its bots and its hop limit, as a form holds them. What is
+ * A room's name and its bots, as a form holds them. What is
  * missing shows once the operator tries to send; a refusal keeps what was
  * typed. What the operator left alone follows the room as the server has it,
  * and a submission sends only what the form changes. A bot picked and deleted
@@ -81,8 +81,6 @@ export function useRoomForm(options: {
   readonly mode: RoomFormMode;
   /** Every bot the operator has; the same list while the bots stay the same. */
   readonly bots: ReadonlyArray<Bot>;
-  /** The hop limit a room takes when it gives none; null until the settings are read. */
-  readonly defaultHopLimit: number | null;
   /** Sending takes a connection to the server. */
   readonly connected: boolean;
   /** The language the bots are sorted in. */
@@ -92,7 +90,7 @@ export function useRoomForm(options: {
   /** A failure to show from the start, for a gallery. */
   readonly initialFailure?: IntentFailure | undefined;
 }): RoomForm {
-  const { mode, bots, defaultHopLimit, connected, locale } = options;
+  const { mode, bots, connected, locale } = options;
   const room = mode._tag === "create" ? null : mode.room;
   const gone = mode._tag !== "create" && mode.gone;
   // Where the form starts: the room as the server has it, or the bots it was opened with.
@@ -119,7 +117,7 @@ export function useRoomForm(options: {
     if (roomSeen !== room) {
       setRoomSeen(room);
       if (room !== null) {
-        const followed = followRoom(nextStart, nextValues, room, defaultHopLimit);
+        const followed = followRoom(nextStart, nextValues, room);
         nextStart = followed.start;
         nextValues = followed.values;
       }
@@ -133,7 +131,7 @@ export function useRoomForm(options: {
   const [tried, setTried] = useState(false);
 
   const draft = room === null ? roomDraft(values) : null;
-  const changes = room === null ? null : roomChanges(start, values, defaultHopLimit);
+  const changes = room === null ? null : roomChanges(start, values);
   // What goes to the server, once nothing is missing.
   const submission: RoomSubmission | null =
     draft?._tag === "ready"
@@ -182,7 +180,7 @@ export function useRoomForm(options: {
     dropped,
     busy,
     canSubmit,
-    unsaved: !sameRoomForm(start, values, defaultHopLimit),
+    unsaved: !sameRoomForm(start, values),
     submit: (send) => {
       if (!canSubmit) return "held";
       setTried(true);

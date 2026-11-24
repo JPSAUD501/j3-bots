@@ -1550,7 +1550,6 @@ const roomIntents = {
 const archivedRoom: Room = {
   id: team.room.id,
   name: team.room.name,
-  hopLimit: team.room.hopLimit,
   pinned: false,
   createdAt: team.room.createdAt,
   status: "archived",
@@ -2099,7 +2098,6 @@ function RoomFormVariant({
         <RoomForm
           mode={{ _tag: "create" }}
           bots={bots}
-          defaultHopLimit={team.settings.budgets.hops}
           connected
           onSubmit={() => new Promise(() => {})}
           onClose={nothing}
@@ -2154,7 +2152,6 @@ function RoomsSection() {
           initial={{
             name: "Launch week",
             members: [scout.id, wren.id],
-            hopLimit: "",
           }}
           initialFailure={{ _tag: "refused", error: new Invalid({ reason: "room-members" }) }}
         />
@@ -2169,7 +2166,6 @@ function RoomsSection() {
           initial={{
             name: team.room.name,
             members: [juniper.id, scout.id],
-            hopLimit: "2",
           }}
           initialFailure={{ _tag: "refused", error: new Conflict({ reason: "room-archived" }) }}
         />

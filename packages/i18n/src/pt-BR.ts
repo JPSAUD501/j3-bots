@@ -660,11 +660,6 @@ const sentences = {
   "room.memberCount.other": "{count} bots",
   "room.archivedBadge": "Arquivada",
   "room.archiveSection": "Arquivar",
-  "room.budget": "Respostas entre bots",
-  "room.hopLimit.one":
-    "Os bots podem responder uns aos outros uma vez antes de a sala esperar por você.",
-  "room.hopLimit.other":
-    "Os bots podem responder uns aos outros {count} vezes seguidas antes de a sala esperar por você.",
 
   "room.edit": "Editar {name}",
   "room.archivedLine": "Arquivada. O que foi dito fica, e ela não recebe mensagens.",
@@ -702,13 +697,6 @@ const sentences = {
   "roomForm.members": "Bots",
   "roomForm.members.hint": "Escolha de dois a seis.",
   "roomForm.members.invalid": "Escolha de dois a seis bots.",
-  "roomForm.hopLimit": "Respostas seguidas entre bots",
-  "roomForm.hopLimit.hint":
-    "Quantas vezes os bots podem responder uns aos outros antes de a sala esperar por você.",
-  "roomForm.hopLimit.default": "Deixe vazio para usar o padrão, {count}.",
-  "roomForm.hopLimit.fewer": "Uma resposta a menos",
-  "roomForm.hopLimit.more": "Uma resposta a mais",
-  "roomForm.hopLimit.invalid": "Use um número inteiro a partir de 1.",
   "roomForm.cancel": "Cancelar",
   "roomForm.create": "Criar sala",
   "roomForm.creating": "Criando…",
@@ -727,7 +715,7 @@ const sentences = {
   "roomForm.createFailedClosed": "A sala {name} não foi criada.",
 
   "mention.label": "Mencionar um bot",
-  "mention.everyone": "Cada membro, um de cada vez",
+  "mention.everyone": "Todos os membros respondem",
 
   "settings.title": "Configurações",
   "settings.appearance": "Aparência",
@@ -873,7 +861,7 @@ const sentences = {
   "empty.quiet.waitingForReset": "{name} dá oi quando o limite de uso renovar.",
   "empty.quiet.waitingForResetAt": "{name} dá oi quando o limite de uso renovar {when}.",
   "empty.quiet.room":
-    "Nenhuma mensagem ainda. Todos aqui leem o que você escreve: quem tiver algo a acrescentar responde, e um @ avisa um bot que é com ele.",
+    "Nenhuma mensagem ainda. Todos aqui leem o que você escreve: sem @, responde quem tiver algo a acrescentar; um @ fala com os bots que você citar.",
   "empty.quiet.connectHint":
     "Para conectar um, rode isto na máquina onde o J3 Bots está instalado.",
 

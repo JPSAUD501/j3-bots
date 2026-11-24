@@ -11,7 +11,7 @@ export interface Mentionable {
   readonly name: string;
 }
 
-/** What the picker offers: one member, or every member in turn. */
+/** What the picker offers: one member, or every member, each asked to answer. */
 export type MentionOption =
   | { readonly _tag: "bot"; readonly id: BotId; readonly name: string }
   | { readonly _tag: "everyone" };

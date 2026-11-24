@@ -24,7 +24,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Teammate conversation.** The record of the messages two bots sent each other, one per pair of bots, titled with their two names ("Scout and Wren"). The operator reads it and never writes into it: they steer a bot in its own conversation, or several in a room. It is not a session and not a room.
 
-**Room.** A group chat with the operator and two to six bots, all equal. A room has a name, members and its own message history. Every member reads every message there, the operator's and each bot's, and the members answer at once, each only when the message is for it or it has something to add; a mention tells a bot the message is for it, and wakes nobody the message would not. Bots keep their own memory in a room; they share only what is said there. The operator creates one, or asks a bot to: it then starts the room as its first member, with a kickoff that hands out the work.
+**Room.** A group chat with the operator and two to six bots, all equal. A room has a name, members and its own message history. Every member reads every message there, the operator's and each bot's. A message that mentions members wakes only them; one that mentions nobody wakes every member but its author, each answering only if it has something to add; the operator's `@everyone` wakes every member and asks each to answer. The members woken answer at once. Bots keep their own memory in a room; they share only what is said there. The operator creates one, or asks a bot to: it then starts the room as its first member, with a kickoff that hands out the work.
 
 ## The roster
 
@@ -107,7 +107,7 @@ From the bot's side, a connector is a set of tools named after it (`notion__sear
 
 **Vault access.** A bot's switch, in its details next to the browser's, off by default, that lets it sign in with the saved logins that allow it. The bot is never handed a value: it asks the server to **fill** one, and the server types it into the bot's browser tab, after checking that the page is one of the login's sites. A bot that runs a script in the page can still read what was typed there. Nobody confirms each fill; the operator decides ahead of time, per bot and per login. Each fill shows in the bot's work.
 
-**Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, or one bot's room message may mention, how many hops a chain of bot-to-bot messages may take, how many turns may run at once.
+**Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, how many hops a chain of teammate messages may take, how many turns may run at once. A room has its own guard instead of hops: after twelve bots' messages there since the operator last wrote, its bots' messages wake nobody until the operator writes again.
 
 ## Names
 

@@ -1714,7 +1714,6 @@ function LiveShell({
       <RoomDialog
         mode={roomFormMode}
         bots={bots}
-        defaultHopLimit={data.settings?.budgets.hops ?? null}
         connected={data.connected}
         unsaved={roomFormUnsaved}
         onUnsavedChange={setRoomFormUnsaved}

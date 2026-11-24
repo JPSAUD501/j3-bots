@@ -259,6 +259,76 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
       );
     }, 1600);
   };
+  /** Each room's latest round: a newer one, or a Stop, ends what an older one had left to do. */
+  const rounds = new Map<RoomId, number>();
+  const nextRound = (roomId: RoomId) => {
+    const round = (rounds.get(roomId) ?? 0) + 1;
+    rounds.set(roomId, round);
+    return round;
+  };
+  /**
+   * A room message as the server takes one: the members it mentions start at
+   * once, or every member when it mentions nobody or everyone. Those it
+   * mentions, or everyone, each reply; with no mention the first two reply,
+   * as if they had something to add, and the rest end without a word. The
+   * room says who is still answering.
+   */
+  const roomRound = (roomId: RoomId, key: string, mentions: Mentions | undefined) => {
+    const found = get().roster.find((i) => i._tag === "room" && i.room.id === roomId);
+    if (found?._tag !== "room" || found.room.status !== "active") return;
+    const round = nextRound(roomId);
+    const members = found.room.members;
+    const named = mentions?._tag === "bots" && mentions.ids.length > 0 ? mentions.ids : null;
+    const woken = named ?? members;
+    const speakers = named ?? (mentions?._tag === "everyone" ? members : members.slice(0, 2));
+    const working = (botIds: ReadonlyArray<BotId>, state: BotState) => (s: State) =>
+      botIds.reduce((next, botId) => updateBot(next, botId, setState(state)), s);
+    /** The room with these members answering in it, or without them. */
+    const answering = (s: State, change: (now: ReadonlyArray<BotId>) => ReadonlyArray<BotId>) =>
+      updateRoom(s, roomId, (room) => {
+        if (room.status !== "active") return room;
+        const next = change(room.answering);
+        return { ...room, work: next.length > 0 ? "running" : "none", answering: next };
+      });
+    /** These members' turns end, unless the round is over; `reply` is what one of them said. */
+    const ends = (
+      botIds: ReadonlyArray<BotId>,
+      reply?: { readonly botId: BotId; readonly text: string },
+    ) => {
+      if (rounds.get(roomId) !== round) return;
+      update((s) => {
+        const said =
+          reply === undefined
+            ? s
+            : withEntries(s, key, (es) =>
+                appended(es, message({ _tag: "bot", botId: reply.botId }, reply.text)),
+              );
+        return answering(working(botIds, { _tag: "idle" })(said), (now) =>
+          now.filter((id) => !botIds.includes(id)),
+        );
+      });
+    };
+    const replies = [
+      "Noted. This is the sample team, so nothing really runs, but the message is here.",
+      "I read it too, and I’ll pick up what is mine in it.",
+      "Same here: I have it, and I’ll say so when there is more.",
+    ] as const;
+    // Those an earlier round left at work and this one does not wake stop with it.
+    const left = found.room.answering.filter((id) => !woken.includes(id));
+    update((s) =>
+      answering(
+        working(woken, { _tag: "thinking", since: now(), stalled: false, quietSince: null })(
+          working(left, { _tag: "idle" })(s),
+        ),
+        () => woken,
+      ),
+    );
+    window.setTimeout(() => ends(woken.filter((id) => !speakers.includes(id))), 1500);
+    speakers.forEach((botId, index) => {
+      const text = replies[index % replies.length] ?? replies[0];
+      window.setTimeout(() => ends([botId], { botId, text }), 2500 * (index + 1));
+    });
+  };
   /** The bot waiting on a card carries on once the card is decided. */
   const resume = (entryId: EntryId, text: string) => {
     const botId = waitingOn(get(), entryId);
@@ -406,23 +476,15 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
         ),
         drafts: { ...s.drafts, [key]: blankDraft },
       }));
-      // In a room, the first bot mentioned answers, or the first member when nobody is.
-      const room = get().roster.find(
-        (i) => i._tag === "room" && target._tag === "room" && i.room.id === target.roomId,
+      if (target._tag === "room") {
+        roomRound(target.roomId, key, mentions);
+        return;
+      }
+      replyLater(
+        target.botId,
+        key,
+        "Noted. This is the sample team, so nothing really runs, but the message is here.",
       );
-      const mentioned = mentions?._tag === "bots" ? mentions.ids[0] : undefined;
-      const answering =
-        target._tag === "conversation"
-          ? target.botId
-          : room?._tag === "room"
-            ? (mentioned ?? room.room.members[0] ?? null)
-            : null;
-      if (answering !== null)
-        replyLater(
-          answering,
-          key,
-          "Noted. This is the sample team, so nothing really runs, but the message is here.",
-        );
     },
     answerQuestion: (entryId, answers) =>
       answer(
@@ -488,7 +550,8 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     setVault: (bot, enabled) =>
       update((s) => updateBot(s, bot.id, (current) => ({ ...current, vault: enabled }))),
     // The sample's members work only for the room, so its Stop ends whatever they run.
-    stopRoom: (roomId) =>
+    stopRoom: (roomId) => {
+      nextRound(roomId);
       update((s) => {
         const found = s.roster.find((i) => i._tag === "room" && i.room.id === roomId);
         const members = found?._tag === "room" ? found.room.members : [];
@@ -503,7 +566,8 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
             room.status === "active" ? { ...room, work: "none", answering: [] } : room,
           ),
         );
-      }),
+      });
+    },
     setRoutineEnabled: (routineId, enabled) =>
       update((s) => ({
         ...s,
@@ -727,7 +791,6 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
             : {
                 id: room.id,
                 name: room.name,
-                hopLimit: room.hopLimit,
                 pinned: room.pinned,
                 createdAt: room.createdAt,
                 status: "active",

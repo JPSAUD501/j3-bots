@@ -21,7 +21,6 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     name: "Launch",
     status: "active",
     members: [bot("Scout").id, bot("Wren").id],
-    hopLimit: 3,
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
