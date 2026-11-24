@@ -1638,7 +1638,7 @@ const sentences = {
   "addOwn.env.twice": "Outra variável tem este nome. Maiúsculas e minúsculas contam como iguais.",
   "addOwn.env.valueAgain": "Informe o valor de novo: um comando alterado é salvo inteiro.",
   "addOwn.consent.title": "Executar isto no computador que roda o J3 Bots?",
-  "addOwn.consent.titleChanged": "Executar o comando alterado?",
+  "addOwn.consent.titleChanged": "Executar o comando alterado no computador que roda o J3 Bots?",
   "addOwn.consent.body":
     "Ele roda lá como o seu usuário, e pode ler e alterar tudo o que o seu usuário pode: arquivos, chaves de outros programas, a rede. Os bots usam o que ele oferece. Execute só software em que você confia.",
   "addOwn.consent.commandLine": "Linha de comando",

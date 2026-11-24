@@ -1613,7 +1613,7 @@ export const en = {
   "addOwn.env.twice": "Another variable has this name. Names count as the same in any case.",
   "addOwn.env.valueAgain": "Give its value again: a changed command is saved whole.",
   "addOwn.consent.title": "Run this on the computer that runs J3 Bots?",
-  "addOwn.consent.titleChanged": "Run the changed command?",
+  "addOwn.consent.titleChanged": "Run the changed command on the computer that runs J3 Bots?",
   "addOwn.consent.body":
     "It runs there as your user, and can read and change everything your user can: files, other programs' keys, the network. Bots use what it offers. Run only software you trust.",
   "addOwn.consent.commandLine": "Command line",
