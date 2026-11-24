@@ -2,7 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- An MCP server's standard streams are node:child_process's pipes, which the SDK's transport reads as Node streams.
 import * as NodeChildProcess from "node:child_process";
 import type * as NodeStream from "node:stream";
-import { inJob } from "@j3-bots/processes";
+import { inJob, jobLauncher } from "@j3-bots/processes";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -113,12 +113,21 @@ const stop = Effect.fn("CommandProcess.stop")(function* (
 export const startProcess = (
   input: ProcessInput,
 ): Effect.Effect<RunningProcess, CommandFailed, Scope.Scope> =>
+  (input.platform === "win32"
+    ? Effect.tryPromise({
+        try: () => jobLauncher(input.environment),
+        catch: () => new CommandFailed({ reason: "exited" }),
+      }).pipe(Effect.map((launcher) => inJob(launcher, input.executable, input.args, "relay")))
+    : Effect.succeed({ command: input.executable, args: input.args })
+  ).pipe(Effect.flatMap((launched) => spawned(input, launched)));
+
+/** The process `launched` starts, stopped when the scope closes. */
+const spawned = (
+  input: ProcessInput,
+  launched: { readonly command: string; readonly args: ReadonlyArray<string> },
+): Effect.Effect<RunningProcess, CommandFailed, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.callback<NodeChildProcess.ChildProcess, CommandFailed>((resume) => {
-      const launched =
-        input.platform === "win32"
-          ? inJob(input.environment, input.executable, input.args, "relay")
-          : { command: input.executable, args: input.args };
       let child: NodeChildProcess.ChildProcess;
       try {
         child = NodeChildProcess.spawn(launched.command, [...launched.args], {

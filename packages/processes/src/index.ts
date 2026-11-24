@@ -4,7 +4,7 @@
  * nothing of any one program's in it. On Windows, {@link inJob} runs a program
  * in a job object, so that nothing it started outlives it.
  */
-export { inJob, type JobStdio } from "./job.ts";
+export { inJob, type JobStdio, jobLauncher } from "./job.ts";
 export {
   POWERSHELL,
   powerShellArgs,
