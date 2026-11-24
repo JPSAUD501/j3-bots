@@ -243,7 +243,8 @@ export function AddOwnConnector({
             env={env}
             problems={problems}
             readOnly={submitting}
-            keptNames={null}
+            editing={false}
+            keptNames={[]}
             autoFocus={false}
             onCommand={setCommand}
             onArgs={setArgs}

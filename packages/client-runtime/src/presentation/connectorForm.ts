@@ -423,6 +423,28 @@ export type CommandEdit =
   | { readonly _tag: "invalid"; readonly problems: FormProblems };
 
 /**
+ * Whether an edit keeps the command line the server has: the same program,
+ * the arguments kept, and the same variable names. Only then does an empty
+ * value keep its own; any other change sends the whole line, every value with it.
+ */
+export function keepsLine(
+  known: KnownCommand,
+  draft: {
+    readonly command: string;
+    readonly args: ArgumentsDraft;
+    readonly env: ReadonlyArray<PairInput>;
+  },
+): boolean {
+  const names = draft.env.filter((row) => !blank(row)).map((row) => row.name.trim());
+  return (
+    draft.command.trim() === known.program &&
+    draft.args._tag === "kept" &&
+    names.length === known.names.length &&
+    known.names.every((name) => names.includes(name))
+  );
+}
+
+/**
  * An edit of a command connector, as its form holds it. Changing only
  * values keeps the command line, which the server holds and the client never
  * sees. Anything else sends a new one whole: its arguments typed again, and
@@ -437,13 +459,7 @@ export function commandEdit(
   },
 ): CommandEdit {
   const rows = draft.env.filter((row) => !blank(row));
-  const names = rows.map((row) => row.name.trim());
-  const sameLine =
-    draft.command.trim() === known.program &&
-    draft.args._tag === "kept" &&
-    names.length === known.names.length &&
-    known.names.every((name) => names.includes(name));
-  if (sameLine) {
+  if (keepsLine(known, draft)) {
     const values = rows.flatMap((row): ReadonlyArray<ConnectorFieldValue> => {
       const key = decodeFieldKey(row.name.trim());
       return row.value === "" || Option.isNone(key)

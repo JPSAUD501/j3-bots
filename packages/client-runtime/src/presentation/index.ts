@@ -68,6 +68,7 @@ export {
   type EnvProblem,
   fieldValues,
   type FormProblems,
+  keepsLine,
   type KnownCommand,
   knownCommand,
   listingSource,

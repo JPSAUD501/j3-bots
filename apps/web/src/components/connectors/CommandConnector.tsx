@@ -6,6 +6,7 @@ import {
   commandConsent,
   commandEdit,
   type FormProblems,
+  keepsLine,
   type KnownCommand,
 } from "@j3-bots/client-runtime/presentation";
 import {
@@ -33,7 +34,7 @@ import type { ConnectorsIntents } from "./screen";
  * A command line's fields: the program, its arguments, one per line, and its
  * environment. `args` is `kept` in an edit until the operator types them
  * again, since the server never shows them; `keptNames` are the variables
- * whose values an empty field keeps.
+ * whose values an empty field keeps, none once the edit sends a new line.
  */
 export function CommandFields({
   command,
@@ -41,6 +42,7 @@ export function CommandFields({
   env,
   problems,
   readOnly,
+  editing,
   keptNames,
   autoFocus,
   onCommand,
@@ -52,8 +54,9 @@ export function CommandFields({
   env: ReadonlyArray<KeyedPair>;
   problems: FormProblems | null;
   readOnly: boolean;
-  /** Null when adding: every argument and value is typed. */
-  keptNames: ReadonlyArray<string> | null;
+  /** False when adding: every argument and value is typed. */
+  editing: boolean;
+  keptNames: ReadonlyArray<string>;
   autoFocus: boolean;
   onCommand: (command: string) => void;
   onArgs: (args: ArgumentsDraft) => void;
@@ -114,7 +117,7 @@ export function CommandFields({
             <p id={argsHintId} className="text-xs text-muted-foreground">
               {t("addOwn.args.hint")}
             </p>
-            {keptNames !== null && (
+            {editing && (
               <Button
                 size="sm"
                 variant="ghost-muted"
@@ -148,7 +151,7 @@ export function CommandFields({
           readOnly={readOnly}
           onChange={onEnv}
           valuePlaceholder={(row) =>
-            keptNames?.includes(row.name.trim())
+            keptNames.includes(row.name.trim())
               ? t("connector.editCommand.value.kept")
               : t("addOwn.env.value")
           }
@@ -351,7 +354,8 @@ export function EditCommand({
         env={env}
         problems={problems}
         readOnly={submitting}
-        keptNames={known.names}
+        editing
+        keptNames={keepsLine(known, { command, args, env }) ? known.names : []}
         autoFocus
         onCommand={setCommand}
         onArgs={setArgs}
