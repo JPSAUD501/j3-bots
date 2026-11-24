@@ -10,6 +10,7 @@ import {
   PairRequest,
   type ProviderStatus,
   ServerInfo,
+  type SignInHarness,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -158,6 +159,20 @@ export const startServer = Effect.fn("startServer")(function* (spec: ServerSpec,
   yield* Effect.raceFirst(answered, exited);
 });
 
+/**
+ * Deletes a run's home once its server has stopped. A harness the engine ran
+ * may outlive it by five seconds: the engine starts each one under a wrapper
+ * that, once the engine is gone, sends its process group SIGTERM and SIGKILL
+ * five seconds later (**Verified**: the wrapper's command line, read from a
+ * running harness's parent). One still writing meanwhile can refill a folder
+ * the removal just emptied, so the removal goes on a little past that.
+ */
+export const removeHome = (home: string) =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((fs) => fs.remove(home, { recursive: true, force: true })),
+    Effect.retry({ schedule: Schedule.spaced("1 second"), times: 8 }),
+  );
+
 /** The last `count` lines the run's server wrote, none if its log cannot be read. */
 export const logTail = (log: string, count: number) =>
   FileSystem.FileSystem.pipe(
@@ -187,7 +202,7 @@ export const connectProviders = Effect.fn("connectProviders")(function* (
 const PRINTED_CODE = /Pairing code: ([0-9A-Z]{5})-([0-9A-Z]{5})/;
 
 /** Pairs the eval as a device, as a client does with the code `j3-bots pair` prints. */
-export const pair = Effect.fn("pair")(function* (spec: ServerSpec) {
+export const pair = Effect.fn("pair")(function* (spec: ServerSpec, device: string) {
   const http = yield* HttpClient.HttpClient;
   const { output, exitCode } = yield* cli(spec, ["pair"]);
   const printed = PRINTED_CODE.exec(output);
@@ -196,7 +211,7 @@ export const pair = Effect.fn("pair")(function* (spec: ServerSpec) {
   }
   const code = yield* Schema.decodeEffect(PairingCode)(`${printed[1]}${printed[2]}`);
   return yield* HttpClientRequest.post(`${origin(spec)}${HTTP_PATHS.pair}`).pipe(
-    HttpClientRequest.schemaBodyJson(PairRequest)({ code, name: "Room eval" }),
+    HttpClientRequest.schemaBodyJson(PairRequest)({ code, name: device }),
     Effect.flatMap(http.execute),
     Effect.filterOrFail((response) => response.status === 200),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(PairResult)),
@@ -242,22 +257,22 @@ export const download = Effect.fn("download")(function* (
   return yield* response.text;
 });
 
-/** The Claude Code provider, if the engine is ready and reports it ready with models. */
-const readyClaudeCode = (providers: ReadonlyArray<ProviderStatus>) =>
+/** The provider of `harness`, if the engine is ready and reports it ready with models. */
+const readyOn = (harness: SignInHarness, providers: ReadonlyArray<ProviderStatus>) =>
   Option.fromNullishOr(
     providers.find(
       (provider) =>
-        provider.harness === "claude-code" &&
+        provider.harness === harness &&
         provider.status._tag === "ready" &&
         provider.models.length > 0,
     ),
   );
 
-/** The Claude Code provider, once the engine reports it ready with its models. */
-export const claudeCode = (client: Client) =>
+/** The provider of `harness`, once the engine reports it ready with its models. */
+export const readyProvider = (client: Client, harness: SignInHarness) =>
   client["engine.subscribe"]().pipe(
     Stream.map((status) =>
-      status.state._tag === "ready" ? readyClaudeCode(status.providers) : Option.none(),
+      status.state._tag === "ready" ? readyOn(harness, status.providers) : Option.none(),
     ),
     Stream.filter(Option.isSome),
     Stream.runHead,

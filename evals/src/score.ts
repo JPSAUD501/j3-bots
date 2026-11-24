@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { AttachmentId, BotId, type RoomId } from "@j3-bots/contracts";
+import { AttachmentId, BotId, RoomId } from "@j3-bots/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 /** The run's database could not be read. */
@@ -116,4 +117,176 @@ export const score = Effect.fn("score")(function* (
     maxHops: Math.max(0, ...hops.map((wake) => wake.hops)),
     files,
   } satisfies Score;
+});
+
+const Made = Schema.Struct({ id: BotId });
+
+const Tool = Schema.Struct({ tool: Schema.String });
+
+const HostedRoom = Schema.Struct({ id: RoomId });
+
+const Member = Schema.Struct({ bot_id: BotId });
+
+const Author = Schema.Struct({ author_bot_id: BotId });
+
+const Text = Schema.Struct({ text: Schema.String });
+
+const Provider = Schema.Struct({ provider_id: Schema.String });
+
+const WakeState = Schema.Struct({
+  status: Schema.String,
+  failure_reason: Schema.NullOr(Schema.String),
+});
+
+export interface TeamScore {
+  /** The J3 Bots tools the primary bot called, in order, its hello's included. */
+  readonly tools: ReadonlyArray<string>;
+  /** The bots its `create_bot` calls made. */
+  readonly made: ReadonlyArray<BotId>;
+  /** The provider each of them runs on, in the order made. */
+  readonly madeOn: ReadonlyArray<string>;
+  /** The first room it hosts, with its members in order. */
+  readonly room: Option.Option<{ readonly id: RoomId; readonly members: ReadonlyArray<BotId> }>;
+  /** Its messages in that room: the kickoff, and any after. */
+  readonly kickoffs: number;
+  /** The other members with a message in that room. */
+  readonly answered: ReadonlyArray<BotId>;
+  /** How each room wake of the other members ended, oldest first: `finished`, `failed (rejected)`. */
+  readonly memberWakes: ReadonlyArray<string>;
+  /** The J3 Bots tools the other members called in their room turns, in order. */
+  readonly memberTools: ReadonlyArray<string>;
+  /** Messages the made bots wrote in their own conversations: a hello is one. */
+  readonly hellos: number;
+  /** Its last message to the operator. */
+  readonly told: Option.Option<string>;
+}
+
+/** What the primary bot set up when asked for a group, read from the database. */
+export const scoreTeam = Effect.fn("scoreTeam")(function* (database: string, primary: BotId) {
+  const tools = yield* query(
+    database,
+    Tool,
+    `SELECT c.tool FROM tool_calls c JOIN sessions s ON s.id = c.session_id
+       WHERE s.bot_id = ? ORDER BY c.created_at, c.rowid`,
+    primary,
+  );
+  const made = yield* query(
+    database,
+    Made,
+    `SELECT json_extract(c.result_json, '$.id') AS id
+       FROM tool_calls c JOIN sessions s ON s.id = c.session_id
+       WHERE s.bot_id = ? AND c.tool = 'create_bot' AND c.result_json IS NOT NULL
+       ORDER BY c.created_at, c.rowid`,
+    primary,
+  );
+  const [hosted] = yield* query(
+    database,
+    HostedRoom,
+    `SELECT id FROM rooms WHERE host_bot_id = ? ORDER BY created_at, rowid LIMIT 1`,
+    primary,
+  );
+  const members =
+    hosted === undefined
+      ? []
+      : yield* query(
+          database,
+          Member,
+          `SELECT bot_id FROM room_members WHERE room_id = ? ORDER BY position`,
+          hosted.id,
+        );
+  const kickoffs =
+    hosted === undefined
+      ? []
+      : yield* query(
+          database,
+          Count,
+          `SELECT COUNT(*) AS n FROM entries
+             WHERE room_id = ? AND kind = 'message' AND author_bot_id = ?`,
+          hosted.id,
+          primary,
+        );
+  const answered =
+    hosted === undefined
+      ? []
+      : yield* query(
+          database,
+          Author,
+          `SELECT author_bot_id FROM entries
+             WHERE room_id = ? AND kind = 'message' AND author_kind = 'bot' AND author_bot_id != ?
+             GROUP BY author_bot_id ORDER BY MIN(position)`,
+          hosted.id,
+          primary,
+        );
+  const memberWakes =
+    hosted === undefined
+      ? []
+      : yield* query(
+          database,
+          WakeState,
+          `SELECT status, failure_reason FROM wakes
+             WHERE audience = 'room' AND audience_room_id = ? AND bot_id != ?
+             ORDER BY created_at, rowid`,
+          hosted.id,
+          primary,
+        );
+  const memberTools =
+    hosted === undefined
+      ? []
+      : yield* query(
+          database,
+          Tool,
+          `SELECT c.tool FROM tool_calls c JOIN sessions s ON s.id = c.session_id
+             WHERE c.audience = 'room' AND c.audience_room_id = ? AND s.bot_id != ?
+             ORDER BY c.created_at, c.rowid`,
+          hosted.id,
+          primary,
+        );
+  const madeIds = made.map((row) => row.id);
+  const madeOn =
+    madeIds.length === 0
+      ? []
+      : yield* query(
+          database,
+          Provider,
+          `SELECT provider_id FROM bots WHERE id IN (${madeIds.map(() => "?").join(", ")})
+             ORDER BY rowid`,
+          ...madeIds,
+        );
+  const hellos =
+    madeIds.length === 0
+      ? []
+      : yield* query(
+          database,
+          Count,
+          `SELECT COUNT(*) AS n FROM entries
+             WHERE conversation_bot_id IN (${madeIds.map(() => "?").join(", ")})
+               AND kind = 'message' AND author_kind = 'bot'`,
+          ...madeIds,
+        );
+  const [told] = yield* query(
+    database,
+    Text,
+    `SELECT json_extract(body_json, '$.text') AS text FROM entries
+       WHERE conversation_bot_id = ? AND kind = 'message' AND author_bot_id = ?
+       ORDER BY position DESC LIMIT 1`,
+    primary,
+    primary,
+  );
+  return {
+    tools: tools.map((row) => row.tool),
+    made: madeIds,
+    madeOn: madeOn.map((row) => row.provider_id),
+    room:
+      hosted === undefined
+        ? Option.none()
+        : Option.some({ id: hosted.id, members: members.map((row) => row.bot_id) }),
+    kickoffs: kickoffs[0]?.n ?? 0,
+    answered: answered.map((row) => row.author_bot_id),
+    memberWakes: memberWakes.map((row) =>
+      row.failure_reason === null ? row.status : `${row.status} (${row.failure_reason})`,
+    ),
+    memberTools: memberTools.map((row) => row.tool),
+    hellos: hellos[0]?.n ?? 0,
+    told: Option.fromNullishOr(told?.text),
+  } satisfies TeamScore;
 });

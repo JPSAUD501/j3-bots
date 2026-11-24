@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "room": "node src/room.ts"
+    "room": "node src/room.ts",
+    "team": "node src/team.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
