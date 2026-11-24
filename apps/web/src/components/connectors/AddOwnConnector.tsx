@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { refusedWith } from "@j3-bots/client-runtime";
 import {
+  type ArgumentsDraft,
+  type CommandConsent,
+  commandConsent,
   commandSource,
   type FormProblems,
   initialGrant,
@@ -12,11 +15,10 @@ import type { Bot, BotId, Connector, ConnectorGrant, ConnectorSource } from "@j3
 import * as Redacted from "effect/Redacted";
 import { useId, useState } from "react";
 import { useI18n } from "../../app/context";
-import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm";
-import { textField } from "../ui/field";
 import { Segmented } from "../ui/segmented";
+import { CommandConsentDialog, CommandFields } from "./CommandConnector";
 import { BotsPicker, type KeyedPair, LineField, PageSection, PairRows } from "./parts";
 import type { ConnectorsIntents } from "./screen";
 
@@ -25,7 +27,11 @@ type Way = "address" | "command";
 /** What the operator is asked to confirm before the source is sent. */
 type Asking =
   | { readonly _tag: "private-network"; readonly host: string }
-  | { readonly _tag: "command"; readonly source: ConnectorSource }
+  | {
+      readonly _tag: "command";
+      readonly source: Extract<ConnectorSource, { readonly _tag: "command" }>;
+      readonly consent: CommandConsent;
+    }
   | null;
 
 /**
@@ -51,7 +57,6 @@ export function AddOwnConnector({
   const i18n = useI18n();
   const { t } = i18n;
   const wayId = useId();
-  const argsId = useId();
   const [way, setWay] = useState<Way>("address");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -60,7 +65,7 @@ export function AddOwnConnector({
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [command, setCommand] = useState("");
-  const [args, setArgs] = useState("");
+  const [args, setArgs] = useState<ArgumentsDraft>({ _tag: "typed", text: "" });
   const [env, setEnv] = useState<ReadonlyArray<KeyedPair>>([]);
   const [grant, setGrant] = useState<ConnectorGrant>(() => initialGrant(bots, forBot));
   const [problems, setProblems] = useState<FormProblems | null>(null);
@@ -79,7 +84,7 @@ export function AddOwnConnector({
           client: { issuer, clientId, clientSecret },
           privateNetwork,
         })
-      : commandSource({ name, command, args, env });
+      : commandSource({ name, command, args: args._tag === "typed" ? args.text : "", env });
 
   const send = (source: ConnectorSource) => {
     setSubmitting(true);
@@ -90,6 +95,7 @@ export function AddOwnConnector({
         // The server keeps them now: none stays in the form.
         setHeaders(headers.map((row) => ({ ...row, value: "" })));
         setEnv(env.map((row) => ({ ...row, value: "" })));
+        setArgs({ _tag: "typed", text: "" });
         setClientSecret("");
         onAdded(result.value);
       } else if (source._tag === "remote" && refusedWith(result, "private-network")) {
@@ -110,8 +116,16 @@ export function AddOwnConnector({
       return;
     }
     setProblems(null);
-    if (built.source._tag === "command") setAsking({ _tag: "command", source: built.source });
-    else send(built.source);
+    if (built.source._tag === "command") {
+      // A command runs only once the operator confirmed it, every time it is added.
+      setAsking({
+        _tag: "command",
+        source: built.source,
+        consent: commandConsent(built.source, null),
+      });
+    } else {
+      send(built.source);
+    }
   };
 
   return (
@@ -167,7 +181,10 @@ export function AddOwnConnector({
             <p className="text-xs text-muted-foreground">{t("addOwn.headers.hint")}</p>
             <PairRows
               rows={headers}
-              refused={problems?.headers ?? []}
+              problems={(problems?.headers ?? []).map((index) => ({
+                index,
+                text: t("addOwn.header.invalid"),
+              }))}
               readOnly={submitting}
               onChange={setHeaders}
               labels={{
@@ -175,7 +192,6 @@ export function AddOwnConnector({
                 value: t("addOwn.header.value"),
                 add: t("addOwn.header.add"),
                 remove: t("addOwn.header.remove"),
-                invalid: t("addOwn.header.invalid"),
               }}
             />
           </PageSection>
@@ -221,50 +237,19 @@ export function AddOwnConnector({
             readOnly={submitting}
             autoFocus
           />
-          <LineField
-            label={t("addOwn.command")}
-            placeholder={t("addOwn.command.placeholder")}
-            problem={
-              problems?.command ? t("connect.required", { field: t("addOwn.command") }) : null
-            }
-            value={command}
-            onChange={setCommand}
+          <CommandFields
+            command={command}
+            args={args}
+            env={env}
+            problems={problems}
             readOnly={submitting}
-            mono
+            editing={false}
+            keptNames={[]}
+            autoFocus={false}
+            onCommand={setCommand}
+            onArgs={setArgs}
+            onEnv={setEnv}
           />
-          <div className="flex flex-col gap-1">
-            <label htmlFor={argsId} className="text-xs">
-              {t("addOwn.args")}
-            </label>
-            <textarea
-              id={argsId}
-              rows={3}
-              aria-invalid={problems?.args ? true : undefined}
-              value={args}
-              readOnly={submitting}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(event) => setArgs(event.currentTarget.value)}
-              className={cn(textField, "py-2 font-mono")}
-            />
-            <p className="text-xs text-muted-foreground">{t("addOwn.args.hint")}</p>
-            {problems?.args && <p className="text-xs text-blocked">{t("addOwn.args.invalid")}</p>}
-          </div>
-          <PageSection title={t("addOwn.env")}>
-            <PairRows
-              rows={env}
-              refused={problems?.env ?? []}
-              readOnly={submitting}
-              onChange={setEnv}
-              labels={{
-                name: t("addOwn.env.name"),
-                value: t("addOwn.env.value"),
-                add: t("addOwn.env.add"),
-                remove: t("addOwn.env.remove"),
-                invalid: t("addOwn.env.invalid"),
-              }}
-            />
-          </PageSection>
         </>
       )}
 
@@ -306,18 +291,13 @@ export function AddOwnConnector({
         tone="primary"
         onConfirm={() => submit(true)}
       />
-      <ConfirmDialog
-        open={asking?._tag === "command"}
-        onOpenChange={(open) => {
-          if (!open) setAsking(null);
-        }}
-        title={t("addOwn.consent.title")}
-        body={t("addOwn.consent.body")}
-        cancel={t("addOwn.consent.cancel")}
-        confirm={t("addOwn.consent.confirm")}
-        tone="primary"
-        onConfirm={() => {
-          if (asking?._tag === "command") send(asking.source);
+      <CommandConsentDialog
+        consent={asking?._tag === "command" ? asking.consent : null}
+        changed={false}
+        onAnswer={(accepted) => {
+          if (asking?._tag !== "command") return;
+          setAsking(null);
+          if (accepted) send(asking.source);
         }}
       />
     </form>

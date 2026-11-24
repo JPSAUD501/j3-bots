@@ -8,6 +8,10 @@ import {
 import * as Redacted from "effect/Redacted";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  type ArgumentsDraft,
+  commandConsent,
+  type CommandEdit,
+  commandEdit,
   commandSource,
   listingSource,
   remoteSource,
@@ -168,13 +172,13 @@ describe("a connector started by command", () => {
       commandSource({
         name: "Files",
         command: "npx",
-        args: "-y\n\n  @scope/server  \n/home/me",
+        args: "-y\n\n  @scope/server@1.2.3  \n/home/me",
         env: [{ name: "API_KEY", value: "k" }],
       }),
     );
     if (source._tag !== "command") throw new Error(source._tag);
     // An argument can carry a key, so each leaves the form redacted.
-    expect(source.args.map(plain)).toEqual(["-y", "@scope/server", "/home/me"]);
+    expect(source.args.map(plain)).toEqual(["-y", "@scope/server@1.2.3", "/home/me"]);
     expect(source.env.map((variable) => [variable.name, plain(variable.value)])).toEqual([
       ["API_KEY", "k"],
     ]);
@@ -184,7 +188,48 @@ describe("a connector started by command", () => {
     const refused = problems(
       commandSource({ name: " ", command: "", args: "", env: [{ name: "1KEY", value: "" }] }),
     );
-    expect([refused.name, refused.command, refused.env]).toEqual([true, true, [0]]);
+    expect([refused.name, refused.command, refused.env]).toEqual([
+      true,
+      true,
+      [{ index: 0, reason: "invalid" }],
+    ]);
+  });
+
+  it("says before the server does that a package runs at no exact version", () => {
+    const command = (args: string, env: ReadonlyArray<{ name: string; value: string }> = []) =>
+      commandSource({ name: "Files", command: "npx", args, env });
+    expect(problems(command("-y\n@scope/server")).pin).toBe("floating");
+    expect(problems(command("@scope/server@latest")).pin).toBe("floating");
+    expect(problems(command("-c\nserver")).pin).toBe("shell");
+    // A launcher setting can choose another package, whatever the arguments say.
+    expect(
+      problems(command("@scope/server@1.2.3", [{ name: "npm_config_registry", value: "x" }])).pin,
+    ).toBe("unclear");
+    expect(ready(command("@scope/server@1.2.3"))._tag).toBe("command");
+    // A program no launcher reads runs as it is given.
+    expect(
+      ready(commandSource({ name: "Files", command: "/opt/server", args: "--serve", env: [] }))
+        ._tag,
+    ).toBe("command");
+  });
+
+  it("refuses a variable the server reads to start the program, and one named twice in any case", () => {
+    const refused = problems(
+      commandSource({
+        name: "Files",
+        command: "node",
+        args: "server.js",
+        env: [
+          { name: "Path", value: "/tmp" },
+          { name: "API_KEY", value: "a" },
+          { name: "api_key", value: "b" },
+        ],
+      }),
+    );
+    expect(refused.env).toEqual([
+      { index: 0, reason: "reserved" },
+      { index: 2, reason: "twice" },
+    ]);
   });
 
   it("refuses an argument longer than a command line takes", () => {
@@ -192,5 +237,118 @@ describe("a connector started by command", () => {
       commandSource({ name: "Files", command: "npx", args: "x".repeat(4_001), env: [] }),
     );
     expect(refused.args).toBe(true);
+  });
+});
+
+describe("an edit of a connector started by command", () => {
+  const known = { program: "npx", names: ["API_KEY", "TEAM"] };
+  const kept: ArgumentsDraft = { _tag: "kept" };
+  const typed = (text: string): ArgumentsDraft => ({ _tag: "typed", text });
+  const edit = (
+    command: string,
+    args: ArgumentsDraft,
+    env: ReadonlyArray<{ name: string; value: string }>,
+  ): CommandEdit => commandEdit(known, { command, args, env });
+  const sameNames = [
+    { name: "TEAM", value: "" },
+    { name: "API_KEY", value: "" },
+  ];
+
+  it("sends new values alone, with no confirmation, while the command line stays", () => {
+    expect(edit("npx", kept, sameNames)).toEqual({ _tag: "unchanged" });
+    const values = edit("npx", kept, [
+      { name: "API_KEY", value: "new" },
+      { name: "TEAM", value: "" },
+    ]);
+    if (values._tag !== "values") throw new Error(values._tag);
+    // A value left empty keeps its own on the server.
+    expect(values.values.map((value) => [value.key, plain(value.value)])).toEqual([
+      ["API_KEY", "new"],
+    ]);
+  });
+
+  it("asks again when a variable's name changes, or one is added or removed", () => {
+    const line = (env: ReadonlyArray<{ name: string; value: string }>) =>
+      edit("npx", typed("@scope/server@1.2.3"), env);
+    expect(
+      line([
+        { name: "API_TOKEN", value: "a" },
+        { name: "TEAM", value: "t" },
+      ])._tag,
+    ).toBe("command");
+    expect(line([{ name: "API_KEY", value: "a" }])._tag).toBe("command");
+    expect(
+      line([
+        { name: "API_KEY", value: "a" },
+        { name: "TEAM", value: "t" },
+        { name: "REGION", value: "r" },
+      ])._tag,
+    ).toBe("command");
+  });
+
+  it("asks again when the program or the arguments change", () => {
+    const full = [
+      { name: "API_KEY", value: "a" },
+      { name: "TEAM", value: "t" },
+    ];
+    expect(edit("uvx", typed("server==1.0.0"), full)._tag).toBe("command");
+    expect(edit("npx", typed("@scope/server@1.2.4"), full)._tag).toBe("command");
+  });
+
+  it("asks for the arguments and each value again, since a new command line is sent whole", () => {
+    const refused = edit("npx", kept, [
+      { name: "API_TOKEN", value: "" },
+      { name: "TEAM", value: "" },
+    ]);
+    if (refused._tag !== "invalid") throw new Error(refused._tag);
+    expect(refused.problems.argsAgain).toBe(true);
+    // Not yet a package at no version: the arguments that name it are still to come.
+    expect(refused.problems.pin).toBeNull();
+    // None keeps a value the client never saw, a renamed one included.
+    expect(refused.problems.env).toEqual([
+      { index: 0, reason: "value-again" },
+      { index: 1, reason: "value-again" },
+    ]);
+  });
+
+  it("refuses a changed command at no exact version", () => {
+    const refused = edit("npx", typed("@scope/server"), [
+      { name: "API_KEY", value: "a" },
+      { name: "TEAM", value: "t" },
+    ]);
+    if (refused._tag !== "invalid") throw new Error(refused._tag);
+    expect(refused.problems.pin).toBe("floating");
+  });
+});
+
+describe("the confirmation of a command line", () => {
+  const line = ready(
+    commandSource({
+      name: "Files",
+      command: "npx",
+      args: "-y\n@scope/server@1.2.3",
+      env: [
+        { name: "API_KEY", value: "very-secret-value" },
+        { name: "REGION", value: "eu" },
+      ],
+    }),
+  );
+  if (line._tag !== "command") throw new Error(line._tag);
+
+  it("shows the whole command line and every variable's name, never a value", () => {
+    const consent = commandConsent(line, null);
+    expect([consent.program, ...consent.args]).toEqual(["npx", "-y", "@scope/server@1.2.3"]);
+    expect(consent.names).toEqual(["API_KEY", "REGION"]);
+    expect(JSON.stringify(consent)).not.toContain("very-secret-value");
+    expect([consent.added, consent.removed, consent.programChanged]).toEqual([[], [], false]);
+  });
+
+  it("names what changed since the command line the operator confirmed before", () => {
+    const consent = commandConsent(line, { program: "uvx", names: ["API_KEY", "TEAM"] });
+    expect([consent.added, consent.removed, consent.programChanged]).toEqual([
+      ["REGION"],
+      ["TEAM"],
+      true,
+    ]);
   });
 });

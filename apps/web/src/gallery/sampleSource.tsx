@@ -51,8 +51,8 @@ import * as DateTime from "effect/DateTime";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ClockProvider } from "../app/clock";
 import { AttachmentImagesProvider } from "../components/attachmentImages";
-import { ImageViewer } from "../components/ImageViewer";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
+import { ImageViewer } from "../components/ImageViewer";
 import type { ShellData, ShellIntents } from "../shell/data";
 import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
@@ -891,6 +891,7 @@ export function SampleSourceProvider({ children }: { children: ReactNode }) {
           fetch={(attachment) => Promise.resolve(attached.get(attachment.id) ?? null)}
         >
           {children}
+          {overlays}
           <ImageViewer attachment={viewing} onClose={() => setViewing(null)} onSave={() => {}} />
           {overlays}
         </AttachmentImagesProvider>

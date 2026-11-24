@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { pinRefusal } from "@j3-bots/contracts";
 import { Client } from "@modelcontextprotocol/client";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -17,7 +18,6 @@ import {
 } from "../session.ts";
 import { type CommandVariable, commandEnvironment } from "./environment.ts";
 import { startProcess } from "./process.ts";
-import { pinRefusal } from "./pinning.ts";
 import { interpreterReads, resolveProgram } from "./program.ts";
 import { ProcessTransport } from "./transport.ts";
 

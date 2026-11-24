@@ -151,6 +151,7 @@ export function StatusBlock({
           {[text.detail, text.since].filter((part) => part !== null).join(" ")}
         </p>
       )}
+      {text.next !== null && <p className="text-sm text-foreground">{text.next}</p>}
       {action !== null && (
         <Button size="sm" variant="primary" className="self-start" onClick={action.run}>
           {action.label}
@@ -469,71 +470,84 @@ const nextRow = (rows: ReadonlyArray<KeyedPair>): KeyedPair => ({
 });
 
 /**
- * Rows of a name and a masked value, such as headers or environment
- * variables, with a button that adds one and one on each row that removes it.
+ * Rows of names and values, such as headers or environment variables, each
+ * value masked as it is typed. `problems` says, under a row, why the server
+ * would refuse it; `valuePlaceholder` what an empty value means for a row.
  */
 export function PairRows({
   rows,
-  refused,
+  problems,
   labels,
   readOnly,
+  valuePlaceholder,
   onChange,
 }: {
   rows: ReadonlyArray<KeyedPair>;
-  /** The rows whose name does not fit, by place. */
-  refused: ReadonlyArray<number>;
+  /** Why a row would be refused, by its place. */
+  problems: ReadonlyArray<{ readonly index: number; readonly text: string }>;
   labels: {
     readonly name: string;
     readonly value: string;
     readonly add: string;
     readonly remove: string;
-    readonly invalid: string;
   };
   readOnly: boolean;
+  valuePlaceholder?: (row: KeyedPair) => string;
   onChange: (rows: ReadonlyArray<KeyedPair>) => void;
 }) {
+  const id = useId();
   const set = (index: number, row: KeyedPair) =>
     onChange(rows.map((current, at) => (at === index ? row : current)));
   return (
     <div className="flex flex-col gap-2">
-      {rows.map((row, index) => (
-        <div key={row.key} className="flex flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <input
-              aria-label={labels.name}
-              value={row.name}
-              placeholder={labels.name}
-              readOnly={readOnly}
-              autoComplete="off"
-              spellCheck={false}
-              aria-invalid={refused.includes(index) ? true : undefined}
-              onChange={(event) => set(index, { ...row, name: event.currentTarget.value })}
-              className={cn(lineField, "min-w-0 flex-1 font-mono placeholder:font-sans")}
-            />
-            <input
-              aria-label={labels.value}
-              type="password"
-              value={row.value}
-              placeholder={labels.value}
-              readOnly={readOnly}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => set(index, { ...row, value: event.currentTarget.value })}
-              className={cn(lineField, "min-w-0 flex-1 font-mono placeholder:font-sans")}
-            />
-            <Button
-              size="icon-sm"
-              variant="ghost-muted"
-              aria-label={labels.remove}
-              disabled={readOnly}
-              onClick={() => onChange(rows.filter((_, at) => at !== index))}
-            >
-              <XIcon />
-            </Button>
+      {rows.map((row, index) => {
+        const problem = problems.find((candidate) => candidate.index === index) ?? null;
+        const problemId = `${id}-${row.key}`;
+        return (
+          <div key={row.key} className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <input
+                aria-label={labels.name}
+                value={row.name}
+                placeholder={labels.name}
+                readOnly={readOnly}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={problem !== null ? true : undefined}
+                aria-describedby={problem !== null ? problemId : undefined}
+                onChange={(event) => set(index, { ...row, name: event.currentTarget.value })}
+                className={cn(lineField, "min-w-0 flex-1 font-mono placeholder:font-sans")}
+              />
+              <input
+                aria-label={labels.value}
+                type="password"
+                value={row.value}
+                placeholder={valuePlaceholder?.(row) ?? labels.value}
+                readOnly={readOnly}
+                autoComplete="off"
+                spellCheck={false}
+                aria-describedby={problem !== null ? problemId : undefined}
+                onChange={(event) => set(index, { ...row, value: event.currentTarget.value })}
+                className={cn(lineField, "min-w-0 flex-1 font-mono placeholder:font-sans")}
+              />
+              <Button
+                size="icon-sm"
+                variant="ghost-muted"
+                aria-label={labels.remove}
+                disabled={readOnly}
+                onClick={() => onChange(rows.filter((_, at) => at !== index))}
+              >
+                <XIcon />
+              </Button>
+            </div>
+            {problem !== null && (
+              <p id={problemId} className="text-xs text-blocked">
+                {problem.text}
+              </p>
+            )}
           </div>
-          {refused.includes(index) && <p className="text-xs text-blocked">{labels.invalid}</p>}
-        </div>
-      ))}
+        );
+      })}
       <Button
         size="sm"
         variant="ghost-muted"

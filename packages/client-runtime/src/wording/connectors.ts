@@ -5,9 +5,11 @@ import type {
   ConnectorGrant,
   ConnectorPublisher,
   ConnectorStatus,
+  PinRefusal,
 } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
 import { type IntentFailure, refusedWith } from "../intents/Actions.ts";
+import type { EnvProblem } from "../presentation/connectorForm.ts";
 import type { SignInProblem } from "../presentation/connectors.ts";
 import { type TimeContext, timeInSentence } from "./time.ts";
 
@@ -33,22 +35,36 @@ export function grantText(grant: ConnectorGrant, bots: ReadonlyArray<Bot>, i18n:
   return i18n.plural("connectors.bots.count", named.length);
 }
 
+/** What a connector's status says, each part a sentence or none. */
+export interface ConnectorStatusText {
+  /** A word or two for its light. */
+  readonly label: string;
+  /** Why bots cannot use it, for any state but `connected`. */
+  readonly detail: string | null;
+  /** What the operator can do about it, where the detail does not say. */
+  readonly next: string | null;
+  /** When that started. */
+  readonly since: string | null;
+}
+
 /**
  * What a connector's status says: a word for its light, and a sentence on why
- * bots cannot use it, with when that started, for any state but `connected`.
+ * bots cannot use it, with what to do about it and when that started, for
+ * any state but `connected`.
  */
 export function connectorStatusText(
   status: ConnectorStatus,
   ctx: TimeContext,
-): { readonly label: string; readonly detail: string | null; readonly since: string | null } {
+): ConnectorStatusText {
   const { t } = ctx.i18n;
   switch (status._tag) {
     case "connected":
-      return { label: t("connector.status.connected"), detail: null, since: null };
+      return { label: t("connector.status.connected"), detail: null, next: null, since: null };
     case "vault-locked":
       return {
         label: t("connector.status.vaultLocked"),
         detail: t("connector.status.vaultLockedDetail"),
+        next: null,
         since: null,
       };
     case "needs-sign-in":
@@ -63,22 +79,32 @@ export function connectorStatusText(
                 ? "connector.status.rejected"
                 : "connector.status.signInOther",
         ),
+        next: null,
         since: null,
       };
     case "failing": {
-      const detail = {
-        unreachable: "connector.status.unreachable",
-        "timed-out": "connector.status.timedOut",
-        "server-error": "connector.status.serverError",
-        "not-mcp": "connector.status.notMcp",
-        "refused-address": "connector.status.refusedAddress",
-        "command-not-found": "connector.status.commandNotFound",
-        "command-exited": "connector.status.commandExited",
-        unknown: "connector.status.failingOther",
+      const failing = {
+        unreachable: { detail: "connector.status.unreachable", next: null },
+        "timed-out": { detail: "connector.status.timedOut", next: null },
+        "server-error": { detail: "connector.status.serverError", next: null },
+        "not-mcp": { detail: "connector.status.notMcp", next: null },
+        "refused-address": { detail: "connector.status.refusedAddress", next: null },
+        "command-not-found": {
+          detail: "connector.status.commandNotFound",
+          next: "connector.status.commandNotFound.next",
+        },
+        "command-exited": {
+          detail: "connector.status.commandExited",
+          next: "connector.status.commandExited.next",
+        },
+        unknown: { detail: "connector.status.failingOther", next: null },
       } as const;
+      const { detail, next } = failing[status.reason];
+      const command = status.reason === "command-not-found" || status.reason === "command-exited";
       return {
-        label: t("connector.status.failing"),
-        detail: t(detail[status.reason]),
+        label: t(command ? "connector.status.notRunning" : "connector.status.failing"),
+        detail: t(detail),
+        next: next === null ? null : t(next),
         since: t("connector.status.since", { when: timeInSentence(status.since, ctx) }),
       };
     }
@@ -95,6 +121,7 @@ export function signedInText(connector: Connector, ctx: TimeContext): string | n
 /** Why adding a connector did not work, in words. */
 export function connectFailureText(failure: IntentFailure, { t }: I18n): string {
   if (refusedWith(failure, "connector-fields")) return t("connect.failed.fields");
+  if (refusedWith(failure, "command-unpinned")) return t("connect.failed.unpinned");
   if (refusedWith(failure, "connector-unsupported")) return t("connector.unsupported");
   if (refusedWith(failure, "vault-locked")) return t("connect.failed.vaultLocked");
   if (refusedWith(failure, "vault-not-set-up")) return t("connect.failed.vaultNotSetUp");
@@ -136,4 +163,30 @@ export function connectedText(grant: ConnectorGrant, bots: ReadonlyArray<Bot>, i
   return named.length === 1
     ? i18n.t("connect.done.one", { name: only.profile.name })
     : i18n.t("connect.done.many");
+}
+
+/** Why a command's package would be refused, as its form says before it is sent. */
+export function pinRefusalText(refusal: PinRefusal, { t }: I18n): string {
+  switch (refusal) {
+    case "floating":
+      return t("addOwn.pin.floating");
+    case "unclear":
+      return t("addOwn.pin.unclear");
+    case "shell":
+      return t("addOwn.pin.shell");
+  }
+}
+
+/** Why one of a command's variables would be refused, under its row. */
+export function envProblemText(problem: EnvProblem, { t }: I18n): string {
+  switch (problem.reason) {
+    case "invalid":
+      return t("addOwn.env.invalid");
+    case "reserved":
+      return t("addOwn.env.reserved");
+    case "twice":
+      return t("addOwn.env.twice");
+    case "value-again":
+      return t("addOwn.env.valueAgain");
+  }
 }

@@ -17,8 +17,6 @@ import {
   observe,
   openCommandSession,
   openSession,
-  pinRefusal,
-  reservedVariable,
   processCapacity,
   type SecretHeader,
   type SessionLimits,
@@ -52,7 +50,9 @@ import {
   type ListingRef,
   NotFound,
   type OAuthClientInput,
+  pinRefusal,
   remoteTransport,
+  reservedVariable,
   type ToolReviewRevision,
 } from "@j3-bots/contracts";
 import {

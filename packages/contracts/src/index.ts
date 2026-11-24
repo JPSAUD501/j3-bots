@@ -3,6 +3,7 @@ export * from "./attachment.ts";
 export * from "./base.ts";
 export * from "./bot.ts";
 export * from "./browser.ts";
+export * from "./commandLine.ts";
 export * from "./connector.ts";
 export * from "./device.ts";
 export * from "./engineStatus.ts";

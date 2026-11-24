@@ -40,17 +40,6 @@ const WINDOWS_ALLOWED = [
   "NUMBER_OF_PROCESSORS",
 ] as const;
 
-/**
- * The variables the server reads to find and start the program: the search
- * path and, on Windows, the system folder its launcher is found in and what
- * starts a batch file. The operator gives none of them: their values can
- * change with no new confirmation, and would choose which program runs.
- */
-const RESERVED = new Set(["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "PSMODULEPATH"]);
-
-/** Whether a command may not be given a variable named `name`, in any case. */
-export const reservedVariable = (name: string): boolean => RESERVED.has(name.toUpperCase());
-
 /** A variable the operator gave the command, with its value from the vault. */
 export interface CommandVariable {
   readonly name: string;
