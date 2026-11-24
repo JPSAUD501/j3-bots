@@ -185,8 +185,9 @@ function useReadMark(
 }
 
 /**
- * A bot's or room's conversation: its header, every entry oldest first with
- * the newest at the bottom, and the composer, which rides on the keyboard.
+ * A bot's or room's conversation: every entry oldest first with the newest
+ * at the bottom, scrolling under its header, which lets it show through, and
+ * the composer, which rides on the keyboard.
  * Mount one per conversation, keyed by it.
  */
 export function ConversationView({
@@ -259,6 +260,7 @@ export function ConversationView({
     composer,
   );
   const [composerHeight, setComposerHeight] = useState(0);
+  const [headerHeight, setHeaderHeight] = useState(0);
   const [column, setColumn] = useState(0);
   const widths = useMemo(() => {
     const { max, bubbleShare, cardShare } = layout.entryWidth;
@@ -311,17 +313,10 @@ export function ConversationView({
 
   return (
     <View className="flex-1 bg-background">
-      <View style={{ paddingTop: insets.top }}>
-        <ConversationHeader
-          item={item}
-          onBack={onBack}
-          onOpenDetails={onOpenDetails}
-          onGoToWaiting={goTo}
-          folds={folds}
-        />
-      </View>
       {state?.phase === "not-found" ? (
-        <Gone onBack={onGone} />
+        <View className="flex-1" style={{ paddingTop: headerHeight }}>
+          <Gone onBack={onGone} />
+        </View>
       ) : (
         <AnimatedView
           entering={openIn()}
@@ -333,9 +328,9 @@ export function ConversationView({
           <EntryWidths value={widths}>
             {quiet ? (
               item._tag === "bot" ? (
-                <Quiet bot={item.bot} bottom={composerHeight} />
+                <Quiet bot={item.bot} top={headerHeight} bottom={composerHeight} />
               ) : (
-                <QuietRoom room={item.room} bottom={composerHeight} />
+                <QuietRoom room={item.room} top={headerHeight} bottom={composerHeight} />
               )
             ) : (
               <KeyboardAwareLegendList
@@ -386,7 +381,7 @@ export function ConversationView({
                 keyboardOffset={insets.bottom}
                 keyboardDismissMode="interactive"
                 keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+                contentContainerStyle={{ paddingTop: headerHeight + 4, paddingBottom: 8 }}
               />
             )}
           </EntryWidths>
@@ -433,6 +428,20 @@ export function ConversationView({
           </KeyboardStickyView>
         </AnimatedView>
       )}
+      {/* Over the conversation, which scrolls under it and shows through, faintly. */}
+      <View
+        onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}
+        className="bg-background/95"
+        style={{ position: "absolute", start: 0, end: 0, top: 0, paddingTop: insets.top }}
+      >
+        <ConversationHeader
+          item={item}
+          onBack={onBack}
+          onOpenDetails={onOpenDetails}
+          onGoToWaiting={goTo}
+          folds={folds}
+        />
+      </View>
     </View>
   );
 }
@@ -471,7 +480,15 @@ export function Gone({ onBack }: { readonly onBack: () => void }) {
  * A bot's conversation before anything is said in it. A first hello waiting
  * for a provider says so, with the command that connects one when there is.
  */
-function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) {
+function Quiet({
+  bot,
+  top,
+  bottom,
+}: {
+  readonly bot: Bot;
+  readonly top: number;
+  readonly bottom: number;
+}) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const status = useEngineStatus();
@@ -480,7 +497,7 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
   return (
     <View
       className="flex-1 items-center justify-center gap-4 px-6"
-      style={{ paddingBottom: bottom }}
+      style={{ paddingTop: top, paddingBottom: bottom }}
     >
       <Animated.View entering={popIn()}>
         <LiveBotAvatar bot={bot} size={96} />
@@ -506,14 +523,22 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
  * answers what is written there. An archived room takes nothing and may have
  * no host, so it shows only who was in it.
  */
-function QuietRoom({ room, bottom }: { readonly room: Room; readonly bottom: number }) {
+function QuietRoom({
+  room,
+  top,
+  bottom,
+}: {
+  readonly room: Room;
+  readonly top: number;
+  readonly bottom: number;
+}) {
   const { t } = usePresentation().i18n;
   const bots = useBots();
   const host = room.hostId === null ? undefined : bots.get(room.hostId);
   return (
     <View
       className="flex-1 items-center justify-center gap-4 px-6"
-      style={{ paddingBottom: bottom }}
+      style={{ paddingTop: top, paddingBottom: bottom }}
     >
       <Animated.View entering={popIn()}>
         <RoomAvatar size={96} members={roomAvatarMembers(room, bots)} />
@@ -565,7 +590,7 @@ function Row({
     case "divider":
       return (
         <AnimatedView {...entering}>
-          <Text className="py-3 text-center text-2xs text-muted-foreground">
+          <Text className="py-2 text-center text-2xs text-muted-foreground">
             {dividerTime(row.at, ctx)}
           </Text>
         </AnimatedView>

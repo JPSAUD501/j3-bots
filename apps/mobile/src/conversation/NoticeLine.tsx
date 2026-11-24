@@ -14,6 +14,9 @@ import { Text } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { usePresentation } from "../presentation.tsx";
 
+/** An action on the line, at its text's height: a full touch target beyond it. */
+const LINE_ACTION_SLOP = { top: 8, bottom: 8 } as const;
+
 /**
  * A quiet line where something stopped, or where a bot changed something the
  * operator should know about, with Try again when the server still takes one.
@@ -57,14 +60,15 @@ export function NoticeLine({
           ? UserRoundCheck
           : CircleAlert;
   return (
-    <View className="my-2 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
+    <View className="my-1 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
       <Icon icon={icon} size={14} color={iconTone} />
       <Text className={`text-center text-xs ${textTone}`}>{noticeText(notice, ctx)}</Text>
       {entry.retryable && (
         <Pressable
           accessibilityRole="button"
           onPress={onRetry}
-          className="min-h-11 justify-center px-2"
+          hitSlop={LINE_ACTION_SLOP}
+          className="justify-center px-2 py-1"
         >
           <Text className="text-xs text-accent">{t("notice.retry")}</Text>
         </Pressable>
@@ -73,7 +77,8 @@ export function NoticeLine({
         <Pressable
           accessibilityRole="button"
           onPress={onOpenConversation}
-          className="min-h-11 flex-row items-center gap-1 px-2"
+          hitSlop={LINE_ACTION_SLOP}
+          className="flex-row items-center gap-1 px-2 py-1"
         >
           <Icon icon={CornerDownRight} size={14} color="accent-accent" />
           <Text className="text-xs text-accent">{t("notice.openConversation")}</Text>
@@ -87,7 +92,7 @@ export function NoticeLine({
 export function NeedsUpdateLine() {
   const { t } = usePresentation().i18n;
   return (
-    <View className="my-2 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
+    <View className="my-1 flex-row flex-wrap items-center justify-center gap-x-2 px-4">
       <Icon icon={CircleArrowUp} size={14} color="accent-muted-foreground" />
       <Text className="text-center text-xs text-muted-foreground">{t("entry.needsUpdate")}</Text>
     </View>

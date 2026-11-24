@@ -22,6 +22,7 @@ import {
   nothingHeard,
   type RecognitionPlace,
 } from "../platform/recognition.ts";
+import { composerButtonFrame, composerButtonSlop } from "./composerButton.ts";
 
 /** Why dictation stopped without the operator stopping it, or did not start. */
 type DictationProblem =
@@ -259,9 +260,11 @@ export function DictationButton({
         accessibilityRole="button"
         accessibilityLabel={t("composer.dictation.stop")}
         onPress={dictation.stop}
-        className="size-11 items-center justify-center rounded-full bg-foreground"
+        style={composerButtonFrame}
+        hitSlop={composerButtonSlop}
+        className="size-8 items-center justify-center rounded-full bg-foreground"
       >
-        <Icon icon={Square} size={14} color="accent-background" filled />
+        <Icon icon={Square} size={12} color="accent-background" filled />
       </Pressable>
     );
   }
@@ -272,9 +275,11 @@ export function DictationButton({
       accessibilityLabel={t("composer.dictate")}
       accessibilityState={{ disabled }}
       onPress={disabled ? undefined : dictation.start}
-      className="size-11 items-center justify-center rounded-full active:bg-muted"
+      style={composerButtonFrame}
+      hitSlop={composerButtonSlop}
+      className="size-8 items-center justify-center rounded-full active:bg-muted"
     >
-      <Icon icon={Mic} size={20} color="accent-muted-foreground" />
+      <Icon icon={Mic} size={18} color="accent-muted-foreground" />
     </Pressable>
   );
 }
