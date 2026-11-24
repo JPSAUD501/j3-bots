@@ -160,6 +160,7 @@ export function StatusBlock({
         </Text>
       </View>
       {detail !== "" && <Text className="text-sm text-foreground">{detail}</Text>}
+      {text.next !== null && <Text className="text-sm text-foreground">{text.next}</Text>}
       {action !== null && (
         <View className="items-start">
           <Button variant="primary" label={action.label} onPress={action.run} />

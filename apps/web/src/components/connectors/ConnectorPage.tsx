@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { refusedWith } from "@j3-bots/client-runtime";
-import { fieldValues, sameGrant, withoutSecrets } from "@j3-bots/client-runtime/presentation";
+import {
+  fieldValues,
+  knownCommand,
+  sameGrant,
+  withoutSecrets,
+} from "@j3-bots/client-runtime/presentation";
 import { useConnectorSignIn } from "@j3-bots/client-runtime/react";
 import {
   connectedText,
@@ -15,6 +20,7 @@ import { cn } from "../../lib/cn";
 import { Button } from "../ui/button";
 import { Confirm } from "../ui/confirm";
 import { SkeletonRows } from "../ui/skeleton";
+import { EditCommand, type EditOutcome } from "./CommandConnector";
 import {
   BotsPicker,
   ConnectorTile,
@@ -61,6 +67,9 @@ export function ConnectorPage({
     connector,
   });
   const [replacing, setReplacing] = useState(false);
+  // A command connector's edit, while open; what it saved, once it closed.
+  const [editing, setEditing] = useState(false);
+  const [edited, setEdited] = useState<EditOutcome | null>(null);
 
   // A card's Sign in, or a connector just added that signs in, starts it as the page opens:
   // the browser's sign-in for one that signs in there, its form again for one that takes a key.
@@ -99,6 +108,7 @@ export function ConnectorPage({
           : null;
   const account =
     connector.account === null ? null : t("connector.signedInAs", { account: connector.account });
+  const command = knownCommand(connector);
   const signedIn = signedInText(connector, ctx);
 
   return (
@@ -121,6 +131,13 @@ export function ConnectorPage({
       {signIn.phase._tag === "done" && (
         <p role="status" className="text-sm">
           {t("signIn.done")}
+        </p>
+      )}
+      {edited !== null && (
+        <p role="status" className="text-sm">
+          {edited === "command"
+            ? t("connector.editCommand.saved")
+            : t("connector.editCommand.savedValues")}
         </p>
       )}
       <StatusBlock connector={connector} onReconnect={reconnect} onUnlock={intents.openVault} />
@@ -157,11 +174,39 @@ export function ConnectorPage({
           connector.transport._tag === "remote" ? t("connector.address") : t("connector.command")
         }
       >
-        <code className="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
-          {connector.transport._tag === "remote"
-            ? connector.transport.origin
-            : connector.transport.program}
-        </code>
+        {command !== null && editing ? (
+          <EditCommand
+            connector={connector}
+            known={command}
+            intents={intents}
+            onDone={(outcome) => {
+              setEditing(false);
+              setEdited(outcome);
+            }}
+          />
+        ) : (
+          <>
+            <code className="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all">
+              {connector.transport._tag === "remote"
+                ? connector.transport.origin
+                : connector.transport.program}
+            </code>
+            {command !== null && (
+              <Button
+                size="sm"
+                className="self-start"
+                aria-disabled={!connected}
+                onClick={() => {
+                  if (!connected) return;
+                  setEdited(null);
+                  setEditing(true);
+                }}
+              >
+                {t("connector.editCommand")}
+              </Button>
+            )}
+          </>
+        )}
       </PageSection>
 
       <PageSection title={t("connector.tools")}>
@@ -428,7 +473,12 @@ function Disconnect({
       <Confirm
         trigger={<Button variant="destructive-outline" aria-disabled={pending || !connected} />}
         title={t("connector.disconnect.title", { name: connector.name })}
-        body={t("connector.disconnect.body", { name: connector.name })}
+        body={t(
+          connector.transport._tag === "command"
+            ? "connector.disconnect.bodyCommand"
+            : "connector.disconnect.body",
+          { name: connector.name },
+        )}
         cancel={t("connector.disconnect.cancel")}
         confirm={t("connector.disconnect")}
         busy={pending || !connected}
