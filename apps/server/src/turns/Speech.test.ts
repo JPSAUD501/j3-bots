@@ -24,6 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Attachments } from "../attachments/Attachments.ts";
 import { Bots } from "../bots/Bots.ts";
 import { BotStore } from "../bots/BotStore.ts";
+import { EngineSessions } from "../bots/EngineSessions.ts";
 import { Layout } from "../Layout.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -441,8 +442,14 @@ it.effect(
       const elsewhere = yield* fs.makeTempDirectoryScoped();
       yield* fs.makeDirectory(path.join(elsewhere, "files"));
       yield* fs.writeFileString(path.join(elsewhere, "files", "notes.md"), "Not in the workspace.");
-      yield* fs.rename(workspace, `${workspace}-moved`);
-      yield* fs.symlink(elsewhere, workspace);
+      // With no provisioning alongside: the rotator may still be provisioning
+      // the new bot, and what it writes would make the folder again between
+      // the two.
+      yield* (yield* EngineSessions).withoutProvisioning(
+        fs
+          .rename(workspace, `${workspace}-moved`)
+          .pipe(Effect.andThen(fs.symlink(elsewhere, workspace))),
+      );
 
       const args = { text: "Here are the notes.", attachments: ["files/notes.md"] };
       yield* control.toolCall({
