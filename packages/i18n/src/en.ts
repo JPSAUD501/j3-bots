@@ -480,7 +480,6 @@ export const en = {
   "eventLine.to": "To {name}",
   "eventLine.from": "From {name}",
   "eventLine.openConversation": "Open conversation with {name}",
-  "eventLine.close": "Close",
   "eventLine.routineCreated": "Routine {name} created",
   "eventLine.routineUpdated": "Routine {name} changed",
   "eventLine.routinePaused": "Routine {name} paused",

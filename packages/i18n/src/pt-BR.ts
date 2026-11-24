@@ -480,7 +480,6 @@ const sentences = {
   "eventLine.to": "Para {name}",
   "eventLine.from": "De {name}",
   "eventLine.openConversation": "Abrir conversa com {name}",
-  "eventLine.close": "Fechar",
   "eventLine.routineCreated": "Rotina {name} criada",
   "eventLine.routineUpdated": "Rotina {name} alterada",
   "eventLine.routinePaused": "Rotina {name} pausada",
