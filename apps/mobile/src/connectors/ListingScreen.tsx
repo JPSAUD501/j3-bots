@@ -213,6 +213,7 @@ function ConnectForm({
     if (submitting || !connected) return;
     const draft = listingSource({
       ref: listing.ref,
+      language: i18n.locale,
       fields: listing.fields,
       values,
       client: ownApp ? { issuer, clientId, clientSecret } : null,
