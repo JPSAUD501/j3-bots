@@ -29,6 +29,7 @@ import { Devices } from "../devices/Devices.ts";
 import * as Http from "../http.ts";
 import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
+import * as TestUpdates from "../testing/update.ts";
 import { engineSession } from "../testing/turns.ts";
 import { BrowserTabs } from "./BrowserTabs.ts";
 import * as MediaSocket from "./MediaSocket.ts";
@@ -130,7 +131,7 @@ const server = Ports.serve(
   Layer.mergeAll(Http.routes, MediaSocket.route),
   NodeHttpServer.layerTest,
   { logAddress: false },
-).pipe(Layer.provideMerge(TestDomain.layer));
+).pipe(Layer.provide(TestUpdates.layer), Layer.provideMerge(TestDomain.layer));
 
 it.layer(server, { excludeTestServices: true })("media socket", (it) => {
   it.effect("refuses an upgrade without a valid credential", () =>

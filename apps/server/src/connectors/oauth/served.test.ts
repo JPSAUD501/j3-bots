@@ -22,6 +22,7 @@ import { Devices } from "../../devices/Devices.ts";
 import * as Http from "../../http.ts";
 import * as Listener from "../../listener.ts";
 import * as TestDomain from "../../testing/domain.ts";
+import * as TestUpdates from "../../testing/update.ts";
 import { addOAuthConnector, NOTION, TestOAuth, unresolvable } from "../../testing/oauth.ts";
 import { Vault } from "../../vault/Vault.ts";
 import * as WebClient from "../../web/WebClient.ts";
@@ -42,6 +43,7 @@ it.layer(
   Http.serve(Listener.layer, { logAddress: false }).pipe(
     Layer.provide(recordLogs),
     Layer.provide(WebClient.statusLayer),
+    Layer.provide(TestUpdates.layer),
     Layer.provideMerge(TestDomain.servedLayer.pipe(Layer.provide(unresolvable))),
   ),
   { excludeTestServices: true },

@@ -19,6 +19,7 @@ import { Devices } from "../devices/Devices.ts";
 import * as Http from "../http.ts";
 import * as Listener from "../listener.ts";
 import * as TestDomain from "../testing/domain.ts";
+import * as TestUpdates from "../testing/update.ts";
 import * as WebClient from "../web/WebClient.ts";
 
 /** Every line the server logs while these tests run, at any level, as JSON. */
@@ -49,6 +50,7 @@ it.layer(
   Http.serve(Listener.layer, { logAddress: false }).pipe(
     Layer.provide(recordLogs),
     Layer.provide(WebClient.statusLayer),
+    Layer.provide(TestUpdates.layer),
     Layer.provideMerge(TestDomain.servedLayer),
   ),
   { excludeTestServices: true },
