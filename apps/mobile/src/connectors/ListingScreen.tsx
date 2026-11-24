@@ -198,9 +198,19 @@ function ConnectForm({
   const bots = useBotList();
   const connected = useConnection()._tag === "connected";
   const ownApp = listing.connect === "own-app";
+  // The entry names the server its app is registered at, so the operator is asked only when it does not.
+  const knownIssuer = listing.setup?.issuer ?? null;
   const [grant, setGrant] = useState<ConnectorGrant>(() => initialGrant(bots, forBot));
   const [values, setValues] = useState<ReadonlyMap<FieldKey, string>>(new Map());
-  const [issuer, setIssuer] = useState("");
+  const [typedIssuer, setIssuer] = useState("");
+  const issuer = knownIssuer ?? typedIssuer;
+  // As the server states it: its own address when the browser returns to it, else this phone's loopback.
+  const redirect =
+    !ownApp || listing.redirects === null
+      ? null
+      : intents.signInRoute._tag === "server"
+        ? listing.redirects.server
+        : listing.redirects.loopback;
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [problems, setProblems] = useState<FormProblems | null>(null);
@@ -213,6 +223,7 @@ function ConnectForm({
     if (submitting || !connected) return;
     const draft = listingSource({
       ref: listing.ref,
+      language: i18n.locale,
       fields: listing.fields,
       values,
       client: ownApp ? { issuer, clientId, clientSecret } : null,
@@ -287,15 +298,23 @@ function ConnectForm({
       )}
       {ownApp && (
         <>
-          <TextField
-            label={t("connect.issuer")}
-            hint={t("connect.issuer.hint")}
-            error={problems?.issuer === true ? t("connect.issuer.invalid") : null}
-            value={issuer}
-            onChange={setIssuer}
-            readOnly={submitting}
-            autoCapitalize="none"
-          />
+          {redirect !== null && (
+            <PageSection title={t("connect.redirect")}>
+              <CommandLine text={redirect} />
+              <Quiet>{t("connect.redirect.hint")}</Quiet>
+            </PageSection>
+          )}
+          {knownIssuer === null && (
+            <TextField
+              label={t("connect.issuer")}
+              hint={t("connect.issuer.hint")}
+              error={problems?.issuer === true ? t("connect.issuer.invalid") : null}
+              value={typedIssuer}
+              onChange={setIssuer}
+              readOnly={submitting}
+              autoCapitalize="none"
+            />
+          )}
           <TextField
             label={t("connect.clientId")}
             hint={t("connect.client.hint")}
