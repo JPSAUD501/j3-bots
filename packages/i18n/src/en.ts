@@ -1171,7 +1171,7 @@ export const en = {
   "settings.phone.restart": "Restart",
   "settings.phone.restart.cancel": "Not now",
   "settings.phone.firewall.windows":
-    "Windows may ask whether J3 Bots can use private networks. Allow it, or your phone can’t connect.",
+    "Windows may ask whether to allow public and private networks to access “Node.js JavaScript Runtime”: that’s your bots. Choose Allow, or your phone can’t connect.",
   "settings.phone.firewall.mac":
     "macOS may ask whether J3 Bots can accept incoming connections. Allow it, or your phone can’t connect.",
   "settings.phone.firewall.linux":

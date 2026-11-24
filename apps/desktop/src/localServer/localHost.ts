@@ -56,7 +56,6 @@ export interface LocalHostOptions {
   readonly homeDirectory: string;
   readonly hostname: string;
   readonly loginShell: string | null;
-  readonly windowsPrivacy: Home.WindowsPrivacy;
 }
 
 /**
@@ -116,6 +115,29 @@ const withUpdate = (state: LocalServerState, update: Option.Option<ServerUpdate>
     onSome: (now): LocalServerState => ({ ...state, update: now }),
   });
 
+/**
+ * Makes the server's `home` ready, as choosing this computer does, the first
+ * time with ports chosen once, and answers the origin the page reaches the
+ * server at. A home the operator must repair first is refused with why and
+ * what repairs it.
+ */
+export const prepareChosen = Effect.fn("LocalHost.prepareChosen")(
+  function* (home: string, system: Home.HomeSystem) {
+    yield* Home.checkHome(home, system);
+    const port = yield* Home.prepareHome(home, system, Home.choosePorts());
+    return yield* decodeOrigin(`http://127.0.0.1:${port}`);
+  },
+  Effect.mapError((error): ServerChoice.NotPrepared =>
+    error._tag === "HomeNotPrivate"
+      ? { _tag: "home-refused", reason: error.message, fix: error.fix }
+      : { _tag: "failed", message: error.message },
+  ),
+);
+
+/** A home the operator must repair before the server starts on it, which waiting does not change. */
+const refusedHome = (refusal: { readonly message: string; readonly fix: string }) =>
+  new Supervisor.LaunchFailed({ reason: refusal.message, fix: refusal.fix, retry: false });
+
 export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -154,7 +176,8 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     }),
   );
 
-  const checkHome = Home.checkHome(home, options.platform, options.windowsPrivacy);
+  const homeSystem: Home.HomeSystem = { platform: options.platform, acl: Home.systemAcl };
+  const checkHome = Home.checkHome(home, homeSystem);
 
   // Where each start listens: on this computer alone, or, while the operator
   // lets phones reach it, on the network.
@@ -202,24 +225,19 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
         retry: false,
       });
     }
-    yield* checkHome.pipe(
-      Effect.mapError(
-        (refusal) =>
-          new Supervisor.LaunchFailed({ reason: refusal.message, fix: refusal.fix, retry: false }),
-      ),
-    );
+    yield* checkHome.pipe(Effect.mapError(refusedHome));
     // Every start makes the home ready, as choosing this computer did, on the
     // port the page is kept on: a config.json that went missing is written
     // again rather than left to the server's own defaults.
     const kept = (yield* settings.get).server;
     yield* (
       kept === null
-        ? Home.prepareHome(home, Home.choosePorts())
-        : Home.prepareKeptHome(home, portOf(kept))
+        ? Home.prepareHome(home, homeSystem, Home.choosePorts())
+        : Home.prepareKeptHome(home, homeSystem, portOf(kept))
     ).pipe(
       Effect.mapError((error) =>
-        error._tag === "HomePortMoved"
-          ? new Supervisor.LaunchFailed({ reason: error.message, fix: error.fix, retry: false })
+        error._tag === "HomePortMoved" || error._tag === "HomeNotPrivate"
+          ? refusedHome(error)
           : new Supervisor.LaunchFailed({
               reason: error.message,
               retry: error._tag === "NoFreePorts" || error._tag === "PlatformError",
@@ -275,15 +293,9 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     yield* supervisor.start;
   });
 
-  const prepare = Effect.gen(function* () {
-    yield* checkHome;
-    const port = yield* Home.prepareHome(home, Home.choosePorts());
-    return yield* decodeOrigin(`http://127.0.0.1:${port}`);
-  }).pipe(Effect.provideContext(context));
-
   const local: ServerChoice.LocalServer = {
     available,
-    prepare,
+    prepare: prepareChosen(home, homeSystem).pipe(Effect.provideContext(context)),
     start: supervisor.start,
     stop: supervisor.stop,
   };

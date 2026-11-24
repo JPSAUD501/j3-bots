@@ -26,13 +26,16 @@ export class SystemdFailed extends Schema.TaggedError<SystemdFailed>()("SystemdF
  */
 export type Linger = "yes" | "no" | "unknown";
 
+/** The command that turns lingering on for this user. */
+export const ENABLE_LINGER = 'sudo loginctl enable-linger "$(id -un)"';
+
 /** What lingering that is not known to be on means for the service, and how to turn it on. */
 export const lingerAdvice = (linger: Exclude<Linger, "yes">) => ({
   summary:
     linger === "no"
       ? "Lingering is off: the service stops when this user's last session ends and does not start at boot."
       : "Could not tell whether lingering is on for this user.",
-  fix: 'Run `sudo loginctl enable-linger "$(id -un)"` once.',
+  fix: `Run \`${ENABLE_LINGER}\` once.`,
 });
 
 /** What `systemctl --user` says of one unit. */

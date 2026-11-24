@@ -19,6 +19,7 @@ import {
   type AclVerdict,
   createPrivateFolder,
   judgeAcl,
+  powerShellWord,
   readFolderAcl,
   repairCommand,
 } from "./windowsAcl.ts";
@@ -43,9 +44,9 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
     "unverifiable",
   ]),
   /**
-   * On Windows, the `icacls` command that makes the home private, which
-   * names the accounts to remove: a mode does not say who may open a folder
-   * there.
+   * On Windows, the `icacls` command, for PowerShell, that makes the home
+   * private, which names the accounts to remove: a mode does not say who may
+   * open a folder there.
    */
   windowsRepair: Schema.optionalKey(Schema.String),
   /** For `unverifiable`, what Windows said instead of who may open the home. */
@@ -69,17 +70,18 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
   /** The command that repairs it, for the operator to run on this system. */
   get fix(): string {
     if (process.platform === "win32") {
-      const repair = this.windowsRepair ?? `icacls "${this.home}" /inheritance:r`;
+      const repair = this.windowsRepair ?? `icacls ${powerShellWord(this.home)} /inheritance:r`;
+      const takeOwnership = `takeown /F ${powerShellWord(this.home)} /R`;
       switch (this.reason) {
         case "not-a-folder":
           return "Set J3_HOME to a folder.";
         case "not-owned":
-          return `Take it as this user (\`takeown /F "${this.home}" /R\`), then run \`${repair}\`.`;
+          return `In PowerShell, take it as this user (\`${takeOwnership}\`), then run \`${repair}\`.`;
         case "open-to-others":
         case "closed-to-owner":
-          return `Run \`${repair}\`.`;
+          return `In PowerShell, run \`${repair}\`.`;
         case "unverifiable":
-          return "Check that Windows PowerShell runs for this user.";
+          return `Check that Windows PowerShell runs for this user. If it runs and Windows denied this user access to the folder, the folder may belong to another user: in PowerShell, take it as this user (\`${takeOwnership}\`).`;
       }
     }
     switch (this.reason) {

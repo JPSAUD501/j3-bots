@@ -18,6 +18,7 @@ import {
   LocalPairingLink,
   LocalServerState,
   ModeChange,
+  UseThisComputerResult,
   NetworkState,
   NotificationClick,
   type NotificationRequest,
@@ -142,7 +143,7 @@ export interface Desktop {
    * has, the app loads the page again. `null` when the app gave no answer the
    * page understands.
    */
-  readonly chooseThisComputer: () => Promise<ModeChange | null>;
+  readonly chooseThisComputer: () => Promise<UseThisComputerResult | null>;
   /**
    * Stops the bots on this computer, their data kept, for a server elsewhere;
    * once it has, the app loads the page again on the server address screen.
@@ -199,6 +200,7 @@ const decodeShortcut = Schema.decodeUnknownOption(ShortcutStatus);
 const decodeShortcutChange = Schema.decodeUnknownOption(ShortcutChange);
 const decodeTheme = Schema.decodeUnknownOption(Theme);
 const decodeModeChange = Schema.decodeUnknownOption(ModeChange);
+const decodeUseThisComputer = Schema.decodeUnknownOption(UseThisComputerResult);
 const decodeLocalServer = Schema.decodeUnknownOption(Schema.NullOr(LocalServerState));
 const decodeLocalDevice = Schema.decodeUnknownOption(LocalDeviceResult);
 const decodeStartWithSystem = Schema.decodeUnknownOption(StartWithSystemChange);
@@ -318,7 +320,7 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     localAvailable: bridge.state.localAvailable,
     localServer: bridge.state.localServer,
     startWithSystem: bridge.state.startWithSystem,
-    chooseThisComputer: () => ask(() => bridge.useThisComputer(), decodeModeChange),
+    chooseThisComputer: () => ask(() => bridge.useThisComputer(), decodeUseThisComputer),
     connectToServerInstead: () => ask(() => bridge.connectToServerInstead(), decodeModeChange),
     retryLocalServer: () => {
       bridge.retryLocalServer();

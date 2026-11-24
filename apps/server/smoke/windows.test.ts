@@ -46,60 +46,79 @@ const GONE_WITHIN = Duration.seconds(15);
 
 const SCRIPTED_AGENT = `${import.meta.dirname}/../../../packages/engine-t3/scripted-agent/agent.ts`;
 
-const Processes = Schema.Array(
-  Schema.Struct({ pid: Schema.Int, parent: Schema.Int, commandLine: Schema.NullOr(Schema.String) }),
-);
-const decodeProcesses = Schema.decodeUnknownEffect(Schema.fromJsonString(Processes));
+// Windows gives a pid out again soon after its process ends, so a pid alone
+// does not name a process: one that took it since would pass for it. Every
+// process here is named by its pid and when it started.
 
-/** Every process on the machine, with its parent and its command line. */
+const Process = Schema.Struct({
+  pid: Schema.Int,
+  parent: Schema.Int,
+  /** When it started, in UTC ticks; null for the system's own, which have no start time. */
+  created: Schema.NullOr(Schema.String),
+  commandLine: Schema.NullOr(Schema.String),
+});
+type Process = typeof Process.Type;
+const decodeProcesses = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Process)));
+
+/** Every process on the machine, with its parent, when it started and its command line. */
 const processTable = runPowerShell(
   `$found = @(Get-CimInstance -ClassName Win32_Process | ForEach-Object {
-  [ordered]@{ pid = [int]$_.ProcessId; parent = [int]$_.ParentProcessId; commandLine = $_.CommandLine }
+  [ordered]@{
+    pid = [int]$_.ProcessId
+    parent = [int]$_.ParentProcessId
+    created = if ($_.CreationDate) { [string]$_.CreationDate.ToUniversalTime().Ticks } else { $null }
+    commandLine = $_.CommandLine
+  }
 })
 [Console]::Out.Write((ConvertTo-Json -InputObject $found -Depth 3 -Compress))`,
   {},
 ).pipe(Effect.flatMap(decodeProcesses));
 
-/** The processes `root` started, and theirs, by pid. */
-const descendantsOf = (root: number, table: typeof Processes.Type) => {
-  const found = new Set<number>();
-  let added = true;
-  while (added) {
-    added = false;
-    for (const { pid, parent } of table) {
-      if (!found.has(pid) && (parent === root || found.has(parent))) {
-        found.add(pid);
-        added = true;
-      }
+const sameProcess = (one: Process, other: Process) =>
+  one.pid === other.pid && one.created !== null && one.created === other.created;
+
+/**
+ * Whether `child` can have been started by `parent`. Windows keeps the pid of
+ * the process that started each one, which may name another process by now:
+ * one that took the pid after the child started is not its parent.
+ */
+const startedBy = (child: Process, parent: Process) =>
+  child.parent === parent.pid &&
+  child.created !== null &&
+  parent.created !== null &&
+  BigInt(child.created) >= BigInt(parent.created);
+
+/** The processes `root` started, and theirs. */
+const descendantsOf = (root: number, table: ReadonlyArray<Process>) => {
+  const tree = table.filter(({ pid }) => pid === root);
+  // An array's iterator reaches what is pushed onto it as it goes.
+  for (const parent of tree) {
+    for (const child of table) {
+      if (child !== parent && startedBy(child, parent) && !tree.includes(child)) tree.push(child);
     }
   }
-  return found;
+  return tree.slice(1);
 };
 
 /** The processes whose command line has `text` in it. */
-const running = (table: typeof Processes.Type, text: string) =>
-  table
-    .filter(({ commandLine }) => commandLine !== null && commandLine.includes(text))
-    .map(({ pid }) => pid);
+const running = (table: ReadonlyArray<Process>, text: string) =>
+  table.filter(({ commandLine }) => commandLine !== null && commandLine.includes(text));
 
-const isRunning = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
-  }
-};
+/** Which of `processes` run now. */
+const stillRunning = (processes: ReadonlyArray<Process>) =>
+  processTable.pipe(
+    Effect.map((table) =>
+      processes.filter((wanted) => table.some((row) => sameProcess(row, wanted))),
+    ),
+  );
 
-/** Which of `pids` still run once they had `GONE_WITHIN` to end. */
-const leftRunning = (pids: Iterable<number>) => {
-  const all = [...pids];
-  return Effect.sync(() => all.filter(isRunning)).pipe(
+/** Which of `processes` still run once they had `GONE_WITHIN` to end. */
+const leftRunning = (processes: ReadonlyArray<Process>) =>
+  stillRunning(processes).pipe(
     Effect.repeat({ schedule: Schedule.spaced("500 millis"), until: (left) => left.length === 0 }),
     Effect.timeoutOption(GONE_WITHIN),
-    Effect.map(Option.getOrElse(() => all.filter(isRunning))),
+    Effect.flatMap(Option.match({ onNone: () => stillRunning(processes), onSome: Effect.succeed })),
   );
-};
 
 /**
  * The scripted agent, started through a file that first starts the stand-in
@@ -254,12 +273,11 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
             yield* turn;
 
             // The engine among what the server started: the `t3.exe` whose parent is no `t3.exe` itself.
-            const engineIn = (table: typeof Processes.Type) => {
-              const started = descendantsOf(serverPid, table);
-              const t3 = new Set(running(table, "t3.exe").filter((pid) => started.has(pid)));
-              const [engine, ...others] = table
-                .filter(({ pid, parent }) => t3.has(pid) && !t3.has(parent))
-                .map(({ pid }) => pid);
+            const engineIn = (table: ReadonlyArray<Process>) => {
+              const t3 = running(descendantsOf(serverPid, table), "t3.exe");
+              const [engine, ...others] = t3.filter(
+                (candidate) => !t3.some((other) => startedBy(candidate, other)),
+              );
               return engine === undefined || others.length > 0
                 ? Effect.die("the server does not run exactly one engine")
                 : Effect.succeed(engine);
@@ -275,7 +293,7 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
             // Only the engine ends, as in a crash: what it started goes with it,
             // and the server starts it again.
             const back = yield* Effect.forkScoped(ready(true));
-            yield* Effect.sync(() => process.kill(engine, "SIGKILL"));
+            yield* Effect.sync(() => process.kill(engine.pid, "SIGKILL"));
             assert.deepStrictEqual(
               yield* leftRunning(harnesses),
               [],
@@ -286,7 +304,9 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
 
             const after = yield* processTable;
             const engineAfter = yield* engineIn(after);
-            const started = new Set([...startedBefore, ...descendantsOf(serverPid, after)]);
+            const started = [...startedBefore, ...descendantsOf(serverPid, after)].filter(
+              (found, index, all) => all.findIndex((other) => sameProcess(other, found)) === index,
+            );
             const harnessesAfter = running(after, marker);
             assert.isNotEmpty(harnessesAfter, "the engine started again runs no stand-in harness");
 
@@ -301,7 +321,10 @@ describe.runIf(process.platform === "win32")("the server on Windows", () => {
             );
             assert.strictEqual(code, 0, output);
             // An update snapshots the data once the server has exited: its engine is gone by then.
-            assert.isFalse(isRunning(engineAfter), "the server exited before its engine");
+            assert.isEmpty(
+              yield* stillRunning([engineAfter]),
+              "the server exited before its engine",
+            );
             assert.deepStrictEqual(yield* leftRunning([...started, ...harnessesAfter]), []);
             const holdsHome = (yield* processTable).filter(
               ({ commandLine }) =>

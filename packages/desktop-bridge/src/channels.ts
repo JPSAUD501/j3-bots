@@ -63,7 +63,7 @@ export const IPC_CHANNELS = {
   shortcut: "j3bots:shortcut",
   /** `ShortcutRequest`, answered with `ShortcutChange`. */
   setShortcut: "j3bots:set-shortcut",
-  /** Runs the bots on this computer, and loads the page again on its server. Answers `ModeChange`. */
+  /** Runs the bots on this computer, and loads the page again on its server. Answers `UseThisComputerResult`. */
   useThisComputer: "j3bots:use-this-computer",
   /**
    * Stops the server on this computer, its data kept, forgets it, and loads

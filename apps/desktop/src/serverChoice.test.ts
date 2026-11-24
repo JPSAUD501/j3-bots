@@ -8,6 +8,8 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import type * as Home from "./localServer/home.ts";
+import * as LocalHost from "./localServer/localHost.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import * as Settings from "./settings.ts";
 
@@ -21,14 +23,19 @@ const DEVICE = "device-1";
  * and a page that records what is done to it, with the server kept as it
  * happens.
  */
-const setUp = (file: string, answer: ConnectRefusal | null = null, localAvailable = true) =>
+const setUp = (
+  file: string,
+  answer: ConnectRefusal | null = null,
+  localAvailable = true,
+  prepare: ServerChoice.LocalServer["prepare"] = Effect.succeed(LOCAL),
+) =>
   Effect.gen(function* () {
     const settings = yield* Settings.DesktopSettings;
     const done: Array<string> = [];
     const checked: Array<string> = [];
     const local: ServerChoice.LocalServer = {
       available: localAvailable,
-      prepare: Effect.succeed(LOCAL),
+      prepare,
       start: Effect.sync(() => done.push("start local server")),
       stop: Effect.sync(() => done.push("stop local server")),
     };
@@ -157,6 +164,48 @@ describe("running the bots on this computer", () => {
         assert.strictEqual(now.server, LOCAL);
         // Chosen again: its next sign-in, which replaces the device, needs no asking.
         assert.deepStrictEqual(now.localDevice, { id: DEVICE, current: false });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "answers why the bots' folder is refused and how to repair it, changing nothing, and goes on once it is repaired",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = path.join(
+          yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-home-" }),
+          "home",
+        );
+        yield* fs.makeDirectory(home, { mode: 0o700 });
+        yield* fs.chmod(home, 0o750);
+        const unix: Home.HomeSystem = {
+          platform: "linux",
+          acl: {
+            read: () => Effect.die("the ACL is asked on Windows only"),
+            createPrivate: () => Effect.die("the ACL is set on Windows only"),
+          },
+        };
+        const file = yield* settingsFile(JSON.stringify({ server: SERVER }));
+        const { choice, page, done, settings } = yield* setUp(
+          file,
+          null,
+          true,
+          LocalHost.prepareChosen(home, unix).pipe(Effect.provide(NodeServices.layer)),
+        );
+
+        assert.deepStrictEqual(yield* choice.useThisComputer(page), {
+          _tag: "home-refused",
+          reason: `Other users on this computer can open ${home}, where this computer's bots keep their data and their keys.`,
+          fix: `Close it to others (\`chmod 700 '${home}'\`), then try again.`,
+        });
+        assert.deepStrictEqual(done, []);
+        assert.strictEqual((yield* settings.get).server, SERVER);
+
+        yield* fs.chmod(home, 0o700);
+        assert.strictEqual(yield* choice.useThisComputer(page), "changed");
+        assert.strictEqual((yield* settings.get).mode, "local");
+        assert.include(done, "start local server");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

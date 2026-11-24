@@ -44,6 +44,7 @@ import type {
   LocalServerState,
   PhoneAccess,
   ServerUpdate,
+  UseThisComputerResult,
 } from "@j3-bots/desktop-bridge";
 import {
   avatarCast,
@@ -2594,6 +2595,14 @@ const rolledBack = {
   ].join("\n"),
 } satisfies ServerUpdate;
 
+/** What "Use this computer" answers when the folder where the bots keep their data is open to others. */
+const homeRefused = {
+  _tag: "home-refused",
+  reason:
+    "Other users on this computer can open C:\\Users\\ana\\AppData\\Roaming\\J3 Bots\\server\\home, where this computer's bots keep their data and their keys.",
+  fix: "In PowerShell, run `icacls 'C:\\Users\\ana\\AppData\\Roaming\\J3 Bots\\server\\home' /inheritance:r /remove:d '*S-1-5-21-1004336348-1177238915-682003330-1001' '*S-1-5-18' '*S-1-5-32-544' /grant:r '*S-1-5-21-1004336348-1177238915-682003330-1001:(OI)(CI)F' /grant:r '*S-1-5-18:(OI)(CI)F' /grant:r '*S-1-5-32-544:(OI)(CI)F' /remove '*S-1-5-32-545'`, then try again.",
+} satisfies UseThisComputerResult;
+
 /** The first screen and, on its second choice, the server address screen with a way back. */
 function WhereFlow({ notice = null }: { notice?: string | null }) {
   const [where, setWhere] = useState<"choice" | "address">("choice");
@@ -2716,6 +2725,16 @@ function WhereBotsLiveSection() {
           height={760}
         >
           <WhereFlow />
+        </Frame>
+        <Frame
+          label="The first screen; Use this computer finds the bots' folder open to others here, with how to close it"
+          width={390}
+          height={760}
+        >
+          <WhereBotsLive
+            onUseThisComputer={() => Promise.resolve(homeRefused)}
+            onConnectToServer={nothing}
+          />
         </Frame>
         <Frame label="The first screen, opened from a pairing link" width={390} height={760}>
           <WhereFlow notice={t("links.chooseFirst")} />

@@ -107,6 +107,31 @@ export const judgeAcl = (acl: FolderAcl): AclVerdict => {
   return (granted & ~denied & OWNER_NEEDS) === OWNER_NEEDS ? "private" : "closed-to-owner";
 };
 
+/** `FileSystemRights` that change what a folder holds or who may: write and append data and attributes, delete, delete what is inside, change permissions, take ownership. */
+const CHANGES = 0xd0156;
+
+/** Whether a folder's contents are this user's to change, in the terms `InstallFolderExposed` uses. */
+export type WriteVerdict = "own" | "not-owned" | "writable-by-others";
+
+/**
+ * Whether `acl` keeps what is in a folder this user's to change, as an
+ * install's folders must be, since what is in them runs as this user: owned
+ * by this user, SYSTEM or the Administrators group, and no rule lets another
+ * account write, delete or change permissions, whether on the folder or only
+ * on what is made inside it. Others may read and run what is there.
+ */
+export const judgeWriteAcl = (acl: FolderAcl): WriteVerdict => {
+  const trusted = new Set([acl.user, SYSTEM, ADMINISTRATORS]);
+  if (!trusted.has(acl.owner)) return "not-owned";
+  const mayWrite = new Set([...trusted, CREATOR_OWNER, OWNER_RIGHTS]);
+  return acl.rules.some(
+    (rule) =>
+      rule.allow && !mayWrite.has(rule.sid) && (effectiveRights(rule.rights) & CHANGES) !== 0,
+  )
+    ? "writable-by-others"
+    : "own";
+};
+
 const decodeAcl = Schema.decodeUnknownEffect(Schema.fromJsonString(FolderAcl));
 
 /** The folder's path reaches the scripts as this variable, never in their text. */
@@ -189,23 +214,32 @@ foreach ($sid in $everyone) {
 });
 
 /**
+ * `value` as one literal PowerShell word: in single quotes, where nothing is
+ * expanded (`$`, `%`, `&` and `^` included), each quote in it doubled.
+ * PowerShell counts the typographic single quotes as quotes too.
+ */
+export const powerShellWord = (value: string) =>
+  `'${value.replaceAll(/['\u2018\u2019\u201a\u201b]/gu, (quote) => quote + quote)}'`;
+
+/**
  * The `icacls` command that makes `folder` private as `judgeAcl` wants it,
- * for the operator to run: inheritance off, full control for this user,
- * SYSTEM and Administrators, and every rule for anyone else removed. SIDs,
- * written `*S-1-…`, mean the same in every language; each is quoted, so it
- * runs the same in a Command Prompt and in PowerShell.
+ * for the operator to run in PowerShell: inheritance off, every rule that
+ * denies this user, SYSTEM or Administrators removed (`/grant:r` replaces
+ * only what they are granted), full control for the three, and every rule
+ * for anyone else removed. SIDs, written `*S-1-…`, mean the same in every
+ * language. Every argument is quoted for PowerShell, which expands `$…`
+ * inside double quotes as a Command Prompt expands `%…%`.
  */
 export const repairCommand = (folder: string, acl: FolderAcl) => {
+  const trusted = [acl.user, SYSTEM, ADMINISTRATORS];
   const others = [
-    ...new Set(
-      acl.rules
-        .filter((rule) => ![acl.user, SYSTEM, ADMINISTRATORS].includes(rule.sid))
-        .map((rule) => rule.sid),
-    ),
+    ...new Set(acl.rules.filter((rule) => !trusted.includes(rule.sid)).map((rule) => rule.sid)),
   ];
   return [
-    `icacls "${folder}" /inheritance:r`,
-    ...[acl.user, SYSTEM, ADMINISTRATORS].map((sid) => `/grant:r "*${sid}:(OI)(CI)F"`),
-    ...(others.length === 0 ? [] : ["/remove", ...others.map((sid) => `"*${sid}"`)]),
+    `icacls ${powerShellWord(folder)} /inheritance:r`,
+    "/remove:d",
+    ...trusted.map((sid) => powerShellWord(`*${sid}`)),
+    ...trusted.map((sid) => `/grant:r ${powerShellWord(`*${sid}:(OI)(CI)F`)}`),
+    ...(others.length === 0 ? [] : ["/remove", ...others.map((sid) => powerShellWord(`*${sid}`))]),
   ].join(" ");
 };

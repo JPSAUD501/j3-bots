@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { LocalServerState, ModeChange } from "@j3-bots/desktop-bridge";
+import type { LocalServerState, UseThisComputerResult } from "@j3-bots/desktop-bridge";
 import { useId, useState, type ReactNode } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
@@ -12,16 +12,20 @@ import { Switch } from "./ui/switch";
 // own server, or on a server elsewhere. The first screen asks; Settings
 // changes it, both ways. Every screen here is the desktop app's alone.
 
-/** Why "Usar neste computador" did not go through, or `null` while it has not failed. */
-type UseFailure = "failed" | "unavailable";
+/** The folder where the bots would keep their data must be repaired first: why, and how. */
+type HomeRefused = Extract<UseThisComputerResult, { readonly _tag: "home-refused" }>;
 
-const failureOf = (answer: ModeChange | null): UseFailure | null =>
-  answer === "changed" ? null : answer === "unavailable" ? "unavailable" : "failed";
+/** Why "Usar neste computador" did not go through, or `null` while it has not failed. */
+type UseFailure = "failed" | "unavailable" | HomeRefused;
+
+const failureOf = (answer: UseThisComputerResult | null): UseFailure | null =>
+  answer === "changed" ? null : (answer ?? "failed");
 
 /**
  * The desktop app's first screen where this computer can run the bots: on
  * this computer, at once and with nothing to type, or on a server, which
- * goes on to its address and pairing.
+ * goes on to its address and pairing. A home that must be repaired first is
+ * shown as a start that failed, with Try again.
  */
 export function WhereBotsLive({
   onUseThisComputer,
@@ -29,7 +33,7 @@ export function WhereBotsLive({
   notice = null,
 }: {
   /** Resolves with the app's answer; once it changed, the app loads the page again. */
-  readonly onUseThisComputer: () => Promise<ModeChange | null>;
+  readonly onUseThisComputer: () => Promise<UseThisComputerResult | null>;
   /** Goes on to the server address screen. */
   readonly onConnectToServer: () => void;
   /** A sentence about a link that led here, said above the choices. */
@@ -40,6 +44,20 @@ export function WhereBotsLive({
   const problemId = useId();
   const [state, setState] = useState<"idle" | "pending" | UseFailure>("idle");
   const pending = state === "pending";
+  const use = () => {
+    setState("pending");
+    // Once it changed, the app loads the page again: only a failure is shown here.
+    void onUseThisComputer().then((answer) => setState(failureOf(answer) ?? "pending"));
+  };
+  if (typeof state === "object") {
+    return (
+      <LocalServerFailed
+        server={state}
+        onRetry={use}
+        footer={<ConnectInstead onConnect={onConnectToServer} />}
+      />
+    );
+  }
   return (
     <FirstScreen title={t("where.title")} body={t("where.body")}>
       {notice !== null && (
@@ -52,10 +70,7 @@ export function WhereBotsLive({
           disabled={pending}
           describedBy={state === "idle" || pending ? hintId : `${hintId} ${problemId}`}
           onClick={() => {
-            if (pending) return;
-            setState("pending");
-            // Once it changed, the app loads the page again: only a failure is shown here.
-            void onUseThisComputer().then((answer) => setState(failureOf(answer) ?? "pending"));
+            if (!pending) use();
           }}
         >
           {pending ? t("where.thisComputer.pending") : t("where.thisComputer")}
@@ -160,7 +175,7 @@ export function LocalServerFailed({
   onRetry,
   footer,
 }: {
-  readonly server: LocalServerState;
+  readonly server: Failure;
   readonly onRetry: () => void;
   readonly footer?: ReactNode;
 }) {
@@ -306,7 +321,7 @@ export function UseThisComputer({
   onUse,
 }: {
   readonly address: string;
-  readonly onUse: () => Promise<ModeChange | null>;
+  readonly onUse: () => Promise<UseThisComputerResult | null>;
 }) {
   const { t } = useI18n();
   const [state, setState] = useState<"idle" | "pending" | UseFailure>("idle");
@@ -327,12 +342,17 @@ export function UseThisComputer({
       >
         {pending ? t("where.thisComputer.pending") : t("where.thisComputer")}
       </Confirm>
-      <p role="alert" className="text-xs text-blocked empty:hidden">
-        {state === "failed"
-          ? t("where.thisComputer.failed")
-          : state === "unavailable"
-            ? t("where.thisComputer.unavailable")
-            : null}
+      <p role="alert" className="text-xs text-pretty break-words text-blocked empty:hidden">
+        {typeof state === "object" ? (
+          <>
+            {state.reason}
+            <span className="mt-0.5 block text-muted-foreground">{state.fix}</span>
+          </>
+        ) : state === "failed" ? (
+          t("where.thisComputer.failed")
+        ) : state === "unavailable" ? (
+          t("where.thisComputer.unavailable")
+        ) : null}
       </p>
     </div>
   );

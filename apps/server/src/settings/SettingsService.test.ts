@@ -206,3 +206,31 @@ it.effect("leaves the base prompt on the later of two names saved close together
     }).pipe(Effect.provide(Layer.fresh(basePromptLayer).pipe(Layer.provide(holdingStore(held)))));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect("changes the update channel only while nothing holds it steady", () =>
+  Effect.gen(function* () {
+    const settings = yield* SettingsService;
+    const holding = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    // What starts an update: it reads the channel's offer, then records its run.
+    const steady = yield* settings
+      .channelSteady(
+        Deferred.succeed(holding, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.andThen(settings.get),
+        ),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(holding);
+    const change = yield* settings
+      .update({ commandId: CommandId.make("nightly"), changes: { updateChannel: "nightly" } })
+      .pipe(Effect.forkChild);
+    // Other settings are not held up.
+    yield* settings.update({ commandId: CommandId.make("name"), changes: { operatorName: "Ana" } });
+    yield* Deferred.succeed(release, undefined);
+
+    assert.strictEqual((yield* Fiber.join(steady)).updateChannel, "stable");
+    yield* Fiber.join(change);
+    assert.strictEqual((yield* settings.get).updateChannel, "nightly");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);

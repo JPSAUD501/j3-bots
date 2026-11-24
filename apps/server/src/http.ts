@@ -15,6 +15,7 @@ import {
   ServerInfo,
   type ServerOrigin,
   SocketTicketGrant,
+  UPDATE_API_VERSION,
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -34,6 +35,7 @@ import { Devices } from "./devices/Devices.ts";
 import * as Webhook from "./routines/webhook.ts";
 import * as Rpc from "./rpc/handlers.ts";
 import * as RpcSocket from "./RpcSocket.ts";
+import * as UpdateRoutes from "./update/routes.ts";
 import { isServedHost } from "./system/Network.ts";
 import * as Ports from "./system/Ports.ts";
 import * as WebClient from "./web/WebClient.ts";
@@ -47,7 +49,7 @@ const serverInfo = Layer.unwrap(
       protocolVersion: PROTOCOL_VERSION,
       version: packageJson.version,
       startedAt: yield* DateTime.now,
-      updateApi: null,
+      updateApi: UPDATE_API_VERSION,
     };
     const response = yield* HttpServerResponse.schemaJson(ServerInfo)(info).pipe(Effect.orDie);
     return HttpRouter.add("GET", HTTP_PATHS.server, Effect.succeed(response));
@@ -286,6 +288,7 @@ export const routes = Layer.mergeAll(
   upload,
   download,
   Webhook.route,
+  UpdateRoutes.routes,
 );
 
 /** Every route, the RPC socket and the web client: what clients are served. */

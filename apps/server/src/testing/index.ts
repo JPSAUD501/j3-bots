@@ -13,6 +13,7 @@ import * as Handlers from "../rpc/handlers.ts";
 import * as RpcSocket from "../RpcSocket.ts";
 import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "./domain.ts";
+import * as TestUpdates from "./update.ts";
 
 export { Attachments } from "../attachments/Attachments.ts";
 export { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
@@ -44,7 +45,7 @@ export const layer = (unserved: Layer.Layer<Rpc.ToHandler<UnservedRpcs>, never, 
     ),
     NodeHttpServer.layerTest,
     { logAddress: false },
-  ).pipe(Layer.provideMerge(TestDomain.layer));
+  ).pipe(Layer.provide(TestUpdates.layer), Layer.provideMerge(TestDomain.layer));
 
 /** The `http:` origin the test server listens on. */
 export const origin = Effect.gen(function* () {

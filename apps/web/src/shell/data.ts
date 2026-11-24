@@ -42,7 +42,7 @@ import type {
 import type {
   Accelerator,
   LocalPairingLink,
-  ModeChange,
+  UseThisComputerResult,
   PhoneAccess,
   PhoneAccessChange,
   ShortcutChange,
@@ -282,7 +282,7 @@ export interface DesktopServer {
    * Leaves it for this computer: forgets it as `forget` does, then runs the
    * bots here. Absent where this computer cannot run them.
    */
-  readonly chooseThisComputer?: () => Promise<ModeChange | null>;
+  readonly chooseThisComputer?: () => Promise<UseThisComputerResult | null>;
 }
 
 /** The bots on this computer, as the desktop app runs them. */
