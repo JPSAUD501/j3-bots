@@ -161,7 +161,7 @@ function AndroidField({
   // does: the draft takes each edit as it is told, so a value that answers an
   // older count is one the operator has typed past.
   const [eventCount, setEventCount] = useState(0);
-  const [height, setHeight] = useState(MIN_HEIGHT);
+  const [height, setHeight] = useState<number>(MIN_HEIGHT);
   useImperativeHandle(ref, () => ({
     focus: () => void native.current?.focus(),
     blur: () => void native.current?.blur(),
