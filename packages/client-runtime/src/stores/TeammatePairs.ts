@@ -94,14 +94,16 @@ const oldestOf = (messages: ReadonlyMap<PairSeq, TeammateMessage>): PairSeq | un
 /**
  * The messages an open conversation holds after a snapshot, which only ever
  * carries the latest ones: the snapshot's, then the pages before them read
- * again down to `keep`, the oldest message held before it, so a reconnection
- * keeps what the operator scrolled back to, with each message as it stands
- * now. Null `keep` takes the snapshot as it is. A page that cannot be read
- * ends the reading: what is older stays to scroll back to.
+ * again down to what `keep` says, the oldest message held until the snapshot
+ * takes over, so a reconnection keeps what the operator scrolled back to,
+ * with each message as it stands now. `keep` is asked again before each page,
+ * since a scroll back may reach further meanwhile; null takes the snapshot as
+ * it is. A page that cannot be read ends the reading: what is older stays to
+ * scroll back to.
  */
 export const refilled = (
   snapshot: { readonly messages: ReadonlyArray<TeammateMessage>; readonly hasOlder: boolean },
-  keep: PairSeq | null,
+  keep: () => PairSeq | null,
   readPage: ReadPage,
 ): Effect.Effect<{
   readonly messages: Map<PairSeq, TeammateMessage>;
@@ -110,9 +112,10 @@ export const refilled = (
   Effect.gen(function* () {
     const messages = new Map(snapshot.messages.map((message) => [message.seq, message]));
     let hasOlder = snapshot.hasOlder;
-    while (keep !== null && hasOlder) {
+    while (hasOlder) {
+      const target = keep();
       const oldest = oldestOf(messages);
-      if (oldest === undefined || oldest <= keep) break;
+      if (target === null || oldest === undefined || oldest <= target) break;
       const page = yield* readPage(oldest, REFILL_PAGE);
       if (page === null || page.messages.length === 0) break;
       for (const message of page.messages) {
@@ -207,7 +210,7 @@ export const layer = Layer.effect(
                 ? // Replaces everything: what the operator reads stays until the pages it reached are read again.
                   refilled(
                     frame,
-                    phase === "ready" ? (oldestOf(messages) ?? null) : null,
+                    phase === "ready" ? () => oldestOf(messages) ?? null : () => null,
                     readPage,
                   ).pipe(
                     Effect.map((next) => {

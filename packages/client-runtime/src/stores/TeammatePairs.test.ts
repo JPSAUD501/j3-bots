@@ -40,32 +40,33 @@ it("finds a message by its card in either bot's conversation", () => {
 });
 
 describe("refilled", () => {
-  // Ten messages on the server, the last one now not delivered.
-  const server = Array.from({ length: 10 }, (_, index) =>
+  // Ten messages, the last one now not delivered.
+  const sent = Array.from({ length: 10 }, (_, index) =>
     teammateMessage(index + 1, "2026-11-20T10:00:00Z", "scout", "wren", `message ${index + 1}`),
   );
-  const now = server.map((message): TeammateMessage =>
+  const now = sent.map((message): TeammateMessage =>
     message.seq === 10 ? { ...message, state: "not-delivered" } : message,
   );
   const latest = { messages: now.slice(7), hasOlder: true };
-  const reads: Array<number> = [];
-  // A server that answers two messages at a time, and none before `failingBelow`.
-  const pages =
-    (failingBelow = 0) =>
-    (before: PairSeq, limit: number) =>
+  /** A server that answers two messages at a time, and none before `failingBelow`: what each read asked for. */
+  const server = (failingBelow = 0) => {
+    const reads: Array<number> = [];
+    const read = (before: PairSeq, limit: number) =>
       Effect.sync(() => {
         reads.push(before);
         if (before <= failingBelow) return null;
         const older = now.filter((message) => message.seq < before);
         return { messages: older.slice(-Math.min(limit, 2)), hasOlder: older.length > 2 };
       });
+    return { reads, read };
+  };
   const seqs = (messages: ReadonlyMap<PairSeq, TeammateMessage>) =>
     [...messages.keys()].toSorted((a, b) => a - b);
 
   effect.effect("reads back down to the oldest message held before, each as it stands now", () =>
     Effect.gen(function* () {
-      reads.length = 0;
-      const held = yield* refilled(latest, PairSeq.make(4), pages());
+      const { reads, read } = server();
+      const held = yield* refilled(latest, () => PairSeq.make(4), read);
       expect(seqs(held.messages)).toEqual([4, 5, 6, 7, 8, 9, 10]);
       expect(held.hasOlder).toBe(true);
       expect(reads).toEqual([8, 6]);
@@ -75,9 +76,19 @@ describe("refilled", () => {
 
   effect.effect("stops at a page it cannot read, leaving the rest to scroll back to", () =>
     Effect.gen(function* () {
-      const held = yield* refilled(latest, PairSeq.make(1), pages(6));
+      const held = yield* refilled(latest, () => PairSeq.make(1), server(6).read);
       expect(seqs(held.messages)).toEqual([6, 7, 8, 9, 10]);
       expect(held.hasOlder).toBe(true);
+    }),
+  );
+
+  effect.effect("reads as far as a scroll back reached while it read", () =>
+    Effect.gen(function* () {
+      const { reads, read } = server();
+      // The operator's scroll back took the conversation from 6 to 2 during the first read.
+      const held = yield* refilled(latest, () => PairSeq.make(reads.length === 0 ? 6 : 2), read);
+      expect(seqs(held.messages)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(reads).toEqual([8, 6, 4]);
     }),
   );
 });
