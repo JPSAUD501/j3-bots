@@ -274,6 +274,7 @@ const envFieldsOf = (command: CommandLine): ReadonlyArray<ConnectorField> =>
     secret: true,
     required: false,
     placeholder: null,
+    choices: [],
   }));
 
 /**
