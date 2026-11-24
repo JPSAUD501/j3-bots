@@ -1565,14 +1565,16 @@ export const layer = Layer.effect(
       }),
     );
 
-    const settleFill = Effect.fn("TurnTools.settleFill")(function* (fill: FillCall, result: Schema.Json) {
+    const settleFill = Effect.fn("TurnTools.settleFill")(function* (
+      fill: FillCall,
+      result: Schema.Json,
+    ) {
       yield* sql`
         UPDATE tool_calls SET result_json = ${yield* encodeResult(result)}
         WHERE id = ${fill.requestId} AND session_id = ${fill.caller.id}
           AND tool = 'fill_credential'
       `;
     }, Effect.orDie);
-
 
     /** Whether the request was claimed before, under its id, for its caller and its tool. */
     const claimedBefore = (call: ClaimedCall) =>
@@ -1594,7 +1596,9 @@ export const layer = Layer.effect(
      * request again; the claim, once begun, is not cut short by it, so a claim
      * that committed is always followed by the call.
      */
-    const claimConnectorCall = Effect.fn("TurnTools.claimConnectorCall")(function* (call: ClaimedCall) {
+    const claimConnectorCall = Effect.fn("TurnTools.claimConnectorCall")(function* (
+      call: ClaimedCall,
+    ) {
       if (yield* claimedBefore(call)) return yield* new CallCutOff();
       const matched = yield* match(call, call.caller, "open-or-closed").pipe(
         Effect.timeoutOrElse({

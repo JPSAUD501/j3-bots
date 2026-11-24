@@ -295,7 +295,12 @@ export const layer = Layer.effect(
       const tooLarge = inputCapRefusal(input);
       if (tooLarge !== undefined) return yield* new Refused({ reason: tooLarge });
       yield* turnTools
-        .claimConnectorCall({ tool, requestId: call.requestId, caller: call.caller, arguments: input })
+        .claimConnectorCall({
+          tool,
+          requestId: call.requestId,
+          caller: call.caller,
+          arguments: input,
+        })
         .pipe(
           Effect.catchTags({
             TurnEnded: (error) => new Refused({ reason: error.message }),

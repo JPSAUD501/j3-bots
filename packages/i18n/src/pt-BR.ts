@@ -1720,8 +1720,7 @@ const sentences = {
   "connector.status.notMcp": "O que responde no endereço dele não é um conector.",
   "connector.status.refusedAddress":
     "O endereço dele leva à sua própria rede, que o J3 Bots não acessa para ele.",
-  "connector.status.commandNotFound":
-    "O programa dele não está no computador que roda o J3 Bots.",
+  "connector.status.commandNotFound": "O programa dele não está no computador que roda o J3 Bots.",
   "connector.status.commandExited":
     "O programa dele não conseguiu iniciar, ou parou. Ele inicia de novo na próxima vez que um bot o usar.",
   "connector.status.failingOther": "Ele não responde como deveria.",
