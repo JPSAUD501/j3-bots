@@ -5,6 +5,7 @@ import {
   addresseeOf,
   arrivalCounts,
   buildTimeline,
+  cardPlace,
   liveTurn,
   mentionedNames,
   mentionedWhoLeft,
@@ -190,6 +191,27 @@ function useReadMark(
 }
 
 /**
+ * The keys of the rows the conversation shows now, by the rule an entry
+ * counts as seen by, with the list's viewability pair that follows them,
+ * which never changes.
+ */
+function useShownRows(): {
+  readonly shown: ReadonlySet<string>;
+  readonly pair: ViewabilityConfigCallbackPairs<TimelineItem>[number];
+} {
+  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
+  const pair = useMemo(
+    () => ({
+      viewabilityConfig: { id: "shown", itemVisiblePercentThreshold: SEEN_PERCENT },
+      onViewableItemsChanged: ({ viewableItems }: OnViewableItemsChangedInfo<TimelineItem>) =>
+        setShown(new Set(viewableItems.map((token) => token.key))),
+    }),
+    [],
+  );
+  return { shown, pair };
+}
+
+/**
  * A bot's or room's conversation: its header, every entry oldest first with
  * the newest at the bottom, and the composer, which rides on the keyboard.
  * Mount one per conversation, keyed by it.
@@ -250,7 +272,10 @@ export function ConversationView({
   // One object while the bot and its latest entry stay, so the list's rows are not all drawn again.
   const turnBot = useMemo(() => (bot === null ? null : { bot, lastEntry }), [bot, lastEntry]);
   const inView = useInView();
-  const pairs = useReadMark(target, rows, markRead, inView);
+  const readPairs = useReadMark(target, rows, markRead, inView);
+  const { shown, pair: shownPair } = useShownRows();
+  // The list reads its viewability pairs once: both parts never change.
+  const pairs = useMemo(() => [...readPairs, shownPair], [readPairs, shownPair]);
   // What arrives at the end settles in, and is counted while the operator reads above it.
   const [scope] = useState(() => rosterKeyText(rosterKeyOf(item)));
   const arrived = useArrivals(
@@ -321,6 +346,9 @@ export function ConversationView({
       void list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
   };
 
+  // The card the bot waits on, which the end of the conversation leads to while it is out of view.
+  const waitingOn = bot?.state._tag === "waiting" ? bot.state.entryId : null;
+
   const archived = room !== null && room.status === "archived";
   const quiet = state?.phase === "ready" && state.items.length === 0;
 
@@ -331,7 +359,6 @@ export function ConversationView({
           item={item}
           onBack={onBack}
           onOpenDetails={onOpenDetails}
-          onGoToWaiting={goTo}
           folds={folds}
         />
       </View>
@@ -419,7 +446,15 @@ export function ConversationView({
               style={{ position: "absolute", start: 0, end: 0, bottom: composerHeight + 8 }}
               pointerEvents="box-none"
             >
-              <ToLatest end={end} onPress={toEnd} />
+              <ToLatest
+                end={end}
+                onPress={toEnd}
+                waiting={
+                  waitingOn === null
+                    ? null
+                    : { place: cardPlace(rows, shown, waitingOn), onPress: () => goTo(waitingOn) }
+                }
+              />
             </KeyboardStickyView>
           )}
           {/* Over the conversation's end, riding on the keyboard: the list keeps its last entry above it. */}

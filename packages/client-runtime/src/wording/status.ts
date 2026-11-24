@@ -330,7 +330,11 @@ export function heldHelloText(name: string, hold: OpeningHold, ctx: TimeContext)
     : t("empty.quiet.waitingForResetAt", { name, when: timeInSentence(hold.resetsAt, ctx) });
 }
 
-/** The line under a bot's name in its conversation: what it is doing now. */
+/**
+ * What a bot is doing now, in one line: the line of its turn under way, and
+ * what its conversation says aloud as that changes. A bot at rest is doing
+ * nothing: null.
+ */
 export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | null {
   const { t } = ctx.i18n;
   const { state } = bot;
@@ -348,7 +352,7 @@ export function presenceLine(bot: Bot, ctx: PresentationContext): StatusLine | n
     case "blocked":
       return { text: failureText(state.failure, state.retryAt, ctx), tone: "blocked" };
     case "idle":
-      return bot.profile.title === "" ? null : { text: bot.profile.title, tone: "secondary" };
+      return null;
   }
 }
 

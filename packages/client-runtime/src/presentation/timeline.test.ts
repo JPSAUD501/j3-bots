@@ -11,7 +11,14 @@ import {
 import type { OutgoingMessage } from "../stores/Conversations.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, handoff, message } from "../../test/fixtures.ts";
-import { arrivalCounts, arrivedRows, buildTimeline, readThrough, rowOrder } from "./timeline.ts";
+import {
+  arrivalCounts,
+  arrivedRows,
+  buildTimeline,
+  cardPlace,
+  readThrough,
+  rowOrder,
+} from "./timeline.ts";
 
 const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
 const wren = { _tag: "bot", botId: BotId.make("wren") } as const;
@@ -356,5 +363,41 @@ describe("arrivalCounts", () => {
     const withOwn = buildTimeline([message("2026-11-20T10:00:00Z", scout), outgoing]);
     const own = new Set(withOwn.filter((row) => row.kind === "message").map((row) => row.key));
     expect(arrivalCounts(withOwn, own)).toEqual({ own: true, others: 1 });
+  });
+});
+
+describe("cardPlace", () => {
+  const card: NoticeEntry = {
+    _tag: "notice",
+    id: EntryId.make("card"),
+    order: EntryOrder.make(2),
+    author: { _tag: "system" },
+    createdAt: at("2026-11-20T10:01:00Z"),
+    notice: { _tag: "session-lost" },
+    retryable: false,
+  };
+  const rows = buildTimeline([
+    message("2026-11-20T10:00:00Z", scout),
+    card,
+    message("2026-11-20T10:02:00Z"),
+    message("2026-11-20T10:03:00Z", scout),
+  ]);
+  const keys = rows.map((row) => row.key);
+  const cardKey = rows.find((row) => row.kind === "card")?.key ?? "";
+  const shown = (...which: ReadonlyArray<string | undefined>) =>
+    new Set(which.filter((key) => key !== undefined));
+
+  it("says the card shows while its row does", () => {
+    expect(cardPlace(rows, shown(cardKey, keys.at(-1)), card.id)).toBe("shown");
+  });
+
+  it("points up to a card scrolled past, and down to one not reached yet", () => {
+    expect(cardPlace(rows, shown(keys.at(-1)), card.id)).toBe("above");
+    expect(cardPlace(rows, shown(keys[0], keys[1]), card.id)).toBe("below");
+  });
+
+  it("knows no place for a card not loaded, or before anything is known to show", () => {
+    expect(cardPlace(rows, shown(keys.at(-1)), EntryId.make("older"))).toBeNull();
+    expect(cardPlace(rows, shown(), card.id)).toBeNull();
   });
 });
