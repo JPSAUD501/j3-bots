@@ -269,3 +269,27 @@ it.effect("tells nobody, by socket or push, of what one device has in view", () 
     assert.deepStrictEqual([recipients?.live, recipients?.push], [[laptop], [phone]]);
   }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
+
+it.effect("notifies nothing of a teammate message, urgent or not", () =>
+  Effect.gen(function* () {
+    const presence = yield* Presence;
+    const scout = yield* createBot("Scout");
+    const wren = yield* createBot("Wren");
+    const phone = yield* pairDevice("Phone");
+    yield* registerPush(phone);
+
+    for (const direction of ["sent", "received"] as const) {
+      const card = yield* add(direction === "sent" ? scout.id : wren.id, {
+        _tag: "handoff",
+        author: { _tag: "bot", botId: scout.id },
+        recipientId: wren.id,
+        direction,
+        text: "Roll back the release.",
+        urgent: true,
+        state: "sent",
+      });
+      const target = conversation(direction === "sent" ? scout.id : wren.id);
+      assert.isNull(yield* presence.recipients(target, card));
+    }
+  }).pipe(Effect.provide(TestDomain.layer)),
+);

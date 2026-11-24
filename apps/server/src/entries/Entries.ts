@@ -36,7 +36,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 export type EntryDraft = DistributiveOmit<Entry, "id" | "order" | "createdAt">;
 
 /** How many entries a subscription's snapshot holds. */
-const SNAPSHOT_SIZE = 100;
+export const SNAPSHOT_SIZE = 100;
 
 /**
  * About how much a frame sent to a client may hold, in characters of the
@@ -47,7 +47,7 @@ const SNAPSHOT_SIZE = 100;
  * megabytes. A page always holds at least one entry, so it goes over by less
  * than one entry.
  */
-const FRAME_BUDGET = 8 * 1024 * 1024;
+export const FRAME_BUDGET = 8 * 1024 * 1024;
 
 /** The total size of some entries' stored bodies. */
 const SizeRows = Schema.Array(Schema.Struct({ size: Schema.Number }));
@@ -95,8 +95,12 @@ const toEntry = Effect.fn("Entries.toEntry")(function* (row: typeof EntryRow.Typ
 
 /** What the roster needs to know about a conversation or room. */
 export interface TargetSummary {
+  /** The latest entry other than a teammate message, which never stands for its conversation. */
   readonly last: Option.Option<Entry>;
-  /** Whether a bot or J3 Bots wrote something after the operator's read mark. */
+  /**
+   * Whether a bot or J3 Bots wrote something after the operator's read mark,
+   * other than a teammate message.
+   */
   readonly unread: boolean;
 }
 
@@ -161,8 +165,8 @@ export class Entries extends Context.Service<
     readonly markRead: (target: EntryTarget, through: EntryOrder) => Effect.Effect<void, NotFound>;
     /**
      * Moves the operator's read mark back to just before the last entry a bot
-     * or J3 Bots wrote, which makes the target unread; a target with none
-     * stays as it is.
+     * or J3 Bots wrote, other than a teammate message, which makes the target
+     * unread; a target with none stays as it is.
      */
     readonly markUnread: (input: {
       readonly commandId: CommandId;
@@ -196,6 +200,13 @@ export const layer = Layer.effect(
       target._tag === "conversation"
         ? sql`conversation_bot_id = ${target.botId}`
         : sql`room_id = ${target.roomId}`;
+
+    /**
+     * The entries that make a target unread: what a bot or J3 Bots wrote,
+     * except a teammate message, which is the bots' business and never
+     * calls for the operator.
+     */
+    const counted = sql`author_kind <> 'operator' AND kind <> 'handoff'`;
 
     const exists = Effect.fn("Entries.exists")(function* (target: EntryTarget) {
       const rows =
@@ -428,7 +439,7 @@ export const layer = Layer.effect(
       // is never true) stays as it is. Before the first entry, nothing is read.
       const last = sql`
         (SELECT MAX(position) FROM entries
-         WHERE ${targetColumn(target)} AND author_kind <> 'operator')
+         WHERE ${targetColumn(target)} AND ${counted})
       `;
       const moveBack = sql`
         SET read_through_order = CASE WHEN ${last} = 0 THEN NULL ELSE ${last} - 1 END
@@ -457,18 +468,27 @@ export const layer = Layer.effect(
     });
 
     const summary = Effect.fn("Entries.summary")(function* (target: EntryTarget) {
-      const { entries } = yield* newest(target, null, 1, null);
+      const lastRows = yield* sql`
+        SELECT ${sql.literal(ENTRY_COLUMNS)} FROM entries
+        WHERE ${targetColumn(target)} AND kind <> 'handoff'
+        ORDER BY position DESC
+        LIMIT 1
+      `;
+      const [last] = yield* Schema.decodeUnknownEffect(Schema.Array(EntryRow))(lastRows);
       const mark =
         target._tag === "conversation"
           ? sql`(SELECT read_through_order FROM conversations WHERE bot_id = ${target.botId})`
           : sql`(SELECT read_through_order FROM rooms WHERE id = ${target.roomId})`;
       const unread = yield* sql`
         SELECT 1 FROM entries
-        WHERE ${targetColumn(target)} AND author_kind <> 'operator'
+        WHERE ${targetColumn(target)} AND ${counted}
           AND position > COALESCE(${mark}, -1)
         LIMIT 1
       `;
-      return { last: Option.fromNullishOr(entries[0]), unread: unread.length > 0 };
+      return {
+        last: last === undefined ? Option.none() : Option.some(yield* toEntry(last)),
+        unread: unread.length > 0,
+      };
     }, Effect.orDie);
 
     /** A snapshot and the sequence it is current at, read in one transaction. */

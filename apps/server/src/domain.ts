@@ -23,6 +23,7 @@ import * as Entries from "./entries/Entries.ts";
 import * as Ids from "./Ids.ts";
 import * as Layout from "./Layout.ts";
 import * as Memory from "./memory/Memory.ts";
+import * as Pairs from "./pairs/Pairs.ts";
 import * as MemoryFiles from "./memory/MemoryFiles.ts";
 import * as ChangeLog from "./persistence/ChangeLog.ts";
 import * as Presence from "./presence/Presence.ts";
@@ -88,6 +89,7 @@ export const layer = Layer.mergeAll(
       BrowserHelp.layer,
       Templates.layer,
       Roster.layer,
+      Pairs.layer,
       Speech.layer,
       Pipeline.layer,
       Cards.layer,

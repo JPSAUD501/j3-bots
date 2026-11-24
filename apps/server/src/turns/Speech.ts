@@ -8,6 +8,7 @@ import {
   MAX_ATTACHMENT_SIZE,
   MAX_VISUAL_BYTES,
   type MessageEntry,
+  pairBotIds,
   RoomId,
   siteOriginOf,
   type Visual,
@@ -1267,6 +1268,12 @@ export const layer = Layer.effect(
           yield* sql`
             INSERT INTO handoffs (tool_call_id, recipient_bot_id, sent_entry_id, received_entry_id)
             VALUES (${found.requestId}, ${recipientId}, ${sent.id}, ${received.id})
+          `.pipe(Effect.orDie);
+          const [low, high] = pairBotIds(found.botId, recipientId);
+          yield* sql`
+            INSERT INTO pair_messages (
+              pair_low, pair_high, sender_bot_id, recipient_bot_id, sent_entry_id, received_entry_id
+            ) VALUES (${low}, ${high}, ${found.botId}, ${recipientId}, ${sent.id}, ${received.id})
           `.pipe(Effect.orDie);
           if (input.urgent) {
             yield* wakes.record([

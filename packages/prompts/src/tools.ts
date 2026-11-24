@@ -449,7 +449,7 @@ export const tools = {
   message_bot: define(
     "message_bot",
     [
-      "Send a message to one teammate, by a bot id from `list_teammates`. Your user sees it in both conversations.",
+      "Send a message to one teammate, by a bot id from `list_teammates`. Your user can read what you two send each other, but is not alerted to it: if they need to know, tell them with `say`.",
       "Only an `urgent` message wakes the teammate now. Any other is queued until the teammate's next turn begins, however long that takes.",
       "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender. Answer a question once; an FYI or a thanks needs no answer.",
       "Returns an acknowledgement only. Any reply comes in a later turn of yours.",

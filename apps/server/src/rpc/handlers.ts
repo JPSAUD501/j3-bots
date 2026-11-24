@@ -29,6 +29,7 @@ import { ServerConfig } from "../config.ts";
 import { ConnectorSources } from "../connectors/sources/Sources.ts";
 import { Listener } from "../listener.ts";
 import { Memory } from "../memory/Memory.ts";
+import { Pairs } from "../pairs/Pairs.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import { Roster } from "../roster/Roster.ts";
@@ -60,6 +61,7 @@ export const handlers = ServedRpcs.toLayer(
     const auth = yield* DeviceAuth;
     const engine = yield* Engine;
     const roster = yield* Roster;
+    const pairs = yield* Pairs;
     const entries = yield* Entries;
     const store = yield* BotStore;
     const bots = yield* Bots;
@@ -115,6 +117,10 @@ export const handlers = ServedRpcs.toLayer(
 
     return {
       "roster.subscribe": () => roster.subscribe,
+      "pairs.subscribe": () => pairs.subscribe,
+      "pairs.history": ({ botIds, before, limit }) =>
+        pairs.history({ botIds, before: before ?? null, limit }),
+      "pairs.messages.subscribe": ({ botIds }) => pairs.messages(botIds),
       // Typed to answer only an `Entry`: the contract takes any `ReceivedEntry`,
       // but the server never sends a kind it does not know.
       "entries.subscribe": ({ target, after }): Stream.Stream<EntryFrame, NotFound> =>

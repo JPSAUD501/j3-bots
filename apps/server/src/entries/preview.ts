@@ -15,7 +15,7 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
  * counts, between two characters as a reader sees them: an emoji, or a letter
  * with its accents, is kept whole or left out.
  */
-const cut = (text: string, length: number): string => {
+export const cut = (text: string, length: number): string => {
   if (text.length <= length) return text;
   let end = 0;
   for (const { segment } of graphemes.segment(text)) {

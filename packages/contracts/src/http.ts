@@ -16,10 +16,10 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
  * failure class, they do not know: from 6 on, adding one needs no bump. 7
  * widened the avatars a client sends to twelve shapes and twelve colors. 8
  * added the bot's browser: `browser.subscribe` and the media socket at
- * `HTTP_PATHS.browser`. docs/architecture/clients.md, "Protocol
- * compatibility", says what does.
+ * `HTTP_PATHS.browser`. 9 added teammate conversations (`TeammatePairRpcs`).
+ * docs/architecture/clients.md, "Protocol compatibility", says what does.
  */
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 export const HTTP_PATHS = {
   /** `GET`, no credential. Answers `ServerInfo`. */
