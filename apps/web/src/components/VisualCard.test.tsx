@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { BotId, VISUAL_FRAME_PATH } from "@j3-bots/contracts";
-import { message } from "@j3-bots/client-runtime/testing";
+import { at, message } from "@j3-bots/client-runtime/testing";
 import { buildTimeline } from "@j3-bots/client-runtime/presentation";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { sampleVault } from "../gallery/sampleVault";
 import { Timeline, type TimelineIntents } from "./Timeline";
 import { ownFrameHeight } from "./VisualCard";
 
@@ -12,12 +13,16 @@ vi.mock("../preferences/preferences", () => ({
 }));
 
 const nothing = () => {};
+const vault = sampleVault({ state: "locked", now: () => at("2026-11-20T10:00:00Z") });
 const intents: TimelineIntents = {
   answerQuestion: nothing,
   dismissQuestion: nothing,
   decideApproval: nothing,
   provideSecret: nothing,
   declineSecret: nothing,
+  answerBrowserHelp: nothing,
+  openBrowser: nothing,
+  dismissLogin: nothing,
   retryNotice: nothing,
   retryMessage: nothing,
   resendMessage: nothing,
@@ -28,6 +33,9 @@ const intents: TimelineIntents = {
   openHandoff: nothing,
   openRoutine: nothing,
   openConversation: nothing,
+  connectSuggested: nothing,
+  dismissSuggestion: nothing,
+  signInConnector: nothing,
 };
 
 const scout = { _tag: "bot", botId: BotId.make("scout") } as const;
@@ -45,6 +53,7 @@ const shown = (page: string) =>
       workSteps={() => null}
       submitting={() => false}
       intents={intents}
+      vault={{ view: vault.view.get(), intents: vault }}
     />,
   );
 
