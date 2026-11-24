@@ -2,7 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import { SessionId, type TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
-import { NO_TURN_REFUSAL, toolList } from "@j3-bots/prompts";
+import { connectorToolDescription, NO_TURN_REFUSAL, toolList } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -89,6 +89,12 @@ it.effect(
 
       assert.deepStrictEqual(yield* listed(ana.session), [...own, "notion__search"]);
       assert.deepStrictEqual(yield* listed(ben.session), own);
+      // The bot reads whose the description is before the server's own words.
+      const { tools } = yield* (yield* ToolLists).list(ana.session);
+      assert.strictEqual(
+        tools.find((tool) => tool.name === "notion__search")?.description,
+        connectorToolDescription("Notion", "Search the workspace's pages."),
+      );
     }).pipe(Effect.scoped, Effect.provide(domain)),
   SLOW,
 );

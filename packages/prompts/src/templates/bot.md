@@ -9,7 +9,7 @@
 ## Your job
 
 {{bot.job}}
-{{bot.browser}}
+{{bot.browser}}{{bot.connectors}}
 # Pinned memory
 
 ## About {{user.name}}

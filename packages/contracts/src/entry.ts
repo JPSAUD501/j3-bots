@@ -385,7 +385,7 @@ export type CredentialRequestEntry = typeof CredentialRequestEntry.Type;
  * Bots cannot add a connector or grant themselves one, so the card is all a
  * bot can do. Its Connect adds the connector (`connector.add`, naming this
  * card) or lets this bot use it (`connector.setBots`); either way, the server
- * closes the card as `connected` once the bot can use it. Not now dismisses
+ * closes the card as `connected` once the bot is given it. Not now dismisses
  * it (`card.answer` with `dismiss`), which the server takes as final for that
  * connector in this conversation. Neither wakes the bot.
  */

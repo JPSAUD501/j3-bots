@@ -313,7 +313,7 @@ export const layer = Layer.effect(
       readonly payload: unknown;
       /** Whether it may change the model, the permission mode or the browser. */
       readonly settings: boolean;
-      /** Whether it may change what the bot's instructions say: its profile or model. */
+      /** Whether it may change what the bot's instructions say: its profile, model or browser switch. */
       readonly instructions: boolean;
       readonly chooser: Chooser;
       readonly decide: (
@@ -395,7 +395,11 @@ export const layer = Layer.effect(
           input.changes.model !== undefined ||
           input.changes.permissionMode !== undefined ||
           input.changes.browser !== undefined,
-        instructions: input.changes.profile !== undefined || input.changes.model !== undefined,
+        // The browser's rules come and go with its switch.
+        instructions:
+          input.changes.profile !== undefined ||
+          input.changes.model !== undefined ||
+          input.changes.browser !== undefined,
         chooser: "operator",
         decide: () => Effect.succeedSome(input.changes),
       });

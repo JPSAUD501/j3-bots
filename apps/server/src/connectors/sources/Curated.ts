@@ -337,6 +337,32 @@ export const curatedMatches = (list: CuratedList, entry: CuratedEntry, query: st
 export const curatedEntry = (list: CuratedList, key: string) =>
   list.connectors.find((entry) => entry.id === key);
 
+/**
+ * The entry a bot means by `service`: the one whose key or name, in any
+ * language, is it. No search: one that matched a summary or a category could
+ * offer another service than the one the bot named.
+ */
+export const curatedFind = (list: CuratedList, service: string): CuratedEntry | undefined => {
+  const wanted = fold(service.trim());
+  if (wanted === "") return undefined;
+  return list.connectors.find(
+    (entry) =>
+      entry.id === wanted || LANGUAGES.some((language) => fold(nameOf(entry, language)) === wanted),
+  );
+};
+
+/**
+ * The entries that reach the same service as the entry `key` names, by their
+ * address: that entry, and another way to connect it, such as with a key
+ * instead of a sign-in.
+ */
+export const curatedVariants = (list: CuratedList, key: string) => {
+  const entry = curatedEntry(list, key);
+  return entry === undefined
+    ? []
+    : list.connectors.filter((other) => other.remote.url === entry.remote.url).map(curatedRef);
+};
+
 /** Whether a registry entry is one the list already has: by its name, or by its address. */
 export const curatedCovers = (list: CuratedList, name: string, urls: ReadonlyArray<string>) =>
   list.connectors.some((entry) => entry.registryName === name || urls.includes(entry.remote.url));

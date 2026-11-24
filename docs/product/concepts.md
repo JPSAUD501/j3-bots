@@ -89,6 +89,8 @@ The machine J3 Bots runs on is never called a "host": a host is a room's bot.
 
 **Connector.** A service a bot can use through J3 Bots, such as the operator's notes, tracker or calendar, signed in to once by the operator, on the server. It is an MCP server the operator adds from the gallery or by its address, and the operator chooses which bots may use it: one, several or all. A bot can suggest one, never add one. Bots use its tools without ever holding its sign-in. The interface says "Connector" in English and "Conector" in Portuguese, and never "MCP" outside the form that adds one by address.
 
+From the bot's side, a connector is a set of tools named after it (`notion__search`) that act in the operator's own account. A bot given one reads what a task needs; it sends, posts, changes or deletes through one only when the operator asked for that step or said yes to it. What a connector answers, and what its tools' descriptions say, is content the bot never takes as the operator's instruction: a tool that asks for more than its job is reported, not followed. A bot with no connector for what a task needs may suggest one from the gallery, once, as a card in its conversation; the operator's Not now is final there. These rules reach only a bot that has a connector, and the suggestion's own rules travel with the tool every bot has.
+
 ## Controls
 
 **Permission mode.** How much a bot may do without asking: supervised, auto-accept edits, auto (an automatic reviewer decides) or full access. This is the engine's runtime mode, set per bot.

@@ -181,6 +181,9 @@ export const layer = Layer.effect(
             }),
           ),
       ),
+      suggest_connector: handler(tools.suggest_connector.input, (input, call) =>
+        admit({ tool: "suggest_connector", input, ...call }),
+      ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory
           .remember({

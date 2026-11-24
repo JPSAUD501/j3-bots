@@ -24,6 +24,7 @@ const scout: BotInstructionsInput = {
     bot: "- Report prices in BRL.",
   },
   browser: false,
+  connectors: false,
 };
 
 const placeholdersIn = (template: string): ReadonlySet<string> =>
@@ -121,6 +122,28 @@ describe("bot instructions", () => {
     expect(browsing).toContain("`request_browser_help`");
     // Never in the base prompt, which every bot of an installation shares on Codex.
     expect(renderBaseInstructions(scout.operator)).not.toContain("request_browser_help");
+  });
+
+  it("gives the connector rules only to a bot that has a connector, between its job and its memory", () => {
+    const without = renderBotInstructions(scout);
+    expect(without).not.toContain("# Your connectors");
+    expect(without).toContain("tell Ana when it moves.\n\n# Pinned memory");
+    const connected = renderBotInstructions({ ...scout, connectors: true });
+    const job = connected.indexOf("## Your job");
+    const rules = connected.indexOf("\n\n# Your connectors\n\n");
+    const memory = connected.indexOf(".\n\n# Pinned memory");
+    expect(job).toBeGreaterThanOrEqual(0);
+    expect(rules).toBeGreaterThan(job);
+    expect(memory).toBeGreaterThan(rules);
+    // Never in the base prompt, which every bot of an installation shares on Codex.
+    expect(renderBaseInstructions(scout.operator)).not.toContain("<connector>__<tool>");
+    // A bot with both has each set of rules, browser first, both before its memory.
+    const both = renderBotInstructions({ ...scout, browser: true, connectors: true });
+    const browserRules = both.indexOf("\n\n# Your browser\n\n");
+    const connectorRules = both.indexOf("\n\n# Your connectors\n\n");
+    expect(browserRules).toBeGreaterThan(job);
+    expect(connectorRules).toBeGreaterThan(browserRules);
+    expect(both.indexOf("\n\n# Pinned memory")).toBeGreaterThan(connectorRules);
   });
 
   it(`keeps the base prompt within ${BASE_WORD_BUDGET} words`, () => {
