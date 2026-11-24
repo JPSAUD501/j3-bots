@@ -58,6 +58,7 @@ import {
   MemoryScope,
   MemoryText,
 } from "./memory.ts";
+import { PairBotIds, PairSeq, TeammateMessage, TeammatePair } from "./pair.ts";
 import { Room, RoomHopLimit, RoomMembers, RoomName } from "./room.ts";
 import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
 import {
@@ -544,6 +545,59 @@ export const RoomRpcs = RpcGroup.make(
   Rpc.make("room.stop", { payload: { ...command, roomId: RoomId }, error: CommandError }),
 );
 
+/**
+ * Teammate conversations: the messages each pair of bots sent each other, which
+ * the operator reads and never writes into. They travel beside the roster,
+ * not in it: a pair has no read mark, pin or section. Neither subscription
+ * resumes; each starts with a snapshot.
+ */
+export const TeammatePairRpcs = RpcGroup.make(
+  /**
+   * Every pair of bots that sent each other a message, latest message first,
+   * then each pair as a new message or a change of its latest one moves it
+   * (upsert by `botIds`), and each pair that no longer has any (once both its
+   * bots are deleted). A pair with one deleted bot stays: the survivor still
+   * reads it. Hiding a bot hides nothing here; clients decide where a pair
+   * with a hidden or deleted bot shows.
+   */
+  Rpc.make("pairs.subscribe", {
+    success: Schema.Union([
+      Schema.TaggedStruct("snapshot", { pairs: Schema.Array(TeammatePair) }),
+      Schema.TaggedStruct("changed", {
+        upsert: Schema.Array(TeammatePair),
+        remove: Schema.Array(PairBotIds),
+      }),
+    ]),
+    stream: true,
+  }),
+  /**
+   * A pair's messages before `before`, or its latest without it, oldest
+   * first, for scrolling back. A pair with no messages has none: it is not
+   * an error.
+   */
+  Rpc.make("pairs.history", {
+    payload: { botIds: PairBotIds, before: Schema.optionalKey(PairSeq), limit: HistoryLimit },
+    success: Schema.Struct({ messages: Schema.Array(TeammateMessage), hasOlder: Schema.Boolean }),
+  }),
+  /**
+   * An open teammate conversation: its latest messages, oldest first, then
+   * each message as it is sent or its state changes (upsert by `seq`). A
+   * snapshot may come again, when too much changed at once to send as
+   * changes; it replaces what the client holds, as for `entries.subscribe`.
+   */
+  Rpc.make("pairs.messages.subscribe", {
+    payload: { botIds: PairBotIds },
+    success: Schema.Union([
+      Schema.TaggedStruct("snapshot", {
+        messages: Schema.Array(TeammateMessage),
+        hasOlder: Schema.Boolean,
+      }),
+      Schema.TaggedStruct("changed", { upsert: Schema.Array(TeammateMessage) }),
+    ]),
+    stream: true,
+  }),
+);
+
 export const RoutineRpcs = RpcGroup.make(
   /** Resumes with `after` like `entries.subscribe`. */
   Rpc.make("routines.subscribe", {
@@ -683,8 +737,9 @@ export const SettingsRpcs = RpcGroup.make(
 );
 
 /**
- * The entries a bot adds that notify: what it says to the operator, an urgent
- * message to a teammate, and the cards that wait on the operator. A push of
+ * The entries a bot adds that notify: what it says to the operator and the
+ * cards that wait on the operator. `handoff` is a server's before 0.5.0, whose
+ * urgent teammate messages notified: none does now. A push of
  * each kind shows on Android in a notification channel of its own, whose id
  * is the kind, so the operator can mute or silence one kind alone.
  */
@@ -1129,6 +1184,7 @@ export const J3Rpcs = RosterRpcs.merge(
   BotRpcs,
   SectionRpcs,
   RoomRpcs,
+  TeammatePairRpcs,
   RoutineRpcs,
   MemoryRpcs,
   EngineRpcs,
