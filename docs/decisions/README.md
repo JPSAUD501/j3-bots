@@ -35,6 +35,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0032](0032-updates-are-served-outside-the-protocol.md) | Updates are served outside the protocol, and offer only a signed, newer release | Proposed |
 | [0033](0033-a-client-update-runs-in-a-transient-unit.md) | A client's update runs in a transient unit, and the home records how it ended | Proposed |
 | [0034](0034-the-desktop-app-installs-only-a-signed-download.md) | The desktop app installs only a download its release signed | Proposed |
+| [0035](0035-the-android-app-installs-its-update-through-a-session.md) | The Android app installs its own update through an installer session, after checking it | Proposed |
 | [0036](0036-phone-access-restarts-the-local-server-on-the-network.md) | Phone access restarts the local server on the network, under the server's own `lan` rules | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

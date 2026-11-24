@@ -12,7 +12,7 @@ import "../global.css";
 import { I18nContext, useI18n } from "./i18n.ts";
 import { AvatarConnection } from "./components/avatar/mood.tsx";
 import { Confirmations } from "./confirm.tsx";
-import { ChangeServer, ForgetSignIn } from "./Leave.tsx";
+import { ForgetSignIn } from "./Leave.tsx";
 import { LineProbe } from "./lines.tsx";
 import { Main } from "./navigation.tsx";
 import { PairingScreen } from "./screens/Pairing.tsx";
@@ -20,13 +20,21 @@ import { session } from "./platform/platform.ts";
 import { i18nFor, usePreferences } from "./preferences.ts";
 import type { SessionState } from "./session.ts";
 import { useColor } from "./theme.ts";
+import { Mismatch } from "./update/Mismatch.tsx";
+import { useAppUpdateFollowing } from "./update/UpdatePanels.tsx";
 import { Body, Button, Centered, Title } from "./ui.tsx";
 
 /** What the app shows, from the session and its client's connection. */
 type Shown =
   | { readonly _tag: "starting" }
   | { readonly _tag: "pairing"; readonly server: URL | null; readonly reason: UnpairedReason }
-  | { readonly _tag: "incompatible"; readonly server: URL; readonly client: J3Client }
+  | {
+      readonly _tag: "incompatible";
+      readonly server: URL;
+      readonly client: J3Client;
+      readonly serverProtocol: number;
+      readonly serverVersion: string;
+    }
   | { readonly _tag: "storage-failed"; readonly retry: () => void }
   | { readonly _tag: "main"; readonly server: URL; readonly client: J3Client };
 
@@ -56,7 +64,13 @@ const shownOf = (
     case "unpaired":
       return { _tag: "pairing", server, reason };
     case "incompatible":
-      return { _tag: "incompatible", server, client };
+      return {
+        _tag: "incompatible",
+        server,
+        client,
+        serverProtocol: connection.serverProtocol,
+        serverVersion: connection.serverVersion,
+      };
     case "storage-failed":
       return { _tag: "storage-failed", retry: client.reconnectNow };
     case "offline":
@@ -111,13 +125,14 @@ function Root() {
       return <PairingScreen server={shown.server} reason={shown.reason} />;
     case "incompatible":
       return (
-        <Gate
-          title={t("gate.incompatible.appTitle")}
-          body={t("gate.incompatible.appBody", { address: shown.server.host })}
-          retry={shown.client.reconnectNow}
-        >
-          <ChangeServer />
-        </Gate>
+        <J3ClientProvider key={shown.server.origin} client={shown.client}>
+          <Mismatch
+            server={shown.server}
+            client={shown.client}
+            serverProtocol={shown.serverProtocol}
+            serverVersion={shown.serverVersion}
+          />
+        </J3ClientProvider>
       );
     case "storage-failed":
       return (
@@ -148,6 +163,7 @@ function Root() {
  */
 export function App() {
   const { language } = usePreferences();
+  useAppUpdateFollowing();
   const i18n = useMemo(() => i18nFor(language), [language]);
   const background = useColor("accent-background");
   useEffect(() => {

@@ -1326,6 +1326,49 @@ export const en = {
   "updateChannel.nightly.hint":
     "A build of each day’s changes, before they are released. It may have problems a release doesn’t.",
 
+  "about.server": "The server",
+  "about.thisApp": "This app",
+  "phoneUpdate.unchecked": "Not checked for updates yet.",
+  "phoneUpdate.available": "J3 Bots {version} is available for this app.",
+  "phoneUpdate.available.hint":
+    "It downloads to this phone and is checked against the project’s signature, then Android asks you to install it.",
+  "phoneUpdate.update": "Update the app",
+  "phoneUpdate.install": "Install",
+  "phoneUpdate.installing": "Installing {version}. The app closes and opens again on it.",
+  "phoneUpdate.cancelled":
+    "The install was cancelled. {version} is downloaded and checked, ready to install.",
+  "phoneUpdate.waitingForStable":
+    "This app runs a nightly build, so it waits for a stable release newer than it.",
+  "phoneUpdate.behind.noRelease": "No newer release of this app on its channel yet.",
+  "phoneUpdate.behind.nightlyHint":
+    "If the server runs a nightly build, choose Nightly for this app below.",
+  "phoneUpdate.permission.title": "Let J3 Bots install its update",
+  "phoneUpdate.permission.body":
+    "Android asks once. On the next screen, Install unknown apps, turn on “Allow from this source”, then come back: the install goes on. J3 Bots installs only its own updates, once they check out against the project’s signature.",
+  "phoneUpdate.permission.open": "Open Android settings",
+  "phoneUpdate.play": "Google Play installed this app, and keeps it up to date.",
+  "phoneUpdate.openPlay": "Open Google Play",
+  "phoneUpdate.failure.unreachable": "Couldn’t reach the releases. Try again later.",
+  "phoneUpdate.failure.digestMismatch":
+    "The download isn’t the file the release signed, so it was deleted and nothing was installed.",
+  "phoneUpdate.failure.notThisApp":
+    "The download isn’t this release of J3 Bots, so it was deleted and nothing was installed.",
+  "phoneUpdate.failure.notNewer":
+    "The download isn’t newer than this app, so it was deleted. J3 Bots never goes back a version.",
+  "phoneUpdate.failure.conflict":
+    "Android refused it: it isn’t signed like the app installed here. Nothing changed.",
+  "phoneUpdate.failure.incompatible": "This release doesn’t run on this phone. Nothing changed.",
+  "phoneUpdate.failure.storage": "There isn’t room on this phone for the update.",
+  "phoneUpdate.failure.blocked":
+    "Something on this phone, such as a work profile’s policy, doesn’t let apps install.",
+  "phoneUpdate.failure.installFailed": "Android couldn’t install the update. Nothing changed.",
+  "updateNotice.server": "J3 Bots {version} is ready for the server.",
+  "updateNotice.app": "J3 Bots {version} is ready for this app.",
+  "updateNotice.both": "J3 Bots {version} is ready for the server and this app.",
+  "updateNotice.open": "Opens the updates in Settings.",
+  "updateNotice.hide": "Hide until the next release",
+  "updateNotice.ok": "OK",
+
   "update.version": "J3 Bots {version}",
   "update.unavailable": "This build doesn’t update itself.",
   "update.upToDate": "Up to date.",

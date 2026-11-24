@@ -137,6 +137,7 @@ Answers: what is this bot, and what runs without me.
 
 - **Command palette** on desktop and web: jump to a bot, a room or a message; run any action by name.
 - **Settings**: engine and provider status, usage, the operator's name and time zone, devices, notifications, appearance, and about and updates: the server's version and channel, and in the desktop app, the app's.
+- **Updates on the phone.** When the server or the app has an update, one quiet line over the roster says so, never a dialog. It opens Settings → About and updates, and hides until the next release. While the server updates, the same line shows how far it has come, its restart included, in place of the line that says the server cannot be reached. It then says once how the update ended. The app's own update is a tap too: the app downloads the release and checks it against the project's signature, and Android asks to install it. The first time, the app explains Android's "Install unknown apps" before it opens that page, and goes on when the operator comes back. A phone whose server speaks another protocol shows the side that is behind, with the update that brings it forward. A server behind the app is first asked to look for releases, so the phone says none is out yet only after it has looked. An app behind its server looks for its own release as the screen opens, and has its check and its channel there, since the server may run a nightly.
 
 ## States the interface must always show
 
