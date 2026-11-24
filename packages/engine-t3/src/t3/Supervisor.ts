@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Whether another program holds the engine's port takes a trial listen from node:net.
 import * as NodeNet from "node:net";
 import type { EngineInstallProgress, EngineStatus } from "@j3-bots/contracts";
+import { inJob } from "@j3-bots/processes";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -26,7 +27,6 @@ import type { Access } from "./Credential.ts";
 import { ORCHESTRATION_PROTOCOL, pin } from "./Pin.ts";
 import { engineFolders, harnessDefaultHomes, type PrivateFiles } from "./PrivateFiles.ts";
 import { makeProcesses, servesHome } from "./Processes.ts";
-import { inJob } from "./WindowsJob.ts";
 
 // Runs the engine as a child process and says, at every moment, whether it can
 // take commands. Being down is a state, not a failure: the supervisor restarts
@@ -44,7 +44,7 @@ import { inJob } from "./WindowsJob.ts";
 // `beforeStart` run between, so what it provisions reaches every harness.
 //
 // On Windows the engine runs in a job that ends every process it started once
-// the engine has ended, crashed or been stopped (`WindowsJob.ts`): nothing it
+// the engine has ended, crashed or been stopped (`inJob` in `@j3-bots/processes`): nothing it
 // started survives into the next run or past the server's stop.
 
 type UnavailableReason = Extract<EngineStatus["state"], { readonly _tag: "unavailable" }>["reason"];

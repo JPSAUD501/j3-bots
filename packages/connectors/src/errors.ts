@@ -138,6 +138,23 @@ export class NotMcp extends Schema.TaggedError<NotMcp>()("NotMcp", {}) {
   }
 }
 
+/** Why a command connector's process is not there to answer. */
+const CommandFailure = Schema.Literals([
+  /** Its program is not on the server: no such file, or none on the search path. */
+  "not-found",
+  /** Its process could not start, or ended before it answered. */
+  "exited",
+]);
+
+/** A command connector's process is not running to answer. Nothing it printed is kept. */
+export class CommandFailed extends Schema.TaggedError<CommandFailed>()("CommandFailed", {
+  reason: CommandFailure,
+}) {
+  override get message(): string {
+    return `A command connector's process is not running: ${this.reason}.`;
+  }
+}
+
 /** Every way a request to a connector can fail. */
 export type ConnectorFailure =
   | CredentialsUnavailable
@@ -146,4 +163,5 @@ export type ConnectorFailure =
   | ResponseTooLarge
   | TimedOut
   | ServerError
-  | NotMcp;
+  | NotMcp
+  | CommandFailed;

@@ -77,6 +77,26 @@ export const hiddenOf = (
   });
 
 /**
+ * A command connector's command line and environment, as its process is
+ * started with them: from its vault record alone, which one write replaces
+ * whole, never from the program the connector's row shows.
+ */
+export const commandOf = (
+  vault: typeof Vault.Service,
+  connector: StoredConnector,
+): Effect.Effect<
+  NonNullable<ConnectorSecret["command"]> & Pick<ConnectorSecret, "env">,
+  CredentialsUnavailable
+> =>
+  Effect.gen(function* () {
+    const secret = yield* secretOf(vault, connector);
+    if (Option.isNone(secret) || secret.value.command === null) {
+      return yield* new AuthFailing({ reason: "secret-unusable" });
+    }
+    return { ...secret.value.command, env: secret.value.env };
+  });
+
+/**
  * Signs the connector's requests from the vault and, for an OAuth connector,
  * its sign-in. `allowed` is asked first, right before each request goes out:
  * a request it refuses is withdrawn unsigned.

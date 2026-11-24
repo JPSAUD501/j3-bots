@@ -11,6 +11,9 @@
  *   tools the operator accepted, and the changes held for them.
  * - {@link toolName}: the name a bot calls a connector's tool by.
  * - {@link statusOf} and {@link observe}: a connector's status.
+ * - {@link openCommandSession} and {@link makeSupervisor}: a connector started
+ *   by command, its process run as `docs/architecture/server.md` says, and
+ *   {@link pinRefusal}, which refuses a package launcher with no exact version.
  * - The errors a connector's request can end in, none of which carries a URL,
  *   a secret or the remote server's text.
  */
@@ -24,9 +27,14 @@ export {
   ListedTool,
   MAX_DESCRIPTION_CHARACTERS,
 } from "./catalog.ts";
+export { reservedVariable } from "./command/environment.ts";
+export { pinRefusal } from "./command/pinning.ts";
+export { type CommandSession, openCommandSession } from "./command/session.ts";
+export { makeSupervisor, processCapacity, type Supervisor } from "./command/supervisor.ts";
 export {
   AuthFailing,
   AuthFailure,
+  CommandFailed,
   type ConnectorFailure,
   type CredentialsUnavailable,
   NeedsSignIn,

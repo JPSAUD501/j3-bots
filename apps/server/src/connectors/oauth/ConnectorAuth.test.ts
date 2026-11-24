@@ -79,6 +79,7 @@ const run = <A, E>(
       address: Redacted.make(MCP_URL),
       oauth: null,
       headers: [],
+      command: null,
       env: [],
       formSecrets: [],
     });

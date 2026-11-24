@@ -480,6 +480,7 @@ export const addOAuthConnector = Effect.gen(function* () {
     address: Redacted.make(MCP_URL),
     oauth: null,
     headers: [],
+    command: null,
     env: [],
     formSecrets: [],
   });

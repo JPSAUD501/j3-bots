@@ -428,8 +428,8 @@ export const layer = Layer.effect(
     const save = (secret: ConnectorSecret) => fromVault(vault.connectorSecrets.put(secret));
 
     /**
-     * Saves the connector's OAuth part, keeping its address, headers and
-     * environment. `null` removes it.
+     * Saves the connector's OAuth part, keeping its address, headers, command
+     * line, environment and form's secrets. `null` removes it.
      */
     const saveOAuth = Effect.fn("ConnectorAuth.saveOAuth")(function* (
       id: ConnectorId,
@@ -437,10 +437,11 @@ export const layer = Layer.effect(
     ) {
       const current = yield* secretOf(id);
       const kept = Option.match(current, {
-        onNone: () => ({ address: null, headers: [], env: [], formSecrets: [] }),
-        onSome: ({ address, headers, env, formSecrets }) => ({
+        onNone: () => ({ address: null, headers: [], command: null, env: [], formSecrets: [] }),
+        onSome: ({ address, headers, command, env, formSecrets }) => ({
           address,
           headers,
+          command,
           env,
           formSecrets,
         }),
@@ -449,6 +450,7 @@ export const layer = Layer.effect(
         oauth === null &&
         kept.address === null &&
         kept.headers.length === 0 &&
+        kept.command === null &&
         kept.env.length === 0 &&
         kept.formSecrets.length === 0
       ) {
