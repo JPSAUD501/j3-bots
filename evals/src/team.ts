@@ -161,7 +161,7 @@ const failures = (run: Run): ReadonlyArray<string> => {
     ...Option.match(s.room, {
       onNone: () => ["no room"],
       onSome: (room) => [
-        ...(room.members.includes(run.primary) ? [] : ["host not a member"]),
+        ...(room.members[0] === run.primary ? [] : [`${PRIMARY} not its first member`]),
         ...(s.made.every((id) => room.members.includes(id)) ? [] : ["a made bot left out"]),
         ...(s.kickoffs > 0 ? [] : ["no kickoff"]),
         ...(s.answered.length > 0 ? [] : ["no member answered"]),
