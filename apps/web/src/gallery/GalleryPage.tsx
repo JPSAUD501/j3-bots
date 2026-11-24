@@ -1317,12 +1317,7 @@ function NoticesSection() {
       <Labeled label="Event lines: handoffs, routine changes, a saved name">
         <div className="flex flex-col">
           {variants.eventLines.map((line) => (
-            <EventLine
-              key={latestOfLine(line).id}
-              line={line}
-              onOpenRoutine={nothing}
-              onOpenConversation={nothing}
-            />
+            <EventLine key={latestOfLine(line).id} line={line} onOpenRoutine={nothing} />
           ))}
         </div>
       </Labeled>

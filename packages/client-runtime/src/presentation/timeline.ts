@@ -17,6 +17,7 @@ import {
   type NonMessageEntry,
   placeOf,
 } from "./eventLine.ts";
+import { DIVIDER_GAP, GROUP_GAP } from "./grouping.ts";
 
 export type GroupPosition = "single" | "first" | "middle" | "last";
 
@@ -64,11 +65,6 @@ export type TimelineItem =
       readonly id: EntryId;
       readonly order: EntryOrder;
     };
-
-/** A quiet stretch longer than this gets a time between the entries around it. */
-const DIVIDER_GAP = 15 * 60_000;
-/** Consecutive messages from one author closer than this form one group. */
-const GROUP_GAP = 5 * 60_000;
 
 /**
  * A message sent from this device is keyed by its command id, outgoing and
@@ -129,9 +125,16 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
   for (const entry of entries) {
     const at = DateTime.toEpochMillis(entry.createdAt);
     const gap = previous === null ? Infinity : at - DateTime.toEpochMillis(previous.createdAt);
+    previous = entry;
     const key = keyOf(entry);
-    if (gap > DIVIDER_GAP)
-      items.push({ kind: "divider", key: `divider-${key}`, at: entry.createdAt });
+    const divider: TimelineItem | null =
+      gap > DIVIDER_GAP ? { kind: "divider", key: `divider-${key}`, at: entry.createdAt } : null;
+    const card = entry._tag === "message" || entry._tag === "outgoing" ? null : known(entry);
+    if (card !== null && card._tag !== "work-fold") {
+      placeOther(items, key, card, divider);
+      continue;
+    }
+    if (divider !== null) items.push(divider);
     if (entry._tag === "message" || entry._tag === "outgoing") {
       const last = items.at(-1);
       const joins = last?.kind === "message" && gap <= GROUP_GAP && sameAuthor(last.message, entry);
@@ -142,35 +145,40 @@ export function buildTimeline(entries: ReadonlyArray<ConversationItem>): Timelin
         };
       }
       items.push({ kind: "message", key, message: entry, position: joins ? "last" : "single" });
-    } else {
-      const card = known(entry);
-      if (card === null) items.push({ kind: "unknown", key, id: entry.id, order: entry.order });
-      else if (card._tag === "work-fold")
-        items.push({ kind: "work", key, fold: card, live: false });
-      else placeOther(items, key, card);
-    }
-    previous = entry;
+    } else if (card === null)
+      items.push({ kind: "unknown", key, id: entry.id, order: entry.order });
+    else items.push({ kind: "work", key, fold: card, live: false });
   }
   return items;
 }
 
 /**
- * An entry that is neither a message nor a turn's work: a line when it tells
- * something that happened, joined to the line just before it when the two
- * make one (`joinEventLines`); otherwise a card.
+ * An entry that is neither a message nor a turn's work, after the time
+ * `divider` when one is due: a line when it tells something that happened,
+ * joined to the line just before it when the two make one (`joinEventLines`),
+ * the time then left out; otherwise a card.
  */
-function placeOther(items: TimelineItem[], key: string, entry: NonMessageEntry) {
+function placeOther(
+  items: TimelineItem[],
+  key: string,
+  entry: NonMessageEntry,
+  divider: TimelineItem | null,
+) {
   const place = placeOf(entry);
-  if (place._tag === "card") {
-    items.push({ kind: "card", key, entry: place.entry });
-    return;
-  }
-  const { line } = place;
   const last = items.at(-1);
-  const joined = last?.kind === "event" ? joinEventLines(last.line, line) : null;
-  if (last?.kind === "event" && joined !== null)
-    items[items.length - 1] = { ...last, line: joined };
-  else items.push({ kind: "event", key, line });
+  if (place._tag === "line" && last?.kind === "event") {
+    const joined = joinEventLines(last.line, place.line, divider !== null);
+    if (joined !== null) {
+      items[items.length - 1] = { ...last, line: joined };
+      return;
+    }
+  }
+  if (divider !== null) items.push(divider);
+  items.push(
+    place._tag === "card"
+      ? { kind: "card", key, entry: place.entry }
+      : { kind: "event", key, line: place.line },
+  );
 }
 
 /** The order of the entry a row shows; none for a divider or a message still on its way. */

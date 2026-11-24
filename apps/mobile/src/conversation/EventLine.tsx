@@ -5,16 +5,13 @@ import {
   type RoutineChanges,
 } from "@j3-bots/client-runtime/presentation";
 import {
-  activityTime,
   type EventIcon,
   type EventLineWords,
   type EventMark,
   eventLineWords,
-  handoffHeading,
-  handoffMarks,
   routineChangeDetail,
 } from "@j3-bots/client-runtime/wording";
-import type { BotId, HandoffEntry, RoutineId } from "@j3-bots/contracts";
+import type { BotId, RoutineId } from "@j3-bots/contracts";
 import {
   CalendarClock,
   ChevronRight,
@@ -32,8 +29,6 @@ import { Sheet } from "../components/Sheet.tsx";
 import { useBots, usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
-import { Button } from "../ui.tsx";
-import { MessageText } from "./MessageText.tsx";
 
 const icons: Record<EventIcon, LucideIcon> = {
   routine: CalendarClock,
@@ -52,19 +47,18 @@ const markTone: Record<EventMark["tone"], string> = {
 /**
  * Something that happened, told in one quiet centred line about as tall as a
  * time between messages: a teammate's face or a glyph, then a short sentence
- * with the name in medium weight. A line with more to show opens it: a
- * teammate message in full, or the routines of a line that tells several, in
- * a sheet; a routine, over its bot's details. The rest only tell. A line that
+ * with the name in medium weight. A line with more to show opens it: the
+ * routines of a line that tells several, in a sheet; a routine, over its
+ * bot's details. The rest only tell, a run of teammate messages too until
+ * the teammate conversation is drawn. A line that
  * opens is pressed anywhere across its row, edge to edge: a row that wide is
  * easy to hit at 32 dp, and its target never reaches into the next row.
  */
 export function EventLine({
   line,
-  onOpenBot,
   onOpenRoutine,
 }: {
   readonly line: Line;
-  readonly onOpenBot: (botId: BotId) => void;
   readonly onOpenRoutine: (routineId: RoutineId) => void;
 }) {
   const ctx = usePresentation();
@@ -76,7 +70,7 @@ export function EventLine({
   const title = words.runs.map((run) => run.text).join("");
   return (
     <View>
-      {opens === null ? (
+      {opens === null || opens._tag === "pair" || opens._tag === "pairs" ? (
         <View
           accessible
           accessibilityLabel={words.label}
@@ -89,11 +83,7 @@ export function EventLine({
           accessibilityRole="button"
           accessibilityLabel={words.label}
           accessibilityHint={
-            opens._tag === "routine"
-              ? t("eventLine.opensRoutine")
-              : opens._tag === "message"
-                ? t("eventLine.opensMessage")
-                : t("eventLine.opensRoutines")
+            opens._tag === "routine" ? t("eventLine.opensRoutine") : t("eventLine.opensRoutines")
           }
           depth="row"
           onPress={() => {
@@ -104,19 +94,6 @@ export function EventLine({
         >
           {sentence}
         </PressScale>
-      )}
-      {opens?._tag === "message" && (
-        <MessageSheet
-          open={open}
-          title={title}
-          peer={opens.peer}
-          entry={opens.entry}
-          onClose={() => setOpen(false)}
-          onOpenBot={(botId) => {
-            setOpen(false);
-            onOpenBot(botId);
-          }}
-        />
       )}
       {opens?._tag === "routines" && (
         <Sheet open={open} title={title} onClose={() => setOpen(false)}>
@@ -169,65 +146,6 @@ function Face({ botId, size }: { readonly botId: BotId; readonly size: number })
   const bot = useBots().get(botId);
   return bot === undefined ? null : (
     <BotAvatar avatar={bot.profile.avatar} seed={bot.id} state="idle" size={size} still />
-  );
-}
-
-/**
- * A teammate message in full, headed by its direction, its marks and its
- * time, with a way to the teammate's own conversation while it has one.
- */
-function MessageSheet({
-  open,
-  title,
-  peer,
-  entry,
-  onClose,
-  onOpenBot,
-}: {
-  readonly open: boolean;
-  readonly title: string;
-  readonly peer: BotId;
-  readonly entry: HandoffEntry;
-  readonly onClose: () => void;
-  readonly onOpenBot: (botId: BotId) => void;
-}) {
-  const ctx = usePresentation();
-  const { t } = ctx.i18n;
-  const other = useBots().get(peer);
-  const name = other?.profile.name ?? t("eventLine.deletedBot");
-  return (
-    <Sheet
-      open={open}
-      title={title}
-      lead={<Face botId={peer} size={24} />}
-      onClose={onClose}
-      footer={
-        other !== undefined && (
-          <View className="border-t border-border px-5 py-3">
-            <Button
-              variant="secondary"
-              label={t("eventLine.openConversation", { name })}
-              onPress={() => onOpenBot(peer)}
-            />
-          </View>
-        )
-      }
-    >
-      <View className="mb-2 flex-row flex-wrap items-baseline gap-x-2">
-        <Text className="text-xs text-muted-foreground">
-          {handoffHeading(entry, name, ctx.i18n)}
-        </Text>
-        {handoffMarks(entry, ctx.i18n).map((mark) => (
-          <Text key={mark.text} className={`text-xs font-medium ${markTone[mark.tone]}`}>
-            {mark.text}
-          </Text>
-        ))}
-        <Text className="ms-auto text-xs text-muted-foreground">
-          {activityTime(entry.createdAt, ctx)}
-        </Text>
-      </View>
-      <MessageText text={entry.text} mentionable={[]} className="text-base text-foreground" />
-    </Sheet>
   );
 }
 

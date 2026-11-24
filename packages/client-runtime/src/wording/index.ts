@@ -38,7 +38,6 @@ export {
   eventLineWords,
   type EventMark,
   type EventRun,
-  handoffHeading,
   handoffMarks,
   routineChangeDetail,
 } from "./eventLine.ts";
@@ -66,13 +65,11 @@ export {
 } from "./status.ts";
 export { connectStepText, type ConnectStepText } from "./onboarding.ts";
 export {
-  handoffStateText,
   type LineName,
   type NamedLine,
   pairLine,
   pairTitle,
   teammateChoice,
-  teammateRunLine,
   type TeamLineContext,
   type TeamNotice,
   teamNoticeLine,

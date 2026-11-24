@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  BotId,
-  Entry,
-  HandoffEntry,
-  MessageEntry,
-  NoticeEntry,
-  RoutineChangeEntry,
-  RoutineId,
-  WorkFoldEntry,
+import {
+  type BotId,
+  type Entry,
+  type EntryId,
+  type HandoffEntry,
+  type MessageEntry,
+  type NoticeEntry,
+  type PairBotIds,
+  pairBotIds,
+  type RoutineChangeEntry,
+  type RoutineId,
+  type WorkFoldEntry,
 } from "@j3-bots/contracts";
 
 /** A notice of one kind, with its notice narrowed to that kind. */
@@ -24,8 +27,9 @@ export type RoutineChanges = readonly [RoutineChangeEntry, ...RoutineChangeEntry
  * must answer, allow, give or sign in to stays a card, and so does a notice
  * of something that stopped, which may offer Try again.
  *
- * - `handoff`: a message between this bot and a teammate, either way; the
- *   line opens it in full.
+ * - `teammates`: messages between this bot and its teammates, either way,
+ *   with nothing else between them (`TeammateRun`); the line opens the
+ *   teammate conversation, or a chooser when there are several.
  * - `routines`: one routine, or several in a row, created or changed alike;
  *   the line opens the routine, or lists them (`joinEventLines`).
  * - `routine-paused`: J3 Bots paused a routine it could not read; the line
@@ -33,12 +37,7 @@ export type RoutineChanges = readonly [RoutineChangeEntry, ...RoutineChangeEntry
  * - `operator-named`: a bot saved the name the operator asked to be called by.
  */
 export type EventLine =
-  | {
-      readonly _tag: "handoff";
-      /** The other bot. */
-      readonly peer: BotId;
-      readonly entry: HandoffEntry;
-    }
+  | { readonly _tag: "teammates"; readonly run: TeammateRun }
   | { readonly _tag: "routines"; readonly changes: RoutineChanges }
   | { readonly _tag: "routine-paused"; readonly entry: NoticeOf<"routine-paused"> }
   | { readonly _tag: "operator-named"; readonly entry: NoticeOf<"operator-named"> };
@@ -54,13 +53,60 @@ export function handoffPeer(entry: HandoffEntry): BotId {
   return entry.direction === "sent" ? entry.recipientId : entry.author.botId;
 }
 
+/** The bot whose conversation a teammate message is in. */
+const ownerOf = (entry: HandoffEntry): BotId =>
+  entry.direction === "sent" ? entry.author.botId : entry.recipientId;
+
+/** One teammate a run of messages was with, and where their conversation opens. */
+export interface TeammateRunPair {
+  readonly peer: BotId;
+  readonly botIds: PairBotIds;
+  /** The run's first message with this teammate: the conversation opens at it. */
+  readonly first: EntryId;
+  /** How many of the run's messages were with this teammate. */
+  readonly count: number;
+}
+
 /**
- * A teammate message as a line of the conversation it is in: one line each,
- * joined to none. Kept apart and small, since messages between bots are to
- * move into a conversation of their own, which replaces this.
+ * Consecutive teammate messages in one bot's conversation, with nothing else
+ * between them, which the conversation tells in one line ("Talked with Wren
+ * · 3 messages").
  */
-function handoffLine(entry: HandoffEntry): EventLine {
-  return { _tag: "handoff", peer: handoffPeer(entry), entry };
+export interface TeammateRun {
+  /** Oldest first. */
+  readonly entries: readonly [HandoffEntry, ...HandoffEntry[]];
+  /** Each teammate, in the order the run first met them. */
+  readonly pairs: readonly [TeammateRunPair, ...TeammateRunPair[]];
+  /** `sent` when the bot only wrote, `received` when it only heard, `both` otherwise. */
+  readonly direction: "sent" | "received" | "both";
+  /** Messages that never reached their teammate: `not-delivered` or `stopped`. */
+  readonly undelivered: number;
+}
+
+/** The run `entries` make, oldest first. */
+function teammateRun(entries: readonly [HandoffEntry, ...HandoffEntry[]]): TeammateRun {
+  const [head, ...tail] = entries;
+  const pairOf = (entry: HandoffEntry): TeammateRunPair => {
+    const peer = handoffPeer(entry);
+    return { peer, botIds: pairBotIds(ownerOf(entry), peer), first: entry.id, count: 1 };
+  };
+  const pairs: [TeammateRunPair, ...TeammateRunPair[]] = [pairOf(head)];
+  for (const entry of tail) {
+    const peer = handoffPeer(entry);
+    const index = pairs.findIndex((pair) => pair.peer === peer);
+    const known = pairs[index];
+    if (known === undefined) pairs.push(pairOf(entry));
+    else pairs[index] = { ...known, count: known.count + 1 };
+  }
+  const sent = entries.filter((entry) => entry.direction === "sent").length;
+  return {
+    entries,
+    pairs,
+    direction: sent === entries.length ? "sent" : sent === 0 ? "received" : "both",
+    undelivered: entries.filter(
+      (entry) => entry.state === "not-delivered" || entry.state === "stopped",
+    ).length,
+  };
 }
 
 /** How an entry that is neither a message nor a turn's work is shown: in a line, or as a card. */
@@ -71,7 +117,7 @@ export type EntryPlace =
 export function placeOf(entry: NonMessageEntry): EntryPlace {
   switch (entry._tag) {
     case "handoff":
-      return { _tag: "line", line: handoffLine(entry) };
+      return { _tag: "line", line: { _tag: "teammates", run: teammateRun([entry]) } };
     case "routine-change":
       return { _tag: "line", line: { _tag: "routines", changes: [entry] } };
     case "notice": {
@@ -121,11 +167,16 @@ function joinRoutines(changes: RoutineChanges, next: RoutineChangeEntry): Routin
 
 /**
  * The line `next` makes together with the line just before it, or null when
- * they stay two lines. Only routine changes join (`joinRoutines`); anything
- * between two lines, a time included, keeps them apart.
+ * they stay two lines. `quiet` says a time stands between them, a quiet
+ * stretch long enough to be shown. Two runs of teammate messages join, across
+ * a time too: an exchange told in one line says nothing of its pauses. Routine
+ * changes join (`joinRoutines`) when no time stands between them. Anything
+ * else between two lines keeps them apart.
  */
-export function joinEventLines(last: EventLine, next: EventLine): EventLine | null {
-  if (last._tag !== "routines" || next._tag !== "routines") return null;
+export function joinEventLines(last: EventLine, next: EventLine, quiet: boolean): EventLine | null {
+  if (last._tag === "teammates" && next._tag === "teammates")
+    return { _tag: "teammates", run: teammateRun([...last.run.entries, ...next.run.entries]) };
+  if (last._tag !== "routines" || next._tag !== "routines" || quiet) return null;
   const joined = next.changes.reduce<RoutineChanges | null>(
     (changes, change) => (changes === null ? null : joinRoutines(changes, change)),
     last.changes,
@@ -136,11 +187,14 @@ export function joinEventLines(last: EventLine, next: EventLine): EventLine | nu
 /** The newest entry a line tells: the one that keeps its place and that reading it reads through. */
 export function latestOfLine(line: EventLine): NonMessageEntry {
   switch (line._tag) {
+    case "teammates":
+      return line.run.entries.reduce((latest, entry) =>
+        entry.order > latest.order ? entry : latest,
+      );
     case "routines":
       return line.changes.reduce((latest, change) =>
         change.order > latest.order ? change : latest,
       );
-    case "handoff":
     case "routine-paused":
     case "operator-named":
       return line.entry;
@@ -148,20 +202,27 @@ export function latestOfLine(line: EventLine): NonMessageEntry {
 }
 
 /**
- * What tapping a line opens: the message in full; the routine; the routines
- * of a line that tells several, to pick one; or nothing, for a line with
- * nothing more to show, such as a deleted routine's.
+ * What tapping a line opens: the teammate conversation, at the run's first
+ * message with that teammate (`TeammatePairs` reveals it); the teammates of a
+ * run with several, to pick one; the routine; the routines of a line that
+ * tells several, to pick one; or nothing, for a line with nothing more to
+ * show, such as a deleted routine's.
  */
 export type EventLineOpens =
-  | { readonly _tag: "message"; readonly peer: BotId; readonly entry: HandoffEntry }
+  | { readonly _tag: "pair"; readonly pair: TeammateRunPair }
+  | { readonly _tag: "pairs"; readonly pairs: TeammateRun["pairs"] }
   | { readonly _tag: "routine"; readonly routineId: RoutineId }
   | { readonly _tag: "routines"; readonly changes: RoutineChanges }
   | null;
 
 export function eventLineOpens(line: EventLine): EventLineOpens {
   switch (line._tag) {
-    case "handoff":
-      return { _tag: "message", peer: line.peer, entry: line.entry };
+    case "teammates": {
+      const [only, ...rest] = line.run.pairs;
+      return rest.length > 0
+        ? { _tag: "pairs", pairs: line.run.pairs }
+        : { _tag: "pair", pair: only };
+    }
     case "routines": {
       const [only, ...rest] = line.changes;
       if (rest.length > 0) return { _tag: "routines", changes: line.changes };

@@ -163,8 +163,6 @@ export {
 } from "./roomForm.ts";
 export {
   buildPairTimeline,
-  type ConversationRow,
-  conversationRowOrder,
   inPair,
   pairKeyText,
   pairMessageKey,
@@ -172,9 +170,6 @@ export {
   peerOf,
   type Teammate,
   teammatesOf,
-  type TeammateRun,
-  type TeammateRunPair,
-  withTeammateRuns,
 } from "./pairs.ts";
 export {
   arrangedOrder,
@@ -244,6 +239,8 @@ export {
   type NonMessageEntry,
   placeOf,
   type RoutineChanges,
+  type TeammateRun,
+  type TeammateRunPair,
 } from "./eventLine.ts";
 export {
   type ArrivalCounts,

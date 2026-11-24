@@ -1,26 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Popover } from "@base-ui/react/popover";
-import type { BotId, HandoffEntry, RoutineId } from "@j3-bots/contracts";
+import type { BotId, RoutineId } from "@j3-bots/contracts";
 import {
   type EventLine as Line,
   eventLineOpens,
   type RoutineChanges,
 } from "@j3-bots/client-runtime/presentation";
 import {
-  activityTime,
   type EventIcon,
   type EventLineWords,
   type EventMark,
   eventLineWords,
-  handoffHeading,
-  handoffMarks,
   routineChangeDetail,
 } from "@j3-bots/client-runtime/wording";
 import {
   CalendarClockIcon,
   ChevronRightIcon,
   CirclePauseIcon,
-  CornerDownRightIcon,
   type LucideIcon,
   MessagesSquareIcon,
   Trash2Icon,
@@ -31,8 +27,6 @@ import { useBot, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { BotAvatar } from "./avatar/BotAvatar";
-import { MessageText } from "./MessageText";
-import { Button } from "./ui/button";
 
 const icons: Record<EventIcon, LucideIcon> = {
   routine: CalendarClockIcon,
@@ -65,18 +59,17 @@ const control = cn(
 /**
  * Something that happened, told in one quiet centred line about as tall as a
  * time between messages: a teammate's face or a glyph, then a short sentence
- * with the name in medium weight. A line with more to show opens it: a
- * teammate message in full, or the routines of a line that tells several, in
- * a popover; a routine, in the details panel. The rest only tell.
+ * with the name in medium weight. A line with more to show opens it: the
+ * routines of a line that tells several, in a popover; a routine, in the
+ * details panel. The rest only tell, a run of teammate messages too until
+ * the teammate conversation is drawn.
  */
 export function EventLine({
   line,
   onOpenRoutine,
-  onOpenConversation,
 }: {
   line: Line;
   onOpenRoutine: (routineId: RoutineId) => void;
-  onOpenConversation: (botId: BotId) => void;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -100,7 +93,7 @@ export function EventLine({
   );
   return (
     <div className="flex justify-center px-4 py-1.5 text-2xs text-muted-foreground pointer-coarse:p-0">
-      {opens === null ? (
+      {opens === null || opens._tag === "pair" || opens._tag === "pairs" ? (
         <p className={cn("inline-flex max-w-full items-center gap-1.5 text-center", coarseRow)}>
           {sentence}
         </p>
@@ -114,16 +107,6 @@ export function EventLine({
         >
           {sentence}
         </button>
-      ) : opens._tag === "message" ? (
-        popover(
-          t("eventLine.opensMessage"),
-          <Message
-            title={title}
-            peer={opens.peer}
-            entry={opens.entry}
-            onOpenConversation={onOpenConversation}
-          />,
-        )
       ) : (
         popover(
           t("eventLine.opensRoutines"),
@@ -171,57 +154,6 @@ function Face({ botId, size }: { botId: BotId; size: number }) {
   const bot = useBot(botId);
   return bot === null ? null : (
     <BotAvatar avatar={bot.profile.avatar} seed={bot.id} state="idle" size={size} still />
-  );
-}
-
-/**
- * A teammate message in full, headed by its direction, its marks and its
- * time, with a way to the teammate's own conversation while it has one.
- */
-function Message({
-  title,
-  peer,
-  entry,
-  onOpenConversation,
-}: {
-  title: string;
-  peer: BotId;
-  entry: HandoffEntry;
-  onOpenConversation: (botId: BotId) => void;
-}) {
-  const ctx = usePresentation();
-  const { t } = ctx.i18n;
-  const other = useBot(peer);
-  const name = other?.profile.name ?? t("eventLine.deletedBot");
-  return (
-    <>
-      <Popover.Title className="flex items-center gap-2 px-4 pt-3.5 pb-1 font-medium">
-        <Face botId={peer} size={20} />
-        {title}
-      </Popover.Title>
-      <div className="flex flex-wrap items-baseline gap-x-2 px-4 pb-2 text-2xs text-muted-foreground">
-        <span>{handoffHeading(entry, name, ctx.i18n)}</span>
-        {handoffMarks(entry, ctx.i18n).map((mark) => (
-          <span key={mark.text} className={cn("font-medium", markTone[mark.tone])}>
-            {mark.text}
-          </span>
-        ))}
-        <time className="ms-auto">{activityTime(entry.createdAt, ctx)}</time>
-      </div>
-      <div className="min-h-0 overflow-y-auto px-4 pb-3 break-words">
-        <MessageText text={entry.text} />
-      </div>
-      {other !== null && (
-        <div className="flex justify-end border-t border-border px-2 py-1.5">
-          <Popover.Close
-            render={<Button variant="ghost" size="sm" onClick={() => onOpenConversation(peer)} />}
-          >
-            <CornerDownRightIcon aria-hidden />
-            {t("eventLine.openConversation", { name })}
-          </Popover.Close>
-        </div>
-      )}
-    </>
   );
 }
 
