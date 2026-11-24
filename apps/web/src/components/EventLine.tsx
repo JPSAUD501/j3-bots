@@ -49,13 +49,17 @@ const markTone: Record<EventMark["tone"], string> = {
 };
 
 /**
- * A line's box is as tall as its text. On a touch screen it is the touch
- * target's height instead, and its row loses its padding, so a target never
- * reaches into the row next to it.
+ * On a touch screen a line takes its whole row, edge to edge and 32 px tall,
+ * in place of the row's padding: a row that wide is easy to hit, and its
+ * target never reaches into the next row. A fine pointer keeps the line as
+ * tall as its text.
  */
+const coarseRow =
+  "pointer-coarse:min-h-8 pointer-coarse:w-full pointer-coarse:justify-center pointer-coarse:px-4";
+
 const control = cn(
-  "inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-center transition-colors duration-(--duration-fast) hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent data-popup-open:text-foreground",
-  touchTarget,
+  "inline-flex max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-center transition-colors duration-(--duration-fast) hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent data-popup-open:text-foreground pointer-coarse:rounded-none",
+  coarseRow,
 );
 
 /**
@@ -95,9 +99,9 @@ export function EventLine({
     </Popover.Root>
   );
   return (
-    <div className="flex justify-center px-4 py-1.5 text-2xs text-muted-foreground pointer-coarse:py-0">
+    <div className="flex justify-center px-4 py-1.5 text-2xs text-muted-foreground pointer-coarse:p-0">
       {opens === null ? (
-        <p className="inline-flex max-w-full items-center gap-1.5 text-center pointer-coarse:min-h-(--layout-touch-target)">
+        <p className={cn("inline-flex max-w-full items-center gap-1.5 text-center", coarseRow)}>
           {sentence}
         </p>
       ) : opens._tag === "routine" ? (

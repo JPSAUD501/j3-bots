@@ -15,7 +15,6 @@ import {
   routineChangeDetail,
 } from "@j3-bots/client-runtime/wording";
 import type { BotId, HandoffEntry, RoutineId } from "@j3-bots/contracts";
-import { layout } from "@j3-bots/design-tokens";
 import {
   CalendarClock,
   ChevronRight,
@@ -51,23 +50,13 @@ const markTone: Record<EventMark["tone"], string> = {
 };
 
 /**
- * The line's own height. Its touch target grows past it by `SLOP` on every
- * side, to the touch target's height. A view takes no touch beyond its own
- * box, so the slop sits inside a frame grown by as much, which its negative
- * margin keeps out of the layout; the row is padded by `SLOP` too, so the
- * target ends where the row does and never reaches into the next one, which
- * the list may stack over or under it.
- */
-const LINE_HEIGHT = 24;
-const SLOP = (layout.touchTarget - LINE_HEIGHT) / 2;
-const slopFrame = { padding: SLOP, margin: -SLOP } as const;
-
-/**
  * Something that happened, told in one quiet centred line about as tall as a
  * time between messages: a teammate's face or a glyph, then a short sentence
  * with the name in medium weight. A line with more to show opens it: a
  * teammate message in full, or the routines of a line that tells several, in
- * a sheet; a routine, over its bot's details. The rest only tell.
+ * a sheet; a routine, over its bot's details. The rest only tell. A line that
+ * opens is pressed anywhere across its row, edge to edge: a row that wide is
+ * easy to hit at 32 dp, and its target never reaches into the next row.
  */
 export function EventLine({
   line,
@@ -86,13 +75,12 @@ export function EventLine({
   const sentence = <Sentence words={words} />;
   const title = words.runs.map((run) => run.text).join("");
   return (
-    <View className="items-center px-4" style={{ paddingVertical: SLOP }}>
+    <View>
       {opens === null ? (
         <View
           accessible
           accessibilityLabel={words.label}
-          style={{ minHeight: LINE_HEIGHT }}
-          className="max-w-full flex-row items-center justify-center gap-1.5"
+          className="min-h-8 flex-row items-center justify-center gap-1.5 px-4"
         >
           {sentence}
         </View>
@@ -107,14 +95,12 @@ export function EventLine({
                 ? t("eventLine.opensMessage")
                 : t("eventLine.opensRoutines")
           }
-          frame={slopFrame}
-          hitSlop={SLOP}
+          depth="row"
           onPress={() => {
             if (opens._tag === "routine") onOpenRoutine(opens.routineId);
             else setOpen(true);
           }}
-          style={{ minHeight: LINE_HEIGHT }}
-          className="max-w-full flex-row items-center justify-center gap-1.5 rounded-md px-1.5 active:bg-muted"
+          className="min-h-8 flex-row items-center justify-center gap-1.5 px-4 active:bg-muted"
         >
           {sentence}
         </PressScale>
