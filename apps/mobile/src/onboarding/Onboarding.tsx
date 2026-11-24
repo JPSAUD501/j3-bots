@@ -265,6 +265,8 @@ export function Onboarding({
   // Leaving the welcome, the bot being made first takes the cast's first bot's place, and once it
   // is laid out there the welcome goes (`lifted`): so the welcome leaves without it.
   const leaveWelcome = () => {
+    // Already on its way: a second tap must not lift it again.
+    if (lifting) return;
     const lead = leadRef.current;
     const steps = stepsRef.current;
     if (reduced || lead === null || steps === null) {

@@ -45,8 +45,12 @@ export function openArrived(botId: BotId, open: () => void, travels: boolean): v
     open();
     return;
   }
-  const { promise, resolve } = Promise.withResolvers<void>();
-  settle({ botId, travels, landed: resolve });
+  // Not `Promise.withResolvers`: some browsers with view transitions predate it.
+  let landed = () => {};
+  const promise = new Promise<void>((resolve) => {
+    landed = resolve;
+  });
+  settle({ botId, travels, landed });
   const transition = document.startViewTransition(() => {
     open();
     // A conversation that never shows, as one already gone, still changes the page.
