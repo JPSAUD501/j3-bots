@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Popover } from "@base-ui/react/popover";
-import type { BotId, RoutineId } from "@j3-bots/contracts";
+import type { BotId, EntryId, PairBotIds, RoutineId } from "@j3-bots/contracts";
 import {
   type EventLine as Line,
   eventLineOpens,
   type RoutineChanges,
+  type TeammateRun,
 } from "@j3-bots/client-runtime/presentation";
 import {
   type EventIcon,
@@ -12,6 +13,7 @@ import {
   type EventMark,
   eventLineWords,
   routineChangeDetail,
+  teammateChoice,
 } from "@j3-bots/client-runtime/wording";
 import {
   CalendarClockIcon,
@@ -27,6 +29,10 @@ import { useBot, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { touchTarget } from "../lib/touchTarget";
 import { BotAvatar } from "./avatar/BotAvatar";
+import { FaceOf } from "./avatar/TeamAvatars";
+
+/** Opens the conversation between two bots at a teammate message, by the card of it a line holds. */
+export type OpenPair = (botIds: PairBotIds, at: EntryId) => void;
 
 const icons: Record<EventIcon, LucideIcon> = {
   routine: CalendarClockIcon,
@@ -59,17 +65,20 @@ const control = cn(
 /**
  * Something that happened, told in one quiet centred line about as tall as a
  * time between messages: a teammate's face or a glyph, then a short sentence
- * with the name in medium weight. A line with more to show opens it: the
+ * with the name in medium weight. A line with more to show opens it: a run
+ * of teammate messages, their teammate conversation at the run, or first a
+ * popover of the conversations when the run has several teammates; the
  * routines of a line that tells several, in a popover; a routine, in the
- * details panel. The rest only tell, a run of teammate messages too until
- * the teammate conversation is drawn.
+ * details panel. The rest only tell.
  */
 export function EventLine({
   line,
   onOpenRoutine,
+  onOpenPair,
 }: {
   line: Line;
   onOpenRoutine: (routineId: RoutineId) => void;
+  onOpenPair: OpenPair;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -93,10 +102,22 @@ export function EventLine({
   );
   return (
     <div className="flex justify-center px-4 py-1.5 text-2xs text-muted-foreground pointer-coarse:p-0">
-      {opens === null || opens._tag === "pair" || opens._tag === "pairs" ? (
+      {opens === null ? (
         <p className={cn("inline-flex max-w-full items-center gap-1.5 text-center", coarseRow)}>
           {sentence}
         </p>
+      ) : opens._tag === "pair" ? (
+        <button
+          type="button"
+          aria-label={words.label}
+          aria-description={t("eventLine.opensPair")}
+          onClick={() => onOpenPair(opens.pair.botIds, opens.pair.first)}
+          className={control}
+        >
+          {sentence}
+        </button>
+      ) : opens._tag === "pairs" ? (
+        popover(t("eventLine.opensPairs"), <Pairs pairs={opens.pairs} onOpenPair={onOpenPair} />)
       ) : opens._tag === "routine" ? (
         <button
           type="button"
@@ -154,6 +175,41 @@ function Face({ botId, size }: { botId: BotId; size: number }) {
   const bot = useBot(botId);
   return bot === null ? null : (
     <BotAvatar avatar={bot.profile.avatar} seed={bot.id} state="idle" size={size} still />
+  );
+}
+
+/** The teammates of a run with several: each one's conversation with the bot, opened at the run. */
+function Pairs({ pairs, onOpenPair }: { pairs: TeammateRun["pairs"]; onOpenPair: OpenPair }) {
+  const ctx = usePresentation();
+  return (
+    <>
+      <Popover.Title className="px-4 pt-3.5 pb-1.5 font-medium">
+        {ctx.i18n.t("pairs.chooser")}
+      </Popover.Title>
+      <ul className="flex min-h-0 flex-col overflow-y-auto px-1.5 pb-1.5 [--avatar-cutout:var(--surface)]">
+        {pairs.map((pair) => {
+          const choice = teammateChoice(pair, ctx);
+          return (
+            <li key={pair.peer}>
+              <Popover.Close
+                onClick={() => onOpenPair(pair.botIds, pair.first)}
+                className={cn(
+                  "flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-start outline-none hover:bg-muted focus-visible:bg-muted",
+                  touchTarget,
+                )}
+              >
+                <FaceOf botId={pair.peer} size={28} />
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate font-medium">{choice.name}</span>
+                  <span className="truncate text-xs text-muted-foreground">{choice.detail}</span>
+                </span>
+                <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              </Popover.Close>
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

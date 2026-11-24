@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { RosterItem, RosterItemKey, Section, SectionId } from "@j3-bots/contracts";
+import type {
+  PairBotIds,
+  RosterItem,
+  RosterItemKey,
+  Section,
+  SectionId,
+  TeammatePair,
+} from "@j3-bots/contracts";
 import {
   BotIcon,
   FileInputIcon,
@@ -20,7 +27,9 @@ import {
 } from "react";
 import {
   arrangeRoster,
+  betweenBots,
   type BotItem,
+  filterPairs,
   filterRoster,
   orderRoster,
   ROOM_MEMBERS,
@@ -29,6 +38,8 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n } from "../app/context";
 import type { AvatarHandle } from "./avatar/BotAvatar";
+import type { PairIntents } from "./PairHeader";
+import { BetweenBots } from "./PairRow";
 import { ReorderList, ReorderRow } from "./ReorderList";
 import {
   type FoldedSections,
@@ -120,6 +131,12 @@ interface RosterProps {
   readonly selected: RosterItemKey | null;
   /** The link a row navigates with, such as a router link to its conversation. */
   readonly rowLink: (item: RosterItem) => ReactElement;
+  /** Every pair of bots that wrote each other, latest first. */
+  readonly pairs: ReadonlyArray<TeammatePair>;
+  /** The teammate conversation open now, if one is. */
+  readonly selectedPair: PairBotIds | null;
+  readonly pairLink: (botIds: PairBotIds) => ReactElement;
+  readonly pairIntents: PairIntents;
   readonly onNewBot: () => void;
   readonly onNewFromTemplate: () => void;
   readonly onNewRoom: () => void;
@@ -137,14 +154,20 @@ interface RosterProps {
 /**
  * Answers: who do I have, who needs me, what is each of them doing. Without
  * a search it draws the pinned bots apart, then the rooms and the bots in no
- * section, then each section, then a row that opens the hidden bots; a
- * search lists every match, hidden bots included, as one list.
+ * section, then each section, then the pairs of bots that wrote each other
+ * ("Between bots"), then a row that opens the hidden bots; a search lists
+ * every match, hidden bots included, as one list, then the pairs either of
+ * whose bots matches.
  */
 export function Roster({
   items,
   sections,
   selected,
   rowLink,
+  pairs,
+  selectedPair,
+  pairLink,
+  pairIntents,
   onNewBot,
   onNewFromTemplate,
   onNewRoom,
@@ -229,7 +252,21 @@ export function Roster({
     );
   } else if (searching) {
     const rows = orderRoster(filterRoster(items, query));
-    body = rows.length === 0 ? <RosterEmpty query={query.trim()} /> : list(rows, query.trim());
+    const found = filterPairs(pairs, items, query);
+    body =
+      rows.length === 0 && found.length === 0 ? (
+        <RosterEmpty query={query.trim()} />
+      ) : (
+        <>
+          {rows.length > 0 && list(rows, query.trim())}
+          <BetweenBots
+            pairs={found}
+            selected={selectedPair}
+            pairLink={pairLink}
+            intents={pairIntents}
+          />
+        </>
+      );
   } else if (items.length === 0) {
     body = <RosterEmpty query="" />;
   } else {
@@ -261,6 +298,12 @@ export function Roster({
             {rows.length > 0 ? list(rows, `section:${section.id}`) : null}
           </SectionBlock>
         ))}
+        <BetweenBots
+          pairs={betweenBots(pairs, items)}
+          selected={selectedPair}
+          pairLink={pairLink}
+          intents={pairIntents}
+        />
         {arranged.hidden.length > 0 && (
           <HiddenRow items={arranged.hidden} onOpen={() => setShowHidden(true)} />
         )}

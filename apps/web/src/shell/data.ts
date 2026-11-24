@@ -32,6 +32,8 @@ import type {
   EntryTarget,
   MemoryFile,
   MemoryPath,
+  PairBotIds,
+  PairSeq,
   ReleaseVersion,
   RoomId,
   RosterItem,
@@ -40,6 +42,7 @@ import type {
   SectionId,
   Settings,
   SignInHarness,
+  TeammatePair,
   UpdateChannel,
   WorkStep,
 } from "@j3-bots/contracts";
@@ -55,6 +58,7 @@ import type {
   UpdateStatus,
 } from "@j3-bots/desktop-bridge";
 import type { BotDetailsIntents } from "../components/DetailsPanel";
+import type { PairView } from "../components/PairConversation";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { TimelineIntents } from "../components/Timeline";
 import type { VaultIntents } from "../components/vault/VaultForms";
@@ -86,6 +90,10 @@ export interface ShellData {
    */
   readonly sections: ReadonlyArray<Section> | null;
   readonly conversation: (target: EntryTarget) => ConversationView;
+  /** Every pair of bots that wrote each other, latest first; null until they load. */
+  readonly pairs: ReadonlyArray<TeammatePair> | null;
+  /** The teammate conversation between `botIds`, while it is the one shown. */
+  readonly pair: (botIds: PairBotIds) => PairView;
   /** What the operator has written to `target` and not sent. */
   readonly draft: (target: EntryTarget) => Draft;
   /**
@@ -177,6 +185,12 @@ export interface ShellIntents extends TimelineIntents {
   /** Reads the drafts again after they could not be read: resolves with whether they are read now. */
   readonly retryDrafts: () => Promise<boolean>;
   readonly loadOlder: (target: EntryTarget) => void;
+  readonly loadOlderPair: (botIds: PairBotIds) => void;
+  /**
+   * Reads the teammate conversation shown back to the message of the card
+   * `entryId`: its `seq`, or null when it holds none.
+   */
+  readonly revealInPair: (botIds: PairBotIds, entryId: EntryId) => Promise<PairSeq | null>;
   /** The operator has seen the conversation through this entry. */
   readonly markRead: (target: EntryTarget, through: EntryOrder) => void;
   /** Marks a conversation or room read through `through` from the roster, shown or not. */
@@ -213,6 +227,8 @@ export interface ShellIntents extends TimelineIntents {
   /** Shows what sharing the bot as a template puts in the file, then saves or copies it. */
   readonly shareBotTemplate: (botId: BotId) => void;
   readonly newRoom: () => void;
+  /** Opens the form for a new room with the two bots of a teammate conversation in it. */
+  readonly startRoomWith: (botIds: PairBotIds) => void;
   /** Opens the form that changes a room's name, members, host and hop limit. */
   readonly editRoom: (roomId: RoomId) => void;
   /** Resolves once the server answered, whatever it said. */

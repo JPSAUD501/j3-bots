@@ -18,6 +18,7 @@ import { useFocusAfterActions } from "../lib/useFocusAfterActions";
 import { BotAvatar } from "./avatar/BotAvatar";
 import { FileCard } from "./FileCard";
 import { MessageText } from "./MessageText";
+import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { VisualCard } from "./VisualCard";
 import { Button } from "./ui/button";
 
@@ -29,7 +30,7 @@ const operatorCorners: Record<GroupPosition, string> = {
   middle: "rounded-r-sm",
   last: "rounded-r-sm",
 };
-const botCorners: Record<GroupPosition, string> = {
+export const botCorners: Record<GroupPosition, string> = {
   single: "rounded-bl-sm",
   first: "rounded-bl-sm",
   middle: "rounded-l-sm",
@@ -50,8 +51,9 @@ interface MessageBubbleProps {
   readonly message: TimelineMessage;
   readonly position: GroupPosition;
   /**
-   * In a room, who said it: shown above the first bubble of a bot's group, by
-   * name and shape only. What the bot is doing now is not part of an old message.
+   * In a room, who said it: its name over the first bubble of a bot's group,
+   * its face beside the last, by shape only. What the bot is doing now is not
+   * part of an old message.
    */
   readonly speaker?: Bot | null;
   /** The names the message addressed, which `@Name` highlights; `everyone` for every member. */
@@ -177,19 +179,20 @@ export function MessageBubble({
         "flex flex-col gap-1 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         fromOperator ? "origin-bottom-right items-end" : "origin-bottom-left items-start",
         startsGroup ? "mt-3" : "mt-1",
+        speaker && speakerGutter,
       )}
     >
-      {speaker && startsGroup && (
-        <div className="flex items-center gap-1.5 ps-1 pt-1">
+      {speaker && <SpeakerName position={position} name={speaker.profile.name} />}
+      {speaker && (
+        <SpeakerFace position={position}>
           <BotAvatar
             avatar={speaker.profile.avatar}
             seed={speaker.id}
             state="idle"
-            size={24}
+            size={28}
             still
           />
-          <span className="text-xs font-medium">{speaker.profile.name}</span>
-        </div>
+        </SpeakerFace>
       )}
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard visual={message.visual} />

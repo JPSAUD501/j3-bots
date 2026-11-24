@@ -24,6 +24,8 @@ import {
   ModelId,
   type Notification,
   type NotificationKind,
+  type PairBotIds,
+  pairBotIds,
   PairingCode,
   ProviderId,
   type ProviderStatus,
@@ -89,6 +91,7 @@ import {
   type ConnectorsPlace,
   latestOfLine,
   liveTurn,
+  teammatesOf,
   withLiveTurn,
   mentionOptions,
   type OnboardingStep,
@@ -854,6 +857,10 @@ function RosterFrame() {
         sections={source.data.sections}
         selected={selected}
         rowLink={(item) => rowButton(() => setSelected(rowKey(item)))}
+        pairs={source.data.pairs ?? []}
+        selectedPair={null}
+        pairLink={() => rowButton(nothing)}
+        pairIntents={quietPairIntents}
         onNewBot={nothing}
         onNewFromTemplate={nothing}
         onNewRoom={nothing}
@@ -867,6 +874,8 @@ function RosterFrame() {
     </div>
   );
 }
+
+const quietPairIntents = { talkTo: nothing, startRoom: nothing };
 
 const quietIntents: RosterIntents = {
   placeBot: nothing,
@@ -1099,10 +1108,11 @@ function BubblesSection() {
             intents={timelineIntents}
             vault={galleryVault}
             turnBot={{ bot: team.bots.scout, lastEntry: null }}
+            onOpenPair={nothing}
           />
         </div>
       </Labeled>
-      <Labeled label="A room: each speaker named above their messages">
+      <Labeled label="A room: each speaker named over their messages, their face beside the last">
         <div className="max-w-(--layout-text-column)">
           <Timeline
             rows={buildTimeline(team.entries[`room:${ids.newsletter}`] ?? [])}
@@ -1111,6 +1121,7 @@ function BubblesSection() {
             submitting={notSubmitting}
             intents={timelineIntents}
             vault={galleryVault}
+            onOpenPair={nothing}
           />
         </div>
       </Labeled>
@@ -1317,7 +1328,12 @@ function NoticesSection() {
       <Labeled label="Event lines: handoffs, routine changes, a saved name">
         <div className="flex flex-col">
           {variants.eventLines.map((line) => (
-            <EventLine key={latestOfLine(line).id} line={line} onOpenRoutine={nothing} />
+            <EventLine
+              key={latestOfLine(line).id}
+              line={line}
+              onOpenRoutine={nothing}
+              onOpenPair={nothing}
+            />
           ))}
         </div>
       </Labeled>
@@ -1537,6 +1553,7 @@ const detailsIntents = {
   setBrowser: nothing,
   setVault: nothing,
   openConnectors: nothing,
+  openPair: nothing,
 };
 
 const roomIntents = {
@@ -1618,6 +1635,7 @@ function DetailsSection() {
             memory={team.memory[scout.id] ?? []}
             files={team.files[scout.id] ?? []}
             connectors={sampleConnectors}
+            teammates={teammatesOf(scout.id, team.pairs)}
             modelName="Claude Code · Claude Sonnet 5.5"
             browserHost={READY_BROWSER}
             intents={detailsIntents}
@@ -1633,6 +1651,7 @@ function DetailsSection() {
             memory={team.memory[atlas.id] ?? []}
             files={team.files[atlas.id] ?? []}
             connectors={sampleConnectors}
+            teammates={[]}
             modelName="Claude Code · Claude Sonnet 5.5"
             browserHost={READY_BROWSER}
             intents={detailsIntents}
@@ -1647,6 +1666,7 @@ function DetailsSection() {
             memory={[]}
             files={[]}
             connectors={sampleConnectors}
+            teammates={[]}
             modelName={null}
             browserHost={READY_BROWSER}
             intents={detailsIntents}
@@ -1671,6 +1691,7 @@ function DetailsSection() {
             memory={null}
             files={null}
             connectors={null}
+            teammates={[]}
             modelName="Claude Code · Claude Sonnet 5.5"
             browserHost={READY_BROWSER}
             intents={detailsIntents}
@@ -3513,12 +3534,15 @@ function UpdatesGallerySection() {
 /** A whole shell in a frame, with its own selection and its own copy of the sample team. */
 function ShellFrame({
   initial,
+  initialPair = null,
   details = false,
   browser = false,
   firstRun = false,
   engine,
 }: {
   initial: RosterItemKey | null;
+  /** A teammate conversation shown in place of a conversation. */
+  initialPair?: PairBotIds | null;
   details?: boolean;
   /** The bot's browser open on its front tab. */
   browser?: boolean;
@@ -3527,6 +3551,13 @@ function ShellFrame({
 }) {
   const source = useSampleSource(engine === undefined ? { firstRun } : { firstRun, engine });
   const [selected, setSelected] = useState(initial);
+  const [pair, setPair] = useState<{ botIds: PairBotIds; at: EntryId | null } | null>(
+    initialPair === null ? null : { botIds: initialPair, at: null },
+  );
+  const openPair = (botIds: PairBotIds, at: EntryId | null) => {
+    setSelected(null);
+    setPair({ botIds, at });
+  };
   const [detailsOpen, setDetailsOpen] = useState(details);
   const [browserTarget, setBrowserTarget] = useState<BrowserTabRef | "front" | null>(
     browser ? "front" : null,
@@ -3542,6 +3573,7 @@ function ShellFrame({
         detailsOpen: detailsOpen && selected !== null,
         select: (key) => {
           setSelected(key);
+          setPair(null);
           setBrowserTarget(null);
         },
         setDetailsOpen: (open) => {
@@ -3553,7 +3585,14 @@ function ShellFrame({
           setBrowserTarget(target);
           if (target !== null) setDetailsOpen(false);
         },
-        rowLink: (item) => rowButton(() => setSelected(rowKey(item))),
+        rowLink: (item) =>
+          rowButton(() => {
+            setSelected(rowKey(item));
+            setPair(null);
+          }),
+        pair,
+        openPair,
+        pairLink: (botIds) => rowButton(() => openPair(botIds, null)),
       }}
     />
   );
@@ -3602,6 +3641,13 @@ function ShellSection() {
             height={760}
           >
             <ShellFrame initial={scout} browser />
+          </Frame>
+          <Frame
+            label="Phone: what Scout and Wren wrote each other, read-only"
+            width={390}
+            height={760}
+          >
+            <ShellFrame initial={null} initialPair={pairBotIds(ids.scout, ids.wren)} />
           </Frame>
         </div>
       </div>

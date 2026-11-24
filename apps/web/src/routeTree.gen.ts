@@ -16,6 +16,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppRoomsRoomIdRouteImport } from './routes/_app/rooms.$roomId'
 import { Route as AppBotsBotIdRouteImport } from './routes/_app/bots.$botId'
+import { Route as AppPairsABRouteImport } from './routes/_app/pairs.$a.$b'
 
 const GalleryRoute = GalleryRouteImport.update({
   id: '/gallery',
@@ -41,18 +42,25 @@ const AppBotsBotIdRoute = AppBotsBotIdRouteImport.update({
   path: '/bots/$botId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPairsABRoute = AppPairsABRouteImport.update({
+  id: '/pairs/$a/$b',
+  path: '/pairs/$a/$b',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/gallery': typeof GalleryRoute
   '/bots/$botId': typeof AppBotsBotIdRoute
   '/rooms/$roomId': typeof AppRoomsRoomIdRoute
+  '/pairs/$a/$b': typeof AppPairsABRoute
 }
 export interface FileRoutesByTo {
   '/gallery': typeof GalleryRoute
   '/': typeof AppIndexRoute
   '/bots/$botId': typeof AppBotsBotIdRoute
   '/rooms/$roomId': typeof AppRoomsRoomIdRoute
+  '/pairs/$a/$b': typeof AppPairsABRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -61,12 +69,14 @@ export interface FileRoutesById {
   '/_app/': typeof AppIndexRoute
   '/_app/bots/$botId': typeof AppBotsBotIdRoute
   '/_app/rooms/$roomId': typeof AppRoomsRoomIdRoute
+  '/_app/pairs/$a/$b': typeof AppPairsABRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/gallery' | '/bots/$botId' | '/rooms/$roomId'
+  fullPaths:
+    '/' | '/gallery' | '/bots/$botId' | '/rooms/$roomId' | '/pairs/$a/$b'
   fileRoutesByTo: FileRoutesByTo
-  to: '/gallery' | '/' | '/bots/$botId' | '/rooms/$roomId'
+  to: '/gallery' | '/' | '/bots/$botId' | '/rooms/$roomId' | '/pairs/$a/$b'
   id:
     | '__root__'
     | '/_app'
@@ -74,6 +84,7 @@ export interface FileRouteTypes {
     | '/_app/'
     | '/_app/bots/$botId'
     | '/_app/rooms/$roomId'
+    | '/_app/pairs/$a/$b'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -118,6 +129,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppBotsBotIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/pairs/$a/$b': {
+      id: '/_app/pairs/$a/$b'
+      path: '/pairs/$a/$b'
+      fullPath: '/pairs/$a/$b'
+      preLoaderRoute: typeof AppPairsABRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -125,12 +143,14 @@ interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppBotsBotIdRoute: typeof AppBotsBotIdRoute
   AppRoomsRoomIdRoute: typeof AppRoomsRoomIdRoute
+  AppPairsABRoute: typeof AppPairsABRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppBotsBotIdRoute: AppBotsBotIdRoute,
   AppRoomsRoomIdRoute: AppRoomsRoomIdRoute,
+  AppPairsABRoute: AppPairsABRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

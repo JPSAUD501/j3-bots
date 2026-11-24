@@ -8,11 +8,11 @@ import {
 } from "lucide-react";
 import type { ReactNode, RefObject } from "react";
 import { useTurnAnnouncement } from "@j3-bots/client-runtime/react";
-import { useBots, useI18n, usePresentation } from "../app/context";
+import { useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { useLanding } from "../onboarding/handoff";
 import { memberList, presenceLine, type StatusLine } from "@j3-bots/client-runtime/wording";
-import { RoomAvatar, roomAvatarMembers } from "./avatar/BotAvatar";
+import { MemberStack } from "./avatar/TeamAvatars";
 import { LiveBotAvatar, useOffline } from "./avatar/mood";
 import { PrimaryBadge } from "./avatar/PrimaryBadge";
 import { toneClass } from "./RosterRow";
@@ -65,7 +65,6 @@ export function ConversationHeader({
 }: ConversationHeaderProps) {
   const ctx = usePresentation();
   const { t } = useI18n();
-  const bots = useBots();
   const name = subject._tag === "bot" ? subject.bot.profile.name : subject.room.name;
   const line: StatusLine | null =
     subject._tag === "bot"
@@ -102,7 +101,7 @@ export function ConversationHeader({
             </span>
           </PrimaryBadge>
         ) : (
-          <RoomAvatar size={32} members={roomAvatarMembers(subject.room, bots)} />
+          <MemberStack members={subject.room.members} size={28} />
         )}
         <span className="flex min-w-0 flex-col items-start">
           <button

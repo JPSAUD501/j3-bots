@@ -1,6 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BrowserTabRef, RoutineId, type RosterItem, type RosterItemKey } from "@j3-bots/contracts";
-import { Link, Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
+import {
+  BrowserTabRef,
+  type PairBotIds,
+  RoutineId,
+  type RosterItem,
+  type RosterItemKey,
+} from "@j3-bots/contracts";
+import {
+  Link,
+  Outlet,
+  createFileRoute,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { lazy } from "react";
 import { LiveSourceProvider } from "../live/LiveSource";
@@ -49,15 +62,24 @@ const rowLink = (item: RosterItem) =>
     <Link to="/rooms/$roomId" params={{ roomId: item.room.id }} />
   );
 
+/** A pair's row too: a link to the conversation between the two. */
+const pairLink = ([a, b]: PairBotIds) => <Link to="/pairs/$a/$b" params={{ a, b }} />;
+
 function AppLayout() {
   const { data, intents, browser: browserSource } = useShellSource();
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const { details, browser } = Route.useSearch();
+  // Where a teammate conversation opens, which only its own route reads.
+  const { at } = useSearch({ strict: false });
   const selected: RosterItemKey | null = params.botId
     ? { _tag: "bot", botId: params.botId }
     : params.roomId
       ? { _tag: "room", roomId: params.roomId }
+      : null;
+  const pair =
+    params.a !== undefined && params.b !== undefined
+      ? { botIds: [params.a, params.b] as const, at: at ?? null }
       : null;
   return (
     <>
@@ -95,6 +117,14 @@ function AppLayout() {
           setBrowser: (target) =>
             navigate({ to: ".", search: target === null ? {} : { browser: target } }),
           rowLink,
+          pair,
+          openPair: ([a, b], entryId) =>
+            navigate({
+              to: "/pairs/$a/$b",
+              params: { a, b },
+              search: entryId === null ? {} : { at: entryId },
+            }),
+          pairLink,
         }}
       />
       <Outlet />

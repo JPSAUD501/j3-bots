@@ -14,6 +14,8 @@ import {
   DeviceId,
   EntryId,
   MemoryPath,
+  pairBotIds,
+  PairSeq,
   ModelId,
   ProviderId,
   RoomId,
@@ -38,6 +40,8 @@ import {
   type Routine,
   type Section,
   type Settings,
+  type TeammateMessage,
+  type TeammatePair,
   type UsageRoutine,
   type UsageTurn,
   type Visual,
@@ -221,7 +225,8 @@ export function sampleTeam(now: DateTime.Utc) {
     id: ids.newsletter,
     name: "Spring newsletter",
     status: "active",
-    members: [ids.juniper, ids.wren, ids.scout],
+    // More than the header draws, so it counts the rest.
+    members: [ids.juniper, ids.wren, ids.scout, ids.atlas, ids.otto],
     hostId: ids.juniper,
     hopLimit: 4,
     pinned: false,
@@ -235,6 +240,11 @@ export function sampleTeam(now: DateTime.Utc) {
 
   let counter = 0;
   const entryId = (prefix: string) => EntryId.make(`${prefix}-${++counter}`);
+  // The teammate cards in Scout's conversation, which its teammate conversations name.
+  const cards = {
+    scoutToWren: EntryId.make("handoff-scout-wren"),
+    atlasToScout: EntryId.make("handoff-atlas-scout"),
+  };
 
   const nobody: Mentions = { _tag: "bots", ids: [] };
 
@@ -324,12 +334,24 @@ export function sampleTeam(now: DateTime.Utc) {
     message(operator, ago(9), "Can Wren write to the bike shop about a test ride?"),
     {
       _tag: "handoff",
-      id: entryId("h"),
+      id: cards.scoutToWren,
       author: by(ids.scout),
       createdAt: ago(8),
       recipientId: ids.wren,
       direction: "sent",
       text: "Could you write to the bike shop and ask for a test ride on Saturday morning? Friendly, three lines at most.",
+      urgent: false,
+      state: "sent",
+    },
+    // Atlas writes back at once: with Scout's own message, one line with two teammates.
+    {
+      _tag: "handoff",
+      id: cards.atlasToScout,
+      author: by(ids.atlas),
+      createdAt: ago(8),
+      recipientId: ids.scout,
+      direction: "received",
+      text: "The bike page is on staging if you want to check the prices there first.",
       urgent: false,
       state: "sent",
     },
@@ -882,9 +904,104 @@ export function sampleTeam(now: DateTime.Utc) {
     },
   ];
 
+  // What bots wrote each other, as their teammate conversations list it.
+  let seq = 0;
+  const said = (
+    from: BotId,
+    to: BotId,
+    minutesAgo: number,
+    text: string,
+    more: Partial<
+      Pick<TeammateMessage, "urgent" | "state" | "sentEntryId" | "receivedEntryId">
+    > = {},
+  ): TeammateMessage => ({
+    seq: PairSeq.make(++seq),
+    from,
+    to,
+    sentEntryId: null,
+    receivedEntryId: null,
+    urgent: false,
+    state: "sent",
+    createdAt: ago(minutesAgo),
+    text,
+    ...more,
+  });
+  const pairMessages: ReadonlyArray<ReadonlyArray<TeammateMessage>> = [
+    [
+      said(
+        ids.juniper,
+        ids.wren,
+        60 * 50,
+        "The newsletter goes out Friday. Could you take the opening paragraph? Warm, four lines, and mention the plant swap.",
+      ),
+      said(
+        ids.wren,
+        ids.juniper,
+        60 * 50 - 6,
+        "On it. I’ll keep the plant swap in the first line so it survives the preview.",
+      ),
+      said(
+        ids.juniper,
+        ids.wren,
+        60 * 26,
+        "The printer needs the final text by noon. Is the opening ready?",
+        { urgent: true, state: "not-delivered" },
+      ),
+    ],
+    [
+      said(
+        ids.scout,
+        ids.wren,
+        60 * 24 * 3,
+        "Can you turn my notes on the three bikes into two friendly sentences for the family chat?",
+      ),
+      said(
+        ids.wren,
+        ids.scout,
+        60 * 24 * 3 - 4,
+        "Done: “Three bikes made the cut, all good on the hill. The cheapest needs the bigger battery, so it ends up the same price as the middle one.”",
+      ),
+      said(
+        ids.scout,
+        ids.wren,
+        8,
+        "Could you write to the bike shop and ask for a test ride on Saturday morning? Friendly, three lines at most.",
+        { sentEntryId: cards.scoutToWren },
+      ),
+    ],
+    [
+      said(
+        ids.atlas,
+        ids.scout,
+        8,
+        "The bike page is on staging if you want to check the prices there first.",
+        { receivedEntryId: cards.atlasToScout },
+      ),
+    ],
+    // Pip is hidden: the roster leaves this one out, and Wren's details still list it.
+    [
+      said(
+        ids.pip,
+        ids.wren,
+        60 * 24 * 6,
+        "The plants on the balcony need water while you’re away.",
+      ),
+    ],
+  ];
+  const pairs: ReadonlyArray<TeammatePair> = pairMessages
+    .flatMap((messages): ReadonlyArray<TeammatePair> => {
+      const last = messages.at(-1);
+      return last === undefined
+        ? []
+        : [{ botIds: pairBotIds(last.from, last.to), lastMessage: last, count: messages.length }];
+    })
+    .toSorted((a, b) => b.lastMessage.seq - a.lastMessage.seq);
+
   return {
     engine,
     bots,
+    pairs,
+    pairMessages,
     room,
     attachments,
     entries,

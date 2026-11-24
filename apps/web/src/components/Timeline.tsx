@@ -32,7 +32,7 @@ import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
 import { CredentialRequestCard } from "./CredentialRequestCard";
 import { ConnectorAuthCard, ConnectorSuggestionCard } from "./connectors/ConnectorCards";
-import { EventLine } from "./EventLine";
+import { EventLine, type OpenPair } from "./EventLine";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
@@ -113,6 +113,8 @@ interface TimelineProps {
   readonly turnBot?: TurnBot | null;
   /** What shows under the line of the bot's turn under way, as its browser. */
   readonly turnExtra?: ReactNode;
+  /** Opens the teammate conversation a line of teammate messages leads to, at that message. */
+  readonly onOpenPair: OpenPair;
 }
 
 /**
@@ -131,6 +133,7 @@ export function Timeline({
   flyFrom,
   turnBot = null,
   turnExtra,
+  onOpenPair,
 }: TimelineProps) {
   const bots = useBots();
   const i18n = useI18n();
@@ -177,7 +180,11 @@ export function Timeline({
         if (item.kind === "event") {
           return (
             <div key={item.key} data-seen-id={latestOfLine(item.line).id} className={settles}>
-              <EventLine line={item.line} onOpenRoutine={intents.openRoutine} />
+              <EventLine
+                line={item.line}
+                onOpenRoutine={intents.openRoutine}
+                onOpenPair={onOpenPair}
+              />
             </div>
           );
         }

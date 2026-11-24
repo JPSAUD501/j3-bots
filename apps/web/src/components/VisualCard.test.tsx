@@ -53,6 +53,7 @@ const shown = (page: string) =>
       submitting={() => false}
       intents={intents}
       vault={{ view: vault.view.get(), intents: vault }}
+      onOpenPair={() => {}}
     />,
   );
 
