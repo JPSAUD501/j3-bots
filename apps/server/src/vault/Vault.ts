@@ -140,14 +140,7 @@ const NamedSecretsJson = json(Schema.Array(NamedSecret));
 const CommandJson = json(ConnectorSecret.fields.command);
 
 /** The fields a connector's record seals, one value each. */
-const CONNECTOR_FIELDS = [
-  "address",
-  "oauth",
-  "headers",
-  "command",
-  "env",
-  "formSecrets",
-] as const;
+const CONNECTOR_FIELDS = ["address", "oauth", "headers", "command", "env", "formSecrets"] as const;
 
 const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 const bytesOf = (text: string) => Buffer.from(text, "base64");
