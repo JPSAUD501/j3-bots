@@ -856,13 +856,24 @@ export const layer = Layer.effect(
       `,
     });
 
-    /** Each bot with a pending wake for its main session, the one with the most urgent wake first. */
+    /**
+     * Each bot with a pending wake for its main session, in the order of each
+     * bot's head wake: by priority, then as written. A free turn slot goes to
+     * the first that can take it, so the members the operator's room message
+     * wakes start in the order it woke them, whatever older and less urgent
+     * wakes one of them also has.
+     */
     const waitingBots = SqlSchema.findAll({
       Request: Schema.Void,
       Result: WaitingBot,
       execute: () => sql`
-        SELECT bot_id FROM wakes WHERE status = 'pending' AND kind <> 'routine'
-        GROUP BY bot_id ORDER BY MIN(priority), MIN(rowid)
+        SELECT bot_id FROM (
+          SELECT bot_id, priority, rowid AS written,
+            ROW_NUMBER() OVER (PARTITION BY bot_id ORDER BY priority, rowid) AS place
+          FROM wakes WHERE status = 'pending' AND kind <> 'routine'
+        )
+        WHERE place = 1
+        ORDER BY priority, written
       `,
     })(undefined).pipe(Effect.orDie);
 
@@ -1603,8 +1614,9 @@ export const layer = Layer.effect(
      * envelope consumed. Nothing changes if the plan no longer holds: its
      * session was retired, lost, became due for a rotation that takes no new
      * work, or its bot's settings changed since it was chosen, or a teammate's
-     * message it waits on turned out read, whose wake is cancelled then
-     * (`stale`, planned again), or its wakes are no longer pending.
+     * message it waits on turned out read, whose wake is cancelled then, or
+     * its wakes are no longer pending, as when a member's removal cancelled
+     * them meanwhile (`stale`, planned again with the bot's other wakes).
      */
     const writeDispatch = Effect.fn("Pipeline.writeDispatch")(function* (chosen: Plan) {
       return yield* transaction(
@@ -1614,7 +1626,7 @@ export const layer = Layer.effect(
           // wake or held; the plan is made again without such a wake.
           if (yield* ledger.settleRead(chosen.botId)) return "stale" as const;
           const still = yield* pendingWakes(chosen.wakes.map((wake) => wake.id));
-          if (still.length !== chosen.wakes.length) return null;
+          if (still.length !== chosen.wakes.length) return "stale" as const;
           const roomed = yield* roomPlan(chosen);
           if (roomed._tag !== "plan") return roomed.result;
           const { plan, room } = roomed;

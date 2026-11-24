@@ -224,3 +224,25 @@ it.effect("stops every member's running room turn at once with the room's Stop",
     assert.deepStrictEqual(targets, { stops: 3, targets: 3 });
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "gives a free turn slot to the members the operator's room message woke in the order it woke them, whatever older wakes one has",
+  () =>
+    Effect.gen(function* () {
+      yield* concurrentTurns(1);
+      const [ana, bo, cy] = [yield* member("Ana"), yield* member("Bo"), yield* member("Cy")];
+      const members = [ana, bo, cy];
+      const launch = yield* roomWith(ana, [bo]);
+      const ops = yield* roomWith(cy, [bo]);
+
+      // Cy holds the only slot, and leaves Bo an older, less urgent wake in another room.
+      yield* operatorWrites(ops.id, members, "Cy, check the servers.", to(cy));
+      const cyTurn = yield* nextTurn(cy.bot.id);
+      yield* say(cy, cyTurn, { text: "Bo, is the backup done?", mention: [bo.bot.id] });
+      yield* operatorWrites(launch.id, members, "Ana, then Bo: pick a date.", to(ana, bo));
+
+      yield* finish(cy, cyTurn, members);
+      yield* nextTurn(ana.bot.id);
+      assert.deepStrictEqual(yield* running(members), ["Ana"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
