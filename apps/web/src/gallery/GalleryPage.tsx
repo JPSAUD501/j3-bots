@@ -196,7 +196,6 @@ const restingRoom: Room = {
   id: RoomId.make("weekend-plans"),
   name: "Weekend plans",
   members: [team.bots.moss.id, team.bots.pip.id],
-  hostId: team.bots.moss.id,
   work: "none",
 };
 /** The sample room while the server ends its work. */
@@ -1040,7 +1039,7 @@ function BubblesSection() {
             onRetry={nothing}
             onDiscard={nothing}
             leftRoom={["Wren"]}
-            retryLabel={t("message.retry.host", { name: "Scout" })}
+            retryLabel={t("message.retry")}
           />
           <MessageBubble
             message={bubbles.unrecorded}
@@ -1414,8 +1413,8 @@ function ComposerDemo({
   notSaved?: boolean;
   /** Text another tab replaced, on offer. */
   replaced?: string | null;
-  /** In a room, its members and its host. */
-  mentionable?: { readonly members: ReadonlyArray<MentionCandidate>; readonly hostId: BotId };
+  /** In a room, its members. */
+  mentionable?: { readonly members: ReadonlyArray<MentionCandidate> };
 }) {
   const i18n = useI18n();
   const draftKey = useId();
@@ -1431,7 +1430,6 @@ function ComposerDemo({
               mentions,
               mentionable.members.map((member) => member.id),
             )?.mentions ?? null,
-            mentionable.hostId,
             (botId) => mentionable.members.find((member) => member.id === botId)?.name,
             i18n,
           ),
@@ -1572,12 +1570,10 @@ const roomIntents = {
 const archivedRoom: Room = {
   id: team.room.id,
   name: team.room.name,
-  hopLimit: team.room.hopLimit,
   pinned: false,
   createdAt: team.room.createdAt,
   status: "archived",
   members: [team.bots.scout.id],
-  hostId: null,
   archivedAt: SAMPLE_NOW,
 };
 
@@ -2122,7 +2118,6 @@ function RoomFormVariant({
         <RoomForm
           mode={{ _tag: "create" }}
           bots={bots}
-          defaultHopLimit={team.settings.budgets.hops}
           connected
           onSubmit={() => new Promise(() => {})}
           onClose={nothing}
@@ -2171,14 +2166,12 @@ function RoomsSection() {
   return (
     <Section title="Rooms: the room form and mentions">
       <div className="flex flex-wrap gap-4">
-        <RoomFormVariant label="New room: empty; pick bots and the host follows them, then Create to see what is missing" />
+        <RoomFormVariant label="New room: empty; pick bots, then Create to see what is missing" />
         <RoomFormVariant
           label="New room: the server refused the bots, one of them deleted meanwhile"
           initial={{
             name: "Launch week",
             members: [scout.id, wren.id],
-            hostPick: null,
-            hopLimit: "",
           }}
           initialFailure={{ _tag: "refused", error: new Invalid({ reason: "room-members" }) }}
         />
@@ -2193,8 +2186,6 @@ function RoomsSection() {
           initial={{
             name: team.room.name,
             members: [juniper.id, scout.id],
-            hostPick: juniper.id,
-            hopLimit: "2",
           }}
           initialFailure={{ _tag: "refused", error: new Conflict({ reason: "room-archived" }) }}
         />
@@ -2221,7 +2212,7 @@ function RoomsSection() {
           <ComposerDemo
             initial=""
             recipient={team.room.name}
-            mentionable={{ members: roomMembers, hostId: team.room.hostId }}
+            mentionable={{ members: roomMembers }}
           />
         </div>
       </Labeled>

@@ -302,10 +302,7 @@ export function ConversationView({
   const addressee =
     room === null
       ? null
-      : addresseeLine(
-          addresseeOf(addressing?.mentions ?? null, room.hostId, nameOf, ctx.i18n),
-          ctx.i18n,
-        );
+      : addresseeLine(addresseeOf(addressing?.mentions ?? null, nameOf, ctx.i18n), ctx.i18n);
   const mentionable: ReadonlyArray<MentionCandidate> | undefined = room?.members.flatMap((id) => {
     const bot = bots.get(id);
     return bot === undefined ? [] : [{ id, name: bot.profile.name, avatar: bot.profile.avatar }];
@@ -525,13 +522,12 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
 
 /**
  * A room before anything is said in it: its members, its name, and who
- * answers what is written there. An archived room takes nothing and may have
- * no host, so it shows only who was in it.
+ * answers what is written there. An archived room takes nothing, so it shows
+ * only who was in it.
  */
 function QuietRoom({ room, bottom }: { readonly room: Room; readonly bottom: number }) {
   const { t } = usePresentation().i18n;
   const bots = useBots();
-  const host = room.hostId === null ? undefined : bots.get(room.hostId);
   return (
     <View
       className="flex-1 items-center justify-center gap-4 px-6"
@@ -541,14 +537,7 @@ function QuietRoom({ room, bottom }: { readonly room: Room; readonly bottom: num
         <RoomAvatar size={96} members={roomAvatarMembers(room, bots)} />
       </Animated.View>
       <Title>{room.name}</Title>
-      {room.status === "active" && (
-        <Body>
-          {/* The host bot may arrive after the room does. */}
-          {host === undefined
-            ? t("empty.quiet.roomAnyHost")
-            : t("empty.quiet.room", { host: host.profile.name })}
-        </Body>
-      )}
+      {room.status === "active" && <Body>{t("empty.quiet.roomAnyHost")}</Body>}
     </View>
   );
 }
@@ -569,8 +558,8 @@ function Row({
   onOpenPair,
 }: {
   readonly row: TimelineItem;
-  /** In a room, the room, with its members and host now; null in a bot's conversation. */
-  readonly room: Pick<Room, "id" | "members" | "hostId"> | null;
+  /** In a room, the room, with its members now; null in a bot's conversation. */
+  readonly room: Pick<Room, "id" | "members"> | null;
   /** In a bot's conversation, the bot: the row of its turn under way says what it is doing. */
   readonly turnBot: TurnBot | null;
   /** It just arrived at the end: it settles into place as it mounts. */
@@ -661,7 +650,7 @@ function Row({
 type MessageRow = Extract<TimelineItem, { readonly kind: "message" }>;
 
 /** In a room, the names a message highlights: only whom it addressed. */
-function useHighlighted(room: Pick<Room, "members" | "hostId"> | null) {
+function useHighlighted(room: Pick<Room, "members"> | null) {
   const bots = useBots();
   return (mentions: Mentions | null, labels: ReadonlyArray<MentionLabel>) =>
     room === null ? [] : mentionedNames(mentions, labels, (id) => bots.get(id)?.profile.name);
@@ -680,7 +669,7 @@ function OutgoingMessage({
 }: {
   readonly row: MessageRow;
   readonly message: Extract<MessageRow["message"], { readonly _tag: "outgoing" }>;
-  readonly room: Pick<Room, "members" | "hostId"> | null;
+  readonly room: Pick<Room, "members"> | null;
   readonly arriving: boolean;
 }) {
   const ctx = usePresentation();
@@ -719,10 +708,7 @@ function OutgoingMessage({
         ? {}
         : {
             leftRoom: left.left.map(labelOf),
-            retryLabel: resendLabel(
-              addresseeOf(left.without, room.hostId, nameOf, ctx.i18n),
-              ctx.i18n,
-            ),
+            retryLabel: resendLabel(addresseeOf(left.without, nameOf, ctx.i18n), ctx.i18n),
           })}
     />
   );
@@ -738,7 +724,7 @@ function ServerMessage({
 }: {
   readonly row: MessageRow;
   readonly message: MessageEntry;
-  readonly room: Pick<Room, "members" | "hostId"> | null;
+  readonly room: Pick<Room, "members"> | null;
   readonly arriving: boolean;
   readonly openingHold: OpeningHold | null;
 }) {

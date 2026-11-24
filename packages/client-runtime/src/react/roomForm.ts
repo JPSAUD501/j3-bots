@@ -4,11 +4,9 @@ import { useState } from "react";
 import { type IntentFailure, refusedWith } from "../intents/Actions.ts";
 import {
   followRoom,
-  hostOf,
   ROOM_MEMBERS,
   roomChanges,
   roomDraft,
-  roomFormContext,
   type RoomFormMode,
   type RoomFormProblem,
   roomFormStart,
@@ -45,13 +43,8 @@ export interface RoomForm {
   /** Changes what the form holds, unless a submission is under way. */
   readonly change: (next: RoomFormValues) => void;
   readonly toggleMember: (botId: BotId) => void;
-  readonly pickHost: (botId: BotId) => void;
-  /** The bots picked, in the order picked. */
-  readonly members: ReadonlyArray<Bot>;
   /** Every bot, by name, to pick from. */
   readonly choices: ReadonlyArray<Bot>;
-  /** The host the room would have; null when a room the server has without one is not given one. */
-  readonly hostId: BotId | null;
   /** No bot can be added. */
   readonly full: boolean;
   /** What is missing, once the operator tried to send. */
@@ -77,10 +70,7 @@ export interface RoomForm {
 }
 
 /**
- * A room's name, its bots, which of them hosts, and its hop limit, as a form
- * holds them. The host follows the bots picked: the one the operator chose
- * while it stays in, else the primary bot, else the first picked; a room the
- * server has without a host has none until the operator picks one. What is
+ * A room's name, its bots and its hop limit, as a form holds them. What is
  * missing shows once the operator tries to send; a refusal keeps what was
  * typed. What the operator left alone follows the room as the server has it,
  * and a submission sends only what the form changes. A bot picked and deleted
@@ -91,8 +81,6 @@ export function useRoomForm(options: {
   readonly mode: RoomFormMode;
   /** Every bot the operator has; the same list while the bots stay the same. */
   readonly bots: ReadonlyArray<Bot>;
-  /** The hop limit a room takes when it gives none; null until the settings are read. */
-  readonly defaultHopLimit: number | null;
   /** Sending takes a connection to the server. */
   readonly connected: boolean;
   /** The language the bots are sorted in. */
@@ -102,14 +90,12 @@ export function useRoomForm(options: {
   /** A failure to show from the start, for a gallery. */
   readonly initialFailure?: IntentFailure | undefined;
 }): RoomForm {
-  const { mode, bots, defaultHopLimit, connected, locale } = options;
+  const { mode, bots, connected, locale } = options;
   const room = mode._tag === "create" ? null : mode.room;
   const gone = mode._tag !== "create" && mode.gone;
   // Where the form starts: the room as the server has it, or the bots it was opened with.
   const [start, setStart] = useState(() => options.initial ?? roomFormStart(mode));
   const [values, setValues] = useState(start);
-  const primaryId = bots.find((bot) => bot.primary)?.id ?? null;
-  const context = roomFormContext(room, primaryId, defaultHopLimit);
   const [dropped, setDropped] = useState<ReadonlyArray<string>>([]);
   const [botsSeen, setBotsSeen] = useState(bots);
   const [roomSeen, setRoomSeen] = useState(room);
@@ -121,7 +107,7 @@ export function useRoomForm(options: {
       const present = new Set<BotId>(bots.map((bot) => bot.id));
       // The server drops them from the room too, which the form follows once the room says so.
       nextStart = withoutDeleted(start, present);
-      nextValues = withoutDeleted(values, present, nextStart.hostPick);
+      nextValues = withoutDeleted(values, present);
       const deleted = values.members.filter((id) => !present.has(id));
       if (deleted.length > 0) {
         const names = new Map(botsSeen.map((bot) => [bot.id, bot.profile.name]));
@@ -131,7 +117,7 @@ export function useRoomForm(options: {
     if (roomSeen !== room) {
       setRoomSeen(room);
       if (room !== null) {
-        const followed = followRoom(nextStart, nextValues, room, context);
+        const followed = followRoom(nextStart, nextValues, room);
         nextStart = followed.start;
         nextValues = followed.values;
       }
@@ -144,8 +130,8 @@ export function useRoomForm(options: {
   // What is missing shows once the operator tried to send, and follows the form from then on.
   const [tried, setTried] = useState(false);
 
-  const draft = room === null ? roomDraft(values, context) : null;
-  const changes = room === null ? null : roomChanges(start, values, context);
+  const draft = room === null ? roomDraft(values) : null;
+  const changes = room === null ? null : roomChanges(start, values);
   // What goes to the server, once nothing is missing.
   const submission: RoomSubmission | null =
     draft?._tag === "ready"
@@ -171,20 +157,12 @@ export function useRoomForm(options: {
     setValues(next);
     setFailure(null);
   };
-  const byId = new Map(bots.map((bot) => [bot.id, bot]));
-
   return {
     room,
     values,
     change,
     toggleMember: (botId) => change(withMember(values, botId, !values.members.includes(botId))),
-    pickHost: (botId) => change({ ...values, hostPick: botId }),
-    members: values.members.flatMap((id) => {
-      const bot = byId.get(id);
-      return bot ? [bot] : [];
-    }),
     choices: bots.toSorted((a, b) => a.profile.name.localeCompare(b.profile.name, locale)),
-    hostId: hostOf(values, context),
     full: values.members.length >= ROOM_MEMBERS.max,
     problems: tried && missing !== null ? missing : new Set(),
     membersRefused,
@@ -202,7 +180,7 @@ export function useRoomForm(options: {
     dropped,
     busy,
     canSubmit,
-    unsaved: !sameRoomForm(start, values, context),
+    unsaved: !sameRoomForm(start, values),
     submit: (send) => {
       if (!canSubmit) return "held";
       setTried(true);

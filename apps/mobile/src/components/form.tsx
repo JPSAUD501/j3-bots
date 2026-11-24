@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useNavigation, usePreventRemove } from "@react-navigation/native";
-import { Check, type LucideIcon, Minus, Plus } from "lucide-react-native";
+import { Check } from "lucide-react-native";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AccessibilityInfo, View } from "react-native";
+import { View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { KeyboardAwareScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -123,96 +123,36 @@ export function TextField(props: {
   readonly maxLength?: number;
   readonly readOnly?: boolean;
   readonly multiline?: boolean;
-  readonly numeric?: boolean;
-  /**
-   * A number one less and one more, each `null` where there is none: the
-   * field sits between a minus and a plus that type it.
-   */
-  readonly steps?: {
-    readonly fewer: number | null;
-    readonly more: number | null;
-    readonly fewerLabel: string;
-    readonly moreLabel: string;
-  };
   readonly autoCapitalize?: "none" | "sentences" | "words";
   readonly onBlur?: () => void;
 }) {
   const placeholderColor = useColor("accent-muted-foreground");
   const error = props.error ?? null;
-  const input = (
-    <TextInput
-      accessibilityLabel={props.label}
-      accessibilityHint={props.hint}
-      aria-invalid={error !== null}
-      value={props.value}
-      onChangeText={props.onChange}
-      onBlur={props.onBlur}
-      editable={props.readOnly !== true}
-      placeholder={props.placeholder}
-      placeholderTextColor={placeholderColor}
-      maxLength={props.maxLength}
-      multiline={props.multiline === true}
-      keyboardType={props.numeric === true ? "number-pad" : "default"}
-      autoCapitalize={props.autoCapitalize ?? "sentences"}
-      autoCorrect={props.multiline === true}
-      textAlignVertical={props.multiline === true ? "top" : "center"}
-      className={`${fieldClass} ${error === null ? "border-transparent" : "border-blocked"} ${props.readOnly === true ? "text-muted-foreground" : "text-foreground"} ${props.multiline === true ? "min-h-28 py-2" : ""} ${props.steps === undefined ? "" : "text-center"}`}
-    />
-  );
   return (
     <View className="gap-1">
       <Text className="text-sm text-foreground">{props.label}</Text>
-      {props.steps === undefined ? (
-        input
-      ) : (
-        <View className="flex-row items-center gap-2">
-          <StepButton
-            icon={Minus}
-            label={props.steps.fewerLabel}
-            to={props.readOnly === true ? null : props.steps.fewer}
-            onChange={props.onChange}
-          />
-          <View className="w-20">{input}</View>
-          <StepButton
-            icon={Plus}
-            label={props.steps.moreLabel}
-            to={props.readOnly === true ? null : props.steps.more}
-            onChange={props.onChange}
-          />
-        </View>
-      )}
+      <TextInput
+        accessibilityLabel={props.label}
+        accessibilityHint={props.hint}
+        aria-invalid={error !== null}
+        value={props.value}
+        onChangeText={props.onChange}
+        onBlur={props.onBlur}
+        editable={props.readOnly !== true}
+        placeholder={props.placeholder}
+        placeholderTextColor={placeholderColor}
+        maxLength={props.maxLength}
+        multiline={props.multiline === true}
+        autoCapitalize={props.autoCapitalize ?? "sentences"}
+        autoCorrect={props.multiline === true}
+        textAlignVertical={props.multiline === true ? "top" : "center"}
+        className={`${fieldClass} ${error === null ? "border-transparent" : "border-blocked"} ${props.readOnly === true ? "text-muted-foreground" : "text-foreground"} ${props.multiline === true ? "min-h-28 py-2" : ""}`}
+      />
       {props.hint !== undefined && (
         <Text className="text-xs text-muted-foreground">{props.hint}</Text>
       )}
       <Problem>{error}</Problem>
     </View>
-  );
-}
-
-/** A round minus or plus beside a number field, which types the number it leads to. */
-function StepButton(props: {
-  readonly icon: LucideIcon;
-  readonly label: string;
-  readonly to: number | null;
-  readonly onChange: (text: string) => void;
-}) {
-  const { to } = props;
-  return (
-    <PressScale
-      depth="round"
-      accessibilityRole="button"
-      accessibilityLabel={props.label}
-      disabled={to === null}
-      onPress={() => {
-        if (to === null) return;
-        props.onChange(String(to));
-        // Focus stays on the button, so the number it typed is read out.
-        AccessibilityInfo.announceForAccessibility(String(to));
-      }}
-      className={`size-11 items-center justify-center rounded-pill bg-muted ${to === null ? "opacity-40" : ""}`}
-    >
-      <Icon icon={props.icon} size={18} color="accent-foreground" />
-    </PressScale>
   );
 }
 

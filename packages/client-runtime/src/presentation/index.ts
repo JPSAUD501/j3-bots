@@ -145,13 +145,10 @@ export { assembleAnswers, optionDescription, type QuestionDraft } from "./questi
 export {
   blankRoomForm,
   followRoom,
-  hopLimitSteps,
-  hostOf,
   ROOM_MEMBERS,
   ROOM_NAME_MAX,
   roomChanges,
   roomDraft,
-  roomFormContext,
   type RoomFormMode,
   roomFormOf,
   roomFormStart,

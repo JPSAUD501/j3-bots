@@ -5,12 +5,8 @@ import { at } from "../../test/fixtures.ts";
 import {
   blankRoomForm,
   followRoom,
-  hopLimitSteps,
-  hostOf,
   roomChanges,
   roomDraft,
-  type RoomFormContext,
-  roomFormContext,
   roomFormOf,
   roomFormStart,
   roomFormTarget,
@@ -40,25 +36,10 @@ const room: Room = {
   name: "Launch",
   status: "active",
   members: [hal, ana],
-  hostId: hal,
-  hopLimit: 4,
   pinned: false,
   createdAt: at("2026-11-01T00:00:00Z"),
   work: "none",
 };
-
-/** How the form reads a room with a host, with `primaryId` as the primary bot and a default hop limit of 4. */
-const hosted = (primaryId: BotId | null = null): RoomFormContext =>
-  roomFormContext(room, primaryId, 4);
-
-describe("hostOf", () => {
-  it("keeps the host picked while it is a member, else the primary bot, else the first member", () => {
-    expect(hostOf(form({ members: [ana, hal], hostPick: hal }), hosted(bo))).toBe(hal);
-    expect(hostOf(form({ members: [ana, hal], hostPick: bo }), hosted(hal))).toBe(hal);
-    expect(hostOf(form({ members: [ana, hal], hostPick: null }), hosted(bo))).toBe(ana);
-    expect(hostOf(form({ members: [] }), hosted(hal))).toBeNull();
-  });
-});
 
 describe("withMember", () => {
   it("adds in the order picked, removes, and takes no seventh bot", () => {
@@ -70,152 +51,61 @@ describe("withMember", () => {
 });
 
 describe("roomDraft", () => {
-  const creating = (primaryId: BotId | null) => roomFormContext(null, primaryId, null);
-
   it("needs a name and two to six bots", () => {
-    const checked = roomDraft(form({ name: "  ", members: [hal] }), creating(null));
+    const checked = roomDraft(form({ name: "  ", members: [hal] }));
     expect(checked._tag === "invalid" && [...checked.problems]).toEqual(["name", "members"]);
   });
 
-  it("leaves an empty hop limit to the server's default, and refuses one that is not a whole number", () => {
-    expect(roomDraft(form({ name: " Launch ", members: [ana, hal] }), creating(hal))).toEqual({
+  it("sends the name without the spaces around it and the bots in the order picked", () => {
+    expect(roomDraft(form({ name: " Launch ", members: [ana, hal] }))).toEqual({
       _tag: "ready",
-      value: { name: "Launch", members: [ana, hal], hostId: hal },
+      value: { name: "Launch", members: [ana, hal] },
     });
-    const checked = roomDraft(form({ members: [ana, hal], hopLimit: "0" }), creating(null));
-    expect(checked._tag === "invalid" && [...checked.problems]).toEqual(["hop-limit"]);
   });
 });
 
 describe("roomChanges", () => {
   const opened = roomFormOf(room);
 
-  it("sends only what changed from the form as it opened, and a host that follows when its bot leaves", () => {
-    expect(roomChanges(opened, { ...opened, members: [ana, bo] }, hosted())).toEqual({
-      _tag: "ready",
-      value: { members: [ana, bo], hostId: ana },
-    });
+  it("sends only what changed from the form as it opened", () => {
     // Fields left as they opened are not sent, so a change made elsewhere meanwhile stands.
-    expect(roomChanges(opened, { ...opened, hopLimit: "5" }, hosted())).toEqual({
+    expect(roomChanges(opened, { ...opened, members: [ana, bo] })).toEqual({
       _tag: "ready",
-      value: { hopLimit: 5 },
+      value: { members: [ana, bo] },
     });
   });
 
   it("finds nothing to send for an edit the operator undid", () => {
-    const undone = { ...opened, name: " Launch ", members: [hal, ana], hostPick: hal };
-    expect(sameRoomForm(opened, undone, hosted())).toBe(true);
-    expect(roomChanges(opened, undone, hosted())).toEqual({ _tag: "ready", value: {} });
-    expect(sameRoomForm(opened, { ...opened, members: [ana, hal] }, hosted())).toBe(false);
+    const undone = { ...opened, name: " Launch ", members: [hal, ana] };
+    expect(sameRoomForm(opened, undone)).toBe(true);
+    expect(roomChanges(opened, undone)).toEqual({ _tag: "ready", value: {} });
+    expect(sameRoomForm(opened, { ...opened, members: [ana, hal] })).toBe(false);
   });
 
-  it("sets an emptied hop limit back to the default, which must be known", () => {
-    const values = { ...opened, hopLimit: "" };
-    expect(roomChanges(opened, values, roomFormContext(room, null, 6))).toEqual({
-      _tag: "ready",
-      value: { hopLimit: 6 },
-    });
-    const checked = roomChanges(opened, values, roomFormContext(room, null, null));
-    expect(checked._tag === "invalid" && [...checked.problems]).toEqual(["hop-limit"]);
-  });
-
-  it("asks for a host the server has none of, as for an archived room whose host was deleted", () => {
+  it("takes an archived room back once it has two to six bots again", () => {
     const archived: Room = {
       ...room,
       status: "archived",
       members: [hal],
-      hostId: null,
       archivedAt: at("2026-11-02T00:00:00Z"),
     };
-    const hostless = roomFormContext(archived, hal, 4);
     const opened = roomFormOf(archived);
-    const values = withMember(opened, scout, true);
-    // Not even the primary bot hosts until the operator picks.
-    expect(hostOf(values, hostless)).toBeNull();
-    const checked = roomChanges(opened, values, hostless);
-    expect(checked._tag === "invalid" && [...checked.problems]).toEqual(["host"]);
-    expect(roomChanges(opened, { ...values, hostPick: scout }, hostless)).toEqual({
+    const alone = roomChanges(opened, opened);
+    expect(alone._tag === "invalid" && [...alone.problems]).toEqual(["members"]);
+    expect(roomChanges(opened, withMember(opened, scout, true))).toEqual({
       _tag: "ready",
-      value: { members: [hal, scout], hostId: scout },
+      value: { members: [hal, scout] },
     });
   });
 
-  it("shows the host the server chose once its host is deleted, and sends nothing", () => {
-    const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: ana });
+  it("drops a bot deleted meanwhile, and sends nothing once the server drops it too", () => {
+    const opened = roomFormOf({ ...room, members: [hal, ana, bo] });
     const present = new Set([hal, bo]);
     const start = withoutDeleted(opened, present);
-    const values = withoutDeleted(opened, present, start.hostPick);
-    // The server moves the room to Hal, though Bo is the primary bot.
-    const followed = followRoom(
-      start,
-      values,
-      { ...room, members: [hal, bo], hostId: hal },
-      hosted(bo),
-    );
-    expect(hostOf(followed.values, hosted(bo))).toBe(hal);
-    expect(roomChanges(followed.start, followed.values, hosted(bo))).toEqual({
-      _tag: "ready",
-      value: {},
-    });
-  });
-
-  it("sends the host it shows whenever the server's is another, as when that one leaves", () => {
-    const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: hal });
-    // Another tab makes Ana the host; this form follows, then takes Ana out.
-    const elsewhere: Room = { ...room, members: [hal, ana, bo], hostId: ana };
-    const followed = followRoom(opened, opened, elsewhere, hosted());
-    expect(hostOf(followed.values, hosted())).toBe(ana);
-    const values = withMember(followed.values, ana, false);
-    expect(hostOf(values, hosted())).toBe(hal);
-    expect(roomChanges(followed.start, values, hosted())).toEqual({
-      _tag: "ready",
-      value: { members: [hal, bo], hostId: hal },
-    });
-  });
-
-  it("leaves a host the form fell back to unsent, so a host set elsewhere stands", () => {
-    const opened = roomFormOf({ ...room, members: [hal, ana, scout], hostId: hal });
-    // The operator takes Hal out, and the form falls back to Ana.
-    const values = withMember(opened, hal, false);
-    expect(hostOf(values, hosted())).toBe(ana);
-    // Another tab makes Scout the host before Save.
-    const elsewhere: Room = { ...room, members: [hal, ana, scout], hostId: scout };
-    const followed = followRoom(opened, values, elsewhere, hosted());
-    expect(hostOf(followed.values, hosted())).toBe(scout);
-    expect(roomChanges(followed.start, followed.values, hosted())).toEqual({
-      _tag: "ready",
-      value: { members: [ana, scout] },
-    });
-  });
-
-  it("sends a host the operator picked, over one set elsewhere", () => {
-    const opened = roomFormOf({ ...room, members: [hal, ana, scout], hostId: hal });
-    const values = { ...opened, hostPick: ana };
-    const elsewhere: Room = { ...room, members: [hal, ana, scout], hostId: scout };
-    const followed = followRoom(opened, values, elsewhere, hosted());
-    expect(roomChanges(followed.start, followed.values, hosted())).toEqual({
-      _tag: "ready",
-      value: { hostId: ana },
-    });
-  });
-
-  it("sends the host it shows once the bot the operator picked leaves", () => {
-    const opened = roomFormOf({ ...room, members: [hal, ana, scout], hostId: hal });
-    // The operator picks Ana, then takes her out: the form shows the primary bot.
-    const values = withMember({ ...opened, hostPick: ana }, ana, false);
-    expect(hostOf(values, hosted(scout))).toBe(scout);
-    expect(roomChanges(opened, values, hosted(scout))).toEqual({
-      _tag: "ready",
-      value: { members: [hal, scout], hostId: scout },
-    });
-  });
-
-  it("gives a host picked and then deleted back to the server's", () => {
-    const opened = roomFormOf({ ...room, members: [hal, ana, bo], hostId: hal });
-    const values = { ...opened, hostPick: bo };
-    const present = new Set([hal, ana]);
-    const start = withoutDeleted(opened, present);
-    expect(hostOf(withoutDeleted(values, present, start.hostPick), hosted(ana))).toBe(hal);
+    const values = withoutDeleted(opened, present);
+    expect(values.members).toEqual([hal, bo]);
+    const followed = followRoom(start, values, { ...room, members: [hal, bo] });
+    expect(roomChanges(followed.start, followed.values)).toEqual({ _tag: "ready", value: {} });
   });
 });
 
@@ -223,10 +113,10 @@ describe("followRoom", () => {
   it("follows the room where the operator changed nothing, and keeps what they changed", () => {
     const opened = roomFormOf(room);
     const values = { ...opened, name: "Liftoff" };
-    const elsewhere: Room = { ...room, name: "Launch v2", hopLimit: 6 };
-    const followed = followRoom(opened, values, elsewhere, hosted());
-    expect(followed.values).toEqual({ ...opened, name: "Liftoff", hopLimit: "6" });
-    expect(roomChanges(followed.start, followed.values, hosted())).toEqual({
+    const elsewhere: Room = { ...room, name: "Launch v2", members: [hal, ana, bo] };
+    const followed = followRoom(opened, values, elsewhere);
+    expect(followed.values).toEqual({ name: "Liftoff", members: [hal, ana, bo] });
+    expect(roomChanges(followed.start, followed.values)).toEqual({
       _tag: "ready",
       value: { name: "Liftoff" },
     });
@@ -234,26 +124,23 @@ describe("followRoom", () => {
 
   it("keeps what is being typed when the server changes nothing the form shows", () => {
     const opened = roomFormOf(room);
-    // Halfway through typing "Launch plan", and the hop limit cleared to the default.
-    const values = { ...opened, name: "Launch ", hopLimit: "" };
+    // Halfway through typing "Launch plan".
+    const values = { ...opened, name: "Launch " };
     // A new message: the room is another object, its fields the same.
-    const followed = followRoom(opened, values, { ...room }, hosted());
+    const followed = followRoom(opened, values, { ...room });
     expect(followed.values).toEqual(values);
   });
 
   it("follows a field typed back to what it says, so Save does not undo a change made elsewhere", () => {
     const opened = roomFormOf(room);
-    // The same hop limit and the same name, typed another way: nothing Save would send.
-    const values = { ...opened, name: "Launch ", hopLimit: "04" };
-    expect(roomChanges(opened, values, hosted())).toEqual({ _tag: "ready", value: {} });
-    // Another tab renames the room and sets the hop limit to 6.
-    const elsewhere: Room = { ...room, name: "Launch v2", hopLimit: 6 };
-    const followed = followRoom(opened, values, elsewhere, hosted());
-    expect(followed.values).toEqual({ ...opened, name: "Launch v2", hopLimit: "6" });
-    expect(roomChanges(followed.start, followed.values, hosted())).toEqual({
-      _tag: "ready",
-      value: {},
-    });
+    // The same name, typed with a space after it: nothing Save would send.
+    const values = { ...opened, name: "Launch " };
+    expect(roomChanges(opened, values)).toEqual({ _tag: "ready", value: {} });
+    // Another tab renames the room.
+    const elsewhere: Room = { ...room, name: "Launch v2" };
+    const followed = followRoom(opened, values, elsewhere);
+    expect(followed.values).toEqual({ ...opened, name: "Launch v2" });
+    expect(roomChanges(followed.start, followed.values)).toEqual({ _tag: "ready", value: {} });
   });
 });
 
@@ -269,29 +156,10 @@ describe("roomFormTarget", () => {
   });
 });
 
-describe("hopLimitSteps", () => {
-  it("steps from the number typed, never below one", () => {
-    expect(hopLimitSteps("3", 4)).toEqual({ fewer: 2, more: 4 });
-    expect(hopLimitSteps(" 1 ", 4)).toEqual({ fewer: null, more: 2 });
-  });
-
-  it("steps from the default while the field is empty", () => {
-    expect(hopLimitSteps("", 4)).toEqual({ fewer: 3, more: 5 });
-    expect(hopLimitSteps("", null)).toEqual({ fewer: null, more: null });
-  });
-
-  it("does not step from what is not a whole number from one up", () => {
-    expect(hopLimitSteps("2.5", 4)).toEqual({ fewer: null, more: null });
-    expect(hopLimitSteps("0", 4)).toEqual({ fewer: null, more: null });
-  });
-});
-
 describe("roomFormStart", () => {
   it("starts a new room with the bots it was opened with, and a room the server has as it has it", () => {
     const start = roomFormStart({ _tag: "create", members: [ana, hal] });
     expect(start).toEqual({ ...blankRoomForm, members: [ana, hal] });
-    // The primary bot hosts when it is one of them, as when the operator picks them.
-    expect(hostOf(start, roomFormContext(null, hal, 4))).toBe(hal);
     expect(roomFormStart({ _tag: "create" })).toEqual(blankRoomForm);
     expect(roomFormStart({ _tag: "edit", room, gone: false })).toEqual(roomFormOf(room));
   });

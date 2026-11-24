@@ -817,14 +817,10 @@ export function RoomDetails({
                     </span>
                   )}
                 </span>
-                {bot.id === room.hostId && <Badge>{t("room.host")}</Badge>}
               </li>
             ))}
           </ul>
         )}
-      </DetailsSection>
-      <DetailsSection title={t("room.budget")}>
-        <p className="text-sm">{plural("room.hopLimit", room.hopLimit)}</p>
       </DetailsSection>
       <DetailsSection title={t("room.archiveSection")}>
         {archived ? (

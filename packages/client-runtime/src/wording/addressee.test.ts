@@ -14,18 +14,14 @@ describe("addressee", () => {
   const en = createI18n("en");
   const nameOf = (botId: BotId) => members.find((one) => one.id === botId)?.name;
 
-  it("says a message for nobody goes to the host, named as it is now", () => {
-    expect(addresseeLine(addresseeOf(null, scout.id, nameOf, en), en)).toBe(
-      "To the host (now Scout)",
-    );
+  it("says a message for nobody goes to every member", () => {
+    expect(addresseeLine(addresseeOf(null, nameOf, en), en)).toBe("To everyone");
   });
 
-  it("says Send again goes to the host once every member mentioned has left", () => {
+  it("says Send again goes to every member once every member mentioned has left", () => {
     const without = { _tag: "bots", ids: [] } as const;
-    expect(resendLabel(addresseeOf(without, scout.id, nameOf, en), en)).toBe(
-      "Send to the host (Scout)",
-    );
+    expect(resendLabel(addresseeOf(without, nameOf, en), en)).toBe("Send again");
     const someStay = { _tag: "bots", ids: [ana.id] } as const;
-    expect(resendLabel(addresseeOf(someStay, scout.id, nameOf, en), en)).toBe("Send to Ana");
+    expect(resendLabel(addresseeOf(someStay, nameOf, en), en)).toBe("Send to Ana");
   });
 });
