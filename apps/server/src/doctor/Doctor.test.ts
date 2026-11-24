@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import type { BrowserHostNeeds } from "@j3-bots/engine-t3/live";
 import { AdminClient, AdminRequestFailed } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
 import { markRestoring, takeSnapshot } from "../install/snapshot.ts";
@@ -97,6 +98,13 @@ interface World {
   readonly socketBlocked: boolean;
   /** A rollback to a snapshot in the home that has not finished. */
   readonly rollbackUnfinished: boolean;
+  /**
+   * An engine executable J3_ENGINE_BINARY names in this shell, so the engine
+   * counts as installed; a server started from this shell, not the service, uses it.
+   */
+  readonly engineBinary: boolean;
+  /** What the engine's browser needs from this host. */
+  readonly browser: BrowserHostNeeds;
 }
 
 const HEALTHY: World = {
@@ -125,6 +133,15 @@ const HEALTHY: World = {
   homeUnreadable: false,
   socketBlocked: false,
   rollbackUnfinished: false,
+  engineBinary: false,
+  browser: {
+    sandboxBlocked: false,
+    downloaded: true,
+    missingLibraries: [],
+    noFonts: false,
+    setup: [],
+    packagesByHand: false,
+  },
 };
 
 const diagnoseIn = (changes: Partial<World> = {}) =>
@@ -146,6 +163,8 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
       path.join(home, "config.json"),
       Option.getOrElse(world.configFile, () => JSON.stringify({ webClient: web })),
     );
+    const engineBinary = path.join(root, "t3");
+    if (world.engineBinary) yield* fs.writeFileString(engineBinary, "");
     if (world.socketBlocked) yield* fs.writeFileString(path.join(home, "admin.sock"), "");
     if (world.rollbackUnfinished) {
       yield* markRestoring(
@@ -166,6 +185,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           HOME: root,
           J3_HOME: home,
           XDG_CONFIG_HOME: configHome,
+          ...(world.engineBinary ? { J3_ENGINE_BINARY: engineBinary } : {}),
           ...world.environment,
         }),
       ),
@@ -196,6 +216,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
               requests.push(url);
               return world.reachable;
             }),
+          browserNeeds: () => Effect.succeed(world.browser),
           findExecutable: (name, searchPath) =>
             Effect.succeed(
               Option.fromNullishOr(
@@ -425,6 +446,50 @@ it.layer(NodeServices.layer)("doctor", (it) => {
         ),
       });
       assertFlagged(named(failed.checks, "Engine"), "problem");
+    }),
+  );
+
+  it.effect("checks what the browser needs, and how an administrator fixes it", () =>
+    Effect.gen(function* () {
+      const ready = yield* diagnoseIn();
+      assert.strictEqual(named(ready.checks, "Browser").status, "ok");
+      const missing = {
+        sandboxBlocked: true,
+        downloaded: true,
+        missingLibraries: ["libnss3.so", "libgbm.so.1"],
+        noFonts: true,
+      };
+      const blocked = yield* diagnoseIn({
+        browser: {
+          ...missing,
+          setup: ["sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell"],
+          packagesByHand: false,
+        },
+      });
+      const browser = named(blocked.checks, "Browser");
+      assertFlagged(browser, "warning", "AppArmor blocks the sandbox");
+      assert.include(browser.summary, "libnss3.so, libgbm.so.1");
+      assert.include(browser.summary, "no font");
+      assert.include(
+        Option.getOrElse(browser.fix, () => ""),
+        "\n  sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell",
+      );
+
+      // On a system with neither apt-get nor dnf, the libraries and fonts are the administrator's to install.
+      const byHand = yield* diagnoseIn({
+        browser: { ...missing, sandboxBlocked: false, setup: [], packagesByHand: true },
+      });
+      assert.strictEqual(
+        Option.getOrElse(named(byHand.checks, "Browser").fix, () => ""),
+        "Install libnss3.so, libgbm.so.1, fontconfig and a font with this system's package manager.",
+      );
+
+      // Off Linux the browser needs nothing.
+      const { checks } = yield* diagnoseIn({
+        browser: { ...HEALTHY.browser, sandboxBlocked: true },
+        platform: "darwin",
+      });
+      assert.isUndefined(checks.find((check) => check.name === "Browser"));
     }),
   );
 

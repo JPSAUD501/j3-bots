@@ -643,6 +643,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             files={data.files(bot.id)}
             modelName={botModelName(data.engine, bot)}
             stopShortcut={shortcuts.stop}
+            browserHost={data.engine?.browser ?? null}
             onClose={close}
             headingRef={detailsHeadingRef}
             headingId={detailsHeadingId}
@@ -652,6 +653,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
               openRoutine: intents.openRoutine,
               openAttachment: intents.openAttachment,
               openMemoryFile: (path) => intents.openMemoryFile(bot.id, path),
+              setBrowser: (enabled) => intents.setBrowser(bot, enabled),
               freshStart: () => intents.freshStart(bot.id, bot.profile.name),
               deleteBot: () => intents.deleteBot(bot.id),
               shareTemplate: () => intents.shareBotTemplate(bot.id),

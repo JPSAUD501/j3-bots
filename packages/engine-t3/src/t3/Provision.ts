@@ -156,6 +156,11 @@ const ENGINE_SETTINGS = {
   continueThreadsAfterServerUpdate: false,
   // Also drops the engine's device instructions from every session.
   enableAgentDeviceAccess: false,
+  // The engine's browser acts with the operator's signed-in sites, so no bot
+  // has it unless the operator turned it on for that bot, which sets it in
+  // the bot's project (`BrowserAccess.ts`). The engine's default is on.
+  // **Read** at `59651c1`, `contracts/src/settings.ts`.
+  enableAgentBrowserAccess: false,
 } as const;
 
 const DRIVERS = {

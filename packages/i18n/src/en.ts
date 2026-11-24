@@ -446,6 +446,13 @@ export const en = {
   "details.freshStart.cancel": "Not now",
   "details.freshStart.done": "{name} started fresh.",
   "details.freshStart.failed": "The fresh start didn’t happen. Try again.",
+  "details.browser": "Browser",
+  "details.browser.use": "Use this computer’s browser",
+  "details.browser.hint":
+    "{name} acts on sites with the sessions you’re signed in to in that browser. Turning it on applies from {name}’s next turn; turning it off takes effect now (a running turn is stopped).",
+  "details.browser.setup":
+    "This computer needs setting up before the browser can run. Run `j3-bots doctor` on it to see how.",
+  "details.browser.failed": "{name}’s browser setting wasn’t saved. Try again.",
   "details.delete": "Delete {name}",
   "details.delete.title": "Delete {name}?",
   "details.delete.body":
@@ -1060,6 +1067,17 @@ export const en = {
   "memory.failedClosed": "Your edit to {file} wasn’t saved. Open it to see why.",
 
   "settings.close": "Close settings",
+  "settings.botBrowser": "Bots’ browser",
+  "settings.botBrowser.hint":
+    "The browser bots use keeps the sessions you signed in to. Signing out ends all of them, for every bot.",
+  "settings.botBrowser.signOut": "Sign out of all sites",
+  "settings.botBrowser.signOut.title": "Sign out of all sites?",
+  "settings.botBrowser.signOut.body":
+    "The browser forgets every site you signed in to, and its open tabs close. Bots can’t use those sites again until you sign in again.",
+  "settings.botBrowser.signOut.cancel": "Not now",
+  "settings.botBrowser.signOut.confirm": "Sign out",
+  "settings.botBrowser.signOut.done": "Signed out of all sites.",
+  "settings.botBrowser.signOut.failed": "The browser didn’t sign out. Try again.",
   "settings.engine": "Engine",
   "settings.engine.ready": "Running, version {version}",
   "settings.engine.lastKnown": "Last known. This device isn’t connected to J3 Bots right now.",

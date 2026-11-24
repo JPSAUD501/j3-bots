@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ConnectCommand, ProviderRow } from "../components/Engine.tsx";
 import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
+import { BotBrowserSection } from "./BotBrowser.tsx";
 import { DevicesSection } from "./Devices.tsx";
 import { usePhoneNotifications } from "./phoneNotifications.ts";
 import { NotificationsSection, YouSection } from "./Profile.tsx";
@@ -67,6 +68,7 @@ export function SettingsScreen() {
         onRetry={recent.retry}
       />
       <DevicesSection connected={connected} />
+      <BotBrowserSection connected={connected} />
       <ServerSection />
       <ThisPhoneSection />
     </ScrollView>

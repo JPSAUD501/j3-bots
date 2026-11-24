@@ -1419,6 +1419,13 @@ function LiveShell({
       });
     },
     editProfile: setEditingBot,
+    setBrowser: (bot, enabled) =>
+      void j3.updateBot(bot.id, { browser: enabled }).then((result) => {
+        if (result._tag !== "failed") return;
+        // The switch shows the bot as the server has it, so a failure leaves nothing to keep.
+        j3.dismissBotSave(bot.id);
+        if (stillPaired()) say(t("details.browser.failed", { name: bot.profile.name }));
+      }),
     openMemoryFile,
     freshStart: (botId, name) =>
       void j3
@@ -1445,6 +1452,7 @@ function LiveShell({
         ),
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
+    signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,

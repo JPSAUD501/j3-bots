@@ -262,6 +262,14 @@ export class TestEngineControl extends Context.Service<
     /** The permission mode a session runs, as it was opened or last configured. */
     readonly sessionPermissionMode: (sessionId: SessionId) => Effect.Effect<PermissionMode>;
     /**
+     * Whether a session's next turn has the browser tools: what its provider
+     * session started with, or for one still to start, at its first turn or
+     * after `reloadTools`, what its project allows now.
+     */
+    readonly sessionBrowserTools: (sessionId: SessionId) => Effect.Effect<boolean>;
+    /** How many times the browser profile was cleared. */
+    readonly browserProfileClears: Effect.Effect<number>;
+    /**
      * The engine refuses the next `stop` it receives, applying nothing and
      * keeping a rejected receipt, as when a read fails while it plans the
      * stop. It and every later call with its key fail with `StopRejected`
@@ -527,6 +535,12 @@ interface SessionRecord {
   retired: boolean;
   model: ModelChoice;
   permissionMode: PermissionMode;
+  /**
+   * Whether the session's provider session has the browser tools: what its
+   * project allowed when it started, at the session's first turn. `null`
+   * while it has none, before that first turn and after `reloadTools`.
+   */
+  browserTools: boolean | null;
   readonly log: Array<{ readonly sequence: number; readonly event: SessionEvent }>;
   /** A resume from a cursor below this sequence cannot be replayed. */
   replayableFrom: number;
@@ -637,6 +651,9 @@ const make = Effect.gen(function* () {
   let sequence = 0;
   let nextId = 0;
   const projects = new Map<string, EngineProjectId>();
+  /** The projects `setBrowserAccess` allowed the browser. */
+  const browserProjects = new Set<EngineProjectId>();
+  let browserProfileClears = 0;
   const sessions = new Map<SessionId, SessionRecord>();
   const keys = new Map<IdempotencyKey, AppliedKey>();
   /** Each staged file, with its `usableUntil`. */
@@ -966,6 +983,7 @@ const make = Effect.gen(function* () {
 
   const startTurn = (session: SessionRecord, turn: TurnRecord, at: DateTime.Utc): void => {
     session.running = turn.turnId;
+    session.browserTools ??= browserProjects.has(session.projectId);
     if (session.failNextStart !== null) {
       const failure = session.failNextStart;
       session.failNextStart = null;
@@ -1243,11 +1261,37 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const at = yield* DateTime.now;
           for (const [path, id] of projects) if (id === projectId) projects.delete(path);
+          browserProjects.delete(projectId);
           for (const session of sessions.values()) {
             if (session.projectId === projectId && !session.retired) retire(session, at);
           }
         }),
       ),
+
+    setBrowserAccess: ({ projectId, enabled }) =>
+      command(
+        Effect.sync(() => {
+          if (enabled) browserProjects.add(projectId);
+          else browserProjects.delete(projectId);
+        }),
+      ),
+
+    withdrawBrowserAccess: (projectId) =>
+      command(
+        Effect.gen(function* () {
+          const at = yield* DateTime.now;
+          browserProjects.delete(projectId);
+          for (const session of sessions.values()) {
+            if (session.projectId !== projectId || session.retired) continue;
+            // The engine's stop, with no turn cancelled, then the provider
+            // session released: its next one starts without the browser.
+            if (session.running !== null) stopSession(session, at, []);
+            session.browserTools = null;
+          }
+        }),
+      ),
+
+    clearBrowserProfile: command(Effect.sync(() => void browserProfileClears++)),
 
     openSession: ({ key, projectId, model, permissionMode }) =>
       command(
@@ -1283,6 +1327,7 @@ const make = Effect.gen(function* () {
             retired: false,
             model,
             permissionMode,
+            browserTools: null,
             log: [],
             replayableFrom: 0,
             turns: new Map(),
@@ -1312,7 +1357,7 @@ const make = Effect.gen(function* () {
         }),
       ),
 
-    configureSession: ({ sessionId, model, permissionMode }) =>
+    configureSession: ({ sessionId, model, permissionMode, reloadTools }) =>
       door(
         "configureSession",
         command(
@@ -1324,10 +1369,17 @@ const make = Effect.gen(function* () {
               model !== undefined &&
               (model.providerId !== session.model.providerId ||
                 model.modelId !== session.model.modelId);
-            if (!changesMode && !changesModel) return;
+            // Only a provider session that started has tools to reload.
+            const reloads = reloadTools === true && session.browserTools !== null;
+            if (!changesMode && !changesModel && !reloads) return;
             // The adapter's check, before anything is sent.
             if (session.running !== null) {
               return yield* new SessionBusy({ sessionId, turnId: session.running });
+            }
+            // The adapter's own check: replacing the provider session would
+            // end its background work.
+            if (reloads && backgroundRuns(session)) {
+              return yield* new BackgroundWorkRunning({ sessionId });
             }
             // As for Claude Code, whose permission mode changes only with a new
             // provider session, which the engine will not start over
@@ -1341,6 +1393,7 @@ const make = Effect.gen(function* () {
               if (Option.isSome(refusal)) return yield* refusal.value;
             }
             if (permissionMode !== undefined) session.permissionMode = permissionMode;
+            if (reloads) session.browserTools = null;
           }),
         ),
       ),
@@ -1789,6 +1842,16 @@ const make = Effect.gen(function* () {
           ? misuse(`no session ${sessionId}`)
           : Effect.succeed(session.permissionMode);
       }),
+
+    sessionBrowserTools: (sessionId) =>
+      Effect.suspend(() => {
+        const session = sessions.get(sessionId);
+        return session === undefined
+          ? misuse(`no session ${sessionId}`)
+          : Effect.succeed(session.browserTools ?? browserProjects.has(session.projectId));
+      }),
+
+    browserProfileClears: Effect.sync(() => browserProfileClears),
 
     rejectNextStop: Effect.sync(() => {
       rejectStop = true;

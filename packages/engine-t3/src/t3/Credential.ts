@@ -21,15 +21,19 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
 // no person is involved, and it is kept next to that data with mode 0600.
 
 /**
- * The scopes the adapter needs: read threads and projects, and operate them,
- * and act on a bot's browser tab for a person who took control of it (without
+ * The scopes the adapter needs: read threads and projects, and operate them;
+ * act on a bot's browser tab for a person who took control of it (without
  * `preview:operate` the engine silently drops a viewer's input; **Read** at
- * `59651c1`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77).
+ * `59651c1`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77); and
+ * write the engine's settings, for each bot's browser access
+ * (`BrowserAccess.ts`). A stored token without one of them is refused by
+ * `checkAccess`, and the supervisor mints a new one with all of them.
  */
 const CREDENTIAL_SCOPES = [
   "orchestration:read",
   "orchestration:operate",
   "preview:operate",
+  "settings:write",
 ] as const;
 
 /** Renew this long before the token expires, so a running engine never sees an expired one. */
@@ -247,9 +251,11 @@ export type Access = "granted" | "refused" | "unreachable";
  * for a token it does not accept, so a refusal is definitive and a failed
  * request only says the engine was not reached. **Read** at `db51b67`,
  * `packages/contracts/src/environmentHttp.ts` (`session`, `OptionalBearerHeaders`).
- * The answer's `scopes` holds only the engine's older scopes, and `preview:operate`
- * is in its `permissions` alone, so the engine's own `sessionGrantsScope` reads
- * it (**Read** at `59651c1`, `packages/contracts/src/auth.ts`, `authScopeResponse`).
+ * The answer's `scopes` lists only the scopes older clients know; what the
+ * token is granted is its `permissions`, which the engine's own
+ * `sessionGrantsScope` reads (**Read** at `59651c1`, `contracts/src/auth.ts`,
+ * `authScopeResponse`, which lists `preview:operate` there alone; **Verified**:
+ * a token issued with `settings:write` reports it only there).
  */
 export const checkAccess = Effect.fn("engine.checkAccess")(function* (input: {
   readonly baseUrl: string;

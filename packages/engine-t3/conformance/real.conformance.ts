@@ -26,7 +26,7 @@ import { BrowserBridge, type ViewerOutput } from "../src/Browser.ts";
 import { Engine, type EngineOptions } from "../src/Engine.ts";
 import { EngineUnavailable } from "../src/errors.ts";
 import { isBackgroundWorkPending, type SessionEvent } from "../src/events.ts";
-import { IdempotencyKey, SyncToken, type TurnId } from "../src/ids.ts";
+import { IdempotencyKey, SessionId, SyncToken, type TurnId } from "../src/ids.ts";
 import { makeEngineRpc } from "../src/t3/Connection.ts";
 import { ensureCredential } from "../src/t3/Credential.ts";
 import { ensureInstalled } from "../src/t3/Install.ts";
@@ -268,6 +268,32 @@ const until = Effect.fnUntraced(function* <T extends SessionEvent["_tag"]>(
   }
 });
 
+/**
+ * Reads the host's speech in a session's events, the uses its `replaced`
+ * events carry included, each once: `next(count)` gives the text of the next
+ * `count` uses.
+ */
+const speechReader = (queue: Queue.Dequeue<SessionEvent, Cause.Done>) => {
+  const seen = new Set<string>();
+  return Effect.fnUntraced(function* (count: number) {
+    const spoken: Array<string> = [];
+    while (spoken.length < count) {
+      const event = yield* take(queue);
+      const heard = isTagged(event, "replaced")
+        ? event.hostSpeech
+        : isTagged(event, "host-speech")
+          ? [event]
+          : [];
+      for (const speech of heard) {
+        if (seen.has(speech.speechId)) continue;
+        seen.add(speech.speechId);
+        spoken.push(speech.text);
+      }
+    }
+    return spoken;
+  });
+};
+
 const openWatched = Effect.fnUntraced(function* (name: string) {
   const engine = yield* Engine;
   const bench = yield* Bench;
@@ -286,7 +312,7 @@ const openWatched = Effect.fnUntraced(function* (name: string) {
     .events({ sessionId, after: null })
     .pipe(Stream.orDie, Stream.toQueue({ capacity: "unbounded" }));
   const first = yield* until(queue, "replaced");
-  return { sessionId, queue, start: first.cursor };
+  return { sessionId, projectId, queue, start: first.cursor };
 });
 
 /**
@@ -429,6 +455,144 @@ describe("Engine conformance, real engine only", () => {
         Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
       ),
     { timeout: 120_000 },
+  );
+
+  it.live(
+    "lets a session use the browser from its next turn once its project allows it, and stops it again",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const { sessionId, projectId, queue } = yield* openWatched("browser");
+        /** Whether the engine took the session's call to one of its browser tools. */
+        const browser = Effect.fnUntraced(function* (name: string) {
+          const probe = yield* engine.dispatch({
+            key: bench.key(`browser-${name}`),
+            sessionId,
+            text: "[[script:browser]]",
+            attachments: [],
+            delivery: { _tag: "start", freshContext: false },
+          });
+          const speech = yield* until(
+            queue,
+            "host-speech",
+            (event) => event.turnId === turnOf(probe),
+          );
+          yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(probe));
+          return speech.text;
+        });
+        const allow = (enabled: boolean) =>
+          engine
+            .setBrowserAccess({ projectId, enabled })
+            .pipe(Effect.andThen(engine.configureSession({ sessionId, reloadTools: true })));
+
+        // The suite's cases share a project, which an earlier run may have left allowed.
+        yield* engine.setBrowserAccess({ projectId, enabled: false });
+        const before = yield* browser("off");
+        yield* allow(true);
+        const allowed = yield* browser("on");
+        yield* allow(false);
+        const after = yield* browser("off-again");
+
+        assert.deepStrictEqual([before, allowed, after], ["refused", "allowed", "refused"]);
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "refuses the browser to a delegated child that a send runs again once it is withdrawn",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const rpc = yield* foreignRpc;
+        const { sessionId, projectId, queue } = yield* openWatched("browser-child");
+        yield* engine.setBrowserAccess({ projectId, enabled: true });
+        const delegating = yield* engine.dispatch({
+          key: bench.key("browser-child-delegate"),
+          sessionId,
+          text: "[[script:delegate child=browser]]",
+          attachments: [],
+          delivery: { _tag: "start", freshContext: false },
+        });
+        yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(delegating));
+        const { threads } = yield* rpc["orchestration.getThreadFamily"]({
+          threadId: ThreadId.make(sessionId),
+        });
+        const child = threads.find((thread) => thread.id !== ThreadId.make(sessionId));
+        assert.isDefined(child);
+        const childSpeech = speechReader(
+          yield* engine
+            .events({ sessionId: SessionId.make(child.id), after: null })
+            .pipe(Stream.orDie, Stream.toQueue({ capacity: "unbounded" })),
+        );
+        const first = yield* childSpeech(1);
+        // The engine wakes the parent once the child's task ended.
+        yield* until(queue, "turn-finished", (event) => event.turnId !== turnOf(delegating));
+
+        yield* engine.withdrawBrowserAccess(projectId);
+        const sending = yield* engine.dispatch({
+          key: bench.key("browser-child-send"),
+          sessionId,
+          text: `[[script:send to=${child.id}]]`,
+          attachments: [],
+          delivery: { _tag: "start", freshContext: false },
+        });
+        yield* until(queue, "turn-finished", (event) => event.turnId === turnOf(sending));
+        const second = yield* childSpeech(1);
+
+        assert.deepStrictEqual([...first, ...second], ["allowed", "refused"]);
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 180_000 },
+  );
+
+  it.live(
+    "takes the browser from a turn the engine queued behind a running one when it is withdrawn",
+    () =>
+      Effect.gen(function* () {
+        const engine = yield* Engine;
+        const bench = yield* Bench;
+        const rpc = yield* foreignRpc;
+        const { sessionId, projectId, queue } = yield* openWatched("browser-queued");
+        yield* engine.setBrowserAccess({ projectId, enabled: true });
+        const running = yield* engine.dispatch({
+          key: bench.key("browser-queued-running"),
+          sessionId,
+          text: "[[script:slow every=500 for=120000]]",
+          attachments: [],
+          delivery: { _tag: "start", freshContext: false },
+        });
+        yield* until(queue, "turn-started", (event) => event.turnId === turnOf(running));
+        // A turn queued behind it, as the engine queues one of its own, here
+        // from another of its clients.
+        const queuedId = bench.key("browser-queued-successor");
+        yield* rpc["orchestration.dispatchCommand"]({
+          type: "message.dispatch",
+          commandId: CommandId.make(queuedId),
+          threadId: ThreadId.make(sessionId),
+          messageId: MessageId.make(queuedId),
+          text: "[[script:browser]]",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+
+        yield* engine.withdrawBrowserAccess(projectId);
+        // The withdrawal's stop holds the queue; released as the server does.
+        const held = yield* until(queue, "queue-held");
+        yield* engine.resumeQueue({ sessionId, hold: held.cursor });
+        const speech = yield* until(queue, "host-speech");
+
+        assert.strictEqual(speech.text, "refused");
+      }).pipe(
+        Effect.provide(bench.pipe(Layer.provideMerge(realEngine), Layer.provideMerge(platform))),
+      ),
+    { timeout: 180_000 },
   );
 
   it.live(

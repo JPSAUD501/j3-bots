@@ -146,6 +146,7 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
           sshPrivateKeys: Effect.succeed([]),
           groups: Effect.succeed([]),
           reachable: () => Effect.die("uninstall never downloads"),
+          browserNeeds: () => Effect.die("uninstall never asks about the browser"),
         }),
       ),
       Layer.succeed(

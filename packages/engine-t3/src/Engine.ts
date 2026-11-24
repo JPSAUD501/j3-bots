@@ -359,9 +359,46 @@ export class Engine extends Context.Service<
 
     /**
      * Removes the project and every session in it, stopping what runs there.
-     * The workspace folder is left alone. Succeeds if the project is already gone.
+     * The workspace folder is left alone. Succeeds if the project is already
+     * gone. The engine drops the project's settings overrides, its browser
+     * access with them, and at its start any a failed removal left (**Read**
+     * at `59651c1`: `ProjectService.ts`, `clearProjectSettingsOverrides`;
+     * `ProjectSettingsOverrideSweep.ts`).
      */
     readonly removeProject: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
+
+    /**
+     * Whether the sessions of the project may use the engine's browser, which
+     * acts with the operator's signed-in sites. The engine allows it to no
+     * project unless this allowed it. A session takes the change when its
+     * provider session next starts: a session opened after this call, or one
+     * that `configureSession` reloaded the tools of. Sends nothing when the
+     * project already has it.
+     */
+    readonly setBrowserAccess: (input: {
+      readonly projectId: EngineProjectId;
+      readonly enabled: boolean;
+    }) => Effect.Effect<void, EngineDown>;
+
+    /**
+     * Takes the browser from the project at once: it disallows it, as
+     * `setBrowserAccess` does, then ends what still has it. A thread of the
+     * project keeps the browser tools its provider session started with,
+     * whoever started it: a session, a delegated child, a thread another agent
+     * launched there. So in every thread of the project, a turn running is
+     * stopped as `stop` stops one, with its delegated tasks, which holds the
+     * thread's queue, and every provider session still running is released.
+     * The thread's next turn starts a provider session without the browser.
+     * Each call sends keys of its own; one that failed can be made again.
+     */
+    readonly withdrawBrowserAccess: (projectId: EngineProjectId) => Effect.Effect<void, EngineDown>;
+
+    /**
+     * Signs the engine's browser out of every site: deletes the cookies and
+     * site data of the one browser profile every session uses. Tabs open in
+     * it close.
+     */
+    readonly clearBrowserProfile: Effect.Effect<void, EngineDown>;
 
     /**
      * A new, idle session in the project. `key` is written by the server
@@ -410,6 +447,13 @@ export class Engine extends Context.Service<
       readonly sessionId: SessionId;
       readonly model?: ModelChoice;
       readonly permissionMode?: PermissionMode;
+      /**
+       * Starts the session's provider again before its next turn, so it
+       * takes the tools its project allows now (`setBrowserAccess`). The
+       * conversation resumes where it was. Refused as a change is: while a
+       * turn runs, and while background work it would end runs.
+       */
+      readonly reloadTools?: boolean;
     }) => Effect.Effect<
       void,
       | EngineDown

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type BrowserHostStatus,
   EngineStatus,
   type ModelChoice,
   PermissionMode,
@@ -14,7 +15,9 @@ import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ProjectId,
   ProjectSnapshot,
+  DEFAULT_BROWSER_PROFILE_ID,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -77,7 +80,7 @@ import {
   SessionNotFound,
   StopRejected,
 } from "../errors.ts";
-import type { BackgroundWork, SessionEvent } from "../events.ts";
+import { type BackgroundWork, isBackgroundWorkPending, type SessionEvent } from "../events.ts";
 import {
   EngineAttachmentId,
   EngineProjectId,
@@ -87,6 +90,8 @@ import {
   SessionId,
   type SyncToken,
 } from "../ids.ts";
+import { type ProjectOverrides, withBrowserAccess } from "./BrowserAccess.ts";
+import { type BrowserHostNeeds, inspectBrowserHost } from "./BrowserHost.ts";
 import { boundedCommand } from "./Command.ts";
 import { makeBrowserBridge } from "./BrowserBridge.ts";
 import { makeEngineRpc } from "./Connection.ts";
@@ -140,6 +145,7 @@ import {
   dispositionOf,
   emptyMirror,
   engineAnswersOf,
+  liveProviderSessions,
   findRequest,
   isDeleted,
   isEnded,
@@ -212,6 +218,18 @@ const APPROVAL_DECISIONS = {
 } as const;
 
 const decodeProjects = HttpClientResponse.schemaBodyJson(ProjectSnapshot);
+
+/** A thread of the engine's shell, as far as J3 Bots reads it: which project it is in. */
+const ShellThread = Schema.Struct({ id: ThreadId, projectId: ProjectId });
+
+/**
+ * The engine's shell, live and archived threads alike, with every subagent:
+ * a thread archived or idle can still hold a provider session (**Read** at
+ * `59651c1`, `environmentHttp.ts`, `shellSnapshot`).
+ */
+const decodeShellThreads = HttpClientResponse.schemaBodyJson(
+  Schema.Struct({ threads: Schema.Array(ShellThread), archivedThreads: Schema.Array(ShellThread) }),
+);
 
 const isEngineDown = Schema.is(Schema.Union([EngineUnavailable, EngineIncompatible]));
 
@@ -307,6 +325,16 @@ interface SyncTarget {
   /** Completed when the stream closes: no marker is owed to it any more. */
   readonly closed: Deferred.Deferred<void>;
 }
+
+/** What the engine's browser needs from this host, as the engine status says it. */
+const browserHostStatus = (needs: BrowserHostNeeds): BrowserHostStatus => {
+  const missing = [
+    ...(needs.sandboxBlocked ? (["sandbox"] as const) : []),
+    ...(needs.missingLibraries.length > 0 ? (["libraries"] as const) : []),
+    ...(needs.noFonts ? (["fonts"] as const) : []),
+  ];
+  return missing.length === 0 ? { _tag: "ready" } : { _tag: "setup-required", needs: missing };
+};
 
 const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const fs = yield* FileSystem.FileSystem;
@@ -850,6 +878,210 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
   });
 
+  // ---------------------------------------------------------------------------
+  // Browser access
+
+  /**
+   * Reads and writes of the projects' overrides take turns: each writes back
+   * a project's whole set, as it read it, with one key changed.
+   */
+  const overridesLock = yield* Semaphore.make(1);
+
+  /** The projects' overrides in the engine's settings. Nothing was sent, so any failure is unavailability. */
+  const projectOverrides = ready.pipe(
+    Effect.andThen(
+      rpc["server.getSettings"]({}).pipe(
+        Effect.timeoutOrElse({
+          duration: COMMAND_TIMEOUT,
+          orElse: () => Effect.fail(new EngineUnavailable()),
+        }),
+        Effect.map((settings) => settings.projectSettingsOverrides),
+        Effect.catchTags({
+          RpcClientError: () => Effect.fail(new EngineUnavailable()),
+          EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+          ServerSettingsError: () => Effect.fail(new EngineUnavailable()),
+        }),
+      ),
+    ),
+  );
+
+  /**
+   * Replaces the project's set of overrides, or removes it with `null`. The
+   * engine refuses a settings file it cannot write (`ServerSettingsError`);
+   * that and a lost reply are indeterminate, and writing the same set again
+   * is harmless.
+   */
+  const writeOverrides = (projectId: EngineProjectId, overrides: ProjectOverrides | null) =>
+    ready.pipe(
+      Effect.andThen(
+        rpc["server.updateSettings"]({
+          patch: { projectSettingsOverrides: { [projectId]: overrides } },
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: COMMAND_TIMEOUT,
+            orElse: () => Effect.fail(new EngineIndeterminate()),
+          }),
+          Effect.catchTags({
+            RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+            EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+            ServerSettingsError: () => Effect.fail(new EngineIndeterminate()),
+          }),
+          Effect.asVoid,
+        ),
+      ),
+    );
+
+  /**
+   * Whether the engine's browser can run on this host, checked each time the
+   * engine becomes ready and each time a bot is given the browser: an
+   * administrator may have set the host up, or the engine downloaded the
+   * browser, since. Nothing to check off Linux, where it needs no setup.
+   */
+  const browserHost = yield* SubscriptionRef.make(Option.none<BrowserHostStatus>());
+  const browserHostChecks = yield* Queue.sliding<void>(1);
+  const checkBrowserHost = Effect.gen(function* () {
+    if (process.platform !== "linux") {
+      return yield* SubscriptionRef.set(browserHost, Option.some({ _tag: "ready" }));
+    }
+    const needs = yield* platformServices(inspectBrowserHost({ home: options.home }));
+    yield* SubscriptionRef.set(browserHost, Option.some(browserHostStatus(needs)));
+  });
+  yield* Stream.merge(
+    stateChanges(state).pipe(Stream.filter((current) => current._tag === "ready")),
+    Stream.fromQueue(browserHostChecks),
+  ).pipe(
+    Stream.runForEach(() => checkBrowserHost),
+    Effect.forkScoped,
+  );
+
+  const setBrowserAccess = Effect.fn("Engine.setBrowserAccess")(function* (input: {
+    readonly projectId: EngineProjectId;
+    readonly enabled: boolean;
+  }) {
+    const current = (yield* projectOverrides)[input.projectId];
+    const next = withBrowserAccess(current, input.enabled);
+    if (next !== null) yield* writeOverrides(input.projectId, next);
+    if (input.enabled) yield* Queue.offer(browserHostChecks, undefined);
+  }, overridesLock.withPermits(1));
+
+  /** Every thread of the project the engine has, archived ones and other agents' children included. */
+  const projectThreads = Effect.fn("Engine.projectThreads")(function* (projectId: EngineProjectId) {
+    yield* ready;
+    const token = yield* currentToken;
+    const shell = yield* http
+      .execute(
+        HttpClientRequest.get(`${baseUrl(options.port)}/api/orchestration/shell`).pipe(
+          HttpClientRequest.bearerToken(Redacted.value(token)),
+          HttpClientRequest.setHeader(
+            ORCHESTRATION_PROTOCOL_HEADER,
+            String(ORCHESTRATION_PROTOCOL),
+          ),
+        ),
+      )
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(decodeShellThreads),
+        Effect.timeout(COMMAND_TIMEOUT),
+        Effect.mapError(() => new EngineUnavailable()),
+      );
+    return [...shell.threads, ...shell.archivedThreads]
+      .filter((thread) => thread.projectId === ProjectId.make(projectId))
+      .map((thread) => SessionId.make(thread.id));
+  });
+
+  /**
+   * Sends one step of a withdrawal, under a key of its own. A refusal counts
+   * as done once a read of the thread shows the step moot (`isMoot`); a
+   * thread gone is moot too. Anything else leaves the withdrawal to be tried
+   * again.
+   */
+  const sendWithdrawalStep = Effect.fnUntraced(function* (
+    threadId: SessionId,
+    input: OrchestrationV2Command,
+    isMoot: (mirror: Mirror) => boolean,
+  ) {
+    yield* command(input).pipe(
+      Effect.catchTags({
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        OrchestrationV2DispatchCommandError: () =>
+          afterSending(projection(threadId)).pipe(
+            Effect.catchTag("SessionNotFound", () => Effect.succeed(null)),
+            Effect.flatMap((mirror) =>
+              mirror === null || isMoot(mirror)
+                ? Effect.void
+                : Effect.fail(new EngineIndeterminate()),
+            ),
+          ),
+      }),
+    );
+  });
+
+  const withdrawBrowserAccess = Effect.fn("Engine.withdrawBrowserAccess")(function* (
+    projectId: EngineProjectId,
+  ) {
+    // First, so a provider session started from here on has no browser.
+    yield* setBrowserAccess({ projectId, enabled: false });
+    for (const threadId of yield* projectThreads(projectId)) {
+      const mirror = yield* projection(threadId).pipe(
+        Effect.asSome,
+        Effect.catchTag("SessionNotFound", () => Effect.succeedNone),
+      );
+      if (Option.isNone(mirror)) continue;
+      const thread = ThreadId.make(threadId);
+      // The engine's stop holds the thread's queue, so no turn waiting in it
+      // starts in the provider session about to be released, and stops the
+      // thread's delegated tasks.
+      if (Option.isSome(startedTurn(mirror.value))) {
+        yield* sendWithdrawalStep(
+          threadId,
+          {
+            type: "thread.stop",
+            commandId: commandId("browser-stop", `${threadId}:${yield* uniqueKey}`),
+            threadId: thread,
+            stopDelegatedTasks: true,
+          },
+          (now) => Option.isNone(startedTurn(now)),
+        );
+      }
+      for (const providerSessionId of liveProviderSessions(mirror.value)) {
+        yield* sendWithdrawalStep(
+          threadId,
+          {
+            type: "provider-session.detach",
+            commandId: commandId("browser-detach", `${threadId}:${yield* uniqueKey}`),
+            threadId: thread,
+            providerSessionId: ProviderSessionId.make(providerSessionId),
+            reason: "Browser access withdrawn.",
+          },
+          (now) => !liveProviderSessions(now).includes(providerSessionId),
+        );
+      }
+    }
+  });
+
+  /**
+   * The engine closes the profile's browser context, which closes its tabs,
+   * and deletes its folder (**Read** at `59651c1`, `ServerBrowserContexts.ts`,
+   * `clearProfile`). A deletion that failed may have deleted part of it:
+   * indeterminate, and clearing again finishes it.
+   */
+  const clearBrowserProfile = ready.pipe(
+    Effect.andThen(
+      rpc["preview.clearProfile"]({ profileId: DEFAULT_BROWSER_PROFILE_ID }).pipe(
+        Effect.timeoutOrElse({
+          duration: COMMAND_TIMEOUT,
+          orElse: () => Effect.fail(new EngineIndeterminate()),
+        }),
+        Effect.catchTags({
+          RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+          EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+          PreviewClearProfileError: () => Effect.fail(new EngineIndeterminate()),
+        }),
+      ),
+    ),
+    Effect.withSpan("Engine.clearBrowserProfile"),
+  );
+
   const openSession = Effect.fn("Engine.openSession")(function* (input: {
     readonly key: IdempotencyKey;
     readonly projectId: EngineProjectId;
@@ -925,6 +1157,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     readonly sessionId: SessionId;
     readonly model?: ModelChoice;
     readonly permissionMode?: PermissionMode;
+    readonly reloadTools?: boolean;
   }) {
     // Only what differs from what the thread runs is sent: a session opened
     // again under its key is the one the engine opened first, as it was
@@ -945,12 +1178,25 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       (thread === undefined || thread.runtimeMode !== RUNTIME_MODES[input.permissionMode])
         ? input.permissionMode
         : undefined;
-    if (selection === undefined && mode === undefined) return;
+    // The tools are reloaded by replacing the provider sessions that still
+    // run, as the engine does itself on a change of runtime mode: the next
+    // turn starts a new one, whose tool credential the engine issues with
+    // what the project allows then, and resumes the conversation natively
+    // (**Read** at `59651c1`, `prepareMcpSession`; `provider-session.detach`
+    // is **Verified**, below). One that has stopped starts again anyway.
+    const reload = input.reloadTools === true && liveProviderSessions(mirror).length > 0;
+    if (selection === undefined && mode === undefined && !reload) return;
     // A change may replace the provider session, which ends a turn running in
     // it: none is sent while one runs.
     const running = startedTurn(mirror);
     if (Option.isSome(running)) {
       return yield* new SessionBusy({ sessionId: input.sessionId, turnId: running.value });
+    }
+    // The engine checks this for a change of model or runtime mode, and not
+    // for a detach, which would end the work: checked here first, so nothing
+    // is sent.
+    if (reload && isBackgroundWorkPending(yield* reportedWork(input.sessionId, mirror))) {
+      return yield* new BackgroundWorkRunning({ sessionId: input.sessionId });
     }
     if (selection !== undefined) {
       yield* sendSettingsCommand(
@@ -976,6 +1222,25 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
         mode,
       );
       yield* selection === undefined ? send : afterSending(send);
+    }
+    if (reload) {
+      const sent = selection !== undefined || mode !== undefined;
+      // A change of model or mode may have replaced them already.
+      const current = sent ? yield* afterSending(liveProjection(input.sessionId)) : mirror;
+      for (const [index, providerSessionId] of liveProviderSessions(current).entries()) {
+        const detach = sendSettingsCommand(
+          input.sessionId,
+          {
+            type: "provider-session.detach",
+            commandId: commandId("tools", `${input.sessionId}:${yield* uniqueKey}`),
+            threadId,
+            providerSessionId: ProviderSessionId.make(providerSessionId),
+            reason: "Browser access changed.",
+          },
+          undefined,
+        );
+        yield* sent || index > 0 ? afterSending(detach) : detach;
+      }
     }
   });
 
@@ -1752,7 +2017,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.forkScoped,
   );
 
-  const status = Stream.zipLatestWith(
+  const engineStatus = Stream.zipLatestWith(
     withFirstCheckBudget(stateChanges(state)),
     SubscriptionRef.changes(reported),
     ({ state: current, firstCheck }, engineProviders): EngineStatus => {
@@ -1786,6 +2051,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           };
       }
     },
+  );
+  const status = Stream.zipLatestWith(
+    engineStatus,
+    SubscriptionRef.changes(browserHost),
+    (current, browser): EngineStatus =>
+      current.state._tag === "ready" && Option.isSome(browser)
+        ? { ...current, browser: browser.value }
+        : current,
   ).pipe(Stream.changesWith(sameStatus));
 
   /**
@@ -1846,6 +2119,9 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     consoleLink,
     ensureProject,
     removeProject,
+    setBrowserAccess,
+    withdrawBrowserAccess,
+    clearBrowserProfile,
     openSession,
     configureSession,
     retireSession,

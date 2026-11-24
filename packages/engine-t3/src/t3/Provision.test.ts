@@ -459,3 +459,38 @@ it.effect.skipIf(process.platform === "win32")(
       );
     }).pipe(Effect.scoped, Effect.provide(machine)),
 );
+
+describe("the engine's browser", () => {
+  it.effect("is off for every bot, and stays on for a bot the operator turned it on for", () =>
+    Effect.gen(function* () {
+      const { fs, path, input, userdata } = yield* setUp;
+      const settingsFile = path.join(userdata, "settings.json");
+      yield* fs.makeDirectory(userdata, { recursive: true });
+      yield* fs.writeFileString(
+        settingsFile,
+        JSON.stringify({
+          enableAgentBrowserAccess: true,
+          projectSettingsOverrides: { "bot-project": { enableAgentBrowserAccess: true } },
+        }),
+      );
+
+      yield* provision(input);
+
+      const written = yield* Schema.decodeEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            enableAgentBrowserAccess: Schema.Boolean,
+            projectSettingsOverrides: Schema.Record(
+              Schema.String,
+              Schema.Struct({ enableAgentBrowserAccess: Schema.Boolean }),
+            ),
+          }),
+        ),
+      )(yield* fs.readFileString(settingsFile));
+      assert.isFalse(written.enableAgentBrowserAccess);
+      assert.deepStrictEqual(written.projectSettingsOverrides, {
+        "bot-project": { enableAgentBrowserAccess: true },
+      });
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});

@@ -2,6 +2,7 @@
 import {
   type AttachmentId,
   type BotId,
+  Conflict,
   type Entry,
   J3Rpcs,
   NotFound,
@@ -162,6 +163,11 @@ export const handlers = ServedRpcs.toLayer(
       "settings.subscribe": () => settings.changes,
       "settings.update": ({ commandId, ...changes }) => settings.update({ commandId, changes }),
       "settings.deviceTimeZone": ({ timeZone }) => settings.deviceTimeZone(timeZone),
+      // Clearing again clears nothing more: no receipt.
+      "browser.signOut": () =>
+        engine.clearBrowserProfile.pipe(
+          Effect.mapError(() => new Conflict({ reason: "engine-unavailable" })),
+        ),
       "client.view": ({ target }) => viewer.view(target),
       "notifications.subscribe": () => viewer.notifications,
       "devices.list": () => devices.list(device.id),

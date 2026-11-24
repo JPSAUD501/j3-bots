@@ -128,6 +128,7 @@ export function sampleTeam(now: DateTime.Utc) {
       },
       model: { providerId: claude, modelId: ModelId.make("claude-sonnet-5-5") },
       permissionMode: extra.permissionMode ?? "supervised",
+      browser: false,
       primary: extra.primary ?? false,
       pinned: extra.pinned ?? false,
       hidden: extra.hidden ?? false,

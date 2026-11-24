@@ -3,6 +3,7 @@ import type {
   Attachment,
   Bot,
   BotFile,
+  BrowserHostStatus,
   MemoryFile,
   MemoryPath,
   Room,
@@ -18,6 +19,7 @@ import {
   CirclePauseIcon,
   CpuIcon,
   FileTextIcon,
+  GlobeIcon,
   NotebookTextIcon,
   PencilIcon,
   RotateCcwIcon,
@@ -222,6 +224,8 @@ export interface BotDetailsIntents {
   readonly openRoutine: (routineId: RoutineId) => void;
   readonly openAttachment: (attachment: Attachment) => void;
   readonly openMemoryFile: (path: MemoryPath) => void;
+  /** Gives the bot the browser, or takes it away, from its next turn. */
+  readonly setBrowser: (enabled: boolean) => void;
   /** Absent where the bot cannot be edited. */
   readonly editProfile?: () => void;
   /** Stops the bot's work under way at once, as its keyboard shortcut does. */
@@ -240,6 +244,8 @@ interface BotDetailsProps {
   readonly memory: ReadonlyArray<MemoryFile> | null;
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
+  /** Whether the browser can run on the server's computer; null until the engine has said. */
+  readonly browserHost: BrowserHostStatus | null;
   readonly intents: BotDetailsIntents;
   /** The keys that stop the bot, shown on its Stop. */
   readonly stopShortcut: { readonly label: string; readonly aria: string };
@@ -258,6 +264,7 @@ export function BotDetails({
   files,
   memory,
   modelName,
+  browserHost,
   intents,
   stopShortcut,
   onClose,
@@ -389,6 +396,26 @@ export function BotDetails({
             </div>
           </div>
         </dl>
+      </DetailsSection>
+
+      <DetailsSection title={t("details.browser")}>
+        <div className="flex items-start gap-3">
+          <GlobeIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <p id={`${bot.id}-browser`} className="text-sm">
+              {t("details.browser.use")}
+            </p>
+            <p className="text-xs text-muted-foreground">{t("details.browser.hint", { name })}</p>
+            {bot.browser && browserHost?._tag === "setup-required" && (
+              <p className="mt-1 text-xs text-blocked">{t("details.browser.setup")}</p>
+            )}
+          </div>
+          <Switch
+            checked={bot.browser}
+            onCheckedChange={intents.setBrowser}
+            aria-labelledby={`${bot.id}-browser`}
+          />
+        </div>
       </DetailsSection>
 
       <DetailsSection title={t("details.workingContext")}>

@@ -65,6 +65,16 @@ Sending something to another person is not reversible. The base prompt holds bot
 - A declined send is final. The bot does not retry it, reword it or find another route.
 - Purchases, deletions, publishing and changes to accounts need the operator's explicit yes in the conversation.
 
+## The browser
+
+A bot whose browser switch is on can open pages in the engine's browser on the host and act in them ([Concepts](../product/concepts.md#controls)). That browser keeps one profile, shared by every bot with the switch on, and the operator signs in to sites in it. So each of those bots acts on those sites with the operator's sessions: what it can do there is what the operator's account can do, and the site cannot tell the bot from the operator. The rules in [Acting on the operator's behalf](#acting-on-the-operators-behalf) apply to what a bot does in a page as to any other send.
+
+- The switch is off for every bot until the operator turns it on, and the engine's browser access is off engine-wide besides it ([Engine: the browser](engine.md#the-browser)).
+- Turning it off takes the browser from the bot at once: its work is stopped, and every thread of its project, a delegated task's or another agent's included, loses it before it runs again.
+- A page is untrusted content, like any tool output: what a page says is never the operator's instruction.
+- **Sign out of all sites**, in Settings, deletes the engine's `default` profile, the one bots use: every session in it ends, for every bot.
+- The profile holds live session cookies, and a backup of the data directory holds them with it ([Back up](../operations/operating.md#back-up)).
+
 ## Running on a machine that matters
 
 The first deployment of J3 Bots is on a host that has SSH access to the rest of its owner's network. That is common for a home server and it changes the stakes: a misled bot on that host can reach every machine the host can.
@@ -80,9 +90,9 @@ This is a deployment recommendation, not something J3 Bots enforces. `j3-bots do
 ## The engine's credentials
 
 - The engine listens on loopback only.
-- J3 Bots' engine token carries `orchestration:operate`, which can start a full-access agent. The engine's own CLI mints it, the server keeps it in `<J3_HOME>/engine/j3/credential.json` (mode 0600, inside the private home), never writes it to a log, and replaces it before it expires. A backup of the home contains it.
+- J3 Bots' engine token carries `orchestration:operate`, which can start a full-access agent, and `settings:write`, which can change any of the engine's settings; the server writes only projects' overrides with it, for each bot's browser switch. The engine's own CLI mints it, the server keeps it in `<J3_HOME>/engine/j3/credential.json` (mode 0600, inside the private home), never writes it to a log, and replaces it before it expires. A backup of the home contains it.
 - The token also carries `preview:operate`, without which the engine drops what a person does in a tab. Whoever holds the token can open a viewer on any tab of the engine's browser, take it from the bot that drives it, and click, type, go to an address and answer its dialogs, as that browser, with its sign-ins. Any process of the server's user can read the file, a bot's shell included ([Trust model](#trust-model)), so a misled bot could drive another bot's tabs that way. That adds little to what such a process already reaches: `orchestration:operate`, the database and the admin channel.
-- When the engine starts with a stored token that lacks a scope or is due for renewal, the adapter mints a new one and revokes every older session J3 Bots minted (`t3 auth session revoke`, matched by the label it mints with). So the token an earlier J3 Bots minted without `preview:operate` stops working at once. A token replaced while the engine runs, on renewal or after the engine refused it, is not revoked, because revoking it could cut connections that still use it: it expires within two days, or the engine already refuses it.
+- When the engine starts with a stored token that lacks a scope or is due for renewal, the adapter mints a new one and revokes every older session J3 Bots minted (`t3 auth session revoke`, matched by the label it mints with). So the token an earlier J3 Bots minted without `preview:operate` or `settings:write` stops working at once. A token replaced while the engine runs, on renewal or after the engine refused it, is not revoked, because revoking it could cut connections that still use it: it expires within two days, or the engine already refuses it.
 - Bots receive no engine credential from J3 Bots. Their sessions get the engine's own per-session MCP token, scoped to their thread, as T3 Code provides to any agent it runs.
 
 ## J3 Bots' own surface
@@ -204,6 +214,8 @@ A bot's browser is signed in wherever the bot or the operator signed it in, and 
 
 - No isolation between bots at the filesystem level, and none between a bot and the operator's user.
 - Whoever can read the service's log, or binds the tool port in the moment the server stops while a bridge forwards a call, can learn a session's id and, until the server retires that session, use the bot tools that do not act for a turn as that session's bot; the one who binds the port can also answer that call ([J3 Bots' own surface](#j3-bots-own-surface)).
+- A bot's shell can read the browser's profile, its session cookies included, whether that bot's browser switch is on or not: the profile is a folder in the engine's data directory, and every bot runs as the same user. The switch controls whether the engine takes the bot's calls to the browser's tools, not the files.
+- A bot can send a message to another bot's session through the engine's own `t3_thread_send`, which reaches any thread of the engine that runs in no broader a mode than the sender's (**Read** at `59651c1`, `mcp/toolkits/orchestrator/tools.ts`). That message goes around J3 Bots' teammate messages and their limits, and the turn it starts shows as background work the server did not dispatch. So a bot without the browser can ask one with it to use it. This predates the browser switch.
 - No protection against a compromised paired device beyond revocation.
 - On Linux without a keyring the desktop app can use, its device token is stored obscured, not encrypted. The app says so rather than refuse to pair, and the token stays obscured until the device is paired again.
 - Desktop builds are unsigned: an update is trusted as far as the GitHub release it comes from, and Windows does not check who published it ([Desktop updates](#desktop-updates)).
