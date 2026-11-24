@@ -71,8 +71,9 @@ The operator creates a room, adds two to six bots, and writes.
 ### One bot hands work to another
 
 - The operator asks, or the bot offers ("want me to ask Scout?").
-- The handoff appears in both conversations. The sender's shows a compact card, "To Wren", with the start of the message; tapping it shows all of it in place. The recipient's shows the message whole, under a centred line, "Message from" with Scout's avatar and name, the way a conversation marks the time between messages. The other bot's name goes to its conversation. An urgent message that never reached the teammate says so on both cards, and the recipient's conversation offers to send it again.
-- The reply comes back later, as its own turn. The operator is told only when there is something new for them.
+- What the two bots say to each other goes in their **teammate conversation**, "Scout and Wren", one per pair of bots. It reads like a room: each bot's name over its messages, its avatar in its tint, the time between them, and each message that never reached the other bot marked so. The operator reads it and cannot write in it: in place of a composer, a "Read-only" mark. Its menu offers "Talk to Scout", "Talk to Wren" and "Start a room with both".
+- In each bot's own conversation, a run of messages with teammates is one small line ("Wrote to Wren", "Talked with Wren · 3 messages"), which opens the teammate conversation there. An urgent message that never reached the teammate still shows the recipient's conversation a card that offers to send it again.
+- The reply comes back later, as its own turn. Messages between bots never make a conversation unread, never become its last line in the roster and never notify: the operator is told only when a bot has something new for them, and a bot that needs them says so.
 
 ### Changing a bot
 
@@ -143,6 +144,7 @@ Answers: who do I have, who needs me, what is each of them doing.
 - Pinned bots stay at the top, as large avatars with their names; a room keeps its own pin, at the top of the list.
 - The operator can group bots in named sections, in an order they choose, each one folded or open. A bot is in one section at most, and deleting a section never deletes its bots: they return to the list.
 - Hidden bots keep running. They are left out of the list and reachable through search and through a "Hidden conversations" row at its end, which says how many there are and whether one has something unread, and lists them, each with Unhide.
+- After the bots and rooms, a "Between bots" section lists each pair of bots that wrote each other, latest first: both avatars overlapped, "Scout and Wren", the last message with who said it ("Wren: …") and its time. It is not one of the operator's sections, and its rows are never unread, pinned or notified. A pair shows only while both bots are in the list, neither hidden nor deleted; the other bot's details still reach it.
 - Each bot and room has a menu (right-click, the "…" or a long press) to mark it read or unread, pin it, move it to a section, make it the primary bot, hide it, and reach its details. The primary bot's avatar carries a small star wherever it appears.
 - Search finds bots, rooms and messages.
 - New bot and new room are one action each, and a new bot can start from a template file.
@@ -166,6 +168,7 @@ Answers: what is this bot, and what runs without me.
 - Files the bot produced.
 - Memory, readable and editable.
 - Connectors this bot may use, each with its status, and a way to the connectors screen.
+- Teammates: the teammate conversation with each bot it wrote or heard from, with the last message and its time, a deleted teammate's included.
 - Model and permission mode.
 
 ### Outside those three

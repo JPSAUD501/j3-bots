@@ -22,6 +22,8 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Card.** A structured entry in a conversation that is not prose: a question with options, an approval request, a request for help in the bot's browser, a file, a routine that was created, a handoff between bots.
 
+**Teammate conversation.** The record of the messages two bots sent each other, one per pair of bots, titled with their two names ("Scout and Wren"). The operator reads it and never writes into it: they steer a bot in its own conversation, or several in a room. It is not a session and not a room.
+
 **Room.** A group chat with the operator and two to six bots. A room has a name, members, a host and its own message history. Bots keep their own memory in a room; they share only what is said there.
 
 **Host.** The bot in a room that answers when the operator addresses nobody in particular, and that decides who should take a request.
@@ -36,7 +38,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Section.** A named group of bots in the roster, which the operator creates, names, orders and folds away. A bot is in at most one section. Deleting a section never deletes its bots: they go back to the roster's main list.
 
-**Unread.** A conversation or room with something a bot or J3 Bots wrote after the operator's read mark. The operator can mark one unread again, to come back to it.
+**Unread.** A conversation or room with something a bot or J3 Bots wrote after the operator's read mark, other than a message between bots. The operator can mark one unread again, to come back to it. A teammate conversation is never unread.
 
 ## How bots run
 

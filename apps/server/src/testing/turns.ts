@@ -601,6 +601,31 @@ export const messageTeammate = (
     });
   });
 
+/**
+ * In one turn the operator started, which ends after them, `sender` sends
+ * each teammate its message, held for the teammate's next turn.
+ */
+export const heldForTeammates = (
+  sender: BotId,
+  messages: ReadonlyArray<{ readonly to: BotId; readonly text: string }>,
+) =>
+  Effect.gen(function* () {
+    const session = yield* engineSession(sender);
+    yield* sendToBot(sender, "Pass it on.");
+    const turnId = yield* nextTurn(sender);
+    for (const { to, text } of messages) {
+      const reply = yield* messageTeammate(session, turnId, { to, text, urgent: false });
+      if (reply._tag !== "result")
+        return yield* Effect.die(new Error("A teammate message was refused"));
+    }
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: session,
+      turnId,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(sender);
+  });
+
 /** The operator answers the card with its first option. */
 export const answerFirstOption = (card: QuestionEntry) =>
   Effect.gen(function* () {

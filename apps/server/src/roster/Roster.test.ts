@@ -19,6 +19,7 @@ import {
   awaitEntry,
   createBot,
   engineSession,
+  heldForTeammates,
   nextTurn,
   sendToBot,
   turnEnded,
@@ -117,4 +118,37 @@ it.effect(
         label: "pnpm test",
       });
     }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("never previews a teammate message, nor counts it unread", () =>
+  Effect.gen(function* () {
+    const entries = yield* Entries;
+    const roster = yield* Roster;
+    const ana = yield* createBot("Ana");
+    const bo = yield* createBot("Bo");
+    const itemOf = (botId: BotId) =>
+      Effect.map(roster.items, (items) =>
+        items.find((item) => item._tag === "bot" && item.bot.id === botId),
+      );
+    const latest = (botId: BotId) =>
+      Effect.map(entries.latest({ _tag: "conversation", botId }, 1), (found) => found[0]);
+    const read = yield* latest(ana.id);
+    if (read !== undefined)
+      yield* entries.markRead({ _tag: "conversation", botId: ana.id }, read.order);
+    const before = yield* itemOf(ana.id);
+
+    yield* heldForTeammates(bo.id, [{ to: ana.id, text: "Draft the launch post." }]);
+
+    // Ana's conversation only got Bo's message: her row is as it was.
+    assert.strictEqual((yield* latest(ana.id))?._tag, "handoff");
+    const after = yield* itemOf(ana.id);
+    assert.deepStrictEqual(
+      [after?.lastEntry?.entryId, after?.lastActivityAt, after?.unread],
+      [before?.lastEntry?.entryId, before?.lastActivityAt, false],
+    );
+    // Bo's ends with the message it sent; its row shows what came before it.
+    assert.strictEqual((yield* latest(bo.id))?._tag, "handoff");
+    const preview = (yield* itemOf(bo.id))?.lastEntry;
+    assert.deepStrictEqual([preview?.kind, preview?.text], ["message", "Pass it on."]);
+  }).pipe(Effect.provide(TestDomain.layer)),
 );

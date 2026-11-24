@@ -33,11 +33,11 @@ const sameTarget = (a: EntryTarget, b: EntryTarget): boolean =>
     : b._tag === "room" && a.roomId === b.roomId;
 
 /**
- * What kind of notification an entry makes, if any: a bot's message, an
- * urgent message to a teammate, or a card that waits on the operator. The
- * operator's own entries, a turn's work, notices (quiet lines by design) and
- * routine changes (which come with the bot's own words) never notify; nor
- * does a teammate message that is not urgent.
+ * What kind of notification an entry makes, if any: a bot's message, or a
+ * card that waits on the operator. The operator's own entries, a turn's work,
+ * notices (quiet lines by design), routine changes (which come with the bot's
+ * own words) and teammate messages (the bots' business: a bot that needs the
+ * operator says so) never notify.
  *
  * Every notification follows from an entry, so a routine run that ends
  * silently, which adds none, notifies nothing; one that speaks notifies as
@@ -46,9 +46,7 @@ const sameTarget = (a: EntryTarget, b: EntryTarget): boolean =>
 const kindOf = (
   entry: Entry,
 ): { readonly kind: NotificationKind; readonly botId: BotId } | null => {
-  if (entry.author._tag !== "bot") return null;
-  // One notification for an urgent message: the sender's card.
-  if (entry._tag === "handoff" && !(entry.urgent && entry.direction === "sent")) return null;
+  if (entry.author._tag !== "bot" || entry._tag === "handoff") return null;
   const kind = notificationKindOf(entry._tag);
   return kind === null ? null : { kind, botId: entry.author.botId };
 };
@@ -57,7 +55,8 @@ const kindOf = (
  * The notification an entry of this kind makes when it notifies, which names
  * the Android channel a push shows in: its own kind, or `connector` for either
  * connector card. Null for a kind that never notifies. A push read back from
- * its delivery takes its channel from here too, from the entry it is about.
+ * its delivery takes its channel from here too, from the entry it is about:
+ * so `handoff` keeps its channel for a push an earlier release recorded.
  */
 export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null => {
   switch (kind) {
