@@ -52,11 +52,11 @@ Done when three routines have run unattended for two weeks, with silent runs sta
 ## M3: More than one bot
 
 - Teammate messages, the primary bot, `create_bot`.
-- Rooms with a host, mentions and budgets.
-- Room integrity: a room's Stop, also the operator's `room.stop`, ends background work its turns started, tracked by the turn that started it, and waits for another audience's turn rather than end it; retries and card answers check the room; a background turn speaks to its room and counts its hops there; a removed member's work for the room ends ([Server: Rooms](architecture/server.md#rooms), [0013](decisions/0013-background-work-belongs-to-the-turn-that-started-it.md)).
+- Rooms, mentions and budgets.
+- Room integrity: a room's Stop, also the operator's `room.stop`, ends background work its turns started, tracked by the turn that started it, and waits for another audience's turn rather than end it; retries and card answers check the room; a background turn speaks to its room; a removed member's work for the room ends ([Server: Rooms](architecture/server.md#rooms), [0013](decisions/0013-background-work-belongs-to-the-turn-that-started-it.md)).
 - Budget enforcement and its notices.
 
-Done when a three-bot room completes a multi-step task without a loop and without waking a bot that had nothing to do.
+Done when a three-bot room completes a multi-step task without a loop and without a bot that had nothing to do speaking.
 
 **Status.** Done. The [three-bot room eval](../evals/README.md#the-three-bot-room) passed five runs of five on 2026-11-21, on Claude Code, and its deterministic counterpart runs in CI.
 

@@ -6,10 +6,7 @@ import { BotId, Label, RoomId } from "./base.ts";
 /** The most bots a room has. */
 export const MAX_ROOM_MEMBERS = 6;
 
-/**
- * Two to six bots, all equal. A room message wakes every member but its
- * author, in this order.
- */
+/** Two to six bots, all equal. The members a room message wakes are woken in this order. */
 export const RoomMembers = Schema.Array(BotId).check(
   Schema.isMinLength(2),
   Schema.isMaxLength(MAX_ROOM_MEMBERS),
