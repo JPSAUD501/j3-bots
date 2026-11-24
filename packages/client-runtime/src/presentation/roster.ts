@@ -202,7 +202,8 @@ export function betweenBots(
 }
 
 /**
- * The pairs to show for a search: those where either bot's name matches.
+ * The pairs to show for a search: those where either bot's name or title
+ * matches, as `filterRoster` finds the bot.
  * Like `filterRoster`, a query finds a hidden bot's pairs too; a deleted
  * bot's are only in the other bot's details.
  */
@@ -218,7 +219,11 @@ export function filterPairs(
     const found = botIds.map((id) => bots.get(id));
     return (
       found.every((bot) => bot !== undefined) &&
-      found.some((bot) => bot !== undefined && fold(bot.profile.name).includes(q))
+      found.some(
+        (bot) =>
+          bot !== undefined &&
+          [bot.profile.name, bot.profile.title].some((name) => fold(name).includes(q)),
+      )
     );
   });
 }

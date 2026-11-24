@@ -20,6 +20,9 @@ import { loading, markStale, ready, type Synced } from "./synced.ts";
 /** How many older messages one scroll back reads. */
 const HISTORY_PAGE = 50;
 
+/** How many older messages each read takes when a snapshot reads back what was held: as many as one may. */
+const REFILL_PAGE = 200;
+
 /** A frame of `pairs.subscribe`. */
 type PairsFrame =
   | { readonly _tag: "snapshot"; readonly pairs: ReadonlyArray<TeammatePair> }
@@ -72,6 +75,53 @@ export interface PairConversation {
    */
   readonly reveal: (entryId: EntryId) => Effect.Effect<PairSeq | null>;
 }
+
+/** A pair's messages before a point (`pairs.history`), or null when they could not be read. */
+type ReadPage = (
+  before: PairSeq,
+  limit: number,
+) => Effect.Effect<{
+  readonly messages: ReadonlyArray<TeammateMessage>;
+  readonly hasOlder: boolean;
+} | null>;
+
+const oldestOf = (messages: ReadonlyMap<PairSeq, TeammateMessage>): PairSeq | undefined => {
+  let oldest: PairSeq | undefined;
+  for (const seq of messages.keys()) if (oldest === undefined || seq < oldest) oldest = seq;
+  return oldest;
+};
+
+/**
+ * The messages an open conversation holds after a snapshot, which only ever
+ * carries the latest ones: the snapshot's, then the pages before them read
+ * again down to `keep`, the oldest message held before it, so a reconnection
+ * keeps what the operator scrolled back to, with each message as it stands
+ * now. Null `keep` takes the snapshot as it is. A page that cannot be read
+ * ends the reading: what is older stays to scroll back to.
+ */
+export const refilled = (
+  snapshot: { readonly messages: ReadonlyArray<TeammateMessage>; readonly hasOlder: boolean },
+  keep: PairSeq | null,
+  readPage: ReadPage,
+): Effect.Effect<{
+  readonly messages: Map<PairSeq, TeammateMessage>;
+  readonly hasOlder: boolean;
+}> =>
+  Effect.gen(function* () {
+    const messages = new Map(snapshot.messages.map((message) => [message.seq, message]));
+    let hasOlder = snapshot.hasOlder;
+    while (keep !== null && hasOlder) {
+      const oldest = oldestOf(messages);
+      if (oldest === undefined || oldest <= keep) break;
+      const page = yield* readPage(oldest, REFILL_PAGE);
+      if (page === null || page.messages.length === 0) break;
+      for (const message of page.messages) {
+        if (!messages.has(message.seq)) messages.set(message.seq, message);
+      }
+      hasOlder = page.hasOlder;
+    }
+    return { messages, hasOlder };
+  });
 
 /** The message one of whose cards, in either bot's conversation, is `entryId`. */
 export const messageWithCard = (
@@ -126,7 +176,7 @@ export const layer = Layer.effect(
 
     const openStore = (botIds: PairBotIds) =>
       Effect.sync(() => {
-        const messages = new Map<PairSeq, TeammateMessage>();
+        let messages = new Map<PairSeq, TeammateMessage>();
         let phase: PairConversationState["phase"] = "loading";
         let stale = true;
         let hasOlder = false;
@@ -145,23 +195,36 @@ export const layer = Layer.effect(
         const pairState = new Cell<PairConversationState>(project());
         const publish = () => pairState.set(project());
 
+        const readPage: ReadPage = (before, limit) =>
+          connection
+            .call((client) => client["pairs.history"]({ botIds, before, limit }))
+            .pipe(Effect.catchTag("NotPaired", () => Effect.succeed(null)));
+
         const run = connection.eachSession((client) =>
           client["pairs.messages.subscribe"]({ botIds }).pipe(
             Stream.runForEach((frame) =>
-              Effect.sync(() => {
-                if (frame._tag === "snapshot") {
-                  // Replaces everything: the server could not tell what changed.
-                  messages.clear();
-                  hasOlder = frame.hasOlder;
-                  loadingOlder = false;
-                  epoch += 1;
-                  phase = "ready";
-                }
-                const taken = frame._tag === "snapshot" ? frame.messages : frame.upsert;
-                for (const message of taken) messages.set(message.seq, message);
-                stale = false;
-                publish();
-              }),
+              frame._tag === "snapshot"
+                ? // Replaces everything: what the operator reads stays until the pages it reached are read again.
+                  refilled(
+                    frame,
+                    phase === "ready" ? (oldestOf(messages) ?? null) : null,
+                    readPage,
+                  ).pipe(
+                    Effect.map((next) => {
+                      messages = next.messages;
+                      hasOlder = next.hasOlder;
+                      loadingOlder = false;
+                      epoch += 1;
+                      phase = "ready";
+                      stale = false;
+                      publish();
+                    }),
+                  )
+                : Effect.sync(() => {
+                    for (const message of frame.upsert) messages.set(message.seq, message);
+                    stale = false;
+                    publish();
+                  }),
             ),
             Effect.ensuring(
               Effect.sync(() => {
@@ -173,39 +236,36 @@ export const layer = Layer.effect(
         );
 
         /**
-         * Reads the page before the oldest message held. True when what is
-         * held changed meanwhile: the page was taken, or a snapshot replaced
-         * everything before it came. False when there was nothing to read, or
-         * the pairing ended.
+         * Reads the page before the oldest message held. `changed` when what
+         * is held changed meanwhile: the page was taken, or a snapshot
+         * replaced everything before it came. `busy` while another read
+         * runs; `none` when there is nothing older, or it could not be read.
          */
-        const readOlder = Effect.suspend(() => {
-          const oldest = sorted()[0];
-          if (loadingOlder || !hasOlder || oldest === undefined) return Effect.succeed(false);
+        const readOlder: Effect.Effect<"changed" | "busy" | "none"> = Effect.suspend(() => {
+          if (loadingOlder) return Effect.succeed("busy" as const);
+          const oldest = oldestOf(messages);
+          if (!hasOlder || oldest === undefined) return Effect.succeed("none" as const);
           const at = epoch;
           loadingOlder = true;
           publish();
-          return connection
-            .call((client) =>
-              client["pairs.history"]({ botIds, before: oldest.seq, limit: HISTORY_PAGE }),
-            )
-            .pipe(
-              Effect.map((page) => {
-                if (epoch !== at) return true;
-                // A copy already held came from the live tail and is at least as new.
-                for (const message of page.messages) {
-                  if (!messages.has(message.seq)) messages.set(message.seq, message);
-                }
-                hasOlder = page.hasOlder;
-                return true;
+          return readPage(oldest, HISTORY_PAGE).pipe(
+            Effect.map((page) => {
+              if (epoch !== at) return "changed" as const;
+              if (page === null) return "none" as const;
+              // A copy already held came from the live tail and is at least as new.
+              for (const message of page.messages) {
+                if (!messages.has(message.seq)) messages.set(message.seq, message);
+              }
+              hasOlder = page.hasOlder;
+              return "changed" as const;
+            }),
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (epoch === at) loadingOlder = false;
+                publish();
               }),
-              Effect.catchTag("NotPaired", () => Effect.succeed(false)),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  if (epoch === at) loadingOlder = false;
-                  publish();
-                }),
-              ),
-            );
+            ),
+          );
         });
 
         const reveal = Effect.fn("TeammatePairs.reveal")(function* (entryId: EntryId) {
@@ -216,7 +276,8 @@ export const layer = Layer.effect(
             );
             const found = messageWithCard(current.messages, entryId);
             if (found !== undefined) return found.seq;
-            if (!current.hasOlder || !(yield* readOlder)) return null;
+            // Busy: a scroll back started meanwhile; its page is looked through once it ends.
+            if ((yield* readOlder) === "none") return null;
           }
         });
 

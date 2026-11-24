@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, EntryId } from "@j3-bots/contracts";
+import { BotId, EntryId, PairSeq, type TeammateMessage } from "@j3-bots/contracts";
+import { it as effect } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 import { teammateMessage, teammatePair } from "../../test/fixtures.ts";
-import { applyPairsFrame, messageWithCard } from "./TeammatePairs.ts";
+import { applyPairsFrame, messageWithCard, refilled } from "./TeammatePairs.ts";
 
 describe("applyPairsFrame", () => {
   const older = teammatePair(teammateMessage(1, "2026-11-20T10:00:00Z", "scout", "wren"));
@@ -35,4 +37,47 @@ it("finds a message by its card in either bot's conversation", () => {
   expect(messageWithCard(messages, EntryId.make("sent-2"))?.seq).toBe(2);
   expect(messageWithCard(messages, EntryId.make("received-1"))?.seq).toBe(1);
   expect(messageWithCard(messages, EntryId.make("elsewhere"))).toBeUndefined();
+});
+
+describe("refilled", () => {
+  // Ten messages on the server, the last one now not delivered.
+  const server = Array.from({ length: 10 }, (_, index) =>
+    teammateMessage(index + 1, "2026-11-20T10:00:00Z", "scout", "wren", `message ${index + 1}`),
+  );
+  const now = server.map((message): TeammateMessage =>
+    message.seq === 10 ? { ...message, state: "not-delivered" } : message,
+  );
+  const latest = { messages: now.slice(7), hasOlder: true };
+  const reads: Array<number> = [];
+  // A server that answers two messages at a time, and none before `failingBelow`.
+  const pages =
+    (failingBelow = 0) =>
+    (before: PairSeq, limit: number) =>
+      Effect.sync(() => {
+        reads.push(before);
+        if (before <= failingBelow) return null;
+        const older = now.filter((message) => message.seq < before);
+        return { messages: older.slice(-Math.min(limit, 2)), hasOlder: older.length > 2 };
+      });
+  const seqs = (messages: ReadonlyMap<PairSeq, TeammateMessage>) =>
+    [...messages.keys()].toSorted((a, b) => a - b);
+
+  effect.effect("reads back down to the oldest message held before, each as it stands now", () =>
+    Effect.gen(function* () {
+      reads.length = 0;
+      const held = yield* refilled(latest, PairSeq.make(4), pages());
+      expect(seqs(held.messages)).toEqual([4, 5, 6, 7, 8, 9, 10]);
+      expect(held.hasOlder).toBe(true);
+      expect(reads).toEqual([8, 6]);
+      expect(held.messages.get(PairSeq.make(10))?.state).toBe("not-delivered");
+    }),
+  );
+
+  effect.effect("stops at a page it cannot read, leaving the rest to scroll back to", () =>
+    Effect.gen(function* () {
+      const held = yield* refilled(latest, PairSeq.make(1), pages(6));
+      expect(seqs(held.messages)).toEqual([6, 7, 8, 9, 10]);
+      expect(held.hasOlder).toBe(true);
+    }),
+  );
 });
