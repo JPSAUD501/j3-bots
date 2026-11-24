@@ -84,27 +84,35 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("steers each member's running turn for the room with the operator's next word", () =>
-  Effect.gen(function* () {
-    yield* concurrentTurns(3);
-    const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
-    const members = [hal, ana, bo];
-    const room = yield* roomWith(hal, [ana, bo]);
-    yield* operatorWrites(room.id, members, "Draft the agenda.", to(hal, ana, bo));
-    const turns = yield* Effect.forEach(members, (one) => nextTurn(one.bot.id));
-    assert.deepStrictEqual(yield* running(members), ["Hal", "Ana", "Bo"]);
+it.effect(
+  "steers each member's running turn for the room with the operator's next word, and what the room said meanwhile",
+  () =>
+    Effect.gen(function* () {
+      yield* concurrentTurns(3);
+      const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
+      const members = [hal, ana, bo];
+      const room = yield* roomWith(hal, [ana, bo]);
+      yield* operatorWrites(room.id, members, "Draft the agenda.", to(hal, ana, bo));
+      const turns = yield* Effect.forEach(members, (one) => nextTurn(one.bot.id));
+      assert.deepStrictEqual(yield* running(members), ["Hal", "Ana", "Bo"]);
+      const halTurn = turns[0];
+      if (halTurn === undefined) return yield* Effect.die("Hal runs no turn");
+      yield* say(hal, halTurn, { text: "Ana: start with the budget.", mention: [ana.bot.id] });
 
-    yield* operatorWrites(room.id, members, "Keep it short.", to(hal, ana, bo));
-    for (const [index, one] of members.entries()) {
-      const sent = yield* received(one.session);
-      assert.deepStrictEqual(
-        sent.map((dispatch) => dispatch.delivery._tag),
-        ["start", "steer"],
-      );
-      assert.include(sent[1]?.text ?? "", "Keep it short.");
-      assert.deepStrictEqual(yield* admittedTurn(one.bot.id), Option.fromNullishOr(turns[index]));
-    }
-  }).pipe(Effect.provide(TestDomain.layer)),
+      yield* operatorWrites(room.id, members, "Keep it short.", to(hal, ana, bo));
+      // Hal's reply, which waited for Ana's turn to end, goes with the steer.
+      const anaSteer = (yield* received(ana.session))[1]?.text ?? "";
+      assert.include(anaSteer, "Ana: start with the budget.");
+      for (const [index, one] of members.entries()) {
+        const sent = yield* received(one.session);
+        assert.deepStrictEqual(
+          sent.map((dispatch) => dispatch.delivery._tag),
+          ["start", "steer"],
+        );
+        assert.include(sent[1]?.text ?? "", "Keep it short.");
+        assert.deepStrictEqual(yield* admittedTurn(one.bot.id), Option.fromNullishOr(turns[index]));
+      }
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(
