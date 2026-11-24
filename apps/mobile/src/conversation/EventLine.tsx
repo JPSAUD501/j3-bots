@@ -15,6 +15,7 @@ import {
   routineChangeDetail,
 } from "@j3-bots/client-runtime/wording";
 import type { BotId, HandoffEntry, RoutineId } from "@j3-bots/contracts";
+import { layout } from "@j3-bots/design-tokens";
 import {
   CalendarClock,
   ChevronRight,
@@ -49,9 +50,17 @@ const markTone: Record<EventMark["tone"], string> = {
   quiet: "text-muted-foreground",
 };
 
-/** The line's own height, a time row's; its touch target grows past it by `SLOP` above and below. */
+/**
+ * The line's own height. Its touch target grows past it by `SLOP` on every
+ * side, to the touch target's height. A view takes no touch beyond its own
+ * box, so the slop sits inside a frame grown by as much, which its negative
+ * margin keeps out of the layout. Lines stand `SLOP` apart, about a time
+ * row's height from one to the next: two lines' targets meet only in the gap
+ * between them and never reach the other's words.
+ */
 const LINE_HEIGHT = 24;
-const SLOP = (44 - LINE_HEIGHT) / 2;
+const SLOP = (layout.touchTarget - LINE_HEIGHT) / 2;
+const slopFrame = { padding: SLOP, margin: -SLOP } as const;
 
 /**
  * Something that happened, told in one quiet centred line about as tall as a
@@ -77,7 +86,7 @@ export function EventLine({
   const sentence = <Sentence words={words} />;
   const title = words.runs.map((run) => run.text).join("");
   return (
-    <View className="items-center px-4 py-0.5">
+    <View className="items-center px-4" style={{ paddingVertical: SLOP / 2 }}>
       {opens === null ? (
         <View
           accessible
@@ -98,7 +107,8 @@ export function EventLine({
                 ? t("eventLine.opensMessage")
                 : t("eventLine.opensRoutines")
           }
-          hitSlop={{ top: SLOP, bottom: SLOP, left: 8, right: 8 }}
+          frame={slopFrame}
+          hitSlop={SLOP}
           onPress={() => {
             if (opens._tag === "routine") onOpenRoutine(opens.routineId);
             else setOpen(true);
