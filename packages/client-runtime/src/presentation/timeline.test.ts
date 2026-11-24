@@ -4,6 +4,8 @@ import {
   CommandId,
   EntryId,
   EntryOrder,
+  type HandoffEntry,
+  type NoticeEntry,
   type RoutineChangeEntry,
   RoutineId,
 } from "@j3-bots/contracts";
@@ -46,7 +48,7 @@ describe("buildTimeline", () => {
     expect(items[3]?.kind === "divider" && items[3].at).toEqual(at("2026-11-20T10:30:00Z"));
   });
 
-  it("does not join messages across a card", () => {
+  it("does not join messages across a line", () => {
     const items = buildTimeline([
       message("2026-11-20T10:00:00Z", scout),
       {
@@ -63,7 +65,7 @@ describe("buildTimeline", () => {
       },
       message("2026-11-20T10:01:00Z", scout),
     ]);
-    expect(shape(items)).toEqual(["divider", "single", "card", "single"]);
+    expect(shape(items)).toEqual(["divider", "single", "event", "single"]);
   });
 
   it("keeps an entry, and a notice, of a kind added after this build as a line in its place", () => {
@@ -134,14 +136,19 @@ describe("buildTimeline", () => {
         trigger: { _tag: "webhook" },
       };
     };
-    const cards = (items: ReturnType<typeof buildTimeline>) =>
+    /** Each line: its key, then each routine it tells as "routine change name". */
+    const lines = (items: ReturnType<typeof buildTimeline>) =>
       items.flatMap((i) =>
-        i.kind === "card" && i.entry._tag === "routine-change"
-          ? [`${i.key} ${i.entry.routineId} ${i.entry.change} ${i.entry.name}`]
+        i.kind === "event" && i.line._tag === "routines"
+          ? [
+              `${i.key}: ${i.line.changes
+                .map((c) => `${c.routineId} ${c.change} ${c.name}`)
+                .join(", ")}`,
+            ]
           : [],
       );
 
-    it("folds edits that follow a routine's creation or edit into one card with the latest", () => {
+    it("folds edits that follow a routine's creation or edit into its change, with the latest", () => {
       const items = buildTimeline([
         change("2026-11-20T10:00:00Z", "digest", "created"),
         change("2026-11-20T10:00:10Z", "digest", "updated"),
@@ -149,13 +156,27 @@ describe("buildTimeline", () => {
         change("2026-11-20T10:00:30Z", "backup", "updated"),
         change("2026-11-20T10:00:40Z", "backup", "updated"),
       ]);
-      expect(cards(items)).toEqual([
-        "change-1 digest created digest 3",
-        "change-4 backup updated backup 5",
+      expect(lines(items)).toEqual([
+        "change-1: digest created digest 3",
+        "change-4: backup updated backup 5",
       ]);
     });
 
-    it("keeps a pause, a resume and a deletion on cards of their own", () => {
+    it("joins changes of the same kind to other routines into one line", () => {
+      const items = buildTimeline([
+        change("2026-11-20T10:10:00Z", "digest", "created"),
+        change("2026-11-20T10:10:10Z", "backup", "created"),
+        change("2026-11-20T10:10:20Z", "backup", "updated"),
+        change("2026-11-20T10:10:30Z", "bills", "created"),
+        change("2026-11-20T10:10:40Z", "digest", "created"),
+      ]);
+      expect(lines(items)).toEqual([
+        "change-6: digest created digest 6, backup created backup 8, bills created bills 9",
+        "change-10: digest created digest 10",
+      ]);
+    });
+
+    it("keeps a pause, a resume and a deletion of one routine on lines of their own", () => {
       const items = buildTimeline([
         change("2026-11-20T10:30:00Z", "digest", "created"),
         change("2026-11-20T10:30:10Z", "digest", "paused"),
@@ -163,7 +184,7 @@ describe("buildTimeline", () => {
         change("2026-11-20T10:30:30Z", "digest", "resumed"),
         change("2026-11-20T10:30:40Z", "digest", "deleted"),
       ]);
-      expect(cards(items).map((card) => card.split(" ")[2])).toEqual([
+      expect(lines(items).map((line) => line.split(" ")[2])).toEqual([
         "created",
         "paused",
         "updated",
@@ -172,33 +193,92 @@ describe("buildTimeline", () => {
       ]);
     });
 
-    it("keeps changes apart that anything, another routine, an author or a pause separates", () => {
+    it("keeps changes apart that a message, an author, another kind or a time separates", () => {
       const items = buildTimeline([
         change("2026-11-20T11:00:00Z", "digest", "created"),
-        change("2026-11-20T11:00:05Z", "backup", "created"),
-        change("2026-11-20T11:00:10Z", "digest", "updated"),
+        change("2026-11-20T11:00:05Z", "backup", "paused"),
         message("2026-11-20T11:00:15Z", scout),
         change("2026-11-20T11:00:20Z", "digest", "updated"),
-        change("2026-11-20T11:00:30Z", "digest", "updated", { _tag: "operator" }),
-        change("2026-11-20T11:30:00Z", "digest", "updated", { _tag: "operator" }),
+        change("2026-11-20T11:00:30Z", "backup", "updated", { _tag: "operator" }),
+        change("2026-11-20T11:30:00Z", "bills", "updated", { _tag: "operator" }),
       ]);
-      expect(cards(items).map((card) => card.split(" ").slice(1, 3).join(" "))).toEqual([
+      expect(lines(items).map((line) => line.split(" ").slice(1, 3).join(" "))).toEqual([
         "digest created",
-        "backup created",
+        "backup paused",
         "digest updated",
-        "digest updated",
-        "digest updated",
-        "digest updated",
+        "backup updated",
+        "bills updated",
       ]);
     });
 
-    it("lets the operator read through a folded card's latest change", () => {
+    it("lets the operator read through a folded line's latest change", () => {
       const created = change("2026-11-20T12:00:10Z", "digest", "created");
       const edited = change("2026-11-20T12:00:20Z", "digest", "updated");
       const items = buildTimeline([created, edited]);
       expect(items.map(rowOrder)).toEqual([null, edited.order]);
       expect(readThrough(items.map(rowOrder))).toBe(edited.order);
     });
+  });
+
+  describe("teammate messages", () => {
+    let order = 100;
+    const handoff = (
+      iso: string,
+      direction: HandoffEntry["direction"],
+      peer: typeof wren | typeof scout = wren,
+    ): HandoffEntry => {
+      order += 1;
+      // This conversation is Scout's: it sends to its peer, and receives from it.
+      return {
+        _tag: "handoff",
+        id: EntryId.make(`handoff-${order}`),
+        order: EntryOrder.make(order),
+        author: direction === "sent" ? scout : peer,
+        createdAt: at(iso),
+        recipientId: direction === "sent" ? peer.botId : scout.botId,
+        direction,
+        text: `Message ${order}`,
+        urgent: false,
+        state: "sent",
+      };
+    };
+    it("tells each message in a line of its own, whichever way it went", () => {
+      const first = handoff("2026-11-20T10:00:00Z", "sent");
+      const items = buildTimeline([
+        first,
+        handoff("2026-11-20T10:00:10Z", "received"),
+        handoff("2026-11-20T10:00:20Z", "sent", { _tag: "bot", botId: BotId.make("ada") }),
+      ]);
+      expect(
+        items.flatMap((i) =>
+          i.kind === "event" && i.line._tag === "handoff"
+            ? [`${i.key} ${i.line.peer} ${i.line.entry.direction}`]
+            : [],
+        ),
+      ).toEqual([`${first.id} wren sent`, "handoff-102 wren received", "handoff-103 ada sent"]);
+    });
+  });
+
+  it("tells a saved name and a routine J3 Bots paused in lines, and keeps other notices cards", () => {
+    const notice = (n: number, value: NoticeEntry["notice"]): NoticeEntry => ({
+      _tag: "notice",
+      id: EntryId.make(`notice-${n}`),
+      order: EntryOrder.make(200 + n),
+      author: { _tag: "system" },
+      createdAt: at(`2026-11-20T12:00:0${n}Z`),
+      notice: value,
+      retryable: false,
+    });
+    const items = buildTimeline([
+      notice(1, { _tag: "operator-named", botId: scout.botId, name: "Jo" }),
+      notice(2, { _tag: "routine-paused", routineId: RoutineId.make("digest"), name: "Digest" }),
+      notice(3, { _tag: "session-lost" }),
+    ]);
+    expect(
+      items.map((i) =>
+        i.kind === "event" ? i.line._tag : i.kind === "card" ? i.entry._tag : i.kind,
+      ),
+    ).toEqual(["divider", "operator-named", "routine-paused", "notice"]);
   });
 });
 

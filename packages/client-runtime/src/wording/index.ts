@@ -31,6 +31,17 @@ export {
   templateReadText,
   templateTooLargeText,
 } from "./details.ts";
+export {
+  type EventIcon,
+  type EventLead,
+  type EventLineWords,
+  eventLineWords,
+  type EventMark,
+  type EventRun,
+  handoffHeading,
+  handoffMarks,
+  routineChangeDetail,
+} from "./eventLine.ts";
 export { engineDownload, engineProblem, providerLine, type ProviderTone } from "./engine.ts";
 export {
   deliveryLine,

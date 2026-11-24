@@ -8,13 +8,10 @@ import type {
   ConnectorAuthEntry,
   ConnectorSuggestionEntry,
   Mentions,
-  Entry,
   EntryId,
-  MessageEntry,
   QuestionAnswers,
   Room,
   RoutineId,
-  WorkFoldEntry,
   WorkStep,
 } from "@j3-bots/contracts";
 import type * as Redacted from "effect/Redacted";
@@ -22,6 +19,8 @@ import type { ReactNode, RefObject } from "react";
 import type { MentionLabel } from "@j3-bots/client-runtime";
 import {
   addresseeOf,
+  type CardEntry,
+  latestOfLine,
   mentionedNames,
   mentionedWhoLeft,
   type OpeningHold,
@@ -33,11 +32,10 @@ import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
 import { CredentialRequestCard } from "./CredentialRequestCard";
 import { ConnectorAuthCard, ConnectorSuggestionCard } from "./connectors/ConnectorCards";
-import { HandoffCard } from "./HandoffCard";
+import { EventLine } from "./EventLine";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
-import { RoutineChangeCard } from "./RoutineChangeCard";
 import { BrowserHelpCard } from "./BrowserHelpCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TimeDivider } from "./TimeDivider";
@@ -70,7 +68,6 @@ export interface TimelineIntents {
   readonly openWorkFold: (entryId: EntryId) => void;
   readonly closeWorkFold: (entryId: EntryId) => void;
   readonly openAttachment: (attachment: Attachment) => void;
-  readonly openHandoff: (entryId: EntryId) => void;
   readonly openRoutine: (routineId: RoutineId) => void;
   readonly openConversation: (botId: BotId) => void;
   /**
@@ -177,6 +174,17 @@ export function Timeline({
             </div>
           );
         }
+        if (item.kind === "event") {
+          return (
+            <div key={item.key} data-seen-id={latestOfLine(item.line).id} className={settles}>
+              <EventLine
+                line={item.line}
+                onOpenRoutine={intents.openRoutine}
+                onOpenConversation={intents.openConversation}
+              />
+            </div>
+          );
+        }
         if (item.kind === "unknown") {
           return (
             <div key={item.key} data-seen-id={item.id} className={settles}>
@@ -258,14 +266,14 @@ export function Timeline({
   );
 }
 
-/** One card or notice: every entry that is neither a message nor a turn's work. */
+/** One card or notice: what the bot asks of the operator, or something that stopped. */
 function Card({
   entry,
   submitting,
   intents,
   vault,
 }: {
-  entry: Exclude<Entry, MessageEntry | WorkFoldEntry>;
+  entry: CardEntry;
   submitting: TimelineProps["submitting"];
   intents: TimelineIntents;
   vault: VaultAccess;
@@ -338,12 +346,6 @@ function Card({
             }
           }}
         />
-      );
-    case "handoff":
-      return <HandoffCard entry={entry} onOpen={() => intents.openHandoff(entry.id)} />;
-    case "routine-change":
-      return (
-        <RoutineChangeCard entry={entry} onOpen={() => intents.openRoutine(entry.routineId)} />
       );
   }
 }

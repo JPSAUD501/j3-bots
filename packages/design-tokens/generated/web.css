@@ -193,7 +193,6 @@
   --layout-touch-target: 2.75rem;
   --layout-bubble-width: min(36rem, 85%);
   --layout-card-width: min(36rem, 92%);
-  --layout-compact-card-width: min(28rem, 92%);
   --layout-composer-max-height: 15rem;
 }
 

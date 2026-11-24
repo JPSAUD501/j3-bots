@@ -116,10 +116,6 @@ ${lines([
     "layout-card-width",
     `min(${rem(layout.entryWidth.max)}, ${layout.entryWidth.cardShare * 100}%)`,
   ],
-  [
-    "layout-compact-card-width",
-    `min(${rem(layout.compactCardWidth)}, ${layout.entryWidth.cardShare * 100}%)`,
-  ],
   ["layout-composer-max-height", rem(layout.composerMaxHeight)],
 ])}
 }

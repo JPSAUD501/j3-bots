@@ -4,6 +4,7 @@
  * card status, fold ending and notice. Development only.
  */
 import type { OutgoingMessage } from "@j3-bots/client-runtime";
+import { type EventLine, placeOf } from "@j3-bots/client-runtime/presentation";
 import {
   AttachmentId,
   BrowserTabRef,
@@ -767,6 +768,9 @@ export function galleryVariants(now: DateTime.Utc) {
     notice("notice-settings", { _tag: "settings-held" }),
     notice("notice-behind", { _tag: "observation-failed" }),
     notice("notice-too-long", { _tag: "too-long" }),
+  ];
+  /** Notices told in event lines, not in notice lines. */
+  const noticeEvents: ReadonlyArray<NoticeEntry> = [
     notice("notice-routine-paused", {
       _tag: "routine-paused",
       routineId: RoutineId.make("routine-digest"),
@@ -866,7 +870,24 @@ export function galleryVariants(now: DateTime.Utc) {
     }),
   ];
 
+  // Each entry's own line, as the timeline places it, then a line that tells several routines.
+  const eventLines: ReadonlyArray<EventLine> = [
+    ...[...handoffs, ...routineChanges, ...noticeEvents].flatMap((entry) => {
+      const place = placeOf(entry);
+      return place._tag === "line" ? [place.line] : [];
+    }),
+    {
+      _tag: "routines",
+      changes: [
+        change("rc-group-1", "created", halfHourly),
+        { ...change("rc-group-2", "created", { _tag: "webhook" }), name: "Deploy watch" },
+        { ...change("rc-group-3", "created", halfHourly), name: "Inbox sweep" },
+      ],
+    },
+  ];
+
   return {
+    eventLines,
     bubbles,
     visualBubbles,
     escapingVisual,
@@ -882,7 +903,5 @@ export function galleryVariants(now: DateTime.Utc) {
     connectorAuths,
     folds,
     notices,
-    handoffs,
-    routineChanges,
   };
 }

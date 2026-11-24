@@ -87,6 +87,7 @@ import {
   avatarStates,
   buildTimeline,
   type ConnectorsPlace,
+  latestOfLine,
   liveTurn,
   withLiveTurn,
   mentionOptions,
@@ -127,7 +128,7 @@ import {
 import { EditBotForm, type EditBotFormProps } from "../components/EditBotDialog";
 import { NoSelection, QuietConversation, QuietRoom } from "../components/EmptyStates";
 import { Onboarding } from "../onboarding/Onboarding";
-import { HandoffCard } from "../components/HandoffCard";
+import { EventLine } from "../components/EventLine";
 import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
@@ -140,7 +141,6 @@ import { HiddenBots, SectionBlock, useFoldedSections } from "../components/Roste
 import type { RosterIntents, RosterMenuContext } from "../components/RosterMenu";
 import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
-import { RoutineChangeCard } from "../components/RoutineChangeCard";
 import { RoutineRunList } from "../components/RoutineRuns";
 import { BrowserHelpCard } from "../components/BrowserHelpCard";
 import { CredentialRequestCard } from "../components/CredentialRequestCard";
@@ -952,7 +952,6 @@ const timelineIntents: TimelineIntents = {
   retryMessage: nothing,
   openWorkFold: nothing,
   openAttachment: nothing,
-  openHandoff: nothing,
   openRoutine: nothing,
   openConversation: nothing,
   connectSuggested: nothing,
@@ -1299,7 +1298,7 @@ function WorkSection() {
 
 function NoticesSection() {
   return (
-    <Section title="Notices, handoffs and routine changes">
+    <Section title="Notices and event lines">
       <Labeled label="Notices">
         <div className="flex flex-col">
           {variants.notices.map((entry) => (
@@ -1315,17 +1314,15 @@ function NoticesSection() {
       <Labeled label="A kind from a newer server">
         <NeedsUpdateLine />
       </Labeled>
-      <Labeled label="Handoffs">
+      <Labeled label="Event lines: handoffs, routine changes, a saved name">
         <div className="flex flex-col">
-          {variants.handoffs.map((entry) => (
-            <HandoffCard key={entry.id} entry={entry} onOpen={nothing} />
-          ))}
-        </div>
-      </Labeled>
-      <Labeled label="Routine changes">
-        <div className="flex flex-col gap-2">
-          {variants.routineChanges.map((entry) => (
-            <RoutineChangeCard key={entry.id} entry={entry} onOpen={nothing} />
+          {variants.eventLines.map((line) => (
+            <EventLine
+              key={latestOfLine(line).id}
+              line={line}
+              onOpenRoutine={nothing}
+              onOpenConversation={nothing}
+            />
           ))}
         </div>
       </Labeled>

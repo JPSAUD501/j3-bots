@@ -216,12 +216,24 @@ export {
   shortDuration,
 } from "./time.ts";
 export {
+  type CardEntry,
+  type EntryPlace,
+  type EventLine,
+  type EventLineOpens,
+  eventLineOpens,
+  handoffPeer,
+  joinEventLines,
+  latestOfLine,
+  type NonMessageEntry,
+  placeOf,
+  type RoutineChanges,
+} from "./eventLine.ts";
+export {
   type ArrivalCounts,
   arrivalCounts,
   arrivedRows,
   buildTimeline,
   type GroupPosition,
-  handoffPeer,
   readThrough,
   rowOrder,
   type TimelineItem,

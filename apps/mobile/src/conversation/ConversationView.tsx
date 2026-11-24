@@ -86,6 +86,7 @@ import { Composer, type MentionCandidate } from "./Composer.tsx";
 import { ConversationHeader } from "./Header.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
 import { AnimatedView } from "./animated.ts";
+import { EventLine } from "./EventLine.tsx";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine.tsx";
 import { ToLatest } from "./ToLatest.tsx";
 import { conversationVisuals, ConversationVisualsContext } from "./visuals.ts";
@@ -272,7 +273,6 @@ export function ConversationView({
     return {
       bubble: Math.min(max, column * bubbleShare),
       card: Math.min(max, column * cardShare),
-      compactCard: Math.min(layout.compactCardWidth, column * cardShare),
       column,
     };
   }, [column]);
@@ -619,16 +619,17 @@ function Row({
               }}
             />
           ) : (
-            <Card
-              entry={entry}
-              onOpenBot={onOpenBot}
-              onOpenRoutine={onOpenRoutine}
-              onOpenBrowser={onOpenBrowser}
-            />
+            <Card entry={entry} onOpenBrowser={onOpenBrowser} />
           )}
         </AnimatedView>
       );
     }
+    case "event":
+      return (
+        <AnimatedView {...entering}>
+          <EventLine line={row.line} onOpenBot={onOpenBot} onOpenRoutine={onOpenRoutine} />
+        </AnimatedView>
+      );
     case "unknown":
       return (
         <AnimatedView {...entering}>
