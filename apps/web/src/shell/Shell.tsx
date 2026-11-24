@@ -3,6 +3,7 @@ import type {
   BrowserHelpEntry,
   BrowserTabRef,
   EntryId,
+  PairBotIds,
   RosterItem,
   RosterItemKey,
 } from "@j3-bots/contracts";
@@ -27,10 +28,12 @@ import {
   liveTurn,
   openingHeld,
   orderRoster,
+  pairKeyText,
   readThrough,
   rosterKeyOf,
   rosterKeyText,
   rosterTarget,
+  teammatesOf,
   withLiveTurn,
 } from "@j3-bots/client-runtime/presentation";
 import { useArrivals, useConversationEnd } from "@j3-bots/client-runtime/react";
@@ -52,6 +55,8 @@ import {
   QuietConversation,
   QuietRoom,
 } from "../components/EmptyStates";
+import { PairConversation } from "../components/PairConversation";
+import type { PairIntents } from "../components/PairHeader";
 import { Roster } from "../components/Roster";
 import { useFoldedSections } from "../components/RosterGroups";
 import { StopUsingComputer } from "../components/LocalMode";
@@ -83,6 +88,16 @@ interface ShellNavigation {
   readonly setBrowser: (target: BrowserTabRef | "front" | null) => void;
   /** The element a roster row renders as: a router link in the app, a button in a preview. */
   readonly rowLink: (item: RosterItem) => ReactElement;
+  /**
+   * The teammate conversation shown, and the card of one of its bots'
+   * conversations it was opened at; null when none is. Shown in place of a
+   * conversation: `selected` is then null.
+   */
+  readonly pair: { readonly botIds: PairBotIds; readonly at: EntryId | null } | null;
+  /** Shows a teammate conversation, at a card's message when `at` names one. */
+  readonly openPair: (botIds: PairBotIds, at: EntryId | null) => void;
+  /** The element a pair's roster row renders as, as `rowLink`. */
+  readonly pairLink: (botIds: PairBotIds) => ReactElement;
 }
 
 /** A touch screen, where a focused composer would raise the keyboard over the conversation. */
@@ -100,13 +115,14 @@ interface ShellProps {
 
 /** The whole interface: roster, conversation and details, from data and intents. */
 export function Shell({ data, intents, browser, navigation, keyboard = true }: ShellProps) {
-  const { selected } = navigation;
+  const { selected, pair } = navigation;
   const i18n = useI18n();
   const { t } = i18n;
   const shortcuts = shellShortcuts();
   const { dictate, editProfile } = intents;
   const composerRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLButtonElement>(null);
+  const pairTitleRef = useRef<HTMLHeadingElement>(null);
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null);
   const detailsHeadingId = useId();
   // State, not a ref: each conversation mounts its own timeline, and what watches it follows.
@@ -115,6 +131,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const [containerRef, layout] = useShellLayout();
 
   const rosterItems = data.roster ?? [];
+  const pairs = data.pairs ?? [];
   const folded = useFoldedSections(data.sections);
   const bots = rosterItems.flatMap((item) => (item._tag === "bot" ? [item.bot] : []));
   const item =
@@ -135,7 +152,14 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
   const detailsOpen = navigation.detailsOpen && browserTarget === null;
   const aside = browserTarget !== null ? "browser" : detailsOpen ? "details" : null;
   // On a phone the details take the screen; the browser rises over the conversation as a sheet.
-  const active: Region = item === null ? "roster" : detailsOpen ? "details" : "conversation";
+  const active: Region =
+    item === null
+      ? pair === null
+        ? "roster"
+        : "conversation"
+      : detailsOpen
+        ? "details"
+        : "conversation";
   // Below `wide` the details and the browser are a modal dialog: it owns focus and every key,
   // Escape included, and the shell's shortcuts wait until it closes.
   const detailsModal = layout === "phone" || layout === "tablet";
@@ -145,7 +169,12 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     if (aside === "browser") viewerRef.current?.requestClose();
     else navigation.setDetailsOpen(false);
   };
-  const selectionKey = item === null ? null : rosterKeyText(rosterKeyOf(item));
+  const selectionKey =
+    item !== null
+      ? rosterKeyText(rosterKeyOf(item))
+      : pair !== null
+        ? pairKeyText(pair.botIds)
+        : null;
 
   // The conversation the operator can see: the one shown, with no sheet or
   // dialog over it, as read tracking also tells. Any other, and what is
@@ -203,7 +232,8 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
       if (detailsModal) return;
       focus(aside !== null ? detailsHeadingRef.current : titleRef.current);
     } else if (moved && selectionKey !== null && !coarsePointer()) {
-      focus(composerRef.current);
+      // A teammate conversation has no composer: its title takes focus.
+      focus(composerRef.current ?? pairTitleRef.current);
     } else if (moved && selectionKey === null && before.selectionKey !== null) {
       const roster = rosterRef.current;
       const row = roster?.querySelector<HTMLElement>(
@@ -395,11 +425,19 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     );
   }
 
+  const pairIntents: PairIntents = {
+    talkTo: intents.openConversation,
+    startRoom: intents.startRoomWith,
+  };
   const roster = (
     <Roster
       items={data.roster}
       selected={selected}
       rowLink={navigation.rowLink}
+      pairs={pairs}
+      selectedPair={pair?.botIds ?? null}
+      pairLink={navigation.pairLink}
+      pairIntents={pairIntents}
       onNewBot={intents.newBot}
       onNewFromTemplate={intents.newBotFromTemplate}
       onNewRoom={intents.newRoom}
@@ -413,6 +451,23 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
 
   let conversation: ReactElement = <NoSelection nextShortcut={shortcuts.nextBot.label} />;
   let details: ReactElement | null = null;
+  if (item === null && pair !== null) {
+    const { botIds } = pair;
+    conversation = (
+      <PairConversation
+        // One per pair: another opens afresh, at its own end.
+        key={pairKeyText(botIds)}
+        botIds={botIds}
+        view={data.pair(botIds)}
+        at={pair.at}
+        intents={pairIntents}
+        onLoadOlder={() => intents.loadOlderPair(botIds)}
+        onReveal={(entryId) => intents.revealInPair(botIds, entryId)}
+        onBack={() => navigation.select(null)}
+        titleRef={pairTitleRef}
+      />
+    );
+  }
   if (item !== null) {
     const key = rosterKeyOf(item);
     const target = rosterTarget(key);
@@ -537,6 +592,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   turnBot={
                     item._tag === "bot" ? { bot: item.bot, lastEntry: item.lastEntry } : null
                   }
+                  onOpenPair={navigation.openPair}
                   {...(browserBot === null
                     ? {}
                     : {
@@ -644,6 +700,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             memory={data.memory(bot.id)}
             files={data.files(bot.id)}
             connectors={data.connectors}
+            teammates={teammatesOf(bot.id, pairs)}
             modelName={botModelName(data.engine, bot)}
             stopShortcut={shortcuts.stop}
             browserHost={data.engine?.browser ?? null}
@@ -670,6 +727,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   forBot: bot.id,
                   suggestion: null,
                 }),
+              openPair: (botIds) => navigation.openPair(botIds, null),
               ...(editProfile ? { editProfile: () => editProfile(bot.id) } : {}),
             }}
           />

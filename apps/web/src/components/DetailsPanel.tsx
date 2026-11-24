@@ -8,6 +8,7 @@ import type {
   ConnectorId,
   MemoryFile,
   MemoryPath,
+  PairBotIds,
   Room,
   Routine,
   RoutineId,
@@ -42,7 +43,12 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { canStop, connectorsOf, roomStop } from "@j3-bots/client-runtime/presentation";
+import {
+  canStop,
+  connectorsOf,
+  roomStop,
+  type Teammate,
+} from "@j3-bots/client-runtime/presentation";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { ConnectorTile, StatusWord } from "./connectors/parts";
@@ -50,11 +56,13 @@ import {
   activityTime,
   fileSize,
   memoryFileName,
+  pairLine,
   permissionModeText,
   routineLines,
 } from "@j3-bots/client-runtime/wording";
 import { RoomAvatar } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
+import { FaceOf } from "./avatar/TeamAvatars";
 import { FileCard } from "./FileCard";
 import { Button } from "./ui/button";
 import { SkeletonRows } from "./ui/skeleton";
@@ -241,6 +249,8 @@ export interface BotDetailsIntents {
   readonly shareTemplate: () => void;
   /** Opens the connectors screen for this bot: on one connector's page, or on all of them. */
   readonly openConnectors: (connectorId: ConnectorId | null) => void;
+  /** Opens the conversation between this bot and a teammate. */
+  readonly openPair: (botIds: PairBotIds) => void;
 }
 
 interface BotDetailsProps {
@@ -252,6 +262,8 @@ interface BotDetailsProps {
   readonly memory: ReadonlyArray<MemoryFile> | null;
   /** Every connector the operator added, the bot's among them; null while they load. */
   readonly connectors: ReadonlyArray<Connector> | null;
+  /** The teammates it wrote or heard from, latest first (`teammatesOf`), deleted ones included. */
+  readonly teammates: ReadonlyArray<Teammate>;
   /** The model's name as the engine reports it, or null if the engine does not offer it now. */
   readonly modelName: string | null;
   /** Whether the browser can run on the server's computer; null until the engine has said. */
@@ -274,6 +286,7 @@ export function BotDetails({
   files,
   memory,
   connectors,
+  teammates,
   modelName,
   browserHost,
   intents,
@@ -357,6 +370,20 @@ export function BotDetails({
           </ul>
         )}
       </DetailsSection>
+
+      {teammates.length > 0 && (
+        <DetailsSection title={t("pairs.teammates")}>
+          <ul className="appear -mx-2 flex flex-col [--avatar-cutout:var(--background)]">
+            {teammates.map((teammate) => (
+              <TeammateRow
+                key={teammate.peer}
+                teammate={teammate}
+                onOpen={() => intents.openPair(teammate.pair.botIds)}
+              />
+            ))}
+          </ul>
+        </DetailsSection>
+      )}
 
       <DetailsSection title={t("details.files")}>
         {files === null ? (
@@ -608,6 +635,32 @@ function RoutineRow({
       <span className="shrink-0 pe-2">
         <Switch checked={routine.enabled} onCheckedChange={onToggle} aria-label={routine.name} />
       </span>
+    </li>
+  );
+}
+
+/** A teammate: its face and name, and the latest message between the two, which the row opens. */
+function TeammateRow({ teammate, onOpen }: { teammate: Teammate; onOpen: () => void }) {
+  const ctx = usePresentation();
+  const peer = useBots().get(teammate.peer);
+  const { pair } = teammate;
+  return (
+    <li>
+      <button type="button" onClick={onOpen} className={cn(rowButton, "items-center")}>
+        <FaceOf botId={teammate.peer} size={32} />
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="flex items-baseline gap-2">
+            <span className="truncate text-sm font-medium">
+              {peer?.profile.name ?? ctx.i18n.t("bot.unknown")}
+            </span>
+            <span className="ms-auto shrink-0 text-2xs text-muted-foreground tabular-nums">
+              {activityTime(pair.lastMessage.createdAt, ctx)}
+            </span>
+          </span>
+          <span className="truncate text-xs text-muted-foreground">{pairLine(pair, ctx)}</span>
+        </span>
+        <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+      </button>
     </li>
   );
 }

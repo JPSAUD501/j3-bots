@@ -29,12 +29,20 @@ const named = (parts: ReadonlyArray<string | LineName>): NamedLine => ({
   text: parts.map((part) => (typeof part === "string" ? part : part.name)).join(""),
 });
 
+/**
+ * A teammate conversation's two bots in the order its title names them: by
+ * name, in the operator's language. Its avatars and menu follow the same order.
+ */
+export function pairOrder(botIds: PairBotIds, ctx: PresentationContext): readonly [BotId, BotId] {
+  const [a, b] = botIds;
+  return botName(a, ctx).localeCompare(botName(b, ctx), ctx.i18n.locale) <= 0 ? [a, b] : [b, a];
+}
+
 /** A teammate conversation's title: its two bots' names, in alphabetical order ("Scout and Wren"). */
 export function pairTitle(botIds: PairBotIds, ctx: PresentationContext): string {
-  const names = botIds
-    .map((id) => botName(id, ctx))
-    .toSorted((a, b) => a.localeCompare(b, ctx.i18n.locale));
-  return new Intl.ListFormat(ctx.i18n.locale, { type: "conjunction" }).format(names);
+  return new Intl.ListFormat(ctx.i18n.locale, { type: "conjunction" }).format(
+    pairOrder(botIds, ctx).map((id) => botName(id, ctx)),
+  );
 }
 
 /** A pair's roster and details line: its latest message, after who wrote it ("Wren: …"). */

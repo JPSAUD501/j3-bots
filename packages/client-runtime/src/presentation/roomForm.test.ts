@@ -12,6 +12,7 @@ import {
   type RoomFormContext,
   roomFormContext,
   roomFormOf,
+  roomFormStart,
   roomFormTarget,
   type RoomFormValues,
   sameRoomForm,
@@ -282,5 +283,22 @@ describe("hopLimitSteps", () => {
   it("does not step from what is not a whole number from one up", () => {
     expect(hopLimitSteps("2.5", 4)).toEqual({ fewer: null, more: null });
     expect(hopLimitSteps("0", 4)).toEqual({ fewer: null, more: null });
+  });
+});
+
+describe("roomFormStart", () => {
+  it("starts a new room with the bots it was opened with, and a room the server has as it has it", () => {
+    const start = roomFormStart({ _tag: "create", members: [ana, hal] });
+    expect(start).toEqual({ ...blankRoomForm, members: [ana, hal] });
+    // The primary bot hosts when it is one of them, as when the operator picks them.
+    expect(hostOf(start, roomFormContext(null, hal, 4))).toBe(hal);
+    expect(roomFormStart({ _tag: "create" })).toEqual(blankRoomForm);
+    expect(roomFormStart({ _tag: "edit", room, gone: false })).toEqual(roomFormOf(room));
+  });
+
+  it("gives a new room opened with other bots another form", () => {
+    expect(roomFormTarget({ _tag: "create", members: [ana, hal] })).not.toBe(
+      roomFormTarget({ _tag: "create" }),
+    );
   });
 });

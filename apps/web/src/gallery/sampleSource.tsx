@@ -16,6 +16,7 @@ import {
   type ConnectorsOpening,
   fittedMarks,
   hasDefaultModel,
+  inPair,
   insertMarks,
   placedMessage,
   providerGate,
@@ -41,10 +42,12 @@ import {
   type Entry,
   type EntryTarget,
   type Mentions,
+  type PairBotIds,
   type Room,
   type RoomId,
   type RosterItem,
   type Section,
+  type TeammateMessage,
 } from "@j3-bots/contracts";
 import { freeAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
@@ -649,6 +652,14 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     openConversation: nothing,
     openMemoryFile: nothing,
     loadOlder: nothing,
+    loadOlderPair: nothing,
+    // Every sample message is held: the one a card names is found at once.
+    revealInPair: (botIds, entryId) =>
+      Promise.resolve(
+        messagesOf(get(), botIds).find(
+          (message) => message.sentEntryId === entryId || message.receivedEntryId === entryId,
+        )?.seq ?? null,
+      ),
     markRead: nothing,
     markRosterRead: (target) => update((s) => withUnread(s, target, false)),
     markUnread: (target) => update((s) => withUnread(s, target, true)),
@@ -702,6 +713,7 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     shareBotTemplate: nothing,
     // The room form belongs to the client runtime's source; the sample has no dialog for it.
     newRoom: nothing,
+    startRoomWith: nothing,
     editRoom: nothing,
     archiveRoom: (roomId) => {
       update((s) =>
@@ -748,6 +760,13 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
   };
 }
 
+/** The sample messages between the two bots of `botIds`, oldest first. */
+const messagesOf = (state: State, botIds: PairBotIds): ReadonlyArray<TeammateMessage> =>
+  state.pairMessages.find((messages) => {
+    const first = messages[0];
+    return first !== undefined && inPair(botIds, first.from) && inPair(botIds, first.to);
+  }) ?? [];
+
 function toData(state: State, vault: VaultView): ShellData {
   return {
     engine: state.engine,
@@ -758,6 +777,13 @@ function toData(state: State, vault: VaultView): ShellData {
     conversation: (target) => ({
       phase: "ready",
       items: state.entries[keyOf(target)] ?? [],
+      hasOlder: false,
+      loadingOlder: false,
+    }),
+    pairs: state.pairs,
+    pair: (botIds) => ({
+      phase: "ready",
+      messages: messagesOf(state, botIds),
       hasOlder: false,
       loadingOlder: false,
     }),

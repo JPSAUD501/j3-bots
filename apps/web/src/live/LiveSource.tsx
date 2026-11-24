@@ -13,6 +13,7 @@ import {
   useEngineStatus,
   useJ3Client,
   useMemory,
+  usePair,
   useReadable,
   useRecentTurns,
   useRoutineRuns,
@@ -31,6 +32,7 @@ import type {
   MemoryPath,
   MemoryScope,
   Notification,
+  PairBotIds,
   Room,
   RoomId,
   RoutineId,
@@ -75,6 +77,7 @@ import {
   type ConnectorsOpening,
   notificationOpening,
   type OpenedNotification,
+  pairKeyText,
   type RoomFormMode,
   roomStopFailed,
   showsImage,
@@ -120,6 +123,7 @@ import { ServerAddress } from "../components/ServerAddress";
 import { type Notice, Toast } from "../components/Toast";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { notificationAccess } from "../preferences/notifications";
+import type { PairView } from "../components/PairConversation";
 import type {
   ConversationView,
   DesktopLocal,
@@ -167,7 +171,7 @@ let started: Promise<J3Client> | null = null;
  * never reaches another.
  */
 type RoomFormTarget =
-  | { readonly _tag: "create" }
+  | { readonly _tag: "create"; readonly members?: ReadonlyArray<BotId> }
   | { readonly _tag: "edit" | "unarchive"; readonly roomId: RoomId };
 
 /**
@@ -769,6 +773,12 @@ const loadingView: ConversationView = {
   hasOlder: false,
   loadingOlder: false,
 };
+const loadingPair: PairView = {
+  phase: "loading",
+  messages: [],
+  hasOlder: false,
+  loadingOlder: false,
+};
 const blankDraft: Draft = { text: "", mentions: [], files: [], sending: false };
 
 const submitting = (state: ActionState | undefined) => state?._tag === "submitting";
@@ -866,6 +876,12 @@ function LiveShell({
   const draftsNotSaved = useReadable(j3.draftsNotSaved);
   const draftsSaving = useReadable(j3.draftsSaving);
   const conversation = useConversation(target);
+  // The teammate conversation the address names, and every pair the roster lists.
+  const shownPair: PairBotIds | null =
+    params.a !== undefined && params.b !== undefined ? [params.a, params.b] : null;
+  const pairKey = shownPair === null ? null : pairKeyText(shownPair);
+  const pairConversation = usePair(shownPair);
+  const listedPairs = useReadable(j3.pairs);
   const files = useBotFiles(detailsBotId);
   const memory = useMemory(detailsBotId === null ? null : { _tag: "bot", botId: detailsBotId });
   const routines = useRoutines(detailsBotId);
@@ -1182,6 +1198,11 @@ function LiveShell({
     sections,
     conversation: (asked) =>
       viewKey !== null && targetKey(asked) === viewKey ? view : loadingView,
+    pairs: listedPairs._tag === "ready" ? listedPairs.value : null,
+    pair: (asked) =>
+      pairConversation.state !== null && pairKeyText(asked) === pairKey
+        ? pairConversation.state
+        : loadingPair,
     draft: (asked) => drafts.get(targetKey(asked)) ?? blankDraft,
     offer: (asked) => draftOffers.get(targetKey(asked)) ?? null,
     draftsLoading,
@@ -1458,6 +1479,11 @@ function LiveShell({
     loadOlder: (asked) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.loadOlder();
     },
+    loadOlderPair: (asked) => {
+      if (pairKeyText(asked) === pairKey) pairConversation.loadOlder();
+    },
+    revealInPair: (asked, entryId) =>
+      pairKeyText(asked) === pairKey ? pairConversation.reveal(entryId) : Promise.resolve(null),
     markRead: (asked, through) => {
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
     },
@@ -1491,6 +1517,7 @@ function LiveShell({
     newBotFromTemplate: () => templatePicker.current?.click(),
     shareBotTemplate: (botId) => shareTemplate(botId),
     newRoom: () => setRoomForm({ _tag: "create" }),
+    startRoomWith: (botIds) => setRoomForm({ _tag: "create", members: botIds }),
     editRoom: (roomId) => setRoomForm({ _tag: "edit", roomId }),
     archiveRoom: (roomId) =>
       j3.updateRoom(roomId, { archived: true }).then((result) => {

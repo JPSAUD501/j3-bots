@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Attachment, Avatar, Bot } from "@j3-bots/contracts";
+import type { Attachment, Avatar, BotId } from "@j3-bots/contracts";
 import { eases, springs } from "@j3-bots/design-tokens";
 import { type RefObject, useLayoutEffect, useRef } from "react";
 import { messageStatus } from "@j3-bots/client-runtime";
@@ -9,15 +9,16 @@ import {
   type OpeningHold,
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
-import { usePresentation } from "../app/context";
+import { useBots, usePresentation } from "../app/context";
 import { deliveryLine } from "@j3-bots/client-runtime/wording";
 import { tintOf } from "../lib/botTint";
 import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { useFocusAfterActions } from "../lib/useFocusAfterActions";
-import { BotAvatar } from "./avatar/BotAvatar";
+import { FaceOf } from "./avatar/TeamAvatars";
 import { FileCard } from "./FileCard";
 import { MessageText } from "./MessageText";
+import { SpeakerFace, SpeakerName, speakerGutter } from "./Speaker";
 import { VisualCard } from "./VisualCard";
 import { Button } from "./ui/button";
 
@@ -29,7 +30,7 @@ const operatorCorners: Record<GroupPosition, string> = {
   middle: "rounded-r-sm",
   last: "rounded-r-sm",
 };
-const botCorners: Record<GroupPosition, string> = {
+export const botCorners: Record<GroupPosition, string> = {
   single: "rounded-bl-sm",
   first: "rounded-bl-sm",
   middle: "rounded-l-sm",
@@ -50,10 +51,11 @@ interface MessageBubbleProps {
   readonly message: TimelineMessage;
   readonly position: GroupPosition;
   /**
-   * In a room, who said it: shown above the first bubble of a bot's group, by
-   * name and shape only. What the bot is doing now is not part of an old message.
+   * In a room, the bot that said it: its name over the first bubble of its
+   * group, its face beside the last, by shape only, and a deleted bot's as
+   * one. What the bot is doing now is not part of an old message.
    */
-  readonly speaker?: Bot | null;
+  readonly speaker?: BotId | null;
   /** The names the message addressed, which `@Name` highlights; `everyone` for every member. */
   readonly mentionable?: ReadonlyArray<string>;
   readonly onOpenAttachment: (attachment: Attachment) => void;
@@ -102,6 +104,9 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
+  const bots = useBots();
+  const speakerName =
+    speaker === null ? null : (bots.get(speaker)?.profile.name ?? t("bot.unknown"));
   const fromOperator = message._tag === "outgoing" || message.author._tag === "operator";
   const startsGroup = position === "single" || position === "first";
   const time = clockTime(message.createdAt, ctx);
@@ -177,19 +182,14 @@ export function MessageBubble({
         "flex flex-col gap-1 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         fromOperator ? "origin-bottom-right items-end" : "origin-bottom-left items-start",
         startsGroup ? "mt-3" : "mt-1",
+        speaker !== null && speakerGutter,
       )}
     >
-      {speaker && startsGroup && (
-        <div className="flex items-center gap-1.5 ps-1 pt-1">
-          <BotAvatar
-            avatar={speaker.profile.avatar}
-            seed={speaker.id}
-            state="idle"
-            size={24}
-            still
-          />
-          <span className="text-xs font-medium">{speaker.profile.name}</span>
-        </div>
+      {speakerName !== null && <SpeakerName position={position} name={speakerName} />}
+      {speaker !== null && (
+        <SpeakerFace position={position}>
+          <FaceOf botId={speaker} size={28} />
+        </SpeakerFace>
       )}
       {message._tag === "message" && message.visual !== undefined && (
         <VisualCard visual={message.visual} />

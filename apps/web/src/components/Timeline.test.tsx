@@ -58,6 +58,7 @@ describe("a conversation", () => {
         submitting={() => false}
         intents={intents}
         vault={{ view: vault.view.get(), intents: vault }}
+        onOpenPair={() => {}}
       />,
     );
     const before = html.indexOf("Before");

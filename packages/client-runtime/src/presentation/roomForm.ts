@@ -46,12 +46,13 @@ export const roomFormContext = (
 });
 
 /**
- * What the form is for: a new room, changing one, or giving an archived one
- * what it needs back. `gone` when the room was deleted while the form was
- * open: the form stays, says so, and saves nothing.
+ * What the form is for: a new room, with the bots it starts with, such as
+ * two teammates' "Start a room with both"; changing one; or giving an
+ * archived one what it needs back. `gone` when the room was deleted while
+ * the form was open: the form stays, says so, and saves nothing.
  */
 export type RoomFormMode =
-  | { readonly _tag: "create" }
+  | { readonly _tag: "create"; readonly members?: ReadonlyArray<BotId> }
   | { readonly _tag: "edit" | "unarchive"; readonly room: Room; readonly gone: boolean };
 
 /**
@@ -60,7 +61,9 @@ export type RoomFormMode =
  * anything else, so a form never carries what was typed over to another.
  */
 export const roomFormTarget = (mode: RoomFormMode): string =>
-  mode._tag === "create" ? "create" : `${mode._tag}:${mode.room.id}`;
+  mode._tag === "create"
+    ? `create:${(mode.members ?? []).join(",")}`
+    : `${mode._tag}:${mode.room.id}`;
 
 export const blankRoomForm: RoomFormValues = {
   name: "",
@@ -82,6 +85,15 @@ export const roomFormOf = (room: Room): RoomFormValues => ({
   hostPick: room.hostId,
   hopLimit: String(room.hopLimit),
 });
+
+/**
+ * Where a form starts: a new room empty but for the bots it was opened with,
+ * in their order; a room the server has, as it has it.
+ */
+export const roomFormStart = (mode: RoomFormMode): RoomFormValues =>
+  mode._tag === "create"
+    ? { ...blankRoomForm, members: mode.members ?? [] }
+    : roomFormOf(mode.room);
 
 /**
  * `values` without the bots that are no longer `present`. A host picked and
