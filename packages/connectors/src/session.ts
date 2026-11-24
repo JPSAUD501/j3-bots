@@ -55,10 +55,17 @@ export interface SecretHeader {
   readonly value: Redacted.Redacted<string>;
 }
 
-/** What signs one request: a bearer token from a sign-in, and headers the operator gave. */
+/**
+ * What signs one request: a bearer token from a sign-in, and headers the
+ * operator gave. `hidden` are secrets the request carries only inside
+ * another value, as the key a `Bearer {key}` header or a path was made from,
+ * each as it may appear: never sent as they are, only taken out of what the
+ * server answers.
+ */
 export interface CallCredentials {
   readonly bearer: Option.Option<Redacted.Redacted<string>>;
   readonly headers: ReadonlyArray<SecretHeader>;
+  readonly hidden: ReadonlyArray<Redacted.Redacted<string>>;
 }
 
 /** Where a session reads its credentials, at each request. */
@@ -359,8 +366,8 @@ const addressValues = (url: URL): ReadonlyArray<string> => [
 
 /**
  * Replaces, in remote text, every exact value of the credentials a request
- * was sent with and of the address' path and query, should the server echo
- * one. Best effort: a value shorter than {@link MIN_SCRUBBED}, or one the
+ * was sent with, those they were made from, and the address' path and query,
+ * should the server echo one. Best effort: a value shorter than {@link MIN_SCRUBBED}, or one the
  * server changed (encoded, split, cased), is not found.
  */
 const scrubberOf = (
@@ -370,9 +377,11 @@ const scrubberOf = (
   const secrets = [
     ...new Set([
       ...sent.flatMap((credentials) =>
-        [...Option.toArray(credentials.bearer), ...credentials.headers.map((h) => h.value)].map(
-          Redacted.value,
-        ),
+        [
+          ...Option.toArray(credentials.bearer),
+          ...credentials.headers.map((h) => h.value),
+          ...credentials.hidden,
+        ].map(Redacted.value),
       ),
       ...address,
     ]),

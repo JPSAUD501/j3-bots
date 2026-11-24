@@ -2017,6 +2017,11 @@ function ConnectorsGallerySection() {
           at={listingAt("google-calendar", "Google Calendar", "calendar")}
         />
         <ConnectorsVariant
+          label="An entry that needs an app you register, with sign-ins back at the server"
+          at={listingAt("google-calendar", "Google Calendar", "calendar")}
+          route={{ _tag: "server" }}
+        />
+        <ConnectorsVariant
           label="An entry that takes a key"
           at={listingAt("sentry", "Sentry", null)}
         />

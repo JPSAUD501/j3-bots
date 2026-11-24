@@ -7,10 +7,11 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { ListenerStatus } from "../admin/protocol.ts";
-import { McpRegistry } from "../connectors/sources/Registry.ts";
+import { McpRegistry, type RegistryEntry } from "../connectors/sources/Registry.ts";
 import * as Domain from "../domain.ts";
 import * as Listener from "../listener.ts";
 import type { PushSender } from "../push/PushSender.ts";
@@ -179,6 +180,30 @@ export const machine = machineWith(TestPush.layer);
  * engine and the in-memory push service.
  */
 export const layer = Domain.layer.pipe(Layer.provideMerge(machine));
+
+/**
+ * The whole domain, with `entries` as the MCP Registry's: a search finds
+ * those whose name has the query in it.
+ */
+export const layerWithRegistry = (entries: ReadonlyArray<RegistryEntry>) =>
+  Domain.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        stores,
+        listener,
+        TestPush.layer,
+        Layer.succeed(
+          McpRegistry,
+          McpRegistry.of({
+            search: (query) =>
+              Effect.succeed(entries.filter((entry) => entry.name.includes(query))),
+            get: (name) =>
+              Effect.succeed(Option.fromUndefinedOr(entries.find((entry) => entry.name === name))),
+          }),
+        ),
+      ),
+    ),
+  );
 
 /**
  * The whole domain over the database `database` gives, as one an earlier

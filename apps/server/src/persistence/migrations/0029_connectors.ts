@@ -11,8 +11,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 // Which bots may use it: every bot (`all_bots`), or those in
 // `connector_bots`, which a deleted bot leaves. A removed connector's row
 // goes at once; `connector_removals` keeps, until it is done, what is left
-// to do outside this database: revoking its OAuth sign-in (`revoke`) and
-// deleting its vault record (`secrets`), which wait for an unlocked vault.
+// to do outside this database, which waits for an unlocked vault: revoking
+// its OAuth sign-in (`revoke`), then deleting its vault record, which every
+// connector has.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
@@ -46,8 +47,7 @@ export default Effect.gen(function* () {
   yield* sql`
     CREATE TABLE connector_removals (
       connector_id TEXT PRIMARY KEY,
-      revoke INTEGER NOT NULL CHECK (revoke IN (0, 1)),
-      secrets INTEGER NOT NULL CHECK (secrets IN (0, 1))
+      revoke INTEGER NOT NULL CHECK (revoke IN (0, 1))
     )
   `;
 });

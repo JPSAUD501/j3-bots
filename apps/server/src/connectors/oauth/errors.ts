@@ -18,6 +18,11 @@ export const OAuthFailureReason = Schema.Literals([
   "insecure-endpoint",
   /** The resource metadata is for another resource than the connector's server. */
   "resource-mismatch",
+  /**
+   * The resource a sign-in would name, in the browser's address and to the
+   * authorization server, holds a secret value of the connector's form.
+   */
+  "secret-in-resource",
   /** The authorization server's metadata names another issuer. */
   "issuer-mismatch",
   /** The authorization server does not offer PKCE with S256. */
@@ -40,7 +45,7 @@ export const OAuthFailureReason = Schema.Literals([
   "vault-not-set-up",
   /** No connector has that id. */
   "unknown-connector",
-  /** The connector's address is not in the vault, as for a gallery entry's, which the gallery gives. */
+  /** The connector's address is not in the vault. */
   "no-address",
   /** The connector signs in with its form, or not at all, never with OAuth. */
   "not-oauth",
@@ -94,6 +99,7 @@ export const toCommandError = (error: OAuthFailure): CommandError => {
     case "no-metadata":
     case "insecure-endpoint":
     case "resource-mismatch":
+    case "secret-in-resource":
     case "issuer-mismatch":
     case "pkce-unsupported":
     case "registration-unsupported":

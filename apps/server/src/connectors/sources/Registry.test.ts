@@ -301,7 +301,7 @@ describe("the gallery's sources", () => {
           { _tag: "registry", name: RegistryName.make("com.example/tracker") },
           "en",
         );
-        assert.isTrue(Schema.is(ConnectorListingDetails)(details));
+        assert.isTrue(Schema.is(ConnectorListingDetails)({ ...details, redirects: null }));
         assert.isTrue(details.description.startsWith("Tracks \u{1F600}"));
       }).pipe(Effect.provide(sourcesLayer)),
   );

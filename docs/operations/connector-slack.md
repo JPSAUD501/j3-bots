@@ -24,7 +24,7 @@ The first row is the one to prefer. Whether Slack accepts a plain-`http` loopbac
 
 ## Add the connector
 
-Add the connector by its address, and give its own OAuth app: the issuer Slack's metadata names (**Assumed** `https://slack.com`), the client ID and the secret. Then sign in. J3 Bots uses the app only with that issuer, so the secret never reaches another server, and sends it only to Slack's token and revocation endpoints.
+Open Slack in the gallery. Its page shows these steps and the redirect address for the way you are signing in, and names Slack's issuer (**Assumed** `https://slack.com`, the one Slack's metadata names): give it the client ID and the secret, then sign in. J3 Bots uses the app only with that issuer, so the secret never reaches another server, and sends it only to Slack's token and revocation endpoints.
 
 ## What to expect
 

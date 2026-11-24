@@ -63,14 +63,21 @@ export type NamedSecret = typeof NamedSecret.Type;
 export const ConnectorSecret = Schema.Struct({
   connectorId: ConnectorId,
   /**
-   * The full URL of a connector the operator added by address, which may
-   * carry a key in its path or query; null for a gallery entry's, which is
-   * public and kept with the connector.
+   * The full URL of the connector's server, which may carry a key in its
+   * path or query: the one the operator typed, or the one a gallery entry's
+   * form gave. Null only for a server started by command.
    */
   address: Schema.NullOr(Secret),
   oauth: Schema.NullOr(Schema.Struct({ client: OAuthClient, tokens: Schema.NullOr(OAuthTokens) })),
   headers: Schema.Array(NamedSecret),
   env: Schema.Array(NamedSecret),
+  /**
+   * The value of each secret field of a gallery entry's form, named by the
+   * field's key. The address and headers hold them rendered, as the key in
+   * `Bearer {key}`; these are never sent as they are, only taken out of what
+   * the connector's server says, and kept out of a sign-in's address.
+   */
+  formSecrets: Schema.Array(NamedSecret),
 });
 export type ConnectorSecret = typeof ConnectorSecret.Type;
 

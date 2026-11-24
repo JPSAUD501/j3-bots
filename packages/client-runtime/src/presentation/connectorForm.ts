@@ -8,6 +8,7 @@ import {
   type FieldKey,
   HeaderName,
   Label,
+  type Language,
   type ListingRef,
   OAuthClientInput,
 } from "@j3-bots/contracts";
@@ -183,9 +184,11 @@ export const withoutSecrets = (
 /**
  * A gallery entry's form: a value for each of its fields, as `fieldValues`
  * takes them, and for an `own-app` entry the client the operator registered.
+ * `language` is the operator's: the connector keeps its name and fields in it.
  */
 export function listingSource(input: {
   readonly ref: ListingRef;
+  readonly language: Language;
   readonly fields: ReadonlyArray<ConnectorField>;
   readonly values: ReadonlyMap<FieldKey, string>;
   /** Null for an entry that takes no client. */
@@ -208,6 +211,7 @@ export function listingSource(input: {
     source: {
       _tag: "listing",
       ref: input.ref,
+      language: input.language,
       values: values.values,
       oauthClient: oauthClient._tag === "ready" ? oauthClient.client : null,
     },

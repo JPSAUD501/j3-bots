@@ -155,10 +155,11 @@ function sampleDetails(ref: ListingRef): ConnectorListingDetails | undefined {
             steps: [
               "Open the cloud console and make a project for J3 Bots.",
               "Turn on the Calendar API for it.",
-              "Make an OAuth client of the web application kind, and add the address J3 Bots shows as its redirect.",
-              "Copy its client ID and secret here, with the issuer https://accounts.example.com.",
+              "Make an OAuth client of the desktop app kind.",
+              "Copy its client ID and secret here.",
             ],
             url: SetupPageUrl.make("https://console.example.com/credentials"),
+            issuer: "https://accounts.example.com",
           }
         : listing.connect === "token"
           ? {
@@ -167,6 +168,7 @@ function sampleDetails(ref: ListingRef): ConnectorListingDetails | undefined {
                 "Make a token with read access to issues and releases, and copy it here.",
               ],
               url: SetupPageUrl.make("https://errors.example.com/settings/auth-tokens"),
+              issuer: null,
             }
           : null,
     command:
@@ -174,6 +176,13 @@ function sampleDetails(ref: ListingRef): ConnectorListingDetails | undefined {
         ? { command: "npx", args: ["-y", "@example/files-server", "~/Shared"], env: [] }
         : null,
     tools: key === "notion" ? notesTools : null,
+    redirects:
+      listing.connect === "own-app"
+        ? {
+            server: "https://bots.example.com/oauth/callback/accounts.example.com",
+            loopback: "http://127.0.0.1/oauth/callback/accounts.example.com",
+          }
+        : null,
   };
 }
 

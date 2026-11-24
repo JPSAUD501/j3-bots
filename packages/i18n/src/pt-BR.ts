@@ -1776,6 +1776,9 @@ const sentences = {
     "O endereço do servidor de login do serviço, como o guia dele informa, por exemplo https://accounts.google.com.",
   "connect.issuer.invalid":
     "Informe o emissor como um endereço https://, como o guia do serviço informa.",
+  "connect.redirect": "Endereço de retorno",
+  "connect.redirect.hint": "Se o app pedir para onde os logins voltam, adicione este endereço.",
+  "connect.redirect.copy": "Copiar o endereço de retorno",
   "connect.clientId": "ID do cliente",
   "connect.clientSecret": "Segredo do cliente",
   "connect.client.hint": "Do app que você registrou no serviço para o J3 Bots.",

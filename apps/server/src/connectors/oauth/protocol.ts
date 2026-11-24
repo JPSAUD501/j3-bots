@@ -177,6 +177,33 @@ export const authorizationServerMetadataUrls = (issuer: URL): ReadonlyArray<stri
  */
 export const sameIssuer = (a: string, b: string): boolean => a === b;
 
+/** An address on this machine's IPv4 loopback, over plain HTTP, as a native app's redirect is. */
+const loopback = (url: URL) => url.protocol === "http:" && url.hostname === "127.0.0.1";
+
+/**
+ * Whether a client registered with `registered` may return to `requested`:
+ * the same address, or, on loopback, the same address on any port. An
+ * authorization server lets a native app's loopback redirect name any port
+ * (RFC 8252 §7.3, which OAuth 2.1 makes a requirement), so a client J3 Bots
+ * registered for one relayed sign-in serves the next, on its new port, and a
+ * pasted one, which names none.
+ */
+export const redirectMatches = (registered: string, requested: string): boolean => {
+  if (registered === requested) return true;
+  if (!URL.canParse(registered) || !URL.canParse(requested)) return false;
+  const a = new URL(registered);
+  const b = new URL(requested);
+  return (
+    loopback(a) &&
+    loopback(b) &&
+    a.pathname === b.pathname &&
+    a.search === "" &&
+    b.search === "" &&
+    a.hash === "" &&
+    b.hash === ""
+  );
+};
+
 const Strings = Schema.Array(Schema.String);
 
 /** Protected resource metadata (RFC 9728 §2), the fields a sign-in reads. */

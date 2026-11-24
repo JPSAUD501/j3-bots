@@ -18,7 +18,6 @@ import {
 import * as Option from "effect/Option";
 import type { SignInState } from "./auth.ts";
 import type { StoredConnector } from "./ConnectorStore.ts";
-import { usesVault } from "./credentials.ts";
 
 /**
  * A connector as the operator and its bots see it, from what is stored and
@@ -106,9 +105,7 @@ export const statusOfConnector = (
   signIn: Option.Option<SignInState>,
 ): ConnectorStatus =>
   statusOf({
-    vaultLocked:
-      (usesVault(connector) && vaultLocked) ||
-      Option.exists(signIn, (state) => state._tag === "vault-locked"),
+    vaultLocked: vaultLocked || Option.exists(signIn, (state) => state._tag === "vault-locked"),
     signIn: signInNeedOf(connector, seen, signIn),
     failing: seen.failing,
   });

@@ -28,16 +28,23 @@ import {
   Connector,
   type ConnectorField,
   type ConnectorFieldValue,
+  type ConnectorGlyph,
   type ConnectorGrant,
   type ConnectorId,
+  type ConnectorPublisher,
+  type ConnectorSignIn,
   type ConnectorSource,
   type ConnectorsEvent,
   type ConnectorSuggestionEntry,
   displayTransport,
+  type ConnectorTransport,
   type EntryId,
   FieldKey,
   Invalid,
+  type ListingRef,
   NotFound,
+  type OAuthClientInput,
+  remoteTransport,
   type ToolReviewRevision,
 } from "@j3-bots/contracts";
 import {
@@ -65,10 +72,13 @@ import packageJson from "../../package.json" with { type: "json" };
 import { BotStore } from "../bots/BotStore.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { Entries } from "../entries/Entries.ts";
+import type { NamedSecret } from "../vault/ConnectorSecret.ts";
 import { Vault } from "../vault/Vault.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
-import { addressOf, credentialsOf, usesVault, vaultIdOf } from "./credentials.ts";
+import { addressOf, credentialsOf, hiddenOf, vaultIdOf } from "./credentials.ts";
+import { headerFieldKeys, refill, resolve } from "./sources/form.ts";
+import { ConnectorSources } from "./sources/Sources.ts";
 import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
 
 /**
@@ -257,6 +267,31 @@ const sameSignIn = (a: SignInState, b: SignInState): boolean => {
   }
 };
 
+/**
+ * A connector's source, made ready to add: where its server is, what each
+ * request sends, how clients see it, and how it signs in once the server's
+ * first answer, or its failure, is known.
+ */
+interface Prepared {
+  readonly name: string;
+  readonly glyph: ConnectorGlyph | null;
+  readonly publisher: ConnectorPublisher;
+  readonly listing: ListingRef | null;
+  /** Sealed in the vault: a key can be part of it. */
+  readonly url: Redacted.Redacted<string>;
+  readonly transport: ConnectorTransport;
+  readonly headers: ReadonlyArray<SecretHeader>;
+  /** The fields asked for again when the service refuses what was sent, for a connector that signs in with `fields`. */
+  readonly fields: ReadonlyArray<ConnectorField>;
+  /** A gallery entry's secret values, by field key, as the vault keeps them. */
+  readonly formSecrets: ReadonlyArray<NamedSecret>;
+  readonly oauthClient: OAuthClientInput | null;
+  readonly privateNetwork: boolean;
+  readonly signIn: (
+    probe: Result.Result<ReadonlyArray<CatalogTool>, ConnectorFailure>,
+  ) => ConnectorSignIn;
+}
+
 export const layer = Layer.effect(
   Connectors,
   Effect.gen(function* () {
@@ -268,6 +303,7 @@ export const layer = Layer.effect(
     const receipts = yield* CommandReceipts;
     const random = yield* SecureRandom.SecureRandom;
     const reach = yield* ConnectorReach;
+    const sources = yield* ConnectorSources;
     const policyOf = (privateNetwork: boolean): UrlPolicy => ({
       loopback: reach.loopback,
       privateNetwork: privateNetwork ? "allow" : "refuse",
@@ -551,14 +587,12 @@ export const layer = Layer.effect(
       removal: PendingRemoval,
     ) {
       if (removal.revoke) yield* signIns.disconnect(removal.id);
-      if (removal.secrets) {
-        yield* vault.connectorSecrets.remove(vaultIdOf(removal.id)).pipe(
-          Effect.catchIf(
-            (conflict) => conflict.reason === "vault-not-set-up",
-            () => Effect.void,
-          ),
-        );
-      }
+      yield* vault.connectorSecrets.remove(vaultIdOf(removal.id)).pipe(
+        Effect.catchIf(
+          (conflict) => conflict.reason === "vault-not-set-up",
+          () => Effect.void,
+        ),
+      );
       yield* store.removalDone(removal.id);
     });
 
@@ -568,14 +602,13 @@ export const layer = Layer.effect(
       }
     });
 
-    // The vault's state: a connector that keeps secrets there is "vault locked" while it is, and is listed once it opens.
+    // The vault's state: every connector keeps its address there, so is "vault locked" while it is, and is listed once it opens.
     yield* Stream.runForEach(vault.status, (status) =>
       Effect.gen(function* () {
         const locked = status.state !== "unlocked";
         if ((yield* Ref.getAndSet(vaultLocked, locked)) === locked) return;
         if (!locked) yield* finishRemovals();
         for (const connector of yield* store.all) {
-          if (!usesVault(connector)) continue;
           // A session opened, or failing to open, under the other state is not used again.
           yield* closeSessions(connector.id);
           yield* touch(connector.id);
@@ -811,14 +844,23 @@ export const layer = Layer.effect(
      * Lists the tools at a new connector's address, signed with the headers
      * the operator gave: whether it answers, and whether it needs a sign-in.
      */
-    const probe = (url: URL, policy: UrlPolicy, headers: ReadonlyArray<SecretHeader>) =>
+    const probe = (
+      url: URL,
+      policy: UrlPolicy,
+      headers: ReadonlyArray<SecretHeader>,
+      formSecrets: ReadonlyArray<NamedSecret>,
+    ) =>
       Effect.scoped(
         Effect.flatMap(
           openSession({
             url,
             policy,
             credentials: {
-              current: Effect.succeed({ bearer: Option.none(), headers }),
+              current: Effect.succeed({
+                bearer: Option.none(),
+                headers,
+                hidden: hiddenOf(formSecrets),
+              }),
               rejected: () => Effect.fail(new NeedsSignIn()),
             },
             limits: reach.limits,
@@ -829,6 +871,108 @@ export const layer = Layer.effect(
         ),
       ).pipe(Effect.result);
 
+    /** A listing's values, by their keys. */
+    const valuesOf = (values: ReadonlyArray<ConnectorFieldValue>) =>
+      new Map<string, Redacted.Redacted<string>>(values.map((value) => [value.key, value.value]));
+
+    /** What adding a connector by its address needs: the address and headers as the operator typed them. */
+    const fromAddress = (
+      source: Extract<ConnectorSource, { readonly _tag: "remote" }>,
+    ): Prepared => {
+      const headers = source.headers.map((header): SecretHeader => ({
+        name: header.name,
+        value: header.value,
+      }));
+      return {
+        name: source.name,
+        glyph: null,
+        publisher: { _tag: "operator" },
+        listing: null,
+        url: source.url,
+        transport: displayTransport(source),
+        headers,
+        fields: headers.map(fieldOf),
+        formSecrets: [],
+        oauthClient: source.oauthClient,
+        privateNetwork: source.privateNetwork,
+        // A service that refuses a connector with no headers signs in; one with
+        // headers takes them, and asks for them again when it refuses them.
+        signIn: (probe) =>
+          source.oauthClient !== null ||
+          (Result.isFailure(probe) && probe.failure._tag === "NeedsSignIn" && headers.length === 0)
+            ? "oauth"
+            : headers.length > 0
+              ? "fields"
+              : "none",
+      };
+    };
+
+    /**
+     * What adding a gallery entry needs: its form, filled with the values the
+     * operator gave, which gives the address and the headers to send. How it
+     * signs in is the entry's, and a client cannot change it: a key in a
+     * header asks for its fields again, an own app needs the operator's
+     * client, and a one-tap sign-in signs in unless the server answered
+     * without one. Only an own app takes a client.
+     */
+    const fromListing = Effect.fn("Connectors.fromListing")(function* (
+      source: Extract<ConnectorSource, { readonly _tag: "listing" }>,
+    ) {
+      const { listing, form, fields } = yield* sources.connection(source.ref, source.language);
+      if ((listing.connect === "own-app") !== (source.oauthClient !== null)) {
+        return yield* new Invalid({ reason: "connector-fields" });
+      }
+      if (
+        listing.connect !== "sign-in" &&
+        listing.connect !== "own-app" &&
+        listing.connect !== "token"
+      ) {
+        return yield* new Invalid({ reason: "connector-unsupported" });
+      }
+      const resolved = resolve(form, valuesOf(source.values));
+      if (Result.isFailure(resolved)) return yield* new Invalid({ reason: "connector-fields" });
+      const { url, displayUrl, headers } = resolved.success;
+      // Clients see the address's origin only, and only when no secret of the form is in it.
+      const origin = new URL(Redacted.value(url)).origin;
+      if (!URL.canParse(displayUrl) || new URL(displayUrl).origin !== origin) {
+        return yield* new Invalid({ reason: "connector-unsupported" });
+      }
+      const kind = listing.connect;
+      // A sign-in sends the server's address, or the resource above it, to
+      // the authorization server and through the browser: never one with a
+      // key the form put in it.
+      if (kind !== "token" && displayUrl !== Redacted.value(url)) {
+        return yield* new Invalid({ reason: "connector-unsupported" });
+      }
+      const refillable = headerFieldKeys(form);
+      const secretKeys = new Set(fields.filter((field) => field.secret).map((field) => field.key));
+      return {
+        name: listing.name,
+        glyph: listing.glyph,
+        publisher: listing.publisher,
+        listing: source.ref,
+        url,
+        transport: remoteTransport(new URL(origin)),
+        headers,
+        fields: kind === "token" ? fields.filter((field) => refillable.has(field.key)) : [],
+        formSecrets: source.values.flatMap((value) =>
+          secretKeys.has(value.key) && Redacted.value(value.value) !== ""
+            ? [{ name: value.key, value: value.value }]
+            : [],
+        ),
+        oauthClient: source.oauthClient,
+        privateNetwork: false,
+        signIn: (probe) =>
+          kind === "own-app"
+            ? "oauth"
+            : kind === "token"
+              ? "fields"
+              : Result.isSuccess(probe)
+                ? "none"
+                : "oauth",
+      } satisfies Prepared;
+    });
+
     const add = Effect.fn("Connectors.add")(function* (input: {
       readonly id: ConnectorId;
       readonly source: ConnectorSource;
@@ -838,20 +982,18 @@ export const layer = Layer.effect(
       const existing = yield* store.get(input.id);
       if (Option.isSome(existing)) return yield* render(existing.value);
       const { source } = input;
-      // A gallery entry is connected through its listing, and a command through a started server: neither is wired yet.
-      if (source._tag !== "remote") return yield* new Invalid({ reason: "connector-unsupported" });
-      const policy = policyOf(source.privateNetwork);
-      const headers = source.headers.map((header): SecretHeader => ({
-        name: header.name,
-        value: header.value,
-      }));
-      const checked = checkUrl(Redacted.value(source.url), policy);
+      // A command needs a server started for it, which is not wired yet.
+      if (source._tag === "command") return yield* new Invalid({ reason: "connector-unsupported" });
+      const prepared = source._tag === "remote" ? fromAddress(source) : yield* fromListing(source);
+      const { headers } = prepared;
+      const policy = policyOf(prepared.privateNetwork);
+      const checked = checkUrl(Redacted.value(prepared.url), policy);
       const listing: Result.Result<ReadonlyArray<CatalogTool>, ConnectorFailure> = Result.isFailure(
         checked,
       )
         ? Result.fail(checked.failure)
-        : source.oauthClient === null
-          ? yield* probe(checked.success, policy, headers)
+        : prepared.oauthClient === null
+          ? yield* probe(checked.success, policy, headers, prepared.formSecrets)
           : Result.fail(new NeedsSignIn());
       if (
         Result.isFailure(listing) &&
@@ -861,19 +1003,15 @@ export const layer = Layer.effect(
         return yield* new Conflict({ reason: "private-network" });
       }
       const refused = Result.isFailure(listing) && listing.failure._tag === "NeedsSignIn";
-      const signIn =
-        source.oauthClient !== null || (refused && headers.length === 0)
-          ? "oauth"
-          : headers.length > 0
-            ? "fields"
-            : "none";
+      const signIn = prepared.signIn(listing);
       // A retry of the same add seals the same values under the same id.
       yield* vault.connectorSecrets.put({
         connectorId: vaultIdOf(input.id),
-        address: source.url,
+        address: prepared.url,
         oauth: null,
         headers: headers.map((header) => ({ name: header.name, value: header.value })),
         env: [],
+        formSecrets: prepared.formSecrets,
       });
       const now = yield* DateTime.now;
       const catalog = Result.isSuccess(listing) ? Option.some(listing.success) : Option.none();
@@ -881,14 +1019,14 @@ export const layer = Layer.effect(
       const inserted = yield* store
         .insert({
           id: input.id,
-          name: source.name,
-          glyph: null,
-          publisher: { _tag: "operator" },
-          listing: null,
-          transport: displayTransport(source),
+          name: prepared.name,
+          glyph: prepared.glyph,
+          publisher: prepared.publisher,
+          listing: prepared.listing,
+          transport: prepared.transport,
           signIn,
-          fields: signIn === "fields" ? headers.map(fieldOf) : [],
-          privateNetwork: source.privateNetwork,
+          fields: signIn === "fields" ? prepared.fields : [],
+          privateNetwork: prepared.privateNetwork,
           grant,
           signedInAt: signIn === "fields" ? now : null,
           accepted: Option.getOrNull(catalog),
@@ -911,9 +1049,9 @@ export const layer = Layer.effect(
           : Option.none(),
         refused: refused && signIn === "fields",
       }));
-      if (source.oauthClient !== null) {
+      if (prepared.oauthClient !== null) {
         yield* signIns
-          .useOperatorClient(input.id, source.oauthClient)
+          .useOperatorClient(input.id, prepared.oauthClient)
           .pipe(
             Effect.tapError(() => store.remove(input.id).pipe(Effect.andThen(forget(input.id)))),
           );
@@ -967,15 +1105,46 @@ export const layer = Layer.effect(
       }
       const secret = yield* vault.connectorSecrets.get(vaultIdOf(connector.id));
       if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
-      const given = new Map<string, Redacted.Redacted<string>>(
-        values.map((value) => [value.key, value.value]),
+      const given = valuesOf(values);
+      // Each header given again, by its name in lower case, as `headers` names it.
+      const replaced = new Map<string, NamedSecret>();
+      if (connector.listing === null) {
+        // A field of a connector added by address is a whole header, by its name.
+        for (const [name, value] of given) replaced.set(name.toLowerCase(), { name, value });
+      } else {
+        // A gallery entry's field can be part of a header, as the token in
+        // `Bearer {token}`: its form renders the header again. The form is the
+        // same in every language.
+        const { form } = yield* sources.connection(connector.listing, "en");
+        const headers = refill(form, given);
+        if (Result.isFailure(headers)) return yield* new Invalid({ reason: "connector-fields" });
+        for (const header of headers.success) replaced.set(header.name.toLowerCase(), header);
+      }
+      const kept = secret.value.headers.filter(
+        (header) => !replaced.has(header.name.toLowerCase()),
       );
+      // A gallery entry's secret field given again replaces its value; one
+      // first given now, as an optional key left blank at first, joins them.
+      // A connector added by address has its headers' values only.
+      const secretKeys = new Set(
+        connector.fields.filter((field) => field.secret).map((field) => field.key),
+      );
+      const formSecrets =
+        connector.listing === null
+          ? []
+          : values.filter(
+              (value) => secretKeys.has(value.key) && Redacted.value(value.value) !== "",
+            );
       yield* vault.connectorSecrets.put({
         ...secret.value,
-        headers: secret.value.headers.map((header) => ({
-          name: header.name,
-          value: given.get(header.name) ?? header.value,
-        })),
+        // Every header rendered now, one the first form left out included.
+        headers: [...kept, ...replaced.values()],
+        formSecrets: [
+          ...secret.value.formSecrets.filter(
+            (named) => !formSecrets.some((value) => value.key === named.name),
+          ),
+          ...formSecrets.map((value) => ({ name: value.key, value: value.value })),
+        ],
       });
       yield* store.update(connector.id, { signedInAt: now }, now);
       yield* updateSeen(connector.id, (seen) => ({ ...seen, refused: false }));

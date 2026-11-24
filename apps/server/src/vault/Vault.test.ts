@@ -80,6 +80,7 @@ const connectorSecret: ConnectorSecret = {
   },
   headers: [{ name: "X-Api-Key", value: Redacted.make("header-value") }],
   env: [],
+  formSecrets: [],
 };
 
 /** The vault's status now. */

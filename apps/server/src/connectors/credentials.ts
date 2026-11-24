@@ -13,7 +13,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { type ConnectorSecret, ConnectorId as VaultConnectorId } from "../vault/ConnectorSecret.ts";
+import {
+  type ConnectorSecret,
+  type NamedSecret,
+  ConnectorId as VaultConnectorId,
+} from "../vault/ConnectorSecret.ts";
 import type { Vault } from "../vault/Vault.ts";
 import type { ConnectorSignIns } from "./auth.ts";
 import type { StoredConnector } from "./ConnectorStore.ts";
@@ -27,28 +31,24 @@ import type { StoredConnector } from "./ConnectorStore.ts";
 /** The vault files a connector's secrets under the connector's own id. */
 export const vaultIdOf: (id: ConnectorId) => VaultConnectorId = Schema.decodeSync(VaultConnectorId);
 
-/** Whether the connector keeps anything in the vault: an address, headers or a sign-in. */
-export const usesVault = (connector: StoredConnector): boolean =>
-  connector.signIn !== "none" || connector.listing === null;
-
 const unavailable = (conflict: Conflict): CredentialsUnavailable =>
   conflict.reason === "vault-locked"
     ? new VaultLocked()
     : new AuthFailing({ reason: "secret-unusable" });
 
-/** The connector's vault record; none for a connector that keeps nothing there. */
+/**
+ * The connector's vault record. Every connector has one: its address is
+ * there, since a key can be part of it.
+ */
 const secretOf = (
   vault: typeof Vault.Service,
   connector: StoredConnector,
 ): Effect.Effect<Option.Option<ConnectorSecret>, CredentialsUnavailable> =>
-  usesVault(connector)
-    ? vault.connectorSecrets.get(vaultIdOf(connector.id)).pipe(Effect.mapError(unavailable))
-    : Effect.succeedNone;
+  vault.connectorSecrets.get(vaultIdOf(connector.id)).pipe(Effect.mapError(unavailable));
 
 /**
- * The URL to reach the connector at: for one added by address, the one the
- * operator typed, from the vault. A gallery entry's comes from the gallery,
- * which this server cannot connect yet.
+ * The URL to reach the connector at, from the vault: the one the operator
+ * typed, or the one a gallery entry's form gave when it was added.
  */
 export const addressOf = (
   vault: typeof Vault.Service,
@@ -60,6 +60,20 @@ export const addressOf = (
     const url = Option.flatMapNullishOr(address, (value) => URL.parse(Redacted.value(value)));
     if (Option.isNone(url)) return yield* new AuthFailing({ reason: "secret-unusable" });
     return url.value;
+  });
+
+/**
+ * A gallery entry's secret values as a request can carry them, to take out
+ * of what its server says: as given, and URL-encoded, as its form puts one
+ * in the address. No form encodes a value any other way.
+ */
+export const hiddenOf = (
+  formSecrets: ReadonlyArray<NamedSecret>,
+): ReadonlyArray<Redacted.Redacted<string>> =>
+  formSecrets.flatMap(({ value }) => {
+    const raw = Redacted.value(value);
+    const encoded = encodeURIComponent(raw);
+    return encoded === raw ? [value] : [value, Redacted.make(encoded)];
   });
 
 /**
@@ -77,11 +91,15 @@ export const credentialsOf = (
     if (!(yield* allowed)) return yield* new Withdrawn();
     const secret = yield* secretOf(vault, connector);
     const headers = Option.match(secret, { onNone: () => [], onSome: (s) => s.headers });
+    const hidden = Option.match(secret, {
+      onNone: () => [],
+      onSome: (s) => hiddenOf(s.formSecrets),
+    });
     const bearer =
       connector.signIn === "oauth"
         ? Option.some(yield* signIns.accessToken(connector.id))
         : Option.none();
-    return { bearer, headers } satisfies CallCredentials;
+    return { bearer, headers, hidden } satisfies CallCredentials;
   }),
   rejected: (wwwAuthenticate, sent) =>
     connector.signIn === "oauth"

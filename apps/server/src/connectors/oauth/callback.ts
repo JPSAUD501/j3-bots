@@ -7,7 +7,8 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { pathOf } from "../../system/Ports.ts";
-import { CALLBACK_PATH, ConnectorAuth } from "./ConnectorAuth.ts";
+import { SIGN_IN_CALLBACK_PATH } from "@j3-bots/contracts";
+import { ConnectorAuth } from "./ConnectorAuth.ts";
 
 // Where a browser returns after a sign-in that came back to the server
 // itself: its `https` public origin, or loopback when the desktop app runs it
@@ -30,8 +31,8 @@ export const redactPath = (path: string): Option.Option<string> => {
   return decoded
     .replace(/\/{2,}/g, "/")
     .toLowerCase()
-    .startsWith(CALLBACK_PATH)
-    ? Option.some(CALLBACK_PATH)
+    .startsWith(SIGN_IN_CALLBACK_PATH)
+    ? Option.some(SIGN_IN_CALLBACK_PATH)
     : Option.none();
 };
 
@@ -60,7 +61,7 @@ const page = (accept: string | undefined, signedIn: boolean) => {
 
 export const route = HttpRouter.add(
   "GET",
-  `${CALLBACK_PATH}/*`,
+  `${SIGN_IN_CALLBACK_PATH}/*`,
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const auth = yield* ConnectorAuth;

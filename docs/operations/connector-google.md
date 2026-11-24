@@ -26,7 +26,9 @@ A Desktop app client accepts a return to loopback on any port and path, as nativ
 
 ## Add the connector
 
-Add the connector by its address, and give its own OAuth app: the issuer `https://accounts.google.com`, the client ID and the secret. Then sign in. J3 Bots uses the app only with the authorization server you named: a connector whose metadata names another is refused, so the secret never reaches a server other than Google's. It sends the secret only to Google's token and revocation endpoints, in a Basic authorization header.
+Open the Google service in the gallery. Its page shows these steps and the redirect address for the way you are signing in, and already knows Google's issuer, `https://accounts.google.com`: give it the client ID and the secret, then sign in. Every Google connector can use the same client. A Google server not in the gallery is added by its address, with the issuer, the client ID and the secret.
+
+For a gallery entry, J3 Bots asks Google for the scopes the entry lists, with `access_type=offline` and `prompt=consent`, which Google needs before it gives a refresh token (**Assumed**, from Google's documentation); without one the connector would need a sign-in every hour. J3 Bots uses the app only with the authorization server you named: a connector whose metadata names another is refused, so the secret never reaches a server other than Google's. It sends the secret only to Google's token and revocation endpoints, in a Basic authorization header.
 
 ## What to expect
 

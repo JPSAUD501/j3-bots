@@ -108,3 +108,8 @@ export const OpenLiterals = <const L extends ReadonlyArray<string>>(known: L) =>
       }),
     ),
   ]);
+
+/** The languages the interface is written in, and a push to a device can be. */
+export const LANGUAGES = ["en", "pt-BR"] as const;
+export const Language = Schema.Literals(LANGUAGES);
+export type Language = typeof Language.Type;

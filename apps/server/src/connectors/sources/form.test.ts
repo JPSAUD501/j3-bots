@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { FieldKey } from "@j3-bots/contracts";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
-import { type ConnectForm, connectForm, contractFields, resolve } from "./form.ts";
+import { type ConnectForm, connectForm, contractFields, refill, resolve } from "./form.ts";
 import type { Remote } from "./serverJson.ts";
 
 const formOf = (remote: Remote): ConnectForm => {
@@ -206,5 +206,38 @@ describe("a remote's connect form", () => {
     assert.isTrue(description.startsWith("Paste your key xxx"));
     assert.strictEqual(description.length, 300);
     assert.isTrue(description.endsWith("…"));
+  });
+});
+
+describe("giving a connected remote's header fields again", () => {
+  const form = formOf({
+    type: "streamable-http",
+    url: "https://{region}.example.com/mcp",
+    variables: { region: { default: "eu" } },
+    headers: [
+      { name: "Authorization", value: "Bearer {token}", isSecret: true, isRequired: true },
+      { name: "X-Workspace", value: "{workspace}", isRequired: false },
+    ],
+  });
+  const refilled = (entries: Record<string, string>) => {
+    const headers = refill(form, values(entries));
+    return Result.isFailure(headers)
+      ? headers.failure
+      : headers.success.map((header) => [header.name, Redacted.value(header.value)]);
+  };
+
+  it("renders only the headers whose fields it is given, in their templates", () => {
+    assert.deepStrictEqual(refilled({ "header:Authorization:token": "n3w" }), [
+      ["Authorization", "Bearer n3w"],
+    ]);
+  });
+
+  it("refuses a field of the address, which would make it another connector", () => {
+    assert.deepStrictEqual(refilled({ "url:region": "us" }), [
+      { _tag: "unknown", key: "url:region" },
+    ]);
+    assert.deepStrictEqual(refilled({ "header:Authorization:token": "" }), [
+      { _tag: "missing", key: "header:Authorization:token" },
+    ]);
   });
 });

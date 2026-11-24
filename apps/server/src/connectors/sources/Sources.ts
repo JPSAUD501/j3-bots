@@ -2,8 +2,8 @@
 import {
   Conflict,
   type ConnectKind,
+  type ConnectorField,
   type ConnectorListing,
-  type ConnectorListingDetails,
   Invalid,
   type Language,
   type ListingRef,
@@ -17,15 +17,18 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import {
   CURATED,
-  type CuratedEntry,
+  curatedAuthorization,
   curatedCovers,
   curatedDetails,
+  type ListingDetails,
   curatedEntry,
   curatedForm,
   curatedListing,
   curatedMatches,
+  NO_AUTHORIZATION,
 } from "./Curated.ts";
 import { type ConnectForm, contractFields, plainText } from "./form.ts";
+import type { AuthorizationExtras } from "../oauth/ConnectorAuth.ts";
 import { McpRegistry, type RegistryEntry } from "./Registry.ts";
 
 // Where the connector gallery's entries come from: J3 Bots' curated list,
@@ -55,7 +58,7 @@ const registryListing = (entry: RegistryEntry): ConnectorListing => ({
   connect: registryConnectKind(entry.form),
 });
 
-const registryDetails = (entry: RegistryEntry): ConnectorListingDetails => ({
+const registryDetails = (entry: RegistryEntry): ListingDetails => ({
   ...registryListing(entry),
   description: entry.description ?? "",
   fields: entry.form === null ? [] : contractFields(entry.form),
@@ -70,19 +73,14 @@ const connectableAnywhere = (listing: ConnectorListing) =>
 
 /**
  * What adding a listing needs to know of it: its form, which turns the values
- * the operator gave into the address and headers to send, and how it signs in.
+ * the operator gave into the address and headers to send, and that form's
+ * fields as the operator reads them, in their language.
  */
-interface ListingConnection {
+export interface ListingConnection {
   readonly listing: ConnectorListing;
   readonly form: ConnectForm;
-  /**
-   * For an `own-app` listing, the scopes it asks for and the parameters every
-   * sign-in through that app adds.
-   */
-  readonly ownApp: {
-    readonly scopes: ReadonlyArray<string>;
-    readonly authorizationParameters: Readonly<Record<string, string>>;
-  } | null;
+  /** One for each of the form's fields, under the same key. */
+  readonly fields: ReadonlyArray<ConnectorField>;
 }
 
 export class ConnectorSources extends Context.Service<
@@ -108,12 +106,19 @@ export class ConnectorSources extends Context.Service<
     readonly get: (
       ref: ListingRef,
       language: Language,
-    ) => Effect.Effect<ConnectorListingDetails, NotFound | Conflict>;
-    /** What adding the listing `ref` needs: its form and how it signs in. */
+    ) => Effect.Effect<ListingDetails, NotFound | Conflict>;
+    /** What adding the listing `ref` needs: its form, and its fields in `language`. */
     readonly connection: (
       ref: ListingRef,
       language: Language,
     ) => Effect.Effect<ListingConnection, NotFound | Conflict | Invalid>;
+    /**
+     * What a sign-in to a connector added from `ref` adds to its
+     * authorization request: an own-app entry's scopes and its app's
+     * parameters. Read from the list this release ships, so a sign-in after
+     * an update asks for what the list says then.
+     */
+    readonly authorization: (ref: ListingRef) => AuthorizationExtras;
   }
 >()("@j3-bots/server/connectors/sources/Sources/ConnectorSources") {}
 
@@ -141,15 +146,6 @@ export const layer = Layer.effect(
       return entry === undefined
         ? Effect.fail(new NotFound({ resource: "connector-listing" }))
         : Effect.succeed(entry);
-    };
-
-    const ownAppOf = (entry: CuratedEntry): ListingConnection["ownApp"] => {
-      if (entry.connect.kind !== "own-app") return null;
-      const app = list.apps[entry.connect.app];
-      return {
-        scopes: entry.connect.scopes,
-        authorizationParameters: app?.authorizationParameters ?? {},
-      };
     };
 
     return ConnectorSources.of({
@@ -190,13 +186,23 @@ export const layer = Layer.effect(
           return {
             listing: curatedListing(entry, language),
             form: curatedForm(entry),
-            ownApp: ownAppOf(entry),
+            fields: curatedDetails(list, entry, language).fields,
           };
         }
         const entry = yield* registryEntry(ref);
         if (entry.form === null) return yield* new Invalid({ reason: "connector-unsupported" });
-        return { listing: registryListing(entry), form: entry.form, ownApp: null };
+        return {
+          listing: registryListing(entry),
+          form: entry.form,
+          fields: contractFields(entry.form),
+        };
       }),
+
+      authorization: (ref) => {
+        if (ref._tag === "registry") return NO_AUTHORIZATION;
+        const entry = curatedEntry(list, ref.key);
+        return entry === undefined ? NO_AUTHORIZATION : curatedAuthorization(list, entry);
+      },
     });
   }),
 );

@@ -20,8 +20,9 @@ import type {
   ListingRef,
 } from "@j3-bots/contracts";
 import { ExternalLinkIcon } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useI18n } from "../../app/context";
+import { CommandLine } from "../CommandLine";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ui/confirm";
 import { SkeletonRows } from "../ui/skeleton";
@@ -107,6 +108,32 @@ export function ListingPage({
 }
 
 /**
+ * The address to register on the operator's app, in full, to copy: a field
+ * would cut it short.
+ */
+function RedirectAddress({ address }: { address: string }) {
+  const { t } = useI18n();
+  const labelId = useId();
+  const hintId = useId();
+  return (
+    <div
+      role="group"
+      aria-labelledby={labelId}
+      aria-describedby={hintId}
+      className="flex flex-col gap-1"
+    >
+      <p id={labelId} className="text-xs">
+        {t("connect.redirect")}
+      </p>
+      <CommandLine command={address} copyLabel={t("connect.redirect.copy")} />
+      <p id={hintId} className="text-xs text-muted-foreground">
+        {t("connect.redirect.hint")}
+      </p>
+    </div>
+  );
+}
+
+/**
  * Connect, as the entry asks for it: the steps that set up an app at the
  * service and its client, any fields the entry takes, masked when secret,
  * what a command runs, and the bots that may use it, at first the bot that
@@ -133,9 +160,19 @@ function ConnectForm({
   const i18n = useI18n();
   const { t } = i18n;
   const ownApp = listing.connect === "own-app";
+  // The entry names the server its app is registered at, so the operator is asked only when it does not.
+  const knownIssuer = listing.setup?.issuer ?? null;
   const [grant, setGrant] = useState<ConnectorGrant>(() => initialGrant(bots, forBot));
   const [values, setValues] = useState<ReadonlyMap<FieldKey, string>>(new Map());
-  const [issuer, setIssuer] = useState("");
+  const [typedIssuer, setIssuer] = useState("");
+  const issuer = knownIssuer ?? typedIssuer;
+  // As the server states it: its own address when the browser returns to it, else this device's loopback.
+  const redirect =
+    !ownApp || listing.redirects === null
+      ? null
+      : intents.signInRoute._tag === "server"
+        ? listing.redirects.server
+        : listing.redirects.loopback;
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [problems, setProblems] = useState<FormProblems | null>(null);
@@ -148,6 +185,7 @@ function ConnectForm({
   const add = () => {
     const draft = listingSource({
       ref: listing.ref,
+      language: i18n.locale,
       fields: listing.fields,
       values,
       client: ownApp ? { issuer, clientId, clientSecret } : null,
@@ -215,15 +253,18 @@ function ConnectForm({
       )}
       {ownApp && (
         <>
-          <LineField
-            label={t("connect.issuer")}
-            hint={t("connect.issuer.hint")}
-            problem={problems?.issuer ? t("connect.issuer.invalid") : null}
-            value={issuer}
-            onChange={setIssuer}
-            readOnly={submitting}
-            mono
-          />
+          {redirect !== null && <RedirectAddress address={redirect} />}
+          {knownIssuer === null && (
+            <LineField
+              label={t("connect.issuer")}
+              hint={t("connect.issuer.hint")}
+              problem={problems?.issuer ? t("connect.issuer.invalid") : null}
+              value={typedIssuer}
+              onChange={setIssuer}
+              readOnly={submitting}
+              mono
+            />
+          )}
           <LineField
             label={t("connect.clientId")}
             hint={t("connect.client.hint")}

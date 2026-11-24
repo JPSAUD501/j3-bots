@@ -21,7 +21,6 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
-import { usesVault } from "./credentials.ts";
 
 /**
  * A connector as the server keeps it: what the operator added, with none of
@@ -53,13 +52,15 @@ export interface StoredConnector {
   readonly createdAt: DateTime.Utc;
 }
 
-/** What is left to do for a connector already removed: what waits for an unlocked vault. */
+/**
+ * What is left to do for a connector already removed, which waits for an
+ * unlocked vault: revoking its sign-in when `revoke`, then deleting its
+ * vault record.
+ */
 export interface PendingRemoval {
   readonly id: ConnectorId;
   /** Its OAuth sign-in is to be revoked at the service. */
   readonly revoke: boolean;
-  /** Its vault record is to be deleted. */
-  readonly secrets: boolean;
 }
 
 /** What may change of a stored connector after it was added. */
@@ -88,7 +89,7 @@ type Row = typeof Row.Type;
 
 const GrantRow = Schema.Struct({ connector_id: ConnectorId, bot_id: BotId });
 
-const RemovalRow = Schema.Struct({ connector_id: ConnectorId, revoke: Flag, secrets: Flag });
+const RemovalRow = Schema.Struct({ connector_id: ConnectorId, revoke: Flag });
 
 const COLUMNS = `id, name, slug, glyph, publisher_json, listing_json, transport_json, sign_in,
   fields_json, private_network, all_bots, signed_in_at, tools_json, kept_revision, created_at`;
@@ -212,7 +213,7 @@ export const layer = Layer.effect(
     const removalRows = SqlSchema.findAll({
       Request: Schema.Void,
       Result: RemovalRow,
-      execute: () => sql`SELECT connector_id, revoke, secrets FROM connector_removals`,
+      execute: () => sql`SELECT connector_id, revoke FROM connector_removals`,
     });
 
     const writeGrant = Effect.fn("ConnectorStore.writeGrant")(function* (
@@ -290,10 +291,9 @@ export const layer = Layer.effect(
         const connector = yield* get(id);
         if (Option.isNone(connector)) return;
         const revoke = connector.value.signIn === "oauth" ? 1 : 0;
-        const secrets = usesVault(connector.value) ? 1 : 0;
         yield* sql`
-          INSERT INTO connector_removals (connector_id, revoke, secrets)
-          VALUES (${id}, ${revoke}, ${secrets})
+          INSERT INTO connector_removals (connector_id, revoke)
+          VALUES (${id}, ${revoke})
           ON CONFLICT (connector_id) DO NOTHING
         `;
         yield* sql`DELETE FROM connectors WHERE id = ${id}`;
@@ -307,7 +307,6 @@ export const layer = Layer.effect(
         rows.map((row): PendingRemoval => ({
           id: row.connector_id,
           revoke: row.revoke,
-          secrets: row.secrets,
         })),
       ),
       Effect.orDie,
