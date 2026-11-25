@@ -196,7 +196,7 @@ export const MAX_BOTS_PER_REQUEST = 5;
 const MessageBotInput = toolInput({
   to: described(
     Id,
-    "A teammate's bot id, or the id of a room you are a member of, from `list_teammates`.",
+    "A teammate's bot id, or the id of a room you are a member of, from `list_teammates` or as `start_room` returned it.",
   ),
   text: described(
     text(1, MAX_SPOKEN_TEXT),
@@ -449,7 +449,7 @@ export const tools = {
     "say",
     [
       "Send a message to your user. Nothing else you write reaches them: reply text outside this tool goes nowhere.",
-      'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead.',
+      'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead. In any other turn it reaches only your user: to post in a room from there, use `message_bot` with the room\'s id.',
       "In a room, the members you list in `mention` are woken to answer; with none listed, every other member is, and each reads what you said in its next turn either way. Your user limits how much bots may say in a room since they last wrote, so speak there only when the room needs it, and mention the one who must act next when there is one. A name typed with @ in the text is only shown; `mention` is what wakes a member.",
       "Attach files you produced, rather than linking workspace paths they cannot open.",
       "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a `pause` the instruction asks for may follow it. Then end your turn.",
@@ -485,8 +485,8 @@ export const tools = {
   message_bot: define(
     "message_bot",
     [
-      "Send a message to one teammate, by a bot id from `list_teammates`, or post in a room you are a member of, by its room id. Your user can read what you send a teammate, but is not alerted to it: if they need to know, tell them with `say`.",
-      "In a room the message lands at once, and wakes the members you list in `mention`, or every other member with none listed. It is how you bring work for several teammates back to a room they share.",
+      "Send a message to one teammate, by a bot id from `list_teammates`, or post in a room you are a member of, by its room id, from any turn, your own conversation included. Your user can read what you send a teammate, but is not alerted to it: if they need to know, tell them with `say`.",
+      "In a room the message lands at once, and wakes the members you list in `mention`, or every other member with none listed. It is how you bring work for several teammates back to a room they share, and how you start there what your user asked you for in your own conversation: their ask is the go-ahead, so post it yourself rather than asking them to write in the room.",
       "To a teammate, only an `urgent` message wakes them now. Any other is queued until the teammate's next turn begins, however long that takes.",
       "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender. Answer a question once; an FYI or a thanks needs no answer.",
       "Returns an acknowledgement only. Any reply comes in a later turn of yours.",
@@ -558,7 +558,7 @@ export const tools = {
     "list_teammates",
     [
       "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members.",
-      "Use the ids with `message_bot` and `start_room`.",
+      "Use a bot's id with `message_bot` and `start_room`, and a room's id with `message_bot` to post there from any turn.",
     ],
     NoInput,
   ),

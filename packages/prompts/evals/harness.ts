@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, Routine, RoutineId, RoutineRunId } from "@j3-bots/contracts";
+import { BotId, type RoomId, Routine, RoutineId, RoutineRunId } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -381,6 +381,29 @@ export interface EarlierTurn {
   readonly calls: ReadonlyArray<EarlierCall>;
 }
 
+/** A teammate as `list_teammates` lists it. */
+interface Teammate {
+  readonly id: BotId;
+  readonly name: string;
+  readonly title: string;
+  readonly job: string;
+}
+
+/** A room the bot is a member of, as `list_teammates` lists it. */
+interface TeamRoom {
+  readonly id: RoomId;
+  readonly name: string;
+  readonly members: ReadonlyArray<BotId>;
+}
+
+/** The bot's teammates and the rooms it is in. */
+export interface Team {
+  readonly teammates: ReadonlyArray<Teammate>;
+  readonly rooms: ReadonlyArray<TeamRoom>;
+}
+
+const NO_TEAM: Team = { teammates: [], rooms: [] };
+
 export interface Scenario {
   readonly wake: Wake;
   /** A fresh workspace for each turn, so what one turn writes another never reads. */
@@ -414,6 +437,11 @@ export interface Scenario {
   readonly browser?: BrowserSetup;
   /** The operator's connectors and connector cards; none by default. */
   readonly connectors?: ConnectorStage;
+  /**
+   * The bot's teammates and rooms, which `list_teammates` lists and
+   * `message_bot` reaches; none by default.
+   */
+  readonly team?: Team;
 }
 
 const NO_CONNECTORS: ConnectorStage = { connected: [] };
@@ -433,6 +461,7 @@ const decodeOperatorName = Schema.decodeUnknownOption(
   DECODE_OPTIONS,
 );
 const decodeShellInput = Schema.decodeUnknownOption(Schema.Struct({ command: Schema.String }));
+const decodeMessageBot = Schema.decodeUnknownOption(tools.message_bot.input, DECODE_OPTIONS);
 
 const json = (value: unknown): string => JSON.stringify(value);
 
@@ -696,6 +725,38 @@ export class HeldRoutines {
   }
 }
 
+/**
+ * What the server answers a `message_bot` (`Speech.ts`), for a scenario's
+ * team: a room post lands at once, a teammate's message waits for their next
+ * turn unless it is urgent, and any other id is refused.
+ */
+const teamAnswer = (team: Team, input: unknown): Schema.Json => {
+  const decoded = decodeMessageBot(input);
+  if (decoded._tag === "None") return { error: "The call was refused as invalid." };
+  const message = decoded.value;
+  const room = team.rooms.find((one) => one.id === message.to);
+  if (room !== undefined) {
+    if (message.urgent === true) {
+      return {
+        error:
+          "Nothing was sent: `urgent` goes with a message to a teammate. In a room, the members you `mention` are woken.",
+      };
+    }
+    return {
+      status: "posted",
+      note: "It is in the room, and every member reads it in their next turn.",
+    };
+  }
+  if (team.teammates.some((one) => one.id === message.to)) {
+    return message.urgent === true
+      ? { status: "sent", note: "It wakes them now." }
+      : { status: "held", note: "They read it at the start of their next turn." };
+  }
+  return {
+    error: `No teammate has the id ${message.to}; they may have been deleted. Nothing was sent. \`list_teammates\` shows your teammates now.`,
+  };
+};
+
 type Request = Pick<Call, "step" | "name" | "input" | "routine">;
 
 type Answer = Pick<Call, "output" | "events" | "refused">;
@@ -762,8 +823,17 @@ const answer = (
     case "remember":
     case "forget":
       return reply(json({ recorded: true }));
-    case "list_teammates":
-      return reply(json({ bots: [], rooms: [] }));
+    case "list_teammates": {
+      const team = scenario.team ?? NO_TEAM;
+      return reply(
+        json({
+          teammates: team.teammates,
+          rooms: team.rooms.map((room) => ({ ...room, archived: false })),
+        }),
+      );
+    }
+    case "message_bot":
+      return reply(json(teamAnswer(scenario.team ?? NO_TEAM, request.input)));
     case SECRET_TOOL: {
       const input = decodeSecretInput(request.input);
       if (input._tag === "None")

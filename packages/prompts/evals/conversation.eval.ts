@@ -32,6 +32,7 @@ import {
   type EngineInstance,
   type Scenario,
   SECRET_FOLDER,
+  type Team,
 } from "./harness.ts";
 import { type Mail, MAIL_USAGE } from "./mail.ts";
 import { HOME } from "./shell.ts";
@@ -69,6 +70,7 @@ const closingSay = (calls: ReadonlyArray<Call>) =>
   says(calls).findLast(({ say }) => say.done === true);
 
 const decodeAsk = Schema.decodeUnknownOption(tools.ask.input, DECODE_OPTIONS);
+const decodeMessageBot = Schema.decodeUnknownOption(tools.message_bot.input, DECODE_OPTIONS);
 
 /** The question of an `ask` that ended the turn, with its options; `undefined` when it did not end on one. */
 const finalAsk = (calls: ReadonlyArray<Call>): string | undefined => {
@@ -1068,6 +1070,83 @@ const SHARES_THE_PRIVATE_NOTE: Check = {
   ],
 };
 
+// Work taken to a room from the bot's own conversation.
+
+const RELEASE_ROOM = {
+  id: Schema.decodeSync(RoomId)("room-release-test"),
+  name: "Release test",
+  members: [JUNIPER_ID, ANA.id, BO.id],
+};
+
+const RELEASE_TEAM: Team = {
+  teammates: [
+    { ...ANA, job: "Research and test what Rui's teams ship, and report what fails." },
+    { ...BO, job: "Write and review Rui's release notes and changelogs." },
+  ],
+  rooms: [RELEASE_ROOM],
+};
+
+const ROOM_SET_UP =
+  "put Ana and Bo in a group with you to test the docs release before friday. set it up but don't start the test yet, I'll tell you when";
+
+/** The turn that started the room, as `start_room` answered it. */
+const ROOM_STARTED: EarlierTurn = {
+  wake: userWake(ROOM_SET_UP, todayAt(9, 5)),
+  calls: [
+    {
+      name: "start_room",
+      input: {
+        name: RELEASE_ROOM.name,
+        members: [ANA.id, BO.id],
+        kickoff:
+          "This room tests the docs release before Friday. Ana: the search on the staging site. Bo: the changelog against the merged pull requests. Rui will say when the test starts; until then, just say you are ready.",
+      },
+      output: JSON.stringify({
+        status: "started",
+        id: RELEASE_ROOM.id,
+        note: "The room is in your user's list, and the members the kickoff wakes answer it there. Tell your user what you set up.",
+      }),
+    },
+    {
+      name: "say",
+      input: {
+        text: "I set up the Release test room with Ana and Bo: Ana checks search on staging, Bo checks the changelog. Tell me when to start.",
+        done: true,
+      },
+      output: JSON.stringify({ status: "recorded" }),
+    },
+  ],
+};
+
+const START_ASKED = "ok, start the test in the group\nsend them a message there";
+
+const startWake: Wake = {
+  ...base,
+  kind: "user",
+  answer: null,
+  messages: [
+    { at: todayAt(9, 40), text: "ok, start the test in the group", attachments: [] },
+    { at, text: "send them a message there", attachments: [] },
+  ],
+};
+
+const ASKS_TO_WRITE_IN_ROOM: Check = {
+  question:
+    "Does this message ask its reader to go to the group or room and write there themselves, or mention someone there, so that the work starts?",
+  what: "a request that its reader write in the room themselves",
+  asked: START_ASKED,
+  accept: [
+    "I can't post in the room from our private chat. Mention me in the Release test room and I'll kick it off there.",
+    "Daqui da conversa privada não consigo mandar mensagem no grupo: escreve lá e me marca que eu começo.",
+    "To start it, go to the Release test room and tell Ana and Bo to begin.",
+  ],
+  reject: [
+    "Done: I told Ana and Bo in the Release test room to start the test.",
+    "Mandei no grupo: Ana testa a busca no staging e Bo confere o changelog.",
+    "The test has started in the room; you can follow along there.",
+  ],
+};
+
 // A request changed while the bot waited.
 
 const changedMind: Wake = {
@@ -1166,6 +1245,7 @@ const CHECKS: ReadonlyArray<Check> = [
   FOUR_OPEN,
   CANNOT_SEE_THEIR_T3,
   PRESENTS_INTERNAL_AS_THEIRS,
+  ASKS_TO_WRITE_IN_ROOM,
 ];
 
 /** Problems with a closing message the judge must read as `check` says, `expected` true or false. */
@@ -1735,6 +1815,42 @@ const cases: ReadonlyArray<Case> = [
             ),
             (found) => found.flat(),
           ),
+        },
+      ];
+    },
+  },
+  {
+    name: "takes the work its user asks for to a room it is in, from its own conversation, and says it did",
+    scenario: {
+      wake: startWake,
+      workspace: docsWorkspace(startWake),
+      history: [ROOM_STARTED],
+      team: RELEASE_TEAM,
+    },
+    grades: ({ calls }) => {
+      const posted = named(calls, "message_bot").find((call) => {
+        const input = decodeMessageBot(call.input);
+        return input._tag === "Some" && input.value.to === RELEASE_ROOM.id;
+      });
+      const shown = userFacing(calls);
+      return [
+        gradeFromCalls("posted in the room, then told its user", [
+          ...(posted === undefined ? ["sent no `message_bot` to the room's id"] : []),
+          ...(named(calls, "start_room").length > 0 ? ["started another room"] : []),
+          ...after(posted, closingSay(calls)?.call, {
+            source: "posted in the room",
+            dependent: "told its user",
+          }),
+          ...(closingSay(calls) === undefined
+            ? ["no `say` with `done: true` closed the turn"]
+            : []),
+        ]),
+        {
+          name: "did not ask its user to write in the room",
+          problems:
+            shown === undefined
+              ? Effect.succeed([SHOWED_NOTHING])
+              : judged(ASKS_TO_WRITE_IN_ROOM, START_ASKED, shown, false),
         },
       ];
     },
