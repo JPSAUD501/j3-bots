@@ -363,6 +363,15 @@ export class Engine extends Context.Service<
     readonly recheckProvider: (providerId: ProviderId) => Effect.Effect<void, EngineDown>;
 
     /**
+     * Has the engine update the provider's harness to the newer version it
+     * knows of (`ProviderStatus.version`), the way the harness's maker
+     * updates it. It answers once asked; how the update goes follows on
+     * `status`, as the provider's `update`. A provider without a version
+     * has nothing to update, and asking does nothing.
+     */
+    readonly updateProvider: (providerId: ProviderId) => Effect.Effect<void, EngineDown>;
+
+    /**
      * A link that opens the engine's own web interface, signed in, for setting
      * up providers until J3 Bots has its own screen. Short-lived.
      */

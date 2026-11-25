@@ -123,6 +123,28 @@ export const handlers = ServedRpcs.toLayer(
         .pipe(Effect.mapError(() => new Conflict({ reason: "engine-unavailable" })));
     });
 
+    /**
+     * The engine's update of a provider's harness, for one whose version the
+     * engine can update. Refused, as `recheckProvider`, until the engine is
+     * ready.
+     */
+    const updateProvider = Effect.fn("rpc.updateProvider")(function* (providerId: ProviderId) {
+      const status = yield* Stream.runHead(engine.status);
+      if (Option.isNone(status) || status.value.state._tag !== "ready") {
+        return yield* new Conflict({ reason: "engine-unavailable" });
+      }
+      const provider = status.value.providers.find((candidate) => candidate.id === providerId);
+      if (provider === undefined) {
+        return yield* new NotFound({ resource: "provider" });
+      }
+      if (provider.version?.canUpdate !== true) {
+        return yield* new Conflict({ reason: "provider-not-updatable" });
+      }
+      yield* engine
+        .updateProvider(providerId)
+        .pipe(Effect.mapError(() => new Conflict({ reason: "engine-unavailable" })));
+    });
+
     const botFiles = Effect.fn("rpc.botFiles")(function* (input: {
       readonly botId: BotId;
       readonly before: AttachmentId | null;
@@ -195,6 +217,7 @@ export const handlers = ServedRpcs.toLayer(
       "engine.subscribe": () => engine.status,
       // Checking again checks nothing more: no receipt.
       "engine.recheckProvider": ({ providerId }) => recheckProvider(providerId),
+      "engine.updateProvider": ({ providerId }) => updateProvider(providerId),
       "usage.turns": ({ limit }) => usage.turns({ period: USAGE_PERIOD, limit }),
       "settings.get": () => settings.get,
       "settings.subscribe": () => settings.changes,

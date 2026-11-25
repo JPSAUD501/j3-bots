@@ -134,7 +134,7 @@ function EngineSection(props: { readonly engine: EngineStatus | null; readonly s
         </View>
       )}
       {engine.providers.map((provider) => (
-        <ProviderRow key={provider.id} provider={provider} stale={stale} />
+        <ProviderRow key={provider.id} provider={provider} stale={stale} version />
       ))}
       {!stale && connect !== null && <ConnectCommand command={connect} />}
     </Section>

@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  MAX_LABEL_LENGTH,
   MAX_PROVIDER_DETAIL,
   ModelId,
+  type ProviderId,
   type ProviderStatus,
+  type ProviderUpdate,
+  type ProviderVersion,
   type UnavailableReason,
 } from "@j3-bots/contracts";
 import {
@@ -296,6 +300,105 @@ const usageOf = (engine: ReportedProvider | undefined): ProviderStatus["usage"] 
       ),
   });
 
+/** A version the engine gave, when it fits a label. */
+const versionLabel = (version: string | null | undefined): string | null =>
+  version === null || version === undefined || version.length > MAX_LABEL_LENGTH ? null : version;
+
+/**
+ * The version of the harness the engine found, on the terms T3 Code's own
+ * client offers an update in its settings (**Read** at `59651c1`,
+ * `isProviderSettingsUpdateCandidate` in
+ * `apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts`): a
+ * newer version is shown only when the engine reports the installed one
+ * `behind_latest` and does not report the latest broken or unsupported with
+ * the engine; it can be updated when the instance is enabled and the engine
+ * says it can, with a command. `installed` is the version the engine's
+ * advisory read, else the one its check reported.
+ */
+const versionOf = (engine: ReportedProvider | undefined): ProviderVersion | undefined => {
+  if (engine === undefined || !engine.installed) return undefined;
+  const advisory = engine.versionAdvisory;
+  const latestStatus = engine.compatibilityAdvisory?.latestVersionStatus;
+  const latest =
+    advisory?.status === "behind_latest" &&
+    latestStatus !== "broken" &&
+    latestStatus !== "unsupported"
+      ? versionLabel(advisory.latestVersion)
+      : null;
+  return {
+    installed: versionLabel(advisory?.currentVersion ?? engine.version),
+    latest,
+    canUpdate:
+      latest !== null &&
+      engine.enabled &&
+      advisory?.canUpdate === true &&
+      advisory.updateCommand !== null,
+  };
+};
+
+/**
+ * An update the adapter asked the engine for (`engine.updateProvider`), as
+ * the adapter knows it, asked at `askedAt` (epoch milliseconds): `asked`
+ * until the engine answers the request, and `refused` when the answer was
+ * not an update's end: the engine refused to start it, in its words
+ * (`detail`), or the request or its answer was lost, with none. A request
+ * the engine answered otherwise is forgotten: the engine's own state says
+ * how it went.
+ */
+export type UpdateRequest =
+  | { readonly _tag: "asked"; readonly askedAt: number }
+  | { readonly _tag: "refused"; readonly askedAt: number; readonly detail: string | null };
+
+const updateDetail = (message: string | null | undefined) =>
+  message === null || message === undefined
+    ? {}
+    : { detail: message.slice(0, MAX_PROVIDER_DETAIL) };
+
+/**
+ * The update last asked for, from the engine's `updateState` (**Read** at
+ * `59651c1`, `ServerProviderUpdateState` in `contracts/src/server.ts`, set by
+ * `ProviderMaintenanceRunner.updateProvider`): `queued` and `running` are
+ * `running`; `succeeded`, which the engine also reports for a harness that
+ * was already up to date, is `updated`; `unchanged`, which it reports when
+ * the command ran but its check did not confirm a newer version, is
+ * `unverified`; `failed` is `failed`; `idle` is none. The adapter's own
+ * `request` comes before an update the engine finished before it was asked:
+ * one just asked is `running` until the engine reports it, and one refused
+ * or lost is `failed`. An update the engine finished since, as one whose
+ * answer was lost, is the engine's to tell.
+ */
+const updateOf = (
+  engine: ReportedProvider | undefined,
+  request: UpdateRequest | undefined,
+): ProviderUpdate | undefined => {
+  const state = engine?.updateState;
+  if (state?.status === "queued" || state?.status === "running") {
+    return { state: "running", ...updateDetail(state.message) };
+  }
+  const finishedAt = Option.map(
+    Option.fromNullishOr(state?.finishedAt).pipe(Option.flatMap(DateTime.make)),
+    DateTime.toEpochMillis,
+  );
+  const finishedSince =
+    request !== undefined && Option.isSome(finishedAt) && finishedAt.value >= request.askedAt;
+  if (request !== undefined && !finishedSince) {
+    return request._tag === "asked"
+      ? { state: "running" }
+      : { state: "failed", ...updateDetail(request.detail) };
+  }
+  switch (state?.status) {
+    case "succeeded":
+      return { state: "updated", ...updateDetail(state.message) };
+    case "unchanged":
+      return { state: "unverified", ...updateDetail(state.message) };
+    case "failed":
+      return { state: "failed", ...updateDetail(state.message) };
+    case "idle":
+    case undefined:
+      return undefined;
+  }
+};
+
 /**
  * Each of J3 Bots' providers as the engine reports its instance, in the order
  * J3 Bots lists them. `firstCheck`: the engine is within its first-check
@@ -305,11 +408,15 @@ export const providerStatuses = (
   providers: ReadonlyArray<ProviderInstance>,
   engine: ReadonlyArray<ReportedProvider>,
   firstCheck: boolean,
+  updates: ReadonlyMap<ProviderId, UpdateRequest> = new Map(),
 ): ReadonlyArray<ProviderStatus> =>
   providers.map((provider) => {
     const reported = engine.find(
       (candidate) => candidate.instanceId === instanceIdFor(provider.id),
     );
+    // An ACP agent is a command J3 Bots runs, not a harness with versions.
+    const version = provider.harness === "acp-command" ? undefined : versionOf(reported);
+    const update = updateOf(reported, updates.get(provider.id));
     return {
       id: provider.id,
       name: provider.name,
@@ -317,15 +424,24 @@ export const providerStatuses = (
       status: statusOf(provider, reported, firstCheck),
       models: modelsOf(reported),
       usage: usageOf(reported),
+      ...(version === undefined ? {} : { version }),
+      ...(update === undefined ? {} : { update }),
     };
   });
 
 /** What stands in for a secret in the engine's words. */
 export const REDACTED = "[redacted]";
 
+/** `text` with every value in `secrets` replaced, the longest first, so a secret that contains another goes whole. */
+export const redact = (text: string, secrets: ReadonlyArray<string>): string =>
+  secrets
+    .filter((secret) => secret.length > 0)
+    .toSorted((a, b) => b.length - a.length)
+    .reduce((scrubbed, secret) => scrubbed.split(secret).join(REDACTED), text);
+
 /**
  * The engine's reports with every value in `secrets` taken out of its words
- * (`message`, `unavailableReason`). What a harness printed when its check
+ * (`message`, `unavailableReason`, its update's `message`). What a harness printed when its check
  * failed can be part of them, and the harness runs with the secrets J3 Bots
  * gives it: the provider connection's key and each instance's own
  * variables. Those words reach every paired client and J3 Bots' log.
@@ -334,19 +450,18 @@ export const withoutSecrets = (
   providers: ReadonlyArray<ReportedProvider>,
   secrets: ReadonlyArray<string>,
 ): ReadonlyArray<ReportedProvider> => {
-  // The longest first, so a secret that contains another goes whole.
-  const known = secrets
-    .filter((secret) => secret.length > 0)
-    .toSorted((a, b) => b.length - a.length);
+  const known = secrets.filter((secret) => secret.length > 0);
   if (known.length === 0) return providers;
-  const scrub = (text: string) =>
-    known.reduce((scrubbed, secret) => scrubbed.split(secret).join(REDACTED), text);
+  const scrub = (text: string) => redact(text, known);
   return providers.map((provider) => ({
     ...provider,
     ...(provider.message === undefined ? {} : { message: scrub(provider.message) }),
     ...(provider.unavailableReason === undefined
       ? {}
       : { unavailableReason: scrub(provider.unavailableReason) }),
+    ...(provider.updateState?.message === undefined || provider.updateState.message === null
+      ? {}
+      : { updateState: { ...provider.updateState, message: scrub(provider.updateState.message) } }),
   }));
 };
 

@@ -126,6 +126,12 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "registration-refused",
     /** The service answered the sign-in with an error, or refused its code. */
     "sign-in-refused",
+    /**
+     * The engine cannot update this provider's harness itself, or knows no
+     * newer version of it. Only `engine.updateProvider`, new in 0.7.1,
+     * answers it.
+     */
+    "provider-not-updatable",
   ]),
 }) {
   override get message(): string {

@@ -2234,6 +2234,16 @@ const engineWith = (
 
 const notInstalled = { _tag: "unavailable", checking: false, reason: "not-installed" } as const;
 
+/** The two providers with these versions and updates. */
+type Versioned = Pick<ProviderStatus, "version" | "update">;
+const withVersions = (claude: Versioned, codex: Versioned): EngineStatus => ({
+  ...team.engine,
+  providers: team.engine.providers.map((p, index) => ({ ...p, ...(index === 0 ? claude : codex) })),
+});
+const behindUpdatable: Versioned = {
+  version: { installed: "2.1.0", latest: "2.2.0", canUpdate: true },
+};
+
 const engines = {
   starting: null,
   // As the server sends them: no provider is reported before the engine runs.
@@ -2411,19 +2421,35 @@ function EngineSettingsSection() {
     <Section title="Settings: the engine">
       <div className="flex flex-wrap gap-4">
         <Frame label="Downloading, on the first start" width={420} height={160}>
-          <EngineSection engine={engines.downloading} stale={false} onRecheck={rechecked} />
+          <EngineSection
+            engine={engines.downloading}
+            stale={false}
+            onRecheck={rechecked}
+            onUpdate={updated}
+          />
         </Frame>
         <Frame label="Downloading, with no size known" width={420} height={160}>
-          <EngineSection engine={engines.downloadingNoTotal} stale={false} onRecheck={rechecked} />
+          <EngineSection
+            engine={engines.downloadingNoTotal}
+            stale={false}
+            onRecheck={rechecked}
+            onUpdate={updated}
+          />
         </Frame>
         <Frame label="Starting, once downloaded" width={420} height={160}>
-          <EngineSection engine={engines.engineStarting} stale={false} onRecheck={rechecked} />
+          <EngineSection
+            engine={engines.engineStarting}
+            stale={false}
+            onRecheck={rechecked}
+            onUpdate={updated}
+          />
         </Frame>
         <Frame label="The download failed" width={420} height={160}>
           <EngineSection
             engine={{ ...engines.installFailed, providers: [] }}
             stale={false}
             onRecheck={rechecked}
+            onUpdate={updated}
           />
         </Frame>
         <Frame
@@ -2435,11 +2461,43 @@ function EngineSettingsSection() {
             engine={engines.failed}
             stale={false}
             onRecheck={rechecked}
+            onUpdate={updated}
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
+        <Frame label="A newer version to update, and one updating" width={420} height={260}>
+          <EngineSection
+            engine={withVersions(behindUpdatable, {
+              version: { installed: "0.170.0", latest: "0.171.0", canUpdate: true },
+              update: { state: "running" },
+            })}
+            stale={false}
+            onRecheck={rechecked}
+            onUpdate={updated}
+          />
+        </Frame>
+        <Frame
+          label="An update that failed, and a version the engine cannot update"
+          width={420}
+          height={300}
+        >
+          <EngineSection
+            engine={withVersions(
+              { ...behindUpdatable, update: { state: "failed", detail: "npm exited with code 1" } },
+              { version: { installed: "0.170.0", latest: "0.171.0", canUpdate: false } },
+            )}
+            stale={false}
+            onRecheck={rechecked}
+            onUpdate={updated}
+          />
+        </Frame>
         <Frame label="Providers turned off on the server" width={420} height={200}>
-          <EngineSection engine={engines.disabled} stale={false} onRecheck={rechecked} />
+          <EngineSection
+            engine={engines.disabled}
+            stale={false}
+            onRecheck={rechecked}
+            onUpdate={updated}
+          />
         </Frame>
       </div>
     </Section>
@@ -2594,6 +2652,7 @@ function FirstRunAt({
 const arrived = () => {};
 /** The engine takes every request to check a provider again. */
 const rechecked = () => Promise.resolve(true);
+const updated = () => Promise.resolve(true);
 
 function FirstRunSection() {
   return (
@@ -2796,6 +2855,7 @@ function LocalFirstRunSection() {
             engine={engines.connect}
             stale={false}
             onRecheck={rechecked}
+            onUpdate={updated}
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
@@ -2804,6 +2864,7 @@ function LocalFirstRunSection() {
             engine={team.engine}
             stale={false}
             onRecheck={rechecked}
+            onUpdate={updated}
             providerSetup={localSetup(harnessesFound.both)}
           />
         </Frame>

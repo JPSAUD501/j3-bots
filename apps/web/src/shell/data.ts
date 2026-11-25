@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Recheck } from "../components/ProviderFix";
+import type { Update } from "../components/ProviderUpdate";
 import type {
   Addressing,
   BotPlacement,
@@ -268,6 +269,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly signOutBrowser: () => Promise<boolean>;
   /** Has the engine check a provider again; resolves with whether the engine took the request. */
   readonly recheckProvider: Recheck;
+  /** Has the engine update a provider's harness; resolves with whether the update started. */
+  readonly updateProvider: Update;
   /** Sets up, unlocks, locks and changes the vault and its logins. */
   readonly vault: VaultIntents;
   /** Reads the list of devices again, as when Settings opens. */

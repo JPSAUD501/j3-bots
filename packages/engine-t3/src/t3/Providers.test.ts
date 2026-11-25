@@ -16,6 +16,7 @@ import {
   providerStatuses,
   providersOfEvent,
   REDACTED,
+  type UpdateRequest,
   withFirstCheckBudget,
   withoutSecrets,
 } from "./Providers.ts";
@@ -304,6 +305,141 @@ describe("providerStatuses", () => {
   });
 });
 
+describe("versions and updates", () => {
+  const advisory = (fields: Record<string, unknown>) => ({
+    status: "behind_latest",
+    currentVersion: "2.1.0",
+    latestVersion: "2.2.0",
+    updateCommand: "claude update",
+    canUpdate: true,
+    checkedAt: null,
+    message: null,
+    ...fields,
+  });
+  const updateState = (
+    status: string,
+    message: string | null = null,
+    finishedAt: string | null = null,
+  ) => ({
+    status,
+    startedAt: null,
+    finishedAt,
+    message,
+    output: null,
+  });
+  const withRequest = (fields: Record<string, unknown>, request: UpdateRequest | undefined) =>
+    providerStatuses(
+      [claude],
+      reported(claude, fields),
+      false,
+      request === undefined ? new Map() : new Map([[claude.id, request]]),
+    )[0]?.update;
+
+  it("offers a newer version on the terms the engine's own client offers it", () => {
+    const behind = { installed: "2.1.0", latest: "2.2.0" };
+    const cases: ReadonlyArray<
+      readonly [ProviderInstance, Record<string, unknown>, ProviderStatus["version"]]
+    > = [
+      [claude, { versionAdvisory: advisory({}) }, { ...behind, canUpdate: true }],
+      // The engine cannot update it itself, or has no command for it.
+      [
+        claude,
+        { versionAdvisory: advisory({ canUpdate: false }) },
+        { ...behind, canUpdate: false },
+      ],
+      [
+        claude,
+        { versionAdvisory: advisory({ updateCommand: null }) },
+        { ...behind, canUpdate: false },
+      ],
+      [claude, { enabled: false, versionAdvisory: advisory({}) }, { ...behind, canUpdate: false }],
+      // Nothing newer, or a newer version that does not work with the engine.
+      [
+        claude,
+        { versionAdvisory: advisory({ status: "current", latestVersion: "2.1.0" }) },
+        { installed: "2.1.0", latest: null, canUpdate: false },
+      ],
+      [
+        claude,
+        {
+          versionAdvisory: advisory({}),
+          compatibilityAdvisory: {
+            status: "supported",
+            latestVersionStatus: "broken",
+            message: null,
+            recommendedVersion: null,
+            recommendedRange: null,
+          },
+        },
+        { installed: "2.1.0", latest: null, canUpdate: false },
+      ],
+      // No advisory: the version the check read.
+      [claude, { version: "2.0.9" }, { installed: "2.0.9", latest: null, canUpdate: false }],
+      // No harness found, and an ACP agent, which has no versions.
+      [claude, { installed: false, versionAdvisory: advisory({}) }, undefined],
+      [scripted, { versionAdvisory: advisory({}) }, undefined],
+    ];
+    for (const [provider, fields, version] of cases) {
+      assert.deepStrictEqual(
+        providerStatuses([provider], reported(provider, fields), false)[0]?.version,
+        version,
+      );
+    }
+  });
+
+  it("reports the update asked for, with the engine's state of one running first", () => {
+    const askedAt = Date.parse("2026-11-20T12:00:00Z");
+    const refused: UpdateRequest = { _tag: "refused", askedAt, detail: "Provider is busy." };
+    assert.strictEqual(withRequest({}, undefined), undefined);
+    assert.strictEqual(withRequest({ updateState: updateState("idle") }, undefined), undefined);
+    // Asked, before the engine reports it.
+    assert.deepStrictEqual(withRequest({}, { _tag: "asked", askedAt }), { state: "running" });
+    assert.deepStrictEqual(withRequest({ updateState: updateState("succeeded") }, refused), {
+      state: "failed",
+      detail: "Provider is busy.",
+    });
+    assert.deepStrictEqual(withRequest({ updateState: updateState("queued") }, refused), {
+      state: "running",
+    });
+    // An update the engine finished after it was asked, whose answer was lost, is the engine's to tell.
+    const stopped = "Update stopped before it finished.";
+    assert.deepStrictEqual(
+      withRequest(
+        { updateState: updateState("failed", stopped, "2026-11-20T12:05:00Z") },
+        { _tag: "refused", askedAt, detail: null },
+      ),
+      { state: "failed", detail: stopped },
+    );
+    assert.deepStrictEqual(
+      withRequest(
+        { updateState: updateState("succeeded", null, "2026-11-20T11:00:00Z") },
+        { _tag: "asked", askedAt },
+      ),
+      { state: "running" },
+    );
+    // A request lost on the way, which the engine never reported.
+    assert.deepStrictEqual(withRequest({}, { _tag: "refused", askedAt, detail: null }), {
+      state: "failed",
+    });
+    // An update after which the engine no longer finds the harness still says how it went.
+    assert.deepStrictEqual(
+      withRequest({ installed: false, updateState: updateState("unchanged") }, undefined),
+      { state: "unverified" },
+    );
+    const finished = [
+      ["succeeded", { state: "updated", detail: "Updated to 2.2.0." }],
+      ["unchanged", { state: "unverified", detail: "Updated to 2.2.0." }],
+      ["failed", { state: "failed", detail: "Updated to 2.2.0." }],
+    ] as const;
+    for (const [status, update] of finished) {
+      assert.deepStrictEqual(
+        withRequest({ updateState: updateState(status, "Updated to 2.2.0.") }, undefined),
+        update,
+      );
+    }
+  });
+});
+
 describe("providerProblems", () => {
   it("gives a line for each provider the engine cannot run, and none for one being checked", () => {
     const notFound = "Claude Agent CLI (`claude`) was not found on PATH.";
@@ -325,6 +461,13 @@ describe("withoutSecrets", () => {
       message: `Probe failed: J3_PROVIDER_KEY=${key} and again ${key}; token=${key}-extra`,
       availability: "unavailable",
       unavailableReason: `Could not read ${key}`,
+      updateState: {
+        status: "failed",
+        startedAt: null,
+        finishedAt: null,
+        message: `npm said ${key}`,
+        output: null,
+      },
     });
     const [scrubbed] = withoutSecrets(engine, ["", key.slice(0, 6), key, `${key}-extra`]);
     assert.strictEqual(
@@ -332,6 +475,7 @@ describe("withoutSecrets", () => {
       `Probe failed: J3_PROVIDER_KEY=${REDACTED} and again ${REDACTED}; token=${REDACTED}`,
     );
     assert.strictEqual(scrubbed?.unavailableReason, `Could not read ${REDACTED}`);
+    assert.strictEqual(scrubbed?.updateState?.message, `npm said ${REDACTED}`);
   });
 });
 

@@ -748,6 +748,18 @@ const sentences = {
   "provider.failed.log":
     "O log do servidor diz o motivo: server/server.log, na pasta de dados do app J3 Bots.",
   "provider.detail": "O motor diz: {detail}",
+  "provider.version": "Versão {installed}",
+  "provider.version.newer": "Versão {installed}. A {latest} já saiu.",
+  "provider.version.newerOnly": "A {latest} já saiu.",
+  "provider.version.manual": "Atualize do jeito que você instalou.",
+  "provider.update": "Atualizar",
+  "provider.updating": "Atualizando…",
+  "provider.updateFinished": "A atualização terminou: versão {installed}",
+  "provider.updateFinished.noVersion": "A atualização terminou",
+  "provider.updateFailed": "A atualização não terminou",
+  "provider.updateUnverified":
+    "A atualização rodou, mas o motor não confirmou uma versão mais nova",
+  "provider.updateRefused": "Não deu para começar a atualização. Tente de novo daqui a pouco.",
   "firstRun.create.name": "Nome do bot",
   "firstRun.create.placeholder": "Um nome, como Scout",
   "firstRun.create.primary":

@@ -1595,6 +1595,8 @@ function LiveShell({
     signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
     recheckProvider: (providerId) =>
       j3.recheckProvider(providerId).then((result) => result._tag === "done"),
+    updateProvider: (providerId) =>
+      j3.updateProvider(providerId).then((result) => result._tag === "done"),
     vault: j3.vault,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,

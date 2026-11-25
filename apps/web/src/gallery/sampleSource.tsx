@@ -812,6 +812,7 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     refreshSettings: nothing,
     signOutBrowser: () => Promise.resolve(true),
     recheckProvider: () => Promise.resolve(true),
+    updateProvider: () => Promise.resolve(true),
     vault,
     refreshDevices: nothing,
     loadMoreTurns: nothing,
