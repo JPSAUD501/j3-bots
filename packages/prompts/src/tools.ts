@@ -565,7 +565,7 @@ export const tools = {
   start_room: define(
     "start_room",
     [
-      "Start a room: a group chat where you and the teammates you name work on something together, and where your user reads along and writes too. Only when your user asked for group work in this turn's message. When they asked for a group or a team of bots, first create the teammates it lacks with `create_bot`, in this same turn.",
+      "Start a room: a group chat where you and the teammates you name work on something together, and where your user reads along and writes too. Only when your user asked for group work in this turn's message. When they asked for a group or a team of bots, first create the teammates it lacks with `create_bot`, in this same turn. Work for a room you are already in goes there with `message_bot`, not a new room.",
       "You join as its first member. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and what each member should answer first.",
       "The kickoff wakes the members in `mention`, every other member by default, and each answers in the room what it asks of them; none waits for you or your user to speak first. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
       "A room holds two to six bots, you included. Your user's limit on how much bots may say in a room since they last wrote holds here too, and starts with your kickoff.",

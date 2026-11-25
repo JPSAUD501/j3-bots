@@ -1132,7 +1132,7 @@ const startWake: Wake = {
 
 const ASKS_TO_WRITE_IN_ROOM: Check = {
   question:
-    "Does this message ask its reader to go to the group or room and write there themselves, or mention someone there, so that the work starts?",
+    "Does this message ask or tell its reader to write in the group or room themselves, for example to post the request there or to mention someone there?",
   what: "a request that its reader write in the room themselves",
   asked: START_ASKED,
   accept: [
@@ -1144,6 +1144,7 @@ const ASKS_TO_WRITE_IN_ROOM: Check = {
     "Done: I told Ana and Bo in the Release test room to start the test.",
     "Mandei no grupo: Ana testa a busca no staging e Bo confere o changelog.",
     "The test has started in the room; you can follow along there.",
+    "Starting the test in the group now.\n\nThe test is running. I posted the assignments in the Release test room: Ana checks search on staging, Bo checks the changelog. I'll flag anything that blocks Friday.",
   ],
 };
 
