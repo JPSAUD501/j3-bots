@@ -39,6 +39,7 @@ const room: Room = {
   pinned: false,
   createdAt: at("2026-11-01T00:00:00Z"),
   work: "none",
+  answering: [],
 };
 
 describe("withMember", () => {

@@ -186,7 +186,7 @@ export const en = {
   "message.failed.unresolved": "May have been delivered. Sending again may repeat the work.",
   "message.failed.stopped": "Not delivered: the work was stopped",
   "message.retry": "Send again",
-  "message.retry.host": "Send to the host ({name})",
+  "message.retry.room": "Send to the room",
   "message.retry.to": "Send to {names}",
 
   "file.open": "Open {name}",
@@ -653,11 +653,13 @@ export const en = {
 
   "room.members": "{names}",
   "room.membersTitle": "Members",
+  "room.answering.one": "{name} is answering…",
+  "room.answering.some": "{names} are answering…",
+  "room.answering.more": "{names}, and {count} more are answering…",
   "room.memberCount.one": "One bot",
   "room.memberCount.other": "{count} bots",
   "room.archivedBadge": "Archived",
   "room.archiveSection": "Archive",
-  "room.host": "Host",
 
   "room.edit": "Edit {name}",
   "room.archivedLine": "Archived. What was said stays, and it takes no messages.",
@@ -669,7 +671,7 @@ export const en = {
   "room.archiveFailed": "{name} wasn’t archived. Try again.",
   "room.unarchiveFailed": "{name} wasn’t unarchived. Try again.",
   "room.unarchiveNeedsMembers":
-    "{name} wasn’t unarchived: it needs two to six bots and a host first. Unarchive it again to pick them.",
+    "{name} wasn’t unarchived: it needs two to six bots first. Unarchive it again to pick them.",
   "room.delete": "Delete {name}",
   "room.delete.title": "Delete {name}?",
   "room.delete.body": "{name} and everything said in it are deleted for good. Its bots stay.",
@@ -687,17 +689,13 @@ export const en = {
   "roomForm.newTitle": "New room",
   "roomForm.editTitle": "Edit {name}",
   "roomForm.unarchiveTitle": "Unarchive {name}",
-  "roomForm.unarchiveBody": "{name} needs two to six bots and a host to take messages again.",
+  "roomForm.unarchiveBody": "{name} needs two to six bots to take messages again.",
   "roomForm.close": "Close",
   "roomForm.name": "Name",
   "roomForm.name.required": "Give the room a name.",
   "roomForm.members": "Bots",
   "roomForm.members.hint": "Pick two to six.",
   "roomForm.members.invalid": "Pick two to six bots.",
-  "roomForm.host": "Host",
-  "roomForm.host.hint": "Answers what you write without mentioning anyone.",
-  "roomForm.host.pick": "Pick a host",
-  "roomForm.host.required": "Pick the bot that hosts the room.",
   "roomForm.cancel": "Cancel",
   "roomForm.create": "Create room",
   "roomForm.creating": "Creating…",
@@ -707,7 +705,7 @@ export const en = {
   "roomForm.createFailed": "The room wasn’t created. Try again.",
   "roomForm.failed": "Your changes weren’t saved. Try again.",
   "roomForm.membersRefused":
-    "A room needs two to six bots, its host among them. One of them may have been deleted meanwhile.",
+    "A room needs two to six bots. One of them may have been deleted meanwhile.",
   "roomForm.dropped.one": "{names} was deleted, so it’s no longer picked.",
   "roomForm.dropped.other": "{names} were deleted, so they’re no longer picked.",
   "roomForm.archived": "{name} was archived meanwhile, so nothing was saved.",
@@ -716,7 +714,7 @@ export const en = {
   "roomForm.createFailedClosed": "The room {name} wasn’t created.",
 
   "mention.label": "Mention a bot",
-  "mention.everyone": "Each member, in turn",
+  "mention.everyone": "Every member answers",
 
   "settings.title": "Settings",
   "settings.appearance": "Appearance",
@@ -861,9 +859,7 @@ export const en = {
   "empty.quiet.waitingForReset": "{name} says hello when the usage limit resets.",
   "empty.quiet.waitingForResetAt": "{name} says hello when the usage limit resets {when}.",
   "empty.quiet.room":
-    "No messages yet. {host} answers what you write here, and an @ brings in any other member.",
-  "empty.quiet.roomAnyHost":
-    "No messages yet. The host answers what you write here, and an @ brings in any other member.",
+    "No messages yet. Everyone here reads what you write: with no @, whoever has something to add answers; an @ speaks to the bots you name.",
   "empty.quiet.connectHint": "To connect one, run this on the machine where J3 Bots is installed.",
 
   "message.sending": "Sending…",
@@ -912,9 +908,6 @@ export const en = {
   "composer.dismiss": "Dismiss",
   "composer.unread": "Couldn’t load your draft.",
   "composer.unread.retry": "Try again",
-  "composer.to.host": "To the host (now {name})",
-  "composer.to": "To {names}",
-  "composer.to.everyone": "To everyone",
   "composer.notSaved": "Not saved yet",
   "composer.waitToAttach": "Wait a moment, then add the files again.",
   "composer.dictation.stop": "Stop dictation",

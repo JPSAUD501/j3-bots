@@ -45,6 +45,7 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
+    answering: [],
   },
   lastEntry,
   lastActivityAt: lastEntry?.createdAt ?? null,
@@ -177,6 +178,7 @@ describe("roomStop", () => {
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
+    answering: [],
   };
 
   it("offers Stop while the room's work runs, and shows it stopping until the server ends it", () => {

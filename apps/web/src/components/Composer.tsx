@@ -129,8 +129,6 @@ interface ComposerProps {
    * a pick mentions one; a name typed or pasted addresses nobody.
    */
   readonly mentionable?: ReadonlyArray<MentionCandidate>;
-  /** In a room, who the message wakes as it stands, in one quiet line under the composer. */
-  readonly addressee?: string;
 }
 
 /**
@@ -179,7 +177,6 @@ export function Composer({
   replaced,
   inputRef,
   mentionable,
-  addressee,
 }: ComposerProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -187,7 +184,6 @@ export function Composer({
   const ownFieldRef = useRef<HTMLDivElement>(null);
   const fieldRef = inputRef ?? ownFieldRef;
   const waitingId = useId();
-  const addresseeId = useId();
   const label = t("composer.label", { name: recipient });
   const { empty, uploading, sendable, problem } = draftReadiness(value, files);
   // The draft takes no change while it is handed over, loads, or could not be read.
@@ -479,7 +475,6 @@ export function Composer({
           }}
           placeholder={label}
           aria-label={label}
-          aria-describedby={addressee === undefined ? undefined : addresseeId}
           {...mention.fieldProps}
           data-composer=""
           className="max-h-(--layout-composer-max-height) min-h-8 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5 text-base pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
@@ -518,12 +513,6 @@ export function Composer({
       <span id={waitingId} hidden>
         {t("composer.stillUploading")}
       </span>
-      {/* Read with the field, not announced as it changes: it changes with each mention. */}
-      {addressee !== undefined && (
-        <p id={addresseeId} className="truncate px-3 text-xs text-muted-foreground">
-          {addressee}
-        </p>
-      )}
       {/* Quiet: it clears by itself once the device keeps the draft. */}
       {notSaved && (
         <p role="status" className="px-3 text-xs text-muted-foreground">

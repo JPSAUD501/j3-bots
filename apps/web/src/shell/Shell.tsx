@@ -19,7 +19,6 @@ import {
 } from "react";
 import {
   addressed,
-  addresseeOf,
   arrangedOrder,
   arrangeRoster,
   arrivalCounts,
@@ -72,7 +71,7 @@ import { cn } from "../lib/cn";
 import { isCovered, useCovered } from "../lib/covered";
 import { useCardPlace } from "../lib/useCardPlace";
 import { useSeenEntries } from "../lib/useSeenEntries";
-import { addresseeLine, botModelName } from "@j3-bots/client-runtime/wording";
+import { botModelName } from "@j3-bots/client-runtime/wording";
 import { useShellLayout } from "./layout";
 import { onShellAction, type ShellAction } from "./commands";
 import { rosterIntents } from "./rosterIntents";
@@ -117,8 +116,7 @@ interface ShellProps {
 /** The whole interface: roster, conversation and details, from data and intents. */
 export function Shell({ data, intents, browser, navigation, keyboard = true }: ShellProps) {
   const { selected, pair } = navigation;
-  const i18n = useI18n();
-  const { t } = i18n;
+  const { t } = useI18n();
   const shortcuts = shellShortcuts();
   const { dictate, editProfile } = intents;
   const composerRef = useRef<HTMLDivElement>(null);
@@ -494,17 +492,6 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
     // Who the message wakes as the draft stands: only mentions picked, and still standing, count.
     const addressing =
       item._tag === "room" ? addressed(draft.text, draft.mentions, item.room.members) : undefined;
-    const addressee =
-      item._tag === "room"
-        ? addresseeLine(
-            addresseeOf(
-              addressing?.mentions ?? null,
-              (botId) => bots.find((candidate) => candidate.id === botId)?.profile.name,
-              i18n,
-            ),
-            i18n,
-          )
-        : null;
     const toggleDetails = () =>
       aside === "browser"
         ? viewerRef.current?.requestClose(() => navigation.setDetailsOpen(true))
@@ -663,7 +650,6 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                   })}
               inputRef={composerRef}
               {...(mentionable === undefined ? {} : { mentionable })}
-              {...(addressee === null ? {} : { addressee })}
             />
           ) : (
             <div className="flex flex-wrap items-center justify-center gap-x-2 py-2 text-center text-xs text-muted-foreground">

@@ -41,7 +41,6 @@ interface FieldProps {
   readonly status: FieldStatus | null;
   readonly editable: boolean;
   readonly label: string;
-  readonly hint?: string;
   readonly onEdit: (edit: FieldEdit) => void;
   readonly onSelection: (selection: readonly [number, number]) => void;
   readonly onFocusChange: (focused: boolean) => void;
@@ -148,7 +147,6 @@ function AndroidField({
   status,
   editable,
   label,
-  hint,
   onEdit,
   onSelection,
   onFocusChange,
@@ -201,7 +199,6 @@ function AndroidField({
       statusNote={status?.note ?? null}
       editable={editable}
       label={label}
-      accessibilityHint={hint}
       onChangeText={({ nativeEvent }) => {
         setEventCount(nativeEvent.eventCount);
         onEdit({
@@ -241,7 +238,6 @@ function PlainField({
   placeholder,
   editable,
   label,
-  hint,
   onEdit,
   onSelection,
   onFocusChange,
@@ -276,7 +272,6 @@ function PlainField({
       placeholder={placeholder}
       placeholderTextColor={placeholderColor}
       accessibilityLabel={label}
-      accessibilityHint={hint}
       style={{ maxHeight: layout.composerMaxHeight }}
       className="min-h-11 flex-1 px-1 py-2.5 text-lg text-foreground"
     />

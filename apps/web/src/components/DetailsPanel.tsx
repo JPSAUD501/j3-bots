@@ -713,13 +713,13 @@ export interface RoomDetailsIntents {
   readonly stop: () => void;
   /** Resolves once the server answered, whatever it said. */
   readonly archiveRoom: () => Promise<void>;
-  /** Asks for members and a host first when the room lacks them. Resolves like `archiveRoom`. */
+  /** Asks for members first when the room has too few. Resolves like `archiveRoom`. */
   readonly unarchiveRoom: () => Promise<void>;
   readonly deleteRoom: () => void;
 }
 
 /**
- * A room's details: who is in it, who hosts, how long bots may talk among
+ * A room's details: who is in it, how long bots may talk among
  * themselves, and what the operator does to the room itself. While the room's
  * work is under way, Stop comes first under its profile, and asks first.
  */

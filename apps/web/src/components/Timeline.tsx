@@ -19,7 +19,6 @@ import type * as Redacted from "effect/Redacted";
 import type { ReactNode, RefObject } from "react";
 import type { MentionLabel } from "@j3-bots/client-runtime";
 import {
-  addresseeOf,
   type CardEntry,
   latestOfLine,
   mentionedNames,
@@ -33,6 +32,7 @@ import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
 import { CredentialRequestCard } from "./CredentialRequestCard";
 import { ConnectorAuthCard, ConnectorSuggestionCard } from "./connectors/ConnectorCards";
+import { AnsweringLine } from "./AnsweringLine";
 import { EventLine, type OpenPair } from "./EventLine";
 import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
@@ -89,12 +89,12 @@ interface TimelineProps {
    */
   readonly rows: ReadonlyArray<TimelineItem>;
   /**
-   * In a room, its members and host now: rooms show who said each message and
-   * whom it addressed, and a message refused for mentioning a member who left
-   * says so, and where Send again sends it. Null in a bot's conversation,
-   * which has one speaker.
+   * In a room, the room as it is now: rooms show who said each message and
+   * whom it addressed, a message refused for mentioning a member who left
+   * says so, and where Send again sends it, and the end says who is answering.
+   * Null in a bot's conversation, which has one speaker.
    */
-  readonly room: Pick<Room, "id" | "members"> | null;
+  readonly room: Room | null;
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Whether the operator's answer to a card is still on its way. */
   readonly submitting: (entryId: EntryId) => boolean;
@@ -235,7 +235,7 @@ export function Timeline({
                     ? {}
                     : {
                         leftRoom: left.left.map(labelOf),
-                        retryLabel: resendLabel(addresseeOf(left.without, nameOf, i18n), i18n),
+                        retryLabel: resendLabel(left.without, nameOf, i18n),
                       })}
                 />
               </div>
@@ -268,6 +268,7 @@ export function Timeline({
           </div>
         );
       })}
+      {room !== null && <AnsweringLine room={room} />}
     </div>
   );
 }

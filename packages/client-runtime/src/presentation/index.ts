@@ -108,8 +108,6 @@ export { type FileIcon, fileIcon, fileKind, showsImage } from "./files.ts";
 export { webAddress } from "./links.ts";
 export {
   addressed,
-  type Addressee,
-  addresseeOf,
   draggedText,
   type DraggedText,
   EVERYONE,

@@ -229,8 +229,9 @@ export function sampleTeam(now: DateTime.Utc) {
     members: [ids.juniper, ids.wren, ids.scout, ids.atlas, ids.otto],
     pinned: false,
     createdAt: ago(60 * 24 * 7),
-    // Scout is working on it.
+    // Juniper and Scout are answering in it, in member order.
     work: "running",
+    answering: [ids.juniper, ids.scout],
   };
 
   const operator = { _tag: "operator" } as const;
@@ -652,7 +653,7 @@ export function sampleTeam(now: DateTime.Utc) {
       id: entryId("rn"),
       author: { _tag: "system" },
       createdAt: ago(44),
-      notice: { _tag: "chain-stopped", limit: "hops" },
+      notice: { _tag: "chain-stopped", limit: "room" },
       retryable: false,
     },
     {

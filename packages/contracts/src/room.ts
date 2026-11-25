@@ -62,6 +62,14 @@ export const Room = Schema.Union([
      * Stop of the room.
      */
     work: RoomWorkState.pipe(Schema.withDecodingDefaultKey(Effect.succeed("none"))),
+    /**
+     * The members answering now, in member order: those whose turn for the
+     * room runs and those woken whose turn has yet to start. Empty unless
+     * `work` is `running`, and from a server that does not send it.
+     */
+    answering: Schema.Array(BotId)
+      .check(Schema.isMaxLength(MAX_ROOM_MEMBERS))
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   }),
   Schema.Struct({
     ...roomFields,

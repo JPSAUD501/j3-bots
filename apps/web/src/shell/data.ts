@@ -229,13 +229,13 @@ export interface ShellIntents extends TimelineIntents {
   readonly newRoom: () => void;
   /** Opens the form for a new room with the two bots of a teammate conversation in it. */
   readonly startRoomWith: (botIds: PairBotIds) => void;
-  /** Opens the form that changes a room's name, members, host and hop limit. */
+  /** Opens the form that changes a room's name and members. */
   readonly editRoom: (roomId: RoomId) => void;
   /** Resolves once the server answered, whatever it said. */
   readonly archiveRoom: (roomId: RoomId) => Promise<void>;
   /**
-   * Unarchives the room, or opens the form that gives it the members and the
-   * host it needs first. Resolves like `archiveRoom`.
+   * Unarchives the room, or opens the form that gives it the members it needs
+   * first. Resolves like `archiveRoom`.
    */
   readonly unarchiveRoom: (roomId: RoomId) => Promise<void>;
   readonly deleteRoom: (roomId: RoomId) => void;

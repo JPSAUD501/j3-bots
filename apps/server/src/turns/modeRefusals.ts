@@ -7,6 +7,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import type * as Statement from "effect/sql/Statement";
 import type { Entries } from "../entries/Entries.ts";
+import type { ChangeLog } from "../persistence/ChangeLog.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { conversation } from "./model.ts";
 import { notices } from "./notices.ts";
@@ -122,6 +123,7 @@ export const modeRefusals = (
   entries: Entries["Service"],
   readiness: Readiness["Service"],
   signals: Signals["Service"],
+  changes: ChangeLog["Service"],
 ) => {
   const transaction = transactional(sql);
   const { notify } = notices(sql, entries);
@@ -143,7 +145,9 @@ export const modeRefusals = (
    * the engine repeats after a restart is not told twice; each room it is a
    * member of is told once for each refusal its conversation is told of, in
    * one line naming the bot, also a room it joined after the conversation
-   * was told (`roomRefusals`).
+   * was told (`roomRefusals`). The bot is touched, so its rooms are read
+   * again: a member whose mode is refused waits out of the room, so it no
+   * longer answers there (`RoomStates`).
    */
   const refused = Effect.fn("modeRefusals.refused")(
     function* (botId: BotId, revision: number, refusal: PermissionModeRefused, generation: number) {
@@ -158,6 +162,7 @@ export const modeRefusals = (
         RETURNING id
       `;
       if (recorded.length === 0) return;
+      yield* changes.touch({ _tag: "bot", botId });
       const told = yield* sql`
         UPDATE bots
         SET mode_refusal_told_revision = ${revision}, mode_refusal_told_allowed = ${refusal.allowed}

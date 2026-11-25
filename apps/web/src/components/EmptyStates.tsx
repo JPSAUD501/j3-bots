@@ -193,7 +193,7 @@ export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineSta
   );
 }
 
-/** A room nothing has been said in yet: its members, and who answers what is written there. */
+/** A room nothing has been said in yet: its members, and that every one of them reads it. */
 export function QuietRoom({ room }: { room: Extract<Room, { readonly status: "active" }> }) {
   const { t } = useI18n();
   const bots = useBots();
@@ -202,7 +202,7 @@ export function QuietRoom({ room }: { room: Extract<Room, { readonly status: "ac
       <span className="pop-in">
         <RoomAvatar size={96} members={roomAvatarMembers(room, bots)} />
       </span>
-      <Heading title={room.name} body={t("empty.quiet.roomAnyHost")} />
+      <Heading title={room.name} body={t("empty.quiet.room")} />
     </Centered>
   );
 }

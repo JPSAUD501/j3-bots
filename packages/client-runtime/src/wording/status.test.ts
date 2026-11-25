@@ -24,6 +24,7 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
+    answering: [],
   },
   lastEntry,
   lastActivityAt: lastEntry?.createdAt ?? null,

@@ -11,7 +11,7 @@ export interface Mentionable {
   readonly name: string;
 }
 
-/** What the picker offers: one member, or every member in turn. */
+/** What the picker offers: one member, or every member, each asked to answer. */
 export type MentionOption =
   | { readonly _tag: "bot"; readonly id: BotId; readonly name: string }
   | { readonly _tag: "everyone" };
@@ -82,33 +82,6 @@ export function addressed(
     }
   }
   return ids.length === 0 ? undefined : { mentions: { _tag: "bots", ids }, labels };
-}
-
-/** Who a room message wakes, as the server routes it, by the names to show. */
-export type Addressee =
-  | { readonly _tag: "everyone" }
-  | { readonly _tag: "bots"; readonly names: string }
-  | null;
-
-/**
- * Who a room message wakes: each member mentioned, in turn; or every member,
- * for `@everyone` and for a message that mentions nobody. Null while a name to
- * show is not known.
- */
-export function addresseeOf(
-  mentions: Mentions | null,
-  nameOf: (botId: BotId) => string | undefined,
-  { locale }: { readonly locale: string },
-): Addressee {
-  if (mentions === null || mentions._tag === "everyone" || mentions.ids.length === 0) {
-    return { _tag: "everyone" };
-  }
-  const names = mentions.ids.flatMap((id) => nameOf(id) ?? []);
-  if (names.length === 0) return null;
-  return {
-    _tag: "bots",
-    names: new Intl.ListFormat(locale, { type: "conjunction" }).format(names),
-  };
 }
 
 /**
