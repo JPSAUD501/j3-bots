@@ -321,7 +321,8 @@ export interface AppUpdate {
   readonly openPlay: () => void;
 }
 
-const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
+/** The app's update, reading `feed` and installing through `installer`. */
+export const makeAppUpdate = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
   const installed = installer.installedApp();
   const folder = new Directory(installer.folder());
   // Whatever a closed app left: an update installed or abandoned.
@@ -481,22 +482,36 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
     await install(release);
   };
 
-  /** "Update automatically" takes the release a check offered, unless something else came first. */
+  /**
+   * "Update automatically" takes the release a check offered, unless
+   * something else came first. Without "Install unknown apps" it asks for
+   * that first: a download would only wait for it, and go at the next start,
+   * to be downloaded again.
+   */
   const takeOffered = (release: AppRelease): Promise<void> => {
     const current = state.get();
     if (current._tag !== "available" || current.release !== release) return Promise.resolve();
+    if (!installer.canRequestInstalls()) {
+      state.set({ _tag: "permission", release });
+      return Promise.resolve();
+    }
     return exclusive(release, () => downloadAndInstall(release));
   };
+
+  /** Goes on with an update that waited: the file it downloaded and checked, or the download. */
+  const goOn = (release: AppRelease) =>
+    exclusive(release, () =>
+      fileOf(release).exists ? install(release) : downloadAndInstall(release),
+    );
 
   const update = async (): Promise<void> => {
     const current = state.get();
     switch (current._tag) {
       case "cancelled":
-      case "permission": {
-        // Already downloaded and checked; the install checks the bytes again.
-        const { release } = current;
-        return exclusive(release, () => install(release));
-      }
+      case "permission":
+        // A file already downloaded and checked is installed, which checks
+        // its bytes again; one asked for before its download downloads it.
+        return goOn(current.release);
       case "available":
       case "failed": {
         const { release } = current;
@@ -551,8 +566,7 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
     resume: () => {
       const current = state.get();
       if (current._tag !== "permission" || !installer.canRequestInstalls()) return;
-      const { release } = current;
-      void exclusive(release, () => install(release));
+      void goOn(current.release);
     },
     openPlay: () => void Linking.openURL(playPage(installed.packageName)),
   };
@@ -575,4 +589,4 @@ const trusted = (installer: AppInstaller, feed: ReleaseFeed): boolean =>
 export const appUpdate: AppUpdate | null =
   appInstaller === null || releaseFeed === null || !trusted(appInstaller, releaseFeed)
     ? null
-    : make(appInstaller, releaseFeed);
+    : makeAppUpdate(appInstaller, releaseFeed);
