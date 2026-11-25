@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import type { EngineStatus, ProviderStatus, UnavailableReason } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -477,7 +477,8 @@ const unavailableCheck = (
   harness: HarnessFacts,
   provider: string,
   path: string,
-  { reason, detail }: Extract<ProviderStatus["status"], { readonly _tag: "unavailable" }>,
+  reason: UnavailableReason | undefined,
+  detail: string | undefined,
 ): Check => {
   // The engine's own words, as it reported them, when it gave any.
   const says = detail === undefined ? "" : ` The engine says: ${detail}`;
@@ -575,7 +576,8 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
   }
   for (const provider of providers) {
     if (provider.status._tag === "unavailable") {
-      return unavailableCheck(harness, provider.name, found.value, provider.status);
+      const { reason, detail } = provider.status;
+      return unavailableCheck(harness, provider.name, found.value, reason, detail);
     }
   }
   const limited = providers.find((provider) => provider.status._tag === "limited");
