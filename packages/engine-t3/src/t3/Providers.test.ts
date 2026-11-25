@@ -28,6 +28,7 @@ const claude: ProviderInstance = {
   environment: [],
   harness: "claude-code",
   home: "/j3/providers/claude-code",
+  executable: undefined,
 };
 const scripted: ProviderInstance = {
   id: ProviderId.make("scripted"),
@@ -78,7 +79,7 @@ const statusOf = (
   providerStatuses(
     [provider],
     fields === undefined ? [] : reported(provider, fields),
-    firstCheck,
+    () => firstCheck,
   )[0];
 
 /** A five-hour window as Claude Code's probe reports it, with what a case changes. */
@@ -331,7 +332,7 @@ describe("versions and updates", () => {
     providerStatuses(
       [claude],
       reported(claude, fields),
-      false,
+      () => false,
       request === undefined ? new Map() : new Map([[claude.id, request]]),
     )[0]?.update;
 
@@ -381,7 +382,7 @@ describe("versions and updates", () => {
     ];
     for (const [provider, fields, version] of cases) {
       assert.deepStrictEqual(
-        providerStatuses([provider], reported(provider, fields), false)[0]?.version,
+        providerStatuses([provider], reported(provider, fields), () => false)[0]?.version,
         version,
       );
     }

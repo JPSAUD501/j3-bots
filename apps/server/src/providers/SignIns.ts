@@ -82,11 +82,11 @@ export const layer = Layer.effect(
       report: (status: ProviderSignInStatus) => Effect.Effect<void>,
     ) {
       const facts = HARNESSES[harness];
-      const found = yield* findHarness(harness, Option.none());
+      const found = yield* findHarness(harness, Option.none(), config.home);
       if (Option.isNone(found.executable)) {
         return yield* new SignInFailed({
           reason: "not-installed",
-          message: `${facts.executable} is not on the server's PATH`,
+          message: `${facts.executable} is not on the server's PATH, and J3 Bots installed no copy of it`,
         });
       }
       const home = yield* prepareHome(harness, config.home);
@@ -158,13 +158,13 @@ export const layer = Layer.effect(
     });
 
     const locations = Effect.forEach(SignInHarness.literals, (harness) =>
-      findHarness(harness, Option.none()).pipe(
+      findHarness(harness, Option.none(), config.home).pipe(
         Effect.map(({ executable }): HarnessLocation => ({
           harness,
           path: Option.getOrNull(executable),
         })),
       ),
-    ).pipe(Effect.provideService(Host, host));
+    ).pipe(Effect.provideContext(context));
 
     return SignIns.of({ locations, follow, cancel });
   }),

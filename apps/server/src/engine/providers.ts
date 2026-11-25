@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ProviderId } from "@j3-bots/contracts";
+import { ProviderId, type SignInHarness } from "@j3-bots/contracts";
 import type { ProviderInstance } from "@j3-bots/engine-t3";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
@@ -12,6 +12,8 @@ import { homeLayout } from "../home/entries.ts";
  * inherit the operator's personal setup. They reach their models through the
  * provider connection the operator sets with `j3-bots provider connect`, or
  * through a sign-in made into their home (`docs/architecture/engine.md#provisioning`).
+ * Each runs J3 Bots' own copy of its harness, by its path in `executables`,
+ * when J3 Bots installed one, and else the one the engine finds on `PATH`.
  *
  * With a scripted agent configured (`scriptedAgent`, or `J3_SCRIPTED_AGENT`),
  * it comes first, so a bot created without a model runs on it: for
@@ -20,6 +22,7 @@ import { homeLayout } from "../home/entries.ts";
 export const engineProviders = (
   path: Path.Path,
   config: ServerConfigShape,
+  executables: Readonly<Partial<Record<SignInHarness, string>>>,
 ): ReadonlyArray<ProviderInstance> => {
   const { providerHome } = homeLayout(path, config.home);
   const scripted: ReadonlyArray<ProviderInstance> = Option.match(config.scriptedAgent, {
@@ -43,6 +46,7 @@ export const engineProviders = (
       harness: "claude-code",
       home: providerHome("claude-code"),
       environment: [],
+      executable: executables["claude-code"],
     },
     {
       id: ProviderId.make("codex"),
@@ -50,6 +54,7 @@ export const engineProviders = (
       harness: "codex",
       home: providerHome("codex"),
       environment: [],
+      executable: executables.codex,
     },
   ];
 };

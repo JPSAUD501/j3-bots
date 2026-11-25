@@ -114,6 +114,7 @@ import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { PERMISSION_MODES, RUNTIME_MODES } from "./Policy.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import {
+  FIRST_CHECK_BUDGET,
   providerProblems,
   providerStatuses,
   redact,
@@ -126,6 +127,7 @@ import {
 import {
   activeConnection,
   driverOf,
+  instanceEntry,
   instanceIdFor,
   provision,
   storeConnection,
@@ -297,9 +299,13 @@ const instanceSpecOf =
     };
     switch (provider.harness) {
       case "claude-code":
-        return { ...common, kind: "claude-code", home: provider.home };
       case "codex":
-        return { ...common, kind: "codex", home: provider.home };
+        return {
+          ...common,
+          kind: provider.harness,
+          home: provider.home,
+          executable: provider.executable,
+        };
       case "acp-command":
         return {
           ...common,
@@ -396,7 +402,20 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.provide(SecureRandom.layerWebCrypto),
   );
   const providerIds = new Set(options.providers.map((provider) => provider.id));
+  /**
+   * The providers as each provisioning writes them, with the executable
+   * each runs now (`setHarnessExecutable`).
+   */
+  const providers = yield* Ref.make(options.providers);
+  const instancesNow = Effect.map(Ref.get(providers), (current) =>
+    current.map(instanceSpecOf(options.toolBridge)),
+  );
   const instances = options.providers.map(instanceSpecOf(options.toolBridge));
+  /** What the last provisioning found: whether a connection is stored, and which instances it turned off. */
+  const provisioned = yield* Ref.make<{
+    readonly connected: boolean;
+    readonly disabled: ReadonlySet<string>;
+  }>({ connected: false, disabled: new Set() });
   /** The base prompt as last rendered, which each provisioning writes for Codex. */
   const basePrompt = yield* Ref.make(
     Option.getOrElse(yield* Stream.runHead(options.basePrompt), () => ""),
@@ -411,18 +430,22 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   /** The connection's key the engine was last started with, which its words must not carry. */
   const givenKey = yield* Ref.make<Redacted.Redacted<string> | null>(null);
   /** Run before each start of the engine, while it is stopped (`Supervisor.beforeStart`). */
-  const provisionEngine = Effect.gen(function* () {
-    const key = yield* provision({
+  const provisionInput = Effect.gen(function* () {
+    return {
       home: options.home,
       files,
-      instances,
+      instances: yield* instancesNow,
       toolBridge: options.toolBridge,
       systemPromptFile: options.systemPromptFile,
       basePrompt: yield* Ref.get(basePrompt),
       sharedSkills: options.sharedSkills,
       userHome,
-    });
+    };
+  });
+  const provisionEngine = Effect.gen(function* () {
+    const { key, disabled } = yield* provision(yield* provisionInput);
     yield* Ref.set(givenKey, key);
+    yield* Ref.set(provisioned, { connected: key !== null, disabled });
   }).pipe(
     provisioning.withPermits(1),
     Effect.provideService(FileSystem.FileSystem, fs),
@@ -2026,6 +2049,26 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // ---------------------------------------------------------------------------
   // Status and console
 
+  /**
+   * The providers whose instance the engine replaced recently, for
+   * `setHarnessExecutable`: each reads as within its first check, as after
+   * the engine became ready, until `FIRST_CHECK_BUDGET` has passed since.
+   */
+  const replaced = yield* SubscriptionRef.make<ReadonlySet<ProviderId>>(new Set());
+  const lifetime = yield* Effect.scope;
+  const markReplaced = Effect.fn("Engine.markReplaced")(function* (providerId: ProviderId) {
+    yield* SubscriptionRef.update(replaced, (current) => new Set([...current, providerId]));
+    yield* Effect.sleep(FIRST_CHECK_BUDGET).pipe(
+      Effect.andThen(
+        SubscriptionRef.update(
+          replaced,
+          (current) => new Set([...current].filter((each) => each !== providerId)),
+        ),
+      ),
+      Effect.forkIn(lifetime),
+    );
+  });
+
   /** The engine's own report of its provider instances, kept while it is ready. */
   const reported = yield* SubscriptionRef.make<ReadonlyArray<ReportedProvider>>([]);
   /**
@@ -2103,44 +2146,50 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.forkScoped,
   );
 
-  const engineStatus = Stream.zipLatestWith(
+  const engineStatus = Stream.zipLatestAll(
     withFirstCheckBudget(stateChanges(state)),
-    Stream.zipLatestWith(
-      SubscriptionRef.changes(reported),
-      SubscriptionRef.changes(updates),
-      (providers, requests) => ({ providers, requests }),
+    SubscriptionRef.changes(reported),
+    SubscriptionRef.changes(updates),
+    SubscriptionRef.changes(replaced),
+  ).pipe(
+    Stream.map(
+      ([{ state: current, firstCheck }, engineProviders, requests, rebuilt]): EngineStatus => {
+        switch (current._tag) {
+          case "ready":
+            return {
+              state: { _tag: "ready" },
+              pinnedVersion: pin.version,
+              providers: providerStatuses(
+                options.providers,
+                engineProviders,
+                (providerId) => firstCheck || rebuilt.has(providerId),
+                requests,
+              ),
+            };
+          case "starting":
+            return {
+              state:
+                current.install === undefined
+                  ? { _tag: "starting" }
+                  : { _tag: "starting", install: current.install },
+              pinnedVersion: pin.version,
+              providers: [],
+            };
+          case "incompatible":
+            return {
+              state: { _tag: "incompatible", runningVersion: current.runningVersion },
+              pinnedVersion: pin.version,
+              providers: [],
+            };
+          case "unavailable":
+            return {
+              state: { _tag: "unavailable", reason: current.reason },
+              pinnedVersion: pin.version,
+              providers: [],
+            };
+        }
+      },
     ),
-    ({ state: current, firstCheck }, { providers: engineProviders, requests }): EngineStatus => {
-      switch (current._tag) {
-        case "ready":
-          return {
-            state: { _tag: "ready" },
-            pinnedVersion: pin.version,
-            providers: providerStatuses(options.providers, engineProviders, firstCheck, requests),
-          };
-        case "starting":
-          return {
-            state:
-              current.install === undefined
-                ? { _tag: "starting" }
-                : { _tag: "starting", install: current.install },
-            pinnedVersion: pin.version,
-            providers: [],
-          };
-        case "incompatible":
-          return {
-            state: { _tag: "incompatible", runningVersion: current.runningVersion },
-            pinnedVersion: pin.version,
-            providers: [],
-          };
-        case "unavailable":
-          return {
-            state: { _tag: "unavailable", reason: current.reason },
-            pinnedVersion: pin.version,
-            providers: [],
-          };
-      }
-    },
   );
   const status = Stream.zipLatestWith(
     engineStatus,
@@ -2232,6 +2281,55 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
   });
 
+  /**
+   * One instance, as provisioning writes it, upserted through the engine's
+   * own settings: the engine replaces a changed instance, closing what ran
+   * on it, and builds it again from the new entry (**Read** at `59651c1`,
+   * `ProviderInstanceRegistry.ts`, `reconcile`, which closes the scope of
+   * each entry that changed, and `serverSettings.ts`,
+   * `updateProviderInstance`). The entry's secret variables are marked
+   * redacted, which keeps the values the engine stores (**Read**,
+   * `settingsSecrets.ts`, `mapSettingsSecrets`).
+   */
+  const setHarnessExecutable = Effect.fn("Engine.setHarnessExecutable")(function* (input: {
+    readonly providerId: ProviderId;
+    readonly executable: string | null;
+  }) {
+    const executable = input.executable ?? undefined;
+    const current = yield* Ref.get(providers);
+    const provider = current.find((each) => each.id === input.providerId);
+    if (provider === undefined || provider.harness === "acp-command") return;
+    if (provider.executable === executable) return;
+    const next = { ...provider, executable };
+    yield* Ref.set(
+      providers,
+      current.map((each) => (each.id === next.id ? next : each)),
+    );
+    // Not running: its next start is provisioned with it.
+    if ((yield* SubscriptionRef.get(state))._tag !== "ready") return;
+    const spec = instanceSpecOf(options.toolBridge)(next);
+    const entry = instanceEntry(path, yield* provisionInput, spec, yield* Ref.get(provisioned));
+    yield* rpc["server.updateSettings"]({
+      patch: {},
+      providerInstanceMutation: {
+        operation: "upsert",
+        instanceId: spec.instanceId,
+        instance: entry,
+      },
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: COMMAND_TIMEOUT,
+        orElse: () => Effect.fail(new EngineIndeterminate()),
+      }),
+      Effect.catchTags({
+        RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        ServerSettingsError: () => Effect.fail(new EngineIndeterminate()),
+      }),
+    );
+    yield* markReplaced(input.providerId);
+  }, provisioning.withPermits(1));
+
   const consoleLink = Effect.gen(function* () {
     yield* ready;
     const executable = yield* Deferred.await(installed);
@@ -2261,6 +2359,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     connectedEndpoint: connectedNow,
     recheckProvider,
     updateProvider,
+    setHarnessExecutable,
     consoleLink,
     ensureProject,
     removeProject,

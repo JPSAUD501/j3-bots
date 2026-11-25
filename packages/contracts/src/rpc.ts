@@ -903,6 +903,26 @@ export const ProviderRpcs = RpcGroup.make(
     payload: ProviderConnectionRequest,
     success: ProviderConnectionOutcome,
   }),
+  /**
+   * Installs J3 Bots' own copy of the harness, or brings it to the version
+   * the publisher lists as latest, in the background: what it does follows
+   * on `engine.subscribe`, in the provider's `copy`. Answers once it started,
+   * or at once when one is under way already. A client sends it only to a
+   * server whose providers carry `copy` (new in 0.7.1, at protocol 10).
+   * `Conflict("harness-not-installable")` when J3 Bots installs no copy of
+   * it here: the server runs the one the operator installed, or the
+   * publisher ships no build for the server's system. No command id: doing
+   * it again does nothing more.
+   */
+  Rpc.make("provider.installHarness", {
+    payload: { harness: SignInHarness },
+    error: CommandError,
+  }),
+  /**
+   * Stops the install or update of the harness under way, if any, before it
+   * switches: the provider keeps the copy it had, or none.
+   */
+  Rpc.make("provider.cancelHarnessInstall", { payload: { harness: SignInHarness } }),
 );
 
 export const BrowserRpcs = RpcGroup.make(

@@ -31,7 +31,12 @@ const Settings = Schema.fromJsonString(
       Schema.String,
       Schema.Struct({
         enabled: Schema.Boolean,
-        config: Schema.optional(Schema.Struct({ launchArgs: Schema.optional(Schema.String) })),
+        config: Schema.optional(
+          Schema.Struct({
+            launchArgs: Schema.optional(Schema.String),
+            binaryPath: Schema.optional(Schema.String),
+          }),
+        ),
         environment: Schema.optional(
           Schema.Array(
             Schema.Struct({ name: Schema.String, value: Schema.String, sensitive: Schema.Boolean }),
@@ -66,6 +71,7 @@ const setUp = Effect.gen(function* () {
       instanceId: "j3-claude",
       name: "Claude Code",
       home: path.join(home, "claude-code"),
+      executable: undefined,
       environment: [],
     },
     {
@@ -73,6 +79,7 @@ const setUp = Effect.gen(function* () {
       instanceId: "j3-codex",
       name: "Codex",
       home: path.join(home, "codex"),
+      executable: undefined,
       environment: [],
     },
   ];
@@ -185,7 +192,7 @@ describe("provision with a provider connection", () => {
         files,
         connection: { baseUrl: "http://127.0.0.1:8317", key: Redacted.make("the-key") },
       });
-      const given = yield* provision(input);
+      const { key: given } = yield* provision(input);
       // The key it gave the harnesses, which their words must not carry.
       assert.strictEqual(given === null ? null : Redacted.value(given), "the-key");
 
@@ -419,6 +426,30 @@ describe("the bridge's tools", () => {
             tools: { say: { approval_mode: "approve" }, ask: { approval_mode: "approve" } },
           },
         });
+      }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+});
+
+describe("the harness an instance runs", () => {
+  it.effect(
+    "is the one J3 Bots installed, by its path, whose own updater stays off; otherwise the one on the PATH",
+    () =>
+      Effect.gen(function* () {
+        const { input, settings } = yield* setUp;
+        yield* provision({
+          ...input,
+          instances: input.instances.map((spec) =>
+            spec.kind === "claude-code" ? { ...spec, executable: "/j3/harnesses/claude" } : spec,
+          ),
+        });
+        const instances = (yield* settings).providerInstances;
+        assert.strictEqual(instances["j3-claude"]?.config?.binaryPath, "/j3/harnesses/claude");
+        assert.deepInclude(instances["j3-claude"]?.environment ?? [], {
+          name: "DISABLE_AUTOUPDATER",
+          value: "1",
+          sensitive: false,
+        });
+        assert.isUndefined(instances["j3-codex"]?.config?.binaryPath);
       }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 });

@@ -39,6 +39,7 @@ import { SettingsService } from "../settings/SettingsService.ts";
 import { Presence } from "../presence/Presence.ts";
 import { connectProviders } from "../providers/connect.ts";
 import { SignIns } from "../providers/SignIns.ts";
+import { Harnesses, withCopies } from "../harnesses/Harnesses.ts";
 import { Network, reachableOrigins } from "../system/Network.ts";
 import { Cards } from "../turns/Cards.ts";
 import { Pipeline } from "../turns/Pipeline.ts";
@@ -85,6 +86,9 @@ export const handlers = ServedRpcs.toLayer(
     const network = yield* Network;
     const { publicOrigin } = yield* ServerConfig;
     const signIns = yield* SignIns;
+    const harnesses = yield* Harnesses;
+    /** The engine's status as clients get it: each provider with its harness's copy. */
+    const served = Stream.zipLatestWith(engine.status, harnesses.copies, withCopies);
     const browserTabs = yield* BrowserTabs;
     const vault = yield* Vault;
     const connectors = yield* Connectors;
@@ -125,11 +129,12 @@ export const handlers = ServedRpcs.toLayer(
 
     /**
      * The engine's update of a provider's harness, for one whose version the
-     * engine can update. Refused, as `recheckProvider`, until the engine is
-     * ready.
+     * engine can update: never J3 Bots' own copy, whose status carries no
+     * version (`withCopies`). Refused, as `recheckProvider`, until the engine
+     * is ready.
      */
     const updateProvider = Effect.fn("rpc.updateProvider")(function* (providerId: ProviderId) {
-      const status = yield* Stream.runHead(engine.status);
+      const status = yield* Stream.runHead(served);
       if (Option.isNone(status) || status.value.state._tag !== "ready") {
         return yield* new Conflict({ reason: "engine-unavailable" });
       }
@@ -214,7 +219,7 @@ export const handlers = ServedRpcs.toLayer(
       "memory.list": ({ scope }) => memory.list(scope),
       "memory.read": ({ scope, path }) => memory.read(scope, path),
       "memory.write": (input) => memory.write(input),
-      "engine.subscribe": () => engine.status,
+      "engine.subscribe": () => served,
       // Checking again checks nothing more: no receipt.
       "engine.recheckProvider": ({ providerId }) => recheckProvider(providerId),
       "engine.updateProvider": ({ providerId }) => updateProvider(providerId),
@@ -242,6 +247,9 @@ export const handlers = ServedRpcs.toLayer(
       "provider.harnesses": () => signIns.locations,
       "provider.signIn": ({ harness, start }) => signIns.follow(harness, start),
       "provider.cancelSignIn": ({ harness }) => signIns.cancel(harness),
+      // Installing again while one runs starts nothing more: no receipt.
+      "provider.installHarness": ({ harness }) => harnesses.install(harness),
+      "provider.cancelHarnessInstall": ({ harness }) => harnesses.cancel(harness),
       // The request carries the key: it is never logged, and has no receipt.
       "provider.connect": (request) =>
         connectProviders(request).pipe(Effect.provideContext(connectContext)),

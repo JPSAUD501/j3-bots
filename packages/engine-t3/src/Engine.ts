@@ -190,6 +190,12 @@ export type ProviderInstance = {
        * otherwise through whatever sign-in this folder holds.
        */
       readonly home: string;
+      /**
+       * The harness's executable when J3 Bots runs a copy of its own, by its
+       * absolute path; undefined runs the one the engine finds on its `PATH`.
+       * `Engine.setHarnessExecutable` changes it while the engine runs.
+       */
+      readonly executable: string | undefined;
     }
   | {
       /**
@@ -370,6 +376,23 @@ export class Engine extends Context.Service<
      * has nothing to update, and asking does nothing.
      */
     readonly updateProvider: (providerId: ProviderId) => Effect.Effect<void, EngineDown>;
+
+    /**
+     * Runs the Claude Code or Codex provider on `executable`, a harness J3
+     * Bots installed, by its absolute path, from now on; null runs the one
+     * the engine finds on its `PATH`. Every later start of the engine is
+     * given it, and an engine that runs applies it at once: it replaces the
+     * provider's instance, which ends that instance's harness processes, a
+     * turn or background work running there included, so the caller makes
+     * sure none runs first; each session starts its harness again, on the
+     * new executable, at its next turn. The engine then checks the provider
+     * again, and its status reads as `checking` until that check ends.
+     * Sends nothing for a provider that already runs `executable`.
+     */
+    readonly setHarnessExecutable: (input: {
+      readonly providerId: ProviderId;
+      readonly executable: string | null;
+    }) => Effect.Effect<void, EngineDown>;
 
     /**
      * A link that opens the engine's own web interface, signed in, for setting

@@ -12,6 +12,7 @@ import {
   RoutineId,
 } from "./base.ts";
 import type { ModelChoice, PermissionMode } from "./bot.ts";
+import { HarnessCopy } from "./harness.ts";
 
 export const UsageWindow = Schema.Struct({
   /**
@@ -133,6 +134,14 @@ export const ProviderStatus = Schema.Struct({
   version: Schema.optionalKey(ProviderVersion),
   /** The update last asked for (`ProviderUpdate`), absent before one; as `version` for older peers. */
   update: Schema.optionalKey(ProviderUpdate),
+  /**
+   * For Claude Code and Codex, from a server that installs and updates its
+   * own copy of a harness (`HarnessCopy`): where the harness comes from, and
+   * an install or update under way. A server older than `copy` never sends
+   * it, at the same protocol version, and a client then offers neither an
+   * install nor an update; an older client ignores it.
+   */
+  copy: Schema.optionalKey(HarnessCopy),
 });
 export type ProviderStatus = typeof ProviderStatus.Type;
 

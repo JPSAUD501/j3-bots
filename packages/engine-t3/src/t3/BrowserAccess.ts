@@ -38,16 +38,29 @@ export const GetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 });
 
 /**
- * The engine's `server.updateSettings`, sending only projects' overrides: a
- * project's set replaces the one it had, and `null` removes it. Its answer,
- * the whole settings, is left unread. It needs `settings:write` (**Read**,
- * `RpcAuthorization.ts`, `requiredScopesForServerSettingsPatch`).
+ * The engine's `server.updateSettings`, sending only what the adapter
+ * changes while the engine runs: projects' overrides, where a project's set
+ * replaces the one it had and `null` removes it, which needs
+ * `settings:write`; or one provider instance, replaced whole by the entry
+ * provisioning writes for it (`instanceEntry`), with an empty patch, which
+ * needs `providers:manage` (**Read** at `59651c1`, `RpcAuthorization.ts`,
+ * `requiredScopesForSettingsUpdate`). Its answer, the whole settings, is
+ * left unread.
  */
 export const UpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({
     patch: Schema.Struct({
-      projectSettingsOverrides: Schema.Record(Schema.String, Schema.NullOr(ProjectOverrides)),
+      projectSettingsOverrides: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.NullOr(ProjectOverrides)),
+      ),
     }),
+    providerInstanceMutation: Schema.optionalKey(
+      Schema.Struct({
+        operation: Schema.Literal("upsert"),
+        instanceId: Schema.String,
+        instance: Schema.Record(Schema.String, Schema.Unknown),
+      }),
+    ),
   }),
   success: Schema.Struct({}),
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),

@@ -21,6 +21,7 @@ import { LEAST_KDF_PARAMS } from "../vault/crypto.ts";
 import { VaultKdf } from "../vault/Vault.ts";
 import * as TestDatabase from "./database.ts";
 import * as TestOAuth from "./oauth.ts";
+import * as TestHarnesses from "./harnesses.ts";
 import * as TestPush from "./push.ts";
 
 /** The model a bot gets by default: the first the test engine offers. */
@@ -128,7 +129,8 @@ const engineWith = (starting: StartingStatuses) =>
 
 /**
  * The database `database` gives, the home, the engine, its providers as
- * `starting` says, and a fake authorization server for connectors' sign-ins.
+ * `starting` says, a fake authorization server for connectors' sign-ins,
+ * and harness sources with nothing to install.
  */
 const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
   Layer.mergeAll(
@@ -137,6 +139,7 @@ const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatu
     // A vault's keys at the cheapest cost it accepts: its tests derive many.
     Layer.succeed(VaultKdf, LEAST_KDF_PARAMS),
     TestOAuth.layer,
+    TestHarnesses.layer,
   ).pipe(Layer.provideMerge(database));
 
 const stores = storesOver(TestDatabase.layer, new Map());

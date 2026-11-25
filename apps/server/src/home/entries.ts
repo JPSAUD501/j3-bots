@@ -15,6 +15,8 @@ export const HOME_ENTRIES = {
   engine: "engine",
   /** One home per Claude Code or Codex instance of the engine, `providers/<provider>`. */
   providers: "providers",
+  /** J3 Bots' own copy of Claude Code and of Codex, `harnesses/<provider>`, when it installed one. */
+  harnesses: "harnesses",
   /** One workspace per bot, `bots/<bot>`. */
   bots: "bots",
   /** Memory and skills every bot reads. */
@@ -70,6 +72,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * backups/<snapshot>/    the databases and settings an update copied first
  * vault/vault.sqlite     the vault's sealed logins and connector secrets; in no snapshot
  * providers/<provider>/  the configuration folder of an engine provider instance
+ * harnesses/<provider>/  J3 Bots' own copy of the provider's harness (`harnesses/layout.ts`)
  * web/                   where the operator may put a built web client; public
  * ```
  */
@@ -87,6 +90,8 @@ export const homeLayout = (path: Path.Path, home: string) => {
     releaseFeed: path.join(home, HOME_ENTRIES.state, "release-feed.json"),
     providerHome: (provider: (typeof PROVIDER_HOMES)[number]) =>
       path.join(home, HOME_ENTRIES.providers, provider),
+    harnessCopy: (provider: (typeof PROVIDER_HOMES)[number]) =>
+      path.join(home, HOME_ENTRIES.harnesses, provider),
     /**
      * Every location the server writes, for a home whose bots are `bots`:
      * each entry of the home but `web`, the shared folders, the provider
@@ -101,6 +106,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
         databaseLogIndex,
         engine,
         providers,
+        harnesses,
         shared,
         state,
         attachments,
@@ -118,6 +124,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
           databaseLogIndex,
           engine,
           providers,
+          harnesses,
           HOME_ENTRIES.bots,
           shared,
           state,

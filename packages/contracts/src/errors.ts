@@ -132,6 +132,12 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      * answers it.
      */
     "provider-not-updatable",
+    /**
+     * J3 Bots installs no copy of the harness on this server: it runs the one
+     * the operator installed, or the harness's publisher ships no build for
+     * the server's system and processor.
+     */
+    "harness-not-installable",
   ]),
 }) {
   override get message(): string {

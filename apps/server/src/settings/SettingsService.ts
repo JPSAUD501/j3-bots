@@ -133,6 +133,7 @@ export const layer = Layer.effect(
         // Field by field, read in the same transaction as the write.
         notifications: { ...saved.notifications, ...changes.notifications },
         updateChannel: changes.updateChannel ?? saved.updateChannel,
+        autoUpdateHarnesses: changes.autoUpdateHarnesses ?? saved.autoUpdateHarnesses,
       };
       yield* store.save(next, yield* DateTime.now, { zoneChosen: changes.timeZone !== undefined });
       return next;
