@@ -316,10 +316,14 @@ describe("versions and updates", () => {
     message: null,
     ...fields,
   });
-  const updateState = (status: string, message: string | null = null) => ({
+  const updateState = (
+    status: string,
+    message: string | null = null,
+    finishedAt: string | null = null,
+  ) => ({
     status,
     startedAt: null,
-    finishedAt: null,
+    finishedAt,
     message,
     output: null,
   });
@@ -384,11 +388,12 @@ describe("versions and updates", () => {
   });
 
   it("reports the update asked for, with the engine's state of one running first", () => {
-    const refused: UpdateRequest = { _tag: "refused", detail: "Provider is busy." };
+    const askedAt = Date.parse("2026-11-20T12:00:00Z");
+    const refused: UpdateRequest = { _tag: "refused", askedAt, detail: "Provider is busy." };
     assert.strictEqual(withRequest({}, undefined), undefined);
     assert.strictEqual(withRequest({ updateState: updateState("idle") }, undefined), undefined);
     // Asked, before the engine reports it.
-    assert.deepStrictEqual(withRequest({}, { _tag: "asked" }), { state: "running" });
+    assert.deepStrictEqual(withRequest({}, { _tag: "asked", askedAt }), { state: "running" });
     assert.deepStrictEqual(withRequest({ updateState: updateState("succeeded") }, refused), {
       state: "failed",
       detail: "Provider is busy.",
@@ -396,8 +401,26 @@ describe("versions and updates", () => {
     assert.deepStrictEqual(withRequest({ updateState: updateState("queued") }, refused), {
       state: "running",
     });
+    // An update the engine finished after it was asked, whose answer was lost, is the engine's to tell.
+    const stopped = "Update stopped before it finished.";
+    assert.deepStrictEqual(
+      withRequest(
+        { updateState: updateState("failed", stopped, "2026-11-20T12:05:00Z") },
+        { _tag: "refused", askedAt, detail: null },
+      ),
+      { state: "failed", detail: stopped },
+    );
+    assert.deepStrictEqual(
+      withRequest(
+        { updateState: updateState("succeeded", null, "2026-11-20T11:00:00Z") },
+        { _tag: "asked", askedAt },
+      ),
+      { state: "running" },
+    );
     // A request lost on the way, which the engine never reported.
-    assert.deepStrictEqual(withRequest({}, { _tag: "refused", detail: null }), { state: "failed" });
+    assert.deepStrictEqual(withRequest({}, { _tag: "refused", askedAt, detail: null }), {
+      state: "failed",
+    });
     // An update after which the engine no longer finds the harness still says how it went.
     assert.deepStrictEqual(
       withRequest({ installed: false, updateState: updateState("unchanged") }, undefined),

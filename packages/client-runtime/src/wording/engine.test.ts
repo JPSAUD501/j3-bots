@@ -138,7 +138,9 @@ describe("a provider's version and update", () => {
       detail: "The engine says: npm exited 1",
       offer: true,
     });
-    expect(line(codex(current, { state: "updated" }))?.text).toBe("Up to date: version 0.171.0");
+    expect(line(codex(current, { state: "updated" }))?.text).toBe(
+      "The update finished: version 0.171.0",
+    );
     // The command ran, but the engine's check did not confirm a newer version.
     expect(
       line(

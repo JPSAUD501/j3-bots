@@ -2203,7 +2203,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     const provider = options.providers.find((candidate) => candidate.id === providerId);
     // Only Claude Code and Codex have versions (`versionOf`); the server asks for nothing else.
     if (provider === undefined || provider.harness === "acp-command") return;
-    yield* setUpdate(providerId, { _tag: "asked" });
+    const askedAt = yield* Clock.currentTimeMillis;
+    yield* setUpdate(providerId, { _tag: "asked", askedAt });
     yield* rpc["server.updateProvider"]({
       provider: ProviderDriverKind.make(driverOf(provider.harness)),
       instanceId: ProviderInstanceId.make(instanceIdFor(providerId)),
@@ -2214,16 +2215,16 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
           Effect.flatMap(secrets, (known) => {
             const detail = redact(error.reason, known);
             return Effect.logWarning("The engine refused to update a provider", detail).pipe(
-              Effect.andThen(setUpdate(providerId, { _tag: "refused", detail })),
+              Effect.andThen(setUpdate(providerId, { _tag: "refused", askedAt, detail })),
             );
           }),
         RpcClientError: () =>
-          Effect.logWarning("An update's request to the engine was lost").pipe(
-            Effect.andThen(setUpdate(providerId, { _tag: "refused", detail: null })),
+          Effect.logWarning("An update's request to the engine, or its answer, was lost").pipe(
+            Effect.andThen(setUpdate(providerId, { _tag: "refused", askedAt, detail: null })),
           ),
         EnvironmentAuthorizationError: () =>
           Effect.logWarning("The engine refused J3 Bots' credential for an update").pipe(
-            Effect.andThen(setUpdate(providerId, { _tag: "refused", detail: null })),
+            Effect.andThen(setUpdate(providerId, { _tag: "refused", askedAt, detail: null })),
           ),
       }),
       Effect.annotateLogs({ providerId }),

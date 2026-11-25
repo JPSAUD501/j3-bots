@@ -338,15 +338,16 @@ const versionOf = (engine: ReportedProvider | undefined): ProviderVersion | unde
 
 /**
  * An update the adapter asked the engine for (`engine.updateProvider`), as
- * the adapter knows it: `asked` until the engine answers the request, and
- * `refused` when the request did not reach an update the engine reports:
- * the engine refused to start it, in its words (`detail`), or the request
- * was lost on the way, with none. A request the engine answered otherwise
- * is forgotten: the engine's own state says how it went.
+ * the adapter knows it, asked at `askedAt` (epoch milliseconds): `asked`
+ * until the engine answers the request, and `refused` when the answer was
+ * not an update's end: the engine refused to start it, in its words
+ * (`detail`), or the request or its answer was lost, with none. A request
+ * the engine answered otherwise is forgotten: the engine's own state says
+ * how it went.
  */
 export type UpdateRequest =
-  | { readonly _tag: "asked" }
-  | { readonly _tag: "refused"; readonly detail: string | null };
+  | { readonly _tag: "asked"; readonly askedAt: number }
+  | { readonly _tag: "refused"; readonly askedAt: number; readonly detail: string | null };
 
 const updateDetail = (message: string | null | undefined) =>
   message === null || message === undefined
@@ -360,9 +361,11 @@ const updateDetail = (message: string | null | undefined) =>
  * `running`; `succeeded`, which the engine also reports for a harness that
  * was already up to date, is `updated`; `unchanged`, which it reports when
  * the command ran but its check did not confirm a newer version, is
- * `unverified`; `failed` is `failed`; `idle` is none. While the engine reports none running, the
- * adapter's own `request` comes first: one just asked is `running` before
- * the engine reports it, and one the engine refused is `failed`.
+ * `unverified`; `failed` is `failed`; `idle` is none. The adapter's own
+ * `request` comes before an update the engine finished before it was asked:
+ * one just asked is `running` until the engine reports it, and one refused
+ * or lost is `failed`. An update the engine finished since, as one whose
+ * answer was lost, is the engine's to tell.
  */
 const updateOf = (
   engine: ReportedProvider | undefined,
@@ -372,7 +375,13 @@ const updateOf = (
   if (state?.status === "queued" || state?.status === "running") {
     return { state: "running", ...updateDetail(state.message) };
   }
-  if (request !== undefined) {
+  const finishedAt = Option.map(
+    Option.fromNullishOr(state?.finishedAt).pipe(Option.flatMap(DateTime.make)),
+    DateTime.toEpochMillis,
+  );
+  const finishedSince =
+    request !== undefined && Option.isSome(finishedAt) && finishedAt.value >= request.askedAt;
+  if (request !== undefined && !finishedSince) {
     return request._tag === "asked"
       ? { state: "running" }
       : { state: "failed", ...updateDetail(request.detail) };

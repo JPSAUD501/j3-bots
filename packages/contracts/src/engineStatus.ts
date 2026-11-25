@@ -69,8 +69,9 @@ export type ProviderVersion = typeof ProviderVersion.Type;
  * engine started:
  * - `running`: waiting for work that is opening a session to start, or
  *   running;
- * - `updated`: the harness, checked again, is at the latest version, which
- *   includes one that already was;
+ * - `updated`: the engine reports the update finished, which it also does
+ *   for a harness that was already up to date; it does not always know the
+ *   latest version then;
  * - `unverified`: the update command ran, but the check that followed did
  *   not confirm a newer version;
  * - `failed`: it did not finish, or did not start;

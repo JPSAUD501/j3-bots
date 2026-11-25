@@ -754,8 +754,8 @@ const sentences = {
   "provider.version.manual": "Atualize do jeito que você instalou.",
   "provider.update": "Atualizar",
   "provider.updating": "Atualizando…",
-  "provider.upToDate": "Em dia: versão {installed}",
-  "provider.upToDate.noVersion": "Em dia",
+  "provider.updateFinished": "A atualização terminou: versão {installed}",
+  "provider.updateFinished.noVersion": "A atualização terminou",
   "provider.updateFailed": "A atualização não terminou",
   "provider.updateUnverified":
     "A atualização rodou, mas o motor não confirmou uma versão mais nova",
