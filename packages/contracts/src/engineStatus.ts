@@ -2,7 +2,15 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { BotId, Label, ModelId, NonNegativeInt, ProviderId, RoutineId } from "./base.ts";
+import {
+  BotId,
+  Label,
+  ModelId,
+  NonNegativeInt,
+  OpenLiterals,
+  ProviderId,
+  RoutineId,
+} from "./base.ts";
 import type { ModelChoice, PermissionMode } from "./bot.ts";
 
 export const UsageWindow = Schema.Struct({
@@ -22,6 +30,18 @@ export type UsageWindow = typeof UsageWindow.Type;
  * serves their models.
  */
 export const HostCommand = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000));
+
+/**
+ * Why a provider the engine is done checking cannot run a bot:
+ * - `not-installed`: the engine did not find its harness on the machine J3
+ *   Bots runs on;
+ * - `failed`: it found the harness, but its check failed or did not end;
+ * - `disabled`: the provider is turned off on the server;
+ * - `unknown`, as a client reads it: a reason a newer server gives.
+ */
+export const unavailableReasons = ["not-installed", "failed", "disabled"] as const;
+export const UnavailableReason = OpenLiterals(unavailableReasons);
+export type UnavailableReason = typeof UnavailableReason.Type;
 
 export const ProviderStatus = Schema.Struct({
   id: ProviderId,
@@ -45,9 +65,15 @@ export const ProviderStatus = Schema.Struct({
      * failed, and the provider is then `unavailable` without `checking`. A
      * server older than `checking` answers without it, at the same protocol
      * version, and reads as not checking; an older client ignores it.
+     *
+     * `reason`, when not `checking`, says why (`UnavailableReason`). A server
+     * older than `reason` answers without it, at the same protocol version,
+     * and a client then knows only that the provider cannot run; an older
+     * client ignores it.
      */
     Schema.TaggedStruct("unavailable", {
       checking: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+      reason: Schema.optionalKey(UnavailableReason),
     }),
   ]),
   models: Schema.Array(Schema.Struct({ id: ModelId, name: Label })),

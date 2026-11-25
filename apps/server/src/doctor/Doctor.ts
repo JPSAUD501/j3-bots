@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import type { EngineStatus, ProviderStatus, UnavailableReason } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,7 +11,7 @@ import rootPackage from "../../../../package.json" with { type: "json" };
 import { AdminClient } from "../admin/AdminClient.ts";
 import type { AdminStatus } from "../admin/protocol.ts";
 import * as ServerConfig from "../config.ts";
-import { findHarness, type Harness, HARNESSES } from "../engine/harnesses.ts";
+import { findHarness, type Harness, type HarnessFacts, HARNESSES } from "../engine/harnesses.ts";
 import { PROVIDER_HOMES } from "../home/entries.ts";
 import * as Home from "../home/Home.ts";
 import {
@@ -465,6 +465,53 @@ const scriptedAgentCheck = (config: ServerConfig.ServerConfigShape) =>
     ),
   );
 
+/** Where the engine's own account of a provider's check is, in the service's log. */
+const SERVICE_LOG = "`journalctl --user -u j3-bots -n 100`";
+
+/**
+ * A provider the engine is done checking and cannot run, by why
+ * (`UnavailableReason`): the harness was found at `path` on the service's
+ * `PATH`, which the engine runs with.
+ */
+const unavailableCheck = (
+  harness: HarnessFacts,
+  provider: string,
+  path: string,
+  reason: UnavailableReason | undefined,
+): Check => {
+  switch (reason) {
+    case "not-installed":
+      return check(
+        harness.name,
+        "problem",
+        `\`${harness.executable}\` is at ${path}, but the engine did not find it, so it cannot run ${provider}.`,
+        `Restart the service so the engine starts again with its PATH: \`systemctl --user restart j3-bots\`. If it still does not find it, the log says where it looked: ${SERVICE_LOG}.`,
+      );
+    case "failed":
+      return check(
+        harness.name,
+        "problem",
+        `The engine found ${harness.name} at ${path}, but its check of ${provider} failed, so no bot runs on it.`,
+        `Run \`${harness.executable} --version\` as this user to see whether it starts; the log has the engine's own account: ${SERVICE_LOG}. Once it starts, restart the service: \`systemctl --user restart j3-bots\`.`,
+      );
+    case "disabled":
+      return check(
+        harness.name,
+        "problem",
+        `${provider} is turned off: the server could not safely set up ${harness.name}'s configuration, so it left it off.`,
+        `The log names the file it could not read or edit: ${SERVICE_LOG}. Repair or remove that file, then restart the service: \`systemctl --user restart j3-bots\`.`,
+      );
+    case "unknown":
+    case undefined:
+      return check(
+        harness.name,
+        "problem",
+        `The engine cannot run ${provider}.`,
+        `Read why in the log: ${SERVICE_LOG}.`,
+      );
+  }
+};
+
 const providerCheck = Effect.fn("doctor.provider")(function* (
   id: Harness,
   status: Option.Option<AdminStatus>,
@@ -524,14 +571,10 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
       return noWayToModels(id, provider.status.command);
     }
   }
-  const unavailable = providers.find((provider) => provider.status._tag === "unavailable");
-  if (unavailable !== undefined) {
-    return check(
-      harness.name,
-      "problem",
-      `The engine cannot run ${unavailable.name}.`,
-      "Read why in the log: `journalctl --user -u j3-bots -n 100`.",
-    );
+  for (const provider of providers) {
+    if (provider.status._tag === "unavailable") {
+      return unavailableCheck(harness, provider.name, found.value, provider.status.reason);
+    }
   }
   const limited = providers.find((provider) => provider.status._tag === "limited");
   if (limited !== undefined) {

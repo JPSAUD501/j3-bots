@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ModelId, ProviderId } from "@j3-bots/contracts";
+import { ModelId, ProviderId, type UnavailableReason } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -104,22 +104,43 @@ describe("providerStatuses", () => {
     assert.deepStrictEqual(statusOf(scripted, { auth: { status: "unauthenticated" } })?.status, {
       _tag: "unavailable",
       checking: false,
+      reason: "failed",
     });
   });
 
-  it("is unavailable until the engine reports it able to run", () => {
-    for (const fields of [
-      undefined,
-      { installed: false },
-      // A check that did not find it.
-      { installed: false, status: "error" },
-      { enabled: false },
-      { availability: "unavailable" },
-      { status: "error" },
-    ]) {
+  it("says why the engine cannot run it", () => {
+    const cases: ReadonlyArray<readonly [Record<string, unknown> | undefined, UnavailableReason]> = [
+      // Missing from the engine's list.
+      [undefined, "failed"],
+      // A check that did not find the harness on the engine's PATH.
+      [
+        {
+          installed: false,
+          status: "error",
+          message: "Claude Agent CLI (`claude`) was not found on PATH.",
+        },
+        "not-installed",
+      ],
+      [{ installed: false }, "not-installed"],
+      // A driver the engine has no use of on this machine.
+      [{ availability: "unavailable", installed: false, enabled: false }, "not-installed"],
+      // Turned off, in J3 Bots' provisioning or in the engine's settings.
+      [{ enabled: false, installed: false, status: "warning" }, "disabled"],
+      [{ status: "disabled" }, "disabled"],
+      // Found, but its check failed or timed out.
+      [
+        {
+          status: "error",
+          message: "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+        },
+        "failed",
+      ],
+    ];
+    for (const [fields, reason] of cases) {
       assert.deepStrictEqual(statusOf(claude, fields)?.status, {
         _tag: "unavailable",
         checking: false,
+        reason,
       });
     }
   });
@@ -140,11 +161,13 @@ describe("providerStatuses", () => {
     assert.deepStrictEqual(statusOf(scripted, notChecked)?.status, {
       _tag: "unavailable",
       checking: false,
+      reason: "not-installed",
     });
     // Past the budget the check failed or died, and the placeholder says nothing more.
     assert.deepStrictEqual(statusOf(claude, notChecked, false)?.status, {
       _tag: "unavailable",
       checking: false,
+      reason: "failed",
     });
   });
 

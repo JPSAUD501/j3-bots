@@ -9,12 +9,17 @@ describe("an unavailable provider across server versions", () => {
     Schema.TaggedStruct("ready", {}),
     Schema.TaggedStruct("unavailable", {}),
   ]);
+  const decodeStatus = Schema.decodeUnknownSync(ProviderStatus.fields.status);
 
-  it("reads an older server's answer as not checking", () => {
+  it("reads an older server's answer as not checking, with no reason", () => {
     const older = Schema.encodeSync(Before)({ _tag: "unavailable" });
-    assert.deepStrictEqual(Schema.decodeSync(ProviderStatus.fields.status)(older), {
-      _tag: "unavailable",
-      checking: false,
-    });
+    assert.deepStrictEqual(decodeStatus(older), { _tag: "unavailable", checking: false });
+  });
+
+  it("reads a reason a newer server gives as unknown", () => {
+    assert.deepStrictEqual(
+      decodeStatus({ _tag: "unavailable", checking: false, reason: "quarantined" }),
+      { _tag: "unavailable", checking: false, reason: "unknown" },
+    );
   });
 });

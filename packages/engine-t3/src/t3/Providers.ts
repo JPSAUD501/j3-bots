@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ModelId, type ProviderStatus } from "@j3-bots/contracts";
+import { ModelId, type ProviderStatus, type UnavailableReason } from "@j3-bots/contracts";
 import {
   ForwardCompatibleArray,
   ServerConfig,
@@ -92,8 +92,9 @@ export const providersOfEvent = (
   }
 };
 
-const unavailable = { _tag: "unavailable", checking: false } as const;
 const checking = { _tag: "unavailable", checking: true } as const;
+const unavailable = (reason: UnavailableReason) =>
+  ({ _tag: "unavailable", checking: false, reason }) as const;
 
 /**
  * Whether the report is the one the engine publishes for a Claude Code or
@@ -169,14 +170,23 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
 
 /**
  * Whether the engine's instance can run a bot, in J3 Bots' terms:
- * - not checked yet since the engine started (`notCheckedYet`), within the
- *   first-check budget: `unavailable`, `checking`;
- * - missing from the engine's list (not provisioned yet), disabled, not
- *   installed or unavailable: `unavailable`;
+ * - not checked yet since the engine started (`notCheckedYet`): within the
+ *   first-check budget, `unavailable` and `checking`; past it, the check
+ *   failed or died, `failed`;
+ * - turned off, in J3 Bots' provisioning or the engine's settings (not
+ *   enabled, or a `disabled` state): `disabled`;
+ * - not found: `not-installed`. The engine reports a harness it did not find
+ *   as not installed, and a driver it has no use of on this machine
+ *   (`availability: "unavailable"`) as neither installed nor enabled, which
+ *   reads the same (**Read** at `59651c1`, `ServerProviderAvailability` in
+ *   `server.ts`, and the Claude Code and Codex checks);
+ * - missing from the engine's list, as before it was provisioned or when its
+ *   report did not decode: `failed`;
  * - signed out: `sign-in-required`, with the command that connects Claude
  *   Code and Codex to an endpoint (an ACP agent has no such command, and is
- *   `unavailable`);
- * - in error: `unavailable`;
+ *   `failed`);
+ * - in error, as a check that found the harness but could not run it, or
+ *   timed out (**Read** at `59651c1`, `ClaudeProvider.ts`): `failed`;
  * - otherwise `ready`. A harness reached through an endpoint's key reports
  *   its sign-in as `unknown` or authenticated; its first turn says whether
  *   the key works. **Read** at `db51b67`, `ServerProvider` in `server.ts`.
@@ -186,25 +196,17 @@ const statusOf = (
   engine: ReportedProvider | undefined,
   firstCheck: boolean,
 ): ProviderStatus["status"] => {
-  if (engine !== undefined && notCheckedYet(provider, engine)) {
-    return firstCheck ? checking : unavailable;
-  }
-  if (
-    engine === undefined ||
-    !engine.enabled ||
-    !engine.installed ||
-    engine.availability === "unavailable"
-  ) {
-    return unavailable;
-  }
+  if (engine === undefined) return unavailable("failed");
+  if (notCheckedYet(provider, engine)) return firstCheck ? checking : unavailable("failed");
+  if (engine.availability === "unavailable") return unavailable("not-installed");
+  if (!engine.enabled || engine.status === "disabled") return unavailable("disabled");
+  if (!engine.installed) return unavailable("not-installed");
   if (engine.auth.status === "unauthenticated") {
     return provider.harness === "acp-command"
-      ? unavailable
+      ? unavailable("failed")
       : { _tag: "sign-in-required", command: CONNECT_COMMAND };
   }
-  return engine.status === "disabled" || engine.status === "error"
-    ? unavailable
-    : { _tag: "ready" };
+  return engine.status === "error" ? unavailable("failed") : { _tag: "ready" };
 };
 
 const decodeUsageLimits = Schema.decodeUnknownOption(
