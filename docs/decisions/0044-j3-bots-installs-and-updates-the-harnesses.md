@@ -25,7 +25,7 @@ The engine J3 Bots pins has requests for both, but not for J3 Bots' case (**Read
 ## What it costs
 
 - **J3 Bots follows two distributions.** Their download addresses, archive layouts and checksum files are J3 Bots' to keep working, where the engine would have kept them.
-- **The engine looks up each harness's latest release again**, which J3 Bots had turned off: over HTTPS, or through the package manager that installed the harness, which keeps its cache in the server user's home ([Engine: isolation](../architecture/engine.md#isolation)).
+- **The engine looks up each harness's latest release again**, which J3 Bots had turned off: from the maker's release channel or the package manager that installed it, and with `npm view` whenever `npm` is on the engine's `PATH`, which writes npm's cache and logs in the server user's `~/.npm` ([Engine: isolation](../architecture/engine.md#isolation)).
 - **Two copies of a harness can exist.** The operator's own and J3 Bots' own are separate installs; J3 Bots' own is found first.
 
 ## What was rejected
