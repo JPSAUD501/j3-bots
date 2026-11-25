@@ -16,6 +16,7 @@ import {
   ProjectId,
   ProjectSnapshot,
   DEFAULT_BROWSER_PROFILE_ID,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   RunId,
@@ -115,6 +116,8 @@ import { makePrivateFiles } from "./PrivateFiles.ts";
 import {
   providerProblems,
   providerStatuses,
+  redact,
+  type UpdateRequest,
   withoutSecrets,
   providersOfEvent,
   type ReportedProvider,
@@ -122,6 +125,7 @@ import {
 } from "./Providers.ts";
 import {
   activeConnection,
+  driverOf,
   instanceIdFor,
   provision,
   storeConnection,
@@ -182,6 +186,14 @@ import {
 
 /** A command that has had no reply for this long counts as lost. */
 const COMMAND_TIMEOUT = Duration.seconds(30);
+
+/**
+ * How long an update the operator asked for may take before the adapter
+ * stops waiting for the engine's answer: the engine allows its update
+ * command 30 minutes (**Read** at `59651c1`, `UPDATE_TIMEOUT_MINUTES` in
+ * `providerMaintenanceRunner.ts`), after the sessions opening before it.
+ */
+const UPDATE_TIMEOUT = Duration.minutes(40);
 
 /**
  * How long the engine may take to answer a request to check a provider
@@ -2041,6 +2053,15 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // the server's log is where the operator reads what the clients word as
   // "found, but it failed to start", and the engine's console is not kept.
   const logged = yield* Ref.make<ReadonlyMap<ProviderId, string>>(new Map());
+  /** The updates asked of the engine since it last became ready (`UpdateRequest`). */
+  const updates = yield* SubscriptionRef.make<ReadonlyMap<ProviderId, UpdateRequest>>(new Map());
+  const setUpdate = (providerId: ProviderId, request: UpdateRequest | undefined) =>
+    SubscriptionRef.update(updates, (current) => {
+      const next = new Map(current);
+      if (request === undefined) next.delete(providerId);
+      else next.set(providerId, request);
+      return next;
+    });
   /**
    * The secrets the engine's words are cleared of (`withoutSecrets`), as the
    * engine was given them, read each time it becomes ready: a new
@@ -2080,7 +2101,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
             ),
           )
         : Stream.fromEffect(
-            Effect.as(Ref.set(logged, new Map()), [] as ReadonlyArray<ReportedProvider>),
+            Effect.as(
+              Effect.andThen(Ref.set(logged, new Map()), SubscriptionRef.set(updates, new Map())),
+              [] as ReadonlyArray<ReportedProvider>,
+            ),
           ),
     ),
     Stream.runForEach((providers) => SubscriptionRef.set(reported, providers)),
@@ -2089,14 +2113,18 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   const engineStatus = Stream.zipLatestWith(
     withFirstCheckBudget(stateChanges(state)),
-    SubscriptionRef.changes(reported),
-    ({ state: current, firstCheck }, engineProviders): EngineStatus => {
+    Stream.zipLatestWith(
+      SubscriptionRef.changes(reported),
+      SubscriptionRef.changes(updates),
+      (providers, requests) => ({ providers, requests }),
+    ),
+    ({ state: current, firstCheck }, { providers: engineProviders, requests }): EngineStatus => {
       switch (current._tag) {
         case "ready":
           return {
             state: { _tag: "ready" },
             pinnedVersion: pin.version,
-            providers: providerStatuses(options.providers, engineProviders, firstCheck),
+            providers: providerStatuses(options.providers, engineProviders, firstCheck, requests),
           };
         case "starting":
           return {
@@ -2158,6 +2186,54 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
   });
 
+  /** Where an update runs once asked for: the engine's, so it ends with it. */
+  const engineScope = yield* Effect.scope;
+
+  /**
+   * The engine's own update of a harness (**Read** at `59651c1`,
+   * `server.updateProvider`, `ProviderMaintenanceRunner.updateProvider`): it
+   * waits for the sessions of that harness that are opening, keeps new ones
+   * waiting, runs the maker's update command (`claude update`, `codex
+   * update`, or npm for a harness npm installed) and checks the harness
+   * again, reporting each step as the instance's `updateState`. It answers
+   * only once all that ends, which can take minutes, so it runs on its own
+   * and this answers once it is asked. A refusal to start, which the engine
+   * reports no state for, is kept as the adapter's (`UpdateRequest`).
+   */
+  const updateProvider = Effect.fn("Engine.updateProvider")(function* (providerId: ProviderId) {
+    yield* ready;
+    const provider = options.providers.find((candidate) => candidate.id === providerId);
+    // Only Claude Code and Codex have versions (`versionOf`); the server asks for nothing else.
+    if (provider === undefined || provider.harness === "acp-command") return;
+    yield* setUpdate(providerId, { _tag: "asked" });
+    yield* rpc["server.updateProvider"]({
+      provider: ProviderDriverKind.make(driverOf(provider.harness)),
+      instanceId: ProviderInstanceId.make(instanceIdFor(providerId)),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: UPDATE_TIMEOUT,
+        orElse: () => Effect.logWarning("The engine did not answer an update in time"),
+      }),
+      Effect.andThen(setUpdate(providerId, undefined)),
+      Effect.catchTags({
+        ServerProviderUpdateError: (error) =>
+          Effect.flatMap(secrets, (known) => {
+            const detail = redact(error.reason, known);
+            return Effect.logWarning("The engine refused to update a provider", detail).pipe(
+              Effect.andThen(setUpdate(providerId, { _tag: "refused", detail })),
+            );
+          }),
+        RpcClientError: () => setUpdate(providerId, undefined),
+        EnvironmentAuthorizationError: () =>
+          Effect.logWarning("The engine refused J3 Bots' credential for an update").pipe(
+            Effect.andThen(setUpdate(providerId, undefined)),
+          ),
+      }),
+      Effect.annotateLogs({ providerId }),
+      Effect.forkIn(engineScope),
+    );
+  });
+
   const consoleLink = Effect.gen(function* () {
     yield* ready;
     const executable = yield* Deferred.await(installed);
@@ -2186,6 +2262,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     connectProviders,
     connectedEndpoint: connectedNow,
     recheckProvider,
+    updateProvider,
     consoleLink,
     ensureProject,
     removeProject,

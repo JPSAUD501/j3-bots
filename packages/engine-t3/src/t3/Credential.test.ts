@@ -135,6 +135,7 @@ describe("ensureCredential", () => {
           "orchestration:operate",
           "preview:operate",
           "settings:write",
+          "providers:manage",
         ],
       });
       assert.strictEqual(Redacted.value(credential.token), "current");
@@ -178,9 +179,10 @@ describe("checkAccess", () => {
         "orchestration:operate",
         "preview:operate",
         "settings:write",
+        "providers:manage",
       ];
       assert.strictEqual(yield* accessWith(all), "granted");
-      for (const missing of ["preview:operate", "settings:write"]) {
+      for (const missing of ["preview:operate", "settings:write", "providers:manage"]) {
         assert.strictEqual(yield* accessWith(all.filter((scope) => scope !== missing)), "refused");
       }
     }),

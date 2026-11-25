@@ -24,16 +24,20 @@ import { engineFolders, type PrivateFiles } from "./PrivateFiles.ts";
  * The scopes the adapter needs: read threads and projects, and operate them;
  * act on a bot's browser tab for a person who took control of it (without
  * `preview:operate` the engine silently drops a viewer's input; **Read** at
- * `59651c1`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77); and
+ * `59651c1`, `apps/server/src/preview/ServerBrowserStream.ts` L74-77);
  * write the engine's settings, for each bot's browser access
- * (`BrowserAccess.ts`). A stored token without one of them is refused by
- * `checkAccess`, and the supervisor mints a new one with all of them.
+ * (`BrowserAccess.ts`); and manage providers, for the operator's update of
+ * a harness (`server.updateProvider` needs `providers:manage`; **Read** at
+ * `59651c1`, `apps/server/src/auth/RpcAuthorization.ts`). A stored token
+ * without one of them is refused by `checkAccess`, and the supervisor mints
+ * a new one with all of them.
  */
 const CREDENTIAL_SCOPES = [
   "orchestration:read",
   "orchestration:operate",
   "preview:operate",
   "settings:write",
+  "providers:manage",
 ] as const;
 
 /** Renew this long before the token expires, so a running engine never sees an expired one. */

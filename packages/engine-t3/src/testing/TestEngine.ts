@@ -137,6 +137,8 @@ export class TestEngineControl extends Context.Service<
     readonly providerConnection: Effect.Effect<Option.Option<string>>;
     /** The providers `recheckProvider` was asked to check again, in order. */
     readonly recheckedProviders: Effect.Effect<ReadonlyArray<ProviderId>>;
+    /** The providers `updateProvider` was asked to update, in order. */
+    readonly updatedProviders: Effect.Effect<ReadonlyArray<ProviderId>>;
     /**
      * The next command is applied, and then its reply is lost: it fails with
      * `EngineIndeterminate`.
@@ -601,6 +603,7 @@ const make = Effect.gen(function* () {
   /** The base URL of the provider connection, once one is set. */
   let connection = Option.none<string>();
   const rechecked: Array<ProviderId> = [];
+  const updated: Array<ProviderId> = [];
   let loseReply = false;
   let rejectDispatch = false;
   let rejectAnswer = false;
@@ -1247,6 +1250,8 @@ const make = Effect.gen(function* () {
 
     recheckProvider: (providerId) => command(Effect.sync(() => void rechecked.push(providerId))),
 
+    updateProvider: (providerId) => command(Effect.sync(() => void updated.push(providerId))),
+
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 
     ensureProject: ({ workspacePath }) =>
@@ -1702,6 +1707,7 @@ const make = Effect.gen(function* () {
   const control = TestEngineControl.of({
     providerConnection: Effect.sync(() => connection),
     recheckedProviders: Effect.sync(() => [...rechecked]),
+    updatedProviders: Effect.sync(() => [...updated]),
 
     setReachable: (value) =>
       Effect.gen(function* () {

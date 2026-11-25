@@ -49,6 +49,40 @@ export const ProviderDetail = Schema.String.check(
 export const UnavailableReason = OpenLiterals(unavailableReasons);
 export type UnavailableReason = typeof UnavailableReason.Type;
 
+/**
+ * The version of a provider's harness, as the engine reports it, for a
+ * harness the engine found:
+ * - `installed`, null when the engine did not read it;
+ * - `latest`, set only when the engine knows a newer version is out;
+ * - `canUpdate`, whether the engine can update it to `latest` itself
+ *   (`engine.updateProvider`), the way its maker updates it.
+ */
+export const ProviderVersion = Schema.Struct({
+  installed: Schema.NullOr(Label),
+  latest: Schema.NullOr(Label),
+  canUpdate: Schema.Boolean,
+});
+export type ProviderVersion = typeof ProviderVersion.Type;
+
+/**
+ * An update of a provider's harness the operator asked for, since the
+ * engine started:
+ * - `running`: waiting for work that is opening a session to start, or
+ *   running;
+ * - `updated`: done, and the harness checked again;
+ * - `current`: there was nothing newer to install;
+ * - `failed`: it did not finish, or the engine refused to start it;
+ * - `unknown`, as a client reads it: a state a newer server gives.
+ * `detail` is how the engine put it, in its own words (English), when it
+ * gave any.
+ */
+export const providerUpdateStates = ["running", "updated", "current", "failed"] as const;
+export const ProviderUpdate = Schema.Struct({
+  state: OpenLiterals(providerUpdateStates),
+  detail: Schema.optionalKey(ProviderDetail),
+});
+export type ProviderUpdate = typeof ProviderUpdate.Type;
+
 export const ProviderStatus = Schema.Struct({
   id: ProviderId,
   name: Label,
@@ -87,6 +121,15 @@ export const ProviderStatus = Schema.Struct({
   ]),
   models: Schema.Array(Schema.Struct({ id: ModelId, name: Label })),
   usage: Schema.Array(UsageWindow),
+  /**
+   * Its harness's version (`ProviderVersion`), absent when the engine did
+   * not find the harness, and from a server older than it, at the same
+   * protocol version, which also does not answer `engine.updateProvider`. An
+   * older client ignores it.
+   */
+  version: Schema.optionalKey(ProviderVersion),
+  /** The update last asked for (`ProviderUpdate`), absent before one; as `version` for older peers. */
+  update: Schema.optionalKey(ProviderUpdate),
 });
 export type ProviderStatus = typeof ProviderStatus.Type;
 

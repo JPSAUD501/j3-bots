@@ -2,6 +2,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  Conflict,
   type Device,
   type DeviceId,
   NotFound,
@@ -79,5 +80,30 @@ it.effect("checks a provider again when asked, and refuses one the server does n
     assert.deepStrictEqual(yield* (yield* TestEngine.TestEngineControl).recheckedProviders, [
       ProviderId.make("codex"),
     ]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("updates a provider only when the engine can update its harness", () =>
+  Effect.gen(function* () {
+    const device = yield* pairDevice("Laptop");
+    const codex = ProviderId.make("codex");
+    const update = asDevice(device, (client) =>
+      client["engine.updateProvider"]({ providerId: codex }).pipe(Effect.flip),
+    );
+    const providers = yield* TestDomain.TestProviders;
+    const behind = { installed: "0.170.0", latest: "0.171.0" };
+
+    // No version reported (the harness was not found), then one it cannot update.
+    assert.deepStrictEqual(yield* update, new Conflict({ reason: "provider-not-updatable" }));
+    yield* providers.setVersion(codex, { ...behind, canUpdate: false });
+    assert.deepStrictEqual(yield* update, new Conflict({ reason: "provider-not-updatable" }));
+
+    yield* providers.setVersion(codex, { ...behind, canUpdate: true });
+    yield* asDevice(device, (client) => client["engine.updateProvider"]({ providerId: codex }));
+    const missing = yield* asDevice(device, (client) =>
+      client["engine.updateProvider"]({ providerId: ProviderId.make("gemini") }).pipe(Effect.flip),
+    );
+    assert.deepStrictEqual(missing, new NotFound({ resource: "provider" }));
+    assert.deepStrictEqual(yield* (yield* TestEngine.TestEngineControl).updatedProviders, [codex]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

@@ -701,6 +701,23 @@ export const EngineRpcs = RpcGroup.make(
     error: Schema.Union([NotFound, Conflict]),
   }),
   /**
+   * Has the engine update the provider's harness to the newer version it
+   * knows of, the way the harness's maker updates it, as T3 Code's own
+   * Update does. It answers once the update has started; how it goes
+   * follows on `engine.subscribe`, as the provider's `update`. Sessions that
+   * open meanwhile wait for it; one already open is not stopped.
+   * `NotFound("provider")` for a provider the server does not have,
+   * `Conflict("provider-not-updatable")` when its `version` cannot be
+   * updated, and `Conflict("engine-unavailable")` when the engine cannot
+   * take it now. New in 0.7.1, at protocol 10: a client asks it only of a
+   * server that reports a provider's `version`, which an older one never
+   * does.
+   */
+  Rpc.make("engine.updateProvider", {
+    payload: { providerId: ProviderId },
+    error: Schema.Union([NotFound, Conflict]),
+  }),
+  /**
    * Turns that started in the `USAGE_PERIOD` before `readAt`, the moment the
    * server read them, newest first, at most `limit`.
    */

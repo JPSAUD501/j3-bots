@@ -185,6 +185,9 @@ const DRIVERS = {
   "acp-local": "acpRegistry",
 } as const;
 
+/** The engine's driver for an instance of Claude Code or Codex. */
+export const driverOf = (harness: "claude-code" | "codex") => DRIVERS[harness];
+
 /**
  * The instance the engine adds for each of its built-in drivers that has
  * one, under the driver's own name, whenever its settings do not name that

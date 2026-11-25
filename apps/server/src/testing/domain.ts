@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import type { EngineStatus, ProviderStatus, ProviderVersion } from "@j3-bots/contracts";
 import { ModelId, ProviderId } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
 import * as TestEngine from "@j3-bots/engine-t3/testing";
@@ -69,6 +69,8 @@ export class TestProviders extends Context.Service<
       providerId: ProviderId,
       models: ProviderStatus["models"],
     ) => Effect.Effect<void>;
+    /** The engine reports this version of the provider's harness from now on. */
+    readonly setVersion: (providerId: ProviderId, version: ProviderVersion) => Effect.Effect<void>;
   }
 >()("@j3-bots/server/testing/domain/TestProviders") {}
 
@@ -95,6 +97,7 @@ const testProviders = (starting: StartingStatuses) =>
         current: SubscriptionRef.changes(ref),
         setStatus: (providerId, status) => change(providerId, { status }),
         setModels: (providerId, models) => change(providerId, { models }),
+        setVersion: (providerId, version) => change(providerId, { version }),
       });
     }),
   );
