@@ -1133,6 +1133,37 @@ const startWake: Wake = {
   ],
 };
 
+const STARTS_THE_TEST: Check = {
+  question: "Does this message ask its readers to begin the release test now?",
+  what: "that the test starts now",
+  asked: START_ASKED,
+  accept: [
+    "Rui says go: the docs release test starts now. Ana, search on staging; Bo, the changelog. Post what you find here.",
+    "Pessoal, podem começar o teste agora: Ana, a busca no staging; Bo, o changelog contra os PRs mergeados.",
+    "Ana, Bo: please start your checks for the release test now.",
+  ],
+  reject: [
+    "Hi everyone!",
+    "Rui will tell us when the test starts; until then, stand by.",
+    "Is everyone ready for the release test on Friday?",
+  ],
+};
+
+const STARTED_SAID: Check = {
+  question:
+    "Does this message say that the bot has already passed the start of the test on to the group (posted it, told them, or started it), rather than still waiting or asking its reader to do it?",
+  what: "that the test was started",
+  asked: START_ASKED,
+  accept: [
+    "Done: I told Ana and Bo in the Release test room to start the test.",
+    "Mandei no grupo: o teste começou, Ana na busca e Bo no changelog.",
+  ],
+  reject: [
+    "I'll wait for your go-ahead before starting the test.",
+    "Mention me in the Release test room and I'll kick it off there.",
+  ],
+};
+
 const ASKS_TO_WRITE_IN_ROOM: Check = {
   question:
     "Does this message ask or tell its reader to write in the group or room themselves, for example to post the request there or to mention someone there?",
@@ -1249,6 +1280,8 @@ const CHECKS: ReadonlyArray<Check> = [
   FOUR_OPEN,
   CANNOT_SEE_THEIR_T3,
   PRESENTS_INTERNAL_AS_THEIRS,
+  STARTS_THE_TEST,
+  STARTED_SAID,
   ASKS_TO_WRITE_IN_ROOM,
 ];
 
@@ -1854,6 +1887,17 @@ const cases: ReadonlyArray<Case> = [
             ? ["no `say` with `done: true` closed the turn"]
             : []),
         ]),
+        {
+          name: "the room post starts the test",
+          problems: Effect.gen(function* () {
+            if (posted === undefined) return [];
+            const input = decodeMessageBot(posted.input);
+            return input._tag === "Some"
+              ? yield* judged(STARTS_THE_TEST, START_ASKED, input.value.text)
+              : [];
+          }),
+        },
+        closingGrade("told its user the test started", calls, STARTED_SAID, START_ASKED),
         {
           name: "did not ask its user to write in the room",
           problems:
