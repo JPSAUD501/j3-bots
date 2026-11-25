@@ -60,7 +60,12 @@ import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
 import type { Recheck } from "./ProviderFix";
-import { HarnessLocations, type LocalProviderSetup, LocalSignIn } from "./ProviderSetup";
+import {
+  engineFindings,
+  HarnessLocations,
+  type LocalProviderSetup,
+  LocalSignIn,
+} from "./ProviderSetup";
 import { ChangeServer } from "./ServerAddress";
 import { StartWithSystem, StopUsingComputer, UseThisComputer } from "./LocalMode";
 import { PairingQr } from "./PairingQr";
@@ -326,10 +331,16 @@ export function EngineSection({
           ))}
         </ul>
       )}
-      {providerSetup !== undefined && <HarnessLocations setup={providerSetup} />}
+      {providerSetup !== undefined && (
+        <HarnessLocations setup={providerSetup} findings={engineFindings(engine)} />
+      )}
       {!stale &&
         (providerSetup !== undefined && connectCommand(engine) !== null ? (
-          <LocalSignIn setup={providerSetup} fallback={<ConnectProviders engine={engine} />} />
+          <LocalSignIn
+            setup={providerSetup}
+            fallback={<ConnectProviders engine={engine} />}
+            findings={engineFindings(engine)}
+          />
         ) : (
           <ConnectProviders engine={engine} />
         ))}

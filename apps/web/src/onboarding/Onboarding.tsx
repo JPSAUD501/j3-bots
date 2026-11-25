@@ -31,7 +31,7 @@ import { AvatarChoices } from "../components/avatar/AvatarPicker";
 import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar";
 import { CommandLine } from "../components/CommandLine";
 import { ProviderFix, type Recheck } from "../components/ProviderFix";
-import { type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetup";
+import { engineFindings, type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetup";
 import { Button } from "../components/ui/button";
 import { SetupVaultForm, type VaultAccess } from "../components/vault/VaultForms";
 import { cn } from "../lib/cn";
@@ -846,7 +846,11 @@ function ConnectStep({
       <p className="text-lg text-pretty text-muted-foreground">
         {signInHere !== undefined ? t("onboarding.connect.local.body") : text.body}
       </p>
-      {signInHere !== undefined ? <LocalSignIn setup={signInHere} fallback={command} /> : command}
+      {signInHere !== undefined ? (
+        <LocalSignIn setup={signInHere} fallback={command} findings={engineFindings(engine)} />
+      ) : (
+        command
+      )}
       {listed.length > 0 && (
         <ul className="flex w-full flex-col gap-3 text-start text-sm">
           {listed.map((provider) => {
@@ -857,6 +861,11 @@ function ConnectStep({
                   <span>{provider.name}</span>
                   <span className="text-muted-foreground">{line.text}</span>
                 </div>
+                {provider.status._tag === "unavailable" && provider.status.detail !== undefined && (
+                  <p className="text-xs break-words text-pretty text-muted-foreground">
+                    {t("provider.detail", { detail: provider.status.detail })}
+                  </p>
+                )}
                 <ProviderFix provider={provider} place={place} onRecheck={onRecheck} />
               </li>
             );

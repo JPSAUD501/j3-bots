@@ -213,6 +213,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           totalMemoryBytes: 4 * GIB,
           userName: "pi",
           searchPath: world.searchPath,
+          installersPath: Effect.succeed(""),
           freeSpace: () => Effect.succeed(world.freeBytes),
           portState: (host, port) => Effect.succeed({ _tag: world.ports(host, port) }),
           holdsSocket: () => Effect.succeed(world.holder),

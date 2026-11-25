@@ -688,8 +688,8 @@ export const EngineRpcs = RpcGroup.make(
   /**
    * Has the engine check the provider again now, as after the operator
    * installed its harness or fixed what made its check fail, instead of at
-   * its next periodic check, minutes away. It answers once the engine took
-   * the request; what the check finds follows on `engine.subscribe`.
+   * its next periodic check, minutes away. It answers once the check ended;
+   * what it found follows on `engine.subscribe`.
    * `NotFound("provider")` for a provider the server does not have, and
    * `Conflict("engine-unavailable")` when the engine cannot take it now. New
    * in 0.7.1, at protocol 10: a client asks it only of a server that reports

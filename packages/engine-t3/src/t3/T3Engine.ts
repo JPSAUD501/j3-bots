@@ -122,7 +122,6 @@ import {
 } from "./Providers.ts";
 import {
   activeConnection,
-  activeConnectionKey,
   instanceIdFor,
   provision,
   storeConnection,
@@ -405,9 +404,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.map(Option.getOrUndefined),
     Effect.orElseSucceed(() => undefined),
   );
+  /** The connection's key the engine was last started with, which its words must not carry. */
+  const givenKey = yield* Ref.make<Redacted.Redacted<string> | null>(null);
   /** Run before each start of the engine, while it is stopped (`Supervisor.beforeStart`). */
   const provisionEngine = Effect.gen(function* () {
-    yield* provision({
+    const key = yield* provision({
       home: options.home,
       files,
       instances,
@@ -417,6 +418,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       sharedSkills: options.sharedSkills,
       userHome,
     });
+    yield* Ref.set(givenKey, key);
   }).pipe(
     provisioning.withPermits(1),
     Effect.provideService(FileSystem.FileSystem, fs),
@@ -2040,14 +2042,12 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // "found, but it failed to start", and the engine's console is not kept.
   const logged = yield* Ref.make<ReadonlyMap<ProviderId, string>>(new Map());
   /**
-   * The secrets the engine's words are cleared of (`withoutSecrets`), read
-   * each time it becomes ready: a new connection restarts it.
+   * The secrets the engine's words are cleared of (`withoutSecrets`), as the
+   * engine was given them, read each time it becomes ready: a new
+   * connection restarts it.
    */
   const secrets = Effect.gen(function* () {
-    const key = yield* activeConnectionKey(options.home).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-    );
+    const key = yield* Ref.get(givenKey);
     return [
       ...(key === null ? [] : [Redacted.value(key)]),
       ...options.providers.flatMap((provider) =>

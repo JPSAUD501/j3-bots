@@ -74,17 +74,45 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
 };
 
 /**
+ * `searchPath` with each folder of `more` it lacks added after its own, in
+ * order: on Windows, a folder's case does not tell two apart, and quotes
+ * around it are not part of it.
+ */
+export const withFolders = (searchPath: string, more: string, platform: string): string => {
+  const separator = platform === "win32" ? ";" : ":";
+  const key = (folder: string) =>
+    platform === "win32"
+      ? folder
+          .trim()
+          .replace(/^"+|"+$/g, "")
+          .toLowerCase()
+      : folder;
+  const folders = searchPath.split(separator).filter((folder) => folder !== "");
+  const seen = new Set(folders.map(key));
+  for (const folder of more.split(separator)) {
+    if (folder === "" || seen.has(key(folder))) continue;
+    seen.add(key(folder));
+    folders.push(folder);
+  }
+  return folders.join(separator);
+};
+
+/**
  * Where `harness` is, looked up as the engine finds it: on the installed
  * service's `PATH` (`servicePath`), else on this shell's, which `j3-bots
- * serve` passes on. Also the `PATH` it was looked up on, which a harness
- * started for J3 Bots gets.
+ * serve` passes on, with, on Windows, the folders installers have added to
+ * the user's `PATH` since (`Host.installersPath`), which the engine also
+ * reads again. Also the `PATH` it was looked up on, which a harness started
+ * for J3 Bots gets.
  */
 export const findHarness = Effect.fn("findHarness")(function* (
   harness: Harness,
   servicePath: Option.Option<string>,
 ) {
   const host = yield* Host;
-  const searchPath = Option.getOrElse(servicePath, () => host.searchPath);
+  const searchPath = Option.isSome(servicePath)
+    ? servicePath.value
+    : withFolders(host.searchPath, yield* host.installersPath, host.platform);
   const executable = yield* host.findExecutable(HARNESSES[harness].executable, searchPath);
   return { searchPath, executable };
 });

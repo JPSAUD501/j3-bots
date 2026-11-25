@@ -3,6 +3,7 @@ import { Collapsible } from "@base-ui/react/collapsible";
 import type { ConnectEndpointResult, SignInView } from "@j3-bots/client-runtime";
 import { endpointInstead, signInLine, type SignInLine } from "@j3-bots/client-runtime/wording";
 import {
+  type EngineStatus,
   type HarnessLocation,
   MAX_PROVIDER_KEY_LENGTH,
   normalizeBaseUrl,
@@ -43,19 +44,39 @@ const idle: SignInView = { _tag: "idle" };
 /** Where the server finds each harness: `looking` until it said, null when it could not. */
 type Found = ReadonlyArray<HarnessLocation> | null | "looking";
 
-/** The harnesses the server finds, asked once as this mounts and again on `look`. */
-function useHarnesses(ask: ProviderSetupIntents["harnesses"]) {
+/**
+ * What changes when the engine finds a harness or stops finding one, from
+ * its providers' states: a reason to ask the server again where the
+ * harnesses are, as after **Look again** found one installed since.
+ */
+export const engineFindings = (engine: EngineStatus | null): string =>
+  engine === null
+    ? ""
+    : engine.providers
+        .map(({ id, status }) =>
+          status._tag === "unavailable"
+            ? `${id}:unavailable:${status.reason ?? ""}`
+            : `${id}:${status._tag}`,
+        )
+        .join(",");
+
+/**
+ * The harnesses the server finds, asked as this mounts, again on `look`, and
+ * again, without showing the search, each time `findings` changes.
+ */
+function useHarnesses(ask: ProviderSetupIntents["harnesses"], findings: string) {
   const [found, setFound] = useState<Found>("looking");
   const askNow = () =>
     ask().then(
       (locations) => setFound(locations),
       () => setFound(null),
     );
-  // Asked as this mounts, not each time the intents are made anew.
-  const askOnMount = useEffectEvent(askNow);
+  // Asked as this mounts and as the engine's findings change, not each time
+  // the intents are made anew: the findings are what the effect follows.
+  const askFor = useEffectEvent((_findings: string) => askNow());
   useEffect(() => {
-    void askOnMount();
-  }, []);
+    void askFor(findings);
+  }, [findings]);
   const look = () => {
     setFound("looking");
     void askNow();
@@ -79,12 +100,15 @@ const lineTone = {
 export function LocalSignIn({
   setup,
   fallback,
+  findings,
 }: {
   readonly setup: LocalProviderSetup;
   readonly fallback: ReactNode;
+  /** `engineFindings` of the engine's status: where the harnesses are is asked again as it changes. */
+  readonly findings: string;
 }) {
   const { t } = useI18n();
-  const { found, look } = useHarnesses(setup.harnesses);
+  const { found, look } = useHarnesses(setup.harnesses, findings);
   const [endpointOpen, setEndpointOpen] = useState(false);
   const endpointRef = useRef<HTMLDivElement>(null);
   // From a sign-in that cannot work here: the form opens, in sight.
@@ -379,9 +403,16 @@ function endpointAnswer(result: ConnectEndpointResult, { t, plural }: I18n): Sig
 }
 
 /** Where the server finds each harness, for Settings: its path, or that it is not there. */
-export function HarnessLocations({ setup }: { readonly setup: ProviderSetupIntents }) {
+export function HarnessLocations({
+  setup,
+  findings,
+}: {
+  readonly setup: ProviderSetupIntents;
+  /** As `LocalSignIn`'s. */
+  readonly findings: string;
+}) {
   const { t } = useI18n();
-  const { found } = useHarnesses(setup.harnesses);
+  const { found } = useHarnesses(setup.harnesses, findings);
   if (found === null || found === "looking") return null;
   return (
     <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
