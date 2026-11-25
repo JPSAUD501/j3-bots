@@ -7,16 +7,14 @@ import {
   type CommandError,
   CommandId,
   type Connector,
-  ConnectorAddress,
+  CommandLine,
   type ConnectorGrant,
+  ConnectorFieldValues,
   ConnectorId,
-  type ConnectorSource,
+  ConnectorSource,
   CuratedKey,
-  EnvName,
-  FieldKey,
   GitRef,
   GitRepository,
-  HeaderName,
   type LastChange,
   type ListingRef,
   RegistryName,
@@ -31,7 +29,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { BotStore } from "../bots/BotStore.ts";
 import { ConnectorSignIns } from "../connectors/auth.ts";
@@ -117,7 +114,21 @@ const decodeOr = <S extends Schema.Decoder<unknown>>(schema: S, value: unknown, 
     Effect.mapError(() => refuse(`${what} is not valid. Nothing changed.`)),
   );
 
-const redact = (value: string) => Redacted.make(value);
+/**
+ * Decodes what the bot gave for a server as the operator's form would send
+ * it: a value, an argument or an address is redacted as it is decoded, and
+ * a refusal names the rule it broke, never the value.
+ */
+const decodeSettings = <S extends Schema.Codec<unknown, unknown>>(schema: S, value: Schema.Json) =>
+  Schema.decodeEffect(Schema.toCodecJson(schema))(value).pipe(
+    Effect.mapError((error) => refuse(`That is not valid: ${error.message}. Nothing changed.`)),
+  );
+
+/** A record of names to values as the list of pairs the contracts take. */
+const pairs = <K extends string>(
+  record: Readonly<Record<string, string>> | undefined,
+  key: K,
+): Schema.Json => Object.entries(record ?? {}).map(([name, value]) => ({ [key]: name, value }));
 
 const authorJson = (change: LastChange | null): Schema.Json =>
   change === null
@@ -237,68 +248,42 @@ export const layer = Layer.effect(
 
     const sourceOf = Effect.fnUntraced(function* (input: ToolInput<"add_mcp_server">) {
       if (input.gallery !== undefined) {
-        const ref = listingRefOf(input.gallery);
-        if (Option.isNone(ref))
-          return yield* refuse(MANAGEMENT_REFUSED.unknownListing(input.gallery));
+        const gallery = input.gallery;
+        const ref = listingRefOf(gallery);
+        if (Option.isNone(ref)) return yield* refuse(MANAGEMENT_REFUSED.unknownListing(gallery));
         const connection = yield* sources
           .connection(ref.value, "en")
-          .pipe(
-            Effect.mapError(() => refuse(MANAGEMENT_REFUSED.unknownListing(input.gallery ?? ""))),
-          );
+          .pipe(Effect.mapError(() => refuse(MANAGEMENT_REFUSED.unknownListing(gallery))));
         // An app the operator registers is theirs to set up.
         if (connection.listing.connect === "own-app")
           return yield* refuse(MANAGEMENT_REFUSED.ownApp);
-        const values = yield* Effect.forEach(Object.entries(input.values ?? {}), ([key, value]) =>
-          Effect.map(decodeOr(FieldKey, key, `The field ${key}`), (fieldKey) => ({
-            key: fieldKey,
-            value: redact(value),
-          })),
-        );
-        const source: ConnectorSource = {
+        return yield* decodeSettings(ConnectorSource, {
           _tag: "listing",
           ref: ref.value,
           language: "en",
-          values,
+          values: pairs(input.values, "key"),
           oauthClient: null,
-        };
-        return source;
+        });
       }
       const name = input.name ?? "";
       if (input.url !== undefined) {
-        const url = yield* decodeOr(ConnectorAddress, input.url, "The address");
-        const headers = yield* Effect.forEach(
-          Object.entries(input.headers ?? {}),
-          ([header, value]) =>
-            Effect.map(decodeOr(HeaderName, header, `The header ${header}`), (headerName) => ({
-              name: headerName,
-              value: redact(value),
-            })),
-        );
-        const source: ConnectorSource = {
+        return yield* decodeSettings(ConnectorSource, {
           _tag: "remote",
           name,
-          url,
-          headers,
+          url: input.url,
+          headers: pairs(input.headers, "name"),
           oauthClient: null,
           // An address in the operator's own network takes their word, in Settings.
           privateNetwork: false,
-        };
-        return source;
+        });
       }
-      const env = yield* Effect.forEach(Object.entries(input.env ?? {}), ([variable, value]) =>
-        Effect.map(decodeOr(EnvName, variable, `The variable ${variable}`), (envName) => ({
-          name: envName,
-          value: redact(value),
-        })),
-      );
-      const source: ConnectorSource = {
+      return yield* decodeSettings(ConnectorSource, {
         _tag: "command",
         name,
         command: input.command ?? "",
-        args: (input.args ?? []).map(redact),
-        env,
-      };
-      return source;
+        args: input.args ?? [],
+        env: pairs(input.env, "name"),
+      });
     });
 
     /** The answer to a server added or changed: itself, and what comes next for it. */
@@ -391,25 +376,15 @@ export const layer = Layer.effect(
       const values =
         input.values === undefined
           ? undefined
-          : yield* Effect.forEach(Object.entries(input.values), ([key, value]) =>
-              Effect.map(decodeOr(FieldKey, key, `The value ${key}`), (fieldKey) => ({
-                key: fieldKey,
-                value: redact(value),
-              })),
-            );
+          : yield* decodeSettings(ConnectorFieldValues, pairs(input.values, "key"));
       const command =
         input.command === undefined
           ? undefined
-          : {
+          : yield* decodeSettings(CommandLine, {
               command: input.command.command,
-              args: input.command.args.map(redact),
-              env: yield* Effect.forEach(Object.entries(input.command.env), ([variable, value]) =>
-                Effect.map(decodeOr(EnvName, variable, `The variable ${variable}`), (envName) => ({
-                  name: envName,
-                  value: redact(value),
-                })),
-              ),
-            };
+              args: input.command.args,
+              env: pairs(input.command.env, "name"),
+            });
       const connector = yield* connectors
         .update({
           connectorId: found.connector.id,

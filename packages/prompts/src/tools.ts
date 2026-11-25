@@ -456,7 +456,10 @@ const AddMcpServerFields = toolInput({
     ),
   ),
   args: Schema.optionalKey(
-    described(Schema.Array(text(0, 2_000)).check(Schema.isMaxLength(64)), "The command's arguments."),
+    described(
+      Schema.Array(text(0, 2_000)).check(Schema.isMaxLength(64)),
+      "The command's arguments.",
+    ),
   ),
   env: Schema.optionalKey(
     described(NamedValues, `The command's environment variables. ${SECRET_REFERENCE}`),
@@ -582,14 +585,20 @@ const SaveSkillInput = SaveSkillFields.check(
 const InstallSkillInput = toolInput({
   repository: described(text(1, 2_048), "The public git repository's https: address."),
   path: Schema.optionalKey(
-    described(text(0, 200), "The skill's folder in the repository, from its root; empty for the root."),
+    described(
+      text(0, 200),
+      "The skill's folder in the repository, from its root; empty for the root.",
+    ),
   ),
   ref: described(
     text(1, 200),
     "The commit, or a branch or tag to take its current commit from. The commit installed is recorded.",
   ),
   name: Schema.optionalKey(
-    described(SkillName, "The name to install it under; the folder's own name when left out."),
+    described(
+      SkillName,
+      "The skill's name, as its `SKILL.md` gives it; the folder's own name when left out.",
+    ),
   ),
   scope: SkillScopeInput,
 });
@@ -950,8 +959,7 @@ export const MANAGEMENT_NOTES = {
   /** A server added that works now. */
   connected: "Its tools are yours from your next model call; their names start with its prefix.",
   /** A server added that could not be reached yet. */
-  failing:
-    "J3 Bots could not reach it yet. Its status says why; its tools come once it answers.",
+  failing: "J3 Bots could not reach it yet. Its status says why; its tools come once it answers.",
   removed: "Removed. Every bot that used it lost its tools.",
   /** A skill saved or installed. */
   skillSaved: "Your harness offers it by its description from your next turn.",
@@ -979,8 +987,10 @@ export const MANAGEMENT_REFUSED = {
   skillLimit: "That place holds as many skills as it can. Remove one first. Nothing changed.",
   skillText:
     "SKILL.md must open with frontmatter between --- lines whose `name` is the skill's and whose `description` says when it applies, at most 1,024 characters, and be at most 20,000 characters in all. Nothing changed.",
-  notASkill: (reason: string) => `That is not a skill J3 Bots installs: ${reason}. Nothing changed.`,
-  fetchFailed: (reason: string) => `The repository could not be fetched: ${reason}. Nothing changed.`,
+  notASkill: (reason: string) =>
+    `That is not a skill J3 Bots installs: ${reason}. Nothing changed.`,
+  fetchFailed: (reason: string) =>
+    `The repository could not be fetched: ${reason}. Nothing changed.`,
   privateLocation:
     "Your skills folder, or the skill's, is a link or leads out of J3 Bots' data, so nothing was written. Put a real folder there.",
   noName:

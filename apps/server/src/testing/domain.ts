@@ -7,8 +7,8 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { DEFAULT_GUARD } from "@j3-bots/connectors";
-import { make as makeSkillRepositories, SkillRepositories } from "../skills/SkillRepositories.ts";
+import { SkillFetchFailed, SkillRepositories } from "../skills/SkillRepositories.ts";
+import * as TestGitHost from "./gitHost.ts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -130,15 +130,13 @@ const engineWith = (starting: StartingStatuses) =>
   );
 
 /**
- * Skills are installed from a git host on this machine's loopback, over
- * plain HTTP, which only tests allow (`testing/gitHost.ts`): no test reaches
- * the network.
+ * No skill is installed from anywhere, so no test reaches the network: a
+ * test that installs one serves its own git host (`layerWithGitHost`).
  */
-const repositories = Layer.effect(
+const noRepositories = Layer.succeed(
   SkillRepositories,
-  makeSkillRepositories({
-    policy: { loopback: "allow-http", privateNetwork: "refuse", redirects: "refuse" },
-    resolve: DEFAULT_GUARD.resolve,
+  SkillRepositories.of({
+    fetch: () => Effect.fail(new SkillFetchFailed({ reason: "unreachable" })),
   }),
 );
 
@@ -147,7 +145,11 @@ const repositories = Layer.effect(
  * `starting` says, a fake authorization server for connectors' sign-ins,
  * and harness sources with nothing to install.
  */
-const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
+const storesOver = (
+  database: typeof TestDatabase.layer,
+  starting: StartingStatuses,
+  repositories: Layer.Layer<SkillRepositories> = noRepositories,
+) =>
   Layer.mergeAll(
     engineWith(starting),
     BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
@@ -226,6 +228,23 @@ export const layerWithRegistry = (entries: ReadonlyArray<RegistryEntry>) =>
       ),
     ),
   );
+
+/**
+ * The whole domain, installing skills from a fake git host on loopback
+ * (`testing/gitHost.ts`), which the test reads as `TestGitHost`.
+ */
+export const layerWithGitHost = Domain.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      // One host: a layer is built once however many times it is provided.
+      storesOver(TestDatabase.layer, new Map(), TestGitHost.layer),
+      TestGitHost.layer,
+      listener,
+      TestPush.layer,
+      registry,
+    ),
+  ),
+);
 
 /**
  * The whole domain over the database `database` gives, as one an earlier
