@@ -115,12 +115,14 @@ import { makePrivateFiles } from "./PrivateFiles.ts";
 import {
   providerProblems,
   providerStatuses,
+  withoutSecrets,
   providersOfEvent,
   type ReportedProvider,
   withFirstCheckBudget,
 } from "./Providers.ts";
 import {
   activeConnection,
+  activeConnectionKey,
   instanceIdFor,
   provision,
   storeConnection,
@@ -181,6 +183,14 @@ import {
 
 /** A command that has had no reply for this long counts as lost. */
 const COMMAND_TIMEOUT = Duration.seconds(30);
+
+/**
+ * How long the engine may take to answer a request to check a provider
+ * again, which it answers once the check ends: up to 45 seconds for one
+ * that ends (`FIRST_CHECK_BUDGET` says why), after reading Windows' PATH
+ * again, with the room the first check's budget leaves.
+ */
+const RECHECK_TIMEOUT = Duration.seconds(90);
 /** How long `synchronize` waits for the engine's marker on each stream. */
 const SYNC_TIMEOUT = Duration.seconds(30);
 /** How long fetching an approval's file change may take; past it the card stays a summary. */
@@ -2029,6 +2039,22 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   // the server's log is where the operator reads what the clients word as
   // "found, but it failed to start", and the engine's console is not kept.
   const logged = yield* Ref.make<ReadonlyMap<ProviderId, string>>(new Map());
+  /**
+   * The secrets the engine's words are cleared of (`withoutSecrets`), read
+   * each time it becomes ready: a new connection restarts it.
+   */
+  const secrets = Effect.gen(function* () {
+    const key = yield* activeConnectionKey(options.home).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+    return [
+      ...(key === null ? [] : [Redacted.value(key)]),
+      ...options.providers.flatMap((provider) =>
+        provider.environment.map((variable) => Redacted.value(variable.value)),
+      ),
+    ];
+  });
   const logProblems = Effect.fn("Engine.logProviderProblems")(function* (
     providers: ReadonlyArray<ReportedProvider>,
   ) {
@@ -2045,7 +2071,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     // left is not kept for when it is back.
     Stream.switchMap((current) =>
       current._tag === "ready"
-        ? reports.pipe(Stream.tap(logProblems))
+        ? Stream.unwrap(
+            Effect.map(secrets, (known) =>
+              reports.pipe(
+                Stream.map((providers) => withoutSecrets(providers, known)),
+                Stream.tap(logProblems),
+              ),
+            ),
+          )
         : Stream.fromEffect(
             Effect.as(Ref.set(logged, new Map()), [] as ReadonlyArray<ReportedProvider>),
           ),
@@ -2111,7 +2144,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       fresh: true,
     }).pipe(
       Effect.timeoutOrElse({
-        duration: COMMAND_TIMEOUT,
+        duration: RECHECK_TIMEOUT,
         orElse: () => Effect.fail(new EngineUnavailable()),
       }),
       Effect.catchTags({

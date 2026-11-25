@@ -502,6 +502,16 @@ const readConnection = Effect.fnUntraced(function* (home: string) {
   );
 });
 
+/** The key of the stored connection, if one can be read: what the harnesses get as `KEY_VARIABLE`. */
+export const activeConnectionKey = Effect.fn("engine.activeConnectionKey")(function* (
+  home: string,
+) {
+  return yield* readConnection(home).pipe(
+    Effect.map((connection) => (connection === null ? null : Redacted.make(connection.key))),
+    Effect.orElseSucceed(() => null),
+  );
+});
+
 /** The base URL of the stored connection, if one can be read. */
 export const activeConnection = Effect.fn("engine.activeConnection")(function* (home: string) {
   return yield* readConnection(home).pipe(

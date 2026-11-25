@@ -88,6 +88,7 @@ export {
 } from "./connectorForm.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
 export {
+  cannotRun,
   connectCommand,
   hasDefaultModel,
   type OpeningHold,

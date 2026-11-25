@@ -19,11 +19,11 @@ const canRunBots = (provider: ProviderStatus): boolean =>
  */
 export const hasDefaultModel = (engine: EngineStatus | null): boolean =>
   engine !== null &&
-  engine.providers.some(
-    (provider) =>
-      provider.models.length > 0 &&
-      !(provider.status._tag === "unavailable" && !provider.status.checking),
-  );
+  engine.providers.some((provider) => provider.models.length > 0 && !cannotRun(provider));
+
+/** Whether the engine is done checking `provider` and cannot run it. */
+export const cannotRun = (provider: ProviderStatus): boolean =>
+  provider.status._tag === "unavailable" && !provider.status.checking;
 
 /** The one command that connects every provider that needs it; null when none does. */
 export const connectCommand = (engine: EngineStatus): string | null =>

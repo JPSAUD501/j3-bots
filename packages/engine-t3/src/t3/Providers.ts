@@ -320,6 +320,36 @@ export const providerStatuses = (
     };
   });
 
+/** What stands in for a secret in the engine's words. */
+export const REDACTED = "[redacted]";
+
+/**
+ * The engine's reports with every value in `secrets` taken out of its words
+ * (`message`, `unavailableReason`). What a harness printed when its check
+ * failed can be part of them, and the harness runs with the secrets J3 Bots
+ * gives it: the provider connection's key and each instance's own
+ * variables. Those words reach every paired client and J3 Bots' log.
+ */
+export const withoutSecrets = (
+  providers: ReadonlyArray<ReportedProvider>,
+  secrets: ReadonlyArray<string>,
+): ReadonlyArray<ReportedProvider> => {
+  // The longest first, so a secret that contains another goes whole.
+  const known = secrets
+    .filter((secret) => secret.length > 0)
+    .toSorted((a, b) => b.length - a.length);
+  if (known.length === 0) return providers;
+  const scrub = (text: string) =>
+    known.reduce((scrubbed, secret) => scrubbed.split(secret).join(REDACTED), text);
+  return providers.map((provider) => ({
+    ...provider,
+    ...(provider.message === undefined ? {} : { message: scrub(provider.message) }),
+    ...(provider.unavailableReason === undefined
+      ? {}
+      : { unavailableReason: scrub(provider.unavailableReason) }),
+  }));
+};
+
 /**
  * What to log of each provider the engine reports it cannot run, keyed by
  * provider: its reason and the engine's words, as the line J3 Bots' log gives

@@ -15,7 +15,9 @@ import {
   providerProblems,
   providerStatuses,
   providersOfEvent,
+  REDACTED,
   withFirstCheckBudget,
+  withoutSecrets,
 } from "./Providers.ts";
 import { instanceIdFor } from "./Provision.ts";
 
@@ -312,6 +314,24 @@ describe("providerProblems", () => {
     const notChecked = { installed: false, status: "warning", auth: { status: "unknown" } };
     assert.strictEqual(providerProblems([claude], reported(claude, notChecked)).size, 0);
     assert.strictEqual(providerProblems([claude], reported(claude, {})).size, 0);
+  });
+});
+
+describe("withoutSecrets", () => {
+  it("takes every secret it is given out of the engine's words, whole", () => {
+    const key = "sk-proxy-0123456789";
+    const engine = reported(claude, {
+      status: "error",
+      message: `Probe failed: J3_PROVIDER_KEY=${key} and again ${key}; token=${key}-extra`,
+      availability: "unavailable",
+      unavailableReason: `Could not read ${key}`,
+    });
+    const [scrubbed] = withoutSecrets(engine, ["", key.slice(0, 6), key, `${key}-extra`]);
+    assert.strictEqual(
+      scrubbed?.message,
+      `Probe failed: J3_PROVIDER_KEY=${REDACTED} and again ${REDACTED}; token=${REDACTED}`,
+    );
+    assert.strictEqual(scrubbed?.unavailableReason, `Could not read ${REDACTED}`);
   });
 });
 

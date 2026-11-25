@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  cannotRun,
   defaultBotName,
   makingProgress,
   nextStep,
@@ -787,7 +788,16 @@ function ConnectStep({
   const waitsId = useId();
   const place = providerSetup === undefined ? "server" : "this-computer";
   const gate = engine !== null && engine.state._tag === "ready" ? providerGate(engine) : null;
-  const unavailable = gate?._tag === "unavailable";
+  // Each provider that cannot run, with why and what fixes it: all of them
+  // when none can, and beside the sign-in, those that signing in would not fix.
+  const listed =
+    engine === null || gate === null
+      ? []
+      : gate._tag === "unavailable"
+        ? engine.providers
+        : gate._tag === "connect"
+          ? engine.providers.filter(cannotRun)
+          : [];
   // On this computer, the harnesses sign in from here; the command stays for when they cannot.
   const signInHere = gate?._tag === "connect" ? providerSetup : undefined;
   const command = (
@@ -837,9 +847,9 @@ function ConnectStep({
         {signInHere !== undefined ? t("onboarding.connect.local.body") : text.body}
       </p>
       {signInHere !== undefined ? <LocalSignIn setup={signInHere} fallback={command} /> : command}
-      {unavailable && engine !== null && (
+      {listed.length > 0 && (
         <ul className="flex w-full flex-col gap-3 text-start text-sm">
-          {engine.providers.map((provider) => {
+          {listed.map((provider) => {
             const line = providerLine(provider, ctx, place);
             return (
               <li key={provider.id} className="flex flex-col gap-1.5">

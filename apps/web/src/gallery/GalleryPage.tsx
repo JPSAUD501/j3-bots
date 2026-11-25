@@ -2304,6 +2304,16 @@ const engines = {
     },
     notInstalled,
   ),
+  /** Claude Code found but failing, Codex signed out: the sign-in would not fix Claude Code. */
+  failedBesideSignIn: engineWith(
+    {
+      _tag: "unavailable",
+      checking: false,
+      reason: "failed",
+      detail: "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+    },
+    { _tag: "sign-in-required", command: "j3-bots provider connect" },
+  ),
   disabled: engineWith(
     { _tag: "unavailable", checking: false, reason: "disabled" },
     { _tag: "unavailable", checking: false, reason: "disabled" },
@@ -2627,6 +2637,13 @@ function FirstRunSection() {
         </Frame>
         <Frame label="Providers turned off on the server" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.disabled} />
+        </Frame>
+        <Frame
+          label="One provider to connect, the other found but failing, with its own fix"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.failedBesideSignIn} />
         </Frame>
         <Frame label="The engine downloading, on the first start" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.downloading} />

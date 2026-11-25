@@ -212,7 +212,7 @@ A paired device can ask the server to update itself, since every paired device h
 
 ## The harnesses
 
-What a harness runs is the operator's to choose, and J3 Bots' requests about one are the operator's too: only a paired device asks the engine to check a provider again (`engine.recheckProvider`), and no bot tool reaches it. A check runs the harness the engine already found, as the engine's own periodic check does, so asking for one gains a device nothing. The engine's account of a provider it cannot run (its `detail`) is shown and logged, never acted on, and is cut to 500 characters. J3 Bots installs and updates the harnesses on the same terms: only the operator, through a paired device ([decision 0043](../decisions/0043-j3-bots-installs-and-updates-the-harnesses.md)).
+What a harness runs is the operator's to choose, and J3 Bots' requests about one are the operator's too: only a paired device asks the engine to check a provider again (`engine.recheckProvider`), and no bot tool reaches it. A check runs the harness the engine already found, as the engine's own periodic check does, so asking for one gains a device nothing. The engine's account of a provider it cannot run (its `detail`) is shown and logged, never acted on, and is cut to 500 characters. It can hold what a harness printed, so the adapter first replaces every secret J3 Bots gives the harnesses, the provider connection's key and each instance's variables, with `[redacted]`; a secret the harness holds on its own, such as a sign-in token it printed, is not known to J3 Bots and is not taken out. J3 Bots installs and updates the harnesses on the same terms: only the operator, through a paired device ([decision 0043](../decisions/0043-j3-bots-installs-and-updates-the-harnesses.md)).
 
 ## Desktop updates
 
@@ -332,7 +332,7 @@ A connector acts in the operator's account at a service, from text a remote serv
 ## What is logged
 
 - Conversations, rooms and memory are the operator's data, stored on their disk, in the clear.
-- Server logs record wakes, dispatches and outcomes with identifiers, not message text.
+- Server logs record wakes, dispatches and outcomes with identifiers, not message text, and, for each provider the engine cannot run, the engine's account of why, with J3 Bots' secrets taken out ([The harnesses](#the-harnesses)).
 - No telemetry leaves the machine by default.
 
 ## Known gaps

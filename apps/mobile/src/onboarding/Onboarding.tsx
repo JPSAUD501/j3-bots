@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  cannotRun,
   defaultBotName,
   makingProgress,
   nextStep,
@@ -833,8 +834,17 @@ function ConnectStep({
   const { t } = i18n;
   const text = connectStepText(engine, name, i18n);
   const { login } = text;
-  const unavailable =
-    engine !== null && engine.state._tag === "ready" && providerGate(engine)._tag === "unavailable";
+  // Each provider that cannot run, with why and what fixes it: all of them
+  // when none can, and beside the command, those that connecting would not fix.
+  const gate = engine !== null && engine.state._tag === "ready" ? providerGate(engine) : null;
+  const listed =
+    engine === null || gate === null
+      ? []
+      : gate._tag === "unavailable"
+        ? engine.providers
+        : gate._tag === "connect"
+          ? engine.providers.filter(cannotRun)
+          : [];
   return (
     <StepFrame
       actions={
@@ -872,9 +882,9 @@ function ConnectStep({
           </Text>
         </Text>
       )}
-      {unavailable && (
+      {listed.length > 0 && (
         <View className="w-full gap-1.5">
-          {engine.providers.map((provider) => (
+          {listed.map((provider) => (
             <ProviderRow key={provider.id} provider={provider} />
           ))}
         </View>
