@@ -33,7 +33,7 @@ export default Effect.gen(function* () {
   yield* sql`
     CREATE TRIGGER entries_fixed_round
     BEFORE UPDATE OF room_round ON entries
-    WHEN OLD.room_round IS NOT NULL
+    WHEN OLD.room_round IS NOT NULL AND NEW.room_round IS NOT OLD.room_round
     BEGIN
       SELECT RAISE(ABORT, 'a room message keeps its round');
     END

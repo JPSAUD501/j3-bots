@@ -6,7 +6,7 @@ import {
   ROOM_QUIET_ROUND,
   RoomId,
 } from "@j3-bots/contracts";
-import { TurnId } from "@j3-bots/engine-t3";
+import type { TurnId } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,7 +14,8 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
-import { type DispatchSeq, type RoomReason, SessionRowId } from "../turns/model.ts";
+import type { DispatchSeq, RoomReason, SessionRowId } from "../turns/model.ts";
+import { hopCounts } from "../turns/hopCounts.ts";
 import { notices } from "../turns/notices.ts";
 import { type NewWake, Wakes } from "../turns/Wakes.ts";
 import type { LiveRoom } from "./liveRoom.ts";
@@ -62,9 +63,10 @@ export interface SpeakingTurn {
  * theirs a bot relayed (`BotWord`), and the room's newest round-0 message is
  * their latest word there. A bot's message is one round past the newest round
  * its turn was shown since that word: the highest `dispatches.room_round` of
- * the turn's room dispatches written since, or round 1 when the turn was shown
- * none of it. A turn shown nothing of the room, one from outside it or one the
- * engine started on its own, answers the whole room: one round past its
+ * the room dispatches written since for the turn and the turns whose work it
+ * goes on with, or round 1 when they were shown none of it. A turn shown
+ * nothing of the room, one from outside it or one the engine started on its
+ * own for no room turn's work, answers the whole room: one round past its
  * highest since that word. Past `ROOM_QUIET_ROUND` a bot's message wakes
  * nobody, and the first such message shows one `chain-stopped` notice in the
  * room until their word reaches it again. Each wake is a `room` wake for the
@@ -149,32 +151,35 @@ export const layer = Layer.effect(
       `,
     });
 
+    const { chainSql: chain } = hopCounts(sql);
+
     /**
-     * What the speaking turn was shown of the room: how many of its room
-     * dispatches the engine took, a steer riding it included, and the
+     * What the speaking turn was shown of the room: how many room dispatches
+     * the engine took for it and the turns whose work it goes on with (the
+     * turn a continuation resumes, the one whose background work woke the
+     * session: `hopCounts.chainSql`), a steer riding any of them included, and the
      * highest round their replies take among those written since the place
      * given, `null` when none was.
      */
-    const shownTo = SqlSchema.findOne({
-      Request: Schema.Struct({
-        roomId: RoomId,
-        sessionId: SessionRowId,
-        turnId: TurnId,
-        from: Schema.Int,
-      }),
-      Result: Schema.Struct({ dispatches: Schema.Int, round: Schema.NullOr(Schema.Int) }),
-      execute: ({ roomId, sessionId, turnId, from }) => sql`
-        SELECT COUNT(*) AS dispatches,
-          MAX(CASE WHEN room_through >= ${from} THEN room_round END) AS round
-        FROM dispatches
-        WHERE audience_room_id = ${roomId} AND session_id = ${sessionId}
-          AND status IN ('accepted', 'delivered', 'finished')
-          AND (
-            engine_turn_id = ${turnId}
-            OR (engine_turn_id IS NULL AND steer_turn_id = ${turnId})
-          )
-      `,
-    });
+    const shownTo = (roomId: RoomId, turn: SpeakingTurn, from: number) =>
+      SqlSchema.findOne({
+        Request: Schema.Void,
+        Result: Schema.Struct({ dispatches: Schema.Int, round: Schema.NullOr(Schema.Int) }),
+        execute: () => sql`
+          SELECT COUNT(*) AS dispatches,
+            MAX(CASE WHEN room_through >= ${from} THEN room_round END) AS round
+          FROM dispatches
+          WHERE audience_room_id = ${roomId} AND session_id = ${turn.sessionId}
+            AND status IN ('accepted', 'delivered', 'finished')
+            AND (
+              engine_turn_id IN (${chain(turn.sessionId, turn.turnId)})
+              OR (
+                engine_turn_id IS NULL
+                AND steer_turn_id IN (${chain(turn.sessionId, turn.turnId)})
+              )
+            )
+        `,
+      })(undefined);
 
     /** Whether a message of the room other than this one went past the quiet round since a place. */
     const quietBefore = (roomId: RoomId, from: number, message: MessageEntry) =>
@@ -195,12 +200,7 @@ export const layer = Layer.effect(
     ) {
       const { word } = yield* latestWord(room.id);
       const from = word ?? 0;
-      const shown = yield* shownTo({
-        roomId: room.id,
-        sessionId: turn.sessionId,
-        turnId: turn.turnId,
-        from,
-      });
+      const shown = yield* shownTo(room.id, turn, from);
       if (shown.dispatches > 0) return { round: shown.round ?? 1, from };
       const { round } = yield* highestFrom({ roomId: room.id, from });
       return { round: (round ?? 0) + 1, from };

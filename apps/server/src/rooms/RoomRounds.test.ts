@@ -274,3 +274,50 @@ it.effect("puts a routine's post in a room one round past the room's newest", ()
     assert.include(envelope, ROOM_CLOSING_NOTE);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "gives what a turn the engine started for a room turn's background work says the round of what that room turn was shown",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
+      const members = [hal, ana, bo];
+      const room = yield* roomWith(hal, [ana, bo]);
+      yield* operatorWrites(room.id, members, "Ana, get Bo to run the build.", to(ana));
+      const anaTurn = yield* nextTurn(ana.bot.id);
+      yield* say(ana, anaTurn, { text: "Bo, run the build.", mention: [bo.bot.id] });
+      yield* say(ana, anaTurn, { text: "Hal, check the docs.", mention: [hal.bot.id] });
+      yield* finish(ana, anaTurn, members);
+
+      // Bo starts the build in a turn shown round 1, and ends it.
+      const building = yield* nextTurn(bo.bot.id);
+      yield* control.startBackgroundWork({ sessionId: bo.session, turnId: building });
+      yield* finish(bo, building, members);
+
+      // Meanwhile Hal and Ana answer each other, to the quiet round.
+      const turns = new Map<BotId, TurnId>([[ana.bot.id, anaTurn]]);
+      let [speaker, other] = [hal, ana];
+      for (let round = 2; round <= ROOM_QUIET_ROUND; round++) {
+        const turnId = yield* nextTurn(speaker.bot.id, turns.get(speaker.bot.id) ?? null);
+        turns.set(speaker.bot.id, turnId);
+        yield* say(speaker, turnId, { text: `Round ${round}.`, mention: [other.bot.id] });
+        yield* finish(speaker, turnId, members);
+        [speaker, other] = [other, speaker];
+      }
+      yield* finish(
+        speaker,
+        yield* nextTurn(speaker.bot.id, turns.get(speaker.bot.id) ?? null),
+        members,
+      );
+      assert.strictEqual((yield* roundsIn(room.id)).at(-1)?.[1], ROOM_QUIET_ROUND);
+
+      // The build ends in a turn the engine starts for it: what Bo says there
+      // answers what its room turn was shown, not the room's newest round.
+      const done = yield* control.startEngineTurn(bo.session, building);
+      yield* nextTurn(bo.bot.id, building);
+      yield* control.hostSpeech({ sessionId: bo.session, turnId: done, text: "The build passed." });
+      yield* finish(bo, done, members);
+      assert.deepStrictEqual((yield* roundsIn(room.id)).at(-1), ["The build passed.", 2]);
+      assert.deepStrictEqual(yield* noticesIn(room.id), []);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
