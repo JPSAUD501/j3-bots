@@ -33,6 +33,7 @@ import {
 import {
   admittedTurn,
   command,
+  concurrentTurns,
   conversation,
   deliveryIs,
   failedAs,
@@ -238,7 +239,9 @@ it.effect(
       yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
       yield* finish(hal, watching, members);
 
-      // Ana runs for the room, and the operator's next word to Hal waits.
+      // Ana runs for the room in the only turn slot, and the operator's next
+      // word to Hal waits for it.
+      yield* concurrentTurns(1);
       yield* operatorWrites(room.id, members, "Ana, draft the notes.", to(ana));
       const drafting = yield* nextTurn(ana.bot.id);
       const waiting = yield* operatorWrites(room.id, members, "Hal, and the date?", to(hal));
