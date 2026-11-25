@@ -57,6 +57,8 @@ export type UpdateEvent =
   | { readonly _tag: "automatic-chosen"; readonly on: boolean }
   /** The launch's check has had all the time a launch waits for it. */
   | { readonly _tag: "launch-wait-over" }
+  /** The launch's download stalled, or has taken all the time a launch gives it. */
+  | { readonly _tag: "launch-download-slow" }
   /** The page asks the app to restart, as after a keyring is unlocked. */
   | { readonly _tag: "relaunch-requested" }
   /** The app quits for good: its window has closed, and the server it ran has stopped. */
@@ -209,6 +211,13 @@ export const step = (current: Updates, event: UpdateEvent): Step => {
     case "launch-wait-over":
       // Whatever the check finds from now on installs as the app quits.
       return current.launch === "checking" ? stay(opened(current)) : stay(current);
+    case "launch-download-slow":
+      // The page opens, and the download goes on in the background, to
+      // install as the app quits, as one found while it runs does.
+      return current.launch === "updating" &&
+        (phase._tag === "available" || phase._tag === "downloading")
+        ? stay(opened(current))
+        : stay(current);
     case "relaunch-requested":
       // The restart goes into the version that would install as the app
       // quits, rather than starting the old one beside its installer.

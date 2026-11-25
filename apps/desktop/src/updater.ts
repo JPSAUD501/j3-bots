@@ -14,7 +14,9 @@ import {
 import type { Candidate } from "@j3-bots/release";
 import { sha256File, signatureCheck } from "@j3-bots/release/node";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -71,6 +73,16 @@ const CHECK_EVERY = "6 hours";
  * alone, and what the check finds later installs as the app quits.
  */
 const LAUNCH_WAIT = "5 seconds";
+
+/**
+ * How long the download of a version the launch found may go without
+ * progress, and how long it may take in all, before the page opens as usual
+ * and the download goes on in the background. electron-updater sets no
+ * timeout of its own that Electron's requests honour, so a connection that
+ * stays open and sends nothing would otherwise hold the updating screen.
+ */
+const LAUNCH_STALL = "30 seconds";
+const LAUNCH_DOWNLOAD_LIMIT = "5 minutes";
 
 /** The feed a development build reads, beside its package.json, as electron-updater names it. */
 const DEV_FEED = "dev-app-update.yml";
@@ -190,7 +202,9 @@ export const serve = Effect.fn("desktop.updates")(function* (
   fromApp: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean,
   steps: InstallSteps,
 ) {
-  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const context = yield* Effect.context<never>();
+  const runPromise = Effect.runPromiseWith(context);
+  const runFork = Effect.runForkWith(context);
   const settings = yield* DesktopSettings;
   const { updateChannel, automaticUpdates } = yield* settings.get;
   const launched = yield* Deferred.make<void>();
@@ -213,6 +227,34 @@ export const serve = Effect.fn("desktop.updates")(function* (
       // The file electron-updater downloaded last, which a verdict is about.
       let downloadedFile: string | null = null;
 
+      // While the launch's download runs: its timers, armed and cleared as each step leaves it.
+      let stalled: Fiber.Fiber<void> | null = null;
+      let overLimit: Fiber.Fiber<void> | null = null;
+      const slowAfter = (wait: Duration.Input) =>
+        runFork(
+          Effect.sleep(wait).pipe(
+            Effect.andThen(Effect.sync(() => dispatch({ _tag: "launch-download-slow" }))),
+          ),
+        );
+      const clearLaunchTimers = () => {
+        if (stalled !== null) stalled.interruptUnsafe();
+        if (overLimit !== null) overLimit.interruptUnsafe();
+        stalled = null;
+        overLimit = null;
+      };
+      /** Gives the launch's download time again after `previous`, and none once it is not running. */
+      const watchLaunchDownload = (previous: Updates) => {
+        const downloading =
+          state.launch === "updating" &&
+          (state.phase._tag === "available" || state.phase._tag === "downloading");
+        if (!downloading) return clearLaunchTimers();
+        overLimit ??= slowAfter(LAUNCH_DOWNLOAD_LIMIT);
+        if (stalled === null || state.phase !== previous.phase) {
+          if (stalled !== null) stalled.interruptUnsafe();
+          stalled = slowAfter(LAUNCH_STALL);
+        }
+      };
+
       const status = () =>
         encodeStatus({
           current: app.getVersion(),
@@ -228,7 +270,9 @@ export const serve = Effect.fn("desktop.updates")(function* (
           taken.next.channel !== state.channel ||
           taken.next.automatic !== state.automatic ||
           taken.next.launch !== state.launch;
+        const previous = state;
         state = taken.next;
+        watchLaunchDownload(previous);
         if (state.launch === "over") Deferred.doneUnsafe(launched, Effect.void);
         if (changed && !window.isDestroyed()) {
           window.webContents.send(IPC_CHANNELS.updateChanged, status());
@@ -428,10 +472,11 @@ export const serve = Effect.fn("desktop.updates")(function* (
       window.webContents.on("did-navigate", pageGone);
       window.webContents.on("render-process-gone", pageGone);
 
-      return { updater, quit, pageGone, check, dispatch, updatesFirst };
+      return { updater, quit, pageGone, check, dispatch, updatesFirst, clearLaunchTimers };
     }),
-    ({ updater, quit, pageGone }) =>
+    ({ updater, quit, pageGone, clearLaunchTimers }) =>
       Effect.sync(() => {
+        clearLaunchTimers();
         app.off("quit", quit);
         autoUpdater.off("update-not-available", updater["update-not-available"]);
         autoUpdater.off("download-progress", updater["download-progress"]);

@@ -351,4 +351,25 @@ describe("updating the app by itself", () => {
     ]);
     expect(plain.actions.slice(-3)).toEqual([{ _tag: "relaunch" }, null, null]);
   });
+
+  it("opens as usual when the launch's download stalls, and installs it as it quits", () => {
+    const slow = run(automatic("install"), [
+      ...found.slice(0, 3),
+      { _tag: "launch-download-slow" },
+    ]);
+    expect(slow.state.launch).toBe("over");
+    expect(slow.state.phase._tag).toBe("downloading");
+    const done = run(slow.state, [...found.slice(3), { _tag: "quitting" }]);
+    expect(done.actions).toEqual([
+      { _tag: "verify", version: "0.0.2" },
+      null,
+      { _tag: "install-on-quit" },
+    ]);
+    // Once its download is in, the launch's update no longer gives way.
+    const verifying = run(automatic("install"), [
+      ...found.slice(0, 4),
+      { _tag: "launch-download-slow" },
+    ]).state;
+    expect(verifying.launch).toBe("updating");
+  });
 });
