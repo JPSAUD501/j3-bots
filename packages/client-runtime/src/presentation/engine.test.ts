@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type EngineStatus, ModelId, ProviderId, type ProviderStatus } from "@j3-bots/contracts";
+import {
+  type EngineStatus,
+  ModelId,
+  ProviderId,
+  type ProviderStatus,
+  type UnavailableReason,
+} from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { providerGate } from "./engine.ts";
+import { providerFix, providerGate } from "./engine.ts";
 
 const provider = (id: string, status: ProviderStatus["status"]): ProviderStatus => ({
   id: ProviderId.make(id),
@@ -44,5 +50,34 @@ describe("providerGate", () => {
     expect(
       providerGate(engine(provider("claude", { _tag: "ready" }), provider("codex", checking))),
     ).toEqual({ _tag: "ready" });
+  });
+});
+
+describe("providerFix", () => {
+  const unavailable = (reason?: UnavailableReason) =>
+    ({ _tag: "unavailable", checking: false, ...(reason ? { reason } : {}) }) as const;
+
+  it("installs a harness that is not there, from its maker's page, and retries one that failed", () => {
+    expect(providerFix(provider("claude", unavailable("not-installed")))).toEqual({
+      _tag: "install",
+      page: "https://code.claude.com/docs/en/setup",
+    });
+    expect(
+      providerFix({ ...provider("agent", unavailable("not-installed")), harness: "other" }),
+    ).toEqual({ _tag: "install", page: null });
+    expect(providerFix(provider("claude", unavailable("failed")))).toEqual({ _tag: "retry" });
+  });
+
+  it("offers nothing where no client can fix it, or the server cannot check again", () => {
+    for (const status of [
+      unavailable("disabled"),
+      unavailable("unknown"),
+      unavailable(),
+      checking,
+      signedOut,
+      { _tag: "ready" } as const,
+    ]) {
+      expect(providerFix(provider("claude", status))).toBeNull();
+    }
   });
 });

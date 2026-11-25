@@ -24,13 +24,20 @@ const GIB = 1024 ** 3;
 const SCRIPTED_AGENT = `${import.meta.dirname}/../../../../packages/engine-t3/scripted-agent/agent.ts`;
 
 /** A provider as the server reports it; `checking` is unavailable while the engine's first check runs. */
-const provider = (harness: "claude-code" | "codex", status: string) => ({
+const provider = (
+  harness: "claude-code" | "codex",
+  status: string,
+  reason?: string,
+  detail?: string,
+) => ({
   id: harness,
   name: harness === "codex" ? "Codex" : "Claude Code",
   harness,
   status: {
     _tag: status === "checking" ? "unavailable" : status,
     ...(status === "checking" ? { checking: true } : {}),
+    ...(reason === undefined ? {} : { reason }),
+    ...(detail === undefined ? {} : { detail }),
     ...(status === "limited" ? { resetsAt: null } : {}),
     ...(status === "sign-in-required" ? { command: "j3-bots provider connect" } : {}),
   },
@@ -206,6 +213,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
           totalMemoryBytes: 4 * GIB,
           userName: "pi",
           searchPath: world.searchPath,
+          installersPath: Effect.succeed(""),
           freeSpace: () => Effect.succeed(world.freeBytes),
           portState: (host, port) => Effect.succeed({ _tag: world.ports(host, port) }),
           holdsSocket: () => Effect.succeed(world.holder),
@@ -594,6 +602,44 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       }
       // Nothing is broken, so the report finds no problem to fix.
       assert.isFalse(checks.some((check) => check.status === "problem"));
+    }),
+  );
+
+  it.effect("says why the engine cannot run a harness it found, and what fixes it", () =>
+    Effect.gen(function* () {
+      const reported = (reason?: string, detail?: string) =>
+        diagnoseIn({
+          server: Option.some(
+            running({
+              engine: {
+                state: { _tag: "ready" },
+                pinnedVersion: "0.1.11",
+                providers: [provider("claude-code", "unavailable", reason, detail)],
+              },
+            }),
+          ),
+        }).pipe(Effect.map(({ checks }) => named(checks, "Claude Code")));
+      const fixOf = (check: { readonly fix: Option.Option<string> }) =>
+        Option.getOrElse(check.fix, () => "");
+
+      const notFound = yield* reported("not-installed");
+      assertFlagged(notFound, "problem", "the engine did not find it");
+      assert.include(fixOf(notFound), "`systemctl --user restart j3-bots`");
+
+      const failed = yield* reported("failed", "Claude Agent CLI is installed but failed to run.");
+      assertFlagged(failed, "problem", "its check of Claude Code failed");
+      // In the engine's own words too.
+      assert.include(failed.summary, "The engine says: Claude Agent CLI is installed but failed");
+      assert.include(fixOf(failed), "`claude --version`");
+
+      const disabled = yield* reported("disabled");
+      assertFlagged(disabled, "problem", "turned off");
+      assert.include(fixOf(disabled), "names the file");
+
+      // An older server says no reason: the log is all there is to go on.
+      const older = yield* reported();
+      assertFlagged(older, "problem", "cannot run Claude Code");
+      assert.include(fixOf(older), "journalctl");
     }),
   );
 

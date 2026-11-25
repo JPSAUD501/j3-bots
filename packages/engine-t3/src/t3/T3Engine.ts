@@ -113,7 +113,9 @@ import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { PERMISSION_MODES, RUNTIME_MODES } from "./Policy.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import {
+  providerProblems,
   providerStatuses,
+  withoutSecrets,
   providersOfEvent,
   type ReportedProvider,
   withFirstCheckBudget,
@@ -180,6 +182,14 @@ import {
 
 /** A command that has had no reply for this long counts as lost. */
 const COMMAND_TIMEOUT = Duration.seconds(30);
+
+/**
+ * How long the engine may take to answer a request to check a provider
+ * again, which it answers once the check ends: up to 45 seconds for one
+ * that ends (`FIRST_CHECK_BUDGET` says why), after reading Windows' PATH
+ * again, with the room the first check's budget leaves.
+ */
+const RECHECK_TIMEOUT = Duration.seconds(90);
 /** How long `synchronize` waits for the engine's marker on each stream. */
 const SYNC_TIMEOUT = Duration.seconds(30);
 /** How long fetching an approval's file change may take; past it the card stays a summary. */
@@ -394,9 +404,11 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Effect.map(Option.getOrUndefined),
     Effect.orElseSucceed(() => undefined),
   );
+  /** The connection's key the engine was last started with, which its words must not carry. */
+  const givenKey = yield* Ref.make<Redacted.Redacted<string> | null>(null);
   /** Run before each start of the engine, while it is stopped (`Supervisor.beforeStart`). */
   const provisionEngine = Effect.gen(function* () {
-    yield* provision({
+    const key = yield* provision({
       home: options.home,
       files,
       instances,
@@ -406,6 +418,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       sharedSkills: options.sharedSkills,
       userHome,
     });
+    yield* Ref.set(givenKey, key);
   }).pipe(
     provisioning.withPermits(1),
     Effect.provideService(FileSystem.FileSystem, fs),
@@ -2023,11 +2036,52 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Stream.catchCause(() => Stream.empty),
     Stream.repeat(Schedule.spaced(PROVIDER_RESUBSCRIBE)),
   );
+  // Why a ready engine cannot run a provider goes to J3 Bots' log, in the
+  // engine's words, once each time it changes and again after each start:
+  // the server's log is where the operator reads what the clients word as
+  // "found, but it failed to start", and the engine's console is not kept.
+  const logged = yield* Ref.make<ReadonlyMap<ProviderId, string>>(new Map());
+  /**
+   * The secrets the engine's words are cleared of (`withoutSecrets`), as the
+   * engine was given them, read each time it becomes ready: a new
+   * connection restarts it.
+   */
+  const secrets = Effect.gen(function* () {
+    const key = yield* Ref.get(givenKey);
+    return [
+      ...(key === null ? [] : [Redacted.value(key)]),
+      ...options.providers.flatMap((provider) =>
+        provider.environment.map((variable) => Redacted.value(variable.value)),
+      ),
+    ];
+  });
+  const logProblems = Effect.fn("Engine.logProviderProblems")(function* (
+    providers: ReadonlyArray<ReportedProvider>,
+  ) {
+    const now = providerProblems(options.providers, providers);
+    const before = yield* Ref.getAndSet(logged, now);
+    for (const [id, line] of now) {
+      if (before.get(id) !== line) {
+        yield* Effect.logWarning(`The engine cannot run a provider: ${line}`);
+      }
+    }
+  });
   yield* stateChanges(state).pipe(
     // An engine that is not ready reports nothing: a report from before it
     // left is not kept for when it is back.
     Stream.switchMap((current) =>
-      current._tag === "ready" ? reports : Stream.succeed<ReadonlyArray<ReportedProvider>>([]),
+      current._tag === "ready"
+        ? Stream.unwrap(
+            Effect.map(secrets, (known) =>
+              reports.pipe(
+                Stream.map((providers) => withoutSecrets(providers, known)),
+                Stream.tap(logProblems),
+              ),
+            ),
+          )
+        : Stream.fromEffect(
+            Effect.as(Ref.set(logged, new Map()), [] as ReadonlyArray<ReportedProvider>),
+          ),
     ),
     Stream.runForEach((providers) => SubscriptionRef.set(reported, providers)),
     Effect.forkScoped,
@@ -2090,7 +2144,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       fresh: true,
     }).pipe(
       Effect.timeoutOrElse({
-        duration: COMMAND_TIMEOUT,
+        duration: RECHECK_TIMEOUT,
         orElse: () => Effect.fail(new EngineUnavailable()),
       }),
       Effect.catchTags({

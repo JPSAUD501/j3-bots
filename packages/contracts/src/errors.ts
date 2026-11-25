@@ -41,6 +41,8 @@ export const Resource = Schema.Literals([
   "connector",
   "connector-listing",
   "sign-in",
+  /** A provider, which only `engine.recheckProvider`, new in 0.7.1, names: an older client never asks it. */
+  "provider",
 ]);
 export type Resource = typeof Resource.Type;
 

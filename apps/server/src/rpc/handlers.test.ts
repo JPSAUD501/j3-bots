@@ -1,6 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { CommandId, type Device, type DeviceId, PushToken } from "@j3-bots/contracts";
+import {
+  CommandId,
+  type Device,
+  type DeviceId,
+  NotFound,
+  ProviderId,
+  PushToken,
+} from "@j3-bots/contracts";
+import * as TestEngine from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
 import type * as RpcClient from "effect/rpc/RpcClient";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
@@ -55,5 +63,21 @@ it.effect("registers for push only the device whose socket asks, and lists only 
     assert.deepStrictEqual(byName(listed), { Laptop: [false, false], Phone: [true, true] });
     const fromLaptop = yield* asDevice(laptop, (client) => client["devices.list"]());
     assert.deepStrictEqual(byName(fromLaptop), { Laptop: [true, false], Phone: [false, true] });
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("checks a provider again when asked, and refuses one the server does not have", () =>
+  Effect.gen(function* () {
+    const device = yield* pairDevice("Laptop");
+    yield* asDevice(device, (client) =>
+      client["engine.recheckProvider"]({ providerId: ProviderId.make("codex") }),
+    );
+    const missing = yield* asDevice(device, (client) =>
+      client["engine.recheckProvider"]({ providerId: ProviderId.make("gemini") }).pipe(Effect.flip),
+    );
+    assert.deepStrictEqual(missing, new NotFound({ resource: "provider" }));
+    assert.deepStrictEqual(yield* (yield* TestEngine.TestEngineControl).recheckedProviders, [
+      ProviderId.make("codex"),
+    ]);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

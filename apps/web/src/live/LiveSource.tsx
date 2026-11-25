@@ -695,6 +695,9 @@ function useLocalHere(origin: URL) {
         providerSetup={providerSetup === undefined ? undefined : { ...providerSetup, signIns }}
         waiting={reached ? null : t("local.waiting")}
         onCreate={createFirst}
+        onRecheck={(providerId) =>
+          j3.recheckProvider(providerId).then((result) => result._tag === "done")
+        }
         onArrived={(botId) => {
           setCreating(false);
           setFirstRun(false);
@@ -1590,6 +1593,8 @@ function LiveShell({
     revokeDevice: (deviceId) => j3.revokeDevice(deviceId).then((result) => result._tag === "done"),
     refreshSettings: j3.refreshSettings,
     signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
+    recheckProvider: (providerId) =>
+      j3.recheckProvider(providerId).then((result) => result._tag === "done"),
     vault: j3.vault,
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,

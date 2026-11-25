@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ModelId, type ProviderStatus } from "@j3-bots/contracts";
+import {
+  MAX_PROVIDER_DETAIL,
+  ModelId,
+  type ProviderStatus,
+  type UnavailableReason,
+} from "@j3-bots/contracts";
 import {
   ForwardCompatibleArray,
   ServerConfig,
@@ -92,8 +97,14 @@ export const providersOfEvent = (
   }
 };
 
-const unavailable = { _tag: "unavailable", checking: false } as const;
 const checking = { _tag: "unavailable", checking: true } as const;
+const unavailable = (reason: UnavailableReason, detail?: string) =>
+  ({
+    _tag: "unavailable",
+    checking: false,
+    reason,
+    ...(detail === undefined ? {} : { detail: detail.slice(0, MAX_PROVIDER_DETAIL) }),
+  }) as const;
 
 /**
  * Whether the report is the one the engine publishes for a Claude Code or
@@ -169,42 +180,52 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
 
 /**
  * Whether the engine's instance can run a bot, in J3 Bots' terms:
- * - not checked yet since the engine started (`notCheckedYet`), within the
- *   first-check budget: `unavailable`, `checking`;
- * - missing from the engine's list (not provisioned yet), disabled, not
- *   installed or unavailable: `unavailable`;
+ * - not checked yet since the engine started (`notCheckedYet`): within the
+ *   first-check budget, `unavailable` and `checking`; past it, the check
+ *   failed or died, `failed`;
+ * - turned off, in J3 Bots' provisioning or the engine's settings (not
+ *   enabled, or a `disabled` state): `disabled`;
+ * - an instance the engine could not create at all (`availability:
+ *   "unavailable"`, which it reports neither installed nor enabled), as for
+ *   settings it cannot read or a driver that failed to start: `failed`
+ *   (**Read** at `59651c1`, `unavailableProviderSnapshot.ts`), checked
+ *   before the instance's own `enabled`;
+ * - not found, which the engine reports as not installed: `not-installed`;
+ * - missing from the engine's list, as before it was provisioned or when its
+ *   report did not decode: `failed`;
  * - signed out: `sign-in-required`, with the command that connects Claude
  *   Code and Codex to an endpoint (an ACP agent has no such command, and is
- *   `unavailable`);
- * - in error: `unavailable`;
+ *   `failed`);
+ * - in error, as a check that found the harness but could not run it, or
+ *   timed out (**Read** at `59651c1`, `ClaudeProvider.ts`): `failed`;
  * - otherwise `ready`. A harness reached through an endpoint's key reports
  *   its sign-in as `unknown` or authenticated; its first turn says whether
  *   the key works. **Read** at `db51b67`, `ServerProvider` in `server.ts`.
+ *
+ * The engine's own words go with `not-installed` and `failed` as `detail`,
+ * cut to what J3 Bots holds: its `message`, or for an instance it could not
+ * create its `unavailableReason`. Its placeholder's say only that it has not
+ * checked, and a turned-off instance's name the engine's settings, which J3
+ * Bots provisions, so neither goes.
  */
 const statusOf = (
   provider: ProviderInstance,
   engine: ReportedProvider | undefined,
   firstCheck: boolean,
 ): ProviderStatus["status"] => {
-  if (engine !== undefined && notCheckedYet(provider, engine)) {
-    return firstCheck ? checking : unavailable;
+  if (engine === undefined) return unavailable("failed");
+  if (notCheckedYet(provider, engine)) return firstCheck ? checking : unavailable("failed");
+  if (engine.availability === "unavailable") {
+    return unavailable("failed", engine.unavailableReason ?? engine.message);
   }
-  if (
-    engine === undefined ||
-    !engine.enabled ||
-    !engine.installed ||
-    engine.availability === "unavailable"
-  ) {
-    return unavailable;
-  }
+  if (!engine.enabled || engine.status === "disabled") return unavailable("disabled");
+  if (!engine.installed) return unavailable("not-installed", engine.message);
   if (engine.auth.status === "unauthenticated") {
     return provider.harness === "acp-command"
-      ? unavailable
+      ? unavailable("failed", engine.message)
       : { _tag: "sign-in-required", command: CONNECT_COMMAND };
   }
-  return engine.status === "disabled" || engine.status === "error"
-    ? unavailable
-    : { _tag: "ready" };
+  return engine.status === "error" ? unavailable("failed", engine.message) : { _tag: "ready" };
 };
 
 const decodeUsageLimits = Schema.decodeUnknownOption(
@@ -298,3 +319,55 @@ export const providerStatuses = (
       usage: usageOf(reported),
     };
   });
+
+/** What stands in for a secret in the engine's words. */
+export const REDACTED = "[redacted]";
+
+/**
+ * The engine's reports with every value in `secrets` taken out of its words
+ * (`message`, `unavailableReason`). What a harness printed when its check
+ * failed can be part of them, and the harness runs with the secrets J3 Bots
+ * gives it: the provider connection's key and each instance's own
+ * variables. Those words reach every paired client and J3 Bots' log.
+ */
+export const withoutSecrets = (
+  providers: ReadonlyArray<ReportedProvider>,
+  secrets: ReadonlyArray<string>,
+): ReadonlyArray<ReportedProvider> => {
+  // The longest first, so a secret that contains another goes whole.
+  const known = secrets
+    .filter((secret) => secret.length > 0)
+    .toSorted((a, b) => b.length - a.length);
+  if (known.length === 0) return providers;
+  const scrub = (text: string) =>
+    known.reduce((scrubbed, secret) => scrubbed.split(secret).join(REDACTED), text);
+  return providers.map((provider) => ({
+    ...provider,
+    ...(provider.message === undefined ? {} : { message: scrub(provider.message) }),
+    ...(provider.unavailableReason === undefined
+      ? {}
+      : { unavailableReason: scrub(provider.unavailableReason) }),
+  }));
+};
+
+/**
+ * What to log of each provider the engine reports it cannot run, keyed by
+ * provider: its reason and the engine's words, as the line J3 Bots' log gives
+ * it. A provider still being checked, or able to run, has none.
+ */
+export const providerProblems = (
+  providers: ReadonlyArray<ProviderInstance>,
+  engine: ReadonlyArray<ReportedProvider>,
+): ReadonlyMap<ProviderInstance["id"], string> =>
+  new Map(
+    providerStatuses(providers, engine, true).flatMap(({ id, name, status }) =>
+      status._tag === "unavailable" && !status.checking
+        ? [
+            [
+              id,
+              `${name}: ${status.reason ?? "unavailable"}${status.detail === undefined ? "" : ` (${status.detail})`}`,
+            ] as const,
+          ]
+        : [],
+    ),
+  );

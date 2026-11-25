@@ -739,6 +739,15 @@ const sentences = {
   "provider.noModels": "Conectado, mas o motor ainda não lista nenhum modelo dele",
   "provider.unavailable": "Indisponível agora",
   "provider.checking": "Verificando…",
+  "provider.notInstalled.here": "Não instalado neste computador",
+  "provider.notInstalled.server": "Não instalado no servidor",
+  "provider.failed": "Encontrado, mas não conseguiu iniciar",
+  "provider.disabled": "Desativado no servidor",
+  "provider.retry": "Tentar de novo",
+  "provider.recheckFailed": "Não deu para alcançar o motor. Tente de novo daqui a pouco.",
+  "provider.failed.log":
+    "O log do servidor diz o motivo: server/server.log, na pasta de dados do app J3 Bots.",
+  "provider.detail": "O motor diz: {detail}",
   "firstRun.create.name": "Nome do bot",
   "firstRun.create.placeholder": "Um nome, como Scout",
   "firstRun.create.primary":
@@ -767,6 +776,8 @@ const sentences = {
   "onboarding.connect.loginLink": "Veja o provider login no guia de instalação",
   "onboarding.connect.later":
     "Sem pressa: crie {name} agora. O bot dá oi assim que um modelo for conectado.",
+  "onboarding.connect.createWaits":
+    "Dá para criar {name} assim que o Claude Code ou o Codex puder rodar.",
   "onboarding.connect.ready.title": "Um modelo está conectado",
   "onboarding.connect.ready.body": "Tudo pronto para {name} dar oi.",
   "onboarding.connect.checking.title": "Procurando um modelo para {name}",
@@ -774,7 +785,7 @@ const sentences = {
     "O J3 Bots confere o Claude Code e o Codex sempre que inicia. Leva até um minuto.",
   "onboarding.connect.unavailable.title": "Nenhum modelo consegue rodar {name} agora",
   "onboarding.connect.unavailable.body":
-    "Nem o Claude Code nem o Codex conseguem rodar um bot no seu servidor neste momento. Esta tela atualiza assim que um deles conseguir.",
+    "Nem o Claude Code nem o Codex conseguem rodar um bot no seu servidor ainda. Cada um diz o motivo abaixo, com o que resolve.",
   "onboarding.connect.status.waiting": "Esperando um modelo…",
   "onboarding.connect.status.ready": "Conectado",
   "onboarding.connect.status.checking": "Verificando…",

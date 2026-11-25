@@ -139,6 +139,7 @@ const uninstallOn = (machine: Machine, options: { readonly deleteData: boolean }
           totalMemoryBytes: 4 * 1024 ** 3,
           userName: "bots",
           searchPath: "/usr/bin",
+          installersPath: Effect.succeed(""),
           freeSpace: () => Effect.succeedNone,
           portState: () => Effect.succeed({ _tag: "free" }),
           findExecutable: () => Effect.succeedNone,

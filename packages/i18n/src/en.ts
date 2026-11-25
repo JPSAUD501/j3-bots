@@ -738,6 +738,15 @@ export const en = {
   "provider.noModels": "Connected, but the engine lists no model for it yet",
   "provider.unavailable": "Not available right now",
   "provider.checking": "Checking…",
+  "provider.notInstalled.here": "Not installed on this computer",
+  "provider.notInstalled.server": "Not installed on the server",
+  "provider.failed": "Found, but it failed to start",
+  "provider.disabled": "Turned off on the server",
+  "provider.retry": "Try again",
+  "provider.recheckFailed": "Couldn’t reach the engine. Try again in a moment.",
+  "provider.failed.log":
+    "The server’s log says why: server/server.log, in J3 Bots’ app data folder.",
+  "provider.detail": "The engine says: {detail}",
   "firstRun.create.name": "Bot name",
   "firstRun.create.placeholder": "A name, such as Scout",
   "firstRun.create.primary": "Make it my primary bot: requests that belong to nobody go to it.",
@@ -765,6 +774,8 @@ export const en = {
   "onboarding.connect.loginLink": "See provider login in the install guide",
   "onboarding.connect.later":
     "No rush: create {name} now, and it says hello as soon as a model is connected.",
+  "onboarding.connect.createWaits":
+    "You can create {name} as soon as Claude Code or Codex can run.",
   "onboarding.connect.ready.title": "A model is connected",
   "onboarding.connect.ready.body": "Everything is ready for {name} to say hello.",
   "onboarding.connect.checking.title": "Looking for a model for {name}",
@@ -772,7 +783,7 @@ export const en = {
     "J3 Bots checks Claude Code and Codex each time it starts. It takes up to a minute.",
   "onboarding.connect.unavailable.title": "No model can run {name} right now",
   "onboarding.connect.unavailable.body":
-    "Neither Claude Code nor Codex can run a bot on your server at the moment. This screen updates as soon as one can.",
+    "Neither Claude Code nor Codex can run a bot on your server yet. Each says why below, with what fixes it.",
   "onboarding.connect.status.waiting": "Waiting for a model…",
   "onboarding.connect.status.ready": "Connected",
   "onboarding.connect.status.checking": "Checking…",

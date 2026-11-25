@@ -10,12 +10,13 @@ import {
   RoutineId,
   type RoutineRun,
   RoutineRunId,
+  type UnavailableReason,
 } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context, plain } from "../../test/fixtures.ts";
 import { createI18n } from "@j3-bots/i18n";
 import { memoryFileName, routineLines, routineRunLines } from "./details.ts";
-import { providerLine } from "./engine.ts";
+import { type ProviderPlace, providerLine } from "./engine.ts";
 
 const en = context("2026-11-20T17:40:00Z");
 const pt = context("2026-11-20T17:40:00Z", "pt-BR");
@@ -176,25 +177,46 @@ const provider = (change: Partial<ProviderStatus>): ProviderStatus => ({
 });
 
 describe("providerLine", () => {
+  const line = (change: Partial<ProviderStatus>, place: ProviderPlace = "server") =>
+    providerLine(provider(change), en, place);
+
   it("tells ready from waiting, blocked and out of use", () => {
-    expect(providerLine(provider({}), en)).toEqual({ text: "Ready", tone: "ready" });
-    expect(providerLine(provider({ models: [] }), en).tone).toBe("waiting");
-    expect(
-      providerLine(provider({ status: { _tag: "sign-in-required", command: "j3 connect" } }), en),
-    ).toEqual({ text: "Not connected", tone: "waiting" });
-    expect(providerLine(provider({ status: { _tag: "limited", resetsAt: null } }), en)).toEqual({
+    expect(line({})).toEqual({ text: "Ready", tone: "ready" });
+    expect(line({ models: [] }).tone).toBe("waiting");
+    expect(line({ status: { _tag: "sign-in-required", command: "j3 connect" } })).toEqual({
+      text: "Not connected",
+      tone: "waiting",
+    });
+    expect(line({ status: { _tag: "limited", resetsAt: null } })).toEqual({
       text: "Usage limit reached",
       tone: "blocked",
     });
-    expect(
-      providerLine(provider({ status: { _tag: "unavailable", checking: false } }), en).tone,
-    ).toBe("muted");
   });
 
   it("says a provider the engine has not finished checking is being checked, not unavailable", () => {
-    expect(providerLine(provider({ status: { _tag: "unavailable", checking: true } }), en)).toEqual(
-      { text: "Checking…", tone: "waiting" },
-    );
+    expect(line({ status: { _tag: "unavailable", checking: true } })).toEqual({
+      text: "Checking…",
+      tone: "waiting",
+    });
+  });
+
+  it("says why a provider cannot run, and where it is not installed", () => {
+    const unavailable = (reason?: UnavailableReason) => ({
+      status: { _tag: "unavailable", checking: false, ...(reason ? { reason } : {}) } as const,
+    });
+    expect(line(unavailable("not-installed"), "this-computer")).toEqual({
+      text: "Not installed on this computer",
+      tone: "waiting",
+    });
+    expect(line(unavailable("not-installed"), "server").text).toBe("Not installed on the server");
+    expect(line(unavailable("failed"))).toEqual({
+      text: "Found, but it failed to start",
+      tone: "blocked",
+    });
+    expect(line(unavailable("disabled")).text).toBe("Turned off on the server");
+    // An older server gives no reason, and a newer one may give one this build does not know.
+    expect(line(unavailable()).text).toBe("Not available right now");
+    expect(line(unavailable("unknown")).text).toBe("Not available right now");
   });
 });
 

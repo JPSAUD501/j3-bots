@@ -556,6 +556,9 @@ const claudeSettings = (
  * is logged by path, and the provider's status shows it off. A failure to
  * read the connection or the engine's own settings, or to write anything,
  * fails the provisioning, and the engine does not start.
+ *
+ * Answers the connection's key it gave the harnesses, null when there is no
+ * connection: a secret the engine's words must not carry (`withoutSecrets`).
  */
 export const provision = Effect.fn("engine.provision")(function* (input: ProvisionInput) {
   const fs = yield* FileSystem.FileSystem;
@@ -675,6 +678,7 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     settingsFile,
     engineSettings(path, input, connection !== null, disabled, existing),
   );
+  return connection === null ? null : Redacted.make(connection.key);
 });
 
 /**

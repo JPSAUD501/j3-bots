@@ -59,7 +59,13 @@ import { updateHasDetails } from "./ConnectionBanner";
 import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
-import { HarnessLocations, type LocalProviderSetup, LocalSignIn } from "./ProviderSetup";
+import type { Recheck } from "./ProviderFix";
+import {
+  engineFindings,
+  HarnessLocations,
+  type LocalProviderSetup,
+  LocalSignIn,
+} from "./ProviderSetup";
 import { ChangeServer } from "./ServerAddress";
 import { StartWithSystem, StopUsingComputer, UseThisComputer } from "./LocalMode";
 import { PairingQr } from "./PairingQr";
@@ -88,6 +94,7 @@ type SettingsIntents = Pick<
   | "retryTurns"
   | "signOut"
   | "signOutBrowser"
+  | "recheckProvider"
   | "server"
   | "local"
   | "update"
@@ -208,6 +215,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               <EngineSection
                 engine={data.engine}
                 stale={data.engineStale}
+                onRecheck={intents.recheckProvider}
                 {...(intents.providerSetup === undefined
                   ? {}
                   : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
@@ -267,10 +275,12 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
 export function EngineSection({
   engine,
   stale,
+  onRecheck,
   providerSetup,
 }: {
   engine: EngineStatus | null;
   stale: boolean;
+  onRecheck: Recheck;
   providerSetup?: LocalProviderSetup;
 }) {
   const i18n = useI18n();
@@ -311,14 +321,26 @@ export function EngineSection({
       {engine.providers.length > 0 && (
         <ul className="flex flex-col gap-1.5 text-sm">
           {engine.providers.map((provider) => (
-            <ProviderRow key={provider.id} provider={provider} stale={stale} />
+            <ProviderRow
+              key={provider.id}
+              provider={provider}
+              place={providerSetup === undefined ? "server" : "this-computer"}
+              onRecheck={onRecheck}
+              stale={stale}
+            />
           ))}
         </ul>
       )}
-      {providerSetup !== undefined && <HarnessLocations setup={providerSetup} />}
+      {providerSetup !== undefined && (
+        <HarnessLocations setup={providerSetup} findings={engineFindings(engine)} />
+      )}
       {!stale &&
         (providerSetup !== undefined && connectCommand(engine) !== null ? (
-          <LocalSignIn setup={providerSetup} fallback={<ConnectProviders engine={engine} />} />
+          <LocalSignIn
+            setup={providerSetup}
+            fallback={<ConnectProviders engine={engine} />}
+            findings={engineFindings(engine)}
+          />
         ) : (
           <ConnectProviders engine={engine} />
         ))}

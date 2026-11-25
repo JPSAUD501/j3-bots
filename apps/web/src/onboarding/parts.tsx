@@ -28,7 +28,10 @@ export function BigButton({
   readonly children: ReactNode;
   readonly onClick?: () => void;
   readonly type?: "button" | "submit";
-  /** Announced as unavailable but still focusable, so its label stays readable. */
+  /**
+   * Announced as unavailable but still focusable, so its label stays
+   * readable; pressing it then does nothing.
+   */
   readonly disabled?: boolean;
   /** The ids of what says more about it, such as a line under it. */
   readonly describedBy?: string | undefined;
@@ -37,7 +40,7 @@ export function BigButton({
     <Button
       type={type}
       variant="primary"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
       aria-disabled={disabled}
       aria-describedby={describedBy}
       className="h-12 w-full text-lg pointer-coarse:h-13"

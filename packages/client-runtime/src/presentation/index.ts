@@ -88,10 +88,13 @@ export {
 } from "./connectorForm.ts";
 export { type CodeLineTone, diffTones } from "./diff.ts";
 export {
+  cannotRun,
   connectCommand,
   hasDefaultModel,
   type OpeningHold,
   openingHeld,
+  providerFix,
+  type ProviderFix,
   providerGate,
 } from "./engine.ts";
 export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";

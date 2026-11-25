@@ -16,6 +16,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { freeSpaceAt } from "./freeSpace.ts";
 import { type PortState, portStateOf } from "./Ports.ts";
+import { runPowerShell } from "./PowerShell.ts";
 import { privateKeysIn } from "./sshKeys.ts";
 
 /** The facts about this machine that `j3-bots doctor` and `service` read. */
@@ -30,6 +31,13 @@ export class Host extends Context.Service<
     readonly userName: string;
     /** `PATH` as this process has it, from which a service unit's is made. */
     readonly searchPath: string;
+    /**
+     * On Windows, the `PATH` a program started now gets, which an installer
+     * may have changed since this process started: the user's, then the
+     * machine's, as Windows keeps them, read again on each call; empty when
+     * they cannot be read, and elsewhere.
+     */
+    readonly installersPath: Effect.Effect<string>;
     /** Bytes free to this user on the filesystem holding `path`, or its nearest existing parent. */
     readonly freeSpace: (path: string) => Effect.Effect<Option.Option<number>>;
     /** Whether the server could listen on `host` and `port` right now. */
@@ -122,6 +130,17 @@ const groupNames = (table: string) => {
 const REACHABLE_WITHIN = "15 seconds";
 
 /**
+ * Prints the user's `PATH`, then the machine's, a line each, as Windows
+ * keeps them for a program started now, the way T3 Code's engine reads them
+ * again before it looks for a harness (**Read** at `59651c1`,
+ * `windowsEnvironmentValueCommand` in `packages/shared/src/shell.ts`). A
+ * folder given as `%VARIABLE%` comes expanded (**Assumed**: .NET expands a
+ * `REG_EXPAND_SZ` value as it reads it).
+ */
+const INSTALLERS_PATH =
+  "@([Environment]::GetEnvironmentVariable('PATH','User'), [Environment]::GetEnvironmentVariable('PATH','Machine')) | Where-Object { $_ } | ForEach-Object { Write-Output $_ }";
+
+/**
  * The file names a command `name` is found as. On Windows, `name` with each
  * extension `PATHEXT` lists, `.COM;.EXE;.BAT;.CMD` when it lists none: a
  * harness is `claude.exe`, or the `.cmd` shim npm installs. Elsewhere, `name`.
@@ -155,6 +174,19 @@ export const layer = Layer.effect(
       totalMemoryBytes: NodeOs.totalmem(),
       userName: user.username,
       searchPath,
+      installersPath:
+        process.platform === "win32"
+          ? runPowerShell(INSTALLERS_PATH, {}).pipe(
+              Effect.map((output) =>
+                output
+                  .split(/\r?\n/)
+                  .filter((line) => line.trim() !== "")
+                  .join(";"),
+              ),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.orElseSucceed(() => ""),
+            )
+          : Effect.succeed(""),
       freeSpace: Effect.fn("Host.freeSpace")(function* (target: string) {
         return yield* freeSpaceAt(target).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),

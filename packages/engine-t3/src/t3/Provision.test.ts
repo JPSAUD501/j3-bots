@@ -185,7 +185,9 @@ describe("provision with a provider connection", () => {
         files,
         connection: { baseUrl: "http://127.0.0.1:8317", key: Redacted.make("the-key") },
       });
-      yield* provision(input);
+      const given = yield* provision(input);
+      // The key it gave the harnesses, which their words must not carry.
+      assert.strictEqual(given === null ? null : Redacted.value(given), "the-key");
 
       const variables = (instanceId: string) =>
         Effect.map(settings, (read) =>

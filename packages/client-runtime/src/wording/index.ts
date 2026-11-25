@@ -42,7 +42,13 @@ export {
   handoffMarks,
   routineChangeDetail,
 } from "./eventLine.ts";
-export { engineDownload, engineProblem, providerLine, type ProviderTone } from "./engine.ts";
+export {
+  engineDownload,
+  engineProblem,
+  type ProviderPlace,
+  providerLine,
+  type ProviderTone,
+} from "./engine.ts";
 export {
   deliveryLine,
   draftFileDetail,

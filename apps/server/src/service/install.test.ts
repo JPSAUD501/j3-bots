@@ -98,6 +98,7 @@ const installOn = (machine: Machine) =>
           totalMemoryBytes: 4 * 1024 ** 3,
           userName: "pi",
           searchPath: "/usr/bin",
+          installersPath: Effect.succeed(""),
           freeSpace: () => Effect.succeedNone,
           // The configured port is held by the service being reinstalled.
           portState: (_host, port) =>
