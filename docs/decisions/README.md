@@ -46,5 +46,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0038](0038-a-teammate-conversation-is-a-view-of-teammate-messages.md) | A teammate conversation is a view of the teammate messages that already exist | Accepted |
 | [0039](0039-a-room-has-no-host.md) | A room has no host, and a message for nobody wakes everyone | Accepted |
 | [0040](0040-the-members-of-a-room-run-in-parallel.md) | The members of a room run in parallel | Accepted |
+| [0041](0041-the-apps-update-themselves-when-they-start.md) | The apps update themselves when they start | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.
