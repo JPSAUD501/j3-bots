@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ProviderStatus, UnavailableReason } from "@j3-bots/contracts";
+import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
 import * as EngineLive from "@j3-bots/engine-t3/live";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -477,21 +477,23 @@ const unavailableCheck = (
   harness: HarnessFacts,
   provider: string,
   path: string,
-  reason: UnavailableReason | undefined,
+  { reason, detail }: Extract<ProviderStatus["status"], { readonly _tag: "unavailable" }>,
 ): Check => {
+  // The engine's own words, as it reported them, when it gave any.
+  const says = detail === undefined ? "" : ` The engine says: ${detail}`;
   switch (reason) {
     case "not-installed":
       return check(
         harness.name,
         "problem",
-        `\`${harness.executable}\` is at ${path}, but the engine did not find it, so it cannot run ${provider}.`,
+        `\`${harness.executable}\` is at ${path}, but the engine did not find it, so it cannot run ${provider}.${says}`,
         `Restart the service so the engine starts again with its PATH: \`systemctl --user restart j3-bots\`. If it still does not find it, the log says where it looked: ${SERVICE_LOG}.`,
       );
     case "failed":
       return check(
         harness.name,
         "problem",
-        `The engine found ${harness.name} at ${path}, but its check of ${provider} failed, so no bot runs on it.`,
+        `The engine found ${harness.name} at ${path}, but its check of ${provider} failed, so no bot runs on it.${says}`,
         `Run \`${harness.executable} --version\` as this user to see whether it starts; the log has the engine's own account: ${SERVICE_LOG}. Once it starts, restart the service: \`systemctl --user restart j3-bots\`.`,
       );
     case "disabled":
@@ -573,7 +575,7 @@ const providerCheck = Effect.fn("doctor.provider")(function* (
   }
   for (const provider of providers) {
     if (provider.status._tag === "unavailable") {
-      return unavailableCheck(harness, provider.name, found.value, provider.status.reason);
+      return unavailableCheck(harness, provider.name, found.value, provider.status);
     }
   }
   const limited = providers.find((provider) => provider.status._tag === "limited");

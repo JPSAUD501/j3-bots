@@ -113,6 +113,7 @@ import { cursorFor, makeBatches, type BatchPlace } from "./Batches.ts";
 import { PERMISSION_MODES, RUNTIME_MODES } from "./Policy.ts";
 import { makePrivateFiles } from "./PrivateFiles.ts";
 import {
+  providerProblems,
   providerStatuses,
   providersOfEvent,
   type ReportedProvider,
@@ -2023,11 +2024,31 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Stream.catchCause(() => Stream.empty),
     Stream.repeat(Schedule.spaced(PROVIDER_RESUBSCRIBE)),
   );
+  // Why a ready engine cannot run a provider goes to J3 Bots' log, in the
+  // engine's words, once each time it changes and again after each start:
+  // the server's log is where the operator reads what the clients word as
+  // "found, but it failed to start", and the engine's console is not kept.
+  const logged = yield* Ref.make<ReadonlyMap<ProviderId, string>>(new Map());
+  const logProblems = Effect.fn("Engine.logProviderProblems")(function* (
+    providers: ReadonlyArray<ReportedProvider>,
+  ) {
+    const now = providerProblems(options.providers, providers);
+    const before = yield* Ref.getAndSet(logged, now);
+    for (const [id, line] of now) {
+      if (before.get(id) !== line) {
+        yield* Effect.logWarning(`The engine cannot run a provider: ${line}`);
+      }
+    }
+  });
   yield* stateChanges(state).pipe(
     // An engine that is not ready reports nothing: a report from before it
     // left is not kept for when it is back.
     Stream.switchMap((current) =>
-      current._tag === "ready" ? reports : Stream.succeed<ReadonlyArray<ReportedProvider>>([]),
+      current._tag === "ready"
+        ? reports.pipe(Stream.tap(logProblems))
+        : Stream.fromEffect(
+            Effect.as(Ref.set(logged, new Map()), [] as ReadonlyArray<ReportedProvider>),
+          ),
     ),
     Stream.runForEach((providers) => SubscriptionRef.set(reported, providers)),
     Effect.forkScoped,

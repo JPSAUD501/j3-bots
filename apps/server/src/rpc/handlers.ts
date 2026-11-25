@@ -6,6 +6,7 @@ import {
   type Entry,
   J3Rpcs,
   NotFound,
+  type ProviderId,
   USAGE_PERIOD,
 } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
@@ -13,7 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import type * as Stream from "effect/Stream";
+import * as Stream from "effect/Stream";
 import { Attachments } from "../attachments/Attachments.ts";
 import { CurrentDevice, DeviceAuth } from "../auth/DeviceAuth.ts";
 import { ConnectorAuth } from "../connectors/oauth/ConnectorAuth.ts";
@@ -104,6 +105,24 @@ export const handlers = ServedRpcs.toLayer(
       return { ...grant, origins };
     });
 
+    /**
+     * The engine's check of a provider it reports, run again now. Until the
+     * engine is ready it reports none, so the request waits for nothing: the
+     * engine cannot take it.
+     */
+    const recheckProvider = Effect.fn("rpc.recheckProvider")(function* (providerId: ProviderId) {
+      const status = yield* Stream.runHead(engine.status);
+      if (Option.isNone(status) || status.value.state._tag !== "ready") {
+        return yield* new Conflict({ reason: "engine-unavailable" });
+      }
+      if (!status.value.providers.some((provider) => provider.id === providerId)) {
+        return yield* new NotFound({ resource: "provider" });
+      }
+      yield* engine
+        .recheckProvider(providerId)
+        .pipe(Effect.mapError(() => new Conflict({ reason: "engine-unavailable" })));
+    });
+
     const botFiles = Effect.fn("rpc.botFiles")(function* (input: {
       readonly botId: BotId;
       readonly before: AttachmentId | null;
@@ -174,6 +193,8 @@ export const handlers = ServedRpcs.toLayer(
       "memory.read": ({ scope, path }) => memory.read(scope, path),
       "memory.write": (input) => memory.write(input),
       "engine.subscribe": () => engine.status,
+      // Checking again checks nothing more: no receipt.
+      "engine.recheckProvider": ({ providerId }) => recheckProvider(providerId),
       "usage.turns": ({ limit }) => usage.turns({ period: USAGE_PERIOD, limit }),
       "settings.get": () => settings.get,
       "settings.subscribe": () => settings.changes,

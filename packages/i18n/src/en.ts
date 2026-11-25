@@ -769,6 +769,7 @@ export const en = {
   "onboarding.connect.loginLink": "See provider login in the install guide",
   "onboarding.connect.later":
     "No rush: create {name} now, and it says hello as soon as a model is connected.",
+  "onboarding.connect.createWaits": "You can create {name} as soon as Claude Code or Codex can run.",
   "onboarding.connect.ready.title": "A model is connected",
   "onboarding.connect.ready.body": "Everything is ready for {name} to say hello.",
   "onboarding.connect.checking.title": "Looking for a model for {name}",

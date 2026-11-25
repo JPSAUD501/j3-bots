@@ -771,6 +771,7 @@ const sentences = {
   "onboarding.connect.loginLink": "Veja o provider login no guia de instalação",
   "onboarding.connect.later":
     "Sem pressa: crie {name} agora. O bot dá oi assim que um modelo for conectado.",
+  "onboarding.connect.createWaits": "Dá para criar {name} assim que o Claude Code ou o Codex puder rodar.",
   "onboarding.connect.ready.title": "Um modelo está conectado",
   "onboarding.connect.ready.body": "Tudo pronto para {name} dar oi.",
   "onboarding.connect.checking.title": "Procurando um modelo para {name}",

@@ -777,6 +777,7 @@ function ConnectStep({
   const ctx = usePresentation();
   const { t } = i18n;
   const text = connectStepText(engine, name, i18n);
+  const waitsId = useId();
   const gate = engine !== null && engine.state._tag === "ready" ? providerGate(engine) : null;
   const unavailable = gate?._tag === "unavailable";
   // On this computer, the harnesses sign in from here; the command stays for when they cannot.
@@ -808,9 +809,17 @@ function ConnectStep({
       actions={
         <>
           <FailureLine failure={failure} name={name} />
-          <BigButton onClick={onCreate}>{t("onboarding.create", { name })}</BigButton>
-          {text.later !== null && (
-            <p className="text-center text-sm text-pretty text-muted-foreground">{text.later}</p>
+          <BigButton
+            onClick={text.createWaits === null ? onCreate : undefined}
+            disabled={text.createWaits !== null}
+            describedBy={text.createWaits === null ? undefined : waitsId}
+          >
+            {t("onboarding.create", { name })}
+          </BigButton>
+          {(text.createWaits ?? text.later) !== null && (
+            <p id={waitsId} className="text-center text-sm text-pretty text-muted-foreground">
+              {text.createWaits ?? text.later}
+            </p>
           )}
         </>
       }

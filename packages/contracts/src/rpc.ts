@@ -12,6 +12,7 @@ import {
   EntryId,
   EntryOrder,
   Language,
+  ProviderId,
   RoomId,
   RoutineId,
   RoutineRunId,
@@ -684,6 +685,21 @@ export const MemoryRpcs = RpcGroup.make(
 export const EngineRpcs = RpcGroup.make(
   /** The current status, then every change. */
   Rpc.make("engine.subscribe", { success: EngineStatus, stream: true }),
+  /**
+   * Has the engine check the provider again now, as after the operator
+   * installed its harness or fixed what made its check fail, instead of at
+   * its next periodic check, minutes away. It answers once the engine took
+   * the request; what the check finds follows on `engine.subscribe`.
+   * `NotFound("provider")` for a provider the server does not have, and
+   * `Conflict("engine-unavailable")` when the engine cannot take it now. New
+   * in 0.7.1, at protocol 10: a client asks it only of a server that reports
+   * an unavailable provider's `reason`, which an older one never does, and
+   * that answers it with a defect.
+   */
+  Rpc.make("engine.recheckProvider", {
+    payload: { providerId: ProviderId },
+    error: Schema.Union([NotFound, Conflict]),
+  }),
   /**
    * Turns that started in the `USAGE_PERIOD` before `readAt`, the moment the
    * server read them, newest first, at most `limit`.

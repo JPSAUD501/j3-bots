@@ -40,6 +40,12 @@ export const HostCommand = Schema.String.check(Schema.isMinLength(1), Schema.isM
  * - `unknown`, as a client reads it: a reason a newer server gives.
  */
 export const unavailableReasons = ["not-installed", "failed", "disabled"] as const;
+/** The engine's own account of a provider it cannot run, cut to this length. */
+export const MAX_PROVIDER_DETAIL = 500;
+export const ProviderDetail = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_PROVIDER_DETAIL),
+);
 export const UnavailableReason = OpenLiterals(unavailableReasons);
 export type UnavailableReason = typeof UnavailableReason.Type;
 
@@ -66,14 +72,17 @@ export const ProviderStatus = Schema.Struct({
      * server older than `checking` answers without it, at the same protocol
      * version, and reads as not checking; an older client ignores it.
      *
-     * `reason`, when not `checking`, says why (`UnavailableReason`). A server
-     * older than `reason` answers without it, at the same protocol version,
-     * and a client then knows only that the provider cannot run; an older
-     * client ignores it.
+     * `reason`, when not `checking`, says why (`UnavailableReason`), and
+     * `detail` how the engine put it, in its own words (English), when it
+     * gave any: for the operator to read, never to act on. A server older
+     * than `reason` answers without either, at the same protocol version, and
+     * a client then knows only that the provider cannot run; it also does not
+     * answer `engine.recheckProvider`. An older client ignores both.
      */
     Schema.TaggedStruct("unavailable", {
       checking: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
       reason: Schema.optionalKey(UnavailableReason),
+      detail: Schema.optionalKey(ProviderDetail),
     }),
   ]),
   models: Schema.Array(Schema.Struct({ id: ModelId, name: Label })),

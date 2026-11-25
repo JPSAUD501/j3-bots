@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ModelId, ProviderId, type UnavailableReason } from "@j3-bots/contracts";
+import {
+  MAX_PROVIDER_DETAIL,
+  ModelId,
+  ProviderId,
+  type ProviderStatus,
+} from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -12,6 +17,7 @@ import type { ProviderInstance } from "../Engine.ts";
 import {
   CONNECT_COMMAND,
   ConfigStreamEvent,
+  providerProblems,
   providerStatuses,
   providersOfEvent,
   withFirstCheckBudget,
@@ -108,40 +114,67 @@ describe("providerStatuses", () => {
     });
   });
 
-  it("says why the engine cannot run it", () => {
-    const cases: ReadonlyArray<readonly [Record<string, unknown> | undefined, UnavailableReason]> = [
+  it("says why the engine cannot run it, in its own words where it gave any", () => {
+    const notFound = "Claude Agent CLI (`claude`) was not found on PATH.";
+    const timedOut =
+      "Claude Agent CLI is installed but failed to run. Timed out while running command.";
+    const cases: ReadonlyArray<
+      readonly [Record<string, unknown> | undefined, ProviderStatus["status"]]
+    > = [
       // Missing from the engine's list.
-      [undefined, "failed"],
+      [undefined, { _tag: "unavailable", checking: false, reason: "failed" }],
       // A check that did not find the harness on the engine's PATH.
       [
-        {
-          installed: false,
-          status: "error",
-          message: "Claude Agent CLI (`claude`) was not found on PATH.",
-        },
-        "not-installed",
+        { installed: false, status: "error", message: notFound },
+        { _tag: "unavailable", checking: false, reason: "not-installed", detail: notFound },
       ],
-      [{ installed: false }, "not-installed"],
-      // A driver the engine has no use of on this machine.
-      [{ availability: "unavailable", installed: false, enabled: false }, "not-installed"],
-      // Turned off, in J3 Bots' provisioning or in the engine's settings.
-      [{ enabled: false, installed: false, status: "warning" }, "disabled"],
-      [{ status: "disabled" }, "disabled"],
-      // Found, but its check failed or timed out.
+      [{ installed: false }, { _tag: "unavailable", checking: false, reason: "not-installed" }],
+      // An instance the engine could not create.
       [
         {
+          availability: "unavailable",
+          unavailableReason: "Driver 'claudeAgent' failed to create instance.",
+          installed: false,
+          enabled: false,
           status: "error",
-          message: "Claude Agent CLI is installed but failed to run. Timed out while running command.",
         },
-        "failed",
+        {
+          _tag: "unavailable",
+          checking: false,
+          reason: "failed",
+          detail: "Driver 'claudeAgent' failed to create instance.",
+        },
+      ],
+      // Turned off, in J3 Bots' provisioning or in the engine's settings: the
+      // engine's words name its own settings, not J3 Bots'.
+      [
+        {
+          enabled: false,
+          installed: false,
+          status: "disabled",
+          message: "Claude is disabled in T3 Code settings.",
+        },
+        { _tag: "unavailable", checking: false, reason: "disabled" },
+      ],
+      [{ status: "disabled" }, { _tag: "unavailable", checking: false, reason: "disabled" }],
+      // Found, but its check failed or timed out.
+      [
+        { status: "error", message: timedOut },
+        { _tag: "unavailable", checking: false, reason: "failed", detail: timedOut },
+      ],
+      // Words longer than J3 Bots holds are cut.
+      [
+        { status: "error", message: "x".repeat(MAX_PROVIDER_DETAIL + 50) },
+        {
+          _tag: "unavailable",
+          checking: false,
+          reason: "failed",
+          detail: "x".repeat(MAX_PROVIDER_DETAIL),
+        },
       ],
     ];
-    for (const [fields, reason] of cases) {
-      assert.deepStrictEqual(statusOf(claude, fields)?.status, {
-        _tag: "unavailable",
-        checking: false,
-        reason,
-      });
+    for (const [fields, expected] of cases) {
+      assert.deepStrictEqual(statusOf(claude, fields)?.status, expected);
     }
   });
 
@@ -162,6 +195,7 @@ describe("providerStatuses", () => {
       _tag: "unavailable",
       checking: false,
       reason: "not-installed",
+      detail: notChecked.message,
     });
     // Past the budget the check failed or died, and the placeholder says nothing more.
     assert.deepStrictEqual(statusOf(claude, notChecked, false)?.status, {
@@ -270,6 +304,19 @@ describe("providerStatuses", () => {
     for (const malformed of ["0", "2026-02-30T10:00:00Z", "2026-11-20T24:00:00Z", "2026-11-20"]) {
       assert.strictEqual(resetOf(malformed), null);
     }
+  });
+});
+
+describe("providerProblems", () => {
+  it("gives a line for each provider the engine cannot run, and none for one being checked", () => {
+    const notFound = "Claude Agent CLI (`claude`) was not found on PATH.";
+    assert.deepStrictEqual(
+      providerProblems([claude], reported(claude, { installed: false, message: notFound })),
+      new Map([[claude.id, `Claude Code: not-installed (${notFound})`]]),
+    );
+    const notChecked = { installed: false, status: "warning", auth: { status: "unknown" } };
+    assert.strictEqual(providerProblems([claude], reported(claude, notChecked)).size, 0);
+    assert.strictEqual(providerProblems([claude], reported(claude, {})).size, 0);
   });
 });
 

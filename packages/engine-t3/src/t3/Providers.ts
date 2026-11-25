@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { ModelId, type ProviderStatus, type UnavailableReason } from "@j3-bots/contracts";
+import {
+  MAX_PROVIDER_DETAIL,
+  ModelId,
+  type ProviderStatus,
+  type UnavailableReason,
+} from "@j3-bots/contracts";
 import {
   ForwardCompatibleArray,
   ServerConfig,
@@ -93,8 +98,13 @@ export const providersOfEvent = (
 };
 
 const checking = { _tag: "unavailable", checking: true } as const;
-const unavailable = (reason: UnavailableReason) =>
-  ({ _tag: "unavailable", checking: false, reason }) as const;
+const unavailable = (reason: UnavailableReason, detail?: string) =>
+  ({
+    _tag: "unavailable",
+    checking: false,
+    reason,
+    ...(detail === undefined ? {} : { detail: detail.slice(0, MAX_PROVIDER_DETAIL) }),
+  }) as const;
 
 /**
  * Whether the report is the one the engine publishes for a Claude Code or
@@ -175,11 +185,12 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
  *   failed or died, `failed`;
  * - turned off, in J3 Bots' provisioning or the engine's settings (not
  *   enabled, or a `disabled` state): `disabled`;
- * - not found: `not-installed`. The engine reports a harness it did not find
- *   as not installed, and a driver it has no use of on this machine
- *   (`availability: "unavailable"`) as neither installed nor enabled, which
- *   reads the same (**Read** at `59651c1`, `ServerProviderAvailability` in
- *   `server.ts`, and the Claude Code and Codex checks);
+ * - an instance the engine could not create at all (`availability:
+ *   "unavailable"`, which it reports neither installed nor enabled), as for
+ *   settings it cannot read or a driver that failed to start: `failed`
+ *   (**Read** at `59651c1`, `unavailableProviderSnapshot.ts`), checked
+ *   before the instance's own `enabled`;
+ * - not found, which the engine reports as not installed: `not-installed`;
  * - missing from the engine's list, as before it was provisioned or when its
  *   report did not decode: `failed`;
  * - signed out: `sign-in-required`, with the command that connects Claude
@@ -190,6 +201,12 @@ const modelsOf = (engine: ReportedProvider | undefined): ProviderStatus["models"
  * - otherwise `ready`. A harness reached through an endpoint's key reports
  *   its sign-in as `unknown` or authenticated; its first turn says whether
  *   the key works. **Read** at `db51b67`, `ServerProvider` in `server.ts`.
+ *
+ * The engine's own words go with `not-installed` and `failed` as `detail`,
+ * cut to what J3 Bots holds: its `message`, or for an instance it could not
+ * create its `unavailableReason`. Its placeholder's say only that it has not
+ * checked, and a turned-off instance's name the engine's settings, which J3
+ * Bots provisions, so neither goes.
  */
 const statusOf = (
   provider: ProviderInstance,
@@ -198,15 +215,17 @@ const statusOf = (
 ): ProviderStatus["status"] => {
   if (engine === undefined) return unavailable("failed");
   if (notCheckedYet(provider, engine)) return firstCheck ? checking : unavailable("failed");
-  if (engine.availability === "unavailable") return unavailable("not-installed");
+  if (engine.availability === "unavailable") {
+    return unavailable("failed", engine.unavailableReason ?? engine.message);
+  }
   if (!engine.enabled || engine.status === "disabled") return unavailable("disabled");
-  if (!engine.installed) return unavailable("not-installed");
+  if (!engine.installed) return unavailable("not-installed", engine.message);
   if (engine.auth.status === "unauthenticated") {
     return provider.harness === "acp-command"
-      ? unavailable("failed")
+      ? unavailable("failed", engine.message)
       : { _tag: "sign-in-required", command: CONNECT_COMMAND };
   }
-  return engine.status === "error" ? unavailable("failed") : { _tag: "ready" };
+  return engine.status === "error" ? unavailable("failed", engine.message) : { _tag: "ready" };
 };
 
 const decodeUsageLimits = Schema.decodeUnknownOption(
@@ -300,3 +319,25 @@ export const providerStatuses = (
       usage: usageOf(reported),
     };
   });
+
+/**
+ * What to log of each provider the engine reports it cannot run, keyed by
+ * provider: its reason and the engine's words, as the line J3 Bots' log gives
+ * it. A provider still being checked, or able to run, has none.
+ */
+export const providerProblems = (
+  providers: ReadonlyArray<ProviderInstance>,
+  engine: ReadonlyArray<ReportedProvider>,
+): ReadonlyMap<ProviderInstance["id"], string> =>
+  new Map(
+    providerStatuses(providers, engine, true).flatMap(({ id, name, status }) =>
+      status._tag === "unavailable" && !status.checking
+        ? [
+            [
+              id,
+              `${name}: ${status.reason ?? "unavailable"}${status.detail === undefined ? "" : ` (${status.detail})`}`,
+            ] as const,
+          ]
+        : [],
+    ),
+  );
