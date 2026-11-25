@@ -18,6 +18,7 @@ import {
   nobody,
   operatorWrites,
   roomWith,
+  say,
   to,
 } from "../testing/rooms.ts";
 import {
@@ -202,6 +203,47 @@ const roomTurnOf = (members: ReadonlyArray<Member>, not: TurnId) =>
       return Option.none();
     }),
   );
+
+it.effect(
+  "names every member answering in the room at once, one waiting for a turn slot too, and drops each as its turns end, in whatever order",
+  () =>
+    Effect.gen(function* () {
+      yield* concurrentTurns(2);
+      const [hal, ana, bo] = [yield* member("Hal"), yield* member("Ana"), yield* member("Bo")];
+      const members = [hal, ana, bo];
+      const room = yield* roomWith(hal, [ana, bo]);
+      const seen = yield* watchRoom(room.id, (sent) => sent.answering);
+
+      // Hal and Ana answer at once, and Bo waits for a slot: all three answer.
+      yield* operatorWrites(room.id, members, "Name one risk each.", nobody);
+      const halTurn = yield* nextTurn(hal.bot.id);
+      const anaTurn = yield* nextTurn(ana.bot.id);
+      yield* answers(seen, room.id, [hal.bot.id, ana.bot.id, bo.bot.id]);
+
+      // Ana ends first. Her reply, to nobody, waits for Hal's turn to end and
+      // goes with the question to Bo, who takes her slot.
+      yield* say(ana, anaTurn, { text: "The budget." });
+      yield* finish(ana, anaTurn, members);
+      const boTurn = yield* nextTurn(bo.bot.id);
+      yield* answers(seen, room.id, [hal.bot.id, bo.bot.id]);
+
+      // Hal answers again for her reply, and stays named in between.
+      yield* finish(hal, halTurn, members);
+      const halAgain = yield* nextTurn(hal.bot.id, halTurn);
+      yield* answers(seen, room.id, [hal.bot.id, bo.bot.id]);
+      yield* finish(bo, boTurn, members);
+      yield* answers(seen, room.id, [hal.bot.id]);
+      yield* finish(hal, halAgain, members);
+      yield* answers(seen, room.id, []);
+
+      // The roster sent each of those once, and nothing else.
+      const names = new Map(members.map((one) => [one.bot.id, one.bot.profile.name]));
+      const sent = (yield* Ref.get(seen))
+        .map((ids) => ids.map((id) => names.get(id) ?? id).join(","))
+        .filter((line, index, all) => index === 0 || all[index - 1] !== line);
+      assert.deepStrictEqual(sent, ["", "Hal,Ana,Bo", "Hal,Bo", "Hal", ""]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
 
 /** The works in order, each change once. */
 const dedupe = (works: ReadonlyArray<RoomWorkState>) =>

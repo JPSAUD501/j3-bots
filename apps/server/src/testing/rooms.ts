@@ -136,10 +136,7 @@ const envelopes = (member: Member) =>
 export const lastEnvelope = (member: Member) =>
   Effect.map(envelopes(member), (all) => all.at(-1) ?? "");
 
-/**
- * Which members run a turn now: a room runs one at a time, so a test asserts
- * this is exactly the member it expects at every step.
- */
+/** Which members run a turn now, in the order given. */
 export const running = (members: ReadonlyArray<Member>) =>
   Effect.gen(function* () {
     const names: Array<string> = [];

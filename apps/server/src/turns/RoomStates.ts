@@ -32,9 +32,10 @@ export interface RoomActivity {
  *
  * `answering`, while the work is `running`, is every member at work on the
  * room, in member order: each one whose turn of the room has not finished, in
- * a session the engine still has, or whose dispatch for the room is live, as
- * `roomLiveSql` counts it, and each one with a room wake waiting to start,
- * for a turn slot or for a turn of its own to end. Member order holds while
+ * a session the engine still has, or whose dispatch for the room is live
+ * (`intended`, `accepted`, or `delivered` with no continuation pending), and
+ * each one with a room wake waiting to start, for a turn slot or for a turn of
+ * its own to end. Members run in parallel, so several are named at once. Member order holds while
  * a member goes from waiting to working, so the list changes only when a
  * member starts or ends. A member whose permission mode the engine refuses
  * waits out of the room, so it is not counted, nor is one that left the

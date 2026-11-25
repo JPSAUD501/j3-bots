@@ -40,8 +40,9 @@ import { freePort, searchPathWithoutNode } from "../smoke/host.ts";
 // server of this checkout, in a scratch home, on the pinned engine, with the
 // scripted agent calling J3 Bots' own tools through the real `j3` bridge. The
 // operator asks the primary bot for a group; in that one turn it creates four
-// teammates and starts a room with them, whose kickoff wakes each member in
-// turn. Needs the network the first time, to download the engine.
+// teammates and starts a room with them, whose kickoff wakes every member;
+// they answer at once, as far as the turn slots allow. Needs the network the
+// first time, to download the engine.
 
 const ENGINE_READY_WITHIN = Duration.minutes(10);
 const TEAM_WITHIN = Duration.minutes(3);
@@ -71,7 +72,7 @@ const decodeStatusRows = Schema.decodeUnknownSync(
 
 it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
   it.effect(
-    "creates four bots and a room on the operator's word, whose members answer one at a time, with no hello",
+    "creates four bots and a room on the operator's word, whose members each answer the kickoff once, with no hello",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -227,7 +228,7 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
         const roomId: RoomId = started.roomId;
         assert.strictEqual(started.botId, scout.id);
 
-        // The members answer in the room, one at a time, in the kickoff's order.
+        // The members answer in the room, as many at once as the turn slots allow.
         const room = { _tag: "room", roomId } as const;
         const said = yield* entriesWhen(
           room,
@@ -264,9 +265,24 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
             { _tag: "bots", ids: team },
           ],
         );
+        // Each member answers once, in whatever order their turns end. An
+        // answer counts the answers its member saw, so it never counts more
+        // than were posted before it; members answering at once count the same.
+        const answered = botMessages(answers);
+        assert.sameMembers(
+          answered.map(([botId]) => botId),
+          team,
+          JSON.stringify(said),
+        );
+        answered.forEach(([, text], index) => {
+          const counted = Number(/^Answer #(\d+)\.$/.exec(text)?.[1] ?? 0);
+          assert.isAtLeast(counted, 1, text);
+          assert.isAtMost(counted, index + 1, JSON.stringify(said));
+        });
+        // Nothing stopped or failed the room's work.
         assert.deepStrictEqual(
-          botMessages(answers),
-          team.map((botId, index) => [botId, `Answer #${index + 1}.`]),
+          said.flatMap((entry) => (entry._tag === "notice" ? [entry.notice._tag] : [])),
+          ["room-started"],
         );
 
         // Each made for the room opened there: its own conversation shows
@@ -278,9 +294,9 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
           ]);
         }
 
-        // No hello ran: each one's turns were the room's, one after another, the first its
-        // answer, in the kickoff's order. Every answer wakes the other members, so those who
-        // answered before the rest read the later answers in one more turn, which says nothing.
+        // No hello ran: each one's turns were the room's, one at a time for each
+        // member. Every answer wakes the other members, so those who answered before
+        // the rest read the later answers in one more turn, which says nothing.
         const database = new NodeSqlite.DatabaseSync(path.join(home, HOME_ENTRIES.database), {
           readOnly: true,
         });
@@ -306,20 +322,20 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
           hellos.map((row) => row.status),
           team.map(() => "cancelled"),
         );
-        assert.deepStrictEqual(
-          turns.slice(0, team.length).map((turn) => turn.bot_id),
-          team,
-        );
+        assert.sameMembers([...new Set(turns.map((turn) => turn.bot_id))], team);
         assert.deepStrictEqual(
           turns.map((turn) => turn.audience_room_id),
           turns.map(() => roomId),
         );
-        turns.forEach((turn, index) => {
-          const before = turns[index - 1];
-          if (before === undefined) return;
-          assert.isNotNull(before.finished_at);
-          assert.isTrue(turn.started_at >= (before.finished_at ?? ""), JSON.stringify(turns));
-        });
+        for (const botId of team) {
+          const own = turns.filter((turn) => turn.bot_id === botId);
+          own.forEach((turn, index) => {
+            const before = own[index - 1];
+            if (before === undefined) return;
+            assert.isNotNull(before.finished_at);
+            assert.isTrue(turn.started_at >= (before.finished_at ?? ""), JSON.stringify(own));
+          });
+        }
       }).pipe(Effect.scoped),
     Duration.toMillis(Duration.minutes(15)),
   );

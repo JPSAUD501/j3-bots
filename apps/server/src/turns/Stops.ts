@@ -1365,9 +1365,9 @@ export const roomWorkLayer = Layer.effect(
       // turns started. Their speech there is refused meanwhile
       // (`liveTarget`).
       for (const botId of botIds) yield* stops.record(botId, { _tag: "room", roomId });
-      // The room is free for its next member's wake, which may have waited
-      // behind theirs.
-      if (unsentIds.length > 0 || pending.length > 0) {
+      // A session whose room start was released unsent can take the bot's
+      // other wakes, which waited behind it.
+      if (unsentIds.length > 0) {
         yield* sql.afterCommit(signals.dispatch.fire);
       }
     }, Effect.orDie);

@@ -5,8 +5,8 @@
  * reading what was said in its next turn, and a member with nothing to add
  * saying nothing. Each bot follows a scripted policy that
  * answers the envelope it receives with tool calls, and the test runs
- * whichever bot the server wakes until the room is quiet: the order of turns
- * is the server's, not the test's.
+ * whichever bots the server wakes until the room is quiet: which turns run,
+ * and beside which, is the server's choice, not the test's.
  */
 import { assert, it } from "@effect/vitest";
 import { ROOM_QUIET_AFTER, type RoomId } from "@j3-bots/contracts";
@@ -35,7 +35,6 @@ import {
   roomEntries,
   roomWakeStatuses,
   roomWith,
-  running,
   sawText,
   say,
   settle,
@@ -43,7 +42,13 @@ import {
   to,
 } from "../testing/rooms.ts";
 import { ROOM_CLOSING_NOTE } from "@j3-bots/prompts";
-import { admittedTurn, eventually, received, turnEnded } from "../testing/turns.ts";
+import {
+  admittedTurn,
+  concurrentTurns,
+  eventually,
+  received,
+  turnEnded,
+} from "../testing/turns.ts";
 
 /** A turn the server started, as a bot's policy sees it. */
 interface Turn {
@@ -66,11 +71,11 @@ const quiet = (roomId: RoomId) =>
   });
 
 /**
- * Runs the room until it is quiet: each turn the server starts goes to its
- * bot's policy, and ends once the policy is done, unless the policy's own
- * action (a Stop, an archival) ended it. After the policy acts, every wake
- * that can go has gone, so a second turn running for the room shows. Returns
- * who ran, in order.
+ * Runs the room until it is quiet: of the turns the server runs, the one seen
+ * first goes to its bot's policy, and ends once the policy is done, unless
+ * the policy's own action (a Stop, an archival) ended it. The others run on
+ * meanwhile and are taken in the order they were seen. Returns who ran, in
+ * that order.
  */
 const runUntilQuiet = <E, R>(
   roomId: RoomId,
@@ -79,20 +84,30 @@ const runUntilQuiet = <E, R>(
 ) =>
   Effect.gen(function* () {
     const ran: Array<string> = [];
+    // The turns running, oldest first.
+    let seen: ReadonlyArray<{ readonly member: Member; readonly turnId: TurnId }> = [];
     while (true) {
       const next = yield* eventually(
         Effect.gen(function* () {
+          const now: Array<{ readonly member: Member; readonly turnId: TurnId }> = [];
           for (const one of members) {
             const turnId = yield* admittedTurn(one.bot.id);
-            if (Option.isSome(turnId)) {
-              return Option.some(Option.some({ member: one, turnId: turnId.value }));
-            }
+            if (Option.isSome(turnId)) now.push({ member: one, turnId: turnId.value });
           }
+          const same = (a: { readonly turnId: TurnId }) => (b: { readonly turnId: TurnId }) =>
+            a.turnId === b.turnId;
+          seen = [
+            ...seen.filter((turn) => now.some(same(turn))),
+            ...now.filter((turn) => !seen.some(same(turn))),
+          ];
+          const [first] = seen;
+          if (first !== undefined) return Option.some(Option.some(first));
           return (yield* quiet(roomId)) ? Option.some(Option.none()) : Option.none();
         }),
       );
       if (Option.isNone(next)) return ran;
       const { member: one, turnId } = next.value;
+      seen = seen.slice(1);
       const name = one.bot.profile.name;
       ran.push(name);
       assert.isAtMost(ran.length, RUNAWAY, `the room never went quiet: ${ran.join(", ")}`);
@@ -101,46 +116,60 @@ const runUntilQuiet = <E, R>(
       yield* TestClock.adjust("1 second");
       yield* policy({ member: one, turnId, envelope: yield* lastEnvelope(one) });
       yield* settle(members);
-      const others = (yield* running(members)).filter((other) => other !== name);
-      assert.deepStrictEqual(others, [], `${others.join(", ")} ran beside ${name}`);
       yield* TestClock.adjust("1 second");
       if (Option.isSome(yield* admittedTurn(one.bot.id))) yield* finish(one, turnId, members);
     }
   });
 
-/** When each of the room's turns started and ended, in the order they started. */
+/** When each of the room's turns started and ended, by member and then in the order they started. */
 const roomTurns = (roomId: RoomId) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     return yield* SqlSchema.findAll({
       Request: Schema.String,
       Result: Schema.Struct({
+        bot_id: Schema.String,
         started_at: Schema.String,
         finished_at: Schema.NullOr(Schema.String),
       }),
       execute: (room) => sql`
-        SELECT started_at, finished_at FROM turns WHERE audience_room_id = ${room}
-        ORDER BY started_at, rowid
+        SELECT s.bot_id AS bot_id, t.started_at AS started_at, t.finished_at AS finished_at
+        FROM turns t JOIN sessions s ON s.id = t.session_id
+        WHERE t.audience_room_id = ${room}
+        ORDER BY s.bot_id, t.started_at, t.rowid
       `,
     })(roomId).pipe(Effect.orDie);
   });
 
-/** Each of the room's turns started after the one before it ended. */
-const assertOneAtATime = (roomId: RoomId) =>
+/**
+ * Each member's turns for the room started after its turn before them ended,
+ * whatever the other members ran meanwhile. Returns how many turns the room
+ * ran, and how many of them started while another member's ran.
+ */
+const assertOneTurnPerMember = (roomId: RoomId) =>
   Effect.gen(function* () {
     const turns = yield* roomTurns(roomId);
+    let beside = 0;
     for (const [index, turn] of turns.entries()) {
       assert.isNotNull(turn.finished_at, "a room turn is still open");
       const previous = turns[index - 1];
-      if (previous !== undefined && previous.finished_at !== null) {
+      if (previous?.bot_id === turn.bot_id && previous.finished_at !== null) {
         assert.isAtLeast(
           Date.parse(turn.started_at),
           Date.parse(previous.finished_at),
-          "a room turn started while another ran",
+          "a member started a room turn while its last one ran",
         );
       }
+      const started = Date.parse(turn.started_at);
+      const overlaps = turns.some(
+        (other) =>
+          other.bot_id !== turn.bot_id &&
+          Date.parse(other.started_at) < started &&
+          (other.finished_at === null || Date.parse(other.finished_at) > started),
+      );
+      if (overlaps) beside++;
     }
-    return turns.length;
+    return { turns: turns.length, beside };
   });
 
 const NOTE = "files/launch-note.md";
@@ -220,19 +249,34 @@ const launchRoom = Effect.gen(function* () {
 });
 
 it.effect(
-  "completes a three-bot task the operator gave the whole room, each hand-off waking only the member named, one turn at a time",
+  "completes a three-bot task the operator gave the whole room, its members answering at once and each hand-off waking only the member named",
   () =>
     Effect.gen(function* () {
       const { hal, ana, bo, cy, members, room } = yield* launchRoom;
       yield* operatorWrites(room.id, members, "Write the launch note.", nobody);
       const ran = yield* runUntilQuiet(room.id, members, team(hal, ana, bo));
 
-      // The operator's message wakes every member, who read it in member
-      // order, taking with it what was said since: Ana is asked, then Bo
-      // handed the note. Bo's hand back wakes Hal alone, after Cy, and Hal's
-      // closing line, which mentions nobody, wakes the others, who say nothing.
-      assert.deepStrictEqual(ran, ["Hal", "Ana", "Bo", "Cy", "Hal", "Ana", "Bo", "Cy"]);
-      assert.strictEqual(yield* assertOneAtATime(room.id), 8);
+      // The operator's message wakes every member, two at a time as the turn
+      // slots allow, each reading it as it was sent: only Hal acts on it. Ana,
+      // asked while her turn ran, answers in her next turn and hands to Bo,
+      // whose next turn writes the note. Bo's hand back wakes Hal alone, and
+      // Hal's closing line, which mentions nobody, wakes the others, who say
+      // nothing.
+      assert.deepStrictEqual(ran, [
+        "Hal",
+        "Ana",
+        "Bo",
+        "Cy",
+        "Ana",
+        "Bo",
+        "Hal",
+        "Ana",
+        "Bo",
+        "Cy",
+      ]);
+      const { turns, beside } = yield* assertOneTurnPerMember(room.id);
+      assert.strictEqual(turns, 10);
+      assert.isAbove(beside, 0);
       assert.deepStrictEqual(yield* noticesIn(room.id), []);
 
       // Cy was woken by the messages to the whole room alone, and read every
@@ -282,7 +326,7 @@ it.effect(
       // Each answers the other, one message a turn, until the message past
       // the room's limit since the operator wrote is posted and wakes nobody.
       assert.strictEqual(ran.length, ROOM_QUIET_AFTER + 1);
-      assert.strictEqual(yield* assertOneAtATime(room.id), ROOM_QUIET_AFTER + 1);
+      assert.strictEqual((yield* assertOneTurnPerMember(room.id)).turns, ROOM_QUIET_AFTER + 1);
       assert.deepStrictEqual(yield* noticesIn(room.id), [{ _tag: "chain-stopped", limit: "room" }]);
       // From the closing point on, each was told the conversation is closing.
       assert.isTrue(yield* sawText(ana, ROOM_CLOSING_NOTE));
@@ -293,6 +337,8 @@ it.effect("cancels the rest of the chain when the room is archived in the middle
   Effect.gen(function* () {
     const { hal, ana, bo, cy, members, room } = yield* launchRoom;
     const work = team(hal, ana, bo);
+    // One turn slot, so the members take the room one after another.
+    yield* concurrentTurns(1);
 
     yield* operatorWrites(room.id, members, "Write the launch note.", nobody);
     const ran = yield* runUntilQuiet(room.id, members, (turn) =>
@@ -308,7 +354,7 @@ it.effect("cancels the rest of the chain when the room is archived in the middle
 
     // Bo and Cy, who had not read the room yet, never will.
     assert.deepStrictEqual(ran, ["Hal", "Ana"]);
-    assert.strictEqual(yield* assertOneAtATime(room.id), 2);
+    assert.strictEqual((yield* assertOneTurnPerMember(room.id)).turns, 2);
     assert.deepStrictEqual(yield* roomWakeStatuses(hal.bot.id, room.id), ["finished"]);
     assert.deepStrictEqual(yield* roomWakeStatuses(bo.bot.id, room.id), ["cancelled", "cancelled"]);
     assert.deepStrictEqual(yield* roomWakeStatuses(cy.bot.id, room.id), ["cancelled"]);
@@ -323,6 +369,8 @@ it.effect(
       const control = yield* TestEngineControl;
       const { hal, ana, bo, cy, members, room } = yield* launchRoom;
       const work = team(hal, ana, bo);
+      // One turn slot, so the members take the room one after another.
+      yield* concurrentTurns(1);
 
       yield* operatorWrites(room.id, members, "Write the launch note.", nobody);
       const ran = yield* runUntilQuiet(room.id, members, (turn) =>
@@ -344,7 +392,7 @@ it.effect(
 
       assert.deepStrictEqual(ran, ["Hal", "Ana", "Bo"]);
       assert.isFalse(yield* control.backgroundWorkRunning(ana.session));
-      assert.strictEqual(yield* assertOneAtATime(room.id), 3);
+      assert.strictEqual((yield* assertOneTurnPerMember(room.id)).turns, 3);
       // The Stop cancels what Cy had yet to read.
       assert.deepStrictEqual(yield* roomWakeStatuses(cy.bot.id, room.id), ["cancelled"]);
     }).pipe(Effect.provide(TestDomain.layer)),

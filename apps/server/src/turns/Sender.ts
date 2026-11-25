@@ -51,7 +51,6 @@ import { SendPause } from "./SendPause.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
-import { roomLiveSql } from "./roomLive.ts";
 import { stopHoldsSql, stopTargets } from "./stopTargets.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 
@@ -567,21 +566,16 @@ export const layer = Layer.effect(
             : { _tag: "start", freshContext: row.fresh_context },
       }) satisfies DispatchInput;
 
-    /**
-     * Whether a room start's bot is still a member, and whether anything else
-     * of the room is live.
-     */
+    /** Whether a room start's bot is still a member of the room. */
     const roomStart = SqlSchema.findOne({
       Request: Schema.Struct({ dispatchId: DispatchRowId, roomId: RoomId }),
-      Result: Schema.Struct({ member: Schema.BooleanFromBit, live: Schema.BooleanFromBit }),
+      Result: Schema.Struct({ member: Schema.BooleanFromBit }),
       execute: ({ dispatchId, roomId }) => sql`
-        SELECT
-          EXISTS (
-            SELECT 1 FROM room_members rs_member JOIN dispatches rs_dispatch
-              ON rs_dispatch.bot_id = rs_member.bot_id
-            WHERE rs_member.room_id = ${roomId} AND rs_dispatch.id = ${dispatchId}
-          ) AS member,
-          ${roomLiveSql(sql, sql`${roomId}`, sql`${dispatchId}`)} AS live
+        SELECT EXISTS (
+          SELECT 1 FROM room_members rs_member JOIN dispatches rs_dispatch
+            ON rs_dispatch.bot_id = rs_member.bot_id
+          WHERE rs_member.room_id = ${roomId} AND rs_dispatch.id = ${dispatchId}
+        ) AS member
       `,
     });
 
@@ -620,8 +614,10 @@ export const layer = Layer.effect(
      * slot is free for its session or because it is automated work its
      * provider's usage limit holds: it is sent (`send`), stays unsent for the
      * dispatcher's next pass (`wait`), or is released (`release`). A room
-     * start is released either way: unsent, it would hold the room for
-     * nothing. So is one in the bot's main session the limit holds: unsent,
+     * start is released either way: its envelope carries the room as it was
+     * when it was written, and the other members may speak for as long as it
+     * waits; planned again once it can start, it carries what they said. So
+     * is one in the bot's main session the limit holds: unsent,
      * it would keep the session busy, and the operator's word, which the
      * limit never holds, would wait behind it until the reset. Its wakes
      * wait as pending wakes, which the planner holds until then. A routine's
@@ -655,14 +651,11 @@ export const layer = Layer.effect(
      * A first start of automated work its provider's usage limit holds now,
      * which may have been reached while the files staged, is held too. A held
      * start stays unsent, for the dispatcher's next pass, or is released
-     * (`startHold`): a room start's wakes are planned again in the room's
-     * order, and those of a main session's start the limit holds wait for the
-     * reset without holding back the operator's word.
-     * A first room start needs its bot still a member and nothing else of the
-     * room live (`roomLiveSql`), as planning did: another member's turn the
-     * engine resumed after a usage limit's reset may have started since. One
-     * that finds otherwise is released: its wakes are planned again with the
-     * room as it is then, or cancelled for a bot that left it.
+     * (`startHold`): a room start's wakes are planned again with the room as
+     * it is then, and those of a main session's start the limit holds wait
+     * for the reset without holding back the operator's word.
+     * A first room start needs its bot still a member, as planning did: one
+     * that left since is released, and its wakes are cancelled.
      * A first steer needs the turn it was planned for to be still the
      * admitted one: if that turn ended while the files staged, the engine
      * would start a turn with it, outside the budget, so it is released and
@@ -702,7 +695,7 @@ export const layer = Layer.effect(
                 dispatchId: row.id,
                 roomId: row.audience_room_id,
               }).pipe(Effect.orDie);
-              if (!room.member || room.live) return yield* releaseFirst;
+              if (!room.member) return yield* releaseFirst;
             }
           }
           if (row.attempts === 0 && row.delivery === "steer") {
@@ -847,11 +840,11 @@ export const layer = Layer.effect(
       }
 
       // A room start that cannot be sent when it is due, for want of a turn
-      // slot or held by a usage limit, holds the room for nothing, and a main
-      // session's start the limit holds keeps the operator's word waiting:
-      // it is released before anything is staged (`startHold`), so the
-      // room's order is read again and the operator's word may go first. Its
-      // wakes wait, as pending wakes, for what held it.
+      // slot or held by a usage limit, would carry a room that went on
+      // without it, and a main session's start the limit holds keeps the
+      // operator's word waiting: it is released before anything is staged
+      // (`startHold`). Its wakes wait, as pending wakes, for what held it,
+      // and a room's are planned with what was said meanwhile.
       if (firstSend && row.delivery === "start" && (yield* startHold(row))._tag === "release") {
         yield* releaseUnsent(row.id);
         return "settled" as const;

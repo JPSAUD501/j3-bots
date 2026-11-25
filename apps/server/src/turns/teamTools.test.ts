@@ -36,6 +36,7 @@ import {
   askRegion,
   awaitEntry,
   command,
+  concurrentTurns,
   conversation,
   createBot,
   engineSession,
@@ -395,9 +396,11 @@ it.effect("goes on from the bots a failed room turn made when the operator retri
 );
 
 it.effect(
-  "starts a room whose kickoff every other member reads in member order, the bots made for it with no hello",
+  "starts a room whose kickoff every other member reads at once, the bots made for it with no hello",
   () =>
     Effect.gen(function* () {
+      // A turn slot for each member.
+      yield* concurrentTurns(4);
       const scout = yield* primaryBot("Scout");
       const wren = yield* member("Wren");
       const { session, turnId } = yield* operatorAsks(scout, "Make me a support group.");
@@ -439,23 +442,34 @@ it.effect(
       // It tells its user what it set up, which ends its turn.
       yield* say(caller, turnId, { text: "Pip, Mole and Wren are on it in Support.", done: true });
       yield* finish(caller, turnId, team);
-      // The other members read the kickoff in member order, one at a time.
-      // Pip opens, as it asks; Mole and Wren read Pip's reply with it.
-      for (const next of [pip, mole, wren]) {
-        const turn = yield* nextTurn(next.bot.id);
-        assert.deepStrictEqual(yield* running(team), [next.bot.profile.name]);
-        const envelope = yield* lastEnvelope(next);
+      // The other members read the kickoff at once, and Pip opens, as it asks.
+      const kicked = [
+        [pip, yield* nextTurn(pip.bot.id)],
+        [mole, yield* nextTurn(mole.bot.id)],
+        [wren, yield* nextTurn(wren.bot.id)],
+      ] as const;
+      assert.deepStrictEqual(yield* running(team), ["Pip", "Mole", "Wren"]);
+      for (const [one, turn] of kicked) {
+        const envelope = yield* lastEnvelope(one);
         assert.include(envelope, "Pip takes billing");
         // It reads as the kickoff, which names its part, not as any message that mentions it.
         assert.include(envelope, 'reason="kickoff"');
-        if (next === pip) yield* say(next, turn, { text: "On it.", done: true });
-        else assert.include(envelope, "On it.");
-        yield* finish(next, turn, team);
+        if (one === pip) yield* say(one, turn, { text: "On it.", done: true });
       }
-      // Scout reads Pip's reply last, as a member's message to it.
-      const reply = yield* nextTurn(scout.id, turnId);
-      assert.include(yield* lastEnvelope(caller), 'reason="member"');
-      yield* finish(caller, reply, team);
+      for (const [one, turn] of kicked) yield* finish(one, turn, team);
+      // Pip's reply mentions nobody: Scout, Mole and Wren read it after, as a
+      // member's message.
+      for (const [one, previous] of [
+        [caller, turnId],
+        [mole, kicked[1][1]],
+        [wren, kicked[2][1]],
+      ] as const) {
+        const reply = yield* nextTurn(one.bot.id, previous);
+        const envelope = yield* lastEnvelope(one);
+        assert.include(envelope, "On it.");
+        assert.include(envelope, 'reason="member"');
+        yield* finish(one, reply, team);
+      }
       assert.deepStrictEqual(yield* running(team), []);
       for (const made of [pip, mole]) {
         assert.deepStrictEqual(yield* hellos(made.bot.id), ["cancelled"]);

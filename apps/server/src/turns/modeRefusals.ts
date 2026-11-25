@@ -57,10 +57,9 @@ const roomToldSql = (
 
 /**
  * The rooms told that a member's permission mode is refused: it takes no part
- * there until the operator acts, and the rest of the room goes on without it
- * (`roomQueue` in the dispatcher). Each room is told once for each refusal
- * the bot's conversation is told of (`roomToldSql`). In the caller's
- * transaction.
+ * there until the operator acts, while the other members go on as ever.
+ * Each room is told once for each refusal the bot's conversation is told of
+ * (`roomToldSql`). In the caller's transaction.
  */
 export const roomRefusals = (sql: SqlClient.SqlClient, entries: Entries["Service"]) => {
   const { notify } = notices(sql, entries);
