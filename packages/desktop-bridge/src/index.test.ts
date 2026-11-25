@@ -120,7 +120,13 @@ describe("the desktop bridge", () => {
   });
 
   it("refuses an update status that is not one the main process gives", () => {
-    const status = (phase: unknown) => ({ current: "0.0.1-test", channel: "stable", phase });
+    const status = (phase: unknown) => ({
+      current: "0.0.1-test",
+      channel: "stable",
+      phase,
+      automatic: true,
+      launch: "over",
+    });
     assert.isTrue(decodes(UpdateStatus, status({ _tag: "idle", checked: false })));
     assert.isTrue(
       decodes(UpdateStatus, status({ _tag: "downloading", version: "0.0.2-test", percent: 41.5 })),
@@ -142,15 +148,12 @@ describe("the desktop bridge", () => {
     );
     assert.isTrue(decodes(UpdateStatus, status({ _tag: "verifying", version: "0.0.2-test" })));
     assert.isTrue(decodes(UpdateStatus, status({ _tag: "failed", stage: "verify" })));
+    assert.isFalse(decodes(UpdateStatus, { ...status({ _tag: "unavailable" }), current: "dev" }));
     assert.isFalse(
-      decodes(UpdateStatus, { current: "dev", channel: "stable", phase: { _tag: "unavailable" } }),
+      decodes(UpdateStatus, { ...status({ _tag: "idle", checked: false }), channel: "beta" }),
     );
     assert.isFalse(
-      decodes(UpdateStatus, {
-        current: "0.0.1-test",
-        channel: "beta",
-        phase: { _tag: "idle", checked: false },
-      }),
+      decodes(UpdateStatus, { ...status({ _tag: "idle", checked: false }), launch: "later" }),
     );
   });
 
@@ -192,6 +195,7 @@ describe("the desktop bridge", () => {
       checkForUpdates: call,
       restartToUpdate: call,
       setUpdateChannel: call,
+      setAutomaticUpdates: call,
       reportSaving: call,
       notify: call,
       closeNotifications: call,

@@ -134,6 +134,7 @@ import { MemoryFile, type MemoryFileProps } from "../components/MemoryViewer";
 import { MessageBubble } from "../components/MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
+import { LaunchUpdate } from "../components/LaunchUpdate";
 import { VisualTheme } from "../components/VisualCard";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
@@ -3420,6 +3421,22 @@ function UpdatesGallerySection() {
           app={appUpdate(appPhases.released)}
           height={300}
         />
+        <UpdatesFrame
+          label="The app, not updating by itself: the restart is the operator's"
+          app={appUpdate(appPhases.ready, { automatic: false })}
+          height={340}
+        />
+      </div>
+      <div className="flex flex-wrap gap-4">
+        <Frame label="Updating as it starts: checking" width={390} height={360}>
+          <LaunchUpdate update={appUpdate({ _tag: "checking" }, { launch: "checking" })} />
+        </Frame>
+        <Frame label="Updating as it starts: downloading" width={390} height={360}>
+          <LaunchUpdate update={appUpdate(appPhases.downloading, { launch: "updating" })} />
+        </Frame>
+        <Frame label="Updating as it starts: restarting" width={390} height={360}>
+          <LaunchUpdate update={appUpdate(appPhases.installing, { launch: "updating" })} />
+        </Frame>
       </div>
       <div className="flex flex-wrap gap-4">
         <Frame label="Mismatch: the server is behind, one tap updates it" width={390} height={560}>

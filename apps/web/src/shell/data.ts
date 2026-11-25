@@ -406,4 +406,6 @@ export interface DesktopUpdate {
   readonly restart: () => void;
   /** Chooses the releases the app follows, unless a version is on its way or installing. */
   readonly setChannel: (channel: UpdateChannel) => void;
+  /** Turns "Update automatically" on or off. */
+  readonly setAutomatic: (on: boolean) => void;
 }

@@ -42,8 +42,10 @@ const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
  * before the page paints, whether the app starts with the system, off
  * until the operator turns it on, whether phones on the network may reach
  * the server on this computer (`phoneAccess`), off until the operator turns
- * it on, and the releases the app updates to (`updateChannel`), stable ones
- * until the operator chooses nightly builds too. None is a secret.
+ * it on, the releases the app updates to (`updateChannel`), stable ones
+ * until the operator chooses nightly builds too, and whether a verified
+ * version installs by itself (`automaticUpdates`), at launch or as the app
+ * quits, on until the operator turns it off. None is a secret.
  */
 export const Settings = Schema.Struct({
   mode: Schema.NullOr(DesktopMode),
@@ -55,6 +57,7 @@ export const Settings = Schema.Struct({
   startWithSystem: Schema.Boolean,
   phoneAccess: Schema.Boolean,
   updateChannel: UpdateChannel,
+  automaticUpdates: Schema.Boolean,
 });
 export type Settings = typeof Settings.Type;
 
@@ -68,6 +71,7 @@ const EMPTY: Settings = {
   startWithSystem: false,
   phoneAccess: false,
   updateChannel: "stable",
+  automaticUpdates: true,
 };
 
 const decodeStored = Schema.decodeUnknownOption(
@@ -106,6 +110,7 @@ export const decodeSettings = (
     startWithSystem,
     phoneAccess,
     updateChannel,
+    automaticUpdates,
   } = stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
@@ -121,6 +126,7 @@ export const decodeSettings = (
   const keptStartWithSystem = decodeFlag(startWithSystem);
   const keptPhoneAccess = decodeFlag(phoneAccess);
   const keptChannel = decodeChannel(updateChannel);
+  const keptAutomaticUpdates = decodeFlag(automaticUpdates);
   const dropped: Array<keyof Settings> = [];
   if (mode !== undefined && mode !== null && Option.isNone(keptMode)) dropped.push("mode");
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
@@ -137,6 +143,9 @@ export const decodeSettings = (
   }
   if (phoneAccess !== undefined && Option.isNone(keptPhoneAccess)) dropped.push("phoneAccess");
   if (updateChannel !== undefined && Option.isNone(keptChannel)) dropped.push("updateChannel");
+  if (automaticUpdates !== undefined && Option.isNone(keptAutomaticUpdates)) {
+    dropped.push("automaticUpdates");
+  }
   return {
     settings: {
       mode: Option.getOrElse(keptMode, () =>
@@ -150,6 +159,7 @@ export const decodeSettings = (
       startWithSystem: Option.getOrElse(keptStartWithSystem, () => EMPTY.startWithSystem),
       phoneAccess: Option.getOrElse(keptPhoneAccess, () => EMPTY.phoneAccess),
       updateChannel: Option.getOrElse(keptChannel, () => EMPTY.updateChannel),
+      automaticUpdates: Option.getOrElse(keptAutomaticUpdates, () => EMPTY.automaticUpdates),
     },
     dropped,
   };

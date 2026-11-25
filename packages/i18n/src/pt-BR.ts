@@ -1601,6 +1601,13 @@ const sentences = {
   "update.download": "Baixar",
   "update.downloading": "Baixando a versão {version}… {percent}",
   "update.ready": "A versão {version} está pronta.",
+  "update.readyOnQuit":
+    "A versão {version} está pronta. Ela é instalada quando você sair do J3 Bots.",
+  "update.automatic": "Atualizar automaticamente",
+  "update.automatic.hint":
+    "Uma nova versão é instalada quando o J3 Bots abre ou quando você sai dele. Desligado, ela espera por Reiniciar para atualizar.",
+  "launchUpdate.title": "Atualizando para a versão {version}",
+  "launchUpdate.body": "O J3 Bots abre de novo sozinho quando terminar.",
   "update.waiting": "Reiniciando assim que suas alterações forem salvas…",
   "update.installing": "Reiniciando…",
   "update.failed": "Não deu para obter a versão mais recente. O J3 Bots tenta de novo mais tarde.",

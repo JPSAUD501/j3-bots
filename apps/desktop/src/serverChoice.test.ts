@@ -299,6 +299,7 @@ describe("the settings file", () => {
     startWithSystem: false,
     phoneAccess: false,
     updateChannel: "stable",
+    automaticUpdates: true,
   } as const;
   const NONE = {
     mode: null,
@@ -307,9 +308,10 @@ describe("the settings file", () => {
     startWithSystem: false,
     phoneAccess: false,
     updateChannel: "stable",
+    automaticUpdates: true,
   } as const;
 
-  it("reads the server, the window, the shortcut, the appearance, starting with the system, phone access and the update channel each on its own", () => {
+  it("reads the server, the window, the shortcut, the appearance, starting with the system, phone access, the update channel and updating by itself each on its own", () => {
     const window = { x: 10, y: 20, width: 800, height: 600, maximized: false };
     const shortcut = "Control+Alt+K";
     assert.deepStrictEqual(
@@ -375,6 +377,18 @@ describe("the settings file", () => {
       Settings.decodeSettings(JSON.stringify({ updateChannel: "nightly" })).settings.updateChannel,
       "nightly",
     );
+    // Updating by itself is on until the operator turns it off, in a file from before it too.
+    assert.deepStrictEqual(
+      Settings.decodeSettings(JSON.stringify({ server: SERVER, automaticUpdates: "no" })),
+      {
+        settings: { ...REMOTE, window: null, shortcut: null, appearance: "system" },
+        dropped: ["automaticUpdates"],
+      },
+    );
+    assert.isFalse(
+      Settings.decodeSettings(JSON.stringify({ automaticUpdates: false })).settings
+        .automaticUpdates,
+    );
     assert.deepStrictEqual(Settings.decodeSettings("{ not json"), {
       settings: { ...NONE, window: null, shortcut: null, appearance: "system" },
       dropped: [],
@@ -401,6 +415,7 @@ describe("the settings file", () => {
         startWithSystem: false,
         phoneAccess: false,
         updateChannel: "stable",
+        automaticUpdates: true,
       },
     );
   });

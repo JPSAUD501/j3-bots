@@ -97,13 +97,18 @@ export interface Desktop {
   readonly onUpdate: (listener: (status: UpdateStatus) => void) => () => void;
   /** Checks for an update now, unless one is on its way or ready. */
   readonly checkForUpdates: () => void;
-  /** Restarts into the downloaded update, as soon as no save is under way. */
+  /**
+   * Restarts into the downloaded update, as soon as no save is under way.
+   * Where updates install by themselves it also installs as the app quits.
+   */
   readonly restartToUpdate: () => void;
   /**
    * Chooses the releases the app follows; answers the status after it, which
    * keeps the channel it had while a version is on its way or installing.
    */
   readonly setUpdateChannel: (channel: UpdateChannel) => Promise<UpdateStatus | null>;
+  /** Turns installing a verified version by itself on or off; answers the status after it. */
+  readonly setAutomaticUpdates: (on: boolean) => Promise<UpdateStatus | null>;
   /** Tells the app whether a save is under way, which a restart waits for. */
   readonly reportSaving: (saving: boolean) => void;
   /** Shows a notification with the system's own notifications. */
@@ -338,6 +343,7 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
       bridge.restartToUpdate();
     },
     setUpdateChannel: (channel) => ask(() => bridge.setUpdateChannel(channel), decodeStatus),
+    setAutomaticUpdates: (on) => ask(() => bridge.setAutomaticUpdates(on), decodeStatus),
     reportSaving: (saving) => {
       bridge.reportSaving(saving);
     },

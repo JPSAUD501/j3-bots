@@ -177,15 +177,37 @@ export const serverViews = {
 /** How the update to 0.4.0 this device followed ended, as it saw it end. */
 export const endedDone: UpdateResult = result("done", null, null);
 
-/** The desktop app on 0.3.1 (or `current`), its update in `phase`. */
+/**
+ * The desktop app on 0.3.1 (or `current`), its update in `phase`: updating by
+ * itself unless `automatic` says otherwise (`null` for a build that does not
+ * install updates, as one in the `released` phase), and open as usual unless
+ * `launch` says it is updating as it starts.
+ */
 export const appUpdate = (
   phase: UpdatePhase,
-  options: { readonly current?: string; readonly channel?: UpdateStatus["channel"] } = {},
+  options: {
+    readonly current?: string;
+    readonly channel?: UpdateStatus["channel"];
+    readonly automatic?: boolean | null;
+    readonly launch?: UpdateStatus["launch"];
+  } = {},
 ): DesktopUpdate => ({
-  status: { current: options.current ?? CURRENT, channel: options.channel ?? "stable", phase },
+  status: {
+    current: options.current ?? CURRENT,
+    channel: options.channel ?? "stable",
+    phase,
+    automatic:
+      options.automatic === undefined
+        ? phase._tag === "released"
+          ? null
+          : true
+        : options.automatic,
+    launch: options.launch ?? "over",
+  },
   check: nothing,
   restart: nothing,
   setChannel: nothing,
+  setAutomatic: nothing,
 });
 
 /** Each state of the app's own update the gallery shows. */
@@ -196,6 +218,7 @@ export const appPhases = {
   ready: { _tag: "downloaded", version: NEXT, restart: "offered" },
   verifyFailed: { _tag: "failed", stage: "verify" },
   released: { _tag: "released", version: NEXT },
+  installing: { _tag: "installing", version: NEXT },
 } satisfies Record<string, UpdatePhase>;
 
 export const SAMPLE_NIGHTLY = NIGHTLY;
