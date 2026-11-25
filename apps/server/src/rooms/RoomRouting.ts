@@ -26,15 +26,30 @@ export type BotMessageRouted =
   | { readonly _tag: "quiet" };
 
 /**
+ * Whose word a bot's room message carries, which decides whether it counts
+ * (`docs/architecture/server.md`, Rooms):
+ *
+ * - `kickoff`: the first message of a room the bot started, which a bot does
+ *   only in a turn the operator spoke in. It starts the room's count.
+ * - `relayed`: a `message_bot` to the room from a turn the operator spoke in,
+ *   outside the room's own turns: their request, brought to the room. It
+ *   starts the count again, as their own message there would.
+ * - `bot`: any other, the bot's own. It counts.
+ */
+export type BotWord = "kickoff" | "relayed" | "bot";
+
+/**
  * Who a room message wakes (`docs/architecture/server.md`, Rooms), the
  * operator's message and a bot's alike: the members it mentions, or every
  * member but its author when it mentions nobody or everyone. Every member
  * reads it in its next envelope either way. The room counts its bots'
- * messages since the operator last wrote there, or a bot's kickoff started
- * it (`rooms.bot_streak`); past `ROOM_QUIET_AFTER` a bot's message wakes
- * nobody, and the first such message shows one `chain-stopped` notice in the
- * room until the operator writes again. Each wake is a `room` wake for the room, written in the caller's
- * transaction, the one that writes the message.
+ * messages since the operator's word last reached it: a message of theirs
+ * there, a bot's kickoff, or a request of theirs a bot relayed
+ * (`rooms.bot_streak`, `BotWord`). Past `ROOM_QUIET_AFTER` a bot's message
+ * wakes nobody, and the first such message shows one `chain-stopped` notice
+ * in the room until their word reaches it again. Each wake is a `room` wake
+ * for the room, written in the caller's transaction, the one that writes the
+ * message.
  */
 export class RoomRouting extends Context.Service<
   RoomRouting,
@@ -44,11 +59,10 @@ export class RoomRouting extends Context.Service<
       readonly message: MessageEntry;
     }) => Effect.Effect<void>;
     /**
-     * A bot spoke in a room: in a `say` or a `message_bot` to it, or in the
-     * `kickoff` of a room it started, which counts as the operator's word:
-     * a bot starts a room only in a turn they spoke in; or in the engine's
-     * own speech of a room turn. Its mentions are already checked to be
-     * other members. `seq` is the dispatch that began the speaking turn's
+     * A bot spoke in a room: in a `say` or a `message_bot` to it, in the
+     * `kickoff` of a room it started, or in the engine's own speech of a room
+     * turn; `word` says whether it carries the operator's word. Its mentions
+     * are already checked to be other members. `seq` is the dispatch that began the speaking turn's
      * work, `null` for a turn no dispatch began. A message of work the
      * operator `stopped` is in the room, so it counts, but wakes nobody.
      */
@@ -56,7 +70,7 @@ export class RoomRouting extends Context.Service<
       readonly room: LiveRoom;
       readonly botId: BotId;
       readonly message: MessageEntry;
-      readonly kickoff: boolean;
+      readonly word: BotWord;
       readonly seq: DispatchSeq | null;
       readonly stopped: boolean;
     }) => Effect.Effect<BotMessageRouted>;
@@ -127,12 +141,12 @@ export const layer = Layer.effect(
       readonly room: LiveRoom;
       readonly botId: BotId;
       readonly message: MessageEntry;
-      readonly kickoff: boolean;
+      readonly word: BotWord;
       readonly seq: DispatchSeq | null;
       readonly stopped: boolean;
     }) {
       const audience = { _tag: "room", roomId: input.room.id } as const;
-      if (input.kickoff) yield* restart(input.room);
+      if (input.word !== "bot") yield* restart(input.room);
       else {
         const { bot_streak: streak } = yield* counted(input.room.id).pipe(Effect.orDie);
         if (streak > ROOM_QUIET_AFTER) {
@@ -148,18 +162,20 @@ export const layer = Layer.effect(
       // counts its own messages, so its wakes carry no hops: a teammate
       // message a member sends from them starts a chain of its own.
       yield* wakes.record(
-        woken(input.room.members, input.message, input.kickoff ? "kickoff" : "member").map(
-          ([botId, reason]): NewWake => ({
-            botId,
-            kind: "room",
-            audience,
-            payload: { _tag: "room", entryId: input.message.id, reason },
-            sourceEntryId: input.message.id,
-            hops: 0,
-            retryOf: null,
-            cause: { _tag: "teammate", senderId: input.botId, audience, seq: input.seq },
-          }),
-        ),
+        woken(
+          input.room.members,
+          input.message,
+          input.word === "kickoff" ? "kickoff" : "member",
+        ).map(([botId, reason]): NewWake => ({
+          botId,
+          kind: "room",
+          audience,
+          payload: { _tag: "room", entryId: input.message.id, reason },
+          sourceEntryId: input.message.id,
+          hops: 0,
+          retryOf: null,
+          cause: { _tag: "teammate", senderId: input.botId, audience, seq: input.seq },
+        })),
       );
       return { _tag: "routed" } as const;
     });
