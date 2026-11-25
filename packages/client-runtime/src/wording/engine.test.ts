@@ -72,7 +72,13 @@ describe("the connect step's Create", () => {
     expect(step.later).toBeNull();
   });
 
-  it("can be pressed while a provider may still run the bot, or before the engine is ready", () => {
+  it("waits while the engine starts, since the server knows no provider yet", () => {
+    expect(connectStepText(downloading(0, null), "Nova", en).createWaits).toBe(
+      "You can create Nova as soon as Claude Code or Codex can run.",
+    );
+  });
+
+  it("can be pressed while a provider may still run the bot, or before the server answers", () => {
     for (const status of [
       { _tag: "unavailable", checking: true } as const,
       { _tag: "sign-in-required", command: "j3-bots provider connect" } as const,
@@ -80,6 +86,5 @@ describe("the connect step's Create", () => {
       expect(connectStepText(ready(claude(status)), "Nova", en).createWaits).toBeNull();
     }
     expect(connectStepText(null, "Nova", en).createWaits).toBeNull();
-    expect(connectStepText(downloading(0, null), "Nova", en).createWaits).toBeNull();
   });
 });

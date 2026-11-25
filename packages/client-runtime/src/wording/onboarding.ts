@@ -15,9 +15,11 @@ import { engineDownload, engineProblem } from "./engine.ts";
  * - `later`, while the bot can be created anyway and speak once a provider
  *   can run it, says so; null while the server has no model to give it
  *   (`hasDefaultModel`), which would refuse it;
- * - `createWaits`, while the engine is ready and the server has no model to
- *   give the bot, so creating it would only be refused: why the step's
- *   Create waits. Null while Create can be pressed.
+ * - `createWaits`, while the server has no model to give the bot, so
+ *   creating it would only be refused: why the step's Create waits. That
+ *   includes an engine still starting, whose providers the server does not
+ *   know yet. Null while Create can be pressed, and before the server
+ *   answers at all, when a client waits for it to create the bot.
  */
 export interface ConnectStepText {
   readonly title: string;
@@ -38,7 +40,7 @@ export function connectStepText(
   name: string,
   i18n: I18n,
 ): ConnectStepText {
-  const waits = engine !== null && engine.state._tag === "ready" && !hasDefaultModel(engine);
+  const waits = engine !== null && !hasDefaultModel(engine);
   return {
     ...stepText(engine, name, i18n),
     createWaits: waits ? i18n.t("onboarding.connect.createWaits", { name }) : null,

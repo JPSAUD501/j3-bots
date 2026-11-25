@@ -223,7 +223,7 @@ Settings → Engine, the first run's last step and `doctor` say why the engine c
 - **Found, but it failed to start**: the engine found the harness, but checking it failed, or took longer than the engine allows (20 seconds for its version, as on a slow first start). **Try again** asks the engine to check it again. When it keeps failing, run the harness's `--version` yourself as that user to see what it says, and read the server's log: J3 Bots writes the engine's words there, as a warning that starts "The engine cannot run a provider". In the app's own server that log is `<userData>/server/server.log` ([Operating: the server the desktop app runs](operating.md#the-server-the-desktop-app-runs)); for the service, `journalctl --user -u j3-bots`.
 - **Turned off on the server**: the engine's settings turned the provider off, which happens when it could not safely set the provider up. No client turns it back on; the log names the file it could not use.
 
-On the first run, **Create** waits while no provider can run a bot, since the server would refuse it, and says so; it can be pressed again as soon as one can.
+On the first run, **Create** waits while no provider can run a bot, the engine's first start included, since the server would refuse it, and says so; it can be pressed again as soon as one can.
 
 ### A harness the service does not find
 
