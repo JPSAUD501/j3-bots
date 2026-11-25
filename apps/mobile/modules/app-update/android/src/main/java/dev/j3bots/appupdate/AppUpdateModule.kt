@@ -34,8 +34,14 @@ import java.security.MessageDigest
  * are hashed again as they are written into it, and the session is committed
  * only when that digest is the one the release signed, so what Android
  * installs is exactly what was checked. Android then asks the operator to
- * confirm, and itself refuses an APK signed with another key or with a lower
- * version code.
+ * confirm, unless the install is unattended and Android grants it (below),
+ * and itself refuses an APK signed with another key or with a lower version
+ * code.
+ *
+ * An unattended install asks Android not to ask the operator
+ * (`USER_ACTION_NOT_REQUIRED`, Android 12 and later). Android grants it to an
+ * app updating itself that declares `UPDATE_PACKAGES_WITHOUT_USER_ACTION` and
+ * targets a recent enough SDK; otherwise it asks as before.
  *
  * Only files in the app's update folder are read, so nothing else on the
  * phone can be handed to the installer through this module.
@@ -118,16 +124,19 @@ class AppUpdateModule : Module() {
       }
     }
 
-    AsyncFunction("install") { uri: String, sha256: String, promise: Promise ->
-      install(updateFile(uri), sha256.lowercase(), promise)
+    AsyncFunction("install") { uri: String, sha256: String, unattended: Boolean, promise: Promise ->
+      install(updateFile(uri), sha256.lowercase(), unattended, promise)
     }
   }
 
-  private fun install(file: File, sha256: String, promise: Promise) {
+  private fun install(file: File, sha256: String, unattended: Boolean, promise: Promise) {
     val context = context
     val installer = context.packageManager.packageInstaller
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
     params.setAppPackageName(context.packageName)
+    if (unattended && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+    }
     val sessionId = installer.createSession(params)
     val session =
       try {

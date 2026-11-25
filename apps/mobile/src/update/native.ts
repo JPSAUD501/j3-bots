@@ -63,7 +63,7 @@ interface AppUpdateModule {
   openInstallSettings(): void;
   sha256(uri: string): Promise<unknown>;
   inspectApk(uri: string): Promise<unknown>;
-  install(uri: string, sha256: string): Promise<unknown>;
+  install(uri: string, sha256: string, unattended: boolean): Promise<unknown>;
 }
 
 const module = requireOptionalNativeModule<AppUpdateModule>("AppUpdate");
@@ -81,8 +81,12 @@ export interface AppInstaller {
   readonly sha256: (uri: string) => Promise<string>;
   /** What an APK in the update folder says it is, or null when it is not one. */
   readonly inspectApk: (uri: string) => Promise<ApkInfo>;
-  /** Installs an APK from the update folder when its bytes have this SHA-256. */
-  readonly install: (uri: string, sha256: string) => Promise<InstallOutcome>;
+  /**
+   * Installs an APK from the update folder when its bytes have this SHA-256.
+   * `unattended` asks Android to install it without asking the operator,
+   * which Android grants only on its own conditions (Android 12 and later).
+   */
+  readonly install: (uri: string, sha256: string, unattended: boolean) => Promise<InstallOutcome>;
 }
 
 const decode = Schema.decodeUnknownSync;
@@ -97,5 +101,6 @@ export const appInstaller: AppInstaller | null =
         openInstallSettings: () => module.openInstallSettings(),
         sha256: async (uri) => decode(Sha256)(await module.sha256(uri)),
         inspectApk: async (uri) => decode(ApkInfo)(await module.inspectApk(uri)),
-        install: async (uri, sha256) => decode(InstallOutcome)(await module.install(uri, sha256)),
+        install: async (uri, sha256, unattended) =>
+          decode(InstallOutcome)(await module.install(uri, sha256, unattended)),
       };

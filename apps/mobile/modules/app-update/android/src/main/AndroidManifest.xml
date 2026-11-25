@@ -4,7 +4,10 @@
   <!--
     The app installs its own update, a release APK it has checked against the
     release's signed SHA256SUMS (src/update). Android still asks the operator
-    to allow installs from J3 Bots once, and to confirm each install.
+    to allow installs from J3 Bots once. It asks them to confirm each install
+    unless the app updates itself unattended, which needs the second
+    permission, granted at install time (Android 12 and later).
   -->
   <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+  <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 </manifest>
