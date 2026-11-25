@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { targetKey } from "@j3-bots/client-runtime";
+import { type DraftMention, targetKey } from "@j3-bots/client-runtime";
 import {
   draftReadiness,
   EVERYONE,
@@ -11,6 +11,7 @@ import {
   mentionOptions,
   mentionQuery,
   type MentionOption,
+  standingMentions,
 } from "@j3-bots/client-runtime/presentation";
 import { useDraft, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wording";
@@ -34,7 +35,13 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import { ChipField, type FieldEdit, type FieldHandle, type FieldStatus } from "./ChipField.tsx";
+import {
+  ChipField,
+  type FieldEdit,
+  type FieldHandle,
+  type FieldMention,
+  type FieldStatus,
+} from "./ChipField.tsx";
 import { DictationButton, DictationLine, useDictation } from "./Dictation.tsx";
 import { useFileOpener } from "./FileOpener.tsx";
 import { AnimatedView } from "./animated.ts";
@@ -336,6 +343,7 @@ export function Composer({
           value={text}
           files={files}
           images={images}
+          mentions={fieldMentions(text, mentions, mentionable ?? [])}
           placeholder={label}
           status={status}
           editable={!frozen}
@@ -459,6 +467,26 @@ function SendButton({
       </Animated.View>
     </PressScale>
   );
+}
+
+/**
+ * Each pick of a member that addresses it as the draft stands, which the
+ * field draws as its chip, so what it shows is whom the message wakes.
+ * `@everyone`, and a member no longer in the room, stay text.
+ */
+function fieldMentions(
+  text: string,
+  mentions: ReadonlyArray<DraftMention>,
+  members: ReadonlyArray<MentionCandidate>,
+): ReadonlyArray<FieldMention> {
+  return standingMentions(text, mentions).flatMap((mention) => {
+    if (mention._tag !== "bot") return [];
+    const member = members.find((candidate) => candidate.id === mention.botId);
+    if (member === undefined) return [];
+    return [
+      { at: mention.position, text: `@${mention.label}`, botId: member.id, avatar: member.avatar },
+    ];
+  });
 }
 
 /** The members and `@everyone` the operator can mention, above the composer. A tap picks. */

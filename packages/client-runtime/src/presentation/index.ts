@@ -126,8 +126,9 @@ export {
   mentionOptions,
   mentionQuery,
   movedOption,
+  standingMentions,
 } from "./mentions.ts";
-export { type Inline, parseMessageText } from "./messageText.ts";
+export { type Inline, type MentionName, parseMessageText } from "./messageText.ts";
 export {
   defaultBotName,
   makingProgress,

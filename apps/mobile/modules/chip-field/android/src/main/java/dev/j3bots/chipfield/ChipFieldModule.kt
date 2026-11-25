@@ -6,12 +6,27 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
 
-/** The field's text, with a mark (U+FFFC) where each chip stands, and the chips' keys in order. */
+/**
+ * The field's text, with a mark (U+FFFC) where each chip stands, the chips'
+ * keys in order, and the runs of it drawn as mentions.
+ */
 class FieldValue : Record {
   @Field val text: String = ""
   @Field val keys: List<String> = emptyList()
+  @Field val mentions: List<MentionLook> = emptyList()
   /** The last change of the field the text answers; an older one is not shown over a newer edit. */
   @Field val eventCount: Int = 0
+}
+
+/** A picked mention, drawn as a chip over `[start, end)` of the text while that reads `text`. */
+class MentionLook : Record {
+  @Field val start: Int = 0
+  @Field val end: Int = 0
+  @Field val text: String = ""
+  /** The bot's still face, a PNG in base64. */
+  @Field val face: String = ""
+  /** A tint of the bot's color, the chip's fill. */
+  @Field val fill: Double = 0.0
 }
 
 /** What one chip shows. */
@@ -33,6 +48,8 @@ class FieldLook : Record {
   @Field val chipBorder: Double = 0.0
   @Field val failedBackground: Double = 0.0
   @Field val failedText: Double = 0.0
+  /** A mention's text, over its tint. */
+  @Field val mentionText: Double = 0.0
   @Field val fontFamily: String = ""
   @Field val fontSize: Double = 18.0
   @Field val paddingHorizontal: Double = 4.0
@@ -41,7 +58,8 @@ class FieldLook : Record {
 
 /**
  * A multiline field of plain text in which each of a draft's files is a chip
- * where its mark stands: React Native's own field cannot hold one.
+ * where its mark stands, and each picked mention one over its text: React
+ * Native's own field cannot hold one.
  */
 class ChipFieldModule : Module() {
   override fun definition() = ModuleDefinition {

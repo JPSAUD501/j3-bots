@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { BotId } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { parseMessageText } from "./messageText.ts";
+import { type MentionName, parseMessageText } from "./messageText.ts";
 
-const inlinesOf = (text: string, mentionable: ReadonlyArray<string> = []) => {
+const wren = { name: "Wren", botId: BotId.make("wren") } satisfies MentionName;
+const ana = { name: "Ana", botId: BotId.make("ana") } satisfies MentionName;
+const anaLima = { name: "Ana Lima", botId: BotId.make("ana-lima") } satisfies MentionName;
+const hal = { name: "Hal", botId: BotId.make("hal") } satisfies MentionName;
+const everyone = { name: "everyone", botId: null } satisfies MentionName;
+
+const inlinesOf = (text: string, mentionable: ReadonlyArray<MentionName> = []) => {
   const [block] = parseMessageText(text, mentionable);
   return block?.kind === "paragraph" ? block.inlines : [];
 };
+
+const mention = ({ name, botId }: MentionName) => ({ kind: "mention", name, botId }) as const;
 
 describe("parseMessageText", () => {
   it("splits paragraphs and fenced code", () => {
@@ -49,41 +58,43 @@ describe("parseMessageText", () => {
   });
 
   it("marks a mention only for a name the message addressed", () => {
-    expect(inlinesOf("@Wren and @Nobody, also @everyone", ["Wren"])).toEqual([
-      { kind: "mention", name: "Wren" },
+    expect(inlinesOf("@Wren and @Nobody, also @everyone", [wren])).toEqual([
+      mention(wren),
       { kind: "text", text: " and @Nobody, also @everyone" },
     ]);
-    expect(inlinesOf("@Wren, @everyone", ["everyone"])).toEqual([
+    expect(inlinesOf("@Wren, @everyone", [everyone])).toEqual([
       { kind: "text", text: "@Wren, " },
-      { kind: "mention", name: "everyone" },
+      mention(everyone),
     ]);
   });
 
   it("marks a name of several words, the longer of two that fit", () => {
-    expect(inlinesOf("@Ana Lima and @Ana, see", ["Ana", "Ana Lima"])).toEqual([
-      { kind: "mention", name: "Ana Lima" },
+    expect(inlinesOf("@Ana Lima and @Ana, see", [ana, anaLima])).toEqual([
+      mention(anaLima),
       { kind: "text", text: " and " },
-      { kind: "mention", name: "Ana" },
+      mention(ana),
       { kind: "text", text: ", see" },
     ]);
   });
 
+  it("marks a name two members share as the first of them", () => {
+    const otherAna = { name: "Ana", botId: BotId.make("other-ana") } satisfies MentionName;
+    expect(inlinesOf("@Ana", [ana, otherAna])).toEqual([mention(ana)]);
+  });
+
   it("marks a name where a mention opens and ends, as the composer reads one", () => {
     // Inside an address it opens no mention, though the message mentions Ana elsewhere.
-    expect(inlinesOf("mail@Ana, @Ana", ["Ana"])).toEqual([
+    expect(inlinesOf("mail@Ana, @Ana", [ana])).toEqual([
       { kind: "text", text: "mail@Ana, " },
-      { kind: "mention", name: "Ana" },
+      mention(ana),
     ]);
     // A hyphen ends the name, as it does where the operator picked it.
-    expect(inlinesOf("@Hal-bot", ["Hal"])).toEqual([
-      { kind: "mention", name: "Hal" },
-      { kind: "text", text: "-bot" },
-    ]);
-    expect(inlinesOf("@Halbot", ["Hal"])).toEqual([{ kind: "text", text: "@Halbot" }]);
+    expect(inlinesOf("@Hal-bot", [hal])).toEqual([mention(hal), { kind: "text", text: "-bot" }]);
+    expect(inlinesOf("@Halbot", [hal])).toEqual([{ kind: "text", text: "@Halbot" }]);
   });
 
   it("ends a link at a backtick, which opens code that holds no mention", () => {
-    expect(inlinesOf("https://example.test/` note @Ana `", ["Ana"])).toEqual([
+    expect(inlinesOf("https://example.test/` note @Ana `", [ana])).toEqual([
       { kind: "link", href: "https://example.test/", text: "https://example.test/" },
       { kind: "code", text: " note @Ana " },
     ]);
@@ -99,7 +110,7 @@ describe("parseMessageText with files placed in the text", () => {
 
   it("puts a file before the code, link or mention it is placed at, and after one it would split", () => {
     const text = "see `a` https://x.dev @Ana end";
-    const [block] = parseMessageText(text, ["Ana"], [4, 8, 24, 30]);
+    const [block] = parseMessageText(text, [ana], [4, 8, 24, 30]);
     expect(block).toEqual({
       kind: "paragraph",
       inlines: [
@@ -110,7 +121,7 @@ describe("parseMessageText with files placed in the text", () => {
         { kind: "file", index: 1 },
         { kind: "link", href: "https://x.dev", text: "https://x.dev" },
         { kind: "text", text: " " },
-        { kind: "mention", name: "Ana" },
+        mention(ana),
         { kind: "file", index: 2 },
         { kind: "text", text: " end" },
         { kind: "file", index: 3 },

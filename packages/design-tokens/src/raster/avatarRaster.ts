@@ -70,6 +70,12 @@ export interface AvatarPaint {
    * cut out of it.
    */
   readonly silhouette?: boolean;
+  /**
+   * The size it shows at, in px, when that is not the box's: drawn on a
+   * screen of more pixels than px, it takes the proportions of its size on
+   * screen, as an avatar of 28 px and under draws its eye larger.
+   */
+  readonly shownAt?: number;
 }
 
 /** A part's paint: a color, or `null` for clearing what is under it. */
@@ -92,7 +98,7 @@ export function drawAvatar(
 ) {
   const { shape: shapeName, color } = resolveAvatar(avatar);
   const shape = avatarShapes[shapeName];
-  const frame = avatarFrame(shapeName, face, box.size);
+  const frame = avatarFrame(shapeName, face, paint.shownAt ?? box.size);
   const unit = box.size / avatarViewBox.size;
   const toBox = (p: Point): Point => ({
     x: box.x + (p.x - avatarViewBox.x) * unit,
@@ -208,17 +214,21 @@ function stillCanvas(size: number): Canvas {
 
 /**
  * A still avatar as a PNG `size` px square on a clear background, in
- * `theme`'s colors: for a notification's image, where SVG is not accepted.
- * `size` is a whole number of px, at least 1; anything else throws a `RangeError`.
+ * `theme`'s colors: for a notification's image, or text a native field
+ * draws, where SVG is not accepted. `size` is a whole number of px, at least
+ * 1; anything else throws a `RangeError`. `shownAt`, when it differs, is the
+ * size the image shows at on a screen of `size / shownAt` pixels per px,
+ * whose proportions it takes.
  */
 export function renderStillAvatar(
   avatar: AvatarTokens,
   face: AvatarFace,
   theme: keyof Themed,
   size: number,
+  shownAt: number = size,
 ): Uint8Array<ArrayBuffer> {
   const canvas = stillCanvas(size);
-  drawAvatar(canvas, avatar, face, theme, { x: 0, y: 0, size });
+  drawAvatar(canvas, avatar, face, theme, { x: 0, y: 0, size }, { shownAt });
   return canvas.png();
 }
 

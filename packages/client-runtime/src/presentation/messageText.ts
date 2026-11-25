@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import type { BotId } from "@j3-bots/contracts";
+
+/**
+ * A name a message highlights where `@` opens it, and whose it is: a member's,
+ * or `@everyone`'s, which is no bot's.
+ */
+export interface MentionName {
+  readonly name: string;
+  readonly botId: BotId | null;
+}
+
 export type Inline =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "code"; readonly text: string }
   | { readonly kind: "link"; readonly href: string; readonly text: string }
-  | { readonly kind: "mention"; readonly name: string }
+  | { readonly kind: "mention"; readonly name: string; readonly botId: BotId | null }
   /** The message's file of this index, where the operator placed it. */
   | { readonly kind: "file"; readonly index: number };
 
@@ -110,8 +121,9 @@ interface Placed {
  * Splits message text into what the bubble renders: paragraphs with inline
  * code, links and mentions, and fenced code blocks. Everything else is plain
  * text. Only http and https addresses become links. `@` and a name in
- * `mentionable` is a mention where it opens and ends as one, outside code and
- * links; of two names that both fit, the longer.
+ * `mentionable` is a mention, of the bot the name is, where it opens and ends
+ * as one, outside code and links; of two names that both fit, the longer, and
+ * of two bots of one name, the first.
  *
  * Each of `placed`, a file's offset in the text by its index, never
  * decreasing, becomes a `file` inline where it stands: in its paragraph,
@@ -120,10 +132,12 @@ interface Placed {
  */
 export function parseMessageText(
   text: string,
-  mentionable: ReadonlyArray<string> = [],
+  mentionable: ReadonlyArray<MentionName> = [],
   placed: ReadonlyArray<number> = [],
 ): Block[] {
-  const names = mentionable.filter((name) => name !== "").toSorted((a, b) => b.length - a.length);
+  const names = mentionable
+    .filter(({ name }) => name !== "")
+    .toSorted((a, b) => b.name.length - a.name.length);
   const parts = literals(text);
   // A file inside a literal stands after it.
   const files: ReadonlyArray<Placed> = placed.map((offset, index) => {
@@ -193,7 +207,7 @@ function inlines(
   from: number,
   to: number,
   parts: ReadonlyArray<Literal>,
-  names: ReadonlyArray<string>,
+  names: ReadonlyArray<MentionName>,
   files: ReadonlyArray<Placed>,
 ): Inline[] {
   const out: Inline[] = [];
@@ -220,16 +234,16 @@ function inlines(
     let cursor = start;
     for (let at = text.indexOf("@", start); at !== -1 && at < end; at = text.indexOf("@", at + 1)) {
       if (at < cursor || !opensAt(text, at)) continue;
-      const name = names.find(
-        (candidate) =>
-          at + 1 + candidate.length <= end &&
-          text.startsWith(candidate, at + 1) &&
-          endsAt(text, at + 1 + candidate.length),
+      const found = names.find(
+        ({ name }) =>
+          at + 1 + name.length <= end &&
+          text.startsWith(name, at + 1) &&
+          endsAt(text, at + 1 + name.length),
       );
-      if (name === undefined) continue;
+      if (found === undefined) continue;
       plain(cursor, at);
-      out.push({ kind: "mention", name });
-      cursor = at + 1 + name.length;
+      out.push({ kind: "mention", name: found.name, botId: found.botId });
+      cursor = at + 1 + found.name.length;
     }
     plain(cursor, end);
   };

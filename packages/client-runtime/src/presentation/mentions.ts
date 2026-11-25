@@ -3,7 +3,7 @@ import type { BotId, Mentions } from "@j3-bots/contracts";
 import type { IntentFailure } from "../intents/Actions.ts";
 import type { MentionLabel } from "../stores/Conversations.ts";
 import type { Addressing, DraftMention } from "../stores/Drafts.ts";
-import { endsAt, literalRanges, opensAt } from "./messageText.ts";
+import { endsAt, literalRanges, type MentionName, opensAt } from "./messageText.ts";
 
 /** A room member the operator can mention, by the name the room shows. */
 export interface Mentionable {
@@ -46,28 +46,44 @@ const stands = (
 };
 
 /**
- * Who a room message addresses, as `message.send` takes it: only mentions the
- * operator picked count, and only while they stand in the text as it is sent,
- * trimmed as `Drafts.send` trims it. `@everyone` asks every member; otherwise
- * each member mentioned, by the id picked, in the order they appear. A member
- * no longer in the room is left out. With it, the names the members it
- * mentions were picked by where those picks stand, in the order they appear:
- * the first for each member is the pick that addressed it. `undefined` when
- * it addresses nobody, which every member reads.
+ * The mentions picked in a draft that address anyone as it would be sent: each
+ * whose token stands intact where it was written, opens and ends as a mention
+ * does, and is not in code or a link, in the text trimmed as `Drafts.send`
+ * trims it. In the order they appear, placed in the draft as it is. The
+ * composer draws these as chips, so what it shows is what goes.
+ */
+export function standingMentions(
+  text: string,
+  mentions: ReadonlyArray<DraftMention>,
+): ReadonlyArray<DraftMention> {
+  const sent = text.trim();
+  // Where the text sent starts in the draft: mentions are placed in the draft.
+  const offset = text.length - text.trimStart().length;
+  const literal = literalRanges(sent);
+  return mentions
+    .filter((mention) => {
+      const position = mention.position - offset;
+      return position >= 0 && stands(sent, { ...mention, position }, literal);
+    })
+    .toSorted((a, b) => a.position - b.position);
+}
+
+/**
+ * Who a room message addresses, as `message.send` takes it: only the mentions
+ * the operator picked that stand as it is sent (`standingMentions`) count.
+ * `@everyone` asks every member; otherwise each member mentioned, by the id
+ * picked, in the order they appear. A member no longer in the room is left
+ * out. With it, the names the members it mentions were picked by where those
+ * picks stand, in the order they appear: the first for each member is the
+ * pick that addressed it. `undefined` when it addresses nobody, which every
+ * member reads.
  */
 export function addressed(
   text: string,
   mentions: ReadonlyArray<DraftMention>,
   members: ReadonlyArray<BotId>,
 ): Addressing | undefined {
-  const sent = text.trim();
-  // Where the text sent starts in the draft: mentions are placed in the draft.
-  const offset = text.length - text.trimStart().length;
-  const literal = literalRanges(sent);
-  const standing = mentions
-    .map((mention) => ({ ...mention, position: mention.position - offset }))
-    .filter((mention) => mention.position >= 0 && stands(sent, mention, literal))
-    .toSorted((a, b) => a.position - b.position);
+  const standing = standingMentions(text, mentions);
   if (standing.some((mention) => mention._tag === "everyone")) {
     return { mentions: { _tag: "everyone" }, labels: [] };
   }
@@ -85,21 +101,25 @@ export function addressed(
 }
 
 /**
- * The names a room message highlights: those of the members it addressed, as
- * the server took them, or `@everyone`. Each member goes by the names it was
- * picked by, when the message keeps them, else by its name now. A name that
- * merely reads like a mention is not highlighted.
+ * The names a room message highlights, each with whose it is: those of the
+ * members it addressed, as the server took them, or `@everyone`, which is no
+ * bot's. Each member goes by the names it was picked by, when the message
+ * keeps them, else by its name now; a member deleted since, with no name
+ * kept, is not highlighted. A name that merely reads like a mention is not
+ * highlighted.
  */
 export function mentionedNames(
   mentions: Mentions | null,
   labels: ReadonlyArray<MentionLabel>,
   nameOf: (botId: BotId) => string | undefined,
-): ReadonlyArray<string> {
+): ReadonlyArray<MentionName> {
   if (mentions === null) return [];
-  if (mentions._tag === "everyone") return [EVERYONE];
-  return mentions.ids.flatMap((id) => {
-    const picked = labels.flatMap((label) => (label.botId === id ? [label.label] : []));
-    return picked.length > 0 ? picked : (nameOf(id) ?? []);
+  if (mentions._tag === "everyone") return [{ name: EVERYONE, botId: null }];
+  return mentions.ids.flatMap((botId) => {
+    const picked = labels.flatMap((label) => (label.botId === botId ? [label.label] : []));
+    if (picked.length > 0) return picked.map((name) => ({ name, botId }));
+    const name = nameOf(botId);
+    return name === undefined ? [] : [{ name, botId }];
   });
 }
 

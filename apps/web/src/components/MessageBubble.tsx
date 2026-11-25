@@ -6,6 +6,7 @@ import { messageStatus } from "@j3-bots/client-runtime";
 import {
   clockTime,
   type GroupPosition,
+  type MentionName,
   type OpeningHold,
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
@@ -56,8 +57,11 @@ interface MessageBubbleProps {
    * one. What the bot is doing now is not part of an old message.
    */
   readonly speaker?: BotId | null;
-  /** The names the message addressed, which `@Name` highlights; `everyone` for every member. */
-  readonly mentionable?: ReadonlyArray<string>;
+  /**
+   * The names the message addressed, each with whose it is, which `@Name`
+   * highlights; `everyone` for every member.
+   */
+  readonly mentionable?: ReadonlyArray<MentionName>;
   readonly onOpenAttachment: (attachment: Attachment) => void;
   /** Sends again a message that failed, or that this device could not send. */
   readonly onRetry: () => void;
