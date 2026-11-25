@@ -300,6 +300,9 @@ export function SettingsPanel({
         return !data.engineStale && providersNeedYou(data.engine);
       case "connectors":
         return data.connectors?.some(connectorNeedsYou) ?? false;
+      case "devices":
+        // Stored unencrypted until it pairs again, which the operator can do.
+        return data.signInUnencrypted;
       case "updates":
         return updateWaiting(intents);
       default:
