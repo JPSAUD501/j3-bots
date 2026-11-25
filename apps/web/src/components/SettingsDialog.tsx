@@ -55,9 +55,10 @@ import {
   engineProblem,
   timeZoneHint,
 } from "@j3-bots/client-runtime/wording";
-import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
+import { AppUpdate } from "./AppUpdate";
 import { updateHasDetails } from "./ConnectionBanner";
-import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
+import { ServerUpdateRow } from "./ServerUpdate";
+import { UpdatePromptEntryButton } from "./UpdatePrompt";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
 import type { ProviderActions } from "./ProviderFix";
@@ -100,6 +101,7 @@ type SettingsIntents = Pick<
   | "local"
   | "update"
   | "serverUpdate"
+  | "updatePrompt"
   | "shortcut"
   | "providerSetup"
   | "vault"
@@ -130,15 +132,6 @@ interface SettingsButtonProps {
 // keeps them; closing it themselves discards them.
 
 /**
- * Whether an update waits for the operator: the server's, on offer to a
- * device that can start it, or the app's, downloaded and ready, or out for
- * a build that does not install it itself.
- */
-const updateWaiting = ({ serverUpdate, update }: SettingsIntents): boolean =>
-  (serverUpdate !== undefined && serverUpdateOffered(serverUpdate)) ||
-  (update !== undefined && appUpdateWaiting(update));
-
-/**
  * The roster's footer: opens everything that is not about one bot. Opening
  * reads the settings and devices again, for what another device changed.
  */
@@ -146,8 +139,12 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
   const { t } = useI18n();
   const titleId = useId();
   const profile = useProfileEdits(data.settingsSaves.profile);
+  const updateEntry = intents.updatePrompt?.entry ?? null;
   return (
-    <div className="border-t border-border p-2">
+    <div className="flex flex-col border-t border-border p-2">
+      {updateEntry !== null && intents.updatePrompt !== undefined && (
+        <UpdatePromptEntryButton entry={updateEntry} onOpen={intents.updatePrompt.reopen} />
+      )}
       <Dialog.Root
         open={data.settingsOpen}
         onOpenChange={(open) => {
@@ -168,12 +165,6 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
         >
           <SettingsIcon aria-hidden />
           {t("settings.title")}
-          {updateWaiting(intents) && (
-            <span className="ms-auto flex items-center gap-1.5 text-2xs text-muted-foreground">
-              <span aria-hidden className="size-1.5 rounded-full bg-accent" />
-              {t("updates.notice")}
-            </span>
-          )}
         </Dialog.Trigger>
         <Dialog.Portal>
           <Dialog.Backdrop className={dialogBackdrop} />
@@ -256,6 +247,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                   server={intents.serverUpdate}
                   app={intents.update}
                   local={intents.local}
+                  onUpdate={intents.updatePrompt?.reopen}
                 />
               )}
               <BrowserSection
@@ -1037,9 +1029,12 @@ export function UpdatesSection({
   server,
   app,
   local,
+  onUpdate,
 }: {
   server: RemoteServerUpdate | undefined;
   app: DesktopUpdate | undefined;
+  /** Opens the update prompt, which updates the server first and this app after it. */
+  onUpdate: (() => void) | undefined;
   /** The bots on this computer, in local mode. */
   local: DesktopLocal | undefined;
 }) {
@@ -1049,7 +1044,7 @@ export function UpdatesSection({
       {server !== undefined && (
         <div className="flex flex-col gap-1.5">
           <h4 className="text-xs font-medium">{t("serverUpdate.title")}</h4>
-          <ServerUpdateRow update={server} />
+          <ServerUpdateRow update={server} onUpdate={onUpdate} />
         </div>
       )}
       {app !== undefined && (

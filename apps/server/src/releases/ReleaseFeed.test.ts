@@ -172,7 +172,10 @@ describe("the release feed", () => {
     () =>
       Effect.gen(function* () {
         const github = yield* FakeGitHub;
-        github.latest = release("0.3.1", false);
+        github.latest = {
+          ...release("0.3.1", false),
+          body: "# J3 Bots 0.3.1\n\n## What's new\n\n- **Bots tend a garden** (#1). More.\n",
+        };
         github.files.set("0.3.1", signed("0.3.1"));
         const feed = yield* make({ running: "0.3.0" });
 
@@ -180,6 +183,7 @@ describe("the release feed", () => {
         assert.strictEqual(first.available?.version, "0.3.1");
         assert.isTrue(first.available?.verified);
         assert.strictEqual(first.available?.notesUrl, "https://github.test/releases/tag/v0.3.1");
+        assert.deepStrictEqual(first.available?.highlights, ["Bots tend a garden"]);
         assert.isNull(first.refused);
         assert.deepStrictEqual(yield* asked, [
           "/repos/owner/j3-bots/releases/latest",

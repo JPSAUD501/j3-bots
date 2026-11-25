@@ -15,6 +15,7 @@ import type {
   SettingsChange,
   SettingsSaves,
   SignInView,
+  UpdatePromptEntry,
   UpdateResult,
   VaultView,
 } from "@j3-bots/client-runtime";
@@ -297,6 +298,8 @@ export interface ShellIntents extends TimelineIntents {
    * where updating the app updates the server it runs.
    */
   readonly serverUpdate?: RemoteServerUpdate;
+  /** The way back to the update prompt: what waits behind it, and opening it again. */
+  readonly updatePrompt?: UpdatePromptIntents;
   /** In the desktop app, the global shortcut that shows it. Absent in a browser. */
   readonly shortcut?: DesktopShortcut;
   /**
@@ -398,6 +401,17 @@ export interface RemoteServerUpdate {
   readonly setChannel: (channel: UpdateChannel) => void;
   /** Starts the update to `version`, stopping the bots' running work only with `stopWork`. */
   readonly start: (version: ReleaseVersion, stopWork: boolean) => Promise<ServerUpdateStart>;
+}
+
+/**
+ * The update prompt's quiet entry point: a release that waits after
+ * "Later", or an update under way behind the dialog the operator put aside;
+ * null when there is nothing to come back to. `reopen` brings the dialog
+ * back in front, as "Update now" in Settings does.
+ */
+export interface UpdatePromptIntents {
+  readonly entry: UpdatePromptEntry | null;
+  readonly reopen: () => void;
 }
 
 /** Updating the desktop app, which carries its own page. */

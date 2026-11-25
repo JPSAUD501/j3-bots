@@ -6,5 +6,6 @@
 // `@j3-bots/release/node`; another platform passes its own.
 export * from "./github.ts";
 export * from "./keys.ts";
+export * from "./notes.ts";
 export * from "./verify.ts";
 export * from "./version.ts";

@@ -10,6 +10,9 @@ import { DeviceId, NonNegativeInt, OpenLiterals, PositiveInt, UnknownLiteral } f
 // is behind, so this is how they still read each other's versions and bring
 // the server forward. The routes have their own version in their path, and
 // their shapes are frozen: a later API version adds paths, never changes these.
+// A field is added only with a decoding default, as `ReleaseInfo.highlights`
+// is: a client built before it ignores a key it does not know, and one built
+// after it reads an older server as sending the default.
 // Every set a client receives here is open: a value added after the client was
 // built decodes as `unknown`, which a client shows without acting on it.
 // docs/decisions/0032-updates-are-served-outside-the-protocol.md says why.
@@ -107,6 +110,21 @@ export const ReleaseNotesUrl = Schema.String.check(
 );
 export type ReleaseNotesUrl = typeof ReleaseNotesUrl.Type;
 
+/** At most this many highlights of a release, each at most `MAX_HIGHLIGHT_LENGTH` characters. */
+export const MAX_HIGHLIGHTS = 5;
+export const MAX_HIGHLIGHT_LENGTH = 160;
+
+/**
+ * What a release brings, in a few short lines: the bold lead of each item
+ * under "What's new" in its notes, in the order the notes give them, in
+ * English as the notes are written. Empty when its notes have none, and
+ * from a server older than this field, which a client then shows without.
+ */
+export const ReleaseHighlights = Schema.Array(
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_HIGHLIGHT_LENGTH)),
+).check(Schema.isMaxLength(MAX_HIGHLIGHTS));
+export type ReleaseHighlights = typeof ReleaseHighlights.Type;
+
 /** A release the feed found on the server's channel. */
 export const ReleaseInfo = Schema.Struct({
   version: ReleaseVersion,
@@ -115,6 +133,12 @@ export const ReleaseInfo = Schema.Struct({
   publishedAt: Schema.DateTimeUtc,
   /** Its page, with its notes: what a client opens for "What's new". */
   notesUrl: ReleaseNotesUrl,
+  /**
+   * What it brings, from its notes. Added after the routes' first version:
+   * a client before it ignores it, and one after it reads an older server's
+   * status as having none.
+   */
+  highlights: ReleaseHighlights.pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   /**
    * Whether its `SHA256SUMS` carries the release key's signature. A server
    * offers only a verified release as `available`, so it is true there.

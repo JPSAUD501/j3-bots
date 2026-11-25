@@ -25,6 +25,7 @@ const release = (): Extract<AppUpdateState, { _tag: "available" }>["release"] =>
     version: signed.version,
     channel: "stable",
     notesUrl: `https://example.com/releases/${signed.version}`,
+    highlights: [],
     apk: { url: "https://example.com/app.apk", sha256: "0".repeat(64) },
     sums: verified.success,
   };

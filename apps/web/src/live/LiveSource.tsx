@@ -94,6 +94,7 @@ import { useI18n } from "../app/context";
 import { LaunchUpdate } from "../components/LaunchUpdate";
 import { ConnectionBanner, updateHasDetails } from "../components/ConnectionBanner";
 import { restartingTo } from "../components/ServerUpdate";
+import { UpdatePromptDialog } from "../components/UpdatePrompt";
 import {
   ConnectInstead,
   LocalServerFailed,
@@ -148,6 +149,7 @@ import { deliverFile, reserveWindow, saveText } from "./openFile";
 import { readTemplate, useTemplateDrop } from "./templateFiles";
 import { updatable, useDesktopUpdate, useLaunchUpdate, useReportSaving } from "./appUpdate";
 import { useRemoteServerUpdate } from "./serverUpdate";
+import { useUpdatePrompt } from "./updatePrompt";
 import {
   useDesktopShortcut,
   useReportAppearance,
@@ -442,6 +444,8 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
             />
           </Screen>
           {local?.details}
+          {/* An update under way goes on over this screen; nothing new opens here. */}
+          <UpdatePromptHost blocked />
         </ConnectionBanner>
       );
     case "storage-failed":
@@ -480,9 +484,21 @@ function Gate({ origin, children }: { origin: URL; children: ReactNode }) {
             {children}
           </LiveShell>
           {local?.details}
+          <UpdatePromptHost blocked={false} />
         </ConnectionBanner>
       );
   }
+}
+
+/**
+ * The update prompt over the screen the operator is on. Its runner belongs
+ * to the client, so an update under way carries on when this screen gives
+ * way to another, as when the server comes back on a protocol this app no
+ * longer speaks.
+ */
+function UpdatePromptHost({ blocked }: { blocked: boolean }) {
+  const { view } = useUpdatePrompt(blocked);
+  return <UpdatePromptDialog view={view} />;
 }
 
 /**
@@ -959,6 +975,8 @@ function LiveShell({
   const update = useDesktopUpdate();
   // The server's own update, for a server this device does not run: in local mode the app updates it.
   const serverUpdate = useRemoteServerUpdate();
+  // The way back to the update prompt after "Later", in the roster's footer.
+  const updatePrompt = useUpdatePrompt(false);
   const shortcut = useDesktopShortcut();
   useReportSaving(
     savesUnderWay({
@@ -1624,6 +1642,7 @@ function LiveShell({
     ...(desktopServer === undefined ? {} : { server: desktopServer }),
     ...(local === undefined ? { serverUpdate } : { local }),
     ...(update === undefined ? {} : { update }),
+    updatePrompt: { entry: updatePrompt.entry, reopen: updatePrompt.reopen },
     ...(shortcut === undefined ? {} : { shortcut }),
     ...(providerSetup === undefined ? {} : { providerSetup }),
   };

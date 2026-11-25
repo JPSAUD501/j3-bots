@@ -49,6 +49,8 @@ interface AppRelease {
   readonly version: string;
   readonly channel: UpdateChannel;
   readonly notesUrl: string;
+  /** What it brings, from its notes. */
+  readonly highlights: ReadonlyArray<string>;
   readonly apk: { readonly url: string; readonly sha256: string };
   /** The release's signed list, which the downloaded APK is checked against. */
   readonly sums: VerifiedSums;
@@ -247,6 +249,7 @@ const verifiedRelease = async (
         version: candidate.version,
         channel: candidate.channel,
         notesUrl: candidate.notesUrl,
+        highlights: candidate.highlights,
         apk: { url: download(feed, candidate.tag, file), sha256 },
         sums: verified,
       })),

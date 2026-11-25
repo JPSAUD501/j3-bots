@@ -5,6 +5,7 @@ import type {
   ReleaseVersion,
 } from "@j3-bots/contracts";
 import type { I18n, KeyWith } from "@j3-bots/i18n";
+import type { ServerFailure } from "../update/prompt.ts";
 import { isRunning, type ServerUpdateView, type UpdateResult } from "../update/ServerUpdate.ts";
 
 // The server's updates in words, the same on the web, the desktop and the
@@ -224,3 +225,17 @@ const REFUSALS = {
 /** Why the server did not start an update, for a refusal the client does not answer itself. */
 export const startRefusalText = (reason: ReceivedUpdateRefused["reason"], { t }: I18n): string =>
   t(REFUSALS[reason]);
+
+/** Why the update prompt's server part did not go through, and what to run when there is something. */
+export function serverFailureLine(failure: ServerFailure, i18n: I18n): ServerUpdateLine {
+  switch (failure._tag) {
+    case "refused":
+      return line(startRefusalText(failure.reason, i18n), "blocked");
+    case "unreachable":
+      return line(i18n.t("serverUpdate.notReached"), "blocked");
+    case "ended":
+      return updateResultLine(failure.result, i18n);
+    case "lost":
+      return line(i18n.t("serverUpdate.lost"), "blocked", { command: "j3-bots doctor" });
+  }
+}

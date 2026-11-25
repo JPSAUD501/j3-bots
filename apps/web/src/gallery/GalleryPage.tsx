@@ -135,6 +135,7 @@ import { MessageBubble } from "../components/MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "../components/NoticeLine";
 import { Incompatible, Pairing, StorageFailed } from "../components/Pairing";
 import { LaunchUpdate } from "../components/LaunchUpdate";
+import { UpdatePromptPanel, type UpdatePromptView } from "../components/UpdatePrompt";
 import { VisualTheme } from "../components/VisualCard";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
@@ -176,6 +177,8 @@ import {
   appPhases,
   appUpdate,
   endedDone,
+  laterEntry,
+  promptViews,
   SAMPLE_NEXT,
   SAMPLE_NIGHTLY,
   said,
@@ -3504,7 +3507,7 @@ function UpdatesFrame({
   return (
     <Frame label={label} width={390} height={height}>
       <div className="h-full overflow-y-auto">
-        <UpdatesSection server={server} app={app} local={local} />
+        <UpdatesSection server={server} app={app} local={local} onUpdate={nothing} />
       </div>
     </Frame>
   );
@@ -3526,16 +3529,42 @@ const desktopServer = {
   forget: () => Promise.resolve(false),
 } as const;
 
+/** The update prompt's dialog in one state, as it shows in front of the app. */
+function PromptFrame({ label, view }: { label: string; view: UpdatePromptView }) {
+  return (
+    <Frame label={label} width={448} height={520}>
+      <div className="h-full overflow-y-auto bg-surface">
+        <UpdatePromptPanel view={view} />
+      </div>
+    </Frame>
+  );
+}
+
 function UpdatesGallerySection() {
   const s = serverStatuses;
   const source = useSampleSource();
   return (
     <Section title="Updating the server and the app" stacked>
-      <Labeled label="The roster's footer with an update waiting">
+      <div className="flex flex-wrap gap-4">
+        <PromptFrame label="The prompt: the server and this app" view={promptViews.desktop} />
+        <PromptFrame label="The prompt in a browser" view={promptViews.browser} />
+        <PromptFrame label="The prompt: only the app, in local mode" view={promptViews.appLocal} />
+        <PromptFrame label="Updating: the server" view={promptViews.updatingServer} />
+        <PromptFrame label="Updating: the app, after the server" view={promptViews.updatingApp} />
+        <PromptFrame label="Bots at work on the server" view={promptViews.workRunning} />
+        <PromptFrame label="The server's update rolled back" view={promptViews.serverFailed} />
+        <PromptFrame label="The server updated, the app did not" view={promptViews.appFailed} />
+        <PromptFrame label="Done: the app was current" view={promptViews.done} />
+      </div>
+      <Labeled label="The roster's footer after Later">
         <div className="w-72 rounded-md border border-border">
           <SettingsButton
             data={source.data}
-            intents={{ ...source.intents, serverUpdate: serverUpdate(said(s.available)) }}
+            intents={{
+              ...source.intents,
+              serverUpdate: serverUpdate(said(s.available)),
+              updatePrompt: { entry: laterEntry, reopen: nothing },
+            }}
           />
         </div>
       </Labeled>

@@ -104,5 +104,6 @@ export {
   startRefusalText,
   type UpdateTone,
   serverBehindLine,
+  serverFailureLine,
   updateResultLine,
 } from "./update.ts";

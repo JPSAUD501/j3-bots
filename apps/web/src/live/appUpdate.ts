@@ -37,6 +37,72 @@ const subscribe = (listener: () => void) => {
 };
 const current = () => latest;
 
+/** The desktop app's update status as last reported, followed as it changes; null in a browser. */
+export const desktopUpdateStatus = {
+  get: (): UpdateStatus | null => latest ?? null,
+  subscribe,
+};
+
+/**
+ * Updates the desktop app now, for the update prompt: checks the feed
+ * (the server may have just moved to a release the app's last check did not
+ * see), lets the app download and verify what it finds, then restarts into
+ * it once no save is under way. Settles `current` when the check finds
+ * nothing newer, `failed` when the check, the download, its verification or
+ * the install fails; a restart does not settle, as the page goes with it.
+ */
+export const installDesktopUpdate = (): Promise<"current" | "failed"> => {
+  const app = desktop;
+  if (app === null) return Promise.resolve("current");
+  return new Promise((resolve) => {
+    // A phase that ends the update counts only once this update has moved
+    // it: a check this one started, or the restart it asked for.
+    let checked = false;
+    let restarted = false;
+    let asked = false;
+    const look = () => {
+      const status = latest;
+      if (status === null || status === undefined) return;
+      const { phase } = status;
+      switch (phase._tag) {
+        case "checking":
+          checked = true;
+          return;
+        case "available":
+        case "downloading":
+        case "verifying":
+        case "installing":
+          return;
+        case "downloaded":
+          if (phase.restart === "offered" && !restarted) {
+            restarted = true;
+            app.restartToUpdate();
+          }
+          return;
+        case "idle":
+        case "failed":
+          if (checked || restarted) {
+            return settle(phase._tag === "idle" ? "current" : "failed");
+          }
+          if (!asked) {
+            asked = true;
+            app.checkForUpdates();
+          }
+          return;
+        case "released":
+        case "unavailable":
+          return settle("current");
+      }
+    };
+    const settle = (outcome: "current" | "failed") => {
+      stop();
+      resolve(outcome);
+    };
+    const stop = subscribe(look);
+    look();
+  });
+};
+
 /** Takes the status the app answers a choice with. */
 const answered = (answer: Promise<UpdateStatus | null>) => {
   void answer.then((status) => {

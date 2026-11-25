@@ -37,6 +37,7 @@ const status = (
       channel: "stable",
       publishedAt: at,
       notesUrl: "https://example.test/releases/tag/v0.3.2",
+      highlights: [],
       verified: true,
     },
     waitingForStable: false,
