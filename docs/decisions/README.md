@@ -50,5 +50,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0042](0042-a-room-counts-rounds.md) | A room counts rounds, not messages | Accepted |
 | [0043](0043-a-bot-reads-its-rooms-from-anywhere-and-posts-there-only-on-what-it-has-seen.md) | A bot reads its rooms from anywhere, and posts there only on what it has seen | Accepted |
 | [0044](0044-j3-bots-installs-and-updates-the-harnesses.md) | J3 Bots installs and updates the harnesses | Accepted |
+| [0045](0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md) | J3 Bots keeps its own copies of the harnesses, checked against the makers' checksums | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

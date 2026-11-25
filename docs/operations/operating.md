@@ -221,6 +221,18 @@ The vault keeps the logins you save and what connectors need to reach their serv
 
   The vault is then empty and asks for a new password. Save each login again and sign in to each connector again. Keep the moved folder if you might remember the password: putting it back while the service is stopped brings everything back.
 
+## J3 Bots' own harnesses
+
+When it does not find Claude Code or Codex, the server can install its own copy, from the harness's maker, when you press **Install** ([Install: when the engine cannot run a harness](install.md#when-the-engine-cannot-run-a-harness)). A harness you installed yourself stays yours: the server never installs beside it, and Settings offers the engine's **Update** for it.
+
+- **Where.** In the data directory, `harnesses/claude-code/` and `harnesses/codex/` ([Server: data](../architecture/server.md#data)). Your `PATH` and your own `~/.claude` and `~/.codex` are not touched; the engine is told where the copy is.
+- **Disk.** Claude Code is about 370 MB, Codex's download about 200 MB and more once unpacked. During an update the old and the new version are both there, until the switch.
+- **Updates.** The server checks each maker for a newer version a minute after it starts and about every six hours, and installs it by itself. The new version waits until no bot on that provider is running anything, then takes over; new turns wait the moment it takes. Settings → Engine shows each copy's version, **Update** when a newer one is out, and how the last update ended, and one switch turns the updates by themselves off; **Update** still works with it off.
+- **What it reaches.** `downloads.claude.ai` and `releases.openai.com`, over HTTPS. A server that cannot reach them says the install could not download.
+- **Back up.** A backup does not need the copies: the server installs them again. Add `--exclude=./harnesses` to the `tar` [below](#back-up) to leave them out; after a restore without them, the provider offers **Install** again.
+- **Remove a copy.** Stop the server, delete `harnesses/<provider>/` from the data directory, and start it again: the provider then runs the harness on the `PATH`, if there is one, or offers **Install**. `j3-bots uninstall --delete-data` removes them with the rest.
+- **Not checked yet on Windows and macOS.** The install is built for both, and tested only against stand-ins on Linux.
+
 ## Back up
 
 Everything J3 Bots keeps is in the data directory: the configuration, the database, the bots' memory and workspaces, attachments and the engine's own data. Stop the service while you copy it, so the database and the files match:
