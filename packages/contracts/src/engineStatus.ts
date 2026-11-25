@@ -69,14 +69,16 @@ export type ProviderVersion = typeof ProviderVersion.Type;
  * engine started:
  * - `running`: waiting for work that is opening a session to start, or
  *   running;
- * - `updated`: done, and the harness checked again;
- * - `current`: there was nothing newer to install;
- * - `failed`: it did not finish, or the engine refused to start it;
+ * - `updated`: the harness, checked again, is at the latest version, which
+ *   includes one that already was;
+ * - `unverified`: the update command ran, but the check that followed did
+ *   not confirm a newer version;
+ * - `failed`: it did not finish, or did not start;
  * - `unknown`, as a client reads it: a state a newer server gives.
  * `detail` is how the engine put it, in its own words (English), when it
  * gave any.
  */
-export const providerUpdateStates = ["running", "updated", "current", "failed"] as const;
+export const providerUpdateStates = ["running", "updated", "unverified", "failed"] as const;
 export const ProviderUpdate = Schema.Struct({
   state: OpenLiterals(providerUpdateStates),
   detail: Schema.optionalKey(ProviderDetail),

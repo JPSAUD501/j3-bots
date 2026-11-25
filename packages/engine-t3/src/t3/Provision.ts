@@ -153,12 +153,12 @@ const claudeLaunchArgs = (systemPromptFile: string, toolBridge: ToolBridge) =>
 
 // Engine settings J3 Bots owns. Everything else in the file is the engine's.
 const ENGINE_SETTINGS = {
-  // The engine would look up each harness's latest release to offer an
-  // update, with the harness's package manager (`npm view`, `npm outdated -g`),
-  // which writes its cache in the server user's home. J3 Bots offers no
-  // harness update. **Read** at `59651c1`, `enrichProviderSnapshotWithVersionAdvisory`
+  // The engine looks up each harness's latest release, which the operator's
+  // update needs (`server.updateProvider`). Set, not left to the default, so
+  // an engine settings file an earlier J3 Bots wrote with it off is turned
+  // back on. **Read** at `59651c1`, `enrichProviderSnapshotWithVersionAdvisory`
   // in `provider-core/src/server/maintenanceResolver.ts`.
-  enableProviderUpdateChecks: false,
+  enableProviderUpdateChecks: true,
   // A bot's session must never be settled: a settled thread loses usage-limit
   // auto-resume and restart continuation.
   sidebarAutoSettleAfterDays: null,

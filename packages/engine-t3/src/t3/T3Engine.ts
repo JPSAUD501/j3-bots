@@ -188,14 +188,6 @@ import {
 const COMMAND_TIMEOUT = Duration.seconds(30);
 
 /**
- * How long an update the operator asked for may take before the adapter
- * stops waiting for the engine's answer: the engine allows its update
- * command 30 minutes (**Read** at `59651c1`, `UPDATE_TIMEOUT_MINUTES` in
- * `providerMaintenanceRunner.ts`), after the sessions opening before it.
- */
-const UPDATE_TIMEOUT = Duration.minutes(40);
-
-/**
  * How long the engine may take to answer a request to check a provider
  * again, which it answers once the check ends: up to 45 seconds for one
  * that ends (`FIRST_CHECK_BUDGET` says why), after reading Windows' PATH
@@ -2197,8 +2189,14 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * update`, or npm for a harness npm installed) and checks the harness
    * again, reporting each step as the instance's `updateState`. It answers
    * only once all that ends, which can take minutes, so it runs on its own
-   * and this answers once it is asked. A refusal to start, which the engine
-   * reports no state for, is kept as the adapter's (`UpdateRequest`).
+   * and this answers once it is asked. The request has no deadline of its
+   * own: the engine stops an update whose request is dropped, and a
+   * harness's native updater stopped mid-download leaves a truncated
+   * executable (**Read** at `59651c1`, `UPDATE_TIMEOUT_MINUTES` and
+   * `Effect.onInterrupt` in `providerMaintenanceRunner.ts`), while the
+   * engine's own 30 minutes bound the command; the request ends with the
+   * connection. A refusal to start, and a request lost on the way, for which
+   * the engine reports no state, are kept as the adapter's (`UpdateRequest`).
    */
   const updateProvider = Effect.fn("Engine.updateProvider")(function* (providerId: ProviderId) {
     yield* ready;
@@ -2210,10 +2208,6 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       provider: ProviderDriverKind.make(driverOf(provider.harness)),
       instanceId: ProviderInstanceId.make(instanceIdFor(providerId)),
     }).pipe(
-      Effect.timeoutOrElse({
-        duration: UPDATE_TIMEOUT,
-        orElse: () => Effect.logWarning("The engine did not answer an update in time"),
-      }),
       Effect.andThen(setUpdate(providerId, undefined)),
       Effect.catchTags({
         ServerProviderUpdateError: (error) =>
@@ -2223,10 +2217,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
               Effect.andThen(setUpdate(providerId, { _tag: "refused", detail })),
             );
           }),
-        RpcClientError: () => setUpdate(providerId, undefined),
+        RpcClientError: () =>
+          Effect.logWarning("An update's request to the engine was lost").pipe(
+            Effect.andThen(setUpdate(providerId, { _tag: "refused", detail: null })),
+          ),
         EnvironmentAuthorizationError: () =>
           Effect.logWarning("The engine refused J3 Bots' credential for an update").pipe(
-            Effect.andThen(setUpdate(providerId, undefined)),
+            Effect.andThen(setUpdate(providerId, { _tag: "refused", detail: null })),
           ),
       }),
       Effect.annotateLogs({ providerId }),

@@ -339,13 +339,14 @@ const versionOf = (engine: ReportedProvider | undefined): ProviderVersion | unde
 /**
  * An update the adapter asked the engine for (`engine.updateProvider`), as
  * the adapter knows it: `asked` until the engine answers the request, and
- * `refused`, in the engine's words, when it refused to start it, which it
- * then reports no state for. A request that ends otherwise is forgotten:
- * the engine's own state says how it went.
+ * `refused` when the request did not reach an update the engine reports:
+ * the engine refused to start it, in its words (`detail`), or the request
+ * was lost on the way, with none. A request the engine answered otherwise
+ * is forgotten: the engine's own state says how it went.
  */
 export type UpdateRequest =
   | { readonly _tag: "asked" }
-  | { readonly _tag: "refused"; readonly detail: string };
+  | { readonly _tag: "refused"; readonly detail: string | null };
 
 const updateDetail = (message: string | null | undefined) =>
   message === null || message === undefined
@@ -356,8 +357,10 @@ const updateDetail = (message: string | null | undefined) =>
  * The update last asked for, from the engine's `updateState` (**Read** at
  * `59651c1`, `ServerProviderUpdateState` in `contracts/src/server.ts`, set by
  * `ProviderMaintenanceRunner.updateProvider`): `queued` and `running` are
- * `running`, `succeeded` `updated`, `unchanged` `current`, `failed`
- * `failed`, `idle` none. While the engine reports none running, the
+ * `running`; `succeeded`, which the engine also reports for a harness that
+ * was already up to date, is `updated`; `unchanged`, which it reports when
+ * the command ran but its check did not confirm a newer version, is
+ * `unverified`; `failed` is `failed`; `idle` is none. While the engine reports none running, the
  * adapter's own `request` comes first: one just asked is `running` before
  * the engine reports it, and one the engine refused is `failed`.
  */
@@ -378,7 +381,7 @@ const updateOf = (
     case "succeeded":
       return { state: "updated", ...updateDetail(state.message) };
     case "unchanged":
-      return { state: "current", ...updateDetail(state.message) };
+      return { state: "unverified", ...updateDetail(state.message) };
     case "failed":
       return { state: "failed", ...updateDetail(state.message) };
     case "idle":

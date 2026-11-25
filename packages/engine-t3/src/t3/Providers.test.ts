@@ -396,9 +396,16 @@ describe("versions and updates", () => {
     assert.deepStrictEqual(withRequest({ updateState: updateState("queued") }, refused), {
       state: "running",
     });
+    // A request lost on the way, which the engine never reported.
+    assert.deepStrictEqual(withRequest({}, { _tag: "refused", detail: null }), { state: "failed" });
+    // An update after which the engine no longer finds the harness still says how it went.
+    assert.deepStrictEqual(
+      withRequest({ installed: false, updateState: updateState("unchanged") }, undefined),
+      { state: "unverified" },
+    );
     const finished = [
       ["succeeded", { state: "updated", detail: "Updated to 2.2.0." }],
-      ["unchanged", { state: "current", detail: "Updated to 2.2.0." }],
+      ["unchanged", { state: "unverified", detail: "Updated to 2.2.0." }],
       ["failed", { state: "failed", detail: "Updated to 2.2.0." }],
     ] as const;
     for (const [status, update] of finished) {

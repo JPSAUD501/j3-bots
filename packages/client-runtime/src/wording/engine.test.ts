@@ -138,7 +138,22 @@ describe("a provider's version and update", () => {
       detail: "The engine says: npm exited 1",
       offer: true,
     });
-    expect(line(codex(current, { state: "updated" }))?.text).toBe("Updated to version 0.171.0");
-    expect(line(codex(current, { state: "current" }))?.text).toBe("Up to date: version 0.171.0");
+    expect(line(codex(current, { state: "updated" }))?.text).toBe("Up to date: version 0.171.0");
+    // The command ran, but the engine's check did not confirm a newer version.
+    expect(
+      line(
+        codex({ ...behind, canUpdate: true }, { state: "unverified", detail: "Still 0.170.0." }),
+      ),
+    ).toEqual({
+      text: "The update ran, but the engine couldn’t confirm a newer version",
+      detail: "The engine says: Still 0.170.0.",
+      offer: true,
+    });
+    // An update that left a harness the engine no longer finds still says how it went.
+    expect(line(codex(undefined, { state: "failed" }))).toEqual({
+      text: "The update didn’t finish",
+      detail: null,
+      offer: false,
+    });
   });
 });
