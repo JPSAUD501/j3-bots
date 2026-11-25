@@ -134,6 +134,7 @@ export {
 } from "./stores/Roster.ts";
 export {
   Settings,
+  type HarnessSettingsChanges,
   type ProfileChanges,
   type SettingsChange,
   type SettingsSave,

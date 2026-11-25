@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { providerFix } from "@j3-bots/client-runtime/presentation";
+import type { IntentResult } from "@j3-bots/client-runtime";
+import { type OwnHarness, ownHarness, providerFix } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
 import {
+  harnessFailureText,
+  harnessOutcomeText,
+  harnessTaskText,
   providerLine,
   type ProviderTone,
   providerVersionLine,
@@ -24,9 +28,10 @@ const toneClass = {
 /**
  * One provider: its name, its state in words, how the engine put it when it
  * gave its own words, and what fixes it (`ProviderFix`); with `version`, as
- * in Settings, also its harness's version and update (`ProviderUpdate`).
- * `stale` mutes a state reported before a disconnection, and leaves out the
- * rest, which may no longer hold.
+ * in Settings, also its harness's version and update: of J3 Bots' own copy
+ * when it runs one (`OwnHarnessLine`), else of the harness the engine found
+ * (`ProviderUpdate`). `stale` mutes a state reported before a disconnection,
+ * and leaves out the rest, which may no longer hold.
  */
 export function ProviderRow(props: {
   readonly provider: ProviderStatus;
@@ -39,6 +44,7 @@ export function ProviderRow(props: {
   const stale = props.stale === true;
   const { status } = props.provider;
   const detail = status._tag === "unavailable" ? status.detail : undefined;
+  const own = props.version === true ? ownHarness(props.provider) : null;
   return (
     <View className="gap-1.5 rounded-md border border-border px-3 py-2">
       <View className="flex-row flex-wrap items-baseline justify-between gap-x-3">
@@ -53,7 +59,13 @@ export function ProviderRow(props: {
         </Text>
       )}
       {!stale && <ProviderFix provider={props.provider} />}
-      {!stale && props.version === true && <ProviderUpdate provider={props.provider} />}
+      {!stale &&
+        props.version === true &&
+        (own === null ? (
+          <ProviderUpdate provider={props.provider} />
+        ) : (
+          <OwnHarnessLine own={own} />
+        ))}
     </View>
   );
 }
@@ -106,50 +118,165 @@ function ProviderUpdate(props: { readonly provider: ProviderStatus }) {
 
 type Asking = "idle" | "asking" | "failed";
 
+/** A request to the server, and whether it took it, for a button to follow. */
+const useAsking = () => {
+  const [asking, setAsking] = useState<Asking>("idle");
+  const ask = (request: Promise<IntentResult>) => {
+    setAsking("asking");
+    void request.then((result) => setAsking(result._tag === "done" ? "idle" : "failed"));
+  };
+  return [asking, ask] as const;
+};
+
 /**
  * What fixes a provider the engine cannot run (`providerFix`), under its
- * line: for a harness not installed on the server, where its maker says how
- * and a way to look again once it is; for one that failed, a way to try
- * again. Nothing for any other state.
+ * line: for a harness not installed, Install, which the server does, with
+ * its progress and a way to cancel; where the server cannot install it,
+ * where its maker says how and a way to look again once it is; for one that
+ * failed, a way to try again. Nothing for any other state.
  */
 function ProviderFix(props: { readonly provider: ProviderStatus }) {
-  const { t } = useI18n();
+  const i18n = useI18n();
+  const { t } = i18n;
   const client = useJ3Client();
-  const [asking, setAsking] = useState<Asking>("idle");
+  const [asking, ask] = useAsking();
   const fix = providerFix(props.provider);
   if (fix === null) return null;
   const { provider } = props;
-  const recheck = () => {
-    setAsking("asking");
-    void client
-      .recheckProvider(provider.id)
-      .then((result) => setAsking(result._tag === "done" ? "idle" : "failed"));
-  };
-  const page = fix._tag === "install" ? fix.page : null;
+  const failure = asking === "failed" && (
+    <Text accessibilityRole="alert" className="text-xs text-blocked">
+      {t(
+        fix._tag === "get" || fix._tag === "getting"
+          ? "provider.install.requestFailed"
+          : "provider.recheckFailed",
+      )}
+    </Text>
+  );
+  switch (fix._tag) {
+    case "get":
+      return (
+        <View className="gap-1">
+          {fix.failed !== null && (
+            <Text accessibilityRole="alert" className="text-xs text-blocked">
+              {harnessFailureText(fix.failed, i18n)}
+            </Text>
+          )}
+          <View className="flex-row flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              label={t(fix.failed === null ? "provider.install" : "provider.retry")}
+              held={asking === "asking"}
+              onPress={() => ask(client.installHarness(fix.harness))}
+            />
+          </View>
+          {failure}
+        </View>
+      );
+    case "getting":
+      return (
+        <View className="gap-1">
+          <Text accessibilityLiveRegion="polite" className="text-xs text-muted-foreground">
+            {harnessTaskText(fix.task, i18n)}
+          </Text>
+          <View className="flex-row flex-wrap gap-2">
+            <Button
+              variant="quiet"
+              label={t("provider.install.cancel")}
+              held={asking === "asking"}
+              onPress={() => ask(client.cancelHarnessInstall(fix.harness))}
+            />
+          </View>
+          {failure}
+        </View>
+      );
+    case "install":
+    case "retry": {
+      const page = fix._tag === "install" ? fix.page : null;
+      return (
+        <View className="gap-1">
+          <View className="flex-row flex-wrap gap-2">
+            {page !== null && (
+              <Button
+                variant="secondary"
+                label={t("providers.notFound.install", { harness: provider.name })}
+                onPress={() => void Linking.openURL(page)}
+              />
+            )}
+            <Button
+              variant={fix._tag === "retry" ? "secondary" : "quiet"}
+              label={
+                asking === "asking"
+                  ? t("provider.checking")
+                  : t(fix._tag === "retry" ? "provider.retry" : "providers.notFound.lookAgain")
+              }
+              held={asking === "asking"}
+              onPress={() => ask(client.recheckProvider(provider.id))}
+            />
+          </View>
+          {failure}
+        </View>
+      );
+    }
+  }
+}
+
+/**
+ * The copy of its harness J3 Bots installed for a provider (`ownHarness`),
+ * where `ProviderUpdate` shows the operator's own: the version it runs and
+ * the newest, when that is newer, with Update; an update under way, with a
+ * way to cancel it; and how the last install or update ended.
+ */
+function OwnHarnessLine(props: { readonly own: OwnHarness }) {
+  const ctx = usePresentation();
+  const { t } = ctx.i18n;
+  const client = useJ3Client();
+  const [asking, ask] = useAsking();
+  const { own } = props;
   return (
     <View className="gap-1">
-      <View className="flex-row flex-wrap gap-2">
-        {page !== null && (
-          <Button
-            variant="secondary"
-            label={t("providers.notFound.install", { harness: provider.name })}
-            onPress={() => void Linking.openURL(page)}
-          />
-        )}
-        <Button
-          variant={fix._tag === "retry" ? "secondary" : "quiet"}
-          label={
-            asking === "asking"
-              ? t("provider.checking")
-              : t(fix._tag === "retry" ? "provider.retry" : "providers.notFound.lookAgain")
-          }
-          held={asking === "asking"}
-          onPress={recheck}
-        />
-      </View>
+      {own.task === null ? (
+        <>
+          <Text className="text-xs text-muted-foreground tabular-nums">
+            {own.newer === null
+              ? t("provider.version", { installed: own.version })
+              : t("provider.version.newer", { installed: own.version, latest: own.newer })}
+          </Text>
+          {own.last !== null && (
+            <Text
+              className={`text-xs ${own.last._tag === "failed" ? "text-blocked" : "text-muted-foreground"}`}
+            >
+              {harnessOutcomeText(own.last, ctx)}
+            </Text>
+          )}
+          {own.newer !== null && (
+            <View className="flex-row">
+              <Button
+                variant="secondary"
+                label={t("provider.update")}
+                held={asking === "asking"}
+                onPress={() => ask(client.installHarness(own.harness))}
+              />
+            </View>
+          )}
+        </>
+      ) : (
+        <>
+          <Text accessibilityLiveRegion="polite" className="text-xs text-muted-foreground">
+            {harnessTaskText(own.task, ctx.i18n)}
+          </Text>
+          <View className="flex-row flex-wrap gap-2">
+            <Button
+              variant="quiet"
+              label={t("provider.install.cancel")}
+              held={asking === "asking"}
+              onPress={() => ask(client.cancelHarnessInstall(own.harness))}
+            />
+          </View>
+        </>
+      )}
       {asking === "failed" && (
         <Text accessibilityRole="alert" className="text-xs text-blocked">
-          {t("provider.recheckFailed")}
+          {t("provider.install.requestFailed")}
         </Text>
       )}
     </View>

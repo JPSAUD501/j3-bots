@@ -4,7 +4,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { savesUnderWay } from "./savesUnderWay";
 
 const idle: Parameters<typeof savesUnderWay>[0] = {
-  settings: { profile: { _tag: "idle" }, notifications: { _tag: "idle" } },
+  settings: {
+    profile: { _tag: "idle" },
+    notifications: { _tag: "idle" },
+    harnesses: { _tag: "idle" },
+  },
   bots: new Map(),
   memory: new Map(),
   actions: new Map(),

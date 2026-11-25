@@ -882,6 +882,7 @@ export function sampleTeam(now: DateTime.Utc) {
     budgets: { hops: 6, fanOut: 3, concurrentTurns: 4 },
     notifications: { enabled: true, previews: true },
     updateChannel: "stable",
+    autoUpdateHarnesses: true,
   };
 
   const devices: ReadonlyArray<Device> = [

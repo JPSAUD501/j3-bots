@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ProviderStatus, UnavailableReason } from "@j3-bots/contracts";
+import type {
+  EngineStatus,
+  HarnessInstallFailure,
+  HarnessOutcome,
+  HarnessTask,
+  ProviderStatus,
+  UnavailableReason,
+} from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
 import { usageLimitText } from "./status.ts";
-import type { TimeContext } from "./time.ts";
+import { type TimeContext, timeInSentence } from "./time.ts";
 
 /** Whole megabytes, 1 MB being a million bytes, as the download's size is told. */
 const megabytes = (bytes: number): number => Math.floor(bytes / 1_000_000);
@@ -183,5 +190,61 @@ function unavailableLine(
     case "unknown":
     case undefined:
       return { text: t("provider.unavailable"), tone: "muted" };
+  }
+}
+
+/**
+ * What an install or update of the server's own copy of a harness is doing,
+ * in words: "Downloading… 42 of 370 MB", "Checking the download…", or that
+ * it waits for the bots on the provider to finish before it switches.
+ */
+export function harnessTaskText(task: HarnessTask, { t }: I18n): string {
+  switch (task._tag) {
+    case "downloading":
+      return task.totalBytes === null
+        ? t("provider.install.downloadingNoTotal", { received: megabytes(task.receivedBytes) })
+        : t("provider.install.downloading", {
+            received: megabytes(task.receivedBytes),
+            total: megabytes(task.totalBytes),
+          });
+    case "verifying":
+      return t("provider.install.verifying");
+    case "waiting":
+      return t("provider.install.waiting");
+  }
+}
+
+/** Why an install or update of the server's own copy of a harness did not finish, in words. */
+export function harnessFailureText(reason: HarnessInstallFailure, { t }: I18n): string {
+  switch (reason) {
+    case "unreachable":
+      return t("provider.install.failed.unreachable");
+    case "checksum":
+      return t("provider.install.failed.checksum");
+    case "check":
+      return t("provider.install.failed.check");
+    case "storage":
+      return t("provider.install.failed.storage");
+    case "engine":
+      return t("provider.install.failed.engine");
+    case "unknown":
+      return t("provider.install.failed.unknown");
+  }
+}
+
+/**
+ * How the last install or update of the server's own copy ended, as Settings
+ * says it under the version: "Version 2.1.330 installed today at 4:12 PM.",
+ * why it failed, or that it was cancelled.
+ */
+export function harnessOutcomeText(last: HarnessOutcome, ctx: TimeContext): string {
+  const { t } = ctx.i18n;
+  switch (last._tag) {
+    case "installed":
+      return t("provider.installed", { version: last.version, when: timeInSentence(last.at, ctx) });
+    case "failed":
+      return harnessFailureText(last.reason, ctx.i18n);
+    case "cancelled":
+      return t("provider.updateCancelled");
   }
 }

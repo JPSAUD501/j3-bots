@@ -2,7 +2,13 @@
 import {
   type Bot,
   type EngineStatus,
+  type HarnessInstallFailure,
+  type HarnessOutcome,
+  type HarnessTask,
+  type HarnessVersion,
+  isNewerHarness,
   type ProviderStatus,
+  type SignInHarness,
   signInHarnesses,
   type UnavailableReason,
 } from "@j3-bots/contracts";
@@ -98,9 +104,15 @@ export const openingHeld = (bot: Bot, engine: EngineStatus | null): OpeningHold 
 /**
  * What the operator does about a provider the engine is done checking and
  * cannot run, from its line:
- * - `install`: its harness is not installed where the server runs. `page` is
- *   where its maker says how, when J3 Bots knows it; once it is installed,
- *   the engine looks again (`engine.recheckProvider`);
+ * - `get`: its harness is not installed where the server runs, and the
+ *   server installs its own copy of it (`provider.installHarness`).
+ *   `failed` says why the last try did not, when it did not;
+ * - `getting`: the server is installing it, as `task` says, and the
+ *   operator may cancel;
+ * - `install`: its harness is not installed, and the server cannot install
+ *   it (an older server, or no build of it for the server's machine).
+ *   `page` is where its maker says how, when J3 Bots knows it; once it is
+ *   installed, the engine looks again (`engine.recheckProvider`);
  * - `retry`: it was found and failed; the engine checks it again.
  * Null for any other state: one that runs or is being checked, a signed-out
  * provider (which the step's own sign-in or command connects), one turned
@@ -108,22 +120,36 @@ export const openingHeld = (bot: Bot, engine: EngineStatus | null): OpeningHold 
  * reason, which also does not take `engine.recheckProvider`.
  */
 export type ProviderFix =
+  | {
+      readonly _tag: "get";
+      readonly harness: SignInHarness;
+      readonly failed: HarnessInstallFailure | null;
+    }
+  | { readonly _tag: "getting"; readonly harness: SignInHarness; readonly task: HarnessTask }
   | { readonly _tag: "install"; readonly page: string | null }
   | { readonly _tag: "retry" };
 
 export const providerFix = (provider: ProviderStatus): ProviderFix | null => {
   const { status } = provider;
-  return status._tag === "unavailable" && !status.checking
-    ? fixFor(status.reason, provider.harness)
-    : null;
+  return status._tag === "unavailable" && !status.checking ? fixFor(status.reason, provider) : null;
 };
 
 const fixFor = (
   reason: UnavailableReason | undefined,
-  harness: ProviderStatus["harness"],
+  { harness, copy }: ProviderStatus,
 ): ProviderFix | null => {
   switch (reason) {
     case "not-installed":
+      if (harness !== "other" && copy !== undefined && copy.source === "none") {
+        if (copy.task !== null) return { _tag: "getting", harness, task: copy.task };
+        if (copy.installable) {
+          return {
+            _tag: "get",
+            harness,
+            failed: copy.last?._tag === "failed" ? copy.last.reason : null,
+          };
+        }
+      }
       return {
         _tag: "install",
         page: harness === "other" ? null : signInHarnesses[harness].installPage,
@@ -136,3 +162,34 @@ const fixFor = (
       return null;
   }
 };
+
+/**
+ * The copy of its harness J3 Bots installed for a provider, as Settings
+ * shows it: the version it runs, the newest its maker lists when that is
+ * newer (`newer`, null otherwise), an update under way, and how the last
+ * install or update ended. Null for a provider that runs the operator's own
+ * harness or none, and on a server that installs none.
+ */
+export interface OwnHarness {
+  readonly harness: SignInHarness;
+  readonly version: HarnessVersion;
+  readonly newer: HarnessVersion | null;
+  readonly task: HarnessTask | null;
+  readonly last: HarnessOutcome | null;
+}
+
+export const ownHarness = ({ harness, copy }: ProviderStatus): OwnHarness | null =>
+  harness === "other" || copy === undefined || copy.source !== "j3" || copy.version === null
+    ? null
+    : {
+        harness,
+        version: copy.version,
+        newer:
+          copy.latest !== null && isNewerHarness(copy.latest, copy.version) ? copy.latest : null,
+        task: copy.task,
+        last: copy.last,
+      };
+
+/** Whether the server installs and updates its own copies of the harnesses: it says where each comes from. */
+export const installsHarnesses = (engine: EngineStatus): boolean =>
+  engine.providers.some((provider) => provider.copy !== undefined);

@@ -21,6 +21,7 @@ import {
   connectCommand,
   connectorNeedsYou,
   connectorTone,
+  installsHarnesses,
 } from "@j3-bots/client-runtime/presentation";
 import { type ProfileEdits, useProfileEdits, useProfileForm } from "@j3-bots/client-runtime/react";
 import { useI18n, usePresentation } from "../app/context";
@@ -59,8 +60,7 @@ import { updateHasDetails } from "./ConnectionBanner";
 import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
-import type { Recheck } from "./ProviderFix";
-import type { Update } from "./ProviderUpdate";
+import type { ProviderActions } from "./ProviderFix";
 import {
   engineFindings,
   HarnessLocations,
@@ -95,8 +95,7 @@ type SettingsIntents = Pick<
   | "retryTurns"
   | "signOut"
   | "signOutBrowser"
-  | "recheckProvider"
-  | "updateProvider"
+  | "providerActions"
   | "server"
   | "local"
   | "update"
@@ -217,8 +216,13 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               <EngineSection
                 engine={data.engine}
                 stale={data.engineStale}
-                onRecheck={intents.recheckProvider}
-                onUpdate={intents.updateProvider}
+                actions={intents.providerActions}
+                autoUpdate={{
+                  settings: data.settings,
+                  save: data.settingsSaves.harnesses,
+                  connected: data.connected,
+                  onSave: intents.updateSettings,
+                }}
                 {...(intents.providerSetup === undefined
                   ? {}
                   : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
@@ -278,14 +282,14 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
 export function EngineSection({
   engine,
   stale,
-  onRecheck,
-  onUpdate,
+  actions,
+  autoUpdate,
   providerSetup,
 }: {
   engine: EngineStatus | null;
   stale: boolean;
-  onRecheck: Recheck;
-  onUpdate: Update;
+  actions: ProviderActions;
+  autoUpdate?: AutoUpdateProps;
   providerSetup?: LocalProviderSetup;
 }) {
   const i18n = useI18n();
@@ -330,12 +334,14 @@ export function EngineSection({
               key={provider.id}
               provider={provider}
               place={providerSetup === undefined ? "server" : "this-computer"}
-              onRecheck={onRecheck}
-              onUpdate={onUpdate}
+              actions={actions}
               stale={stale}
             />
           ))}
         </ul>
+      )}
+      {autoUpdate !== undefined && installsHarnesses(engine) && (
+        <AutoUpdateHarnesses {...autoUpdate} />
       )}
       {providerSetup !== undefined && (
         <HarnessLocations setup={providerSetup} findings={engineFindings(engine)} />
@@ -604,6 +610,43 @@ function NotificationsSection({
       </p>
       {!connected && <p className="text-xs text-muted-foreground">{t("settings.save.offline")}</p>}
     </Section>
+  );
+}
+
+interface AutoUpdateProps {
+  readonly settings: Settings | null;
+  readonly save: SettingsSaves["harnesses"];
+  readonly connected: boolean;
+  readonly onSave: SettingsIntents["updateSettings"];
+}
+
+/**
+ * Whether the server keeps its own copies of Claude Code and Codex up to
+ * date by itself. Saves at once, as the notification switches do.
+ */
+function AutoUpdateHarnesses({ settings, save, connected, onSave }: AutoUpdateProps) {
+  const { t } = useI18n();
+  const saving = save._tag === "saving";
+  const [watching, setWatching] = useState(saving);
+  if (settings === null) return null;
+  const checked = saving ? save.changes.autoUpdateHarnesses : settings.autoUpdateHarnesses;
+  return (
+    <div className="flex flex-col gap-1">
+      <SwitchRow
+        label={t("settings.engine.autoUpdate")}
+        hint={t("settings.engine.autoUpdate.body")}
+        checked={checked}
+        readOnly={saving || !connected}
+        onChange={(autoUpdateHarnesses) => {
+          if (saving || !connected) return;
+          setWatching(true);
+          onSave({ section: "harnesses", changes: { autoUpdateHarnesses } });
+        }}
+      />
+      <p role="status" className="text-xs text-blocked empty:sr-only">
+        {watching && save._tag === "failed" && t("settings.saveFailed")}
+      </p>
+    </div>
   );
 }
 

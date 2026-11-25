@@ -758,6 +758,28 @@ export const en = {
   "provider.updateFailed": "The update didn’t finish",
   "provider.updateUnverified": "The update ran, but the engine couldn’t confirm a newer version",
   "provider.updateRefused": "Couldn’t start the update. Try again in a moment.",
+  "provider.install": "Install",
+  "provider.install.downloading": "Downloading… {received} of {total} MB",
+  "provider.install.downloadingNoTotal": "Downloading… {received} MB",
+  "provider.install.verifying": "Checking the download…",
+  "provider.install.waiting":
+    "Ready. It switches over once the bots using it finish what they’re doing.",
+  "provider.install.cancel": "Cancel",
+  "provider.install.requestFailed": "Couldn’t reach the server. Try again in a moment.",
+  "provider.install.failed.unreachable":
+    "Couldn’t download it. Check that the server is online, then try again.",
+  "provider.install.failed.checksum":
+    "The download didn’t match its maker’s checksum, so nothing was installed.",
+  "provider.install.failed.check": "The downloaded copy didn’t start, so nothing was installed.",
+  "provider.install.failed.storage": "Couldn’t save it on the server. Check its free disk space.",
+  "provider.install.failed.engine":
+    "The engine couldn’t switch to it, so the copy before keeps running.",
+  "provider.install.failed.unknown": "It couldn’t be installed.",
+  "provider.installed": "Version {version} installed {when}.",
+  "provider.updateCancelled": "The last update was cancelled.",
+  "settings.engine.autoUpdate": "Update Claude Code and Codex automatically",
+  "settings.engine.autoUpdate.body":
+    "J3 Bots keeps the copies it installed up to date. An update waits until the bots using it finish what they’re doing.",
   "firstRun.create.name": "Bot name",
   "firstRun.create.placeholder": "A name, such as Scout",
   "firstRun.create.primary": "Make it my primary bot: requests that belong to nobody go to it.",

@@ -169,7 +169,7 @@ import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
 import { connectorsHolder, sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
-import { useSampleSource } from "./sampleSource";
+import { sampleProviderActions, useSampleSource } from "./sampleSource";
 import { SAMPLE_VAULT_PASSWORD, useSampleVault } from "./sampleVault";
 import { galleryVariants } from "./variants";
 import {
@@ -2244,6 +2244,27 @@ const behindUpdatable: Versioned = {
   version: { installed: "2.1.0", latest: "2.2.0", canUpdate: true },
 };
 
+const minutesAgo = (minutes: number) =>
+  DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) - minutes * 60_000);
+
+/** The sample engine with each provider's harness `copy` set: Claude Code's first, then Codex's. */
+const engineWithCopies = (
+  claude: Pick<ProviderStatus, "status" | "copy">,
+  codex: Pick<ProviderStatus, "status" | "copy">,
+): EngineStatus => ({
+  ...team.engine,
+  providers: team.engine.providers.map((p, index) => ({ ...p, ...(index === 0 ? claude : codex) })),
+});
+
+const noCopy = {
+  source: "none",
+  version: null,
+  latest: "0.172.0",
+  installable: true,
+  task: null,
+  last: null,
+} as const;
+
 const engines = {
   starting: null,
   // As the server sends them: no provider is reported before the engine runs.
@@ -2327,6 +2348,45 @@ const engines = {
   disabled: engineWith(
     { _tag: "unavailable", checking: false, reason: "disabled" },
     { _tag: "unavailable", checking: false, reason: "disabled" },
+  ),
+  /** Claude Code on the server's own copy, with a newer one out; Codex being installed. */
+  ownCopies: engineWithCopies(
+    {
+      status: { _tag: "ready" },
+      copy: {
+        source: "j3",
+        version: "2.1.300",
+        latest: "2.1.330",
+        installable: true,
+        task: null,
+        last: { _tag: "installed", version: "2.1.300", at: minutesAgo(3 * 24 * 60) },
+      },
+    },
+    {
+      status: notInstalled,
+      copy: {
+        ...noCopy,
+        task: { _tag: "downloading", receivedBytes: 61_000_000, totalBytes: 200_434_347 },
+      },
+    },
+  ),
+  /** Claude Code's update waits for its bots; Codex's install failed its checksum. */
+  copyWaitingAndFailed: engineWithCopies(
+    {
+      status: { _tag: "ready" },
+      copy: {
+        source: "j3",
+        version: "2.1.300",
+        latest: "2.1.330",
+        installable: true,
+        task: { _tag: "waiting" },
+        last: null,
+      },
+    },
+    {
+      status: notInstalled,
+      copy: { ...noCopy, last: { _tag: "failed", reason: "checksum", at: minutesAgo(2) } },
+    },
   ),
 } as const;
 
@@ -2421,35 +2481,23 @@ function EngineSettingsSection() {
     <Section title="Settings: the engine">
       <div className="flex flex-wrap gap-4">
         <Frame label="Downloading, on the first start" width={420} height={160}>
-          <EngineSection
-            engine={engines.downloading}
-            stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
-          />
+          <EngineSection engine={engines.downloading} stale={false} actions={providerActions} />
         </Frame>
         <Frame label="Downloading, with no size known" width={420} height={160}>
           <EngineSection
             engine={engines.downloadingNoTotal}
             stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
+            actions={providerActions}
           />
         </Frame>
         <Frame label="Starting, once downloaded" width={420} height={160}>
-          <EngineSection
-            engine={engines.engineStarting}
-            stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
-          />
+          <EngineSection engine={engines.engineStarting} stale={false} actions={providerActions} />
         </Frame>
         <Frame label="The download failed" width={420} height={160}>
           <EngineSection
             engine={{ ...engines.installFailed, providers: [] }}
             stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
+            actions={providerActions}
           />
         </Frame>
         <Frame
@@ -2460,8 +2508,7 @@ function EngineSettingsSection() {
           <EngineSection
             engine={engines.failed}
             stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
+            actions={providerActions}
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
@@ -2472,8 +2519,7 @@ function EngineSettingsSection() {
               update: { state: "running" },
             })}
             stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
+            actions={providerActions}
           />
         </Frame>
         <Frame
@@ -2487,16 +2533,38 @@ function EngineSettingsSection() {
               { version: { installed: "0.170.0", latest: "0.171.0", canUpdate: false } },
             )}
             stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
+            actions={providerActions}
           />
         </Frame>
         <Frame label="Providers turned off on the server" width={420} height={200}>
+          <EngineSection engine={engines.disabled} stale={false} actions={providerActions} />
+        </Frame>
+        <Frame
+          label="The server's own copies: one with a newer version out, one downloading"
+          width={420}
+          height={380}
+        >
           <EngineSection
-            engine={engines.disabled}
+            engine={engines.ownCopies}
             stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
+            actions={providerActions}
+            autoUpdate={{
+              settings: team.settings,
+              save: { _tag: "idle" },
+              connected: true,
+              onSave: () => undefined,
+            }}
+          />
+        </Frame>
+        <Frame
+          label="An update waiting for its bots, and an install whose download did not check"
+          width={420}
+          height={320}
+        >
+          <EngineSection
+            engine={engines.copyWaitingAndFailed}
+            stale={false}
+            actions={providerActions}
           />
         </Frame>
       </div>
@@ -2644,15 +2712,14 @@ function FirstRunAt({
       providerSetup={providerSetup}
       onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
-      onRecheck={rechecked}
+      providerActions={providerActions}
     />
   );
 }
 
 const arrived = () => {};
 /** The engine takes every request to check a provider again. */
-const rechecked = () => Promise.resolve(true);
-const updated = () => Promise.resolve(true);
+const providerActions = sampleProviderActions;
 
 function FirstRunSection() {
   return (
@@ -2854,8 +2921,7 @@ function LocalFirstRunSection() {
           <EngineSection
             engine={engines.connect}
             stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
+            actions={providerActions}
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
@@ -2863,8 +2929,7 @@ function LocalFirstRunSection() {
           <EngineSection
             engine={team.engine}
             stale={false}
-            onRecheck={rechecked}
-            onUpdate={updated}
+            actions={providerActions}
             providerSetup={localSetup(harnessesFound.both)}
           />
         </Frame>
@@ -3207,7 +3272,7 @@ function WhereBotsLiveSection() {
             waiting={t("local.waiting")}
             onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
             onArrived={arrived}
-            onRecheck={rechecked}
+            providerActions={providerActions}
           />
         </Frame>
         <Frame
@@ -3223,7 +3288,7 @@ function WhereBotsLiveSection() {
             waiting={t("local.waiting")}
             onCreate={() => new Promise(() => {})}
             onArrived={arrived}
-            onRecheck={rechecked}
+            providerActions={providerActions}
           />
         </Frame>
         <Frame label="The bots did not start, before the first bot" width={390} height={760}>
