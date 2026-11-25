@@ -1558,6 +1558,11 @@ const sentences = {
   "phoneUpdate.update": "Atualizar app",
   "phoneUpdate.install": "Instalar",
   "phoneUpdate.installing": "Instalando a {version}. O app fecha e abre de novo nela.",
+  "phoneUpdate.installing.unattended":
+    "Atualizando este app para a {version}. Ele fecha para terminar; depois é só abrir de novo.",
+  "phoneUpdate.automatic": "Atualizar automaticamente",
+  "phoneUpdate.automatic.hint":
+    "Instala cada versão nova assim que o app abre, depois de conferir com a assinatura do projeto. Desligado, o app pergunta antes de atualizar.",
   "phoneUpdate.cancelled":
     "A instalação foi cancelada. A {version} está baixada e conferida, pronta para instalar.",
   "phoneUpdate.waitingForStable":

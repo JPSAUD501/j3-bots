@@ -19,7 +19,7 @@ import Constants from "expo-constants";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Linking, View } from "react-native";
 import { ConnectCommand } from "../components/Engine.tsx";
-import { Problem, Quiet, Segmented } from "../components/form.tsx";
+import { Problem, Quiet, Segmented, SwitchRow } from "../components/form.tsx";
 import { useConfirm } from "../confirm.tsx";
 import { useI18n } from "../i18n.ts";
 import { Text } from "../text.tsx";
@@ -279,15 +279,20 @@ const STABLE: Readable<UpdateChannel> = {
   get: () => "stable",
   subscribe: () => () => undefined,
 };
+const AUTOMATIC: Readable<boolean> = { get: () => true, subscribe: () => () => undefined };
 
 /** Where the app's own update stands, or null in a build that does not update itself. */
 export const useAppUpdateState = (): AppUpdateState | null =>
   useReadable<AppUpdateState | null>(appUpdate?.state ?? NO_STATE);
 
+/** Whether "Update automatically" is on; on in a build that does not update itself, where it says nothing. */
+export const useAppUpdateAutomatic = (): boolean => useReadable(appUpdate?.automatic ?? AUTOMATIC);
+
 /**
  * Checks for the app's update when the app starts and each time it comes
- * back, at most every six hours, and goes on with an install that waited for
- * the operator to allow it in Android's settings.
+ * back, within the bound `AppUpdate.check` sets, and goes on with an install
+ * that waited for the operator to allow it in Android's settings. With
+ * "Update automatically" on, the check installs what it finds.
  */
 export function useAppUpdateFollowing() {
   useEffect(() => {
@@ -341,6 +346,7 @@ export function PhoneUpdatePanel(props: { readonly place: "settings" | "behind" 
   const { t } = i18n;
   const state = useAppUpdateState();
   const channel = useReadable(appUpdate?.channel ?? STABLE);
+  const automatic = useAppUpdateAutomatic();
   useEffect(() => {
     if (props.place === "behind") void appUpdate?.check();
   }, [props.place]);
@@ -388,6 +394,14 @@ export function PhoneUpdatePanel(props: { readonly place: "settings" | "behind" 
       )}
       {state._tag !== "play" && (
         <>
+          {props.place === "settings" && (
+            <SwitchRow
+              label={t("phoneUpdate.automatic")}
+              hint={t("phoneUpdate.automatic.hint")}
+              value={automatic}
+              onChange={update.setAutomatic}
+            />
+          )}
           <ChannelChoice value={channel} onChange={update.setChannel} />
           <View className="items-start">
             <Button

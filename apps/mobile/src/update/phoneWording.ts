@@ -90,8 +90,15 @@ export function phoneUpdateLine(state: AppUpdateState, i18n: I18n): PhoneUpdateL
         hint: t("phoneUpdate.permission.body"),
         action: "allow",
       });
-    case "installing":
-      return line(t("phoneUpdate.installing", { version: state.release.version }), "working");
+    case "installing": {
+      const version = state.release.version;
+      return line(
+        state.unattended
+          ? t("phoneUpdate.installing.unattended", { version })
+          : t("phoneUpdate.installing", { version }),
+        "working",
+      );
+    }
     case "cancelled":
       return line(t("phoneUpdate.cancelled", { version: state.release.version }), "offer", {
         action: "install",
@@ -108,6 +115,35 @@ export function phoneUpdateLine(state: AppUpdateState, i18n: I18n): PhoneUpdateL
         action: again && state.release !== null ? "retry" : null,
       });
     }
+  }
+}
+
+/**
+ * The app's update in the notice over the roster, once "Update automatically"
+ * started it with no tap: how far it has come, and how it ended when it did
+ * not go through, or what it waits for. Null when the notice has nothing of
+ * it to say: no update under way, or a check that found nothing it could
+ * take, which Settings says. `release`: the version a line the operator can
+ * hide is about.
+ */
+export function phoneNoticeLine(
+  state: AppUpdateState,
+  i18n: I18n,
+): { readonly line: PhoneUpdateLine; readonly release: string | null } | null {
+  switch (state._tag) {
+    case "downloading":
+    case "verifying":
+    case "installing":
+      return { line: phoneUpdateLine(state, i18n), release: null };
+    case "permission":
+    case "cancelled":
+      return { line: phoneUpdateLine(state, i18n), release: state.release.version };
+    case "failed":
+      return state.release === null
+        ? null
+        : { line: phoneUpdateLine(state, i18n), release: state.release.version };
+    default:
+      return null;
   }
 }
 

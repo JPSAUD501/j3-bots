@@ -1539,6 +1539,11 @@ export const en = {
   "phoneUpdate.update": "Update the app",
   "phoneUpdate.install": "Install",
   "phoneUpdate.installing": "Installing {version}. The app closes and opens again on it.",
+  "phoneUpdate.installing.unattended":
+    "Updating this app to {version}. It closes to finish; then open it again.",
+  "phoneUpdate.automatic": "Update automatically",
+  "phoneUpdate.automatic.hint":
+    "Installs each new release as soon as the app opens, once it checks out against the project’s signature. Off, the app asks before it updates.",
   "phoneUpdate.cancelled":
     "The install was cancelled. {version} is downloaded and checked, ready to install.",
   "phoneUpdate.waitingForStable":

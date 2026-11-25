@@ -17,12 +17,15 @@ import type { Navigation } from "../navigation.tsx";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
-import { ToneLine, useAppUpdateState } from "./UpdatePanels.tsx";
+import { phoneNoticeLine } from "./phoneWording.ts";
+import { ToneLine, useAppUpdateAutomatic, useAppUpdateState } from "./UpdatePanels.tsx";
 
 // The updates where the operator already looks: one quiet line over the
 // roster, never a dialog. It says an update is ready, until the operator
 // opens it or hides it for that version; how an update under way goes; and
-// how one this phone followed ended, once.
+// how one this phone followed ended, once. The app's own update, which
+// "Update automatically" starts as the app opens, shows there as it goes,
+// and when it did not go through.
 
 /** The versions whose notice the operator hid, kept on this phone. */
 const HIDDEN_KEY = {
@@ -69,7 +72,9 @@ export function UpdateNotice() {
   const view = useServerUpdate();
   const ended = useServerUpdateEnded();
   const phone = useAppUpdateState();
+  const automatic = useAppUpdateAutomatic();
   const hiddenNow = useReadable(hidden);
+  const openUpdates = () => navigation.navigate("settings", { section: "updates" });
 
   if (ended !== null) {
     const result = updateResultLine(ended, i18n);
@@ -97,6 +102,26 @@ export function UpdateNotice() {
     );
   }
 
+  // The app's update ends in its process closing, so how it goes comes before any offer.
+  const app = automatic && phone !== null ? phoneNoticeLine(phone, i18n) : null;
+  if (app !== null && app.release === null) {
+    return (
+      <View className="px-4 py-2">
+        <ToneLine text={app.line.text} tone={app.line.tone} hint={null} />
+      </View>
+    );
+  }
+  if (app !== null && app.release !== null && app.release !== hiddenNow.app) {
+    const release = app.release;
+    return (
+      <NoticeRow
+        text={app.line.text}
+        onOpen={openUpdates}
+        onHide={() => hide({ server: null, app: release })}
+      />
+    );
+  }
+
   const serverVersion = server?.offer?.version ?? null;
   const appVersion = phone?._tag === "available" ? phone.release.version : null;
   const newServer =
@@ -117,23 +142,33 @@ export function UpdateNotice() {
   } else {
     return null;
   }
+  return <NoticeRow text={text} onOpen={openUpdates} onHide={() => hide(shown)} />;
+}
+
+/** A line that opens the updates in Settings, and hides until the next release. */
+function NoticeRow(props: {
+  readonly text: string;
+  readonly onOpen: () => void;
+  readonly onHide: () => void;
+}) {
+  const { t } = useI18n();
   return (
     <View className="flex-row items-center gap-1 px-2">
       <PressScale
         accessibilityRole="button"
         accessibilityHint={t("updateNotice.open")}
-        onPress={() => navigation.navigate("settings", { section: "updates" })}
+        onPress={props.onOpen}
         frame={{ flex: 1 }}
         className="min-h-11 flex-row items-center gap-2 rounded-md px-2 active:bg-muted"
       >
-        <Text className="flex-1 text-sm font-medium text-foreground">{text}</Text>
+        <Text className="flex-1 text-sm font-medium text-foreground">{props.text}</Text>
         <Icon icon={ChevronRight} size={16} color="accent-muted-foreground" />
       </PressScale>
       <PressScale
         depth="round"
         accessibilityRole="button"
         accessibilityLabel={t("updateNotice.hide")}
-        onPress={() => hide(shown)}
+        onPress={props.onHide}
         className="size-11 items-center justify-center rounded-pill active:bg-muted"
       >
         <Icon icon={X} size={16} color="accent-muted-foreground" />

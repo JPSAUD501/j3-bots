@@ -34,11 +34,15 @@ import {
 
 // The app's own update, on Android. The app reads the releases of its
 // channel, offers the newest one only when it is newer than itself and its
-// signed SHA256SUMS verifies, then on the operator's tap downloads the APK
-// into its own cache, checks its SHA-256 against that list and what it says
-// it is, and hands it to Android's installer, which asks the operator to
-// confirm. The downloaded file goes once the install is over either way, and
-// whatever a closed app left behind goes at the next start.
+// signed SHA256SUMS verifies, then downloads the APK into its own cache,
+// checks its SHA-256 against that list and what it says it is, and hands it
+// to Android's installer. With "Update automatically" on, the default, it
+// does so as soon as a check finds the release, and asks Android to install
+// it without a confirmation, which Android grants an app updating itself on
+// Android 12 and later; with it off, it waits for the operator's tap, and
+// Android asks them to confirm. The downloaded file goes once the install is
+// over either way, and whatever a closed app left behind goes at the next
+// start.
 
 /** A release this app may update to, its APK's digest taken from the signed list. */
 interface AppRelease {
@@ -89,7 +93,8 @@ export type AppUpdateState =
   | { readonly _tag: "verifying"; readonly release: AppRelease }
   /** Verified and waiting for the operator to allow installs from J3 Bots. */
   | { readonly _tag: "permission"; readonly release: AppRelease }
-  | { readonly _tag: "installing"; readonly release: AppRelease }
+  /** `unattended`: the app asked Android to install it without a confirmation. */
+  | { readonly _tag: "installing"; readonly release: AppRelease; readonly unattended: boolean }
   /** The operator said no to Android's confirmation; the verified file is kept to try again. */
   | { readonly _tag: "cancelled"; readonly release: AppRelease }
   | {
@@ -112,8 +117,26 @@ const readChannel = (): UpdateChannel => {
   }
 };
 
-/** At most one check of the feed in this long, besides the operator's own. */
+const AUTOMATIC_KEY = "j3:appUpdateAutomatic";
+
+/** Whether the app installs an update as soon as it finds one: on unless the operator turned it off. */
+const readAutomatic = (): boolean => {
+  try {
+    return Storage.getItemSync(AUTOMATIC_KEY) !== "off";
+  } catch {
+    // Unreadable, the phone updates itself, the default.
+    return true;
+  }
+};
+
+/**
+ * At most one check of the feed in this long when the app opens or comes
+ * back, besides the operator's own: six hours when the operator installs
+ * updates themselves, as before; one hour when the app installs them as it
+ * opens, so coming back to it after a while finds a release out since.
+ */
 const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+const AUTOMATIC_CHECK_EVERY_MS = 60 * 60 * 1000;
 
 const GITHUB_HEADERS = {
   Accept: "application/vnd.github+json",
@@ -275,13 +298,19 @@ export const updateInHand = (current: AppUpdateState): boolean => {
 export interface AppUpdate {
   readonly state: Readable<AppUpdateState>;
   readonly channel: Readable<UpdateChannel>;
+  /** "Update automatically": whether a release a check finds is installed at once. */
+  readonly automatic: Readable<boolean>;
   readonly installed: InstalledApp;
   /**
-   * Reads the feed now; `auto` skips it when it was read in the last six
-   * hours. Neither replaces an update in hand.
+   * Reads the feed now; `opening`, the app opening or coming back, skips it
+   * when it was read within the bound above. Neither replaces an update in
+   * hand. With "Update automatically" on, a verified release the check
+   * finds is downloaded and installed at once, one try per check: a try
+   * that fails says so and waits for the next opening or the operator.
    */
-  readonly check: (auto?: boolean) => Promise<void>;
+  readonly check: (opening?: boolean) => Promise<void>;
   readonly setChannel: (channel: UpdateChannel) => void;
+  readonly setAutomatic: (on: boolean) => void;
   /** Downloads, verifies and installs the available release, asking for what Android needs. */
   readonly update: () => Promise<void>;
   /** Opens the system's page that lets J3 Bots install apps. */
@@ -304,16 +333,18 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
     route === "play" ? { _tag: "play" } : { _tag: "unchecked" },
   );
   const channel = new Cell<UpdateChannel>(readChannel());
+  const automatic = new Cell<boolean>(readAutomatic());
   let checkedAt = 0;
   let busy = false;
 
   const fail = (release: AppRelease | null, failure: AppUpdateFailure) =>
     state.set({ _tag: "failed", release, failure });
 
-  const check = async (auto = false) => {
+  const check = async (opening = false) => {
     if (route === "play" || busy || updateInHand(state.get())) return;
     const now = Date.now();
-    if (auto && now - checkedAt < CHECK_EVERY_MS) return;
+    const every = automatic.get() ? AUTOMATIC_CHECK_EVERY_MS : CHECK_EVERY_MS;
+    if (opening && now - checkedAt < every) return;
     const running = installed.versionName;
     if (running === null) return;
     busy = true;
@@ -325,6 +356,8 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
     const found = (next: AppUpdateState) => {
       if (channel.get() === asked) state.set(next);
     };
+    // The release this check offered, which "Update automatically" takes.
+    let offeredRelease: AppRelease | null = null;
     state.set({ _tag: "checking" });
     try {
       const releases = await listReleases(feed, asked);
@@ -334,20 +367,23 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
         found({ _tag: "current", waitingForStable: offered.waitingForStable });
         return;
       }
-      Result.match(await verifiedRelease(feed, candidate), {
-        onSuccess: (release) => found({ _tag: "available", release }),
-        onFailure: (reason) =>
-          found({
-            _tag: "failed",
-            release: null,
-            failure: { _tag: "unverified", version: candidate.version, reason },
-          }),
-      });
+      const verified = await verifiedRelease(feed, candidate);
+      if (Result.isFailure(verified)) {
+        found({
+          _tag: "failed",
+          release: null,
+          failure: { _tag: "unverified", version: candidate.version, reason: verified.failure },
+        });
+        return;
+      }
+      offeredRelease = verified.success;
+      found({ _tag: "available", release: verified.success });
     } catch {
       found({ _tag: "failed", release: null, failure: { _tag: "unreachable" } });
     } finally {
       busy = false;
       if (channel.get() !== asked) void check();
+      else if (offeredRelease !== null && automatic.get()) void takeOffered(offeredRelease);
     }
   };
 
@@ -373,14 +409,19 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
     }
   };
 
-  /** Hands the verified file to Android, and goes on from what it answers. */
+  /**
+   * Hands the verified file to Android, and goes on from what it answers.
+   * With "Update automatically" on, it asks Android not to ask the operator;
+   * Android still asks where it does not grant that.
+   */
   const install = async (release: AppRelease) => {
     if (!installer.canRequestInstalls()) {
       state.set({ _tag: "permission", release });
       return;
     }
-    state.set({ _tag: "installing", release });
-    const outcome = await installer.install(fileOf(release).uri, release.apk.sha256);
+    const unattended = automatic.get();
+    state.set({ _tag: "installing", release, unattended });
+    const outcome = await installer.install(fileOf(release).uri, release.apk.sha256, unattended);
     if (outcome._tag === "cancelled") {
       state.set({ _tag: "cancelled", release });
       return;
@@ -440,6 +481,13 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
     await install(release);
   };
 
+  /** "Update automatically" takes the release a check offered, unless something else came first. */
+  const takeOffered = (release: AppRelease): Promise<void> => {
+    const current = state.get();
+    if (current._tag !== "available" || current.release !== release) return Promise.resolve();
+    return exclusive(release, () => downloadAndInstall(release));
+  };
+
   const update = async (): Promise<void> => {
     const current = state.get();
     switch (current._tag) {
@@ -463,6 +511,7 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
   return {
     state,
     channel,
+    automatic,
     installed,
     check,
     setChannel: (next) => {
@@ -483,6 +532,19 @@ const make = (installer: AppInstaller, feed: ReleaseFeed): AppUpdate => {
         state.set({ _tag: "unchecked" });
       }
       void check();
+    },
+    setAutomatic: (on) => {
+      if (on === automatic.get()) return;
+      try {
+        if (on) Storage.removeItemSync(AUTOMATIC_KEY);
+        else Storage.setItemSync(AUTOMATIC_KEY, "off");
+      } catch {
+        // The choice holds until the app restarts.
+      }
+      automatic.set(on);
+      // Turned on with a release on offer: it is taken now, as an opening would.
+      const current = state.get();
+      if (on && current._tag === "available") void takeOffered(current.release);
     },
     update,
     allowInstalls: () => installer.openInstallSettings(),
