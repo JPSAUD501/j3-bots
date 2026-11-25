@@ -60,12 +60,15 @@ import { HarnessSources } from "./sources.ts";
 //
 // A new version is downloaded, checked against its maker's SHA-256, run once,
 // and installed beside the one the provider runs, which keeps running. The
-// switch then waits until no bot on the provider has work running, since
-// the engine ends the harness's processes when it runs another executable:
-// a turn is never cut. While it switches, no bot's first send goes out (the
-// `SendPause`), so none starts on the old copy in between; a turn that would
-// start then waits the moment the switch takes. Only once the engine runs the
-// new version is `current.json` replaced and the old version removed.
+// switch then waits until no bot has work running in a session on the
+// provider: the engine rebuilds the provider's instance, and what becomes
+// of a turn that runs across that is not known, so none does. While it
+// switches, no bot's first send goes out (the `SendPause`), until the
+// engine's check of the rebuilt instance shows the new version; only then
+// is `current.json` replaced. A session the engine already has open keeps
+// running the copy it started on until the engine releases it: each is
+// released then, and the copy before removed once all were, else once the
+// engine starts again.
 
 /** How often each listing is read on its own, give or take `JITTER`. */
 const CHECK_EVERY = Duration.hours(6);
@@ -83,6 +86,12 @@ export interface ProviderWork {
   readonly paused: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   /** How many bots on `providerId` have work running in the engine now. */
   readonly running: (providerId: ProviderId) => Effect.Effect<number>;
+  /**
+   * Has the engine release each session it has open on `providerId`, which
+   * starts its harness again, and resumes its conversation, at its next
+   * turn: true once every one was.
+   */
+  readonly release: (providerId: ProviderId) => Effect.Effect<boolean>;
 }
 
 export class Harnesses extends Context.Service<
@@ -155,22 +164,33 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
     );
 
   /**
-   * Removes what an install left that is not the current copy: other
-   * versions, unpacking folders, and every download but one of `resume`,
+   * Removes what an install left that is not the current copy, nor a
+   * stranded one: other versions, unpacking folders, and every download but one of `resume`,
    * which the next install of that version resumes. Only space is at stake,
    * so a failure is logged and left.
    */
+  /**
+   * A copy the engine may run though it is not current: one it was switched
+   * to, and then could not be shown to have been switched back from. It is
+   * kept on disk, and reused by the next install of its version, until the
+   * engine starts again, provisioned with the current copy.
+   */
+  const stranded = new Map<SignInHarness, InstalledCopy>();
+
   const prune = Effect.fn("Harnesses.prune")(function* (
     harness: SignInHarness,
     slot: Slot,
     resume: string | null,
   ) {
     const layout = layoutOf(harness);
-    const current = Option.map(slot.installed, (copy) => copy.version);
+    const kept = [
+      ...Option.toArray(Option.map(slot.installed, (copy) => copy.version)),
+      ...Option.toArray(Option.fromNullishOr(stranded.get(harness)?.version)),
+    ];
     const versions = yield* fs.readDirectory(layout.versions).pipe(Effect.orElseSucceed(() => []));
     const leftovers = [
       ...versions
-        .filter((version) => !Option.contains(current, version))
+        .filter((version) => !kept.includes(version))
         .map((version) => layout.version(version)),
       ...(yield* fs.readDirectory(layout.root).pipe(Effect.orElseSucceed(() => [])))
         .filter(
@@ -253,18 +273,45 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
 
   const autoUpdate = yield* SubscriptionRef.make(true);
 
+  // The harnesses whose job a client asked for, rather than the check alone.
+  const requested = new Set<SignInHarness>();
+  // The copy each job made current, though the job may still be interrupted after.
+  const committed = new Map<SignInHarness, InstalledCopy>();
+
+  /** Why a switch to a copy waiting for it is no longer wanted, if it is not. */
+  const unwanted = Effect.fn("Harnesses.unwanted")(function* (
+    harness: SignInHarness,
+    before: Option.Option<InstalledCopy>,
+    automatic: boolean,
+  ) {
+    if (Option.isNone(before) && (yield* options.onPath(harness))) {
+      yield* update(harness, (slot) => ({ ...slot, operator: true }));
+      return Option.some("The operator installed the harness meanwhile; J3 Bots' copy is not used");
+    }
+    if (automatic && !requested.has(harness) && !(yield* SubscriptionRef.get(autoUpdate))) {
+      return Option.some("Updates were turned off; a waiting update is not installed");
+    }
+    return Option.none<string>();
+  });
+
   /**
-   * Runs the engine's provider on `copy`, once no bot on it has work running,
-   * then makes it current and removes the copy before it; false while it
-   * waits, for that work or for an engine that is not ready, which runs the
-   * copy it ran. An engine that may have taken `copy` without showing it runs
-   * it is put back on the copy before, as is one whose `current.json` cannot
-   * be written, so the engine and `current.json` name the same copy.
+   * Runs the engine's provider on `copy`, once no bot has work running in a
+   * session on it, then makes it current: `switched`; `waiting` while that
+   * work runs or the engine is not ready, which runs the copy it ran; or
+   * `unwanted`, with why, looked at with first sends held, just before the
+   * engine is given it. An engine that may have taken `copy` without showing
+   * it runs it is put back on the copy before, as is one whose
+   * `current.json` cannot be written, so the engine and `current.json` name
+   * the same copy; one that cannot be shown put back keeps `copy` stranded.
+   * A session the engine has open keeps running the copy it started on
+   * until the engine releases it, so each is released then; the copy before
+   * is removed once all were, else once the engine starts again.
    */
   const switchTo = Effect.fn("Harnesses.switchTo")(function* (
     harness: SignInHarness,
     copy: InstalledCopy,
     before: Option.Option<InstalledCopy>,
+    automatic: boolean,
   ) {
     const providerId = ProviderId.make(harness);
     const layout = layoutOf(harness);
@@ -280,12 +327,21 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
           onSome: (previous) => previous.version,
         }),
       })
-      .pipe(Effect.ignore);
+      .pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning(
+            "The engine could not be shown to run the harness copy before again; the new one is kept",
+            { cause },
+          ).pipe(Effect.andThen(Effect.sync(() => void stranded.set(harness, copy)))),
+        ),
+      );
     const engineFailed = () => new HarnessFailed({ reason: "engine" });
-    const switched = yield* options.work
+    const outcome = yield* options.work
       .paused(
         Effect.gen(function* () {
-          if ((yield* options.work.running(providerId)) > 0) return false;
+          const why = yield* unwanted(harness, before, automatic);
+          if (Option.isSome(why)) return { _tag: "unwanted", why: why.value } as const;
+          if ((yield* options.work.running(providerId)) > 0) return { _tag: "waiting" } as const;
           const taken = yield* engine
             .setHarnessExecutable({
               providerId,
@@ -301,41 +357,43 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
                   putBack.pipe(Effect.andThen(Effect.fail(engineFailed()))),
               }),
             );
-          if (!taken) return false;
+          if (!taken) return { _tag: "waiting" } as const;
           yield* currentText(copy).pipe(
             Effect.flatMap((text) => files.writeFile(layout.current, text)),
             Effect.mapError(() => new HarnessFailed({ reason: "storage" })),
             Effect.tapError(() => putBack),
           );
           // Recorded in the same step: a cancel that lands meanwhile finds
-          // the copy the engine now runs installed, and keeps it.
+          // the copy the engine now runs installed, keeps it, and is told so.
+          committed.set(harness, copy);
+          if (stranded.get(harness)?.version === copy.version) stranded.delete(harness);
           yield* update(harness, (slot) => ({ ...slot, installed: Option.some(copy), task: null }));
-          return true;
+          // Still with first sends held: no turn reaches a session on the copy before.
+          const released = yield* options.work.release(providerId);
+          return { _tag: "switched", released } as const;
         }),
       )
       .pipe(Effect.uninterruptible);
-    if (!switched) return false;
-    if (Option.isSome(before) && before.value.version !== copy.version) {
-      yield* fs
-        .remove(layout.version(before.value.version), { recursive: true, force: true })
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not remove the harness copy a newer one replaced", { cause }),
-          ),
-        );
+    if (outcome._tag !== "switched") return outcome;
+    if (!outcome.released) {
+      yield* Effect.logInfo(
+        "A session may still run the harness copy before; it is removed once the engine starts again",
+      ).pipe(Effect.annotateLogs({ harness }));
+    } else if (Option.isSome(before) && before.value.version !== copy.version) {
+      yield* files.writable(layout.version(before.value.version)).pipe(
+        Effect.flatMap((location) => fs.remove(location, { recursive: true, force: true })),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not remove the harness copy a newer one replaced", { cause }),
+        ),
+      );
     }
-    return true;
+    return outcome;
   });
-
-  // The harnesses whose job a client asked for, rather than the check alone.
-  const requested = new Set<SignInHarness>();
 
   /**
    * An install or update of `harness`, to `known` when given, else to the
    * newest listed: the copy it installed, none when it found nothing newer,
-   * or gave the copy up while it waited: for the operator's own, found on
-   * `PATH` meanwhile, by a first install, or for updates turned off, by an
-   * update the check started and no client asked for.
+   * or gave the copy up while it waited (`unwanted`).
    */
   const job = Effect.fn("Harnesses.job")(function* (
     harness: SignInHarness,
@@ -351,37 +409,38 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
       return Option.none<InstalledCopy>();
     }
     const layout = layoutOf(harness);
-    const copy = yield* installRelease({
-      release,
-      layout,
-      files,
-      client: options.distributions[harness].client,
-      probe: options.probe(harness),
-      platform: options.platform,
-      report,
-    });
+    // A stranded copy of this version may be what the engine runs: it is not replaced.
+    const left = stranded.get(harness);
+    const copy =
+      left !== undefined && left.version === release.version
+        ? left
+        : yield* installRelease({
+            release,
+            layout,
+            files,
+            client: options.distributions[harness].client,
+            probe: options.probe(harness),
+            platform: options.platform,
+            report,
+          });
     yield* report({ _tag: "waiting" });
-    const giveUp = (why: string) =>
-      Effect.logInfo(why).pipe(
-        Effect.annotateLogs({ harness, version: copy.version }),
-        Effect.andThen(files.writable(layout.version(copy.version))),
-        Effect.andThen((location) => fs.remove(location, { recursive: true, force: true })),
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not remove a harness copy that was given up", { cause }),
-        ),
-        Effect.as(Option.none<InstalledCopy>()),
-      );
     while (true) {
-      if (Option.isNone(before) && (yield* options.onPath(harness))) {
-        yield* update(harness, (slot) => ({ ...slot, operator: true }));
-        return yield* giveUp(
-          "The operator installed the harness meanwhile; J3 Bots' copy is not used",
+      const outcome = yield* switchTo(harness, copy, before, automatic);
+      if (outcome._tag === "switched") break;
+      if (outcome._tag === "unwanted") {
+        yield* Effect.logInfo(outcome.why).pipe(
+          Effect.annotateLogs({ harness, version: copy.version }),
         );
+        if (stranded.get(harness)?.version !== copy.version) {
+          yield* files.writable(layout.version(copy.version)).pipe(
+            Effect.flatMap((location) => fs.remove(location, { recursive: true, force: true })),
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not remove a harness copy that was given up", { cause }),
+            ),
+          );
+        }
+        return Option.none<InstalledCopy>();
       }
-      if (automatic && !requested.has(harness) && !(yield* SubscriptionRef.get(autoUpdate))) {
-        return yield* giveUp("Updates were turned off; a waiting update is not installed");
-      }
-      if (yield* switchTo(harness, copy, before)) break;
       yield* Effect.sleep(WAIT_STEP);
     }
     yield* Effect.logInfo("J3 Bots' copy of a harness was installed").pipe(
@@ -410,6 +469,12 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
   ) {
     const at = yield* DateTime.now;
     const wasCancelled = cancelled.delete(harness);
+    const made = committed.get(harness);
+    committed.delete(harness);
+    // A job that made a copy current installed it, whatever came after.
+    if (made !== undefined) {
+      return yield* end(harness, { _tag: "installed", version: made.version, at });
+    }
     if (Exit.isSuccess(exit)) {
       return yield* end(
         harness,
@@ -519,8 +584,36 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
       Effect.gen(function* () {
         const before = yield* SubscriptionRef.getAndSet(autoUpdate, on);
         // Turned on: what is newer installs now, not at the next check.
-        if (on && !before) yield* Effect.forEach(HARNESS_IDS, check);
+        if (on && !before) {
+          yield* Effect.forEach(HARNESS_IDS, check, { discard: true }).pipe(Effect.forkIn(scope));
+        }
       }),
+    ),
+    Effect.forkIn(scope),
+  );
+
+  // Each time the engine is ready again it is a new engine, which releases
+  // every session the one before had open, and runs the current copies: a
+  // copy before one of them, or a stranded one, runs nowhere now. A harness
+  // whose job is under way is left to it.
+  yield* engine.status.pipe(
+    Stream.map((status) => status.state._tag === "ready"),
+    Stream.changes,
+    Stream.filter((ready) => ready),
+    Stream.runForEach(() =>
+      lock.withPermits(1)(
+        Effect.forEach(
+          HARNESS_IDS,
+          (harness) =>
+            Effect.gen(function* () {
+              if (jobs.has(harness)) return;
+              stranded.delete(harness);
+              const slot = yield* slotOf(harness);
+              if (slot !== undefined) yield* prune(harness, slot, slot.state.latest);
+            }),
+          { discard: true },
+        ),
+      ),
     ),
     Effect.forkIn(scope),
   );
@@ -563,7 +656,8 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
  * The service as the server runs it: in the server's home, with the
  * distributions and probe of `HarnessSources`, the operator's own found as
  * the engine finds it, the `autoUpdateHarnesses` setting, and a switch that
- * holds bots' first sends and counts the bots whose work runs in a session on the provider.
+ * holds bots' first sends, counts the bots whose work runs in a session on
+ * the provider, and has the engine release that provider's sessions.
  */
 export const layer = Layer.effect(
   Harnesses,
@@ -574,6 +668,7 @@ export const layer = Layer.effect(
     const settings = yield* SettingsService;
     const pause = yield* SendPause;
     const runningWork = yield* RunningWork;
+    const engine = yield* Engine;
     return yield* make({
       home,
       platform: sources.platform,
@@ -588,6 +683,20 @@ export const layer = Layer.effect(
       work: {
         paused: pause.paused,
         running: (providerId) => Effect.map(runningWork.botsOn(providerId), (bots) => bots.length),
+        release: Effect.fn("Harnesses.release")(function* (providerId: ProviderId) {
+          const sessions = yield* runningWork.sessionsOn(providerId);
+          const each = yield* Effect.forEach(sessions, (sessionId) =>
+            engine.configureSession({ sessionId, reloadTools: true }).pipe(
+              Effect.as(true),
+              Effect.catch((cause) =>
+                Effect.logWarning("The engine did not release a session for a harness update", {
+                  cause,
+                }).pipe(Effect.as(false)),
+              ),
+            ),
+          );
+          return each.every(Boolean);
+        }),
       },
     });
   }),

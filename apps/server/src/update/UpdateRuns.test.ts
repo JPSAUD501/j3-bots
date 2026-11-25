@@ -85,6 +85,7 @@ const withRuns = <A, E, R>(
                 RunningWork.of({
                   bots: Effect.sync(() => machine.working),
                   botsOn: () => Effect.sync(() => machine.working),
+                  sessionsOn: () => Effect.succeed([]),
                 }),
               ),
               Ids.layer,

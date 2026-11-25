@@ -40,6 +40,8 @@ export class RunningWork extends Context.Service<
      * a session of until it is stopped.
      */
     readonly botsOn: (providerId: ProviderId) => Effect.Effect<ReadonlyArray<BotId>>;
+    /** The engine's sessions still in use on `providerId`, running or not. */
+    readonly sessionsOn: (providerId: ProviderId) => Effect.Effect<ReadonlyArray<SessionId>>;
   }
 >()("@j3-bots/server/turns/RunningWork") {}
 
@@ -107,6 +109,12 @@ export const layer = Layer.effect(
       return [...new Set(found.flat())];
     });
 
-    return RunningWork.of({ bots: busy(null), botsOn: busy });
+    const sessionsOn = (providerId: ProviderId) =>
+      inEngine(providerId).pipe(
+        Effect.orDie,
+        Effect.map((sessions) => sessions.map((session) => session.engine_session_id)),
+      );
+
+    return RunningWork.of({ bots: busy(null), botsOn: busy, sessionsOn });
   }),
 );

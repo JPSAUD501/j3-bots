@@ -2349,30 +2349,37 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     readonly executable: string | null;
     readonly version: string | null;
   }) {
+    const sentAt = yield* Clock.currentTimeMillis;
     const sent = yield* upsertExecutable({
       providerId: input.providerId,
       executable: input.executable ?? undefined,
     });
     if (sent === null) return;
     const { version } = input;
-    if (version !== null) {
-      yield* SubscriptionRef.changes(reported).pipe(
-        Stream.filter((engineProviders) =>
-          engineProviders.some(
-            (each) =>
-              each.instanceId === sent.instanceId &&
-              each.installed &&
-              (versionNumberIn(each.installedVersion) === version ||
-                versionNumberIn(each.version) === version),
-          ),
-        ),
-        Stream.runHead,
-        Effect.timeoutOrElse({
-          duration: FIRST_CHECK_BUDGET,
-          orElse: () => Effect.fail(new EngineIndeterminate()),
-        }),
+    // A report the engine made of the rebuilt instance, not one from before.
+    const runsIt = (each: ReportedProvider) => {
+      if (each.instanceId !== sent.instanceId || Date.parse(each.checkedAt) < sentAt) return false;
+      // Back on its `PATH`: any check that ended, the harness found there or not.
+      if (version === null) return each.installed || each.status === "error";
+      const compatibility = each.compatibilityAdvisory?.status;
+      return (
+        each.installed &&
+        each.status !== "error" &&
+        each.availability !== "unavailable" &&
+        compatibility !== "broken" &&
+        compatibility !== "unsupported" &&
+        (versionNumberIn(each.installedVersion) === version ||
+          versionNumberIn(each.version) === version)
       );
-    }
+    };
+    yield* SubscriptionRef.changes(reported).pipe(
+      Stream.filter((engineProviders) => engineProviders.some(runsIt)),
+      Stream.runHead,
+      Effect.timeoutOrElse({
+        duration: FIRST_CHECK_BUDGET,
+        orElse: () => Effect.fail(new EngineIndeterminate()),
+      }),
+    );
     yield* Ref.update(providers, (current) =>
       current.map((each) => (each.id === sent.next.id ? sent.next : each)),
     );

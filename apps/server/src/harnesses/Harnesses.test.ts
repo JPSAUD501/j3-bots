@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as HttpClient from "effect/http/HttpClient";
@@ -173,6 +174,8 @@ interface Setup {
   readonly home: string;
   /** How many bots on each provider have work running, as the switch sees it. */
   readonly running: Ref.Ref<number>;
+  /** Whether the engine released every session on the provider when asked, after a switch. */
+  readonly released: Ref.Ref<boolean>;
   /** The operator's `autoUpdateHarnesses`. */
   readonly autoUpdate: SubscriptionRef.SubscriptionRef<boolean>;
   /** The harnesses the operator has on `PATH`. */
@@ -189,11 +192,14 @@ const setup = Effect.fn(function* (options?: {
   readonly prepare?: (fake: FakeDistributions) => void;
 }) {
   const fs = yield* FileSystem.FileSystem;
-  const { home } = yield* ServerConfig;
+  const path = yield* Path.Path;
+  // Apart from the test domain's own service, which keeps the home's copies.
+  const home = path.join((yield* ServerConfig).home, "own");
   const fake: FakeDistributions = { files: new Map(), serving: new Map(), asked: [] };
   options?.prepare?.(fake);
   const client = onlyTo(["https://downloads.test", "https://releases.test"])(fakeClient(fake));
   const running = yield* Ref.make(0);
+  const released = yield* Ref.make(false);
   const autoUpdate = yield* SubscriptionRef.make(true);
   const onPath = yield* Ref.make(options?.onPath ?? []);
   const harnesses = yield* make({
@@ -210,9 +216,10 @@ const setup = Effect.fn(function* (options?: {
     work: {
       paused: (effect) => effect,
       running: () => Ref.get(running),
+      release: () => Ref.get(released),
     },
   });
-  return { harnesses, fake, home, running, autoUpdate, onPath } satisfies Setup;
+  return { harnesses, fake, home, running, released, autoUpdate, onPath } satisfies Setup;
 });
 
 /** The first state of `harness`'s copy that `until` holds for. */
@@ -399,8 +406,56 @@ describe("J3 Bots' own copies of the harnesses", () => {
             path.join(layout.version("2.1.330"), "claude"),
           ],
         );
-        assert.deepStrictEqual(yield* fs.readDirectory(layout.versions), ["2.1.330"]);
+        // The engine's open sessions may still run the copy before, until it starts again.
+        assert.sameMembers(yield* fs.readDirectory(layout.versions), ["2.1.326", "2.1.330"]);
       }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
+  it.effect("removes the copy before at once when the engine released every session on it", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const { harnesses, fake, home, released } = yield* setup({
+        prepare: (fake) => publishClaude(fake, "2.1.326"),
+      });
+      const layout = copyLayout(path, home, "claude-code");
+      yield* harnesses.install("claude-code");
+      yield* copyWhen(harnesses, "claude-code", installed("2.1.326"));
+      yield* Ref.set(released, true);
+      publishClaude(fake, "2.1.330");
+      yield* harnesses.install("claude-code");
+      yield* copyWhen(harnesses, "claude-code", installed("2.1.330"));
+      assert.deepStrictEqual(yield* fs.readDirectory(layout.versions), ["2.1.330"]);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
+  it.live("keeps the copy before while a session may run it, until the engine starts again", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const control = yield* TestEngineControl;
+      const { harnesses, fake, home } = yield* setup({
+        prepare: (fake) => publishClaude(fake, "2.1.326"),
+      });
+      const layout = copyLayout(path, home, "claude-code");
+      yield* harnesses.install("claude-code");
+      yield* copyWhen(harnesses, "claude-code", installed("2.1.326"));
+      publishClaude(fake, "2.1.330");
+      yield* harnesses.install("claude-code");
+      yield* copyWhen(harnesses, "claude-code", installed("2.1.330"));
+      assert.sameMembers(yield* fs.readDirectory(layout.versions), ["2.1.326", "2.1.330"]);
+
+      yield* control.setReachable(false);
+      yield* control.setReachable(true);
+      const left = yield* fs.readDirectory(layout.versions).pipe(
+        Effect.repeat({
+          until: (versions) => versions.length === 1,
+          schedule: Schedule.spaced("20 millis"),
+          times: 100,
+        }),
+      );
+      assert.deepStrictEqual(left, ["2.1.330"]);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
   );
 
   it.effect("updates on its own at its check, once no bot on the provider has work running", () =>
@@ -454,7 +509,8 @@ describe("J3 Bots' own copies of the harnesses", () => {
       yield* held.entered;
       yield* harnesses.cancel("claude-code");
       yield* held.release;
-      const copy = yield* copyWhen(harnesses, "claude-code", ended);
+      // It ends recorded as installed, not as cancelled.
+      const copy = yield* copyWhen(harnesses, "claude-code", installed("2.1.330"));
       assert.strictEqual(copy.version, "2.1.330");
       assert.isTrue(yield* fs.exists(path.join(layout.version("2.1.330"), "claude")));
       assert.deepStrictEqual(JSON.parse(yield* fs.readFileString(layout.current)), {
@@ -462,6 +518,47 @@ describe("J3 Bots' own copies of the harnesses", () => {
         executable: "claude",
       });
     }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+  );
+
+  it.effect(
+    "keeps a copy the engine may run when it cannot be shown back on the one before, and reuses it",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fs = yield* FileSystem.FileSystem;
+        const control = yield* TestEngineControl;
+        const { harnesses, fake, home } = yield* setup({
+          prepare: (fake) => publishClaude(fake, "2.1.326"),
+        });
+        const layout = copyLayout(path, home, "claude-code");
+        yield* harnesses.install("claude-code");
+        yield* copyWhen(harnesses, "claude-code", installed("2.1.326"));
+
+        publishClaude(fake, "2.1.330");
+        // The switch's answer is lost, and the engine is gone before it is put back.
+        const held = yield* control.holdNextAnswer("setHarnessExecutable");
+        yield* control.loseNextReply;
+        yield* harnesses.install("claude-code");
+        yield* held.entered;
+        yield* control.setReachable(false);
+        yield* held.release;
+        const failed = yield* copyWhen(
+          harnesses,
+          "claude-code",
+          (copy) => ended(copy) && copy.last?._tag === "failed",
+        );
+        assert.strictEqual(failed.version, "2.1.326");
+        assert.isTrue(yield* fs.exists(path.join(layout.version("2.1.330"), "claude")));
+
+        // Asked again, it switches to the same copy, not a new download of it.
+        yield* control.setReachable(true);
+        const asked = fake.asked.length;
+        yield* harnesses.install("claude-code");
+        yield* copyWhen(harnesses, "claude-code", installed("2.1.330"));
+        assert.isFalse(
+          fake.asked.slice(asked).some(({ path: asked }) => asked.endsWith("/linux-x64/claude")),
+        );
+      }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
   );
 
   it.effect("gives up an update its check started once updates are turned off while it waits", () =>

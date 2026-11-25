@@ -27,5 +27,8 @@ it.effect(
       });
       assert.deepStrictEqual(yield* running.botsOn(TestDomain.DEFAULT_MODEL.providerId), [bot.id]);
       assert.deepStrictEqual(yield* running.botsOn(TestDomain.OTHER_PROVIDER_MODEL.providerId), []);
+      assert.deepStrictEqual(yield* running.sessionsOn(TestDomain.DEFAULT_MODEL.providerId), [
+        session,
+      ]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
