@@ -35,7 +35,6 @@ import {
   roomEntries,
   roomWakeStatuses,
   roomWith,
-  running,
   sawText,
   say,
   settle,
