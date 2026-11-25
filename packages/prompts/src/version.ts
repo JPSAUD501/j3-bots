@@ -16,6 +16,12 @@ import {
   BROWSER_TEMPLATE,
   CONNECTORS_TEMPLATE,
 } from "./instructions.ts";
+import {
+  renderRoomMovedOnWithNonce,
+  renderRoomReadWithNonce,
+  type RoomRead,
+  type RoomReadEntry,
+} from "./roomRead.ts";
 import { sharedSkills } from "./skills.ts";
 import {
   BROWSER_HELP_REQUESTED,
@@ -27,8 +33,8 @@ import {
 
 /**
  * The prompt version: one identifier for the base prompt, the envelope format,
- * the tool descriptions and the skills J3 Bots ships together, derived from
- * their content. A session
+ * the tool descriptions, what the tools answer and the skills J3 Bots ships
+ * together, derived from their content. A session
  * records the version it was created with.
  *
  * The envelope format is code, so it enters the hash as rendered output: one
@@ -174,6 +180,51 @@ const SAMPLE_CONNECTOR_RESULTS: ReadonlyArray<ConnectorResult> = [
   ).map((reason): ConnectorResult => ({ type: "unavailable", connector: "Connector", reason })),
 ];
 
+const SAMPLE_ROOM = { id: Schema.decodeSync(RoomId)("room"), name: "Room" };
+const SAMPLE_ROOM_ENTRIES: readonly [...Array<RoomReadEntry>, RoomReadEntry] = [
+  { author: { type: "user", name: "Name" }, at, text: "text", mentions: "everyone", files: [] },
+  { author: { type: "you" }, at, text: "text", mentions: [], files: [] },
+  { author: { type: "teammate", teammate }, at, text: "text", mentions: ["Bot"], files: ["a.pdf"] },
+];
+const SAMPLE_ROOM_READS: ReadonlyArray<RoomRead> = [
+  {
+    at,
+    timeZone,
+    room: { ...SAMPLE_ROOM, archived: false },
+    search: null,
+    entries: [],
+    earlier: 0,
+    cut: false,
+  },
+  {
+    at,
+    timeZone,
+    room: { ...SAMPLE_ROOM, archived: true },
+    search: "text",
+    entries: [],
+    earlier: 0,
+    cut: false,
+  },
+  {
+    at,
+    timeZone,
+    room: { ...SAMPLE_ROOM, archived: false },
+    search: null,
+    entries: SAMPLE_ROOM_ENTRIES,
+    earlier: 1,
+    cut: true,
+  },
+  {
+    at,
+    timeZone,
+    room: { ...SAMPLE_ROOM, archived: false },
+    search: "text",
+    entries: SAMPLE_ROOM_ENTRIES,
+    earlier: 2,
+    cut: false,
+  },
+];
+
 const fingerprint = (): string => {
   const hash = createHash("sha256");
   for (const part of [
@@ -191,6 +242,11 @@ const fingerprint = (): string => {
     connectorToolDescription("Connector", "text"),
     ...SAMPLE_CONNECTOR_RESULTS.map((result) =>
       renderConnectorResultWithNonce(result, "000000000000"),
+    ),
+    ...SAMPLE_ROOM_READS.map((read) => renderRoomReadWithNonce(read, "000000000000")),
+    renderRoomMovedOnWithNonce(
+      { at, timeZone, room: SAMPLE_ROOM, entries: SAMPLE_ROOM_ENTRIES, omitted: 1 },
+      "000000000000",
     ),
   ]) {
     // Length-prefixed, so moving text from one part to the next changes the hash.

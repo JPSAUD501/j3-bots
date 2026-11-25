@@ -1182,6 +1182,136 @@ const ASKS_TO_WRITE_IN_ROOM: Check = {
   ],
 };
 
+// Work in a room cancelled from the bot's own conversation, after it was delivered.
+
+const ANALYSIS_ROOM = {
+  id: Schema.decodeSync(RoomId)("room-q3-analysis"),
+  name: "Q3 analysis",
+  members: [JUNIPER_ID, ANA.id, BO.id],
+};
+
+const DECK_IN_PROGRESS =
+  "Juniper, the Q3 traffic numbers are in. I'm building the deck now and Bo is writing the summary; I'll post it here when it's delivered.";
+const WAITS_FOR_THE_DECK = "Thanks Ana. I'll tell Rui once the deck is here.";
+
+/** The room turn in which Ana said the deck was in progress, as Juniper answered it. */
+const ANALYSIS_IN_PROGRESS: EarlierTurn = {
+  wake: {
+    ...base,
+    at: todayAt(8, 50),
+    kind: "room",
+    room: {
+      id: ANALYSIS_ROOM.id,
+      name: ANALYSIS_ROOM.name,
+      members: [{ id: JUNIPER_ID, name: "Juniper", title: "Docs" }, ANA, BO],
+    },
+    reason: "addressed",
+    closing: false,
+    omitted: 0,
+    entries: [
+      {
+        author: ANA,
+        at: todayAt(8, 50),
+        text: DECK_IN_PROGRESS,
+        mentions: ["Juniper"],
+        files: [],
+      },
+    ],
+  },
+  calls: [
+    {
+      name: "say",
+      input: {
+        text: WAITS_FOR_THE_DECK,
+        done: true,
+      },
+      output: JSON.stringify({ status: "recorded" }),
+    },
+  ],
+};
+
+/** What Ana and Bo wrote in the room after that, which Juniper has not seen. */
+const DECK_DELIVERED: Team = {
+  teammates: [
+    { ...ANA, job: "Analyse the docs site's traffic and build Rui's reports." },
+    { ...BO, job: "Write and review Rui's release notes and summaries." },
+  ],
+  rooms: [
+    {
+      ...ANALYSIS_ROOM,
+      seen: [
+        {
+          author: { type: "teammate", teammate: ANA },
+          at: todayAt(8, 50),
+          text: DECK_IN_PROGRESS,
+          mentions: ["Juniper"],
+          files: [],
+        },
+        {
+          author: { type: "you" },
+          at: todayAt(8, 51),
+          text: WAITS_FOR_THE_DECK,
+          mentions: [],
+          files: [],
+        },
+      ],
+      unseen: [
+        {
+          author: { type: "teammate", teammate: BO },
+          at: todayAt(9, 22),
+          text: "Summary is written and in the deck.",
+          mentions: [],
+          files: [],
+        },
+        {
+          author: { type: "teammate", teammate: ANA },
+          at: todayAt(9, 30),
+          text: "Done: the Q3 deck is delivered, with Bo's summary. Nothing is pending.",
+          mentions: [],
+          files: ["q3-docs-traffic.pdf"],
+        },
+      ],
+    },
+  ],
+};
+
+const CANCEL_ASKED =
+  "we don't need the Q3 deck anymore. tell the group to stop the analysis and cancel whatever is pending";
+
+const cancelWake = userWake(CANCEL_ASKED);
+
+/** A cancel posted blindly: as though the work were still under way, with no word of its delivery. */
+const CANCELS_BLINDLY: Check = {
+  question:
+    "Does this message tell its readers to stop, cancel or drop the work without saying anywhere that the work, or the deck, was already finished or delivered?",
+  what: "a cancel that ignores that the work was delivered",
+  asked: CANCEL_ASKED,
+  accept: [
+    "Rui doesn't need the Q3 deck anymore: please stop the analysis and cancel anything still pending.",
+    "Pessoal, podem parar a análise do Q3 e descartar o que estiver pendente: o Rui não precisa mais do deck.",
+  ],
+  reject: [
+    "No need to continue: the deck is already delivered and that's all Rui needed.",
+    "Rui no longer needs the Q3 deck. I see it's already delivered, so if anything is still running on it, you can stop.",
+    "Thanks Ana and Bo: the deck is delivered, so there's nothing more to do on it.",
+  ],
+};
+
+const ALREADY_DELIVERED_SAID: Check = {
+  question:
+    "Does this message tell its reader that the deck, or the work on it, was already finished or delivered?",
+  what: "that the work was already done",
+  asked: CANCEL_ASKED,
+  accept: [
+    "There was nothing to cancel: Ana and Bo had already delivered the Q3 deck, q3-docs-traffic.pdf, at 9:30.",
+    "O deck do Q3 já tinha sido entregue pela Ana, com o resumo do Bo, então não havia o que cancelar.",
+  ],
+  reject: [
+    "Done: I told the group to stop the analysis and cancel the Q3 deck.",
+    "I'll let the group know you don't need the deck anymore.",
+  ],
+};
+
 // A request changed while the bot waited.
 
 const changedMind: Wake = {
@@ -1283,6 +1413,8 @@ const CHECKS: ReadonlyArray<Check> = [
   STARTS_THE_TEST,
   STARTED_SAID,
   ASKS_TO_WRITE_IN_ROOM,
+  CANCELS_BLINDLY,
+  ALREADY_DELIVERED_SAID,
 ];
 
 /** Problems with a closing message the judge must read as `check` says, `expected` true or false. */
@@ -1905,6 +2037,41 @@ const cases: ReadonlyArray<Case> = [
               ? Effect.succeed([SHOWED_NOTHING])
               : judged(ASKS_TO_WRITE_IN_ROOM, START_ASKED, shown, false),
         },
+      ];
+    },
+  },
+  {
+    name: "does not cancel room work that was delivered after it last saw the room, and tells its user it was done",
+    scenario: {
+      wake: cancelWake,
+      workspace: docsWorkspace(cancelWake),
+      history: [ANALYSIS_IN_PROGRESS],
+      team: DECK_DELIVERED,
+    },
+    grades: ({ calls }) => {
+      // The posts the server took: a refused one never reached the room.
+      const posted = named(calls, "message_bot").flatMap((call) => {
+        const input = decodeMessageBot(call.input);
+        return input._tag === "Some" &&
+          input.value.to === ANALYSIS_ROOM.id &&
+          decodePosted(call.output)._tag === "Some"
+          ? [input.value.text]
+          : [];
+      });
+      return [
+        {
+          name: "posted no blind cancel of the delivered work",
+          problems: Effect.map(
+            Effect.forEach(posted, (text) => judged(CANCELS_BLINDLY, CANCEL_ASKED, text, false)),
+            (found) => found.flat(),
+          ),
+        },
+        closingGrade(
+          "told its user the work was already delivered",
+          calls,
+          ALREADY_DELIVERED_SAID,
+          CANCEL_ASKED,
+        ),
       ];
     },
   },

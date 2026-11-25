@@ -23,7 +23,18 @@ import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import { CredentialFills, type ListAnswer } from "../vault/Fill.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
-import { type TurnToolCall, TurnToolRefused, type TurnToolRetry, TurnTools } from "./TurnTools.ts";
+import {
+  RoomReadResult,
+  type TurnToolCall,
+  TurnToolRefused,
+  type TurnToolRetry,
+  TurnTools,
+} from "./TurnTools.ts";
+
+/** What a handler answers: a value the bridge encodes, or text already framed for the bot. */
+type Answered = Extract<ToolCallResponse, { readonly _tag: "result" | "text" }>;
+
+const decodeRoomRead = Schema.decodeUnknownEffect(RoomReadResult);
 
 /** Why a call did nothing, in words the bot reads. */
 class Refused extends Schema.TaggedError<Refused>()("Refused", { reason: Schema.String }) {}
@@ -117,16 +128,25 @@ export const layer = Layer.effect(
     }
 
     /** A handler that decodes its arguments with the tool's schema, then runs. */
-    const handler =
+    const framedHandler =
       <S extends Schema.Decoder<unknown>, E, R>(
         schema: S,
-        run: (input: S["Type"], call: Call) => Effect.Effect<Schema.Json, E, R>,
+        run: (input: S["Type"], call: Call) => Effect.Effect<Answered, E, R>,
       ) =>
       (call: Call) =>
         Schema.decodeEffect(schema)(call.arguments, DECODE_OPTIONS).pipe(
           Effect.mapError((error) => new Refused({ reason: error.message })),
           Effect.flatMap((input) => run(input, call)),
         );
+
+    /** A handler whose answer is a value, which the bridge encodes for the bot. */
+    const handler = <S extends Schema.Decoder<unknown>, E, R>(
+      schema: S,
+      run: (input: S["Type"], call: Call) => Effect.Effect<Schema.Json, E, R>,
+    ) =>
+      framedHandler(schema, (input, call) =>
+        Effect.map(run(input, call), (value): Answered => ({ _tag: "result", value })),
+      );
 
     /** Hands a turn tool's call to the turn it belongs to. */
     const admit = (call: TurnToolCall) =>
@@ -139,7 +159,7 @@ export const layer = Layer.effect(
       );
 
     const handlers: {
-      readonly [N in ToolName]: (call: Call) => Effect.Effect<Schema.Json, Refused | TurnToolRetry>;
+      readonly [N in ToolName]: (call: Call) => Effect.Effect<Answered, Refused | TurnToolRetry>;
     } = {
       say: handler(tools.say.input, (input, call) => admit({ tool: "say", input, ...call })),
       ask: handler(tools.ask.input, (input, call) => admit({ tool: "ask", input, ...call })),
@@ -244,6 +264,13 @@ export const layer = Layer.effect(
       start_room: handler(tools.start_room.input, (input, call) =>
         admit({ tool: "start_room", input, ...call }),
       ),
+      // The read is framed as envelopes frame room entries: the bot gets its text.
+      read_room: framedHandler(tools.read_room.input, (input, call) =>
+        admit({ tool: "read_room", input, ...call }).pipe(
+          Effect.flatMap((value) => decodeRoomRead(value).pipe(Effect.orDie)),
+          Effect.map(({ text }): Answered => ({ _tag: "text", text, isError: false })),
+        ),
+      ),
       // A turn tool of its own: the bot is saved with the call's pin on its
       // turn, which only this service's `Bots` can do.
       create_bot: handler(tools.create_bot.input, (input, call) =>
@@ -339,9 +366,7 @@ export const layer = Layer.effect(
       tool: string,
       call: Call,
     ): Effect.Effect<ToolCallResponse, Refused | TurnToolRetry> => {
-      if (isToolName(tool)) {
-        return handlers[tool](call).pipe(Effect.map((value) => ({ _tag: "result", value })));
-      }
+      if (isToolName(tool)) return handlers[tool](call);
       if (isConnectorTool(tool)) {
         return connectorCall(tool, call).pipe(
           Effect.map(({ text, isError }) => ({ _tag: "text", text, isError })),

@@ -30,6 +30,28 @@ import { inboxPath } from "./inbox.ts";
  */
 const DISPATCH_VARIANCE = 1_000;
 
+/**
+ * The most unseen room entries an envelope is built from: a member back after
+ * a long absence is shown the newest, and told how many earlier ones it missed.
+ * A post refused because the room moved on shows them the same way.
+ */
+export const ROOM_ENTRIES_READ = 200;
+
+/**
+ * The largest count in `[1, max]` for which `fits` holds, given that it holds
+ * for 1 and, once it fails, fails for every larger count.
+ */
+export const longestFitting = (max: number, fits: (count: number) => boolean): number => {
+  let low = 1;
+  let high = max;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(middle)) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+};
+
 /** Whether an envelope renders within the engine's input limit, less `reserve`. */
 export const fitsEngine = (wake: Wake, reserve = 0): boolean =>
   engineInputLength(renderWakeForSize(wake)) <= ENGINE_INPUT_LIMIT - reserve;

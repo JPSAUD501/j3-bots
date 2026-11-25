@@ -28,6 +28,7 @@ import {
 import {
   BROWSER_HELP_REQUESTED,
   MAX_BOTS_PER_REQUEST,
+  ROOM_READ_COUNT,
   SUGGESTION_REFUSED,
   SUGGESTION_SHOWN,
   type ToolInput,
@@ -62,6 +63,7 @@ import { SettingsStore } from "../settings/SettingsStore.ts";
 import {
   type FillCall,
   CallCutOff,
+  type RoomReadResult,
   type ClaimedCall,
   type CreateBotCall,
   TurnEnded,
@@ -74,6 +76,7 @@ import { hopCounts } from "./hopCounts.ts";
 import { Ledger } from "./Ledger.ts";
 import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
+import { type RoomReader, roomReads } from "./roomReads.ts";
 import { routineSpeech } from "./routineSpeech.ts";
 import { type Once, routineTool } from "./routineTool.ts";
 import {
@@ -160,11 +163,16 @@ const CallKey = Schema.Struct({
 const StoredResult = Schema.Struct({ result_json: json(Schema.Json) });
 
 /**
- * A refusal that committed something, as a `message_bot` past the hop limit
- * commits its notice: stored as the request's result like any other, so a
- * replayed forward refuses the same way.
+ * A refusal stored as the request's result like any other, so a replayed
+ * forward refuses the same way. `kind` says which: a `message_bot` past the
+ * hop limit, which committed its chain-stopped notice; a room post refused
+ * because the room moved on, which committed the view it showed; a connector
+ * suggestion the checks refused.
  */
-const StoredRefusal = Schema.TaggedStruct("refused", { reason: Schema.String });
+const StoredRefusal = Schema.TaggedStruct("refused", {
+  reason: Schema.String,
+  kind: Schema.Literals(["hop-limit", "room-moved-on", "connector"]),
+});
 
 /**
  * Why a message the operator sent while a turn ran does not count in it
@@ -217,6 +225,7 @@ type PinnedTool =
   | "ask"
   | "request_browser_help"
   | "message_bot"
+  | "read_room"
   | "set_routine"
   | "set_operator_name"
   | "request_credential"
@@ -282,6 +291,7 @@ export const layer = Layer.effect(
     const roomOf = liveRoom(sql);
     const spoken = routineSpeech(sql, ids, changes);
     const setRoutine = yield* routineTool;
+    const reads = roomReads(sql, entries, bots, settings);
 
     const engineSessionOf = SqlSchema.findOneOption({
       Request: Schema.String,
@@ -295,6 +305,14 @@ export const layer = Layer.effect(
       Request: SessionRowId,
       Result: Schema.Struct({ purpose: Schema.Literals(["main", "side"]) }),
       execute: (id) => sql`SELECT purpose FROM sessions WHERE id = ${id}`,
+    });
+
+    /** The pinned call as a reader of rooms: its session's view counts (`roomShown`). */
+    const readerOf = (found: Pin): RoomReader => ({
+      botId: found.botId,
+      sessionId: found.sessionId,
+      turnId: found.turnId,
+      callId: found.callId,
     });
 
     /**
@@ -639,6 +657,7 @@ export const layer = Layer.effect(
         SELECT 1 FROM tool_calls
         WHERE session_id = ${found.sessionId} AND engine_turn_id = ${found.turnId}
           AND tool = 'message_bot' AND json_extract(result_json, '$._tag') = 'refused'
+          AND json_extract(result_json, '$.kind') = 'hop-limit'
       `.pipe(
         Effect.orDie,
         Effect.map((rows) => rows.length > 0),
@@ -1208,7 +1227,11 @@ export const layer = Layer.effect(
      * the rounds before it. A turn of this room is left out because the
      * operator's message there already was their word. Refused, with nothing
      * written, for an archived room, one the bot is not in, and
-     * work the operator stopped. `null` when no room has the id.
+     * work the operator stopped. From any turn but one of this room, it is
+     * refused too while others wrote there what the turn's session has not
+     * seen: the refusal shows it them, so sent again, the post goes out
+     * unless something newer arrived (`roomReads.movedOn`). `null` when no
+     * room has the id.
      */
     /**
      * Records that the pinned turn relays the operator's word to the room
@@ -1263,6 +1286,21 @@ export const layer = Layer.effect(
       ) {
         return yield* refuse("Your user stopped this work, so nothing was sent.");
       }
+      const inThisRoom = found.audience._tag === "room" && found.audience.roomId === roomId;
+      // A room's own turn may answer beside the others' replies
+      // (`docs/decisions/0040`); from anywhere else, the post goes out only
+      // on what the turn's session has seen. The refusal is stored: it
+      // records what it showed.
+      if (!inThisRoom) {
+        const missed = yield* reads.movedOn(readerOf(found), live.value);
+        if (missed !== null) {
+          return {
+            _tag: "refused",
+            reason: missed,
+            kind: "room-moved-on",
+          } satisfies typeof StoredRefusal.Type;
+        }
+      }
       const entry = yield* entries.append({
         target: { _tag: "room", roomId },
         entry: {
@@ -1281,7 +1319,6 @@ export const layer = Layer.effect(
         entryId: entry.id,
         text: input.text,
       });
-      const inThisRoom = found.audience._tag === "room" && found.audience.roomId === roomId;
       const spoke = !inThisRoom && (yield* operatorSpokeIn(found));
       const word = spoke && (yield* firstRelay(found, roomId)) ? "relayed" : "bot";
       const routed =
@@ -1299,6 +1336,39 @@ export const layer = Layer.effect(
           status: "posted",
           note: "It is in the room, and every member reads it in their next turn.",
         } satisfies Schema.Json)
+      );
+    });
+
+    /**
+     * `read_room` (`docs/architecture/server.md`, What a bot has seen of a
+     * room): a room the bot is a member of, archived or not, read from any
+     * turn. What it showed is recorded with its result, in the transaction
+     * that pins it, so a forward retried under its id reads the same.
+     */
+    const readRoom = Effect.fn("Speech.readRoom")(function* (
+      found: Pin,
+      input: ToolInput<"read_room">,
+    ) {
+      return yield* once(
+        "read_room",
+        found,
+      )(
+        Effect.gen(function* () {
+          const roomId = Option.getOrNull(Schema.decodeOption(RoomId)(input.room));
+          const known = roomId === null ? Option.none() : yield* rooms.find(roomId);
+          if (Option.isNone(known) || !known.value.members.includes(found.botId)) {
+            return yield* new TurnToolRefused({
+              reason: `You are not a member of a room with the id ${input.room}. \`list_teammates\` shows the rooms you are in.`,
+            });
+          }
+          const room = known.value;
+          const text = yield* reads.read(
+            readerOf(found),
+            { id: room.id, name: room.name, archived: room.status === "archived" },
+            { search: input.search ?? null, count: input.count ?? ROOM_READ_COUNT.default },
+          );
+          return { status: "read", text } satisfies RoomReadResult;
+        }),
       );
     });
 
@@ -1382,6 +1452,7 @@ export const layer = Layer.effect(
                 counted === null
                   ? "Nothing was sent: this turn started on its own, and what started it cannot be traced, so it may not message teammates. Do not try again. If your user is waiting on it, tell them with `say`."
                   : `Nothing was sent: ${chainReached(counted.borrowed, budgets.hops)} Do not try again. If your user is waiting on it, tell them with \`say\`.`,
+              kind: "hop-limit",
             } satisfies typeof StoredRefusal.Type;
           }
           const card = (target: EntryTarget, direction: "sent" | "received") =>
@@ -1763,7 +1834,8 @@ export const layer = Layer.effect(
         found,
       )(
         Effect.gen(function* () {
-          const refused = (reason: string) => ({ _tag: "refused", reason }) satisfies Schema.Json;
+          const refused = (reason: string) =>
+            ({ _tag: "refused", reason, kind: "connector" }) satisfies typeof StoredRefusal.Type;
           // The card keeps the entry's English name: the server knows no
           // operator's language, and a client words a gallery card from its
           // listing. Only a variant's name (Linear with a key) differs by one.
@@ -1862,6 +1934,8 @@ export const layer = Layer.effect(
           return yield* requestBrowserHelp(found, call.input);
         case "message_bot":
           return yield* messageBot(found, call.input);
+        case "read_room":
+          return yield* readRoom(found, call.input);
         case "set_routine":
           return yield* setRoutine(found, call.input, once("set_routine", found));
         case "set_operator_name":

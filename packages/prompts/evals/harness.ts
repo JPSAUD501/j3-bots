@@ -12,8 +12,11 @@ import {
   type BotInstructionsInput,
   BROWSER_HELP_REQUESTED,
   DECODE_OPTIONS,
+  renderRoomMovedOn,
+  renderRoomRead,
   renderSystemFile,
   renderWake,
+  type RoomReadEntry,
   type RoutineWake,
   sharedSkills,
   type ToolInput,
@@ -394,6 +397,14 @@ interface TeamRoom {
   readonly id: RoomId;
   readonly name: string;
   readonly members: ReadonlyArray<BotId>;
+  /** What the room holds that the bot has seen, oldest first; none by default. */
+  readonly seen?: ReadonlyArray<RoomReadEntry>;
+  /**
+   * What others wrote in the room after that, which the bot has not seen,
+   * oldest first; none by default. A post to the room is refused with them
+   * until the turn has been shown them.
+   */
+  readonly unseen?: ReadonlyArray<RoomReadEntry>;
 }
 
 /** The bot's teammates and the rooms it is in. */
@@ -462,6 +473,7 @@ const decodeOperatorName = Schema.decodeUnknownOption(
 );
 const decodeShellInput = Schema.decodeUnknownOption(Schema.Struct({ command: Schema.String }));
 const decodeMessageBot = Schema.decodeUnknownOption(tools.message_bot.input, DECODE_OPTIONS);
+const decodeReadRoom = Schema.decodeUnknownOption(tools.read_room.input, DECODE_OPTIONS);
 
 const json = (value: unknown): string => JSON.stringify(value);
 
@@ -731,7 +743,11 @@ export class HeldRoutines {
  * itself or a non-member; a teammate's message waits for their next turn
  * unless it is urgent; and any other id is refused.
  */
-const teamAnswer = (team: Team, input: unknown): Schema.Json => {
+type TeamAnswer =
+  | { readonly status: "posted" | "sent" | "held"; readonly note: string }
+  | { readonly error: string };
+
+const teamAnswer = (team: Team, input: unknown): TeamAnswer => {
   const decoded = decodeMessageBot(input);
   if (decoded._tag === "None") return { error: "The call was refused as invalid." };
   const message = decoded.value;
@@ -774,6 +790,121 @@ const teamAnswer = (team: Team, input: unknown): Schema.Json => {
 type Request = Pick<Call, "step" | "name" | "input" | "routine">;
 
 type Answer = Pick<Call, "output" | "events" | "refused">;
+
+/** Text as a room search compares it (`roomReads.ts`): case and accents set aside. */
+const folded = (text: string): string => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/** The name a search finds a message by: its author's, but for the bot's own. */
+const authorName = (entry: RoomReadEntry): string => {
+  switch (entry.author.type) {
+    case "user":
+      return entry.author.name ?? "";
+    case "you":
+      return "";
+    case "teammate":
+      return entry.author.teammate.name;
+  }
+};
+
+/**
+ * What the server answers `message_bot` and `read_room` (`Speech.ts`,
+ * `roomReads.ts`) for a scenario's team, over one turn of a main session. A
+ * post to a room holding messages the turn has not been shown is refused
+ * with them, and goes out once shown; a read shows the room's newest
+ * messages, or those a search finds, and counts as seen when, without a
+ * search, it showed every message the bot had not seen.
+ * The fixtures are short, so a read is never cut to fit.
+ */
+class TeamRooms {
+  readonly #team: Team;
+  readonly #wake: Wake;
+  readonly #shown = new Set<RoomId>();
+
+  constructor(team: Team, wake: Wake) {
+    this.#team = team;
+    this.#wake = wake;
+  }
+
+  /** The answer to a call of `message_bot` or `read_room`; `undefined` for any other tool. */
+  answer(request: Request): Effect.Effect<Answer | undefined, never, SecureRandom.SecureRandom> {
+    switch (request.name) {
+      case "message_bot":
+        return this.#post(request.input);
+      case "read_room":
+        return this.#read(request.input);
+      default:
+        return Effect.undefined;
+    }
+  }
+
+  #post(input: unknown): Effect.Effect<Answer, never, SecureRandom.SecureRandom> {
+    const posted = teamAnswer(this.#team, input);
+    const room = this.#roomOf(decodeMessageBot(input));
+    const unseen = room === undefined || this.#shown.has(room.id) ? [] : (room.unseen ?? []);
+    const latest = unseen.at(-1);
+    if (room === undefined || latest === undefined || !("status" in posted)) {
+      // Refused before the check, or nothing to show: as the server answers.
+      return Effect.succeed({ output: json(posted), events: [] });
+    }
+    this.#shown.add(room.id);
+    return renderRoomMovedOn({
+      at: this.#wake.at,
+      timeZone: this.#wake.timeZone,
+      room: { id: room.id, name: room.name },
+      entries: [...unseen.slice(0, -1), latest],
+      omitted: 0,
+    }).pipe(Effect.map((reason) => ({ output: json({ error: reason }), events: [] })));
+  }
+
+  #read(input: unknown): Effect.Effect<Answer, never, SecureRandom.SecureRandom> {
+    const decoded = decodeReadRoom(input);
+    if (decoded._tag === "None") {
+      return Effect.succeed({
+        output: json({ error: "The call was refused as invalid." }),
+        events: [],
+      });
+    }
+    const { room: id, search, count } = decoded.value;
+    const room = this.#team.rooms.find((one) => one.id === id);
+    if (room === undefined) {
+      return Effect.succeed({
+        output: json({
+          error: `You are not a member of a room with the id ${id}. \`list_teammates\` shows the rooms you are in.`,
+        }),
+        events: [],
+      });
+    }
+    const all = [...(room.seen ?? []), ...(room.unseen ?? [])];
+    const wanted = search === undefined ? undefined : folded(search);
+    const found =
+      wanted === undefined
+        ? all
+        : all.filter(
+            (entry) =>
+              folded(entry.text).includes(wanted) || folded(authorName(entry)).includes(wanted),
+          );
+    const entries = found.slice(-(count ?? found.length));
+    // Unseen messages come last, so a read of the newest shows them all when it shows as many.
+    if (search === undefined && entries.length >= (room.unseen ?? []).length) {
+      this.#shown.add(room.id);
+    }
+    return renderRoomRead({
+      at: this.#wake.at,
+      timeZone: this.#wake.timeZone,
+      room: { id: room.id, name: room.name, archived: false },
+      search: search ?? null,
+      entries,
+      earlier: found.length - entries.length,
+      cut: false,
+    }).pipe(Effect.map((text) => ({ output: text, events: [] })));
+  }
+
+  #roomOf(decoded: ReturnType<typeof decodeMessageBot>): TeamRoom | undefined {
+    return decoded._tag === "None"
+      ? undefined
+      : this.#team.rooms.find((one) => one.id === decoded.value.to);
+  }
+}
 
 /** What the server would answer, as far as these scenarios need, and what a command did. */
 const answer = (
@@ -846,8 +977,6 @@ const answer = (
         }),
       );
     }
-    case "message_bot":
-      return reply(json(teamAnswer(scenario.team ?? NO_TEAM, request.input)));
     case SECRET_TOOL: {
       const input = decodeSecretInput(request.input);
       if (input._tag === "None")
@@ -948,6 +1077,7 @@ export const runTurn = Effect.fn("evals.runTurn")(
     const routines = new HeldRoutines(scenario.wake);
     const connectors = scenario.connectors ?? NO_CONNECTORS;
     const cards = new ConnectorCards(connectors);
+    const rooms = new TeamRooms(scenario.team ?? NO_TEAM, scenario.wake);
     const tools = functionTools(
       workspace.commands,
       scenario.shell ?? GH_SIGNED_IN,
@@ -1005,7 +1135,8 @@ export const runTurn = Effect.fn("evals.runTurn")(
         );
         const call: Call = {
           ...request,
-          ...answer(routines, cards, workspace, browser, scenario, request),
+          ...((yield* rooms.answer(request)) ??
+            answer(routines, cards, workspace, browser, scenario, request)),
         };
         calls.push(call);
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: call.output });

@@ -12,6 +12,9 @@
  *   {@link BROWSER_HELP_REQUESTED}: what a request for help in the browser
  *   answers; and {@link SUGGESTION_SHOWN} and {@link SUGGESTION_REFUSED}:
  *   what a connector suggestion answers.
+ * - {@link renderRoomRead}: what `read_room` answers; {@link renderRoomMovedOn}:
+ *   why a post to a room that moved on since the bot last saw it went out
+ *   nowhere, with what it missed. Both frame room entries as envelopes do.
  * - {@link sharedSkills}: the skills J3 Bots ships, which the server installs
  *   for every bot.
  * - {@link renderConnectorResult}: what a bot reads back from a connector's
@@ -20,7 +23,7 @@
  *   {@link defuseTags}, for other remote text a bot reads.
  * - {@link PROMPT_VERSION}: one identifier for all of the above.
  *
- * Every function here is pure. `renderWake` and `renderConnectorResult` draw their nonce from `SecureRandom`.
+ * Every function here is pure. `renderWake`, `renderConnectorResult` and the room renders draw their nonce from `SecureRandom`.
  */
 export {
   type AskAnswer,
@@ -66,6 +69,7 @@ export {
   isConnectorTool,
   type McpTool,
   NO_TURN_REFUSAL,
+  ROOM_READ_COUNT,
   SUGGESTION_REFUSED,
   SUGGESTION_SHOWN,
   type ToolDefinition,
@@ -80,6 +84,17 @@ export {
   connectorToolDescription,
   renderConnectorResult,
 } from "./connectorResult.ts";
+export {
+  renderRoomMovedOn,
+  renderRoomRead,
+  ROOM_READ_LIMIT,
+  type RoomMovedOn,
+  roomMovedOnFits,
+  type RoomRead,
+  type RoomReadAuthor,
+  type RoomReadEntry,
+  roomReadFits,
+} from "./roomRead.ts";
 export { type SharedSkill, sharedSkills } from "./skills.ts";
 export { defuseTags } from "./text.ts";
 export { PROMPT_VERSION } from "./version.ts";
