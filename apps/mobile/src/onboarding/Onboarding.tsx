@@ -840,9 +840,15 @@ function ConnectStep({
       actions={
         <>
           <FailureLine failure={failure} name={name} />
-          <BigButton label={t("onboarding.create", { name })} onPress={onCreate} />
-          {text.later !== null && (
-            <Text className="text-center text-sm text-muted-foreground">{text.later}</Text>
+          <BigButton
+            label={t("onboarding.create", { name })}
+            onPress={onCreate}
+            disabled={text.createWaits !== null}
+          />
+          {(text.createWaits ?? text.later) !== null && (
+            <Text className="text-center text-sm text-muted-foreground">
+              {text.createWaits ?? text.later}
+            </Text>
           )}
         </>
       }

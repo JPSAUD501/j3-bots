@@ -92,6 +92,8 @@ export {
   hasDefaultModel,
   type OpeningHold,
   openingHeld,
+  providerFix,
+  type ProviderFix,
   providerGate,
 } from "./engine.ts";
 export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";

@@ -2220,6 +2220,20 @@ function Frame({
   );
 }
 
+/** The sample engine with Claude Code's status `claude` and Codex's `codex`. */
+const engineWith = (
+  claude: ProviderStatus["status"],
+  codex: ProviderStatus["status"],
+): EngineStatus => ({
+  ...team.engine,
+  providers: team.engine.providers.map((p, index) => ({
+    ...p,
+    status: index === 0 ? claude : codex,
+  })),
+});
+
+const notInstalled = { _tag: "unavailable", checking: false, reason: "not-installed" } as const;
+
 const engines = {
   starting: null,
   // As the server sends them: no provider is reported before the engine runs.
@@ -2263,10 +2277,7 @@ const engines = {
     ...team.engine,
     providers: team.engine.providers.map((p, index) => ({
       ...p,
-      status:
-        index === 0
-          ? ({ _tag: "ready" } as const)
-          : ({ _tag: "unavailable", checking: false } as const),
+      status: index === 0 ? ({ _tag: "ready" } as const) : notInstalled,
       models: [],
     })),
   },
@@ -2280,9 +2291,23 @@ const engines = {
               _tag: "limited",
               resetsAt: team.engine.providers[0]?.usage[0]?.resetsAt ?? null,
             } as const)
-          : ({ _tag: "unavailable", checking: false } as const),
+          : notInstalled,
     })),
   },
+  notInstalled: engineWith(notInstalled, notInstalled),
+  failed: engineWith(
+    {
+      _tag: "unavailable",
+      checking: false,
+      reason: "failed",
+      detail: "Claude Agent CLI is installed but failed to run. Timed out while running command.",
+    },
+    notInstalled,
+  ),
+  disabled: engineWith(
+    { _tag: "unavailable", checking: false, reason: "disabled" },
+    { _tag: "unavailable", checking: false, reason: "disabled" },
+  ),
 } as const;
 
 /** The sample engine with Codex signed in again and Claude Code's windows changed by `windows`. */
@@ -2376,16 +2401,35 @@ function EngineSettingsSection() {
     <Section title="Settings: the engine">
       <div className="flex flex-wrap gap-4">
         <Frame label="Downloading, on the first start" width={420} height={160}>
-          <EngineSection engine={engines.downloading} stale={false} />
+          <EngineSection engine={engines.downloading} stale={false} onRecheck={rechecked} />
         </Frame>
         <Frame label="Downloading, with no size known" width={420} height={160}>
-          <EngineSection engine={engines.downloadingNoTotal} stale={false} />
+          <EngineSection engine={engines.downloadingNoTotal} stale={false} onRecheck={rechecked} />
         </Frame>
         <Frame label="Starting, once downloaded" width={420} height={160}>
-          <EngineSection engine={engines.engineStarting} stale={false} />
+          <EngineSection engine={engines.engineStarting} stale={false} onRecheck={rechecked} />
         </Frame>
         <Frame label="The download failed" width={420} height={160}>
-          <EngineSection engine={{ ...engines.installFailed, providers: [] }} stale={false} />
+          <EngineSection
+            engine={{ ...engines.installFailed, providers: [] }}
+            stale={false}
+            onRecheck={rechecked}
+          />
+        </Frame>
+        <Frame
+          label="A provider that failed to start, in the engine's words, and one not installed"
+          width={420}
+          height={360}
+        >
+          <EngineSection
+            engine={engines.failed}
+            stale={false}
+            onRecheck={rechecked}
+            providerSetup={localSetup(harnessesFound.claudeOnly)}
+          />
+        </Frame>
+        <Frame label="Providers turned off on the server" width={420} height={200}>
+          <EngineSection engine={engines.disabled} stale={false} onRecheck={rechecked} />
         </Frame>
       </div>
     </Section>
@@ -2532,11 +2576,14 @@ function FirstRunAt({
       providerSetup={providerSetup}
       onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
+      onRecheck={rechecked}
     />
   );
 }
 
 const arrived = () => {};
+/** The engine takes every request to check a provider again. */
+const rechecked = () => Promise.resolve(true);
 
 function FirstRunSection() {
   return (
@@ -2564,8 +2611,22 @@ function FirstRunSection() {
         <Frame label="The engine still checking its providers" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.checking} />
         </Frame>
-        <Frame label="No provider can run a bot" width={390} height={760}>
+        <Frame
+          label="No provider can run a bot now, one at its limit: Create still works"
+          width={390}
+          height={760}
+        >
           <FirstRunAt step="connect" engine={engines.unusable} />
+        </Frame>
+        <Frame
+          label="Neither harness installed on the server: Create waits"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.notInstalled} />
+        </Frame>
+        <Frame label="Providers turned off on the server" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.disabled} />
         </Frame>
         <Frame label="The engine downloading, on the first start" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.downloading} />
@@ -2691,10 +2752,33 @@ function LocalFirstRunSection() {
             providerSetup={localSetup(harnessesFound.none)}
           />
         </Frame>
+        <Frame
+          label="Neither harness installed on this computer, as the engine finds it: Create waits"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt
+            step="connect"
+            engine={engines.notInstalled}
+            providerSetup={localSetup(harnessesFound.none)}
+          />
+        </Frame>
+        <Frame
+          label="Claude Code found but failed to start, with where the log is"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt
+            step="connect"
+            engine={engines.failed}
+            providerSetup={localSetup(harnessesFound.claudeOnly)}
+          />
+        </Frame>
         <Frame label="Settings: where the harnesses are, and signing in" width={420} height={420}>
           <EngineSection
             engine={engines.connect}
             stale={false}
+            onRecheck={rechecked}
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
@@ -2702,6 +2786,7 @@ function LocalFirstRunSection() {
           <EngineSection
             engine={team.engine}
             stale={false}
+            onRecheck={rechecked}
             providerSetup={localSetup(harnessesFound.both)}
           />
         </Frame>
@@ -3044,6 +3129,7 @@ function WhereBotsLiveSection() {
             waiting={t("local.waiting")}
             onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
             onArrived={arrived}
+            onRecheck={rechecked}
           />
         </Frame>
         <Frame
@@ -3059,6 +3145,7 @@ function WhereBotsLiveSection() {
             waiting={t("local.waiting")}
             onCreate={() => new Promise(() => {})}
             onArrived={arrived}
+            onRecheck={rechecked}
           />
         </Frame>
         <Frame label="The bots did not start, before the first bot" width={390} height={760}>

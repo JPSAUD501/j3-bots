@@ -29,6 +29,7 @@ import { useI18n, usePresentation } from "../app/context";
 import { AvatarChoices } from "../components/avatar/AvatarPicker";
 import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar";
 import { CommandLine } from "../components/CommandLine";
+import { ProviderFix, type Recheck } from "../components/ProviderFix";
 import { type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetup";
 import { Button } from "../components/ui/button";
 import { SetupVaultForm, type VaultAccess } from "../components/vault/VaultForms";
@@ -73,6 +74,8 @@ interface OnboardingProps {
   }) => Promise<IntentResult<BotId>>;
   /** Opens the new bot's conversation, which ends the first run. */
   readonly onArrived: (botId: BotId) => void;
+  /** Has the engine check a provider again, from the connect step's lines. */
+  readonly onRecheck: Recheck;
   /** Where it starts: the welcome, or another step for the gallery. */
   readonly initialStep?: OnboardingStep;
   /** The first bot's name until the operator changes it; a random one by default. */
@@ -113,6 +116,7 @@ export function Onboarding({
   engine,
   onCreate,
   onArrived,
+  onRecheck,
   initialStep = "welcome",
   initialName,
   footer,
@@ -320,6 +324,7 @@ export function Onboarding({
             name={botName}
             failure={failure}
             onCreate={create}
+            onRecheck={onRecheck}
             providerSetup={providerSetup}
           />
         );
@@ -765,12 +770,14 @@ function ConnectStep({
   name,
   failure,
   onCreate,
+  onRecheck,
   providerSetup,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
   readonly failure: Failure | null;
   readonly onCreate: () => void;
+  readonly onRecheck: Recheck;
   readonly providerSetup: LocalProviderSetup | undefined;
 }) {
   const i18n = useI18n();
@@ -778,6 +785,7 @@ function ConnectStep({
   const { t } = i18n;
   const text = connectStepText(engine, name, i18n);
   const waitsId = useId();
+  const place = providerSetup === undefined ? "server" : "this-computer";
   const gate = engine !== null && engine.state._tag === "ready" ? providerGate(engine) : null;
   const unavailable = gate?._tag === "unavailable";
   // On this computer, the harnesses sign in from here; the command stays for when they cannot.
@@ -810,7 +818,7 @@ function ConnectStep({
         <>
           <FailureLine failure={failure} name={name} />
           <BigButton
-            onClick={text.createWaits === null ? onCreate : undefined}
+            onClick={onCreate}
             disabled={text.createWaits !== null}
             describedBy={text.createWaits === null ? undefined : waitsId}
           >
@@ -830,17 +838,16 @@ function ConnectStep({
       </p>
       {signInHere !== undefined ? <LocalSignIn setup={signInHere} fallback={command} /> : command}
       {unavailable && engine !== null && (
-        <ul className="flex w-full flex-col gap-1 text-sm">
+        <ul className="flex w-full flex-col gap-3 text-start text-sm">
           {engine.providers.map((provider) => {
-            const line = providerLine(
-              provider,
-              ctx,
-              providerSetup === undefined ? "server" : "this-computer",
-            );
+            const line = providerLine(provider, ctx, place);
             return (
-              <li key={provider.id} className="flex justify-between gap-3">
-                <span>{provider.name}</span>
-                <span className="text-muted-foreground">{line.text}</span>
+              <li key={provider.id} className="flex flex-col gap-1.5">
+                <div className="flex justify-between gap-3">
+                  <span>{provider.name}</span>
+                  <span className="text-muted-foreground">{line.text}</span>
+                </div>
+                <ProviderFix provider={provider} place={place} onRecheck={onRecheck} />
               </li>
             );
           })}

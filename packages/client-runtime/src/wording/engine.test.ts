@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus } from "@j3-bots/contracts";
+import { type EngineStatus, ModelId, ProviderId, type ProviderStatus } from "@j3-bots/contracts";
 import { createI18n } from "@j3-bots/i18n";
 import { describe, expect, it } from "vite-plus/test";
 import { engineProblem } from "./engine.ts";
@@ -42,5 +42,44 @@ describe("the engine's first download", () => {
       en,
     );
     expect(after.status).toEqual({ text: "Starting…", tone: "waiting" });
+  });
+});
+
+describe("the connect step's Create", () => {
+  const en = createI18n("en");
+  const claude = (status: ProviderStatus["status"]): ProviderStatus => ({
+    id: ProviderId.make("claude-code"),
+    name: "Claude Code",
+    harness: "claude-code",
+    status,
+    // Claude Code lists its catalog whatever its state.
+    models: [{ id: ModelId.make("claude-haiku-5-5"), name: "Haiku 5.5" }],
+    usage: [],
+  });
+  const ready = (provider: ProviderStatus): EngineStatus => ({
+    state: { _tag: "ready" },
+    pinnedVersion: "0.1.12",
+    providers: [provider],
+  });
+
+  it("waits, and says why, while the server has no model to give the bot", () => {
+    const step = connectStepText(
+      ready(claude({ _tag: "unavailable", checking: false, reason: "not-installed" })),
+      "Nova",
+      en,
+    );
+    expect(step.createWaits).toBe("You can create Nova as soon as Claude Code or Codex can run.");
+    expect(step.later).toBeNull();
+  });
+
+  it("can be pressed while a provider may still run the bot, or before the engine is ready", () => {
+    for (const status of [
+      { _tag: "unavailable", checking: true } as const,
+      { _tag: "sign-in-required", command: "j3-bots provider connect" } as const,
+    ]) {
+      expect(connectStepText(ready(claude(status)), "Nova", en).createWaits).toBeNull();
+    }
+    expect(connectStepText(null, "Nova", en).createWaits).toBeNull();
+    expect(connectStepText(downloading(0, null), "Nova", en).createWaits).toBeNull();
   });
 });

@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import {
-  MAX_PROVIDER_DETAIL,
-  ModelId,
-  ProviderId,
-  type ProviderStatus,
-} from "@j3-bots/contracts";
+import { MAX_PROVIDER_DETAIL, ModelId, ProviderId, type ProviderStatus } from "@j3-bots/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";

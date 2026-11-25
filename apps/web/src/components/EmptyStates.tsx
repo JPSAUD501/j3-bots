@@ -19,6 +19,7 @@ import { CommandLine } from "./CommandLine";
 import { useConnectionLineShown } from "./ConnectionBanner";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
+import { ProviderFix, type Recheck } from "./ProviderFix";
 
 /** Three idle bots: the picture for screens where the team is still to come. */
 function Ensemble() {
@@ -126,26 +127,40 @@ const providerToneClass = {
 
 /**
  * One provider: its name, and its state in words. `stale` mutes a state
- * reported before a disconnection.
+ * reported before a disconnection. One the engine cannot run also shows what
+ * the engine said of it and what fixes it (`ProviderFix`), unless stale.
  */
 export function ProviderRow({
   provider,
   place,
+  onRecheck,
   stale = false,
 }: {
   provider: ProviderStatus;
   place: ProviderPlace;
+  onRecheck: Recheck;
   stale?: boolean;
 }) {
+  const { t } = useI18n();
   const line = providerLine(provider, usePresentation(), place);
+  const { status } = provider;
+  const detail = status._tag === "unavailable" ? status.detail : undefined;
   return (
-    <li className="flex flex-wrap items-baseline justify-between gap-x-3 rounded-md border border-border px-3 py-2">
-      <span>{provider.name}</span>
-      <span
-        className={cn("text-xs", stale ? "text-muted-foreground" : providerToneClass[line.tone])}
-      >
-        {line.text}
-      </span>
+    <li className="flex flex-col gap-2 rounded-md border border-border px-3 py-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+        <span>{provider.name}</span>
+        <span
+          className={cn("text-xs", stale ? "text-muted-foreground" : providerToneClass[line.tone])}
+        >
+          {line.text}
+        </span>
+      </div>
+      {!stale && detail !== undefined && (
+        <p className="text-xs text-pretty break-words text-muted-foreground">
+          {t("provider.detail", { detail })}
+        </p>
+      )}
+      {!stale && <ProviderFix provider={provider} place={place} onRecheck={onRecheck} />}
     </li>
   );
 }

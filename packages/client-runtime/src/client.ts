@@ -39,6 +39,7 @@ import type {
   PairBotIds,
   PairSeq,
   ProviderConnectionRequest,
+  ProviderId,
   Room,
   RoomId,
   RosterItem,
@@ -514,6 +515,8 @@ export interface J3Client {
   readonly refreshSettings: () => void;
   /** Signs the bots' browser out of every site, for every bot. */
   readonly signOutBrowser: () => Promise<Actions.IntentResult>;
+  /** Has the engine check the provider again now, as after its harness was installed or fixed. */
+  readonly recheckProvider: (providerId: ProviderId) => Promise<Actions.IntentResult>;
   readonly refreshDevices: () => void;
   /** Waits ten seconds at most; see `Devices.revoke`. */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
@@ -840,6 +843,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     updateSettings: (change) => run.promise(services.settings.update(change)),
     refreshSettings: () => fire(services.settings.refresh),
     signOutBrowser: () => run.promise(services.settings.signOutBrowser),
+    recheckProvider: (providerId) => run.promise(services.engine.recheck(providerId)),
     refreshDevices: () => fire(services.devices.refresh),
     revokeDevice: (deviceId) => run.promise(services.devices.revoke(deviceId)),
     startPairing: () =>

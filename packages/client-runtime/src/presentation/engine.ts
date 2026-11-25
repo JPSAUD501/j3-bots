@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import {
+  type Bot,
+  type EngineStatus,
+  type ProviderStatus,
+  signInHarnesses,
+  type UnavailableReason,
+} from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
 
 /** A provider a bot can be created on: ready, with a model to pick. */
@@ -86,5 +92,47 @@ export const openingHeld = (bot: Bot, engine: EngineStatus | null): OpeningHold 
       const command = connectCommand(engine);
       return command === null ? { _tag: "provider" } : { _tag: "connect", command };
     }
+  }
+};
+
+/**
+ * What the operator does about a provider the engine is done checking and
+ * cannot run, from its line:
+ * - `install`: its harness is not installed where the server runs. `page` is
+ *   where its maker says how, when J3 Bots knows it; once it is installed,
+ *   the engine looks again (`engine.recheckProvider`);
+ * - `retry`: it was found and failed; the engine checks it again.
+ * Null for any other state: one that runs or is being checked, a signed-out
+ * provider (which the step's own sign-in or command connects), one turned
+ * off on the server, which no client turns on, and one whose server gives no
+ * reason, which also does not take `engine.recheckProvider`.
+ */
+export type ProviderFix =
+  | { readonly _tag: "install"; readonly page: string | null }
+  | { readonly _tag: "retry" };
+
+export const providerFix = (provider: ProviderStatus): ProviderFix | null => {
+  const { status } = provider;
+  return status._tag === "unavailable" && !status.checking
+    ? fixFor(status.reason, provider.harness)
+    : null;
+};
+
+const fixFor = (
+  reason: UnavailableReason | undefined,
+  harness: ProviderStatus["harness"],
+): ProviderFix | null => {
+  switch (reason) {
+    case "not-installed":
+      return {
+        _tag: "install",
+        page: harness === "other" ? null : signInHarnesses[harness].installPage,
+      };
+    case "failed":
+      return { _tag: "retry" };
+    case "disabled":
+    case "unknown":
+    case undefined:
+      return null;
   }
 };
