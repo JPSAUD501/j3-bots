@@ -248,23 +248,30 @@ it.effect("puts a routine's post in a room one round past the room's newest", ()
     const anaLast = yield* nextTurn(ana.bot.id, anaTurn);
     yield* finish(ana, anaLast, members);
 
-    // Ana's routine, outside the room, was shown none of it: its post
-    // answers the room's newest round, 2, and Bo's reply would be round 4.
+    // Ana's routine, outside the room, was shown none of it. Its first post
+    // is refused with what it missed (What a bot has seen of a room), which
+    // shows it the room through the newest round, 2: the post it sends again
+    // answers that, and Bo's reply would be round 4.
     const side = yield* routineRuns(ana.bot.id);
     const args = { to: room.id, text: "Digest: revenue grew 12%.", mention: [bo.bot.id] };
-    yield* control.toolCall({
-      sessionId: side.engine_session_id,
-      turnId: side.admitted_turn_id,
-      tool: "message_bot",
-      input: args,
-      recorded: "now",
-    });
-    const posted = yield* (yield* BotTools).call({
-      requestId: "routine-post",
-      sessionId: side.engine_session_id,
-      tool: "message_bot",
-      arguments: args,
-    });
+    const post = (requestId: string) =>
+      Effect.gen(function* () {
+        yield* control.toolCall({
+          sessionId: side.engine_session_id,
+          turnId: side.admitted_turn_id,
+          tool: "message_bot",
+          input: args,
+          recorded: "now",
+        });
+        return yield* (yield* BotTools).call({
+          requestId,
+          sessionId: side.engine_session_id,
+          tool: "message_bot",
+          arguments: args,
+        });
+      });
+    assert.strictEqual((yield* post("routine-post"))._tag, "refused");
+    const posted = yield* post("routine-post-again");
     assert.isFalse(wokeNobody(posted));
     assert.deepStrictEqual((yield* roundsIn(room.id)).at(-1), ["Digest: revenue grew 12%.", 3]);
 
