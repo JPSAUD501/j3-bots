@@ -517,6 +517,8 @@ export interface J3Client {
   readonly signOutBrowser: () => Promise<Actions.IntentResult>;
   /** Has the engine check the provider again now, as after its harness was installed or fixed. */
   readonly recheckProvider: (providerId: ProviderId) => Promise<Actions.IntentResult>;
+  /** Has the engine update the provider's harness to the newer version it reports. */
+  readonly updateProvider: (providerId: ProviderId) => Promise<Actions.IntentResult>;
   readonly refreshDevices: () => void;
   /** Waits ten seconds at most; see `Devices.revoke`. */
   readonly revokeDevice: (deviceId: DeviceId) => Promise<Devices.RevokeResult>;
@@ -844,6 +846,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
     refreshSettings: () => fire(services.settings.refresh),
     signOutBrowser: () => run.promise(services.settings.signOutBrowser),
     recheckProvider: (providerId) => run.promise(services.engine.recheck(providerId)),
+    updateProvider: (providerId) => run.promise(services.engine.update(providerId)),
     refreshDevices: () => fire(services.devices.refresh),
     revokeDevice: (deviceId) => run.promise(services.devices.revoke(deviceId)),
     startPairing: () =>

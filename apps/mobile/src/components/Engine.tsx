@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { providerFix } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
-import { providerLine, type ProviderTone } from "@j3-bots/client-runtime/wording";
+import {
+  providerLine,
+  type ProviderTone,
+  providerVersionLine,
+} from "@j3-bots/client-runtime/wording";
 import type { ProviderStatus } from "@j3-bots/contracts";
 import { useState } from "react";
 import { Linking, View } from "react-native";
@@ -19,13 +23,15 @@ const toneClass = {
 
 /**
  * One provider: its name, its state in words, how the engine put it when it
- * gave its own words, and what fixes it (`ProviderFix`). `stale` mutes a
- * state reported before a disconnection, and leaves out what it said and
- * what fixes it, which may no longer hold.
+ * gave its own words, and what fixes it (`ProviderFix`); with `version`, as
+ * in Settings, also its harness's version and update (`ProviderUpdate`).
+ * `stale` mutes a state reported before a disconnection, and leaves out the
+ * rest, which may no longer hold.
  */
 export function ProviderRow(props: {
   readonly provider: ProviderStatus;
   readonly stale?: boolean;
+  readonly version?: boolean;
 }) {
   const { t } = useI18n();
   // A phone never runs the server: its providers are always the server's.
@@ -47,6 +53,53 @@ export function ProviderRow(props: {
         </Text>
       )}
       {!stale && <ProviderFix provider={props.provider} />}
+      {!stale && props.version === true && <ProviderUpdate provider={props.provider} />}
+    </View>
+  );
+}
+
+/**
+ * A provider's harness version and its update (`providerVersionLine`), under
+ * its line: Update when the engine can install the newer version itself.
+ * Nothing when the server reports no version.
+ */
+function ProviderUpdate(props: { readonly provider: ProviderStatus }) {
+  const { i18n } = usePresentation();
+  const { t } = i18n;
+  const client = useJ3Client();
+  const [asking, setAsking] = useState<Asking>("idle");
+  const line = providerVersionLine(props.provider, i18n);
+  if (line === null) return null;
+  const { provider } = props;
+  const update = () => {
+    setAsking("asking");
+    void client
+      .updateProvider(provider.id)
+      .then((result) => setAsking(result._tag === "done" ? "idle" : "failed"));
+  };
+  return (
+    <View className="gap-1">
+      <Text className="text-xs text-muted-foreground">{line.text}</Text>
+      {line.detail !== null && (
+        <Text selectable className="text-xs text-muted-foreground">
+          {line.detail}
+        </Text>
+      )}
+      {line.offer && (
+        <View className="flex-row">
+          <Button
+            variant="secondary"
+            label={asking === "asking" ? t("provider.updating") : t("provider.update")}
+            held={asking === "asking"}
+            onPress={update}
+          />
+        </View>
+      )}
+      {asking === "failed" && (
+        <Text accessibilityRole="alert" className="text-xs text-blocked">
+          {t("provider.updateRefused")}
+        </Text>
+      )}
     </View>
   );
 }

@@ -20,6 +20,7 @@ import { useConnectionLineShown } from "./ConnectionBanner";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 import { ProviderFix, type Recheck } from "./ProviderFix";
+import { ProviderUpdate, type Update } from "./ProviderUpdate";
 
 /** Three idle bots: the picture for screens where the team is still to come. */
 function Ensemble() {
@@ -128,17 +129,21 @@ const providerToneClass = {
 /**
  * One provider: its name, and its state in words. `stale` mutes a state
  * reported before a disconnection. One the engine cannot run also shows what
- * the engine said of it and what fixes it (`ProviderFix`), unless stale.
+ * the engine said of it and what fixes it (`ProviderFix`), and one whose
+ * version the server reports, that version and its update
+ * (`ProviderUpdate`), unless stale.
  */
 export function ProviderRow({
   provider,
   place,
   onRecheck,
+  onUpdate,
   stale = false,
 }: {
   provider: ProviderStatus;
   place: ProviderPlace;
   onRecheck: Recheck;
+  onUpdate: Update;
   stale?: boolean;
 }) {
   const { t } = useI18n();
@@ -161,6 +166,7 @@ export function ProviderRow({
         </p>
       )}
       {!stale && <ProviderFix provider={provider} place={place} onRecheck={onRecheck} />}
+      {!stale && <ProviderUpdate provider={provider} onUpdate={onUpdate} />}
     </li>
   );
 }

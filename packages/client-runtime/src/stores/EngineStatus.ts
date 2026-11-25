@@ -15,10 +15,16 @@ export class EngineStatus extends Context.Service<
   {
     readonly state: Readable<Synced<EngineStatusValue>>;
     /**
-     * Has the engine check the provider again now; done once it took the
-     * request. What it finds follows on `state`.
+     * Has the engine check the provider again now; done once the check
+     * ended. What it found follows on `state`.
      */
     readonly recheck: (providerId: ProviderId) => Effect.Effect<IntentResult<void>>;
+    /**
+     * Has the engine update the provider's harness to the newer version it
+     * reports (`ProviderStatus.version`); done once the update started. How
+     * it goes follows on `state`, as the provider's `update`.
+     */
+    readonly update: (providerId: ProviderId) => Effect.Effect<IntentResult<void>>;
   }
 >()("@j3-bots/client-runtime/stores/EngineStatus") {}
 
@@ -39,6 +45,10 @@ export const layer = Layer.effect(
       connection
         .call((client) => client["engine.recheckProvider"]({ providerId }))
         .pipe(Effect.exit, Effect.map(intentResult));
-    return EngineStatus.of({ state, recheck });
+    const update = (providerId: ProviderId) =>
+      connection
+        .call((client) => client["engine.updateProvider"]({ providerId }))
+        .pipe(Effect.exit, Effect.map(intentResult));
+    return EngineStatus.of({ state, recheck, update });
   }),
 );

@@ -60,6 +60,7 @@ import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
 import type { Recheck } from "./ProviderFix";
+import type { Update } from "./ProviderUpdate";
 import {
   engineFindings,
   HarnessLocations,
@@ -95,6 +96,7 @@ type SettingsIntents = Pick<
   | "signOut"
   | "signOutBrowser"
   | "recheckProvider"
+  | "updateProvider"
   | "server"
   | "local"
   | "update"
@@ -216,6 +218,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
                 engine={data.engine}
                 stale={data.engineStale}
                 onRecheck={intents.recheckProvider}
+                onUpdate={intents.updateProvider}
                 {...(intents.providerSetup === undefined
                   ? {}
                   : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
@@ -276,11 +279,13 @@ export function EngineSection({
   engine,
   stale,
   onRecheck,
+  onUpdate,
   providerSetup,
 }: {
   engine: EngineStatus | null;
   stale: boolean;
   onRecheck: Recheck;
+  onUpdate: Update;
   providerSetup?: LocalProviderSetup;
 }) {
   const i18n = useI18n();
@@ -326,6 +331,7 @@ export function EngineSection({
               provider={provider}
               place={providerSetup === undefined ? "server" : "this-computer"}
               onRecheck={onRecheck}
+              onUpdate={onUpdate}
               stale={stale}
             />
           ))}

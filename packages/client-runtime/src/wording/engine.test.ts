@@ -2,7 +2,7 @@
 import { type EngineStatus, ModelId, ProviderId, type ProviderStatus } from "@j3-bots/contracts";
 import { createI18n } from "@j3-bots/i18n";
 import { describe, expect, it } from "vite-plus/test";
-import { engineProblem } from "./engine.ts";
+import { engineProblem, providerVersionLine } from "./engine.ts";
 import { connectStepText } from "./onboarding.ts";
 
 const downloading = (receivedBytes: number, totalBytes: number | null): EngineStatus => ({
@@ -86,5 +86,59 @@ describe("the connect step's Create", () => {
       expect(connectStepText(ready(claude(status)), "Nova", en).createWaits).toBeNull();
     }
     expect(connectStepText(null, "Nova", en).createWaits).toBeNull();
+  });
+});
+
+describe("a provider's version and update", () => {
+  const en = createI18n("en");
+  const codex = (
+    version: ProviderStatus["version"],
+    update?: ProviderStatus["update"],
+  ): ProviderStatus => ({
+    id: ProviderId.make("codex"),
+    name: "Codex",
+    harness: "codex",
+    status: { _tag: "ready" },
+    models: [],
+    usage: [],
+    ...(version === undefined ? {} : { version }),
+    ...(update === undefined ? {} : { update }),
+  });
+  const behind = { installed: "0.170.0", latest: "0.171.0" };
+  const current = { installed: "0.171.0", latest: null, canUpdate: false };
+  const line = (provider: ProviderStatus) => providerVersionLine(provider, en);
+
+  it("offers Update for a newer version only when the engine can install it", () => {
+    expect(line(codex({ ...behind, canUpdate: true }))).toEqual({
+      text: "Version 0.170.0. 0.171.0 is out.",
+      detail: null,
+      offer: true,
+    });
+    expect(line(codex({ ...behind, canUpdate: false }))).toEqual({
+      text: "Version 0.170.0. 0.171.0 is out.",
+      detail: "Update it the way you installed it.",
+      offer: false,
+    });
+    expect(line(codex(current))?.text).toBe("Version 0.171.0");
+    // No version from the server: nothing to say.
+    expect(line(codex(undefined))).toBeNull();
+  });
+
+  it("follows the update the operator asked for", () => {
+    expect(line(codex({ ...behind, canUpdate: true }, { state: "running" }))).toEqual({
+      text: "Updating…",
+      detail: null,
+      offer: false,
+    });
+    // A failed update can be asked again, and says what the engine said.
+    expect(
+      line(codex({ ...behind, canUpdate: true }, { state: "failed", detail: "npm exited 1" })),
+    ).toEqual({
+      text: "The update didn’t finish",
+      detail: "The engine says: npm exited 1",
+      offer: true,
+    });
+    expect(line(codex(current, { state: "updated" }))?.text).toBe("Updated to version 0.171.0");
+    expect(line(codex(current, { state: "current" }))?.text).toBe("Up to date: version 0.171.0");
   });
 });

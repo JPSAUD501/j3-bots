@@ -103,6 +103,70 @@ export function providerLine(
   }
 }
 
+/**
+ * A provider's harness version, and the update the operator last asked for,
+ * in words; null when the server reports no version, as for a harness it did
+ * not find or from a server older than 0.7.1.
+ * - `text`: the update while it runs or once it failed; else a newer version
+ *   when one is out; else how the last update ended; else the version.
+ * - `detail`: the engine's words on a failed update, or, for a newer version
+ *   the engine cannot install itself, that the operator updates it the way
+ *   they installed it.
+ * - `offer`: whether to offer Update (`engine.updateProvider`).
+ */
+export function providerVersionLine(
+  provider: ProviderStatus,
+  { t }: I18n,
+): { readonly text: string; readonly detail: string | null; readonly offer: boolean } | null {
+  const { version, update } = provider;
+  if (version === undefined) return null;
+  const { installed, latest, canUpdate } = version;
+  if (update?.state === "running")
+    return { text: t("provider.updating"), detail: null, offer: false };
+  if (update?.state === "failed") {
+    return {
+      text: t("provider.updateFailed"),
+      detail: update.detail === undefined ? null : t("provider.detail", { detail: update.detail }),
+      offer: canUpdate,
+    };
+  }
+  if (latest !== null) {
+    return {
+      text:
+        installed === null
+          ? t("provider.version.newerOnly", { latest })
+          : t("provider.version.newer", { installed, latest }),
+      detail: canUpdate ? null : t("provider.version.manual"),
+      offer: canUpdate,
+    };
+  }
+  switch (update?.state) {
+    case "updated":
+      return {
+        text:
+          installed === null
+            ? t("provider.updated.noVersion")
+            : t("provider.updated", { installed }),
+        detail: null,
+        offer: false,
+      };
+    case "current":
+      return {
+        text:
+          installed === null
+            ? t("provider.upToDate.noVersion")
+            : t("provider.upToDate", { installed }),
+        detail: null,
+        offer: false,
+      };
+    case "unknown":
+    case undefined:
+      return installed === null
+        ? null
+        : { text: t("provider.version", { installed }), detail: null, offer: false };
+  }
+}
+
 /** Why a provider the engine is done checking cannot run, in words. */
 function unavailableLine(
   reason: UnavailableReason | undefined,

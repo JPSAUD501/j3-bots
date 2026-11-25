@@ -48,6 +48,7 @@ export {
   type ProviderPlace,
   providerLine,
   type ProviderTone,
+  providerVersionLine,
 } from "./engine.ts";
 export {
   deliveryLine,
