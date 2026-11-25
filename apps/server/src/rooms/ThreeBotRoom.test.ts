@@ -122,20 +122,22 @@ const runUntilQuiet = <E, R>(
     }
   });
 
-/** When each of the room's turns started and ended, by session and then in the order they started. */
+/** When each of the room's turns started and ended, by member and then in the order they started. */
 const roomTurns = (roomId: RoomId) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     return yield* SqlSchema.findAll({
       Request: Schema.String,
       Result: Schema.Struct({
-        session_id: Schema.String,
+        bot_id: Schema.String,
         started_at: Schema.String,
         finished_at: Schema.NullOr(Schema.String),
       }),
       execute: (room) => sql`
-        SELECT session_id, started_at, finished_at FROM turns WHERE audience_room_id = ${room}
-        ORDER BY session_id, started_at, rowid
+        SELECT s.bot_id AS bot_id, t.started_at AS started_at, t.finished_at AS finished_at
+        FROM turns t JOIN sessions s ON s.id = t.session_id
+        WHERE t.audience_room_id = ${room}
+        ORDER BY s.bot_id, t.started_at, t.rowid
       `,
     })(roomId).pipe(Effect.orDie);
   });
@@ -152,7 +154,7 @@ const assertOneTurnPerMember = (roomId: RoomId) =>
     for (const [index, turn] of turns.entries()) {
       assert.isNotNull(turn.finished_at, "a room turn is still open");
       const previous = turns[index - 1];
-      if (previous?.session_id === turn.session_id && previous.finished_at !== null) {
+      if (previous?.bot_id === turn.bot_id && previous.finished_at !== null) {
         assert.isAtLeast(
           Date.parse(turn.started_at),
           Date.parse(previous.finished_at),
@@ -162,7 +164,7 @@ const assertOneTurnPerMember = (roomId: RoomId) =>
       const started = Date.parse(turn.started_at);
       const overlaps = turns.some(
         (other) =>
-          other.session_id !== turn.session_id &&
+          other.bot_id !== turn.bot_id &&
           Date.parse(other.started_at) < started &&
           (other.finished_at === null || Date.parse(other.finished_at) > started),
       );

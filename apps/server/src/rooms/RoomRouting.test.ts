@@ -955,7 +955,7 @@ it.effect("sends no room dispatch written for a member that left before it was s
     assert.deepStrictEqual(yield* received(bo.session), []);
     assert.deepStrictEqual(yield* roomWakeStatuses(bo.bot.id, room.id), ["cancelled"]);
 
-    // Nothing of theirs holds the room.
+    // Hal still gets its turn.
     yield* operatorWrites(room.id, members, "Hal, wrap up.", to(hal));
     yield* nextTurn(hal.bot.id);
   }).pipe(Effect.provide(TestDomain.layer)),

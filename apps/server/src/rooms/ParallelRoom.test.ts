@@ -28,6 +28,8 @@ import {
   sendToBot,
   turnEnded,
 } from "../testing/turns.ts";
+import { Attachments } from "../attachments/Attachments.ts";
+import { Pipeline } from "../turns/Pipeline.ts";
 import { Rooms } from "./Rooms.ts";
 
 /** The room's work as a client reads it. */
@@ -68,10 +70,11 @@ it.effect(
       assert.deepStrictEqual(yield* running(members), ["Hal", "Ana"]);
       assert.deepStrictEqual(yield* roomWakeStatuses(bo.bot.id, room.id), ["pending"]);
 
-      // Each answers without the other's reply: theirs started together.
-      assert.notInclude(yield* lastEnvelope(ana), "The deadline.");
       yield* say(hal, halTurn, { text: "The deadline." });
       yield* say(ana, anaTurn, { text: "The budget." });
+      // Each answered without the other's reply: theirs started together.
+      assert.notInclude(yield* lastEnvelope(ana), "The deadline.");
+      assert.notInclude(yield* lastEnvelope(hal), "The budget.");
       yield* finish(hal, halTurn, members);
 
       // Bo takes the slot Hal left, and reads both replies with the question.
@@ -244,5 +247,77 @@ it.effect(
       yield* finish(cy, cyTurn, members);
       yield* nextTurn(ana.bot.id);
       assert.deepStrictEqual(yield* running(members), ["Ana"]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "gives a freed turn slot by the order the wakes have when it frees, not as they were when the dispatcher's pass began",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      yield* concurrentTurns(2);
+      const [ana, bo, cy, kit, lu] = [
+        yield* member("Ana"),
+        yield* member("Bo"),
+        yield* member("Cy"),
+        yield* member("Kit"),
+        yield* member("Lu"),
+      ];
+      const members = [ana, bo, cy];
+      const launch = yield* roomWith(ana, [bo]);
+      const ops = yield* roomWith(cy, [bo, kit]);
+
+      // Kit and Lu hold both slots while the wakes are written: Cy's, Bo's in
+      // ops, then Ana's and Bo's in launch, so Bo comes before Ana.
+      const privately = yield* Effect.forEach([kit, lu], (one) =>
+        Effect.gen(function* () {
+          yield* sendToBot(one.bot.id, "Check the build.");
+          return yield* nextTurn(one.bot.id);
+        }),
+      );
+      const [kitTurn, luTurn] = privately;
+      if (kitTurn === undefined || luTurn === undefined) return yield* Effect.die("no turns");
+      const servers = yield* (yield* Attachments).store({
+        name: "servers.txt",
+        mediaType: "text/plain",
+        bytes: new TextEncoder().encode("The servers to check."),
+      });
+      yield* (yield* Pipeline).sendMessage({
+        commandId: command(),
+        target: { _tag: "room", roomId: ops.id },
+        text: "Cy, check the servers.",
+        attachments: [servers.id],
+        mentions: to(cy),
+      });
+      yield* operatorWrites(ops.id, members, "Bo, check the backup.", to(bo));
+      yield* operatorWrites(launch.id, members, "Ana, then Bo: pick a date.", to(ana, bo));
+
+      // Lu's turn ends: the pass gives Cy its slot, and Cy's file stages.
+      const staging = yield* control.holdNext("stageAttachment");
+      yield* control.finishTurn({
+        sessionId: lu.session,
+        turnId: luTurn,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(lu.bot.id);
+      yield* staging.entered;
+
+      // Meanwhile Bo leaves ops, which cancels the wake that put it first, and
+      // Kit's turn ends: the slot it frees is Ana's.
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId: ops.id,
+        changes: { members: [cy.bot.id, kit.bot.id] },
+      });
+      yield* control.finishTurn({
+        sessionId: kit.session,
+        turnId: kitTurn,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(kit.bot.id);
+      yield* staging.release;
+      yield* nextTurn(cy.bot.id);
+      yield* settle(members);
+      assert.deepStrictEqual(yield* running(members), ["Ana", "Cy"]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );

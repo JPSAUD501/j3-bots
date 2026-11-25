@@ -861,7 +861,7 @@ export const layer = Layer.effect(
      * bot's head wake: by priority, then as written. A free turn slot goes to
      * the first that can take it, so the members the operator's room message
      * wakes start in the order it woke them, whatever older and less urgent
-     * wakes one of them also has.
+     * wakes one of them also has. A pass reads it again before each bot.
      */
     const waitingBots = SqlSchema.findAll({
       Request: Schema.Void,
@@ -1784,7 +1784,15 @@ export const layer = Layer.effect(
         const routineStarts = written.filter((row) => row.routine);
         const others = written.filter((row) => !row.routine);
         if (yield* sendUnsent(others, now, outcome)) return { _tag: "unavailable" } as const;
-        for (const { bot_id: botId } of yield* waitingBots) {
+        // The order is read again before each bot: a send may wait, as for its
+        // files, and a wake that set a bot's place may go meanwhile. Each bot
+        // is planned once a pass.
+        const visited = new Set<BotId>();
+        while (true) {
+          const next = (yield* waitingBots).find((row) => !visited.has(row.bot_id));
+          if (next === undefined) break;
+          const botId = next.bot_id;
+          visited.add(botId);
           const planned = yield* planOne(
             Effect.gen(function* () {
               // Planned again, once, when its session changed under the plan.
