@@ -55,7 +55,7 @@ import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { json, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { type LiveRoom, liveRoom } from "../rooms/liveRoom.ts";
-import { type BotMessageRouted, RoomRouting } from "../rooms/RoomRouting.ts";
+import { type BotMessageRouted, type BotWord, RoomRouting } from "../rooms/RoomRouting.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import { SettingsStore } from "../settings/SettingsStore.ts";
@@ -852,14 +852,14 @@ export const layer = Layer.effect(
       found: Pin,
       room: LiveRoom,
       message: MessageEntry,
-      kickoff: boolean,
+      word: BotWord,
     ) {
       const work = yield* workStopped(found);
       return yield* routing.botMessage({
         room,
         botId: found.botId,
         message,
-        kickoff,
+        word,
         seq: work.seq,
         stopped: work.stopped,
       });
@@ -945,7 +945,7 @@ export const layer = Layer.effect(
             });
             const routed =
               Option.isSome(room) && entry._tag === "message"
-                ? yield* routeRoomMessage(found, room.value, entry, false)
+                ? yield* routeRoomMessage(found, room.value, entry, "bot")
                 : null;
             if (input.done === true) {
               for (const { id } of yield* deliveredBy(found))
@@ -1199,11 +1199,31 @@ export const layer = Layer.effect(
     /**
      * A message to a room the bot is a member of (`docs/architecture/server.md`,
      * Rooms), from a turn of any audience: posted there at once as the bot's,
-     * and routed as a room `say` is, its `mention` checked against the room,
-     * and counted with the room's other bots' messages. Refused, with nothing
+     * and routed as a room `say` is, its `mention` checked against the room.
+     * The first post of a turn the operator spoke in (`operatorSpokeIn`),
+     * other than a turn of this room, is their request relayed, and starts
+     * the room's count again, once, as their own message there would; any
+     * other post counts with the room's other bots' messages. A turn of this
+     * room is left out because the operator's message there already started
+     * the count again. Refused, with nothing
      * written, for an archived room, one the bot is not in, and
      * work the operator stopped. `null` when no room has the id.
      */
+    /**
+     * Records that the pinned turn relays the operator's word to the room
+     * (`room_relays`): `true` for its first post there, `false` once it has.
+     */
+    const firstRelay = (found: Pin, roomId: RoomId) =>
+      sql<{ readonly room_id: string }>`
+        INSERT INTO room_relays (room_id, session_id, engine_turn_id)
+        VALUES (${roomId}, ${found.sessionId}, ${found.turnId})
+        ON CONFLICT DO NOTHING
+        RETURNING room_id
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
+
     const messageRoom = Effect.fn("Speech.messageRoom")(function* (
       found: Pin,
       input: ToolInput<"message_bot">,
@@ -1260,10 +1280,20 @@ export const layer = Layer.effect(
         entryId: entry.id,
         text: input.text,
       });
+      const inThisRoom = found.audience._tag === "room" && found.audience.roomId === roomId;
+      const spoke = !inThisRoom && (yield* operatorSpokeIn(found));
+      const word = spoke && (yield* firstRelay(found, roomId)) ? "relayed" : "bot";
       const routed =
-        entry._tag === "message" ? yield* routeRoomMessage(found, live.value, entry, false) : null;
+        entry._tag === "message" ? yield* routeRoomMessage(found, live.value, entry, word) : null;
+      const quiet = roomPosted(routed);
+      // A turn from outside the room that the operator did not speak in may
+      // carry a message of theirs steered into it, which does not count: they
+      // are asked again, as the other tools that take only their word ask.
+      if (quiet !== null && !inThisRoom && !spoke) {
+        return { ...quiet, note: `${quiet.note} ${LATE_WORD}` };
+      }
       return (
-        roomPosted(routed) ??
+        quiet ??
         ({
           status: "posted",
           note: "It is in the room, and every member reads it in their next turn.",
@@ -1655,7 +1685,7 @@ export const layer = Layer.effect(
           const live = yield* roomOf(room.id);
           const routed =
             Option.isSome(live) && kickoff._tag === "message"
-              ? yield* routeRoomMessage(found, live.value, kickoff, true)
+              ? yield* routeRoomMessage(found, live.value, kickoff, "kickoff")
               : null;
           const posted = roomPosted(routed);
           return {

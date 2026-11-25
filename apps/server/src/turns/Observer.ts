@@ -978,7 +978,7 @@ export const layer = Layer.effect(
             room: room.value,
             botId: session.bot_id,
             message: entry,
-            kickoff: false,
+            word: "bot",
             seq: work.seq,
             stopped: work.stopped,
           });

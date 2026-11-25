@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, it } from "@effect/vitest";
-import { type Bot, BotId, type ModelChoice, type Notice, RoomId } from "@j3-bots/contracts";
+import {
+  type Bot,
+  BotId,
+  type ModelChoice,
+  type Notice,
+  ROOM_QUIET_AFTER,
+  RoomId,
+} from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import { ROOM_CLOSING_NOTE } from "@j3-bots/prompts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -84,6 +92,7 @@ const call = (sessionId: SessionId, turnId: TurnId, tool: string, args: Schema.J
 const decodeCreated = Schema.decodeUnknownSync(Schema.Struct({ id: BotId }));
 const decodeStarted = Schema.decodeUnknownSync(Schema.Struct({ id: RoomId }));
 const decodeStatus = Schema.decodeUnknownSync(Schema.Struct({ status: Schema.String }));
+const decodeNote = Schema.decodeUnknownSync(Schema.Struct({ note: Schema.String }));
 
 /** The value a tool answered with, or a failure naming the refusal. */
 const resultOf = (response: ToolCallResponse) =>
@@ -684,6 +693,136 @@ it.effect("posts in a room the bot is in from its own conversation, waking whom 
     // Nothing reached either bot's own conversation.
     assert.deepStrictEqual(yield* conversation(wren.bot.id), []);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** Whether a room post went in quiet: it is in the room, and the tool says it woke nobody. */
+const wokeNobody = (response: ToolCallResponse) =>
+  Schema.is(Schema.Struct({ stopped: Schema.Literal("room") }))(resultOf(response));
+
+it.effect(
+  "counts a room post from a turn the operator did not speak in, and from a turn of that room",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const scout = yield* member("Scout");
+      const wren = yield* member("Wren");
+      const room = yield* roomWith(scout, [wren]);
+
+      // The operator's word in the room is spent by the room's own turn: its
+      // posts count, though the operator spoke in it.
+      yield* operatorWrites(room.id, [scout, wren], "Scout, gather the options.", to(scout));
+      const roomTurn = yield* nextTurn(scout.bot.id);
+      for (let n = 1; n <= ROOM_QUIET_AFTER; n++) {
+        const posted = yield* call(scout.session, roomTurn, "message_bot", {
+          to: room.id,
+          text: `Wren, option ${n}?`,
+          mention: [wren.bot.id],
+        });
+        assert.isFalse(wokeNobody(posted));
+      }
+      const past = yield* call(scout.session, roomTurn, "message_bot", {
+        to: room.id,
+        text: "Wren, one more?",
+        mention: [wren.bot.id],
+      });
+      assert.isTrue(wokeNobody(past));
+      yield* endTurn(scout.bot.id, scout.session, roomTurn);
+
+      // A turn of Scout's own conversation nobody asked for brings no word.
+      const own = yield* control.startEngineTurn(scout.session);
+      yield* nextTurn(scout.bot.id, roomTurn);
+      const unasked = yield* call(scout.session, own, "message_bot", {
+        to: room.id,
+        text: "Wren, still there?",
+        mention: [wren.bot.id],
+      });
+      assert.isTrue(wokeNobody(unasked));
+      // A message of the operator's steered into such a turn is not their
+      // word in it, so the bot is told to have them ask again.
+      assert.include(decodeNote(resultOf(unasked)).note, "ask again once you have finished");
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "reopens a quiet room for a post the operator asked for in the bot's own conversation",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const scout = yield* member("Scout");
+      const wren = yield* member("Wren");
+      const pip = yield* member("Pip");
+      const room = yield* roomWith(scout, [wren, pip]);
+
+      // The room goes quiet on Scout's posts to Pip, from a turn of its own
+      // conversation that nobody asked for.
+      const unasked = yield* control.startEngineTurn(scout.session);
+      yield* nextTurn(scout.bot.id);
+      for (let n = 0; n <= ROOM_QUIET_AFTER; n++) {
+        yield* call(scout.session, unasked, "message_bot", {
+          to: room.id,
+          text: `Pip, note ${n}.`,
+          mention: [pip.bot.id],
+        });
+      }
+      const quiet = yield* call(scout.session, unasked, "message_bot", {
+        to: room.id,
+        text: "Pip, the last note.",
+        mention: [pip.bot.id],
+      });
+      assert.isTrue(wokeNobody(quiet));
+      yield* endTurn(scout.bot.id, scout.session, unasked);
+
+      // In Scout's own conversation, the operator asks for the room's work:
+      // the post carries their word, so it wakes Wren and the room's count
+      // starts again.
+      const { session, turnId } = yield* operatorAsks(scout.bot, "Start the test in the group.");
+      const posted = yield* call(session, turnId, "message_bot", {
+        to: room.id,
+        text: "Wren, run the test now.",
+        mention: [wren.bot.id],
+      });
+      assert.isFalse(wokeNobody(posted));
+      assert.strictEqual(decodeStatus(resultOf(posted)).status, "posted");
+      yield* say(scout, turnId, { text: "The test has started in the room.", done: true });
+      yield* endTurn(scout.bot.id, session, turnId);
+
+      yield* flushed(wren.bot.id);
+      yield* nextTurn(wren.bot.id);
+      const envelope = yield* lastEnvelope(wren);
+      assert.include(envelope, "Wren, run the test now.");
+      assert.include(envelope, "You were addressed");
+      assert.notInclude(envelope, ROOM_CLOSING_NOTE);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "relays the operator's word to a room once a turn, counting the turn's later posts there",
+  () =>
+    Effect.gen(function* () {
+      const scout = yield* member("Scout");
+      const wren = yield* member("Wren");
+      const room = yield* roomWith(scout, [wren]);
+      const { session, turnId } = yield* operatorAsks(scout.bot, "Keep the group posted.");
+
+      // The first post carries the operator's word; the turn's next ones are
+      // Scout's own, so the room goes quiet as it would after their message.
+      for (let n = 0; n <= ROOM_QUIET_AFTER; n++) {
+        const posted = yield* call(session, turnId, "message_bot", {
+          to: room.id,
+          text: `Update ${n}.`,
+          mention: [wren.bot.id],
+        });
+        assert.isFalse(wokeNobody(posted));
+      }
+      const past = yield* call(session, turnId, "message_bot", {
+        to: room.id,
+        text: "One update too many.",
+        mention: [wren.bot.id],
+      });
+      assert.isTrue(wokeNobody(past));
+      // The operator's word was counted: the bot is not told to have them ask again.
+      assert.notInclude(decodeNote(resultOf(past)).note, "ask again");
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("posts nothing in a room the operator stopped from a turn begun before the Stop", () =>
