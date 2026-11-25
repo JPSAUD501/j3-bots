@@ -26,7 +26,7 @@ J3 Bots also owns waiting and priority. A wake waits in J3 Bots' database until 
 
 - One place applies budgets, priority, coalescing and concurrency limits to every kind of wake. A private message never goes inside a room turn: the operator steers only a turn with the same audience. It can be queued behind one only when the engine began that turn on its own in the moment the message was on its way, such as a room turn's continuation after a usage limit; it keeps its own audience while it waits, and its turn speaks privately.
 - Every envelope is written by J3 Bots, in one format.
-- The hop and fan-out limits apply to teammate messages where they are made, in the `message_bot` that sends them. A room is bounded by its own count of its bots' messages since the operator last wrote, checked by the `say` or `message_bot` that posts there.
+- The hop and fan-out limits apply to teammate messages where they are made, in the `message_bot` that sends them. A room is bounded by its own count of rounds of its bots answering each other since the operator last wrote ([0042](0042-a-room-counts-rounds.md)), checked by the `say` or `message_bot` that posts there.
 - The engine surface J3 Bots depends on shrinks to: create a thread, start a turn or steer a running one, stream events, answer a request, stop, and resume a held queue.
 - The engine still holds its queue after a restart, a provider error or a Stop. Releasing it is the server's decision too: it resumes each hold the adapter reports once, and never while a Stop of the session is unsettled.
 - The engine can still turn a steer into a new turn, when the steer arrives late or the provider cannot steer. The adapter reports what happened instead of assuming the steer landed.
