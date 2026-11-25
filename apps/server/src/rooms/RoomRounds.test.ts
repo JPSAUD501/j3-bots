@@ -321,3 +321,46 @@ it.effect(
       assert.deepStrictEqual(yield* noticesIn(room.id), []);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "keeps a quiet room quiet against a slower member's late answer to an earlier round",
+  () =>
+    Effect.gen(function* () {
+      const [ana, bo, cy] = [yield* member("Ana"), yield* member("Bo"), yield* member("Cy")];
+      const members = [ana, bo, cy];
+      const room = yield* roomWith(ana, [bo, cy]);
+      yield* concurrentTurns(3);
+      yield* operatorWrites(room.id, members, "Ideas for the launch?", nobody);
+      const anaFirst = yield* nextTurn(ana.bot.id);
+      const boFirst = yield* nextTurn(bo.bot.id);
+      // Cy takes its time over the operator's message.
+      const cyTurn = yield* nextTurn(cy.bot.id);
+
+      // Ana and Bo answer each other until the room is quiet.
+      yield* say(ana, anaFirst, { text: "Bo, a launch video?", mention: [bo.bot.id] });
+      yield* finish(ana, anaFirst, members);
+      yield* finish(bo, boFirst, members);
+      const turns = new Map<BotId, TurnId>([
+        [ana.bot.id, anaFirst],
+        [bo.bot.id, boFirst],
+      ]);
+      let [speaker, other] = [bo, ana];
+      for (let round = 2; round <= ROOM_QUIET_ROUND + 1; round++) {
+        const turnId = yield* nextTurn(speaker.bot.id, turns.get(speaker.bot.id) ?? null);
+        turns.set(speaker.bot.id, turnId);
+        yield* say(speaker, turnId, { text: `Round ${round}.`, mention: [other.bot.id] });
+        yield* finish(speaker, turnId, members);
+        [speaker, other] = [other, speaker];
+      }
+      assert.deepStrictEqual(yield* noticesIn(room.id), [{ _tag: "chain-stopped", limit: "room" }]);
+
+      // Cy's answer to the operator is round 1, but the room waits for them.
+      const late = yield* say(cy, cyTurn, { text: "A webinar, everyone?" });
+      assert.isTrue(wokeNobody(late));
+      yield* finish(cy, cyTurn, members);
+      assert.deepStrictEqual((yield* roundsIn(room.id)).at(-1), ["A webinar, everyone?", 1]);
+      assert.deepStrictEqual(yield* running(members), []);
+      assert.strictEqual(yield* liveRoomWork(room.id), 0);
+      assert.deepStrictEqual(yield* noticesIn(room.id), [{ _tag: "chain-stopped", limit: "room" }]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);

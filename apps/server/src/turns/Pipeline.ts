@@ -1383,19 +1383,18 @@ export const layer = Layer.effect(
       const filesOf = (wakes: number, newest: number) =>
         picked(wakes, newest).flatMap(({ message }) => message.attachments);
       /**
-       * The round the bot's reply takes: one past the newest round the
-       * envelope shows since the operator's latest word, round 1 when it shows
-       * none. It shows every unseen message but those of the wakes left for
-       * the next envelope, the ones it leaves out as seen too.
+       * The round the bot's reply takes: one past the newest round among the
+       * messages the envelope shows since the operator's latest word, round 1
+       * when it shows none of them.
        */
-      const replyRound = (wakes: number) => {
-        const carried = sourceIds.slice(0, wakes);
-        const waiting = sourceIds.slice(wakes).filter((id) => !carried.includes(id));
-        const shown = [...unseen.rounds].flatMap(([id, round]) =>
-          waiting.includes(id) ? [] : [round],
-        );
-        return Math.max(0, ...shown) + 1;
-      };
+      const replyRound = (wakes: number, newest: number) =>
+        Math.max(
+          0,
+          ...picked(wakes, newest).flatMap(({ message }) => {
+            const round = unseen.rounds.get(message.id);
+            return round === undefined ? [] : [round];
+          }),
+        ) + 1;
       const render = (wakes: number, newest: number, seen: number): RoomWake | null => {
         const entries = picked(wakes, newest);
         const [first, ...rest] = entries.map(({ entry }) => entry);
@@ -1412,7 +1411,7 @@ export const layer = Layer.effect(
           kind: "room",
           room: header,
           reason: reasonOf(wakes),
-          closing: replyRound(wakes) >= ROOM_CLOSING_ROUND,
+          closing: replyRound(wakes, newest) >= ROOM_CLOSING_ROUND,
           omitted: unseen.total - entries.length - waiting,
           entries: [first, ...rest],
         };
@@ -1435,7 +1434,7 @@ export const layer = Layer.effect(
           seen: 0,
           files: filesOf(1, least),
           through: end,
-          round: replyRound(1),
+          round: replyRound(1, least),
           fits: false,
         };
       }
@@ -1454,7 +1453,7 @@ export const layer = Layer.effect(
         seen,
         files: filesOf(wakes, newest),
         through: end,
-        round: replyRound(wakes),
+        round: replyRound(wakes, newest),
         fits: true,
       };
     });

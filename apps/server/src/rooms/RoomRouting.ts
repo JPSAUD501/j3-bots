@@ -68,8 +68,9 @@ export interface SpeakingTurn {
  * nothing of the room, one from outside it or one the engine started on its
  * own for no room turn's work, answers the whole room: one round past its
  * highest since that word. Past `ROOM_QUIET_ROUND` a bot's message wakes
- * nobody, and the first such message shows one `chain-stopped` notice in the
- * room until their word reaches it again. Each wake is a `room` wake for the
+ * nobody, and the first such message shows one `chain-stopped` notice; from
+ * then on no bot's message there wakes anyone, whatever its round, until
+ * their word reaches the room again. Each wake is a `room` wake for the
  * room, written in the caller's transaction, the one that writes the message.
  */
 export class RoomRouting extends Context.Service<
@@ -157,9 +158,14 @@ export const layer = Layer.effect(
      * What the speaking turn was shown of the room: how many room dispatches
      * the engine took for it and the turns whose work it goes on with (the
      * turn a continuation resumes, the one whose background work woke the
-     * session: `hopCounts.chainSql`), a steer riding any of them included, and the
-     * highest round their replies take among those written since the place
-     * given, `null` when none was.
+     * session: `hopCounts.chainSql`), a steer riding any of them included, and
+     * the highest round their replies take among those written since the place
+     * given, `null` when none was. A dispatch is the turn's it was first
+     * answered for (`disposition_turn_id`) as well as the one it is now:
+     * a continuation takes over its turn's dispatch, and the speech of the
+     * turn it resumes may be read after that. A steer counts once the engine
+     * has it: whether the agent read it is told only when the turn ends, so
+     * it is taken as shown.
      */
     const shownTo = (roomId: RoomId, turn: SpeakingTurn, from: number) =>
       SqlSchema.findOne({
@@ -173,6 +179,7 @@ export const layer = Layer.effect(
             AND status IN ('accepted', 'delivered', 'finished')
             AND (
               engine_turn_id IN (${chain(turn.sessionId, turn.turnId)})
+              OR disposition_turn_id IN (${chain(turn.sessionId, turn.turnId)})
               OR (
                 engine_turn_id IS NULL
                 AND steer_turn_id IN (${chain(turn.sessionId, turn.turnId)})
@@ -240,8 +247,11 @@ export const layer = Layer.effect(
       else {
         const { round, from } = yield* roundOf(input.room, input.turn);
         yield* setRound(input.message, round);
-        if (round > ROOM_QUIET_ROUND) {
-          if (!(yield* quietBefore(input.room.id, from, input.message))) {
+        // Once a message went past the quiet round, the room waits for the
+        // operator's word: a late answer to an earlier round wakes nobody either.
+        const quiet = yield* quietBefore(input.room.id, from, input.message);
+        if (quiet || round > ROOM_QUIET_ROUND) {
+          if (!quiet) {
             yield* notify(input.botId, audience, { _tag: "chain-stopped", limit: "room" }, null);
           }
           return { _tag: "quiet" } as const;
