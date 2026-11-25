@@ -2,14 +2,17 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// How far a session was shown a room outside its envelopes
-// (docs/architecture/server.md, What a bot has seen of a room): the room's
-// newest entry when a call of the session read all it had not seen of the
-// room, or was refused a post there and shown what it had missed. One row per
-// call. `calls_known` is the newest of the session's engine tool calls known
-// when the view was recorded (`engine_tool_calls.rowid`): a call already known
-// then was written before the bot had the view, so the view does not count
-// for it. A row goes with its room and with its turn.
+// What a room was shown to a session outside its envelopes
+// (docs/architecture/server.md, What a bot has seen of a room), beside the
+// room dispatches that show it the rest (`roomShown.ts`): the room's newest
+// entry when a call of the session read all it had not seen of the room, or
+// was refused a post there and shown what it had missed, and the round a
+// reply to it takes, one past the newest it showed since the operator's
+// latest word (null when it showed none), as a room dispatch keeps one. One
+// row per call. `calls_known` is the newest of the session's engine tool calls
+// known when the view was recorded (`engine_tool_calls.rowid`): a call already
+// known then was written before the bot had the view, so the view does not
+// count for it. A row goes with its room and with its turn.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`
@@ -19,6 +22,7 @@ export default Effect.gen(function* () {
       engine_turn_id TEXT NOT NULL,
       room_id TEXT NOT NULL REFERENCES rooms (id) ON DELETE CASCADE,
       through INTEGER NOT NULL CHECK (through >= 0),
+      room_round INTEGER CHECK (room_round IS NULL OR room_round >= 1),
       calls_known INTEGER NOT NULL,
       PRIMARY KEY (session_id, engine_call_id),
       FOREIGN KEY (session_id, engine_turn_id)

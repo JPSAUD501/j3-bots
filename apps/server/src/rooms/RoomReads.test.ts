@@ -292,6 +292,23 @@ it.effect("relays the operator's word only with a post that went out", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("gives a reply the round of what its turn read of the room", () =>
+  Effect.gen(function* () {
+    const { scout, wren, pip, room, all } = yield* crew;
+    yield* operatorWrites(room.id, all, "Scout and Pip, plan the launch.", to(scout, pip));
+    const scoutTurn = yield* nextTurn(scout.bot.id);
+    const pipTurn = yield* nextTurn(pip.bot.id);
+    yield* say(pip, pipTurn, { text: "Wren, the dates?", mention: [wren.bot.id] });
+    const wrenTurn = yield* nextTurn(wren.bot.id);
+    yield* say(wren, wrenTurn, { text: "Launch on the 3rd." });
+
+    // Its envelope showed the operator's word; the read shows round 2 as well.
+    readOf(yield* call(scout.session, scoutTurn, "read_room", { room: room.id }));
+    yield* say(scout, scoutTurn, { text: "Then I book the 3rd." });
+    assert.deepStrictEqual((yield* roundsIn(room.id)).at(-1), ["Then I book the 3rd.", 3]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("never checks a post of the room's own turn", () =>
   Effect.gen(function* () {
     const { scout, room, all, toPip } = yield* crew;

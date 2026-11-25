@@ -21,7 +21,7 @@ import type { BotStore } from "../bots/BotStore.ts";
 import type { Entries } from "../entries/Entries.ts";
 import type { SettingsStore } from "../settings/SettingsStore.ts";
 import { longestFitting, operatorZone, ROOM_ENTRIES_READ } from "./envelopes.ts";
-import { roomSeen, type SessionCall } from "./roomSeen.ts";
+import { roomShown, type SessionCall } from "./roomShown.ts";
 
 /** The call a room is read or posted to from, whose session's view of the room counts. */
 export interface RoomReader extends SessionCall {
@@ -68,7 +68,7 @@ export const roomReads = (
   bots: BotStore["Service"],
   settings: SettingsStore["Service"],
 ) => {
-  const seen = roomSeen(sql);
+  const seen = roomShown(sql);
   const zoneOf = operatorZone(settings);
 
   /** The place of the room's newest entry, of any kind. */

@@ -90,7 +90,7 @@ import { Observer } from "./Observer.ts";
 import { automatedSql, providerLimit } from "./providerLimit.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
-import { roomSeen } from "./roomSeen.ts";
+import { roomShown } from "./roomShown.ts";
 import { takesNewWorkSql } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { stopHoldsSql } from "./stopTargets.ts";
@@ -1191,7 +1191,7 @@ export const layer = Layer.effect(
 
     // ---- Room envelopes -------------------------------------------------------
 
-    const seen = roomSeen(sql);
+    const seen = roomShown(sql);
 
     /** The place of the room's newest entry. */
     const roomEnd = SqlSchema.findOne({
@@ -1201,7 +1201,7 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The room's messages the plan's session has not seen (`roomSeen`):
+     * The room's messages the plan's session has not seen (`roomShown`):
      * always those its wakes are for, and, newest first, at most
      * `ROOM_ENTRIES_READ` of the others after what it has seen; and how many
      * unseen messages there are in all. Its own are not among them; it wrote

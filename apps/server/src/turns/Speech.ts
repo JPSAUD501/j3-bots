@@ -307,7 +307,7 @@ export const layer = Layer.effect(
       execute: (id) => sql`SELECT purpose FROM sessions WHERE id = ${id}`,
     });
 
-    /** The pinned call as a reader of rooms: its session's view counts (`roomSeen`). */
+    /** The pinned call as a reader of rooms: its session's view counts (`roomShown`). */
     const readerOf = (found: Pin): RoomReader => ({
       botId: found.botId,
       sessionId: found.sessionId,
