@@ -53,7 +53,7 @@ const stands = (
  * no longer in the room is left out. With it, the names the members it
  * mentions were picked by where those picks stand, in the order they appear:
  * the first for each member is the pick that addressed it. `undefined` when
- * it addresses nobody, which goes to the host.
+ * it addresses nobody, which every member reads.
  */
 export function addressed(
   text: string,
@@ -86,27 +86,23 @@ export function addressed(
 
 /** Who a room message wakes, as the server routes it, by the names to show. */
 export type Addressee =
-  | { readonly _tag: "host"; readonly name: string }
   | { readonly _tag: "everyone" }
   | { readonly _tag: "bots"; readonly names: string }
   | null;
 
 /**
- * Who a room message wakes: each member mentioned, in turn; every member; or,
- * mentioning nobody, the room's host, named as it is now. Null while a name
- * to show is not known.
+ * Who a room message wakes: each member mentioned, in turn; or every member,
+ * for `@everyone` and for a message that mentions nobody. Null while a name to
+ * show is not known.
  */
 export function addresseeOf(
   mentions: Mentions | null,
-  hostId: BotId | null,
   nameOf: (botId: BotId) => string | undefined,
   { locale }: { readonly locale: string },
 ): Addressee {
-  if (mentions === null || (mentions._tag === "bots" && mentions.ids.length === 0)) {
-    const host = hostId === null ? undefined : nameOf(hostId);
-    return host === undefined ? null : { _tag: "host", name: host };
+  if (mentions === null || mentions._tag === "everyone" || mentions.ids.length === 0) {
+    return { _tag: "everyone" };
   }
-  if (mentions._tag === "everyone") return { _tag: "everyone" };
   const names = mentions.ids.flatMap((id) => nameOf(id) ?? []);
   if (names.length === 0) return null;
   return {

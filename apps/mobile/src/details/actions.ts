@@ -70,11 +70,11 @@ export function useRoomActions() {
       }),
     /**
      * Unarchives the room, or opens the form first when it lacks the members
-     * or the host it needs, as a room left too small by deleted bots does.
+     * it needs, as a room left too small by deleted bots does.
      * Resolves like `archive`.
      */
     unarchive: (room: Room): Promise<void> => {
-      if (room.members.length < ROOM_MEMBERS.min || room.hostId === null) {
+      if (room.members.length < ROOM_MEMBERS.min) {
         askForMembers(room);
         return Promise.resolve();
       }

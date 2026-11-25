@@ -197,19 +197,12 @@ export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineSta
 export function QuietRoom({ room }: { room: Extract<Room, { readonly status: "active" }> }) {
   const { t } = useI18n();
   const bots = useBots();
-  const host = bots.get(room.hostId);
   return (
     <Centered>
       <span className="pop-in">
         <RoomAvatar size={96} members={roomAvatarMembers(room, bots)} />
       </span>
-      <Heading
-        title={room.name}
-        body={
-          // The host bot may arrive after the room does.
-          host ? t("empty.quiet.room", { host: host.profile.name }) : t("empty.quiet.roomAnyHost")
-        }
-      />
+      <Heading title={room.name} body={t("empty.quiet.roomAnyHost")} />
     </Centered>
   );
 }

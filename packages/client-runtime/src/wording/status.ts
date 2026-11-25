@@ -158,7 +158,14 @@ export function noticeText(
   const { t } = ctx.i18n;
   switch (notice._tag) {
     case "chain-stopped":
-      return notice.limit === "hops" ? t("notice.chainHops") : t("notice.chainFanOut");
+      switch (notice.limit) {
+        case "hops":
+          return t("notice.chainHops");
+        case "fan-out":
+          return t("notice.chainFanOut");
+        case "room":
+          return t("notice.chainRoom");
+      }
     case "turn-failed":
       return failureText(notice.failure, null, ctx);
     case "handoff-failed": {

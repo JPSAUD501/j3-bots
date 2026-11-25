@@ -252,8 +252,8 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
           item._tag === "room" ? [item.room] : [],
         );
         assert.deepStrictEqual(
-          found.map(({ name, members, hostId }) => ({ name, members, hostId })),
-          [{ name: "Support", members: [scout.id, ...team], hostId: scout.id }],
+          found.map(({ name, members }) => ({ name, members })),
+          [{ name: "Support", members: [scout.id, ...team] }],
         );
         const [opened, kickoff, ...answers] = said;
         assert.deepStrictEqual(noticeOf(opened), started);
@@ -278,7 +278,9 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
           ]);
         }
 
-        // No hello ran: each one's only turn was the room's, after the one before it ended.
+        // No hello ran: each one's turns were the room's, one after another, the first its
+        // answer, in the kickoff's order. Every answer wakes the other members, so those who
+        // answered before the rest read the later answers in one more turn, which says nothing.
         const database = new NodeSqlite.DatabaseSync(path.join(home, HOME_ENTRIES.database), {
           readOnly: true,
         });
@@ -305,8 +307,12 @@ it.layer(services, { excludeTestServices: true })("bots build a team", (it) => {
           team.map(() => "cancelled"),
         );
         assert.deepStrictEqual(
-          turns.map((turn) => [turn.bot_id, turn.audience_room_id]),
-          team.map((botId) => [botId, roomId]),
+          turns.slice(0, team.length).map((turn) => turn.bot_id),
+          team,
+        );
+        assert.deepStrictEqual(
+          turns.map((turn) => turn.audience_room_id),
+          turns.map(() => roomId),
         );
         turns.forEach((turn, index) => {
           const before = turns[index - 1];

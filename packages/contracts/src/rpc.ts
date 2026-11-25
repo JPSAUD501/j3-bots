@@ -59,7 +59,7 @@ import {
   MemoryText,
 } from "./memory.ts";
 import { PairBotIds, PairSeq, TeammateMessage, TeammatePair } from "./pair.ts";
-import { Room, RoomHopLimit, RoomMembers, RoomName } from "./room.ts";
+import { Room, RoomMembers, RoomName } from "./room.ts";
 import { Routine, RoutineInstruction, RoutineRun, RoutineTrigger } from "./routine.ts";
 import {
   HarnessLocation,
@@ -233,8 +233,9 @@ export const EntryRpcs = RpcGroup.make(
   }),
   /**
    * Returns the new message entry. `attachments` are uploaded first with
-   * `POST /attachments`. `mentions` only applies in a room; leaving it out
-   * mentions nobody. Fails with `Invalid("attachment")`, writing nothing, when
+   * `POST /attachments`. `mentions` only applies in a room, and names
+   * members only; leaving it out wakes every member, as `bots` with no ids
+   * does. Fails with `Invalid("attachment")`, writing nothing, when
    * the files break a limit of the engine that runs the bot: an empty file, an
    * inline image (`INLINE_IMAGE_MEDIA_TYPES`) over `MAX_INLINE_IMAGE_SIZE`, or
    * inline images over `MAX_INLINE_IMAGES_SIZE` together. Fails with
@@ -414,8 +415,8 @@ export const BotRpcs = RpcGroup.make(
   Rpc.make("bot.freshStart", { payload: { ...command, botId: BotId }, error: CommandError }),
   /**
    * Removes the bot, its conversation, memory and routines. What it said in rooms
-   * stays, shown as from a deleted bot. A room it hosted passes to another
-   * member; a room left with fewer than two members is archived.
+   * stays, shown as from a deleted bot. A room left with fewer than two
+   * members is archived.
    */
   Rpc.make("bot.delete", {
     payload: { ...command, botId: BotId, deleteFiles: Schema.Boolean },
@@ -505,8 +506,6 @@ export const RoomRpcs = RpcGroup.make(
       ...command,
       name: RoomName,
       members: RoomMembers,
-      hostId: BotId,
-      hopLimit: Schema.optionalKey(RoomHopLimit),
     },
     success: Room,
     error: CommandError,
@@ -516,7 +515,7 @@ export const RoomRpcs = RpcGroup.make(
    * running work is stopped as `bot.stop` stops it, and its open `ask` cards
    * expire. An archived room takes only `pinned` and `archived: false`, and
    * fails with `Conflict("room-archived")` for anything else; unarchiving
-   * needs two to six members and a host, which the same update may give.
+   * needs two to six members, which the same update may give.
    */
   Rpc.make("room.update", {
     payload: {
@@ -524,8 +523,6 @@ export const RoomRpcs = RpcGroup.make(
       roomId: RoomId,
       name: Schema.optionalKey(RoomName),
       members: Schema.optionalKey(RoomMembers),
-      hostId: Schema.optionalKey(BotId),
-      hopLimit: Schema.optionalKey(RoomHopLimit),
       pinned: Schema.optionalKey(Schema.Boolean),
       archived: Schema.optionalKey(Schema.Boolean),
     },

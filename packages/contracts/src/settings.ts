@@ -67,12 +67,12 @@ export const keepsUtcClock = (timeZone: string, year: number): boolean => {
 
 /**
  * The limits that keep bots from spending the operator's allowance on each
- * other. A room's own hop limit overrides `hops` for that room.
+ * other. A room counts its bots' messages instead (`ROOM_QUIET_AFTER`).
  */
 export const Budgets = Schema.Struct({
-  /** Consecutive bot-caused wakes in one chain since the operator last spoke. */
+  /** Consecutive bot-caused wakes in one chain of teammate messages since the operator last spoke. */
   hops: PositiveInt,
-  /** Teammates one bot turn may message, and bots one bot message in a room may mention. */
+  /** Teammates one bot turn may message. */
   fanOut: PositiveInt,
   /** Turns running at once across all bots. */
   concurrentTurns: PositiveInt,

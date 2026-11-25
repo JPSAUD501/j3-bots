@@ -172,15 +172,20 @@ export interface RoomWake extends WakeBase {
     readonly name: string;
     /** In member order, this bot included. */
     readonly members: ReadonlyArray<TeammateRef>;
-    readonly hostName: string;
   };
   /**
-   * Why this bot is the one woken: the kickoff of a room its host started
-   * mentioned it, a later message mentioned it, the operator addressed
-   * everyone, or the operator addressed nobody and this bot hosts the room.
-   * It chooses the envelope's closing line.
+   * Why this bot is woken: the kickoff of a room a member started, a message
+   * addressed to this bot or to everyone, or one addressed to nobody, which
+   * the operator wrote (`user`) or another member did (`member`). It chooses
+   * the envelope's closing line.
    */
   readonly reason: RoomReason;
+  /**
+   * The room's bots have said so much since the operator last wrote that the
+   * conversation is closing: the closing line asks for an answer only if it
+   * is essential.
+   */
+  readonly closing: boolean;
   /**
    * How many entries this bot has not seen are older than those shown: the
    * envelope carries the newest that fit.
@@ -191,7 +196,7 @@ export interface RoomWake extends WakeBase {
 }
 
 /** Why a bot is woken for a room. */
-export type RoomReason = "kickoff" | "mentioned" | "everyone" | "host";
+export type RoomReason = "kickoff" | "addressed" | "everyone" | "user" | "member";
 
 export interface BotWake extends WakeBase {
   readonly kind: "bot";
@@ -283,25 +288,35 @@ export const CLOSING_LINES: { readonly [K in Exclude<WakeKind, "room">]: string 
 };
 
 /**
- * A room envelope's closing line, by why the bot was woken: the host's role
- * when nobody was addressed, and how far a mentioned or polled member goes.
+ * A room envelope's closing line, by why the bot was woken: how far the
+ * member goes, and, for one not addressed, that a member's message asks less
+ * of it than the user's, which keeps a room from talking on among its bots.
  * The kickoff's says the room is the user's and gives the member a part: a
- * bot made for the room has nothing else to go on, and the room's rule of
- * staying silent with nothing new would otherwise leave it waiting.
+ * bot made for the room has nothing else to go on.
  */
 export const ROOM_CLOSING_LINES: { readonly [R in RoomReason]: string } = {
-  host: "In this room, `say` reaches everyone. You host it and nobody was addressed: answer, or hand the work to one member with `mention`.",
   kickoff:
-    "In this room, `say` reaches everyone. Your user asked for it, and this is its kickoff, which names your part. Answer what it asks of you now, even if another member opens: the members it names are woken one at a time, each seeing the replies before theirs. End your turn without a word only if it asks nothing of you.",
-  mentioned:
-    "In this room, `say` reaches everyone. You were addressed: answer, and `mention` a member only if they must act next.",
+    "In this room, `say` reaches everyone. Your user asked for this room, and this is its kickoff, which names your part. Answer what it asks of you now, even if another member speaks first. End your turn without a word only if it asks nothing of you.",
+  addressed:
+    "In this room, `say` reaches everyone. You were addressed: read what the others already said, then answer.",
   everyone:
-    "In this room, `say` reaches everyone. Everyone was addressed, one at a time: add only what the replies before yours do not say, or end your turn without a word.",
+    "In this room, `say` reaches everyone. Your user asked every member to answer: answer briefly, adding what the replies before yours do not say.",
+  user: "In this room, `say` reaches everyone. Your user wrote to the whole room. Read what the others already said, then answer if the message is for you or you have something to add that nobody said; otherwise end your turn without a word.",
+  member:
+    "In this room, `say` reaches everyone. A member wrote to the whole room. Answer only if it asks something of you or you have something to add that nobody said, never just to agree, thank or acknowledge; otherwise end your turn without a word.",
 };
+
+/** What a room envelope's closing line adds once the conversation is closing (`RoomWake.closing`). */
+export const ROOM_CLOSING_NOTE =
+  "The bots here have said a lot since your user last wrote, so the conversation is closing: speak only if it is essential.";
 
 /** The line an envelope ends with. */
 const closingLine = (wake: Wake): string =>
-  wake.kind === "room" ? ROOM_CLOSING_LINES[wake.reason] : CLOSING_LINES[wake.kind];
+  wake.kind === "room"
+    ? wake.closing
+      ? `${ROOM_CLOSING_LINES[wake.reason]} ${ROOM_CLOSING_NOTE}`
+      : ROOM_CLOSING_LINES[wake.reason]
+    : CLOSING_LINES[wake.kind];
 
 const PROFILE_CHANGED_LINE = "Your profile was changed. The new values:";
 
@@ -584,7 +599,6 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       w.open("room", [
         ["id", wake.room.id],
         ["name", wake.room.name],
-        ["host", wake.room.hostName],
         ["reason", wake.reason],
       ]);
       for (const member of wake.room.members) {

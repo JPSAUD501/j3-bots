@@ -32,8 +32,6 @@ const roster: Synced<ReadonlyArray<RosterItem>> = {
         name: "Launch",
         status: "active",
         members: [scout.id, archivist.id],
-        hostId: scout.id,
-        hopLimit: 3,
         pinned: false,
         createdAt: at("2026-11-01T00:00:00Z"),
         work: "none",

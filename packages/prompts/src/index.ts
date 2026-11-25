@@ -33,6 +33,7 @@ export {
   renderWake,
   renderWakeForSize,
   ROOM_CLOSING_LINES,
+  ROOM_CLOSING_NOTE,
   type RoomEntry,
   type RoomMentions,
   type RoomReason,

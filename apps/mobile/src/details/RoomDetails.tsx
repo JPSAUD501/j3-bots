@@ -102,18 +102,9 @@ export function RoomDetails({ room }: { readonly room: Room }) {
                   </Text>
                 )}
               </View>
-              {bot.id === room.hostId && (
-                <Text className="rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
-                  {t("room.host")}
-                </Text>
-              )}
             </View>
           ))
         )}
-      </Section>
-
-      <Section open title={t("room.budget")}>
-        <Text className="text-sm text-foreground">{plural("room.hopLimit", room.hopLimit)}</Text>
       </Section>
 
       <Section open title={t("room.archiveSection")}>

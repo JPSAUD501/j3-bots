@@ -48,9 +48,18 @@ export const busy = (database: string) =>
        AS n`,
   ).pipe(Effect.map((rows) => (rows[0]?.n ?? 0) > 0));
 
-const RoomTurn = Schema.Struct({ bot_id: BotId });
+/** How many `chain-stopped` notices the room shows. */
+const chainStoppedIn = (database: string, roomId: RoomId) =>
+  query(
+    database,
+    Count,
+    `SELECT COUNT(*) AS n FROM entries
+       WHERE room_id = ? AND kind = 'notice'
+         AND json_extract(body_json, '$.notice._tag') = 'chain-stopped'`,
+    roomId,
+  );
 
-const Hops = Schema.Struct({ hops: Schema.Number });
+const RoomTurn = Schema.Struct({ bot_id: BotId });
 
 const SharedFile = Schema.Struct({ id: AttachmentId, name: Schema.String });
 
@@ -58,11 +67,11 @@ export interface Score {
   /** The members who ran a turn for the room, in the order the turns started. */
   readonly sequence: ReadonlyArray<string>;
   readonly botTurns: number;
-  /** Room wakes of the member the task gives no part. */
-  readonly bystanderWakes: number;
+  /** Messages in the room from the member the task gives no part. */
+  readonly bystanderMessages: number;
   readonly chainStopped: number;
-  /** The furthest hop count a room wake reached. */
-  readonly maxHops: number;
+  /** The bots' messages in the room, the count its quiet limit (`ROOM_QUIET_AFTER`) is on. */
+  readonly botMessages: number;
   /** The files bots shared in the room, in the order they were shared. */
   readonly files: ReadonlyArray<typeof SharedFile.Type>;
 }
@@ -80,27 +89,22 @@ export const score = Effect.fn("score")(function* (
        WHERE t.audience_room_id = ? ORDER BY t.started_at, t.rowid`,
     roomId,
   );
-  const hops = yield* query(
-    database,
-    Hops,
-    `SELECT hops FROM wakes WHERE audience_room_id = ?`,
-    roomId,
-  );
-  const bystanderWakes = yield* query(
-    database,
-    Count,
-    `SELECT COUNT(*) AS n FROM wakes WHERE audience_room_id = ? AND bot_id = ?`,
-    roomId,
-    bystander,
-  );
-  const chainStopped = yield* query(
+  const botMessages = yield* query(
     database,
     Count,
     `SELECT COUNT(*) AS n FROM entries
-       WHERE room_id = ? AND kind = 'notice'
-         AND json_extract(body_json, '$.notice._tag') = 'chain-stopped'`,
+       WHERE room_id = ? AND kind = 'message' AND author_bot_id IS NOT NULL`,
     roomId,
   );
+  const bystanderMessages = yield* query(
+    database,
+    Count,
+    `SELECT COUNT(*) AS n FROM entries
+       WHERE room_id = ? AND kind = 'message' AND author_bot_id = ?`,
+    roomId,
+    bystander,
+  );
+  const chainStopped = yield* chainStoppedIn(database, roomId);
   const files = yield* query(
     database,
     SharedFile,
@@ -112,18 +116,51 @@ export const score = Effect.fn("score")(function* (
   return {
     sequence: turns.map((turn) => names.get(turn.bot_id) ?? turn.bot_id),
     botTurns: turns.length,
-    bystanderWakes: bystanderWakes[0]?.n ?? 0,
+    bystanderMessages: bystanderMessages[0]?.n ?? 0,
     chainStopped: chainStopped[0]?.n ?? 0,
-    maxHops: Math.max(0, ...hops.map((wake) => wake.hops)),
+    botMessages: botMessages[0]?.n ?? 0,
     files,
   } satisfies Score;
+});
+
+const RoomMessage = Schema.Struct({ author: Schema.NullOr(BotId), text: Schema.String });
+
+/** What has happened in a room so far, to compare before and after the operator writes. */
+interface RoomActivity {
+  /** Turns that ran for the room. */
+  readonly turns: number;
+  /** Its messages, oldest first; `author` is null for the operator's. */
+  readonly messages: ReadonlyArray<typeof RoomMessage.Type>;
+  readonly chainStopped: number;
+}
+
+export const roomActivity = Effect.fn("roomActivity")(function* (database: string, roomId: RoomId) {
+  const turns = yield* query(
+    database,
+    Count,
+    `SELECT COUNT(*) AS n FROM turns WHERE audience_room_id = ?`,
+    roomId,
+  );
+  const messages = yield* query(
+    database,
+    RoomMessage,
+    `SELECT author_bot_id AS author, json_extract(body_json, '$.text') AS text FROM entries
+       WHERE room_id = ? AND kind = 'message' ORDER BY position`,
+    roomId,
+  );
+  const chainStopped = yield* chainStoppedIn(database, roomId);
+  return {
+    turns: turns[0]?.n ?? 0,
+    messages,
+    chainStopped: chainStopped[0]?.n ?? 0,
+  } satisfies RoomActivity;
 });
 
 const Made = Schema.Struct({ id: BotId });
 
 const Tool = Schema.Struct({ tool: Schema.String });
 
-const HostedRoom = Schema.Struct({ id: RoomId });
+const StartedRoom = Schema.Struct({ id: RoomId });
 
 const Member = Schema.Struct({ bot_id: BotId });
 
@@ -145,7 +182,7 @@ export interface TeamScore {
   readonly made: ReadonlyArray<BotId>;
   /** The provider each of them runs on, in the order made. */
   readonly madeOn: ReadonlyArray<string>;
-  /** The first room it hosts, with its members in order. */
+  /** The first room it is the first member of, as `start_room` makes it, with its members in order. */
   readonly room: Option.Option<{ readonly id: RoomId; readonly members: ReadonlyArray<BotId> }>;
   /** Its messages in that room: the kickoff, and any after. */
   readonly kickoffs: number;
@@ -181,8 +218,9 @@ export const scoreTeam = Effect.fn("scoreTeam")(function* (database: string, pri
   );
   const [hosted] = yield* query(
     database,
-    HostedRoom,
-    `SELECT id FROM rooms WHERE host_bot_id = ? ORDER BY created_at, rowid LIMIT 1`,
+    StartedRoom,
+    `SELECT r.id FROM rooms r JOIN room_members m ON m.room_id = r.id
+       WHERE m.bot_id = ? AND m.position = 0 ORDER BY r.created_at, r.rowid LIMIT 1`,
     primary,
   );
   const members =

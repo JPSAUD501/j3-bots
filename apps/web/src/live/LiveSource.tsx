@@ -1386,8 +1386,8 @@ function LiveShell({
       if (open.current.room === null) setRoomForm({ _tag: "unarchive", roomId });
       else say(t("room.unarchiveNeedsMembers", { name: room.name }));
     };
-    // A room deleting bots left too small needs members and a host before it can take messages.
-    if (room.members.length < 2 || room.hostId === null) {
+    // A room deleting bots left too small needs members before it can take messages.
+    if (room.members.length < 2) {
       askForMembers();
       return Promise.resolve();
     }
@@ -1713,7 +1713,6 @@ function LiveShell({
       <RoomDialog
         mode={roomFormMode}
         bots={bots}
-        defaultHopLimit={data.settings?.budgets.hops ?? null}
         connected={data.connected}
         unsaved={roomFormUnsaved}
         onUnsavedChange={setRoomFormUnsaved}

@@ -41,15 +41,13 @@ export const member = (name: string) =>
     return { bot, session: yield* engineSession(bot.id) } satisfies Member;
   });
 
-/** A room of these members, in this order, hosted by `host`. */
-export const roomWith = (host: Member, others: ReadonlyArray<Member>, hopLimit?: number) =>
+/** A room of these members, in this order: `first`, then `others`. */
+export const roomWith = (first: Member, others: ReadonlyArray<Member>) =>
   Effect.gen(function* () {
     return yield* (yield* Rooms).create({
       commandId: command(),
       name: "Launch",
-      members: [host, ...others].map((one) => one.bot.id),
-      hostId: host.bot.id,
-      ...(hopLimit === undefined ? {} : { hopLimit }),
+      members: [first, ...others].map((one) => one.bot.id),
     });
   });
 

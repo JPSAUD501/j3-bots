@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { IntentFailure } from "@j3-bots/client-runtime";
 import {
-  hopLimitSteps,
   ROOM_NAME_MAX,
   type RoomFormMode,
   roomFormTarget,
@@ -11,7 +10,6 @@ import {
   useConnection,
   useJ3Client,
   useRoomForm,
-  useSettings,
 } from "@j3-bots/client-runtime/react";
 import type { Bot, Room, RoomId } from "@j3-bots/contracts";
 import { useNavigation } from "@react-navigation/native";
@@ -130,11 +128,8 @@ function RoomFormFor({
 }
 
 /**
- * A room's name, its bots, which of them hosts, and how many replies in a
- * row bots may trade before the room waits for the operator. The host
- * follows the bots picked: the one the operator chose while it stays in,
- * else the primary bot, else the first picked; a room the server has without
- * a host shows none until the operator picks one. What is missing is said once
+ * A room's name, its bots, and how many replies in a row bots may trade
+ * before the room waits for the operator. What is missing is said once
  * the operator tries to send; a refusal from the server is said under the
  * form, or beside the bots when they are the reason, and keeps what was
  * typed. What the operator left alone follows the room as the server has it;
@@ -158,12 +153,10 @@ function RoomForm({
 }) {
   const { t, plural, locale } = useI18n();
   const connected = useConnection()._tag === "connected";
-  const settings = useSettings();
-  const defaultHopLimit = settings._tag === "ready" ? settings.value.budgets.hops : null;
   const botsById = useBots();
   // Every bot the operator has, to pick members from; the same list while the bots stay the same.
   const bots = useMemo((): ReadonlyArray<Bot> => [...botsById.values()], [botsById]);
-  const form = useRoomForm({ mode, bots, defaultHopLimit, connected, locale });
+  const form = useRoomForm({ mode, bots, connected, locale });
   const { room, values, problems, busy, dropped } = form;
   const leave = useDiscardGuard(form.unsaved && !busy);
 
@@ -266,48 +259,6 @@ function RoomForm({
           </Text>
         )}
       </View>
-
-      {form.members.length > 0 && (
-        <View accessibilityRole="radiogroup" className="gap-2">
-          <Text className="text-sm text-foreground">{t("roomForm.host")}</Text>
-          <Text className="text-xs text-muted-foreground">{t("roomForm.host.hint")}</Text>
-          {/* A room the server has without a host shows none picked, and asks for one, until the operator picks one. */}
-          {form.hostId === null && (
-            <Text className="text-sm text-muted-foreground">{t("roomForm.host.pick")}</Text>
-          )}
-          {form.members.map((bot) => (
-            <ChoiceRow
-              key={bot.id}
-              kind="one"
-              label={bot.profile.name}
-              selected={bot.id === form.hostId}
-              unavailable={busy}
-              onPress={() => form.pickHost(bot.id)}
-            />
-          ))}
-          <Problem>{problems.has("host") ? t("roomForm.host.required") : null}</Problem>
-        </View>
-      )}
-
-      <TextField
-        label={t("roomForm.hopLimit")}
-        value={values.hopLimit}
-        numeric
-        readOnly={busy}
-        {...(defaultHopLimit === null ? {} : { placeholder: String(defaultHopLimit) })}
-        hint={
-          defaultHopLimit === null
-            ? t("roomForm.hopLimit.hint")
-            : `${t("roomForm.hopLimit.hint")} ${t("roomForm.hopLimit.default", { count: defaultHopLimit })}`
-        }
-        steps={{
-          ...hopLimitSteps(values.hopLimit, defaultHopLimit),
-          fewerLabel: t("roomForm.hopLimit.fewer"),
-          moreLabel: t("roomForm.hopLimit.more"),
-        }}
-        onChange={(text) => form.change({ ...values, hopLimit: text })}
-        error={problems.has("hop-limit") ? t("roomForm.hopLimit.invalid") : null}
-      />
     </FormScreen>
   );
 }

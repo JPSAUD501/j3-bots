@@ -22,8 +22,6 @@ const room = (name: string, unread: boolean): RosterItem => ({
     name,
     status: "active",
     members: [bot("Scout").id, bot("Wren").id],
-    hostId: bot("Scout").id,
-    hopLimit: 3,
     pinned: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",

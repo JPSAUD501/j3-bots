@@ -7,11 +7,13 @@
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
     "room": "node src/room.ts",
+    "reads": "node src/reads.ts",
     "team": "node src/team.ts"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "@j3-bots/contracts": "workspace:*",
+    "@j3-bots/engine-t3": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

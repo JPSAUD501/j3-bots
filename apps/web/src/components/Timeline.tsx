@@ -94,7 +94,7 @@ interface TimelineProps {
    * says so, and where Send again sends it. Null in a bot's conversation,
    * which has one speaker.
    */
-  readonly room: Pick<Room, "id" | "members" | "hostId"> | null;
+  readonly room: Pick<Room, "id" | "members"> | null;
   readonly workSteps: (entryId: EntryId) => ReadonlyArray<WorkStep> | null;
   /** Whether the operator's answer to a card is still on its way. */
   readonly submitting: (entryId: EntryId) => boolean;
@@ -235,10 +235,7 @@ export function Timeline({
                     ? {}
                     : {
                         leftRoom: left.left.map(labelOf),
-                        retryLabel: resendLabel(
-                          addresseeOf(left.without, room.hostId, nameOf, i18n),
-                          i18n,
-                        ),
+                        retryLabel: resendLabel(addresseeOf(left.without, nameOf, i18n), i18n),
                       })}
                 />
               </div>

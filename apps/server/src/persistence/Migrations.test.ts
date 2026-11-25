@@ -774,3 +774,182 @@ it.effect("lists each of a large earlier release's teammate messages once, in th
     }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect(
+  "keeps every room and its links without a host or a hop limit, and its wakes in the new words without hops",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+      const message = (text: string, mentions: object) =>
+        JSON.stringify({ text, attachments: [], mentions, delivery: "delivered" });
+      const wake = (entryId: string, reason: string) =>
+        JSON.stringify({ _tag: "room", entryId, reason });
+
+      // An active room Ana hosts, with Bo, and an archived one of Bo and Cy
+      // whose host was deleted. The operator wrote to everyone and to nobody,
+      // Ana to Bo, Bo's kickoff to Cy, and each wake says why its member woke
+      // in 0.5.0's words.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA foreign_keys = ON`;
+        yield* migrate(migrationsThrough(31));
+        for (const id of ["ana", "bo", "cy"]) {
+          yield* sql`
+            INSERT INTO bots (
+              id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+              permission_mode, workspace_path, created_at, updated_at
+            ) VALUES (
+              ${id}, ${id}, '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', ${`/bots/${id}`},
+              ${now}, ${now}
+            )
+          `;
+        }
+        yield* sql`
+          INSERT INTO rooms (
+            id, name, status, host_bot_id, hop_limit, pinned, archived_at, created_at, updated_at
+          ) VALUES
+            ('launch', 'Launch', 'active', 'ana', 3, 1, NULL, ${now}, ${now}),
+            ('old', 'Old', 'archived', NULL, 4, 0, ${now}, ${now}, ${now})
+        `;
+        yield* sql`
+          INSERT INTO room_members (room_id, bot_id, position) VALUES
+            ('launch', 'ana', 0), ('launch', 'bo', 1), ('old', 'bo', 0), ('old', 'cy', 1)
+        `;
+        const entry = (
+          id: string,
+          roomId: string,
+          position: number,
+          author: string | null,
+          body: string,
+        ) =>
+          sql`
+            INSERT INTO entries (
+              id, room_id, position, kind, author_kind, author_bot_id, body_json, created_at,
+              updated_at
+            ) VALUES (
+              ${id}, ${roomId}, ${position}, 'message', ${author === null ? "operator" : "bot"},
+              ${author}, ${body}, ${now}, ${now}
+            )
+          `;
+        yield* entry("to-all", "launch", 0, null, message("Hello all.", { _tag: "everyone" }));
+        yield* entry("to-none", "launch", 1, null, message("Ship it.", { _tag: "bots", ids: [] }));
+        yield* entry("to-bo", "launch", 2, "ana", message("Bo?", { _tag: "bots", ids: ["bo"] }));
+        yield* entry("kickoff", "old", 0, "bo", message("Begin.", { _tag: "bots", ids: ["cy"] }));
+        const wakeOf = (
+          id: string,
+          roomId: string,
+          entryId: string,
+          reason: string,
+          { botId = "bo", hops = 0 }: { readonly botId?: string; readonly hops?: number } = {},
+        ) =>
+          sql`
+            INSERT INTO wakes (
+              id, bot_id, kind, priority, audience, audience_room_id, hops, payload_json, status,
+              source_entry_id, created_at, updated_at
+            ) VALUES (
+              ${id}, ${botId}, 'room', 0, 'room', ${roomId}, ${hops}, ${wake(entryId, reason)}, 'pending',
+              ${entryId}, ${now}, ${now}
+            )
+          `;
+        yield* wakeOf("w-all", "launch", "to-all", "everyone");
+        yield* wakeOf("w-none", "launch", "to-none", "host");
+        // Ana's message to Bo was a hop of a chain the room counted.
+        yield* wakeOf("w-bo", "launch", "to-bo", "mentioned", { hops: 2 });
+        yield* wakeOf("w-kickoff", "old", "kickoff", "kickoff", { botId: "cy" });
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(
+          yield* sql`
+            SELECT id, name, status, pinned, archived_at, bot_streak FROM rooms ORDER BY id
+          `,
+          [
+            {
+              id: "launch",
+              name: "Launch",
+              status: "active",
+              pinned: 1,
+              archived_at: null,
+              bot_streak: 0,
+            },
+            {
+              id: "old",
+              name: "Old",
+              status: "archived",
+              pinned: 0,
+              archived_at: now,
+              bot_streak: 0,
+            },
+          ],
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT room_id, bot_id, position FROM room_members ORDER BY room_id, position`,
+          [
+            { room_id: "launch", bot_id: "ana", position: 0 },
+            { room_id: "launch", bot_id: "bo", position: 1 },
+            { room_id: "old", bot_id: "bo", position: 0 },
+            { room_id: "old", bot_id: "cy", position: 1 },
+          ],
+        );
+        assert.deepStrictEqual(
+          yield* sql`
+            SELECT id, room_id FROM entries ORDER BY seq
+          `,
+          [
+            { id: "to-all", room_id: "launch" },
+            { id: "to-none", room_id: "launch" },
+            { id: "to-bo", room_id: "launch" },
+            { id: "kickoff", room_id: "old" },
+          ],
+        );
+        assert.deepStrictEqual(
+          yield* sql`
+            SELECT id, audience_room_id, source_entry_id, hops, payload_json FROM wakes ORDER BY id
+          `,
+          [
+            {
+              id: "w-all",
+              audience_room_id: "launch",
+              source_entry_id: "to-all",
+              hops: 0,
+              payload_json: wake("to-all", "everyone"),
+            },
+            {
+              id: "w-bo",
+              audience_room_id: "launch",
+              source_entry_id: "to-bo",
+              hops: 0,
+              payload_json: wake("to-bo", "addressed"),
+            },
+            {
+              id: "w-kickoff",
+              audience_room_id: "old",
+              source_entry_id: "kickoff",
+              hops: 0,
+              payload_json: wake("kickoff", "kickoff"),
+            },
+            {
+              id: "w-none",
+              audience_room_id: "launch",
+              source_entry_id: "to-none",
+              hops: 0,
+              payload_json: wake("to-none", "user"),
+            },
+          ],
+        );
+        assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);
+
+        // A room's members go on without the bot that hosted it.
+        yield* sql`DELETE FROM bots WHERE id = 'ana'`;
+        assert.deepStrictEqual(
+          yield* sql`SELECT bot_id FROM room_members WHERE room_id = 'launch'`,
+          [{ bot_id: "bo" }],
+        );
+      }).pipe(
+        Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);

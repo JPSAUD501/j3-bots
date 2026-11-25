@@ -405,21 +405,18 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
         ),
         drafts: { ...s.drafts, [key]: blankDraft },
       }));
-      // In a room, the first bot addressed answers, or the host when nobody is.
+      // In a room, the first bot addressed answers, or the first member when nobody is.
       const room = get().roster.find(
         (i) => i._tag === "room" && target._tag === "room" && i.room.id === target.roomId,
       );
+      const first = room?._tag === "room" ? room.room.members[0] : undefined;
       const addressed =
-        mentions?._tag === "everyone"
-          ? room?._tag === "room"
-            ? room.room.members[0]
-            : undefined
-          : mentions?.ids[0];
+        mentions === undefined || mentions._tag === "everyone" ? first : (mentions.ids[0] ?? first);
       const host =
         target._tag === "conversation"
           ? target.botId
           : room?._tag === "room"
-            ? (addressed ?? room.room.hostId)
+            ? (addressed ?? null)
             : null;
       if (host !== null)
         replyLater(
@@ -726,17 +723,15 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
     unarchiveRoom: (roomId) => {
       update((s) =>
         updateRoom(s, roomId, (room) =>
-          room.status === "active" || room.hostId === null || room.members.length < 2
+          room.status === "active" || room.members.length < 2
             ? room
             : {
                 id: room.id,
                 name: room.name,
-                hopLimit: room.hopLimit,
                 pinned: room.pinned,
                 createdAt: room.createdAt,
                 status: "active",
                 members: room.members,
-                hostId: room.hostId,
                 work: "none",
               },
         ),

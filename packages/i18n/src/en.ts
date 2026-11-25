@@ -445,7 +445,9 @@ export const en = {
   "tool.builtIn.doing": "Using one of its tools",
 
   "entry.needsUpdate": "This needs a newer version of the app.",
-  "notice.chainHops": "Bots stopped replying to each other here. The room waits for you.",
+  "notice.chainHops": "Bots stopped replying to each other here. They wait for you.",
+  "notice.chainRoom":
+    "Bots stopped answering each other after a long run without you. The room waits for you.",
   "notice.chainFanOut": "Not every bot was asked: one message may wake only a few.",
   "notice.undelivered": "A reply didn’t arrive",
   "notice.waitingInConversation": "{name} is waiting on you in its own conversation.",
@@ -656,10 +658,6 @@ export const en = {
   "room.archivedBadge": "Archived",
   "room.archiveSection": "Archive",
   "room.host": "Host",
-  "room.budget": "Replies between bots",
-  "room.hopLimit.one": "Bots may reply to each other once before the room waits for you.",
-  "room.hopLimit.other":
-    "Bots may reply to each other {count} times in a row before the room waits for you.",
 
   "room.edit": "Edit {name}",
   "room.archivedLine": "Archived. What was said stays, and it takes no messages.",
@@ -700,13 +698,6 @@ export const en = {
   "roomForm.host.hint": "Answers what you write without mentioning anyone.",
   "roomForm.host.pick": "Pick a host",
   "roomForm.host.required": "Pick the bot that hosts the room.",
-  "roomForm.hopLimit": "Bot replies in a row",
-  "roomForm.hopLimit.hint":
-    "How many times bots may reply to each other before the room waits for you.",
-  "roomForm.hopLimit.default": "Leave it empty for the default, {count}.",
-  "roomForm.hopLimit.fewer": "One reply fewer",
-  "roomForm.hopLimit.more": "One reply more",
-  "roomForm.hopLimit.invalid": "Use a whole number from 1 up.",
   "roomForm.cancel": "Cancel",
   "roomForm.create": "Create room",
   "roomForm.creating": "Creating…",

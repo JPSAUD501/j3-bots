@@ -15,6 +15,7 @@ import {
   ProviderId,
   type QuestionEntry,
   RoomId,
+  ROOM_CLOSING_AFTER,
 } from "@j3-bots/contracts";
 import { attachmentLimitViolation, type TurnId } from "@j3-bots/engine-t3";
 import type {
@@ -161,8 +162,9 @@ const LONGEST_ROOM_REASON: RoomReason = RoomReason.literals.reduce((longest, rea
 
 /** Why a bot is woken for a room, of several coalesced wakes: the one that asks the most of it. */
 const strongestReason = (reasons: ReadonlyArray<RoomReason>): RoomReason =>
-  (["host", "kickoff", "mentioned"] as const).find((reason) => reasons.includes(reason)) ??
-  "everyone";
+  (["kickoff", "addressed", "everyone", "user"] as const).find((reason) =>
+    reasons.includes(reason),
+  ) ?? "member";
 
 /** The room's queue as planning reads it. */
 const RoomQueue = Schema.Struct({
@@ -542,6 +544,7 @@ export const layer = Layer.effect(
                   // As long as it can render: the longest closing line,
                   // and a line counting entries left out.
                   reason: LONGEST_ROOM_REASON,
+                  closing: true,
                   omitted: Number.MAX_SAFE_INTEGER,
                   entries: [
                     {
@@ -1346,21 +1349,14 @@ export const layer = Layer.effect(
       };
     }, Effect.orDie);
 
-    /** The room as an envelope names it: its members in member order, and its host. */
+    /** The room as an envelope names it: its members in member order. */
     const roomHeader = Effect.fn("Pipeline.roomHeader")(function* (room: {
       readonly id: RoomId;
       readonly name: string;
-      readonly hostId: BotId;
       readonly members: ReadonlyArray<BotId>;
     }) {
       const members = yield* Effect.forEach(room.members, teammateRef);
-      const host = yield* teammateRef(room.hostId);
-      return {
-        id: room.id,
-        name: room.name,
-        members,
-        hostName: host.name,
-      } satisfies RoomWake["room"];
+      return { id: room.id, name: room.name, members } satisfies RoomWake["room"];
     });
 
     /** A room message as an envelope shows it, with the members it mentioned by name. */
@@ -1457,6 +1453,7 @@ export const layer = Layer.effect(
           kind: "room",
           room: header,
           reason: reasonOf(wakes),
+          closing: room.botStreak >= ROOM_CLOSING_AFTER,
           omitted: unseen.total - entries.length - waiting,
           entries: [first, ...rest],
         };

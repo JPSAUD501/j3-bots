@@ -16,7 +16,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import type * as Redacted from "effect/Redacted";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -28,6 +27,7 @@ import {
   connectProviders,
   download,
   EvalFailure,
+  keepEngine,
   logTail,
   pair,
   readyProvider,
@@ -40,12 +40,15 @@ import {
 const OUTPUT = "release-notes.md";
 
 /**
- * At most this many bot turns for the task. Its handoffs take four (host,
- * researcher, writer, host); six leaves the host one round of sending the
- * file back to the writer for a fix, which is the host's job. A bot woken with
- * nothing to do is caught by the bystander's wakes, not by this budget.
+ * At most this many bot turns for the task. The task names nobody, so it
+ * wakes every member; the messages it calls for (the counts, the file, the
+ * check) wake those they name, or, naming nobody, every other member, and
+ * what reaches a member while it waits shares one turn. Three turns per
+ * member covers that; past it, the members are answering each other for
+ * nothing. A bot with nothing to do is caught by the bystander's messages,
+ * not by this budget.
  */
-const TURN_BUDGET = 6;
+const TURN_BUDGET = 12;
 
 const TEAM = [
   {
@@ -70,7 +73,7 @@ const TEAM = [
   },
 ] as const;
 
-/** The member the task gives no part: any room wake of theirs is a wake with nothing to do. */
+/** The member the task gives no part: it reads the task, as every member does, and says nothing. */
 const BYSTANDER = "Cy";
 
 /** Fictional beta feedback for a fictional app: requests of four, three, two and one. */
@@ -214,16 +217,14 @@ const runOnce = Effect.fn("runOnce")(function* (
   const client = yield* connectClient(spec, token);
   const { bots, modelId } = yield* createTeam(client, database, model);
   yield* Console.log(`  ${bots.length} bots on ${modelId}; the task goes to the room`);
-  const [host, ...others] = bots;
   const bystander = bots.find((bot) => bot.profile.name === BYSTANDER);
-  if (host === undefined || bystander === undefined) {
+  if (bots.length !== TEAM.length || bystander === undefined) {
     return yield* new EvalFailure({ reason: "The team was not created" });
   }
   const room = yield* client["room.create"]({
     commandId: yield* command,
     name: "Release",
-    members: [host.id, ...others.map((bot) => bot.id)],
-    hostId: host.id,
+    members: bots.map((bot) => bot.id),
   });
 
   const started = yield* DateTime.now;
@@ -238,7 +239,7 @@ const runOnce = Effect.fn("runOnce")(function* (
   const minutes = Duration.toMinutes(DateTime.distance(started, yield* DateTime.now));
   const names = new Map<BotId, string>(bots.map((bot) => [bot.id, bot.profile.name]));
   const scored = yield* score(database, room.id, names, bystander.id);
-  // The last one, in case the host shared the file again after a fix.
+  // The last one, in case the lead had the file shared again after a fix.
   const shared = scored.files.findLast((file) => file.name === OUTPUT);
   const content =
     shared === undefined
@@ -248,7 +249,6 @@ const runOnce = Effect.fn("runOnce")(function* (
     _tag: "scored" as const,
     minutes,
     modelId,
-    hopLimit: room.hopLimit,
     score: scored,
     content,
   };
@@ -272,13 +272,13 @@ const failures = (run: Run): ReadonlyArray<string> => {
       onSome: (problems) => problems,
     }),
     ...(s.botTurns <= TURN_BUDGET ? [] : [`${s.botTurns} bot turns`]),
-    ...(s.bystanderWakes === 0 ? [] : [`${BYSTANDER} woken ${s.bystanderWakes} times`]),
+    ...(s.bystanderMessages === 0 ? [] : [`${BYSTANDER} said ${s.bystanderMessages} messages`]),
     ...(s.chainStopped === 0 ? [] : ["chain stopped"]),
   ];
 };
 
 const HEADER = [
-  `| Run | Result | File | Content | Bot turns | Turns | ${BYSTANDER}'s wakes | Chain stopped | Hops / limit | Minutes |`,
+  `| Run | Result | File | Content | Bot turns | Turns | ${BYSTANDER}'s messages | Chain stopped | Bot messages | Minutes |`,
   "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
 ];
 
@@ -301,15 +301,13 @@ const row = (index: number, outcome: Run | Broken) => {
     }),
     s.botTurns,
     s.sequence.join(" → "),
-    s.bystanderWakes,
+    s.bystanderMessages,
     s.chainStopped,
-    `${s.maxHops} / ${outcome.hopLimit}`,
+    s.botMessages,
     outcome.minutes.toFixed(1),
   ];
   return `| ${cells.join(" | ")} |`;
 };
-
-const EnginePin = Schema.fromJsonString(Schema.Struct({ version: Schema.String }));
 
 const main = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -323,24 +321,19 @@ const main = Effect.gen(function* () {
   const model = yield* Config.option(Config.String("J3_EVAL_MODEL"));
   const here = path.dirname(yield* path.fromFileUrl(new URL(import.meta.url)));
   const repo = path.resolve(here, "..", "..");
-  const { version } = yield* fs
-    .readFileString(path.join(repo, "engine.json"))
-    .pipe(Effect.flatMap(Schema.decodeUnknownEffect(EnginePin)));
 
   // Every run's home and log, and with them the stored connection, are gone when the eval ends.
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "j3-evals-room-" });
-  const engineDir = path.join(root, "engine");
-  const engineBinary = path.join(engineDir, "t3");
+  let engineBinary = Option.none<string>();
   const outcomes: Array<Run | Broken> = [];
   for (let index = 1; index <= runs; index++) {
     const home = path.join(root, `run-${index}`);
     const log = `${home}.log`;
-    const installed = yield* fs.exists(engineBinary);
     const spec: ServerSpec = {
       repo,
       home,
       port,
-      engineBinary: installed ? Option.some(engineBinary) : Option.none(),
+      engineBinary,
     };
     yield* Console.log(`Run ${index} of ${runs}`);
     const outcome: Run | Broken = yield* runOnce(spec, log, endpoint, model).pipe(
@@ -365,9 +358,8 @@ const main = Effect.gen(function* () {
       );
     }
     // The first run's engine serves the rest; each run's home, key included, goes now.
-    if (!installed) {
-      const fresh = path.join(home, "engine", "j3", "runtime", version);
-      if (yield* fs.exists(path.join(fresh, "t3"))) yield* fs.rename(fresh, engineDir);
+    if (Option.isNone(engineBinary)) {
+      engineBinary = yield* keepEngine(home, path.join(root, "engine"));
     }
     yield* removeHome(home);
     const line = row(index, outcome);

@@ -36,6 +36,7 @@ import Migration0028 from "./migrations/0028_connector_cards.ts";
 import Migration0029 from "./migrations/0029_connectors.ts";
 import Migration0030 from "./migrations/0030_held_tool_calls.ts";
 import Migration0031 from "./migrations/0031_teammate_pairs.ts";
+import Migration0032 from "./migrations/0032_rooms_without_host.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -73,13 +74,21 @@ const migrations = SqliteMigrator.fromRecord({
   "29_connectors": Migration0029,
   "30_held_tool_calls": Migration0030,
   "31_teammate_pairs": Migration0031,
+  "32_rooms_without_host": Migration0032,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });
 
+const ForeignKeys = Schema.Struct({ foreign_keys: Schema.Int });
+const Violation = Schema.Struct({ table: Schema.String, parent: Schema.String });
+
 /**
  * Applies, in one transaction, every migration of `loader` the database has
- * not recorded yet. Refused first, with nothing applied:
+ * not recorded yet. They run with foreign keys off, as SQLite's rebuild of a
+ * table needs: dropping a table that rows reference must not delete or
+ * change those rows. Before the transaction commits, every reference must
+ * name a row that exists, or nothing is applied. Foreign keys are back as the
+ * connection had them once it ends. Refused first, with nothing applied:
  *
  * - a database that records a migration `loader` does not have: a newer
  *   release of J3 Bots wrote it, and this one cannot know what it changed;
@@ -123,7 +132,42 @@ export const migrate = Effect.fn("migrate")(function* (loader: Migrator.Loader) 
       });
     }
   }
-  const applied = yield* SqliteMigrator.run({ loader });
+  const [enforced] = yield* SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ForeignKeys,
+    execute: () => sql`PRAGMA foreign_keys`,
+  })(undefined).pipe(Effect.orDie);
+  // A pragma that changes nothing inside a transaction, so set before it.
+  yield* sql`PRAGMA foreign_keys = OFF`;
+  // The migrator's own transaction nests in this one, which commits only
+  // once the references hold.
+  const applied = yield* sql
+    .withTransaction(
+      Effect.gen(function* () {
+        const applied = yield* SqliteMigrator.run({ loader });
+        const broken = yield* SqlSchema.findAll({
+          Request: Schema.Void,
+          Result: Violation,
+          execute: () => sql`PRAGMA foreign_key_check`,
+        })(undefined).pipe(Effect.orDie);
+        if (broken.length > 0) {
+          return yield* new Migrator.MigrationError({
+            kind: "Failed",
+            message: `The migrations left rows that reference rows that do not exist (${[
+              ...new Set(broken.map(({ table, parent }) => `${table} → ${parent}`)),
+            ].join(", ")}), so none was applied`,
+          });
+        }
+        return applied;
+      }),
+    )
+    .pipe(
+      Effect.ensuring(
+        enforced?.foreign_keys === 1
+          ? sql`PRAGMA foreign_keys = ON`.pipe(Effect.orDie)
+          : Effect.void,
+      ),
+    );
   if (applied.length > 0) {
     yield* Effect.logInfo("Applied database migrations").pipe(
       Effect.annotateLogs({ migrations: applied.map(([id, name]) => `${id}_${name}`) }),

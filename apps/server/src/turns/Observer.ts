@@ -42,6 +42,8 @@ import { Ids } from "../Ids.ts";
 import { ChangeLog } from "../persistence/ChangeLog.ts";
 import { Flag, json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
+import { liveRoom } from "../rooms/liveRoom.ts";
+import { RoomRouting } from "../rooms/RoomRouting.ts";
 import { hopCounts } from "./hopCounts.ts";
 import { liveTarget as liveTargetOf } from "./liveTarget.ts";
 import { DISPATCH_COLUMNS, DispatchRow, dispatchOfKey, Ledger, type WakeRow } from "./Ledger.ts";
@@ -63,6 +65,7 @@ import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
 import { rotationRequests } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
+import { workStopped } from "./workStopped.ts";
 import { Wakes } from "./Wakes.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 
@@ -282,8 +285,11 @@ export const layer = Layer.effect(
     const changes = yield* ChangeLog;
     const ids = yield* Ids;
     const workSteps = yield* WorkSteps;
+    const routing = yield* RoomRouting;
+    const roomOf = liveRoom(sql);
     const scope = yield* Effect.scope;
     const stops = stopTargets(sql);
+    const stoppedWork = workStopped(sql);
     const chains = hopCounts(sql);
     const { notify } = notices(sql, entries);
     const spoken = routineSpeech(sql, ids, changes);
@@ -917,6 +923,12 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     /** The host's own speech tool, delivered once per speech like a `say` without `done`. */
+    /**
+     * What the bot said through the engine rather than `say`: a message of
+     * its turn's audience, with no mentions. In a room it is a bot's message
+     * like any other (`RoomRouting.botMessage`): it counts, and wakes every
+     * other member.
+     */
     const hostSpeech = Effect.fn("Observer.hostSpeech")(function* (
       session: Watched,
       speech: {
@@ -953,6 +965,25 @@ export const layer = Layer.effect(
         UPDATE host_speech SET entry_id = ${entry.id}
         WHERE session_id = ${session.id} AND speech_id = ${speech.speechId}
       `;
+      if (target._tag === "room" && entry._tag === "message") {
+        const room = yield* roomOf(target.roomId);
+        if (Option.isSome(room)) {
+          const work = yield* stoppedWork({
+            sessionId: session.id,
+            botId: session.bot_id,
+            turnId: speech.turnId,
+            audience,
+          });
+          yield* routing.botMessage({
+            room: room.value,
+            botId: session.bot_id,
+            message: entry,
+            kickoff: false,
+            seq: work.seq,
+            stopped: work.stopped,
+          });
+        }
+      }
       yield* spoken.said({
         sessionId: session.id,
         botId: session.bot_id,

@@ -1,31 +1,40 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, MessageEntry, Room } from "@j3-bots/contracts";
+import { type BotId, type MessageEntry, type Room, ROOM_QUIET_AFTER } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
+import { Entries } from "../entries/Entries.ts";
 import type { DispatchSeq, RoomReason } from "../turns/model.ts";
+import { notices } from "../turns/notices.ts";
 import { type NewWake, Wakes } from "../turns/Wakes.ts";
 import type { LiveRoom } from "./liveRoom.ts";
 
 /** A room that takes messages. */
 export type ActiveRoom = Extract<Room, { readonly status: "active" }>;
 
-/** What became of a bot's room message's mentions. */
+/** What became of a bot's room message's wakes. */
 export type BotMessageRouted =
-  /** Each mentioned member has its wake, unless the work that spoke was stopped. */
+  /** The members it wakes have their wakes, unless the work that spoke was stopped. */
   | { readonly _tag: "routed" }
-  /** The wakes would pass the room's hop limit, so none was written. */
-  | { readonly _tag: "hop-limit"; readonly limit: number };
+  /**
+   * The room's bots had already said `ROOM_QUIET_AFTER` messages since the
+   * operator last wrote, so none was written.
+   */
+  | { readonly _tag: "quiet" };
 
 /**
- * Who a room message wakes (`docs/architecture/server.md`, Rooms). For the
- * operator's: the bots it mentions, in the order mentioned; every member, in
- * member order, for `everyone`; the host when it mentions nobody. For a
- * bot's: only the members its `say` lists in `mention`, within the room's hop
- * limit. Each wake is a `room` wake for the room, written in the caller's
- * transaction, the one that writes the message. The members then run one at a
- * time, oldest wake first, because a room runs one turn at a time
- * (`turns/Pipeline.ts`).
+ * Who a room message wakes (`docs/architecture/server.md`, Rooms), the
+ * operator's message and a bot's alike: the members it mentions, or every
+ * member but its author when it mentions nobody or everyone. Every member
+ * reads it in its next envelope either way. The room counts its bots'
+ * messages since the operator last wrote there, or a bot's kickoff started
+ * it (`rooms.bot_streak`); past `ROOM_QUIET_AFTER` a bot's message wakes
+ * nobody, and the first such message shows one `chain-stopped` notice in the
+ * room until the operator writes again. Each wake is a `room` wake for the room, written in the caller's
+ * transaction, the one that writes the message.
  */
 export class RoomRouting extends Context.Service<
   RoomRouting,
@@ -35,47 +44,73 @@ export class RoomRouting extends Context.Service<
       readonly message: MessageEntry;
     }) => Effect.Effect<void>;
     /**
-     * A bot spoke in a room and listed `mention`, members other than itself,
-     * already checked: in a `say`, or in the kickoff of a room it started,
-     * which `reason` tells the members. A wake it causes is `hops` hops from
-     * the operator (Budgets); `seq` is the dispatch that began the speaking
-     * turn's work, `null` for a turn no dispatch began.
+     * A bot spoke in a room: in a `say` or a `message_bot` to it, or in the
+     * `kickoff` of a room it started, which counts as the operator's word:
+     * a bot starts a room only in a turn they spoke in; or in the engine's
+     * own speech of a room turn. Its mentions are already checked to be
+     * other members. `seq` is the dispatch that began the speaking turn's
+     * work, `null` for a turn no dispatch began. A message of work the
+     * operator `stopped` is in the room, so it counts, but wakes nobody.
      */
     readonly botMessage: (input: {
       readonly room: LiveRoom;
       readonly botId: BotId;
       readonly message: MessageEntry;
-      readonly mention: ReadonlyArray<BotId>;
-      readonly reason: Extract<RoomReason, "kickoff" | "mentioned">;
-      readonly hops: number;
+      readonly kickoff: boolean;
       readonly seq: DispatchSeq | null;
+      readonly stopped: boolean;
     }) => Effect.Effect<BotMessageRouted>;
   }
 >()("@j3-bots/server/rooms/RoomRouting") {}
 
-/** Who the operator's room message wakes, in order, and why. */
-const addressed = (
-  room: ActiveRoom,
+/**
+ * The members a message wakes, in member order, and why: those it mentions,
+ * or, mentioning nobody or everyone, every member but its author.
+ */
+const woken = (
+  members: ReadonlyArray<BotId>,
   message: MessageEntry,
+  unaddressed: "user" | "member" | "kickoff",
 ): ReadonlyArray<readonly [BotId, RoomReason]> => {
+  const author = message.author._tag === "bot" ? message.author.botId : null;
+  const others = members.filter((id) => id !== author);
   const { mentions } = message;
-  if (mentions._tag === "everyone") return room.members.map((id) => [id, "everyone"]);
-  if (mentions.ids.length > 0) return mentions.ids.map((id) => [id, "mentioned"]);
-  return [[room.hostId, "host"]];
+  if (mentions._tag === "everyone") {
+    return others.map((id) => [id, unaddressed === "kickoff" ? "kickoff" : "everyone"] as const);
+  }
+  if (mentions.ids.length === 0) return others.map((id) => [id, unaddressed] as const);
+  return others
+    .filter((id) => mentions.ids.includes(id))
+    .map((id) => [id, unaddressed === "kickoff" ? "kickoff" : "addressed"] as const);
 };
 
 export const layer = Layer.effect(
   RoomRouting,
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
     const wakes = yield* Wakes;
+    const { notify } = notices(sql, yield* Entries);
+
+    const restart = (room: { readonly id: Room["id"] }) =>
+      sql`UPDATE rooms SET bot_streak = 0 WHERE id = ${room.id}`.pipe(Effect.orDie);
+
+    /** One more bot's message in the room, and how many there are now. */
+    const counted = SqlSchema.findOne({
+      Request: Schema.String,
+      Result: Schema.Struct({ bot_streak: Schema.Int }),
+      execute: (id) => sql`
+        UPDATE rooms SET bot_streak = bot_streak + 1 WHERE id = ${id} RETURNING bot_streak
+      `,
+    });
 
     const operatorMessage = Effect.fn("RoomRouting.operatorMessage")(function* (input: {
       readonly room: ActiveRoom;
       readonly message: MessageEntry;
     }) {
+      yield* restart(input.room);
       const audience = { _tag: "room", roomId: input.room.id } as const;
       yield* wakes.record(
-        addressed(input.room, input.message).map(([botId, reason]): NewWake => ({
+        woken(input.room.members, input.message, "user").map(([botId, reason]): NewWake => ({
           botId,
           kind: "room",
           audience,
@@ -92,29 +127,39 @@ export const layer = Layer.effect(
       readonly room: LiveRoom;
       readonly botId: BotId;
       readonly message: MessageEntry;
-      readonly mention: ReadonlyArray<BotId>;
-      readonly reason: Extract<RoomReason, "kickoff" | "mentioned">;
-      readonly hops: number;
+      readonly kickoff: boolean;
       readonly seq: DispatchSeq | null;
+      readonly stopped: boolean;
     }) {
-      if (input.mention.length === 0) return { _tag: "routed" } as const;
-      if (input.hops > input.room.hopLimit) {
-        return { _tag: "hop-limit", limit: input.room.hopLimit } as const;
-      }
       const audience = { _tag: "room", roomId: input.room.id } as const;
+      if (input.kickoff) yield* restart(input.room);
+      else {
+        const { bot_streak: streak } = yield* counted(input.room.id).pipe(Effect.orDie);
+        if (streak > ROOM_QUIET_AFTER) {
+          if (streak === ROOM_QUIET_AFTER + 1) {
+            yield* notify(input.botId, audience, { _tag: "chain-stopped", limit: "room" }, null);
+          }
+          return { _tag: "quiet" } as const;
+        }
+      }
+      if (input.stopped) return { _tag: "routed" } as const;
       // The speaking turn's work: a Stop that covers it, or the room's
-      // archival, leaves these wakes unwritten (`Wakes.record`).
+      // archival, leaves these wakes unwritten (`Wakes.record`). A room
+      // counts its own messages, so its wakes carry no hops: a teammate
+      // message a member sends from them starts a chain of its own.
       yield* wakes.record(
-        input.mention.map((botId): NewWake => ({
-          botId,
-          kind: "room",
-          audience,
-          payload: { _tag: "room", entryId: input.message.id, reason: input.reason },
-          sourceEntryId: input.message.id,
-          hops: input.hops,
-          retryOf: null,
-          cause: { _tag: "teammate", senderId: input.botId, audience, seq: input.seq },
-        })),
+        woken(input.room.members, input.message, input.kickoff ? "kickoff" : "member").map(
+          ([botId, reason]): NewWake => ({
+            botId,
+            kind: "room",
+            audience,
+            payload: { _tag: "room", entryId: input.message.id, reason },
+            sourceEntryId: input.message.id,
+            hops: 0,
+            retryOf: null,
+            cause: { _tag: "teammate", senderId: input.botId, audience, seq: input.seq },
+          }),
+        ),
       );
       return { _tag: "routed" } as const;
     });

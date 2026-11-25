@@ -227,8 +227,6 @@ export function sampleTeam(now: DateTime.Utc) {
     status: "active",
     // More than the header draws, so it counts the rest.
     members: [ids.juniper, ids.wren, ids.scout, ids.atlas, ids.otto],
-    hostId: ids.juniper,
-    hopLimit: 4,
     pinned: false,
     createdAt: ago(60 * 24 * 7),
     // Scout is working on it.

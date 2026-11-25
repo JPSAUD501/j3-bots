@@ -444,7 +444,9 @@ const sentences = {
   "tool.builtIn.doing": "Usando uma de suas ferramentas",
 
   "entry.needsUpdate": "Isto precisa de uma versão mais nova do app.",
-  "notice.chainHops": "Os bots pararam de responder uns aos outros aqui. A sala espera por você.",
+  "notice.chainHops": "Os bots pararam de responder uns aos outros aqui. Eles esperam por você.",
+  "notice.chainRoom":
+    "Os bots pararam de responder uns aos outros depois de muita conversa sem você. A sala espera por você.",
   "notice.chainFanOut": "Nem todos os bots foram chamados: uma mensagem só pode acordar alguns.",
   "notice.undelivered": "Uma resposta não chegou",
   "notice.waitingInConversation": "{name} está esperando por você na própria conversa.",
@@ -656,11 +658,6 @@ const sentences = {
   "room.archivedBadge": "Arquivada",
   "room.archiveSection": "Arquivar",
   "room.host": "Anfitrião",
-  "room.budget": "Respostas entre bots",
-  "room.hopLimit.one":
-    "Os bots podem responder uns aos outros uma vez antes de a sala esperar por você.",
-  "room.hopLimit.other":
-    "Os bots podem responder uns aos outros {count} vezes seguidas antes de a sala esperar por você.",
 
   "room.edit": "Editar {name}",
   "room.archivedLine": "Arquivada. O que foi dito fica, e ela não recebe mensagens.",
@@ -703,13 +700,6 @@ const sentences = {
   "roomForm.host.hint": "Responde o que você escreve sem mencionar ninguém.",
   "roomForm.host.pick": "Escolha um anfitrião",
   "roomForm.host.required": "Escolha o bot que é o anfitrião da sala.",
-  "roomForm.hopLimit": "Respostas seguidas entre bots",
-  "roomForm.hopLimit.hint":
-    "Quantas vezes os bots podem responder uns aos outros antes de a sala esperar por você.",
-  "roomForm.hopLimit.default": "Deixe vazio para usar o padrão, {count}.",
-  "roomForm.hopLimit.fewer": "Uma resposta a menos",
-  "roomForm.hopLimit.more": "Uma resposta a mais",
-  "roomForm.hopLimit.invalid": "Use um número inteiro a partir de 1.",
   "roomForm.cancel": "Cancelar",
   "roomForm.create": "Criar sala",
   "roomForm.creating": "Criando…",

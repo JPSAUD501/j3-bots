@@ -499,7 +499,6 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         ? addresseeLine(
             addresseeOf(
               addressing?.mentions ?? null,
-              item.room.hostId,
               (botId) => bots.find((candidate) => candidate.id === botId)?.profile.name,
               i18n,
             ),
