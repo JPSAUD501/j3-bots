@@ -558,7 +558,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           ]),
         ),
       })),
-    createBot: ({ name, primary, avatar }) => {
+    createBot: ({ name, primary, hidden, avatar }) => {
       // As on a server: with no model to give the bot, it is refused.
       if (!hasDefaultModel(get().engine)) {
         return Promise.resolve({
@@ -590,7 +590,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
           primary,
           browser: false,
           pinned: false,
-          hidden: false,
+          hidden: hidden ?? false,
           sectionId: null,
           state: canSpeak
             ? { _tag: "thinking", since: now(), stalled: false, quietSince: null }
@@ -726,8 +726,8 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
             : item;
         }),
       })),
-    pinRoom: (roomId, pinned) =>
-      update((s) => updateRoom(s, roomId, (room) => ({ ...room, pinned }))),
+    placeRoom: (roomId, placement) =>
+      update((s) => updateRoom(s, roomId, (room) => ({ ...room, ...placement }))),
     createSection: (name, botId) => {
       const id = SectionId.make(`local-section-${++created}`);
       update((s) => {
@@ -782,6 +782,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
                 id: room.id,
                 name: room.name,
                 pinned: room.pinned,
+                hidden: room.hidden,
                 createdAt: room.createdAt,
                 status: "active",
                 members: room.members,

@@ -43,8 +43,9 @@ import { BetweenBots } from "./PairRow";
 import { ReorderList, ReorderRow } from "./ReorderList";
 import {
   type FoldedSections,
-  HiddenBots,
+  HiddenConversations,
   HiddenRow,
+  memberAvatarsOf,
   PinnedBots,
   SectionBlock,
 } from "./RosterGroups";
@@ -155,9 +156,9 @@ interface RosterProps {
  * Answers: who do I have, who needs me, what is each of them doing. Without
  * a search it draws the pinned bots apart, then the rooms and the bots in no
  * section, then each section, then the pairs of bots that wrote each other
- * ("Between bots"), then a row that opens the hidden bots; a search lists
- * every match, hidden bots included, as one list, then the pairs either of
- * whose bots matches.
+ * ("Between bots"), then a row that opens the hidden bots and rooms; a
+ * search lists every match, hidden ones included, as one list, then the
+ * pairs either of whose bots matches.
  */
 export function Roster({
   items,
@@ -214,14 +215,7 @@ export function Roster({
             avatarRef={avatars.ref(key)}
             selected={sameKey(item, selected)}
             render={rowLink(item)}
-            memberAvatars={
-              item._tag === "room"
-                ? item.room.members.flatMap((id) => {
-                    const bot = bots.get(id);
-                    return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
-                  })
-                : []
-            }
+            memberAvatars={memberAvatarsOf(item, bots)}
           />
         </WithMenu>
       </ReorderRow>
@@ -242,12 +236,16 @@ export function Roster({
   let body: ReactNode;
   if (showHidden && !searching) {
     body = (
-      <HiddenBots
+      <HiddenConversations
         items={arranged.hidden}
         selected={selected}
         rowLink={rowLink}
         onBack={() => setShowHidden(false)}
-        onUnhide={(botId) => intents.placeBot(botId, { hidden: false })}
+        onShow={(item) =>
+          item._tag === "bot"
+            ? intents.placeBot(item.bot.id, { hidden: false })
+            : intents.placeRoom(item.room.id, { hidden: false })
+        }
       />
     );
   } else if (searching) {

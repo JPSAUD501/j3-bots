@@ -12,7 +12,7 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, usePairs, useReadable } from "@j3-bots/client-runtime/react";
 import { pairTitle } from "@j3-bots/client-runtime/wording";
-import type { PairBotIds, RosterItemKey, Section } from "@j3-bots/contracts";
+import type { PairBotIds, RosterItem, RosterItemKey, Section } from "@j3-bots/contracts";
 import { layout } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -38,6 +38,7 @@ import { Connecting, ConnectionLine } from "../components/ConnectionLine.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { StateMark } from "../components/States.tsx";
 import { BotMenu, type PressedBot } from "../components/BotMenu.tsx";
+import { type PressedRoom, RoomMenu } from "../components/RoomMenu.tsx";
 import { Menu, type MenuAnchor, type MenuEntry } from "../components/Menu.tsx";
 import { PinnedBots } from "../components/PinnedBots.tsx";
 import {
@@ -178,9 +179,9 @@ interface PressedPair {
  * status bar, what the operator arranged: the pinned bots as a band of large
  * avatars, then the rows in no section, then each section, then the pairs of
  * bots that wrote each other under "Between bots", then the way to the
- * hidden bots. A search lists only what matches, hidden bots too, as rows,
+ * hidden bots and rooms. A search lists only what matches, hidden ones too, as rows,
  * then the pairs either of whose bots matches. A long press on a bot, a
- * pair or a section's header opens its menu.
+ * room, a pair or a section's header opens its menu.
  */
 function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const { t } = useI18n();
@@ -217,7 +218,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const searching = searched !== "";
   // Beside a conversation the roster is its column's width.
   const width = sideBySide ? layout.rosterWidth : windowWidth;
-  // A search finds hidden bots too, in the order the web lists what it finds.
+  // A search finds hidden bots and rooms too, in the order the web lists what it finds.
   // Each entry is as tall as its text needs at the operator's font size, once the lines are read.
   const lines = useTextLines();
   const sizes = lines === null ? null : rosterSizes(lines);
@@ -246,6 +247,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const [pressed, setPressed] = useState<PressedBot | null>(null);
   const [pressedSection, setPressedSection] = useState<PressedSection | null>(null);
   const [pressedPair, setPressedPair] = useState<PressedPair | null>(null);
+  const [pressedRoom, setPressedRoom] = useState<PressedRoom | null>(null);
   const [leaving, setLeaving] = useState<ReadonlySet<string>>(new Set());
   const listed = new Set(entries?.map((entry) => entry.key));
   if ([...leaving].some((key) => !listed.has(key))) {
@@ -371,6 +373,11 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
         onClose={() => setPressed(null)}
         onLeave={(item) => setLeaving((now) => new Set(now).add(rosterKeyText(rosterKeyOf(item))))}
       />
+      <RoomMenu
+        pressed={pressedRoom}
+        onClose={() => setPressedRoom(null)}
+        onLeave={(item) => setLeaving((now) => new Set(now).add(rosterKeyText(rosterKeyOf(item))))}
+      />
       <Menu
         anchor={pressedSection?.anchor ?? null}
         onClose={() => setPressedSection(null)}
@@ -453,12 +460,11 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                             selected={selected}
                             avatarRef={avatar}
                             onOpen={() => openConversation(key)}
-                            {...(item._tag === "bot"
-                              ? {
-                                  onMenu: (anchor: MenuAnchor) =>
-                                    setPressed({ item, from: "row", anchor }),
-                                }
-                              : {})}
+                            onMenu={(anchor) =>
+                              item._tag === "bot"
+                                ? setPressed({ item, from: "row", anchor })
+                                : setPressedRoom({ item, anchor })
+                            }
                           />
                         )}
                       </RowLift>
@@ -501,7 +507,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                 case "hidden":
                   return (
                     <HiddenRow
-                      bots={entry.bots}
+                      items={entry.items}
                       height={entry.height}
                       onOpen={() => navigation.navigate("hidden")}
                     />
@@ -555,21 +561,21 @@ function PairMenu({
 }
 
 /**
- * The way to the hidden bots, at the end of the list: how many there are,
+ * The way to the hidden bots and rooms, at the end of the list: how many there are,
  * and a chevron to the screen that lists them.
  */
 function HiddenRow({
-  bots,
+  items,
   height,
   onOpen,
 }: {
-  readonly bots: ReadonlyArray<BotItem>;
+  readonly items: ReadonlyArray<RosterItem>;
   readonly height: number;
   readonly onOpen: () => void;
 }) {
   const { t, plural } = useI18n();
-  const count = bots.length;
-  const unread = bots.some((item) => item.unread);
+  const count = items.length;
+  const unread = items.some((item) => item.unread);
   return (
     <PressScale
       depth="row"

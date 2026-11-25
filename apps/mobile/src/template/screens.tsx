@@ -14,7 +14,7 @@ import { Cpu, ShieldAlert } from "lucide-react-native";
 import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChoiceRow, Problem, Quiet, Section } from "../components/form.tsx";
+import { ChoiceRow, Problem, Quiet, Section, SwitchRow } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { type Screens, useReplaceWithConversation } from "../navigation.tsx";
@@ -167,7 +167,7 @@ export function ShareTemplateScreen({
  * Creating a bot from the template file the operator opened, which is
  * untrusted: they see all of it, the model it runs on here and the
  * permission mode it starts with, capped by the default unless they choose
- * more, and nothing is created until they press Create. Once it exists, its
+ * more, and whether it starts hidden; nothing is created until they press Create. Once it exists, its
  * conversation opens in place of this screen. Leaving lets the file go.
  */
 export function NewFromTemplateScreen({
@@ -211,6 +211,7 @@ function TemplateForm({
   const openConversation = useReplaceWithConversation();
   const start = templateStart(template, engineStatus._tag === "ready" ? engineStatus.value : null);
   const [picked, setPicked] = useState<PermissionMode | null>(null);
+  const [hidden, setHidden] = useState(false);
   const [state, setState] = useState<"editing" | "creating" | "schedule" | "failed">("editing");
   const mode = picked ?? start.permissionMode;
   const { name } = template.profile;
@@ -249,7 +250,7 @@ function TemplateForm({
               disabled={submission === null || !connected}
               held={creating}
               onPress={() => {
-                if (submission !== null) create(submission);
+                if (submission !== null) create({ ...submission, ...(hidden ? { hidden } : {}) });
               }}
             />
           </View>
@@ -311,6 +312,15 @@ function TemplateForm({
               );
             })}
           </View>
+        </Section>
+        <Section open>
+          <SwitchRow
+            label={t("visibility.hide")}
+            hint={t("visibility.hide.hint")}
+            value={hidden}
+            readOnly={creating}
+            onChange={setHidden}
+          />
         </Section>
       </TemplatePreview>
     </TemplateScreen>

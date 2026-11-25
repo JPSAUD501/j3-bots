@@ -19,7 +19,14 @@ import { View } from "react-native";
 import { Text } from "../text.tsx";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { Connecting } from "../components/ConnectionLine.tsx";
-import { ChoiceRow, FormScreen, Problem, TextField, useDiscardGuard } from "../components/form.tsx";
+import {
+  ChoiceRow,
+  FormScreen,
+  Problem,
+  SwitchRow,
+  TextField,
+  useDiscardGuard,
+} from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { type Screens, useReplaceWithConversation } from "../navigation.tsx";
 import { useBots } from "../presentation.tsx";
@@ -128,8 +135,8 @@ function RoomFormFor({
 }
 
 /**
- * A room's name, its bots, and how many replies in a row bots may trade
- * before the room waits for the operator. What is missing is said once
+ * A room's name, its bots, and, unless it is being unarchived, whether it is
+ * hidden from the roster's list. What is missing is said once
  * the operator tries to send; a refusal from the server is said under the
  * form, or beside the bots when they are the reason, and keeps what was
  * typed. What the operator left alone follows the room as the server has it;
@@ -259,6 +266,17 @@ function RoomForm({
           </Text>
         )}
       </View>
+
+      {/* Unarchiving asks only for what the room needs to take messages again. */}
+      {mode._tag !== "unarchive" && (
+        <SwitchRow
+          label={t("visibility.hide")}
+          hint={t("visibility.hide.hint")}
+          value={values.hidden}
+          readOnly={busy}
+          onChange={(hidden) => form.change({ ...values, hidden })}
+        />
+      )}
     </FormScreen>
   );
 }

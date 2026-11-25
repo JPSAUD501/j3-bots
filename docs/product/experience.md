@@ -157,10 +157,11 @@ Answers: who do I have, who needs me, what is each of them doing.
 - Rows that need the operator (a pending question or approval, an unread result) come first and are marked.
 - Pinned bots stay at the top, as large avatars with their names; a room keeps its own pin, at the top of the list.
 - The operator can group bots in named sections, in an order they choose, each one folded or open. A bot is in one section at most, and deleting a section never deletes its bots: they return to the list.
-- Hidden bots keep running. They are left out of the list and reachable through search and through a "Hidden conversations" row at its end, which says how many there are and whether one has something unread, and lists them, each with Unhide.
+- Hidden bots and rooms keep running, and still notify. They are left out of the list and reachable through search, through everything that names them (a notification, a mention, a notice, a teammate list), and through a "Hidden conversations" row at its end, which says how many there are and whether one has something unread, and lists them, each with Show. A hidden one's details say it is hidden, with Show.
+- Whether a bot or room is hidden is set when it is made and when it is edited: "Hide from the list", off unless the operator turns it on, in New bot, New bot from a template, Edit, and the room's form. A bot that builds a team may hide the helpers it makes that the operator did not ask to see, and say so; once the operator has shown or hidden something, or made it themselves, no bot changes that.
 - After the bots and rooms, a "Between bots" section lists each pair of bots that wrote each other, latest first: both avatars overlapped, "Scout and Wren", the last message with who said it ("Wren: …") and its time. It is not one of the operator's sections, and its rows are never unread, pinned or notified. A pair shows only while both bots are in the list, neither hidden nor deleted; the other bot's details still reach it.
-- Each bot and room has a menu (right-click, the "…" or a long press) to mark it read or unread, pin it, move it to a section, make it the primary bot, hide it, and reach its details. The primary bot's avatar carries a small star wherever it appears.
-- Search finds bots, rooms and messages, and pairs of bots by either name, a hidden bot's too.
+- Each bot and room has a menu (right-click, the "…" or a long press) to mark it read or unread, pin it, move it to a section, make it the primary bot, hide or show it, and reach its details. The primary bot's avatar carries a small star wherever it appears.
+- Search finds bots, rooms and messages, and pairs of bots by either name, hidden ones too.
 - New bot and new room are one action each, and a new bot can start from a template file.
 
 ### Conversation

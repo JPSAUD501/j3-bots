@@ -67,7 +67,7 @@ export const en = {
   "roster.replacePrimary.confirm": "Make {name} primary",
   "roster.replacePrimary.cancel": "Keep {previous}",
   "roster.hide": "Hide",
-  "roster.unhide": "Unhide",
+  "roster.unhide": "Show",
   "roster.more": "More",
   "roster.openDetails": "Details",
   "roster.changeFailed": "That change didn’t save. Try again.",
@@ -87,7 +87,7 @@ export const en = {
   "roster.menu.back": "Back",
   "roster.hidden.count.one": "{count} hidden conversation",
   "roster.hidden.count.other": "{count} hidden conversations",
-  "roster.hidden.unhideName": "Unhide {name}",
+  "roster.hidden.unhideName": "Show {name}",
   "roster.section": "Section {name}",
   "roster.section.count.one": "{count} bot",
   "roster.section.count.other": "{count} bots",
@@ -1207,6 +1207,11 @@ export const en = {
   "newBot.title": "New bot",
   "newBot.body": "Give it a name. It will ask what you want it for, one question at a time.",
   "newBot.cancel": "Cancel",
+
+  "visibility.hide": "Hide from the list",
+  "visibility.hide.hint":
+    "It goes to Hidden conversations, which you can open at any time. It keeps working and notifying you.",
+  "visibility.notice": "This conversation is hidden from your list.",
 
   "roster.newFromTemplate": "New bot from a template",
   "details.shareTemplate": "Share as template…",

@@ -115,6 +115,17 @@ export function SectionEmpty({ height }: { readonly height: number }) {
  */
 export function BetweenHeader({ height }: { readonly height: number }) {
   const { t } = useI18n();
+  return <GroupHeader label={t("pairs.section")} height={height} />;
+}
+
+/** A header in a section header's place and type, over rows that are grouped but not arranged. */
+export function GroupHeader({
+  label,
+  height,
+}: {
+  readonly label: string;
+  readonly height: number;
+}) {
   return (
     <View className="mx-2 flex-row items-end px-3 pb-2" style={{ height }}>
       <Text
@@ -122,7 +133,7 @@ export function BetweenHeader({ height }: { readonly height: number }) {
         numberOfLines={1}
         className="min-w-0 shrink text-sm font-semibold text-muted-foreground"
       >
-        {t("pairs.section")}
+        {label}
       </Text>
     </View>
   );

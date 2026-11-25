@@ -12,6 +12,8 @@ export interface RoomFormValues {
   readonly name: string;
   /** In the order picked, the order the room lists them in. */
   readonly members: ReadonlyArray<BotId>;
+  /** Among the hidden conversations rather than in the roster's list. */
+  readonly hidden: boolean;
 }
 
 export type RoomFormProblem = "name" | "members";
@@ -39,6 +41,7 @@ export const roomFormTarget = (mode: RoomFormMode): string =>
 export const blankRoomForm: RoomFormValues = {
   name: "",
   members: [],
+  hidden: false,
 };
 
 const sameOrder = (a: ReadonlyArray<BotId>, b: ReadonlyArray<BotId>) =>
@@ -48,6 +51,7 @@ const sameOrder = (a: ReadonlyArray<BotId>, b: ReadonlyArray<BotId>) =>
 export const roomFormOf = (room: Room): RoomFormValues => ({
   name: room.name,
   members: room.members,
+  hidden: room.hidden,
 });
 
 /**
@@ -89,6 +93,7 @@ export function followRoom(
     values: {
       name: follows("name") ? live.name : values.name,
       members: follows("members") ? live.members : values.members,
+      hidden: follows("hidden") ? live.hidden : values.hidden,
     },
   };
 }
@@ -116,14 +121,21 @@ type Checked<A> =
   | { readonly _tag: "ready"; readonly value: A }
   | { readonly _tag: "invalid"; readonly problems: ReadonlySet<RoomFormProblem> };
 
-/** The new room the form describes. */
+/** The new room the form describes; a visible one says nothing of it, as the server's default. */
 export function roomDraft(values: RoomFormValues): Checked<RoomDraft> {
   const problems = roomFormProblems(values);
   if (problems.size > 0) return { _tag: "invalid", problems };
-  return { _tag: "ready", value: { name: values.name.trim(), members: values.members } };
+  return {
+    _tag: "ready",
+    value: {
+      name: values.name.trim(),
+      members: values.members,
+      ...(values.hidden ? { hidden: true } : {}),
+    },
+  };
 }
 
-type RoomField = "name" | "members";
+type RoomField = "name" | "members" | "hidden";
 
 /**
  * Whether `a` and `b` say the same of `field`, as the server reads it: the
@@ -135,13 +147,15 @@ function sameField(field: RoomField, a: RoomFormValues, b: RoomFormValues): bool
       return a.name.trim() === b.name.trim();
     case "members":
       return sameOrder(a.members, b.members);
+    case "hidden":
+      return a.hidden === b.hidden;
   }
 }
 
 /** The fields where `values` say something else than `from`, as the server reads them. */
 function changedFields(from: RoomFormValues, values: RoomFormValues): ReadonlySet<RoomField> {
   const changed = new Set<RoomField>();
-  for (const field of ["name", "members"] as const) {
+  for (const field of ["name", "members", "hidden"] as const) {
     if (!sameField(field, from, values)) changed.add(field);
   }
   return changed;
@@ -169,6 +183,7 @@ export function roomChanges(room: RoomFormValues, values: RoomFormValues): Check
     value: {
       ...(changed.has("name") ? { name: values.name.trim() } : {}),
       ...(changed.has("members") ? { members: values.members } : {}),
+      ...(changed.has("hidden") ? { hidden: values.hidden } : {}),
     },
   };
 }

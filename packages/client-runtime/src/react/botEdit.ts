@@ -27,6 +27,8 @@ export interface BotEdit {
   readonly avatar: Avatar;
   readonly model: ModelChoice;
   readonly permissionMode: PermissionMode;
+  /** Among the hidden conversations rather than in the roster's list. */
+  readonly hidden: boolean;
   /** Whether a save is under way; the form then shows what it sends and takes no edit. */
   readonly saving: boolean;
   readonly fieldProblem: (field: ProfileField) => ProfileFieldProblem | null;
@@ -44,12 +46,14 @@ export interface BotEdit {
   /** What Save sends, or null while it cannot. */
   readonly changes: BotChanges | null;
   readonly editText: (field: ProfileField, value: string) => void;
-  readonly edit: (change: Partial<Pick<BotEdits, "avatar" | "model" | "permissionMode">>) => void;
+  readonly edit: (
+    change: Partial<Pick<BotEdits, "avatar" | "model" | "permissionMode" | "hidden">>,
+  ) => void;
 }
 
 /**
- * The edit of a bot's name, title, avatar and job, its model and its permission mode,
- * as a form holds it. Save sends only what changed. A save that fails leaves
+ * The edit of a bot's name, title, avatar and job, its model, its permission mode
+ * and whether it is hidden, as a form holds it. Save sends only what changed. A save that fails leaves
  * the edits in place, and its problem shows until the operator edits again.
  * Fields the operator left alone follow the bot as the server has it.
  */
@@ -101,6 +105,7 @@ export function useBotEdit(options: {
     avatar: edits.avatar ?? shown.profile.avatar,
     model,
     permissionMode,
+    hidden: edits.hidden ?? shown.hidden,
     saving,
     fieldProblem: (field) =>
       patch._tag !== "invalid" || !patch.fields.has(field)

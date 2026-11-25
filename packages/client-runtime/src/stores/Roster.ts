@@ -40,12 +40,20 @@ const pinned = (item: RosterItem) => (item._tag === "bot" ? item.bot.pinned : it
 const nameOf = (item: RosterItem) => (item._tag === "bot" ? item.bot.profile.name : item.room.name);
 
 /**
- * The roster as every client lists it: hidden bots left out, pinned rows on
- * top, then the rows that need the operator, then the most recently active.
+ * Whether the bot or room is hidden: out of the roster's rows, among the
+ * hidden conversations, still running and notifying.
+ */
+export const isHidden = (item: RosterItem): boolean =>
+  item._tag === "bot" ? item.bot.hidden : item.room.hidden;
+
+/**
+ * The roster as every client lists it: hidden bots and rooms left out, pinned
+ * rows on top, then the rows that need the operator, then the most recently
+ * active.
  */
 export const rosterRows = (items: ReadonlyArray<RosterItem>): ReadonlyArray<RosterItem> =>
   items
-    .filter((item) => item._tag === "room" || !item.bot.hidden)
+    .filter((item) => !isHidden(item))
     .toSorted(
       (a, b) =>
         Number(pinned(b)) - Number(pinned(a)) ||

@@ -62,6 +62,7 @@ import type {
 import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { PairView } from "../components/PairConversation";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
+import type { RoomPlacement } from "../components/RosterMenu";
 import type { TimelineIntents } from "../components/Timeline";
 import type { SecretsIntents } from "../components/secrets/parts";
 
@@ -157,10 +158,14 @@ export interface ShellData {
 /** A pairing code for another device and where it reaches the server, or why there is none. */
 type PairingStart = ({ readonly _tag: "started" } & PairingOffer) | { readonly _tag: "failed" };
 
-/** A bot to create: its name, whether it becomes the primary one, and its look, or the server's choice. */
+/**
+ * A bot to create: its name, whether it becomes the primary one or starts
+ * hidden (visible when left out), and its look, or the server's choice.
+ */
 interface NewBot {
   readonly name: string;
   readonly primary: boolean;
+  readonly hidden?: boolean;
   readonly avatar?: AvatarChoice;
 }
 
@@ -209,7 +214,8 @@ export interface ShellIntents extends TimelineIntents {
    * when the server says it did; the shell says so when it did not.
    */
   readonly placeBot: (botId: BotId, placement: BotPlacement) => void;
-  readonly pinRoom: (roomId: RoomId, pinned: boolean) => void;
+  /** Pins or hides a room, as `placeBot` does a bot. */
+  readonly placeRoom: (roomId: RoomId, placement: RoomPlacement) => void;
   /** Resolves with the new section's id, or null when it was not made. */
   readonly createSection: (name: string, botId: BotId | null) => Promise<SectionId | null>;
   readonly updateSection: (sectionId: SectionId, changes: SectionChanges) => void;

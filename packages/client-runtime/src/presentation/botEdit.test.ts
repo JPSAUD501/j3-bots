@@ -38,11 +38,23 @@ describe("botPatch", () => {
         avatar: { shape: "dome", color: "cobalt" },
         model: { ...claude },
         permissionMode: "supervised",
+        hidden: false,
       }),
     ).toEqual({ _tag: "unchanged" });
     expect(botPatch(scout, { ...noBotEdits, name: "  ", title: "Research" })).toEqual({
       _tag: "invalid",
       fields: new Set(["name"]),
+    });
+  });
+
+  it("sends whether the bot is hidden only when the operator changed it", () => {
+    expect(botPatch(scout, { ...noBotEdits, hidden: true })).toEqual({
+      _tag: "changes",
+      changes: { hidden: true },
+    });
+    // Hidden elsewhere meanwhile: the switch already says what the bot is.
+    expect(botPatch({ ...scout, hidden: true }, { ...noBotEdits, hidden: true })).toEqual({
+      _tag: "unchanged",
     });
   });
 

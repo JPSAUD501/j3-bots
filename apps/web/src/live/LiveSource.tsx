@@ -890,8 +890,9 @@ function LiveShell({
   const detailsBotId: BotId | null = search.details === true && params.botId ? params.botId : null;
 
   const connection = useConnection();
-  // The whole roster, hidden bots included: the shell leaves hidden bots out
-  // of its list, and still shows one opened from a search or a notification.
+  // The whole roster, hidden bots and rooms included: the shell leaves them
+  // out of its list, and still shows one opened from a search, a notification
+  // or a mention.
   const listedRoster = useReadable(j3.roster);
   const roster = listedRoster._tag === "ready" ? listedRoster.value : null;
   const sections = useReadable(j3.sections);
@@ -1112,7 +1113,7 @@ function LiveShell({
     // about what another window has in view, which this one cannot know.
     // That is accepted: it is brief, and the click opens what is already open.
     if (isInView() && shown !== null && targetKey(notification.target) === targetKey(shown)) return;
-    // Names come from the whole roster, hidden bots included: the shell lists
+    // Names come from the whole roster, hidden ones included: the shell lists
     // bots for what it draws, below this source. Before the roster first
     // loads there is no name to show, so the notification is dropped on
     // purpose; the entry still shows as unread once the roster loads.
@@ -1531,7 +1532,7 @@ function LiveShell({
     markRosterRead: (asked, through) => void j3.markRosterRead(asked, through).then(rosterChanged),
     markUnread: (asked) => void j3.markUnread(asked).then(rosterChanged),
     placeBot: (botId, placement) => void j3.placeBot(botId, placement).then(rosterChanged),
-    pinRoom: (roomId, pinned) => void j3.updateRoom(roomId, { pinned }).then(rosterChanged),
+    placeRoom: (roomId, placement) => void j3.updateRoom(roomId, placement).then(rosterChanged),
     createSection: (name, botId) =>
       j3.createSection(name, botId).then((result) => {
         rosterChanged(result);

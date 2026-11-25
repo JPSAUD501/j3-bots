@@ -2,6 +2,8 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import {
+  type Avatar,
+  type Bot,
   type BotId,
   type RosterItem,
   type RosterItemKey,
@@ -14,7 +16,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, EyeOffIcon } from "lucide-react";
 import { type ComponentProps, type ReactElement, type ReactNode, useState } from "react";
-import { useI18n } from "../app/context";
+import { useBots, useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
 import { LiveBotAvatar } from "./avatar/mood";
@@ -23,8 +25,22 @@ import { type RosterMenuContext, RosterItemRows, SectionRowsOf, WithMenu } from 
 import { RosterRow } from "./RosterRow";
 import { Button } from "./ui/button";
 
-const isSelected = (item: BotItem, selected: RosterItemKey | null) =>
-  selected?._tag === "bot" && selected.botId === item.bot.id;
+const isSelected = (item: RosterItem, selected: RosterItemKey | null) =>
+  item._tag === "bot"
+    ? selected?._tag === "bot" && selected.botId === item.bot.id
+    : selected?._tag === "room" && selected.roomId === item.room.id;
+
+/** A room row's members' avatars, for the bots still there; none for a bot row. */
+export const memberAvatarsOf = (
+  item: RosterItem,
+  bots: ReadonlyMap<BotId, Bot>,
+): ReadonlyArray<{ readonly id: BotId; readonly avatar: Avatar }> =>
+  item._tag === "room"
+    ? item.room.members.flatMap((id) => {
+        const bot = bots.get(id);
+        return bot ? [{ id: bot.id, avatar: bot.profile.avatar }] : [];
+      })
+    : [];
 
 const FOLDED_KEY = "j3:roster:folded";
 const Folded = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -261,12 +277,12 @@ export function SectionBlock({
   );
 }
 
-/** The last row of the roster: how many bots are hidden, and the way to them. */
+/** The last row of the roster: how many bots and rooms are hidden, and the way to them. */
 export function HiddenRow({
   items,
   onOpen,
 }: {
-  items: ReadonlyArray<BotItem>;
+  items: ReadonlyArray<RosterItem>;
   onOpen: () => void;
 }) {
   const { t } = useI18n();
@@ -290,21 +306,22 @@ export function HiddenRow({
   );
 }
 
-/** The hidden bots, each still a way into its conversation, and each with Unhide. */
-export function HiddenBots({
+/** The hidden bots and rooms, each still a way into its conversation, and each with Show. */
+export function HiddenConversations({
   items,
   selected,
   rowLink,
   onBack,
-  onUnhide,
+  onShow,
 }: {
-  items: ReadonlyArray<BotItem>;
+  items: ReadonlyArray<RosterItem>;
   selected: RosterItemKey | null;
   rowLink: (item: RosterItem) => ReactElement;
   onBack: () => void;
-  onUnhide: (botId: BotId) => void;
+  onShow: (item: RosterItem) => void;
 }) {
   const { t } = useI18n();
+  const bots = useBots();
   return (
     <section aria-labelledby="roster-hidden-title" className="appear">
       <div className="flex items-center gap-1 pb-1">
@@ -326,11 +343,23 @@ export function HiddenBots({
         </p>
       ) : (
         items.map((item) => (
-          <div key={item.bot.id} className="flex items-center gap-1">
+          <div key={rosterKeyText(rosterKeyOf(item))} className="flex items-center gap-1">
             <div className="min-w-0 flex-1">
-              <RosterRow item={item} selected={isSelected(item, selected)} render={rowLink(item)} />
+              <RosterRow
+                item={item}
+                memberAvatars={memberAvatarsOf(item, bots)}
+                selected={isSelected(item, selected)}
+                render={rowLink(item)}
+              />
             </div>
-            <Button variant="secondary" size="sm" onClick={() => onUnhide(item.bot.id)}>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-label={t("roster.hidden.unhideName", {
+                name: item._tag === "bot" ? item.bot.profile.name : item.room.name,
+              })}
+              onClick={() => onShow(item)}
+            >
               {t("roster.unhide")}
             </Button>
           </div>

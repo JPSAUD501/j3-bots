@@ -1751,7 +1751,12 @@ export const layer = Layer.effect(
             return yield* refuse("Your user stopped this work, so nothing was started.");
           }
           const room = yield* rooms
-            .open({ name: input.name, members: [found.botId, ...members] })
+            .open({
+              name: input.name,
+              members: [found.botId, ...members],
+              hidden: input.hidden ?? false,
+              madeBy: found.botId,
+            })
             .pipe(
               Effect.catchTag("Invalid", () =>
                 refuse("Nothing was started: a room holds two to six bots, you included."),

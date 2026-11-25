@@ -148,7 +148,11 @@ export const Bot = Schema.Struct({
   /** The operator's default contact. At most one bot is primary. */
   primary: Schema.Boolean,
   pinned: Schema.Boolean,
-  /** Kept out of the roster; still running and reachable through search. */
+  /**
+   * Kept out of the roster, among the hidden conversations: still running,
+   * notifying and reachable. The operator sets it, and so may a bot, for one
+   * it made or as the primary bot, unless the operator chose (decision 0050).
+   */
   hidden: Schema.Boolean,
   /**
    * The bot may use a web browser on the server's computer, signed in to

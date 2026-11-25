@@ -16,7 +16,13 @@ import { View } from "react-native";
 import { Text } from "../text.tsx";
 import { AvatarPicker } from "../components/avatar/AvatarPicker.tsx";
 import { Connecting } from "../components/ConnectionLine.tsx";
-import { ChoiceRow, FormScreen, TextField, useDiscardGuard } from "../components/form.tsx";
+import {
+  ChoiceRow,
+  FormScreen,
+  SwitchRow,
+  TextField,
+  useDiscardGuard,
+} from "../components/form.tsx";
 import { Gone } from "../conversation/ConversationView.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
@@ -76,8 +82,8 @@ export function EditBotScreen({ navigation, route }: Props) {
 }
 
 /**
- * The form: name, title, look and job, the model and the permission mode. Save
- * sends only what changed. While a save is under way the form shows what it
+ * The form: name, title, look and job, the model, the permission mode, and
+ * whether it is hidden from the roster's list. Save sends only what changed. While a save is under way the form shows what it
  * sends and takes no edit; a save that fails leaves the edits in place and
  * says why, beside the field when one field is the reason.
  */
@@ -238,6 +244,14 @@ function EditBotForm({
             ` ${t("editBot.providerChangeStops", { name: bot.profile.name })}`}
         </Text>
       )}
+
+      <SwitchRow
+        label={t("visibility.hide")}
+        hint={t("visibility.hide.hint")}
+        value={form.hidden}
+        readOnly={saving}
+        onChange={(hidden) => form.edit({ hidden })}
+      />
     </FormScreen>
   );
 }

@@ -36,6 +36,8 @@ const BotRow = Schema.Struct({
   is_primary: Flag,
   pinned: Flag,
   hidden: Flag,
+  made_by_bot_id: Schema.NullOr(BotId),
+  visibility_by_operator: Flag,
   browser: Flag,
   section_id: Schema.NullOr(SectionId),
   workspace_path: Schema.String,
@@ -55,6 +57,10 @@ export interface StoredBot {
    */
   readonly workspaceRoot: Option.Option<string>;
   readonly engineProjectId: Option.Option<EngineProjectId>;
+  /** The bot whose `create_bot` made it, while that bot exists. */
+  readonly madeBy: BotId | null;
+  /** The operator chose whether it shows: no bot changes it (decision 0050). */
+  readonly visibilityByOperator: boolean;
 }
 
 const toStored = (
@@ -86,6 +92,8 @@ const toStored = (
   workspacePath: row.workspace_path,
   workspaceRoot: Option.fromNullishOr(row.workspace_root),
   engineProjectId: Option.fromNullishOr(row.engine_project_id),
+  madeBy: row.made_by_bot_id,
+  visibilityByOperator: row.visibility_by_operator,
 });
 
 /**
@@ -106,6 +114,12 @@ export interface NewBot {
   readonly permissionMode: PermissionMode;
   readonly permissionModeChooser: Chooser;
   readonly primary: boolean;
+  readonly hidden: boolean;
+  /**
+   * The bot whose `create_bot` makes it, whose choice its visibility then is;
+   * null for the operator's, whose choice it is.
+   */
+  readonly madeBy: BotId | null;
   readonly workspacePath: string;
   readonly at: DateTime.Utc;
 }
@@ -117,6 +131,7 @@ export interface BotChanges {
   readonly permissionMode?: PermissionMode;
   readonly primary?: boolean;
   readonly pinned?: boolean;
+  /** Recorded as the operator's choice when they make the change (decision 0050). */
   readonly hidden?: boolean;
   readonly browser?: boolean;
   /** The section the bot moves into, or null for none. It must exist. */
@@ -125,8 +140,8 @@ export interface BotChanges {
 
 const SELECT = `
   SELECT id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
-    permission_mode, is_primary, pinned, hidden, browser, section_id, workspace_path, workspace_root,
-    engine_project_id, created_at
+    permission_mode, is_primary, pinned, hidden, made_by_bot_id, visibility_by_operator, browser,
+    section_id, workspace_path, workspace_root, engine_project_id, created_at
   FROM bots
 `;
 
@@ -144,13 +159,18 @@ export class BotStore extends Context.Service<
     readonly avatars: Effect.Effect<ReadonlyArray<Avatar>>;
     /** The bot and its conversation. */
     readonly insert: (bot: NewBot) => Effect.Effect<void>;
-    /** A new model or permission mode is recorded as `chooser`'s choice. */
+    /**
+     * A new model or permission mode is recorded as `chooser`'s choice, and
+     * whether it is hidden as the operator's when `chooser` is the operator.
+     */
     readonly update: (
       id: BotId,
       changes: BotChanges,
       at: DateTime.Utc,
       chooser: Chooser,
     ) => Effect.Effect<void>;
+    /** Shows or hides it for a bot, leaving whose choice its visibility is as it was. */
+    readonly setHidden: (id: BotId, hidden: boolean, at: DateTime.Utc) => Effect.Effect<void>;
     /** Makes no bot primary; the caller then makes one primary, in the same transaction. */
     readonly clearPrimary: (at: DateTime.Utc) => Effect.Effect<ReadonlyArray<BotId>>;
     readonly setEngineProject: (id: BotId, projectId: EngineProjectId) => Effect.Effect<void>;
@@ -196,13 +216,14 @@ export const layer = Layer.effect(
       yield* sql`
         INSERT INTO bots (
           id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
-          model_by_server, permission_mode, permission_mode_by_server, is_primary, workspace_path,
-          created_at, updated_at
+          model_by_server, permission_mode, permission_mode_by_server, is_primary, hidden,
+          made_by_bot_id, visibility_by_operator, workspace_path, created_at, updated_at
         ) VALUES (
           ${bot.id}, ${bot.profile.name}, ${bot.profile.title}, ${bot.profile.avatar.shape},
           ${bot.profile.avatar.color}, ${bot.profile.job}, ${bot.model.providerId},
           ${bot.model.modelId}, ${bot.modelChooser === "server" ? 1 : 0}, ${bot.permissionMode},
           ${bot.permissionModeChooser === "server" ? 1 : 0}, ${bot.primary ? 1 : 0},
+          ${bot.hidden ? 1 : 0}, ${bot.madeBy}, ${bot.madeBy === null ? 1 : 0},
           ${bot.workspacePath}, ${at}, ${at}
         )
       `;
@@ -235,7 +256,10 @@ export const layer = Layer.effect(
       }
       if (changes.primary !== undefined) columns["is_primary"] = changes.primary ? 1 : 0;
       if (changes.pinned !== undefined) columns["pinned"] = changes.pinned ? 1 : 0;
-      if (changes.hidden !== undefined) columns["hidden"] = changes.hidden ? 1 : 0;
+      if (changes.hidden !== undefined) {
+        columns["hidden"] = changes.hidden ? 1 : 0;
+        if (chooser === "operator") columns["visibility_by_operator"] = 1;
+      }
       if (changes.browser !== undefined) columns["browser"] = changes.browser ? 1 : 0;
       if (changes.sectionId !== undefined) columns["section_id"] = changes.sectionId;
       // A browser taken away is withdrawn from the bot's project
@@ -246,6 +270,16 @@ export const layer = Layer.effect(
         `;
       }
       yield* sql`UPDATE bots SET ${sql.update(columns)} WHERE id = ${id}`;
+    }, Effect.orDie);
+
+    const setHidden = Effect.fn("BotStore.setHidden")(function* (
+      id: BotId,
+      hidden: boolean,
+      at: DateTime.Utc,
+    ) {
+      yield* sql`
+        UPDATE bots SET hidden = ${hidden ? 1 : 0}, updated_at = ${timeText(at)} WHERE id = ${id}
+      `;
     }, Effect.orDie);
 
     const clearPrimary = Effect.fn("BotStore.clearPrimary")(function* (at: DateTime.Utc) {
@@ -296,6 +330,7 @@ export const layer = Layer.effect(
       avatars: avatarRows(undefined).pipe(Effect.orDie),
       insert,
       update,
+      setHidden,
       clearPrimary,
       setEngineProject,
       setWorkspaceRoot,

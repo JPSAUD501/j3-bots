@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotPlacement, SectionChanges } from "@j3-bots/client-runtime";
+import type { BotPlacement, RoomChanges, SectionChanges } from "@j3-bots/client-runtime";
 import type {
   Bot,
   BotId,
@@ -47,10 +47,13 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 
+/** Where a room sits in the roster: pinned at the top, or among the hidden. Fields left out keep their value. */
+export type RoomPlacement = Pick<RoomChanges, "pinned" | "hidden">;
+
 /** What the roster's menus ask for. The shell carries each out and says when one did not take. */
 export interface RosterIntents {
   readonly placeBot: (botId: BotId, placement: BotPlacement) => void;
-  readonly pinRoom: (roomId: RoomId, pinned: boolean) => void;
+  readonly placeRoom: (roomId: RoomId, placement: RoomPlacement) => void;
   /** Marks everything in the conversation or room read, through its latest entry. */
   readonly markRead: (target: EntryTarget, through: EntryOrder) => void;
   readonly markUnread: (target: EntryTarget) => void;
@@ -226,7 +229,10 @@ function BotRows({
   );
 }
 
-/** A room keeps its own pin, and is read or unread like a conversation. */
+/**
+ * A room keeps its own pin, is read or unread like a conversation, and hides
+ * as a bot does: a hidden room's pin waits until it is shown again.
+ */
 function RoomRows({
   item,
   menu,
@@ -236,15 +242,27 @@ function RoomRows({
 }) {
   const { t } = useI18n();
   const { room } = item;
+  const place = (placement: RoomPlacement) => menu.intents.placeRoom(room.id, placement);
   return (
     <>
       <ReadRow item={item} menu={menu} />
-      <MenuItem
-        icon={room.pinned ? <PinOffIcon /> : <PinIcon />}
-        onClick={() => menu.intents.pinRoom(room.id, !room.pinned)}
-      >
-        {room.pinned ? t("roster.unpin") : t("roster.pin")}
-      </MenuItem>
+      {!room.hidden && (
+        <MenuItem
+          icon={room.pinned ? <PinOffIcon /> : <PinIcon />}
+          onClick={() => place({ pinned: !room.pinned })}
+        >
+          {room.pinned ? t("roster.unpin") : t("roster.pin")}
+        </MenuItem>
+      )}
+      {room.hidden ? (
+        <MenuItem icon={<EyeIcon />} onClick={() => place({ hidden: false })}>
+          {t("roster.unhide")}
+        </MenuItem>
+      ) : (
+        <MenuItem icon={<EyeOffIcon />} onClick={() => place({ hidden: true })}>
+          {t("roster.hide")}
+        </MenuItem>
+      )}
       <MenuSeparator />
       <MenuItem
         icon={<PanelRightIcon />}

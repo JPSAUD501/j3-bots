@@ -55,6 +55,8 @@ import { Button, Switch } from "../ui.tsx";
 import { FileCard } from "../conversation/FileCard.tsx";
 import { EntryWidths } from "../conversation/widths.ts";
 import { useShareBotTemplate } from "../template/share.ts";
+import { useBotPlacing } from "../screens/placing.ts";
+import { HiddenNotice } from "./HiddenNotice.tsx";
 import { useBotActions } from "./actions.ts";
 import { useOpenConnectors } from "../connectors/intents.ts";
 import { ConnectorTile, StatusWord } from "../connectors/parts.tsx";
@@ -66,9 +68,10 @@ const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<
 
 /**
  * Answers: what is this bot, and what runs without me. Its profile, Stop
- * while it has work to stop, its routines with a switch to pause each, the
- * files it sent, its memory, its connectors, the teammates it wrote with,
- * the model it runs on, a fresh start, and, last and apart, deleting it.
+ * while it has work to stop, that it is hidden while it is, its routines
+ * with a switch to pause each, the files it sent, its memory, its
+ * connectors, the teammates it wrote with, the model it runs on, a fresh
+ * start, and, last and apart, deleting it.
  */
 export function BotDetails({ bot }: { readonly bot: Bot }) {
   const ctx = usePresentation();
@@ -80,6 +83,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const fileWidths = useMemo(() => ({ bubble: column, card: column, column }), [column]);
   const navigation = useNavigation<Navigation>();
   const actions = useBotActions();
+  const placing = useBotPlacing();
   const shareTemplate = useShareBotTemplate();
   const engine = useEngineStatus();
   const routines = loadedList(useRoutines(bot.id));
@@ -123,6 +127,8 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
       </Profile>
 
       {canStop(bot) && <StopRow label={t("details.stop")} onPress={() => actions.stop(bot)} />}
+
+      {bot.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(bot)} />}
 
       <Section open title={t("details.routines")}>
         {routines === null ? (

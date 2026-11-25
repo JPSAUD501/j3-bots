@@ -60,6 +60,8 @@ export interface BotDraft {
   readonly model?: ModelChoice;
   readonly permissionMode?: PermissionMode;
   readonly primary?: boolean;
+  /** Creates it among the hidden conversations; visible when left out. */
+  readonly hidden?: boolean;
 }
 
 /** What asking the server for a bot's template got. */
@@ -79,6 +81,8 @@ export interface TemplateDraft {
   readonly template: BotTemplate;
   readonly model?: ModelChoice;
   readonly permissionMode?: PermissionMode;
+  /** Creates it among the hidden conversations; visible when left out. */
+  readonly hidden?: boolean;
 }
 
 /** What `updateBot` changes. Fields left out keep their value. */
@@ -88,6 +92,8 @@ export interface BotChanges {
   readonly permissionMode?: PermissionMode;
   /** Whether the bot may use the engine's browser, from its next turn. */
   readonly browser?: boolean;
+  /** Whether it is among the hidden conversations: the operator's choice, which no bot changes. */
+  readonly hidden?: boolean;
 }
 
 /** What creating a room takes. */
@@ -95,17 +101,22 @@ export interface RoomDraft {
   readonly name: string;
   /** Two to six bots, in the order the room lists them in. */
   readonly members: ReadonlyArray<BotId>;
+  /** Creates it among the hidden conversations; visible when left out. */
+  readonly hidden?: boolean;
 }
 
 /**
  * What `updateRoom` changes. Fields left out keep their value. An archived
- * room takes only `archived: false`, which may come with members.
+ * room takes only `pinned`, `hidden` and `archived: false`, which may come
+ * with members.
  */
 export interface RoomChanges {
   readonly name?: string;
   readonly members?: ReadonlyArray<BotId>;
   /** A room keeps its own pin, at the top of the roster's list. */
   readonly pinned?: boolean;
+  /** Whether it is among the hidden conversations: the operator's choice, which no bot changes. */
+  readonly hidden?: boolean;
   readonly archived?: boolean;
 }
 

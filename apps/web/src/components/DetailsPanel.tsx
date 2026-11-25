@@ -68,6 +68,7 @@ import { SkeletonRows } from "./ui/skeleton";
 import { Confirm } from "./ui/confirm";
 import { Kbd } from "./ui/kbd";
 import { Switch } from "./ui/switch";
+import { HiddenNotice } from "./Visibility";
 
 interface PanelFrameProps {
   readonly title: string;
@@ -241,6 +242,8 @@ export interface BotDetailsIntents {
   readonly editProfile?: () => void;
   /** Stops the bot's work under way at once, as its keyboard shortcut does. */
   readonly stop: () => void;
+  /** Puts a hidden bot back in the roster's list. */
+  readonly show: () => void;
   readonly freshStart: () => void;
   readonly deleteBot: () => void;
   readonly shareTemplate: () => void;
@@ -275,7 +278,8 @@ interface BotDetailsProps {
 
 /**
  * Answers: what is this bot, and what runs without me. While it has work to
- * stop, Stop comes first under its profile.
+ * stop, Stop comes first under its profile; while it is hidden, a line says
+ * so after that, with Show.
  */
 export function BotDetails({
   bot,
@@ -348,6 +352,7 @@ export function BotDetails({
           </button>
         </StopPlace>
       )}
+      {bot.hidden && <HiddenNotice name={name} onShow={intents.show} />}
 
       <DetailsSection title={t("details.routines")}>
         {routines === null ? (
@@ -687,6 +692,8 @@ export interface RoomDetailsIntents {
   readonly editRoom: () => void;
   /** Stops the work addressed to the room; its Stop asks first. */
   readonly stop: () => void;
+  /** Puts a hidden room back in the roster's list. */
+  readonly show: () => void;
   /** Resolves once the server answered, whatever it said. */
   readonly archiveRoom: () => Promise<void>;
   /** Asks for members first when the room has too few. Resolves like `archiveRoom`. */
@@ -697,7 +704,8 @@ export interface RoomDetailsIntents {
 /**
  * A room's details: who is in it, how long bots may talk among
  * themselves, and what the operator does to the room itself. While the room's
- * work is under way, Stop comes first under its profile, and asks first.
+ * work is under way, Stop comes first under its profile, and asks first;
+ * while it is hidden, a line says so after that, with Show.
  */
 export function RoomDetails({
   room,
@@ -777,6 +785,7 @@ export function RoomDetails({
           </Confirm>
         </StopPlace>
       )}
+      {room.hidden && <HiddenNotice name={name} onShow={intents.show} />}
       <DetailsSection title={t("room.membersTitle")}>
         {members.length === 0 ? (
           <Quiet>{t("room.noMembers")}</Quiet>

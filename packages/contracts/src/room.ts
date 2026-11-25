@@ -45,6 +45,12 @@ const roomFields = {
   id: RoomId,
   name: RoomName,
   pinned: Schema.Boolean,
+  /**
+   * Kept out of the roster, among the hidden conversations, as a hidden bot
+   * is (`Bot.hidden`): it still runs and notifies. False from a server that
+   * predates it.
+   */
+  hidden: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   createdAt: Schema.DateTimeUtc,
 };
 

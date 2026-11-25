@@ -15,6 +15,7 @@ import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { BotAvatar } from "./avatar/BotAvatar";
+import { HideSwitch } from "./Visibility";
 import { Button } from "./ui/button";
 import { ChoiceIndicator, choiceRow } from "./ui/choice";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
@@ -41,7 +42,7 @@ export interface RoomFormProps {
 }
 
 /**
- * A room's name and its bots. What is missing is said once
+ * A room's name, its bots, and whether it is hidden. What is missing is said once
  * the operator tries to send; a refusal from the server is said in the footer,
  * or beside the bots when they are the reason, and keeps what was typed. What
  * the operator left alone follows the room as the server has it, so a change
@@ -237,6 +238,15 @@ export function RoomForm({
                 })}
           </p>
         </fieldset>
+
+        {/* Giving an archived room back its bots is about that alone. */}
+        {mode._tag !== "unarchive" && (
+          <HideSwitch
+            checked={values.hidden}
+            readOnly={busy}
+            onChange={(hidden) => form.change({ ...values, hidden })}
+          />
+        )}
       </div>
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">

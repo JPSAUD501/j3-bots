@@ -5,6 +5,7 @@ import {
   EntryId,
   ModelId,
   ProviderId,
+  RoomId,
   type RosterItem,
 } from "@j3-bots/contracts";
 import { assert, it } from "@effect/vitest";
@@ -44,6 +45,27 @@ const bot = (
   unread: options.unread ?? false,
 });
 
+const room = (
+  name: string,
+  options: { readonly minutesAgo: number; readonly hidden?: boolean; readonly unread?: boolean },
+): RosterItem => ({
+  _tag: "room",
+  room: {
+    id: RoomId.make(name),
+    name,
+    status: "active",
+    members: [BotId.make("Recent"), BotId.make("Old")],
+    pinned: false,
+    hidden: options.hidden ?? false,
+    createdAt: DateTime.makeUnsafe(0),
+    work: "none",
+    answering: [],
+  },
+  lastEntry: null,
+  lastActivityAt: DateTime.subtract(NOW, { minutes: options.minutesAgo }),
+  unread: options.unread ?? false,
+});
+
 const names = (rows: ReadonlyArray<RosterItem>) =>
   rows.map((row) => (row._tag === "bot" ? row.bot.profile.name : row.room.name));
 
@@ -58,7 +80,9 @@ it("lists pinned rows first, then the ones waiting on the operator, then the mos
     bot("Unread", { minutesAgo: 50, unread: true }),
     bot("Pinned", { minutesAgo: 90, pinned: true }),
     bot("Hidden", { minutesAgo: 0, hidden: true, unread: true }),
+    room("Launch", { minutesAgo: 40 }),
+    room("Crew", { minutesAgo: 0, hidden: true, unread: true }),
   ]);
 
-  assert.deepStrictEqual(names(rows), ["Pinned", "Asking", "Unread", "Recent", "Old"]);
+  assert.deepStrictEqual(names(rows), ["Pinned", "Asking", "Unread", "Recent", "Launch", "Old"]);
 });

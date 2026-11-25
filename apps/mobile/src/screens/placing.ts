@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotPlacement, IntentResult } from "@j3-bots/client-runtime";
+import type { BotPlacement, IntentResult, RoomChanges } from "@j3-bots/client-runtime";
 import type { BotItem } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
-import { type Bot, SECTION_NAME_LENGTH, type Section } from "@j3-bots/contracts";
+import { type Bot, type Room, SECTION_NAME_LENGTH, type Section } from "@j3-bots/contracts";
 import { useAskName, useConfirm } from "../confirm.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBots } from "../presentation.tsx";
@@ -72,6 +72,25 @@ export function useBotPlacing() {
         onConfirm: () => place(bot, { primary: true }),
       });
     },
+  };
+}
+
+/**
+ * Where the operator puts a room in the roster: pinned at the top of the
+ * list, hidden among the hidden conversations, or shown again. As with a
+ * bot, nothing changes on screen until the server has it, and a toast says
+ * when it did not take.
+ */
+export function useRoomPlacing() {
+  const client = useJ3Client();
+  const failing = useChangeFailed();
+  const place = (room: Room, changes: RoomChanges) =>
+    void client.updateRoom(room.id, changes).then(failing);
+  return {
+    pin: (room: Room) => place(room, { pinned: true }),
+    unpin: (room: Room) => place(room, { pinned: false }),
+    hide: (room: Room) => place(room, { hidden: true }),
+    unhide: (room: Room) => place(room, { hidden: false }),
   };
 }
 

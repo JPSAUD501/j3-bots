@@ -37,6 +37,7 @@ const room: Room = {
   status: "active",
   members: [hal, ana],
   pinned: false,
+  hidden: false,
   createdAt: at("2026-11-01T00:00:00Z"),
   work: "none",
   answering: [],
@@ -63,6 +64,11 @@ describe("roomDraft", () => {
       value: { name: "Launch", members: [ana, hal] },
     });
   });
+
+  it("asks for a hidden room only when the operator chose one", () => {
+    const hidden = roomDraft(form({ members: [ana, hal], hidden: true }));
+    expect(hidden._tag === "ready" && hidden.value.hidden).toBe(true);
+  });
 });
 
 describe("roomChanges", () => {
@@ -74,6 +80,14 @@ describe("roomChanges", () => {
       _tag: "ready",
       value: { members: [ana, bo] },
     });
+  });
+
+  it("sends whether the room is hidden only when the operator changed it", () => {
+    expect(roomChanges(opened, { ...opened, hidden: true })).toEqual({
+      _tag: "ready",
+      value: { hidden: true },
+    });
+    expect(sameRoomForm(opened, { ...opened, hidden: true })).toBe(false);
   });
 
   it("finds nothing to send for an edit the operator undid", () => {
@@ -116,7 +130,18 @@ describe("followRoom", () => {
     const values = { ...opened, name: "Liftoff" };
     const elsewhere: Room = { ...room, name: "Launch v2", members: [hal, ana, bo] };
     const followed = followRoom(opened, values, elsewhere);
-    expect(followed.values).toEqual({ name: "Liftoff", members: [hal, ana, bo] });
+    expect(followed.values).toEqual({ name: "Liftoff", members: [hal, ana, bo], hidden: false });
+    expect(roomChanges(followed.start, followed.values)).toEqual({
+      _tag: "ready",
+      value: { name: "Liftoff" },
+    });
+  });
+
+  it("follows the room shown again elsewhere, so Save does not hide it back", () => {
+    const hiddenRoom: Room = { ...room, hidden: true };
+    const opened = roomFormOf(hiddenRoom);
+    const values = { ...opened, name: "Liftoff" };
+    const followed = followRoom(opened, values, room);
     expect(roomChanges(followed.start, followed.values)).toEqual({
       _tag: "ready",
       value: { name: "Liftoff" },

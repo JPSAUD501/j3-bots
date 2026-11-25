@@ -22,7 +22,7 @@ export const rosterIntents = (
   navigation: RosterNavigation,
 ): RosterIntents => ({
   placeBot: intents.placeBot,
-  pinRoom: intents.pinRoom,
+  placeRoom: intents.placeRoom,
   markRead: intents.markRosterRead,
   // An open conversation reads what it shows, so it would clear the mark at
   // once: marking it unread leaves it first, and the dot stays.

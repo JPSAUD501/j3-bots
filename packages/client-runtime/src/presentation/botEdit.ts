@@ -22,6 +22,7 @@ export interface BotEdits {
   readonly avatar: AvatarChoice | null;
   readonly model: ModelChoice | null;
   readonly permissionMode: PermissionMode | null;
+  readonly hidden: boolean | null;
 }
 
 export const noBotEdits: BotEdits = {
@@ -31,6 +32,7 @@ export const noBotEdits: BotEdits = {
   avatar: null,
   model: null,
   permissionMode: null,
+  hidden: null,
 };
 
 export type ProfileField = "name" | "title" | "job";
@@ -80,6 +82,7 @@ export function botPatch(bot: Bot, edits: BotEdits): BotPatch {
   if (edits.permissionMode !== null && edits.permissionMode !== bot.permissionMode) {
     changes.permissionMode = edits.permissionMode;
   }
+  if (edits.hidden !== null && edits.hidden !== bot.hidden) changes.hidden = edits.hidden;
   return Object.keys(changes).length === 0 ? { _tag: "unchanged" } : { _tag: "changes", changes };
 }
 
@@ -110,6 +113,7 @@ export function editsAfterFailedBotSave(edits: BotEdits, changes: BotChanges): B
     avatar: edits.avatar ?? changes.profile?.avatar ?? null,
     model: edits.model ?? changes.model ?? null,
     permissionMode: edits.permissionMode ?? changes.permissionMode ?? null,
+    hidden: edits.hidden ?? changes.hidden ?? null,
   };
 }
 
@@ -182,4 +186,5 @@ export const withChanges = (bot: Bot, changes: BotChanges): Bot => ({
   profile: { ...bot.profile, ...changes.profile },
   model: changes.model ?? bot.model,
   permissionMode: changes.permissionMode ?? bot.permissionMode,
+  hidden: changes.hidden ?? bot.hidden,
 });

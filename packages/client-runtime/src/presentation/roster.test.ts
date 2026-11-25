@@ -35,14 +35,18 @@ const row = (b: Bot, lastEntry: EntryPreview | null = null, unread = false): Ros
   unread,
 });
 
-const room = (lastEntry: EntryPreview | null): RosterItem => ({
+const room = (
+  lastEntry: EntryPreview | null,
+  options: { readonly name?: string; readonly pinned?: boolean; readonly hidden?: boolean } = {},
+): RosterItem => ({
   _tag: "room",
   room: {
-    id: RoomId.make("launch"),
-    name: "Launch",
+    id: RoomId.make((options.name ?? "Launch").toLowerCase()),
+    name: options.name ?? "Launch",
     status: "active",
     members: [bot("Scout").id, bot("Wren").id],
-    pinned: false,
+    pinned: options.pinned ?? false,
+    hidden: options.hidden ?? false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
     answering: [],
@@ -81,7 +85,7 @@ describe("arrangeRoster", () => {
   const home = { id: SectionId.make("home"), name: "Home" };
   const gone = SectionId.make("gone");
 
-  it("draws pinned bots apart, sections in their order, and hidden bots only as hidden", () => {
+  it("draws pinned bots apart, sections in their order, and hidden bots and rooms only as hidden", () => {
     const arranged = arrangeRoster(
       [
         row(bot("Pinned", { _tag: "idle" }, { pinned: true, sectionId: work.id })),
@@ -90,6 +94,7 @@ describe("arrangeRoster", () => {
         row(bot("Loose")),
         row(bot("Orphan", { _tag: "idle" }, { sectionId: gone })),
         row(bot("Away", { _tag: "idle" }, { hidden: true, pinned: true, sectionId: work.id })),
+        room(null, { name: "Crew", hidden: true, pinned: true }),
         row(bot("Bia", { _tag: "idle" }, { sectionId: work.id })),
       ],
       [home, work],
@@ -101,7 +106,7 @@ describe("arrangeRoster", () => {
       ["Home", []],
       ["Work", ["Ana", "Bia"]],
     ]);
-    expect(names(arranged.hidden)).toEqual(["Away"]);
+    expect(names(arranged.hidden)).toEqual(["Away", "Crew"]);
     expect(names(arrangedOrder(arranged, () => false))).toEqual([
       "Pinned",
       "Launch",
@@ -137,11 +142,12 @@ describe("filterRoster", () => {
     ),
     row(bot("Pip", { _tag: "idle" }, { hidden: true })),
     room(null),
+    room(null, { name: "Pit crew", hidden: true }),
   ];
 
-  it("keeps hidden bots out until searched for", () => {
+  it("keeps hidden bots and rooms out until searched for", () => {
     expect(names(filterRoster(items, ""))).toEqual(["João", "Launch"]);
-    expect(names(filterRoster(items, "pi"))).toEqual(["Pip"]);
+    expect(names(filterRoster(items, "pi"))).toEqual(["Pip", "Pit crew"]);
   });
 
   it("matches names and titles regardless of case and accents", () => {
@@ -176,6 +182,7 @@ describe("roomStop", () => {
     status: "active",
     members: [bot("Scout").id, bot("Wren").id],
     pinned: false,
+    hidden: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
     answering: [],

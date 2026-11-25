@@ -37,7 +37,7 @@ export interface RosterSizes {
   readonly section: number;
   /** The line an open section with no bots shows. */
   readonly empty: number;
-  /** The row that opens the hidden bots, at the end of the list. */
+  /** The row that opens the hidden bots and rooms, at the end of the list. */
   readonly hidden: number;
   /** A pinned bot: its avatar, the gap under it and one line of name. */
   readonly pinCell: number;
@@ -115,12 +115,12 @@ export type RosterEntry =
       readonly height: number;
       readonly pair: TeammatePair;
     }
-  /** The way to the hidden bots, listed while any is. */
+  /** The way to the hidden bots and rooms, listed while any is. */
   | {
       readonly kind: "hidden";
       readonly key: "hidden";
       readonly height: number;
-      readonly bots: ReadonlyArray<BotItem>;
+      readonly items: ReadonlyArray<RosterItem>;
     };
 
 /** How many pinned bots stand side by side in a list `width` px wide. */
@@ -193,7 +193,7 @@ const sectionEntries = (
  * What the roster lists in a list `width` px wide: the pinned bots' band,
  * the rows in no section, each section in the operator's order, the pairs
  * of bots that wrote each other (`betweenBots`), and the way to the hidden
- * bots last. `folded` are the sections folded on this phone.
+ * bots and rooms last. `folded` are the sections folded on this phone.
  */
 export const rosterEntries = (
   arranged: ArrangedRoster,
@@ -214,7 +214,7 @@ export const rosterEntries = (
   const hidden: ReadonlyArray<RosterEntry> =
     arranged.hidden.length === 0
       ? []
-      : [{ kind: "hidden", key: "hidden", height: sizes.hidden, bots: arranged.hidden }];
+      : [{ kind: "hidden", key: "hidden", height: sizes.hidden, items: arranged.hidden }];
   return [
     pinned,
     ...arranged.main.map(row(sizes)),

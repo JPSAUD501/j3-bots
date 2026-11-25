@@ -12,7 +12,7 @@ import type {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import { type IntentResult, refusedWith } from "../intents/Actions.ts";
-import { needsOperator } from "../stores/Roster.ts";
+import { isHidden, needsOperator } from "../stores/Roster.ts";
 
 /**
  * Whether the operator can stop the bot: a turn runs, or background work holds
@@ -76,7 +76,7 @@ const isPinned = (item: RosterItem) => (item._tag === "bot" ? item.bot.pinned : 
 /**
  * Pinned rows first, then rows that need the operator, then the most recently
  * active. This is the web roster's order, and not yet `rosterRows`': that one
- * also leaves hidden bots out and breaks a tie by name, where this keeps the
+ * also leaves hidden rows out and breaks a tie by name, where this keeps the
  * order the rows came in. Issue #54 merges the two into one order.
  */
 export function orderRoster(items: ReadonlyArray<RosterItem>): RosterItem[] {
@@ -113,13 +113,13 @@ export interface ArrangedRoster {
   readonly main: ReadonlyArray<RosterItem>;
   /** Every section, in the operator's order, also those with no bots. */
   readonly sections: ReadonlyArray<RosterSectionRows>;
-  /** Hidden bots, for the row that opens them. */
-  readonly hidden: ReadonlyArray<BotItem>;
+  /** Hidden bots and rooms, for the row that opens them. */
+  readonly hidden: ReadonlyArray<RosterItem>;
 }
 
 /**
  * Arranges rows already in the roster's order (`orderRoster`). A hidden bot
- * is only among the hidden, whatever its pin or section; a pinned bot only
+ * or room is only among the hidden, whatever its pin or section; a pinned bot only
  * among the pinned; a bot whose section is not among `sections` (it was just
  * deleted) in the main list. Rooms keep their own pin, at the top of the list.
  */
@@ -129,11 +129,11 @@ export function arrangeRoster(
 ): ArrangedRoster {
   const pinned: Array<BotItem> = [];
   const main: Array<RosterItem> = [];
-  const hidden: Array<BotItem> = [];
+  const hidden: Array<RosterItem> = [];
   const bySection = new Map(sections.map((section) => [section.id, [] as Array<BotItem>]));
   for (const item of items) {
-    if (item._tag === "room") main.push(item);
-    else if (item.bot.hidden) hidden.push(item);
+    if (isHidden(item)) hidden.push(item);
+    else if (item._tag === "room") main.push(item);
     else if (item.bot.pinned) pinned.push(item);
     else {
       const section = item.bot.sectionId === null ? undefined : bySection.get(item.bot.sectionId);
@@ -151,7 +151,7 @@ export function arrangeRoster(
 
 /**
  * The rows of an arranged roster in the order they are drawn, as the keys
- * that move between conversations walk them: the hidden bots and those in a
+ * that move between conversations walk them: the hidden rows and the bots in a
  * section `folded` says is folded are not drawn.
  */
 export const arrangedOrder = (
@@ -166,12 +166,12 @@ export const arrangedOrder = (
 const fold = (s: string) => s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 
 /**
- * The rows to show for a search. Without a query, hidden bots stay out of the
- * roster; a query finds them too.
+ * The rows to show for a search. Without a query, hidden bots and rooms stay
+ * out of the roster; a query finds them too.
  */
 export function filterRoster(items: ReadonlyArray<RosterItem>, query: string): RosterItem[] {
   const q = fold(query.trim());
-  if (q === "") return items.filter((item) => item._tag !== "bot" || !item.bot.hidden);
+  if (q === "") return items.filter((item) => !isHidden(item));
   return items.filter((item) => {
     const names =
       item._tag === "bot" ? [item.bot.profile.name, item.bot.profile.title] : [item.room.name];
