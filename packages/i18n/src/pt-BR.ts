@@ -739,6 +739,10 @@ const sentences = {
   "provider.noModels": "Conectado, mas o motor ainda não lista nenhum modelo dele",
   "provider.unavailable": "Indisponível agora",
   "provider.checking": "Verificando…",
+  "provider.notInstalled.here": "Não instalado neste computador",
+  "provider.notInstalled.server": "Não instalado no servidor",
+  "provider.failed": "Encontrado, mas não conseguiu iniciar",
+  "provider.disabled": "Desativado no servidor",
   "firstRun.create.name": "Nome do bot",
   "firstRun.create.placeholder": "Um nome, como Scout",
   "firstRun.create.primary":

@@ -20,7 +20,8 @@ export function ProviderRow(props: {
   readonly provider: ProviderStatus;
   readonly stale?: boolean;
 }) {
-  const line = providerLine(props.provider, usePresentation());
+  // A phone never runs the server: its providers are always the server's.
+  const line = providerLine(props.provider, usePresentation(), "server");
   return (
     <View className="flex-row flex-wrap items-baseline justify-between gap-x-3 rounded-md border border-border px-3 py-2">
       <Text className="text-sm text-foreground">{props.provider.name}</Text>

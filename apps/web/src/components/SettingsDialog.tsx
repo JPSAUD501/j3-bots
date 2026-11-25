@@ -311,7 +311,12 @@ export function EngineSection({
       {engine.providers.length > 0 && (
         <ul className="flex flex-col gap-1.5 text-sm">
           {engine.providers.map((provider) => (
-            <ProviderRow key={provider.id} provider={provider} stale={stale} />
+            <ProviderRow
+              key={provider.id}
+              provider={provider}
+              place={providerSetup === undefined ? "server" : "this-computer"}
+              stale={stale}
+            />
           ))}
         </ul>
       )}

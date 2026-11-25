@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, ProviderStatus } from "@j3-bots/contracts";
+import type { EngineStatus, ProviderStatus, UnavailableReason } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
 import { usageLimitText } from "./status.ts";
 import type { TimeContext } from "./time.ts";
@@ -72,10 +72,18 @@ export function engineProblem(
 /** How a provider's line is drawn: ready to run bots, waiting on the operator or the engine, blocked, or out of use. */
 export type ProviderTone = "ready" | "waiting" | "blocked" | "muted";
 
+/**
+ * Where the providers run, as the client words it: `this-computer` where the
+ * client runs the server itself (the desktop app in local mode), `server`
+ * anywhere else.
+ */
+export type ProviderPlace = "this-computer" | "server";
+
 /** A provider's state in words, as the engine's list of providers shows it. */
 export function providerLine(
   provider: ProviderStatus,
   ctx: TimeContext,
+  place: ProviderPlace,
 ): { readonly text: string; readonly tone: ProviderTone } {
   const { t } = ctx.i18n;
   const { status } = provider;
@@ -91,6 +99,30 @@ export function providerLine(
     case "unavailable":
       return status.checking
         ? { text: t("provider.checking"), tone: "waiting" }
-        : { text: t("provider.unavailable"), tone: "muted" };
+        : unavailableLine(status.reason, place, ctx);
+  }
+}
+
+/** Why a provider the engine is done checking cannot run, in words. */
+function unavailableLine(
+  reason: UnavailableReason | undefined,
+  place: ProviderPlace,
+  { i18n: { t } }: TimeContext,
+): { readonly text: string; readonly tone: ProviderTone } {
+  switch (reason) {
+    case "not-installed":
+      return {
+        text: t(
+          place === "this-computer" ? "provider.notInstalled.here" : "provider.notInstalled.server",
+        ),
+        tone: "waiting",
+      };
+    case "failed":
+      return { text: t("provider.failed"), tone: "blocked" };
+    case "disabled":
+      return { text: t("provider.disabled"), tone: "muted" };
+    case "unknown":
+    case undefined:
+      return { text: t("provider.unavailable"), tone: "muted" };
   }
 }

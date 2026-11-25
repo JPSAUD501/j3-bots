@@ -823,7 +823,11 @@ function ConnectStep({
       {unavailable && engine !== null && (
         <ul className="flex w-full flex-col gap-1 text-sm">
           {engine.providers.map((provider) => {
-            const line = providerLine(provider, ctx);
+            const line = providerLine(
+              provider,
+              ctx,
+              providerSetup === undefined ? "server" : "this-computer",
+            );
             return (
               <li key={provider.id} className="flex justify-between gap-3">
                 <span>{provider.name}</span>

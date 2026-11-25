@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import {
+  type ProviderPlace,
   providerLine,
   type ProviderTone,
   heldHelloText,
@@ -129,12 +130,14 @@ const providerToneClass = {
  */
 export function ProviderRow({
   provider,
+  place,
   stale = false,
 }: {
   provider: ProviderStatus;
+  place: ProviderPlace;
   stale?: boolean;
 }) {
-  const line = providerLine(provider, usePresentation());
+  const line = providerLine(provider, usePresentation(), place);
   return (
     <li className="flex flex-wrap items-baseline justify-between gap-x-3 rounded-md border border-border px-3 py-2">
       <span>{provider.name}</span>
