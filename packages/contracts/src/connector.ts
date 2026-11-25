@@ -355,8 +355,9 @@ export const FAILURE_REASONS = [
  *   again, or gives a new token;
  * - `failing`: it has not answered as it should since `since`; bots get a
  *   result that says it is unavailable;
- * - `vault-locked`: its secrets are in the vault, which is locked until the
- *   operator unlocks it.
+ * - `secrets-unavailable`: its secrets cannot be read: the operator's
+ *   secrets wait for an old vault's password, or their key is missing
+ *   (`SecretsState`).
  */
 export const ConnectorStatus = Schema.Union([
   Schema.TaggedStruct("connected", {}),
@@ -365,7 +366,7 @@ export const ConnectorStatus = Schema.Union([
     reason: OpenLiterals(FAILURE_REASONS),
     since: Schema.DateTimeUtc,
   }),
-  Schema.TaggedStruct("vault-locked", {}),
+  Schema.TaggedStruct("secrets-unavailable", {}),
 ]);
 export type ConnectorStatus = typeof ConnectorStatus.Type;
 

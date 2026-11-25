@@ -35,8 +35,8 @@ export const Resource = Schema.Literals([
   "attachment",
   /** Only an answer to a request about sections names it, which an older client never makes. */
   "section",
-  /** A saved login, which only the vault's requests name. */
-  "credential",
+  /** A secret, which only the secrets' requests name. */
+  "secret",
   /** A connector, a gallery entry, or a sign-in to one: only connector requests name them. */
   "connector",
   "connector-listing",
@@ -77,24 +77,31 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      * the link lets it through again.
      */
     "private-location",
-    /** The vault is locked: a client unlocks it with the master password first. */
-    "vault-locked",
-    /** The vault has no master password yet: `vault.setup` sets one. */
-    "vault-not-set-up",
-    /** The vault already has a master password: `vault.changePassword` changes it. */
-    "vault-set-up",
     /**
-     * A newer release of J3 Bots changed the vault's file, which this one
+     * The operator's secrets are in a vault sealed under a master password,
+     * from before secrets, which waits for that password to be typed one last
+     * time (`secrets.openOldVault`).
+     */
+    "secrets-old-vault",
+    /**
+     * The key that opens the operator's secrets is missing or is another one:
+     * its file was deleted or replaced.
+     */
+    "secrets-unreadable",
+    /**
+     * A newer release of J3 Bots changed the secrets' file, which this one
      * cannot read. Nothing in it can be used until that release runs again.
      */
-    "vault-newer",
+    "secrets-newer",
     /**
-     * A value in the vault does not open under its key, or does not read as
-     * what it should be, or the vault's key settings are out of range: its
+     * A value of a secret does not open under its key, or does not read as
+     * what it should be, or an old vault's key settings are out of range: the
      * file was changed by hand or damaged. The server's log names the record
-     * and field, never the value. Restoring the vault from a backup fixes it.
+     * and field, never the value. Restoring the file from a backup fixes it.
      */
-    "vault-damaged",
+    "secrets-damaged",
+    /** Another secret has that name already. */
+    "secret-name-taken",
     /**
      * The connector's address is in the operator's own network. Nothing was
      * added; the operator confirms it, and the client sends it again saying so.
@@ -175,8 +182,10 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
     "answer-length",
     /** A dismissal of a question the harness asked: only a bot's `ask` question takes one. */
     "not-dismissible",
-    /** The master password given is not the vault's. */
-    "master-password",
+    /** The password given is not the one the old vault was sealed under. */
+    "old-vault-password",
+    /** A login's field for a single value, or a single value's for a login. */
+    "secret-kind",
     /** The one-time code setup is neither a base32 secret nor an `otpauth://totp/` address. */
     "totp",
     /** A connect form's values: a required one missing, or one the form does not ask for. */
@@ -213,6 +222,3 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
 export const CommandError = Schema.Union([NotFound, Conflict, Invalid]);
 export type CommandError = typeof CommandError.Type;
 
-/** What a request to the vault can fail with: a command's errors, and the unlock limit. */
-export const VaultError = Schema.Union([NotFound, Conflict, Invalid, RateLimited]);
-export type VaultError = typeof VaultError.Type;

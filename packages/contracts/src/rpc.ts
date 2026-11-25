@@ -50,7 +50,7 @@ import {
   ReceivedEntry,
   WorkStep,
 } from "./entry.ts";
-import { CommandError, Conflict, NotFound, VaultError } from "./errors.ts";
+import { CommandError, Conflict, NotFound } from "./errors.ts";
 import { ServerOrigin } from "./link.ts";
 import {
   MemoryDocument,
@@ -70,22 +70,21 @@ import {
   ProviderSignInStatus,
   SignInHarness,
 } from "./provider.ts";
+import {
+  OldVaultPassword,
+  Secret,
+  SecretAccess,
+  SecretChanges,
+  SecretDraft,
+  SecretField,
+  SecretId,
+  SecretName,
+  SecretsStatus,
+  TotpPreview,
+} from "./secrets.ts";
 import { Section, SectionName } from "./section.ts";
 import { Settings, SettingsChange, TimeZone } from "./settings.ts";
 import { BotTemplate, TemplateTooLarge } from "./template.ts";
-import {
-  Credential,
-  CredentialDraft,
-  CredentialField,
-  CredentialId,
-  CredentialOrigins,
-  CredentialPassword,
-  CredentialUsername,
-  MasterPassword,
-  TotpPreview,
-  TotpSetup,
-  VaultStatus,
-} from "./vault.ts";
 
 // ---------------------------------------------------------------------------
 // Conventions
@@ -106,7 +105,7 @@ import {
 // Commands carry a client-generated `commandId`. Sending the same command again
 // with the same id has no further effect and returns the first result, so a
 // client retries freely after a dropped connection. `secret.provide`,
-// `provider.connect`, the vault's requests and the connector requests that
+// `provider.connect`, the secrets' requests and the connector requests that
 // carry a value or a sign-in are the exceptions: what they carry must never be
 // stored, so they have no receipt (see there).
 //
@@ -279,8 +278,9 @@ export const EntryRpcs = RpcGroup.make(
    * `Conflict("card-closed")` once the card has closed, by another device's
    * answer or by expiring.
    *
-   * A save-login card takes only a dismissal, which closes it without waking
-   * the bot; it is saved with `vault.save`.
+   * A bot's ask for a secret (`secret-ask`) takes only a dismissal, its
+   * Decline, which closes it as declined and wakes the bot to say so; it is
+   * saved with `secrets.add`.
    */
   Rpc.make("card.answer", {
     payload: {
@@ -389,11 +389,6 @@ export const BotRpcs = RpcGroup.make(
       hidden: Schema.optionalKey(Schema.Boolean),
       /** Lets the bot use the browser (`Bot.browser`), or stops it. */
       browser: Schema.optionalKey(Schema.Boolean),
-      /**
-       * Lets the bot have its allowed logins filled (`Bot.vault`), or stops
-       * it. Applies to the next fill, also during a turn.
-       */
-      vault: Schema.optionalKey(Schema.Boolean),
       /** Moves the bot into a section, or out of its section with null. */
       sectionId: Schema.optionalKey(Schema.NullOr(SectionId)),
     },
@@ -939,104 +934,91 @@ export const BrowserRpcs = RpcGroup.make(
 );
 
 /**
- * The vault: the operator's saved logins (docs/architecture/server.md, "The
- * vault"). Any paired client may unlock it, read it and change it. None of
- * these requests has a command id, since a receipt would keep what it carries;
- * each is safe to send again instead: `vault.save` names the login it makes.
- * No value they carry or answer is stored outside the vault, logged or kept
- * in an error. Every request but `vault.status`, `vault.setup`, `vault.unlock`
- * and `vault.lock` fails with `Conflict("vault-locked")` while the vault is
- * locked, `Conflict("vault-not-set-up")` before it has a password, and
- * `Conflict("vault-newer")` while its state is `newer`. A value the vault
- * cannot open or read back fails with `Conflict("vault-damaged")`, and so do
- * `vault.unlock` and `vault.changePassword` when its key settings are out of
- * range. New in 0.4.0: a client calls them only on a server that answers
- * `vault.status`.
+ * Secrets: what the operator types for bots to use without reading them
+ * (docs/architecture/server.md, "Secrets"). Any paired client may read and
+ * change them. None of these requests has a command id, since a receipt
+ * would keep what it carries; each is safe to send again instead:
+ * `secrets.add` names the secret it makes. No value they carry or answer is
+ * stored outside the secrets' file, logged or kept in an error. Every request
+ * but `secrets.status` and `secrets.openOldVault` fails with the state's
+ * conflict while the state is not `ready`: `Conflict("secrets-old-vault")`,
+ * `Conflict("secrets-unreadable")` or `Conflict("secrets-newer")`. A value
+ * that cannot be opened or read back fails with `Conflict("secrets-damaged")`.
+ * New at protocol 11, in place of the vault's requests.
  */
-export const VaultRpcs = RpcGroup.make(
-  /** The vault's state now, then each change. */
-  Rpc.make("vault.status", { success: VaultStatus, stream: true }),
+export const SecretsRpcs = RpcGroup.make(
+  /** The secrets' state now, then each change. */
+  Rpc.make("secrets.status", { success: SecretsStatus, stream: true }),
   /**
-   * Creates the vault, unlocked, with this master password. Fails with
-   * `Conflict("vault-set-up")` when it has one already.
+   * Opens a vault from before secrets with the master password it was sealed
+   * under, once: the server keeps its key itself from then on, forgets the
+   * password, and the state becomes `ready`. A wrong password fails with
+   * `Invalid("old-vault-password")`. In `ready` it does nothing and
+   * succeeds, so a retry after a lost reply finds the work done.
    */
-  Rpc.make("vault.setup", { payload: { password: MasterPassword }, error: VaultError }),
-  /**
-   * Unlocks the vault for every client until one locks it or the server
-   * stops. A wrong password fails with `Invalid("master-password")`; after a
-   * few in a row, every attempt fails with `RateLimited` until its `retryAt`,
-   * which grows with each further wrong one. The count and the wait outlast
-   * a restart, and the count starts over after a day with no wrong one.
-   * Unlocking an unlocked vault checks the password all the same.
-   */
-  Rpc.make("vault.unlock", { payload: { password: MasterPassword }, error: VaultError }),
-  /** Forgets the vault's key until a client unlocks it again. */
-  Rpc.make("vault.lock", {}),
-  /**
-   * Replaces the master password, checking `current` as `vault.unlock` does,
-   * with the same limit. The saved logins stay as they are.
-   */
-  Rpc.make("vault.changePassword", {
-    payload: { current: MasterPassword, next: MasterPassword },
-    error: VaultError,
+  Rpc.make("secrets.openOldVault", {
+    payload: { password: OldVaultPassword },
+    error: CommandError,
   }),
-  /** Every saved login, by name, without its values. */
-  Rpc.make("vault.list", { success: Schema.Array(Credential), error: VaultError }),
+  /** Every secret, by name, without its values. */
+  Rpc.make("secrets.list", { success: Schema.Array(Secret), error: CommandError }),
   /**
-   * One value of a login, for the operator to see. The vault records when it
-   * was shown and on which device, never the value.
+   * One value of a secret, for the operator to see. The server records when
+   * it was shown and on which device, never the value. Fails with
+   * `NotFound("secret")` for a field the secret does not have.
    */
-  Rpc.make("vault.reveal", {
-    payload: { id: CredentialId, field: CredentialField },
+  Rpc.make("secrets.reveal", {
+    payload: { id: SecretId, field: SecretField },
     success: Schema.Redacted(Schema.String),
-    error: VaultError,
+    error: CommandError,
   }),
   /**
-   * Saves a new login as `id`, allowed to the bots in `allowedBots`. With
-   * `request`, it answers that bot's save-login card, which then shows it as
-   * saved. When `id` is saved already, nothing changes and the login is
-   * returned as it is, so a retry adds nothing. Fails with `Invalid("totp")`
-   * when `totp` is not a one-time code setup.
+   * Adds a secret as `id`, under `name`, usable by the bots of `access`.
+   * With `request`, it answers that bot's `secret-ask` card, which closes as
+   * saved and wakes the bot with the reference; the card's name and kind are
+   * the secret's, and its bot may use it whatever `access` says. When `id` is
+   * added already, nothing changes and the secret is returned as it is, so a
+   * retry adds nothing. Fails with `Conflict("secret-name-taken")` for a name
+   * another secret has, and with `Invalid("totp")` when `totp` is not a
+   * one-time code setup.
    */
-  Rpc.make("vault.save", {
+  Rpc.make("secrets.add", {
     payload: {
-      id: CredentialId,
-      ...CredentialDraft.fields,
-      allowedBots: Schema.Array(BotId),
+      id: SecretId,
+      name: SecretName,
+      draft: SecretDraft,
+      access: SecretAccess,
       request: Schema.NullOr(EntryId),
     },
-    success: Credential,
-    error: VaultError,
-  }),
-  /** Fields left out keep their value; `totp: null` removes the one-time codes. */
-  Rpc.make("vault.update", {
-    payload: {
-      id: CredentialId,
-      name: Schema.optionalKey(CredentialDraft.fields.name),
-      origins: Schema.optionalKey(CredentialOrigins),
-      username: Schema.optionalKey(CredentialUsername),
-      password: Schema.optionalKey(CredentialPassword),
-      totp: Schema.optionalKey(Schema.NullOr(TotpSetup)),
-    },
-    success: Credential,
-    error: VaultError,
-  }),
-  /** Deletes the login. Deleting one already gone succeeds. */
-  Rpc.make("vault.delete", { payload: { id: CredentialId }, error: VaultError }),
-  /** Replaces the bots that may use the login. */
-  Rpc.make("vault.setAllowedBots", {
-    payload: { id: CredentialId, bots: Schema.Array(BotId) },
-    success: Credential,
-    error: VaultError,
+    success: Secret,
+    error: CommandError,
   }),
   /**
-   * The login's one-time code now, so the operator can check it against the
-   * site's. Fails with `NotFound("credential")` for a login without one.
+   * Changes a secret's name or values. Fails with `Invalid("secret-kind")`
+   * for a login's field on a single value or the other way round. A bot that
+   * named it by its old name no longer finds it.
    */
-  Rpc.make("vault.totpPreview", {
-    payload: { id: CredentialId },
+  Rpc.make("secrets.update", {
+    payload: { id: SecretId, changes: SecretChanges },
+    success: Secret,
+    error: CommandError,
+  }),
+  /** Deletes the secret. Deleting one already gone succeeds. */
+  Rpc.make("secrets.delete", { payload: { id: SecretId }, error: CommandError }),
+  /** Replaces which bots may use the secret. */
+  Rpc.make("secrets.setAccess", {
+    payload: { id: SecretId, access: SecretAccess },
+    success: Secret,
+    error: CommandError,
+  }),
+  /**
+   * A login's one-time code now, so the operator can check it against the
+   * site's. Fails with `NotFound("secret")` for a secret without one.
+   */
+  Rpc.make("secrets.totpPreview", {
+    payload: { id: SecretId },
     success: TotpPreview,
-    error: VaultError,
+    error: CommandError,
   }),
 );
 
@@ -1060,10 +1042,8 @@ export type ConnectorsEvent = typeof ConnectorsEvent.Type;
  * redacted, and the requests that carry one (`connector.add`,
  * `connector.update`, `connector.beginSignIn`, `connector.completeSignIn`)
  * have no command id, since a receipt would keep it; each is safe to send
- * again instead. A request that needs a connector's secrets fails with
- * `Conflict("vault-locked")` while the vault is locked, and one that would
- * keep a secret, with `Conflict("vault-not-set-up")` before the vault has a
- * master password (decision 0028).
+ * again instead. A request that needs a connector's secrets fails with the
+ * secrets' conflict while they are not `ready` (`secrets.status`).
  */
 export const ConnectorRpcs = RpcGroup.make(
   /** The curated list, in the client's language: what the gallery features. */
@@ -1109,7 +1089,7 @@ export const ConnectorRpcs = RpcGroup.make(
     stream: true,
   }),
   /**
-   * Adds the connector as `id`, its secrets to the vault, and lists its tools
+   * Adds the connector as `id`, its secrets to the secrets' file, and lists its tools
    * when it needs no sign-in; one that does is added as `needs-sign-in`, and
    * `connector.beginSignIn` follows. When `id` is added already, nothing
    * changes and the connector is returned as it is, so a retry adds nothing.
@@ -1159,7 +1139,7 @@ export const ConnectorRpcs = RpcGroup.make(
   /**
    * Removes the connector: bots lose its tools at once, its sign-in is
    * revoked at the service when the service offers that, and its secrets
-   * leave the vault. The operator's account at the service is not changed.
+   * are deleted. The operator's account at the service is not changed.
    * Removing one already gone succeeds.
    */
   Rpc.make("connector.remove", {
@@ -1238,7 +1218,7 @@ export const J3Rpcs = RosterRpcs.merge(
   ClientRpcs,
   ProviderRpcs,
   BrowserRpcs,
-  VaultRpcs,
+  SecretsRpcs,
   ConnectorRpcs,
   SkillRpcs,
 );
