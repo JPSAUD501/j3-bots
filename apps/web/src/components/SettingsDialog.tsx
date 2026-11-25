@@ -344,7 +344,10 @@ export function SettingsPanel({
           <nav
             ref={list}
             aria-label={t("settings.sections")}
-            className="flex w-full flex-col gap-4 overflow-y-auto p-2 tablet:w-56 tablet:shrink-0 tablet:border-e tablet:border-border"
+            className={cn(
+              "flex flex-col gap-4 overflow-y-auto p-2",
+              wide ? "w-56 shrink-0 border-e border-border" : "w-full",
+            )}
           >
             {groups.map((group) => (
               <ul key={group[0]} className="flex flex-col gap-0.5">
@@ -399,7 +402,8 @@ function PageRow({
       aria-current={current ? "page" : undefined}
       onClick={onPick}
       className={cn(
-        "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-start text-sm transition-colors duration-(--duration-state) outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring tablet:min-h-9",
+        "flex w-full items-center gap-3 rounded-lg px-3 text-start text-sm transition-colors duration-(--duration-state) outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring",
+        chevron ? "min-h-11" : "min-h-9",
         current ? "bg-muted font-medium text-foreground" : "text-foreground",
       )}
     >
