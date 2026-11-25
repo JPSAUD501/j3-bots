@@ -300,7 +300,7 @@ export const ROOM_CLOSING_LINES: { readonly [R in RoomReason]: string } = {
   addressed:
     "In this room, `say` reaches everyone. You were addressed: read what the others already said, then answer.",
   everyone:
-    "In this room, `say` reaches everyone. Your user asked every member to answer: answer briefly, adding what the replies before yours do not say.",
+    "In this room, `say` reaches everyone. Your user asked every member to answer: answer briefly, leaving out what the others already said.",
   user: "In this room, `say` reaches everyone. Your user wrote to the whole room. Read what the others already said, then answer if the message is for you or you have something to add that nobody said; otherwise end your turn without a word.",
   member:
     "In this room, `say` reaches everyone. A member wrote to the whole room. Answer only if it asks something of you or you have something to add that nobody said, never just to agree, thank or acknowledge; otherwise end your turn without a word.",
