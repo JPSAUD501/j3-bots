@@ -1287,8 +1287,13 @@ export const layer = Layer.effect(
           : "bot";
       const routed =
         entry._tag === "message" ? yield* routeRoomMessage(found, live.value, entry, word) : null;
+      const quiet = roomPosted(routed);
+      // From outside the room, only the operator's word in this turn could
+      // have woken it: a message of theirs steered into the turn does not
+      // count, so they are asked again.
+      if (quiet !== null && !inThisRoom) return { ...quiet, note: `${quiet.note} ${LATE_WORD}` };
       return (
-        roomPosted(routed) ??
+        quiet ??
         ({
           status: "posted",
           note: "It is in the room, and every member reads it in their next turn.",

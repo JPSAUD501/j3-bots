@@ -92,6 +92,7 @@ const call = (sessionId: SessionId, turnId: TurnId, tool: string, args: Schema.J
 const decodeCreated = Schema.decodeUnknownSync(Schema.Struct({ id: BotId }));
 const decodeStarted = Schema.decodeUnknownSync(Schema.Struct({ id: RoomId }));
 const decodeStatus = Schema.decodeUnknownSync(Schema.Struct({ status: Schema.String }));
+const decodeNote = Schema.decodeUnknownSync(Schema.Struct({ note: Schema.String }));
 
 /** The value a tool answered with, or a failure naming the refusal. */
 const resultOf = (response: ToolCallResponse) =>
@@ -736,6 +737,9 @@ it.effect(
         mention: [wren.bot.id],
       });
       assert.isTrue(wokeNobody(unasked));
+      // A message of the operator's steered into such a turn is not their
+      // word in it, so the bot is told to have them ask again.
+      assert.include(decodeNote(resultOf(unasked)).note, "ask again once you have finished");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

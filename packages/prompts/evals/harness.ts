@@ -727,8 +727,9 @@ export class HeldRoutines {
 
 /**
  * What the server answers a `message_bot` (`Speech.ts`), for a scenario's
- * team: a room post lands at once, a teammate's message waits for their next
- * turn unless it is urgent, and any other id is refused.
+ * team: a room post lands at once, unless it is urgent or mentions the bot
+ * itself or a non-member; a teammate's message waits for their next turn
+ * unless it is urgent; and any other id is refused.
  */
 const teamAnswer = (team: Team, input: unknown): Schema.Json => {
   const decoded = decodeMessageBot(input);
@@ -741,6 +742,19 @@ const teamAnswer = (team: Team, input: unknown): Schema.Json => {
         error:
           "Nothing was sent: `urgent` goes with a message to a teammate. In a room, the members you `mention` are woken.",
       };
+    }
+    for (const id of message.mention ?? []) {
+      if (id === BOT_ID) {
+        return {
+          error:
+            "Nothing was sent: that id in `mention` is your own. Mention only the members who must act next.",
+        };
+      }
+      if (!room.members.some((member) => member === id)) {
+        return {
+          error: `Nothing was sent: ${id} is not a member of this room. The room's members and their ids are in the wake; mention only them.`,
+        };
+      }
     }
     return {
       status: "posted",

@@ -71,6 +71,9 @@ const closingSay = (calls: ReadonlyArray<Call>) =>
 
 const decodeAsk = Schema.decodeUnknownOption(tools.ask.input, DECODE_OPTIONS);
 const decodeMessageBot = Schema.decodeUnknownOption(tools.message_bot.input, DECODE_OPTIONS);
+const decodePosted = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ status: Schema.Literal("posted") })),
+);
 
 /** The question of an `ask` that ended the turn, with its options; `undefined` when it did not end on one. */
 const finalAsk = (calls: ReadonlyArray<Call>): string | undefined => {
@@ -1829,14 +1832,19 @@ const cases: ReadonlyArray<Case> = [
       team: RELEASE_TEAM,
     },
     grades: ({ calls }) => {
+      // A post the server took: to the room's id, and answered `posted`.
       const posted = named(calls, "message_bot").find((call) => {
         const input = decodeMessageBot(call.input);
-        return input._tag === "Some" && input.value.to === RELEASE_ROOM.id;
+        return (
+          input._tag === "Some" &&
+          input.value.to === RELEASE_ROOM.id &&
+          decodePosted(call.output)._tag === "Some"
+        );
       });
       const shown = userFacing(calls);
       return [
         gradeFromCalls("posted in the room, then told its user", [
-          ...(posted === undefined ? ["sent no `message_bot` to the room's id"] : []),
+          ...(posted === undefined ? ["no `message_bot` to the room's id was posted"] : []),
           ...(named(calls, "start_room").length > 0 ? ["started another room"] : []),
           ...after(posted, closingSay(calls)?.call, {
             source: "posted in the room",
