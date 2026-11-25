@@ -365,7 +365,7 @@ const eventLine = (event: SystemEvent): string => {
   }
 };
 
-type Attributes = ReadonlyArray<readonly [string, string | null]>;
+export type Attributes = ReadonlyArray<readonly [string, string | null]>;
 
 const attributes = (attrs: Attributes): string =>
   attrs
@@ -375,18 +375,27 @@ const attributes = (attrs: Attributes): string =>
 
 const trimEnd = (text: string): string => text.replace(/\s+$/u, "");
 
-/** Builds one envelope with a fixed nonce, counting the data blocks it opens. */
-class EnvelopeWriter {
+/** When a text is written and the zone its times are given in: a wake's, or a room read's. */
+export interface WriterClock {
+  readonly at: DateTime.Utc;
+  readonly timeZone: DateTime.TimeZone.Named;
+}
+
+/**
+ * Builds one envelope, or another text framed as envelopes are, with a fixed
+ * nonce, counting the data blocks it opens.
+ */
+export class EnvelopeWriter {
   readonly lines: Array<string> = [];
   readonly nonce: string;
-  readonly wake: Wake;
+  readonly clock: WriterClock;
   dataBlocks = 0;
   /** The files numbered so far: the next one is `files + 1`. */
   files = 0;
 
-  constructor(nonce: string, wake: Wake) {
+  constructor(nonce: string, clock: WriterClock) {
     this.nonce = nonce;
-    this.wake = wake;
+    this.clock = clock;
   }
 
   line(text: string): void {
@@ -429,10 +438,10 @@ class EnvelopeWriter {
     this.line(`</${tag}>`);
   }
 
-  /** A time as the operator reads it: the clock alone on the wake's day, the date as well otherwise. */
+  /** A time as the operator reads it: the clock alone on the writer's day, the date as well otherwise. */
   time(at: DateTime.Utc): string {
-    const local = DateTime.toParts(DateTime.setZone(at, this.wake.timeZone));
-    const today = DateTime.toParts(DateTime.setZone(this.wake.at, this.wake.timeZone));
+    const local = DateTime.toParts(DateTime.setZone(at, this.clock.timeZone));
+    const today = DateTime.toParts(DateTime.setZone(this.clock.at, this.clock.timeZone));
     const clock = `${pad(local.hour)}:${pad(local.minute)}`;
     const sameDay =
       local.year === today.year && local.month === today.month && local.day === today.day;
@@ -452,9 +461,9 @@ const isoInZone = (at: DateTime.Utc, zone: DateTime.TimeZone.Named) => {
   return { iso, weekday: WEEKDAYS[p.weekDay] ?? "" };
 };
 
-const titleOf = (ref: TeammateRef): string | null => (ref.title === "" ? null : ref.title);
+export const titleOf = (ref: TeammateRef): string | null => (ref.title === "" ? null : ref.title);
 
-const mentionsOf = (mentions: RoomMentions): string | null =>
+export const mentionsOf = (mentions: RoomMentions): string | null =>
   mentions === "everyone" ? "everyone" : mentions.length === 0 ? null : mentions.join(", ");
 
 const writeTeammateMessage = (w: EnvelopeWriter, message: TeammateMessage): void =>

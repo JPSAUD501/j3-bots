@@ -58,8 +58,10 @@ import {
   askAnswer,
   fitsAlone,
   fitsEngine,
+  longestFitting,
   operatorMessage,
   operatorZone,
+  ROOM_ENTRIES_READ,
   roomName,
   widestRoomHeader,
   widestTeammate,
@@ -88,6 +90,7 @@ import { Observer } from "./Observer.ts";
 import { automatedSql, providerLimit } from "./providerLimit.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { roomSeen } from "./roomSeen.ts";
 import { takesNewWorkSql } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { stopHoldsSql } from "./stopTargets.ts";
@@ -132,27 +135,6 @@ const HeldRow = Schema.Struct({
   text: Schema.String,
   created_at: Time,
 });
-
-/**
- * The largest count in `[1, max]` for which `fits` holds, given that it holds
- * for 1 and, once it fails, fails for every larger count.
- */
-const longestFitting = (max: number, fits: (count: number) => boolean): number => {
-  let low = 1;
-  let high = max;
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2);
-    if (fits(middle)) low = middle;
-    else high = middle - 1;
-  }
-  return low;
-};
-
-/**
- * The most unseen room entries an envelope is built from: a member back after
- * a long absence is shown the newest, and told how many earlier ones it missed.
- */
-const ROOM_ENTRIES_READ = 200;
 
 /** The reason whose closing line is the longest, for a check of what a room envelope can take. */
 const LONGEST_ROOM_REASON: RoomReason = RoomReason.literals.reduce((longest, reason) =>
@@ -1209,22 +1191,7 @@ export const layer = Layer.effect(
 
     // ---- Room envelopes -------------------------------------------------------
 
-    /**
-     * How far the bot has seen the room: the newest place any of its room
-     * dispatches was written after, among those the engine may have applied.
-     * One it certainly never applied (released, refused, dropped) leaves its
-     * entries unseen, for the next envelope.
-     */
-    const seenThrough = SqlSchema.findOne({
-      Request: Schema.Struct({ botId: BotId, roomId: RoomId }),
-      Result: Schema.Struct({ through: Schema.NullOr(Schema.Int) }),
-      execute: ({ botId, roomId }) => sql`
-        SELECT MAX(room_through) AS through FROM dispatches
-        WHERE audience_room_id = ${roomId} AND bot_id = ${botId} AND room_through IS NOT NULL
-          AND status NOT IN ('released', 'dropped')
-          AND NOT (status = 'failed' AND failure_reason = 'rejected')
-      `,
-    });
+    const seen = roomSeen(sql);
 
     /** The place of the room's newest entry. */
     const roomEnd = SqlSchema.findOne({
@@ -1234,19 +1201,20 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The room's messages the bot has not seen: always those its wakes are
-     * for, and, newest first, at most `ROOM_ENTRIES_READ` of the others after
-     * what it has seen; and how many unseen messages there are in all. Its
-     * own are not among them; it wrote them. With them, the round of each
-     * unseen message since the operator's latest word there, the room's
-     * newest round-0 message (`RoomRouting`).
+     * The room's messages the plan's session has not seen (`roomSeen`):
+     * always those its wakes are for, and, newest first, at most
+     * `ROOM_ENTRIES_READ` of the others after what it has seen; and how many
+     * unseen messages there are in all. Its own are not among them; it wrote
+     * them. With them, the round of each unseen message since the operator's
+     * latest word there, the room's newest round-0 message (`RoomRouting`).
      */
     const unseenEntries = Effect.fn("Pipeline.unseenEntries")(function* (
-      botId: BotId,
+      plan: Plan,
       roomId: RoomId,
       sources: ReadonlyArray<EntryId>,
     ) {
-      const { through } = yield* seenThrough({ botId, roomId });
+      const { botId } = plan;
+      const through = yield* seen.throughSession(plan.sessionId, roomId);
       const fromOthers = sql`
         room_id = ${roomId} AND kind = 'message'
         AND (author_bot_id IS NULL OR author_bot_id <> ${botId})
@@ -1352,7 +1320,7 @@ export const layer = Layer.effect(
     ) {
       const sourceIds = plan.wakes.map((wake) => wake.source_entry_id);
       const unseen = yield* unseenEntries(
-        plan.botId,
+        plan,
         room.id,
         sourceIds.flatMap((id) => (id === null ? [] : [id])),
       );

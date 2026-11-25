@@ -14,6 +14,7 @@ const TurnToolName = Schema.Literals([
   "ask",
   "request_browser_help",
   "message_bot",
+  "read_room",
   "set_routine",
   "set_operator_name",
   "request_credential",
@@ -21,6 +22,16 @@ const TurnToolName = Schema.Literals([
   "start_room",
 ]);
 type TurnToolName = typeof TurnToolName.Type;
+
+/**
+ * What `read_room` answers, as its result is stored: the read, framed for
+ * the bot (`roomReads.read`), which the bot is given as it is.
+ */
+export const RoomReadResult = Schema.Struct({
+  status: Schema.Literal("read"),
+  text: Schema.String,
+});
+export type RoomReadResult = typeof RoomReadResult.Type;
 
 /**
  * The call matches no open call of the session's running turn: that turn has
@@ -128,8 +139,8 @@ export type FillClaim =
  * turn's audience, `request_browser_help` asks the operator to do a step in
  * the bot's browser, `message_bot` wakes or holds for a teammate,
  * `set_routine` changes a routine on the bot's behalf, and
- * `set_operator_name` saves what the operator asked to be called, only in a
- * turn they spoke in, `request_credential` shows a save-login card in the
+ * `read_room` reads a room the bot is in, `set_operator_name` saves what the
+ * operator asked to be called, only in a turn they spoke in, `request_credential` shows a save-login card in the
  * bot's conversation, `suggest_connector` a connector card there, and
  * `create_bot` and `start_room` build a team in a room, only in a turn the
  * operator spoke in. Each call is first

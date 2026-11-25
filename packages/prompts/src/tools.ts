@@ -234,6 +234,28 @@ const StartRoomInput = toolInput({
   ),
 });
 
+/** How many messages `read_room` shows when the bot names no `count`, and the most it may. */
+export const ROOM_READ_COUNT = { default: 20, max: 100 } as const;
+
+const ReadRoomInput = toolInput({
+  room: described(
+    Id,
+    "The id of a room you are a member of, from `list_teammates` or as `start_room` returned it.",
+  ),
+  search: Schema.optionalKey(
+    described(
+      text(1, 200),
+      "Words to look for in the messages' text or in their author's name, ignoring case. Leave it out for the room's newest messages.",
+    ),
+  ),
+  count: Schema.optionalKey(
+    described(
+      Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: ROOM_READ_COUNT.max })),
+      `How many messages to show at most. Defaults to ${ROOM_READ_COUNT.default}.`,
+    ).annotate({ default: ROOM_READ_COUNT.default }),
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(ROOM_READ_COUNT.default))),
+});
+
 const RememberInput = toolInput({
   fact: described(text(1, 1_000), "One self-contained sentence."),
   tier: Schema.optionalKey(
@@ -487,6 +509,7 @@ export const tools = {
     [
       "Send a message to one teammate, by a bot id from `list_teammates`, or post in a room you are a member of, by its room id, from any turn, your own conversation included. Your user can read what you send a teammate, but is not alerted to it: if they need to know, tell them with `say`.",
       "In a room the message lands at once, and wakes the members you list in `mention`, or every other member with none listed. It is how you bring work for several teammates back to a room they share, and how you start there what your user asked you for in your own conversation: their ask is the go-ahead, so post it yourself rather than asking them to write in the room.",
+      "Outside that room's own turn, a post goes out only if you have seen what the others wrote there; otherwise nothing is sent and you are shown what you missed, to decide again.",
       "To a teammate, only an `urgent` message wakes them now. Any other is queued until the teammate's next turn begins, however long that takes.",
       "It is also how you answer a teammate: in a `bot` turn, `say` reaches your user, not the sender. Answer a question once; an FYI or a thanks needs no answer.",
       "Returns an acknowledgement only. Any reply comes in a later turn of yours.",
@@ -519,7 +542,7 @@ export const tools = {
   recall: define(
     "recall",
     [
-      "Search your memory log and the shared facts about your user.",
+      "Search your memory log and the shared facts about your user. What was said in a room is not here: `read_room` reads it.",
       "Use it before asking your user to repeat something, and when a task touches earlier decisions.",
       "Returns matching facts with their dates, most relevant first.",
       "Memory goes stale: check anything that changes, such as a price or a status, at its source again.",
@@ -558,9 +581,19 @@ export const tools = {
     "list_teammates",
     [
       "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members.",
-      "Use a bot's id with `message_bot` and `start_room`, and a room's id with `message_bot` to post there from any turn.",
+      "Use a bot's id with `message_bot` and `start_room`, and a room's id with `message_bot` to post there and `read_room` to read it, from any turn.",
     ],
     NoInput,
+  ),
+  read_room: define(
+    "read_room",
+    [
+      "Read a room you are a member of, from any turn: its newest messages in order, or with `search` the newest whose text or author's name holds those words.",
+      "Your room turns are part of your conversation, so answer about a room from what you remember. Read it when you don't remember, need an exact detail, or are about to act on it from outside its turn after time has passed.",
+      "Returns the messages oldest first, each with its author, time, whom it mentioned and the names of its files, and how many earlier ones are not shown.",
+      BOT_ONLY,
+    ],
+    ReadRoomInput,
   ),
   start_room: define(
     "start_room",
