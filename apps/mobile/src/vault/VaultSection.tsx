@@ -13,7 +13,7 @@ import { Button } from "../ui.tsx";
 import { useVaultFailureText, useVaultRequest, VaultGate } from "./VaultForms.tsx";
 
 /**
- * The vault in Settings: whether it is locked, its setup or unlock in place,
+ * The vault's page in Settings: whether it is locked, its setup or unlock in place,
  * and once it is unlocked, the way to its saved logins and Lock now.
  */
 export function VaultSection() {
@@ -25,7 +25,7 @@ export function VaultSection() {
   const { busy, failure, run } = useVaultRequest();
   if (view._tag === "loading") {
     return (
-      <Section title={t("vault.title")}>
+      <Section open>
         <SkeletonRows count={1} />
       </Section>
     );
@@ -34,18 +34,14 @@ export function VaultSection() {
   const locked = view._tag === "ready" && view.status.state === "locked";
   const count = view._tag === "ready" ? (view.credentials?.length ?? null) : null;
   return (
-    <Section
-      title={t("vault.title")}
-      action={
-        unlocked || locked ? (
-          <Text
-            className={`text-xs font-medium ${unlocked ? "text-success" : "text-muted-foreground"}`}
-          >
-            {t(unlocked ? "vault.state.unlocked" : "vault.state.locked")}
-          </Text>
-        ) : undefined
-      }
-    >
+    <Section open>
+      {(unlocked || locked) && (
+        <Text
+          className={`text-sm font-medium ${unlocked ? "text-success" : "text-muted-foreground"}`}
+        >
+          {t(unlocked ? "vault.state.unlocked" : "vault.state.locked")}
+        </Text>
+      )}
       <VaultGate view={view} vault={vault} />
       {unlocked && (
         <View className="gap-3">

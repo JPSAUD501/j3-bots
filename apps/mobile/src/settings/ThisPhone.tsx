@@ -22,11 +22,10 @@ import { Button } from "../ui.tsx";
 
 /** The server this phone talks to, and leaving it for another. */
 export function ServerSection() {
-  const { t } = useI18n();
   const state = useReadable(session.state);
   if (state._tag !== "open") return null;
   return (
-    <Section title={t("settings.server")}>
+    <Section open>
       <Text selectable face="mono" className="text-sm text-foreground">
         {state.origin.origin}
       </Text>
@@ -37,11 +36,8 @@ export function ServerSection() {
   );
 }
 
-/**
- * Choices kept on this phone only, and signing it out. Each language is named
- * in itself, so it can be found from any other.
- */
-export function ThisPhoneSection() {
+/** The theme and the language, kept on this phone only. */
+export function AppearanceSection() {
   const { t } = useI18n();
   const { appearance, language } = usePreferences();
   const appearances: ReadonlyArray<{ readonly value: Appearance; readonly label: string }> = [
@@ -55,30 +51,39 @@ export function ThisPhoneSection() {
     ...LANGUAGES.map((language) => ({ value: language, label: LANGUAGE_NAMES[language] })),
   ];
   return (
-    <Section title={t("settings.thisDevice")}>
-      <View className="gap-2">
-        <Text className="text-sm text-foreground">{t("settings.appearance")}</Text>
+    <>
+      <Section open title={t("settings.theme")}>
         <Segmented
-          label={t("settings.appearance")}
+          label={t("settings.theme")}
           value={appearance}
           options={appearances}
           onChange={setAppearance}
         />
-      </View>
-      <View accessibilityRole="radiogroup" className="gap-2">
-        <Text className="text-sm text-foreground">{t("settings.language")}</Text>
-        {languages.map(({ value, label }) => (
-          <ChoiceRow
-            key={value}
-            kind="one"
-            label={label}
-            selected={language === value}
-            onPress={() => setLanguage(value)}
-          />
-        ))}
-      </View>
-      <View className="items-start gap-2 pt-1">
-        <Quiet>{t("settings.signOut.hint")}</Quiet>
+      </Section>
+      <Section open title={t("settings.language")}>
+        <View accessibilityRole="radiogroup" className="gap-1">
+          {languages.map(({ value, label }) => (
+            <ChoiceRow
+              key={value}
+              kind="one"
+              label={label}
+              selected={language === value}
+              onPress={() => setLanguage(value)}
+            />
+          ))}
+        </View>
+      </Section>
+    </>
+  );
+}
+
+/** Signing this phone out, ruled off at the end of the devices. */
+export function SignOutSection() {
+  const { t } = useI18n();
+  return (
+    <Section apart title={t("settings.thisPhone")}>
+      <Quiet>{t("settings.signOut.hint")}</Quiet>
+      <View className="items-start">
         <SignOut />
       </View>
     </Section>

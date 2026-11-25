@@ -26,7 +26,7 @@ export function BotBrowserSection({ connected }: { readonly connected: boolean }
     });
   };
   return (
-    <Section title={t("settings.botBrowser")}>
+    <Section open title={t("settings.botBrowser")}>
       <Quiet>{t("settings.botBrowser.hint")}</Quiet>
       <View className="items-start gap-1">
         <Button

@@ -56,7 +56,7 @@ export function VaultSection({ vault }: { readonly vault: VaultAccess }) {
       ? view.status.state
       : null;
   return (
-    <Section title={t("vault.title")}>
+    <Section>
       {state !== null && (
         <div className="flex items-center justify-between gap-3">
           <span

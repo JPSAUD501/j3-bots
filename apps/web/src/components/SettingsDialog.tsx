@@ -13,8 +13,24 @@ import {
   type Settings,
 } from "@j3-bots/contracts";
 import * as Schema from "effect/Schema";
-import { SettingsIcon, XIcon } from "lucide-react";
-import { useId, useState } from "react";
+import {
+  BellIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CpuIcon,
+  GaugeIcon,
+  KeyRoundIcon,
+  type LucideIcon,
+  MonitorSmartphoneIcon,
+  PaletteIcon,
+  PlugIcon,
+  RefreshCwIcon,
+  ServerIcon,
+  SettingsIcon,
+  UserRoundIcon,
+  XIcon,
+} from "lucide-react";
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
 import type { PairingOffer, SettingsSaves } from "@j3-bots/client-runtime";
 import {
   clockTime,
@@ -22,6 +38,9 @@ import {
   connectorNeedsYou,
   connectorTone,
   installsHarnesses,
+  providersNeedYou,
+  type SettingsPage,
+  settingsGroups,
 } from "@j3-bots/client-runtime/presentation";
 import { type ProfileEdits, useProfileEdits, useProfileForm } from "@j3-bots/client-runtime/react";
 import { useI18n, usePresentation } from "../app/context";
@@ -49,15 +68,17 @@ import type {
 } from "../shell/data";
 import { cn } from "../lib/cn";
 import { systemTimeZone } from "../lib/timeZone";
+import { useTabletUp } from "../lib/useTabletUp";
 import {
   activityTime,
   deviceZoneOffer,
   engineProblem,
+  settingsPageWords,
   timeZoneHint,
 } from "@j3-bots/client-runtime/wording";
-import { AppUpdate } from "./AppUpdate";
+import { AppUpdate, appUpdateWaiting } from "./AppUpdate";
 import { updateHasDetails } from "./ConnectionBanner";
-import { ServerUpdateRow } from "./ServerUpdate";
+import { ServerUpdateRow, serverUpdateOffered } from "./ServerUpdate";
 import { UpdatePromptEntryButton } from "./UpdatePrompt";
 import { ShortcutSetting } from "./ShortcutSetting";
 import { ConnectProviders, ProviderRow } from "./EmptyStates";
@@ -87,6 +108,7 @@ type SettingsIntents = Pick<
   ShellIntents,
   | "updateSettings"
   | "setSettingsOpen"
+  | "showSettingsPage"
   | "openConnectors"
   | "startPairing"
   | "revokeDevice"
@@ -107,23 +129,26 @@ type SettingsIntents = Pick<
   | "vault"
 >;
 
+type SettingsData = Pick<
+  ShellData,
+  | "engine"
+  | "engineStale"
+  | "signIns"
+  | "settings"
+  | "settingsSaves"
+  | "settingsOpen"
+  | "settingsPage"
+  | "devices"
+  | "connected"
+  | "roster"
+  | "recentTurns"
+  | "signInUnencrypted"
+  | "vault"
+  | "connectors"
+>;
+
 interface SettingsButtonProps {
-  readonly data: Pick<
-    ShellData,
-    | "engine"
-    | "engineStale"
-    | "signIns"
-    | "settings"
-    | "settingsSaves"
-    | "settingsOpen"
-    | "devices"
-    | "connected"
-    | "roster"
-    | "recentTurns"
-    | "signInUnencrypted"
-    | "vault"
-    | "connectors"
-  >;
+  readonly data: SettingsData;
   readonly intents: SettingsIntents;
 }
 
@@ -132,14 +157,58 @@ interface SettingsButtonProps {
 // keeps them; closing it themselves discards them.
 
 /**
- * The roster's footer: opens everything that is not about one bot. Opening
- * reads the settings and devices again, for what another device changed.
+ * Whether an update waits for the operator: the server's, on offer to a
+ * device that can start it, or the app's, downloaded and ready, or out for
+ * a build that does not install it itself.
+ */
+const updateWaiting = ({ serverUpdate, update }: SettingsIntents): boolean =>
+  (serverUpdate !== undefined && serverUpdateOffered(serverUpdate)) ||
+  (update !== undefined && appUpdateWaiting(update));
+
+const pageIcons: Record<SettingsPage, LucideIcon> = {
+  you: UserRoundIcon,
+  notifications: BellIcon,
+  appearance: PaletteIcon,
+  providers: CpuIcon,
+  usage: GaugeIcon,
+  connectors: PlugIcon,
+  vault: KeyRoundIcon,
+  devices: MonitorSmartphoneIcon,
+  where: ServerIcon,
+  updates: RefreshCwIcon,
+};
+
+/**
+ * Settings' pages this window has something for: where the bots live only in
+ * the desktop app, and updates only where one can be followed from here.
+ */
+const pagesFor = (intents: SettingsIntents): ReadonlyArray<ReadonlyArray<SettingsPage>> =>
+  settingsGroups
+    .map((group) =>
+      group.filter((page) => {
+        switch (page) {
+          case "where":
+            return intents.server !== undefined || intents.local !== undefined;
+          case "updates":
+            return intents.serverUpdate !== undefined || intents.update !== undefined;
+          default:
+            return true;
+        }
+      }),
+    )
+    .filter((group) => group.length > 0);
+
+/**
+ * The roster's footer: opens everything that is not about one bot, at the
+ * list of its pages. Opening reads the settings and devices again, for what
+ * another device changed.
  */
 export function SettingsButton({ data, intents }: SettingsButtonProps) {
   const { t } = useI18n();
   const titleId = useId();
   const profile = useProfileEdits(data.settingsSaves.profile);
   const updateEntry = intents.updatePrompt?.entry ?? null;
+  const wide = useTabletUp();
   return (
     <div className="flex flex-col border-t border-border p-2">
       {updateEntry !== null && intents.updatePrompt !== undefined && (
@@ -149,6 +218,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
         open={data.settingsOpen}
         onOpenChange={(open) => {
           if (open) {
+            intents.showSettingsPage(null);
             intents.refreshSettings();
             intents.refreshDevices();
             intents.serverUpdate?.refresh();
@@ -170,97 +240,311 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
           <Dialog.Backdrop className={dialogBackdrop} />
           <Dialog.Popup
             aria-labelledby={titleId}
-            className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-lg`}
+            className={`${screenDialog} tablet:top-12 tablet:bottom-12 tablet:max-w-3xl`}
           >
-            <header className="flex h-14 shrink-0 items-center border-b border-border ps-4 pe-2">
-              <Dialog.Title id={titleId} className="display-type text-lg">
-                {t("settings.title")}
-              </Dialog.Title>
-              <Dialog.Close
-                render={
-                  <Button
-                    variant="ghost-muted"
-                    size="icon"
-                    className="ms-auto"
-                    aria-label={t("settings.close")}
-                  />
-                }
-              >
-                <XIcon />
-              </Dialog.Close>
-            </header>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <YouSection
-                settings={data.settings}
-                save={data.settingsSaves.profile}
-                profile={profile}
-                connected={data.connected}
-                onSave={intents.updateSettings}
-              />
-              <NotificationsSection
-                settings={data.settings}
-                save={data.settingsSaves.notifications}
-                connected={data.connected}
-                onSave={intents.updateSettings}
-              />
-              <VaultSection vault={{ view: data.vault, intents: intents.vault }} />
-              <EngineSection
-                engine={data.engine}
-                stale={data.engineStale}
-                actions={intents.providerActions}
-                autoUpdate={{
-                  settings: data.settings,
-                  save: data.settingsSaves.harnesses,
-                  connected: data.connected,
-                  onSave: intents.updateSettings,
-                }}
-                {...(intents.providerSetup === undefined
-                  ? {}
-                  : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
-              />
-              <ConnectorsSection
-                connectors={data.connectors}
-                onOpen={() => intents.openConnectors({ at: { _tag: "home" }, forBot: null })}
-              />
-              <UsageSection
-                engine={data.engine}
-                engineStale={data.engineStale}
-                recent={data.recentTurns}
-                roster={data.roster}
-                onLoadMore={intents.loadMoreTurns}
-                onRetry={intents.retryTurns}
-              />
-              <DevicesSection
-                devices={data.devices}
-                connected={data.connected}
-                onStartPairing={intents.startPairing}
-                onRevoke={intents.revokeDevice}
-              />
-              <BotBrowserSection connected={data.connected} onSignOut={intents.signOutBrowser} />
-              {(intents.server !== undefined || intents.local !== undefined) && (
-                <WhereSection server={intents.server} local={intents.local} />
-              )}
-              {(intents.serverUpdate !== undefined || intents.update !== undefined) && (
-                <UpdatesSection
-                  server={intents.serverUpdate}
-                  app={intents.update}
-                  local={intents.local}
-                  onUpdate={intents.updatePrompt?.reopen}
-                />
-              )}
-              <BrowserSection
-                onSignOut={intents.signOut}
-                desktop={intents.server !== undefined || intents.local !== undefined}
-                local={intents.local !== undefined}
-                unencrypted={data.signInUnencrypted}
-                shortcut={intents.shortcut}
-              />
-            </div>
+            <SettingsPanel
+              data={data}
+              intents={intents}
+              profile={profile}
+              titleId={titleId}
+              wide={wide}
+            />
           </Dialog.Popup>
         </Dialog.Portal>
       </Dialog.Root>
     </div>
   );
+}
+
+/**
+ * Settings' pages, listed by name. At the tablet layout and up (`wide`) the
+ * list stays beside the page it shows, the first one until the operator picks
+ * another; narrower, the list is a screen of its own, a page replaces it, and
+ * Back returns to it. Moving between them there, focus goes to the page's
+ * title, and back to the row it came from.
+ */
+export function SettingsPanel({
+  data,
+  intents,
+  profile,
+  titleId,
+  wide,
+}: SettingsButtonProps & {
+  readonly profile: ProfileEdits;
+  /** Labels the dialog the panel fills. */
+  readonly titleId: string;
+  readonly wide: boolean;
+}) {
+  const { t } = useI18n();
+  const groups = pagesFor(intents);
+  const page =
+    data.settingsPage !== null && groups.some((group) => group.includes(data.settingsPage!))
+      ? data.settingsPage
+      : null;
+  const shown: SettingsPage | null = page ?? (wide ? (groups[0]?.[0] ?? null) : null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const list = useRef<HTMLElement>(null);
+  // The page the narrow list was left for, whose row takes focus as the list comes back.
+  const left = useRef<SettingsPage | null>(null);
+  useEffect(() => {
+    if (wide) return;
+    if (page !== null) heading.current?.focus();
+    else if (left.current !== null) {
+      list.current?.querySelector<HTMLElement>(`[data-page="${left.current}"]`)?.focus();
+      left.current = null;
+    }
+  }, [page, wide]);
+  const needsYou = (item: SettingsPage): boolean => {
+    switch (item) {
+      case "providers":
+        return !data.engineStale && providersNeedYou(data.engine);
+      case "connectors":
+        return data.connectors?.some(connectorNeedsYou) ?? false;
+      case "updates":
+        return updateWaiting(intents);
+      default:
+        return false;
+    }
+  };
+  return (
+    <>
+      <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border ps-4 pe-2">
+        {!wide && page !== null && (
+          <Button
+            variant="ghost-muted"
+            size="icon"
+            className="-ms-2"
+            aria-label={t("settings.back")}
+            onClick={() => {
+              left.current = page;
+              intents.showSettingsPage(null);
+            }}
+          >
+            <ChevronLeftIcon className="rtl:-scale-x-100" />
+          </Button>
+        )}
+        <Dialog.Title id={titleId} className="display-type text-lg">
+          {t("settings.title")}
+        </Dialog.Title>
+        <Dialog.Close
+          render={
+            <Button
+              variant="ghost-muted"
+              size="icon"
+              className="ms-auto"
+              aria-label={t("settings.close")}
+            />
+          }
+        >
+          <XIcon />
+        </Dialog.Close>
+      </header>
+      <div className="flex min-h-0 flex-1">
+        {(wide || shown === null) && (
+          <nav
+            ref={list}
+            aria-label={t("settings.sections")}
+            className="flex w-full flex-col gap-4 overflow-y-auto p-2 tablet:w-56 tablet:shrink-0 tablet:border-e tablet:border-border"
+          >
+            {groups.map((group) => (
+              <ul key={group[0]} className="flex flex-col gap-0.5">
+                {group.map((item) => (
+                  <li key={item}>
+                    <PageRow
+                      page={item}
+                      current={item === shown}
+                      needsYou={needsYou(item)}
+                      chevron={!wide}
+                      onPick={() => intents.showSettingsPage(item)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            ))}
+          </nav>
+        )}
+        {shown !== null && (
+          <div key={shown} className="conversation-open min-w-0 flex-1 overflow-y-auto">
+            <PageView page={shown} heading={heading}>
+              <PageBody page={shown} data={data} intents={intents} profile={profile} />
+            </PageView>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** A page's row in Settings' list: its icon and name, a dot while it waits on the operator. */
+function PageRow({
+  page,
+  current,
+  needsYou,
+  chevron,
+  onPick,
+}: {
+  page: SettingsPage;
+  current: boolean;
+  needsYou: boolean;
+  /** On a narrow screen, where the row leads to a page of its own. */
+  chevron: boolean;
+  onPick: () => void;
+}) {
+  const i18n = useI18n();
+  const Icon = pageIcons[page];
+  return (
+    <button
+      type="button"
+      data-page={page}
+      aria-current={current ? "page" : undefined}
+      onClick={onPick}
+      className={cn(
+        "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-start text-sm transition-colors duration-(--duration-state) outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring tablet:min-h-9",
+        current ? "bg-muted font-medium text-foreground" : "text-foreground",
+      )}
+    >
+      <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate">{settingsPageWords(page, i18n).title}</span>
+      {needsYou && (
+        <span className="size-1.5 shrink-0 rounded-full bg-accent">
+          <span className="sr-only">{i18n.t("settings.needsYou")}</span>
+        </span>
+      )}
+      {chevron && (
+        <ChevronRightIcon
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground rtl:-scale-x-100"
+        />
+      )}
+    </button>
+  );
+}
+
+/** A page of Settings: its name in the display face, the line that says what it holds, its groups. */
+function PageView({
+  page,
+  heading,
+  children,
+}: {
+  page: SettingsPage;
+  heading: RefObject<HTMLHeadingElement | null>;
+  children: ReactNode;
+}) {
+  const words = settingsPageWords(page, useI18n());
+  return (
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-8 px-5 pt-6 pb-10">
+      <header className="flex flex-col gap-1">
+        <h2 ref={heading} tabIndex={-1} className="display-type text-xl outline-none">
+          {words.title}
+        </h2>
+        <p className="text-sm text-muted-foreground">{words.description}</p>
+      </header>
+      {children}
+    </div>
+  );
+}
+
+/** What one page of Settings holds. */
+function PageBody({
+  page,
+  data,
+  intents,
+  profile,
+}: SettingsButtonProps & { readonly page: SettingsPage; readonly profile: ProfileEdits }) {
+  switch (page) {
+    case "you":
+      return (
+        <YouSection
+          settings={data.settings}
+          save={data.settingsSaves.profile}
+          profile={profile}
+          connected={data.connected}
+          onSave={intents.updateSettings}
+        />
+      );
+    case "notifications":
+      return (
+        <NotificationsSection
+          settings={data.settings}
+          save={data.settingsSaves.notifications}
+          connected={data.connected}
+          onSave={intents.updateSettings}
+        />
+      );
+    case "appearance":
+      return <AppearanceSection />;
+    case "providers":
+      return (
+        <EngineSection
+          engine={data.engine}
+          stale={data.engineStale}
+          actions={intents.providerActions}
+          autoUpdate={{
+            settings: data.settings,
+            save: data.settingsSaves.harnesses,
+            connected: data.connected,
+            onSave: intents.updateSettings,
+          }}
+          {...(intents.providerSetup === undefined
+            ? {}
+            : { providerSetup: { ...intents.providerSetup, signIns: data.signIns } })}
+        />
+      );
+    case "usage":
+      return (
+        <UsageSection
+          engine={data.engine}
+          engineStale={data.engineStale}
+          recent={data.recentTurns}
+          roster={data.roster}
+          onLoadMore={intents.loadMoreTurns}
+          onRetry={intents.retryTurns}
+        />
+      );
+    case "connectors":
+      return (
+        <ConnectorsSection
+          connectors={data.connectors}
+          onOpen={() => intents.openConnectors({ at: { _tag: "home" }, forBot: null })}
+        />
+      );
+    case "vault":
+      return (
+        <>
+          <VaultSection vault={{ view: data.vault, intents: intents.vault }} />
+          <BotBrowserSection connected={data.connected} onSignOut={intents.signOutBrowser} />
+        </>
+      );
+    case "devices":
+      return (
+        <>
+          <ThisDeviceSection
+            desktop={intents.server !== undefined || intents.local !== undefined}
+            unencrypted={data.signInUnencrypted}
+            shortcut={intents.shortcut}
+          />
+          <DevicesSection
+            devices={data.devices}
+            connected={data.connected}
+            onStartPairing={intents.startPairing}
+            onRevoke={intents.revokeDevice}
+          />
+          {/* On this computer, signing out is stopping using it, where the bots live. */}
+          {intents.local === undefined && <SignOutSection onSignOut={intents.signOut} />}
+        </>
+      );
+    case "where":
+      return <WhereSection server={intents.server} local={intents.local} />;
+    case "updates":
+      return (
+        <UpdatesSection
+          server={intents.serverUpdate}
+          app={intents.update}
+          local={intents.local}
+          onUpdate={intents.updatePrompt?.reopen}
+        />
+      );
+  }
 }
 
 /**
@@ -286,14 +570,14 @@ export function EngineSection({
   const { t } = i18n;
   if (engine === null) {
     return (
-      <Section title={t("settings.engine")}>
+      <Section>
         <SkeletonRows />
       </Section>
     );
   }
   const problem = engineProblem(engine, i18n);
   return (
-    <Section title={t("settings.engine")}>
+    <Section>
       {stale && <p className="text-xs text-muted-foreground">{t("settings.engine.lastKnown")}</p>}
       {problem === null ? (
         <p className={cn("text-sm", stale && "text-muted-foreground")}>
@@ -366,8 +650,7 @@ export function ConnectorsSection({
     connectors?.filter((connector) => connectorTone(connector) === "connected").length ?? 0;
   const needYou = connectors?.filter(connectorNeedsYou).length ?? 0;
   return (
-    <Section title={t("settings.connectors")}>
-      <p className="text-sm text-muted-foreground">{t("settings.connectors.hint")}</p>
+    <Section>
       {connectors === null ? (
         <SkeletonRows count={1} />
       ) : connectors.length === 0 ? (
@@ -400,9 +683,8 @@ function YouSection({
   settings,
   ...form
 }: Omit<YouFormProps, "settings"> & { settings: Settings | null }) {
-  const { t } = useI18n();
   return (
-    <Section title={t("settings.you")}>
+    <Section>
       {settings === null ? <SkeletonRows /> : <YouForm settings={settings} {...form} />}
     </Section>
   );
@@ -549,7 +831,7 @@ function NotificationsSection({
   const [watching, setWatching] = useState(saving);
   if (settings === null) {
     return (
-      <Section title={t("settings.notifications")}>
+      <Section>
         <SkeletonRows />
       </Section>
     );
@@ -563,7 +845,7 @@ function NotificationsSection({
     onSave({ section: "notifications", changes });
   };
   return (
-    <Section title={t("settings.notifications")}>
+    <Section>
       <SwitchRow
         label={t("settings.notifications.enabled")}
         hint={t("settings.notifications.enabled.hint")}
@@ -718,7 +1000,7 @@ function DevicesSection({
     );
   };
   return (
-    <Section title={t("settings.devices")}>
+    <Section title={t("settings.devices.paired")}>
       {devices === null ? (
         <SkeletonRows />
       ) : (
@@ -981,39 +1263,42 @@ export function WhereSection({
   local: DesktopLocal | undefined;
 }) {
   const { t } = useI18n();
-  return (
-    <Section title={t("settings.where")}>
-      {local !== undefined ? (
-        <>
+  if (local !== undefined) {
+    return (
+      <>
+        <Section>
           <div className="flex flex-col gap-0.5">
             <p className="text-sm">{t("settings.where.local")}</p>
             <p className="text-2xs text-muted-foreground">{t("where.thisComputer.hint")}</p>
           </div>
           <StartWithSystem on={local.startWithSystem} onChange={local.setStartWithSystem} />
           <PhoneAccessSetting phone={local.phone} />
+        </Section>
+        {/* Stopping takes the bots off this computer: ruled off from the rest. */}
+        <Section apart>
           <StopUsingComputer onStop={local.stopUsing} />
-        </>
-      ) : (
-        server !== undefined && (
-          <>
-            <div className="flex flex-col gap-0.5">
-              <p className="text-sm">{t("settings.where.server")}</p>
-              <p className="font-mono text-2xs break-all text-muted-foreground">{server.address}</p>
-            </div>
-            <div className="flex flex-wrap items-start gap-2">
-              {server.chooseThisComputer !== undefined && (
-                <UseThisComputer address={server.address} onUse={server.chooseThisComputer} />
-              )}
-              <ChangeServer
-                address={server.address}
-                onChange={server.forget}
-                paired
-                className="items-start"
-              />
-            </div>
-          </>
-        )
-      )}
+        </Section>
+      </>
+    );
+  }
+  if (server === undefined) return null;
+  return (
+    <Section>
+      <div className="flex flex-col gap-0.5">
+        <p className="text-sm">{t("settings.where.server")}</p>
+        <p className="font-mono text-2xs break-all text-muted-foreground">{server.address}</p>
+      </div>
+      <div className="flex flex-wrap items-start gap-2">
+        {server.chooseThisComputer !== undefined && (
+          <UseThisComputer address={server.address} onUse={server.chooseThisComputer} />
+        )}
+        <ChangeServer
+          address={server.address}
+          onChange={server.forget}
+          paired
+          className="items-start"
+        />
+      </div>
     </Section>
   );
 }
@@ -1038,7 +1323,7 @@ export function UpdatesSection({
 }) {
   const { t } = useI18n();
   return (
-    <Section title={t("settings.about")}>
+    <Section>
       {server !== undefined && (
         <div className="flex flex-col gap-1.5">
           <h4 className="text-xs font-medium">{t("serverUpdate.title")}</h4>
@@ -1103,27 +1388,8 @@ function LocalServerUpdateLine({ local }: { local: DesktopLocal }) {
   }
 }
 
-/**
- * Choices kept in this browser only, and signing this device out. In the
- * `desktop` app, the same for this device, with its global `shortcut`, and
- * that its sign-in is stored
- * `unencrypted` when it is, as that is less safe than the operator would
- * expect. In `local` mode, signing out is stopping using this computer, in
- * the section above: there is no other server to sign in to.
- */
-function BrowserSection({
-  onSignOut,
-  desktop,
-  local,
-  unencrypted,
-  shortcut,
-}: {
-  onSignOut: SettingsIntents["signOut"];
-  desktop: boolean;
-  local: boolean;
-  unencrypted: boolean;
-  shortcut: DesktopShortcut | undefined;
-}) {
+/** The theme and the language, kept on this device only. */
+function AppearanceSection() {
   const { t } = useI18n();
   const { appearance, language } = usePreferences();
   const appearanceId = useId();
@@ -1139,11 +1405,10 @@ function BrowserSection({
     ...LANGUAGES.map((language) => ({ value: language, label: LANGUAGE_NAMES[language] })),
   ];
   return (
-    <Section title={t(desktop ? "settings.thisDevice" : "settings.browser")}>
-      {shortcut !== undefined && <ShortcutSetting shortcut={shortcut} />}
+    <Section>
       <div className="flex flex-col gap-1.5">
         <span id={appearanceId} className="text-xs">
-          {t("settings.appearance")}
+          {t("settings.theme")}
         </span>
         <Segmented
           value={appearance}
@@ -1172,19 +1437,47 @@ function BrowserSection({
           ))}
         </select>
       </div>
-      {(unencrypted || !local) && (
-        <div className="flex flex-col gap-1.5 pt-1">
-          {unencrypted && (
-            <p className="text-xs text-muted-foreground">{t("settings.thisDevice.unencrypted")}</p>
-          )}
-          {!local && (
-            <>
-              <p className="text-xs text-muted-foreground">{t("settings.signOut.hint")}</p>
-              <SignOutDevice onSignOut={onSignOut} />
-            </>
-          )}
-        </div>
+    </Section>
+  );
+}
+
+/**
+ * What holds for this device alone, in the `desktop` app: its global
+ * `shortcut`, and that its sign-in is stored `unencrypted` when it is, as
+ * that is less safe than the operator would expect. Nothing in a browser.
+ */
+function ThisDeviceSection({
+  desktop,
+  unencrypted,
+  shortcut,
+}: {
+  desktop: boolean;
+  unencrypted: boolean;
+  shortcut: DesktopShortcut | undefined;
+}) {
+  const { t } = useI18n();
+  if (shortcut === undefined && !unencrypted) return null;
+  return (
+    <Section title={t(desktop ? "settings.thisDevice" : "settings.browser")}>
+      {shortcut !== undefined && <ShortcutSetting shortcut={shortcut} />}
+      {unencrypted && (
+        <p className="text-xs text-muted-foreground">{t("settings.thisDevice.unencrypted")}</p>
       )}
+    </Section>
+  );
+}
+
+/**
+ * Signing this device out, ruled off at the end of the devices. In local mode
+ * there is none: signing out is stopping using this computer, where the bots
+ * live, as there is no other server to sign in to.
+ */
+function SignOutSection({ onSignOut }: { onSignOut: SettingsIntents["signOut"] }) {
+  const { t } = useI18n();
+  return (
+    <Section apart>
+      <p className="text-xs text-muted-foreground">{t("settings.signOut.hint")}</p>
+      <SignOutDevice onSignOut={onSignOut} />
     </Section>
   );
 }

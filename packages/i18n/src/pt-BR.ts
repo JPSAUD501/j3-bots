@@ -729,6 +729,29 @@ const sentences = {
   "mention.everyone": "Todos os membros respondem",
 
   "settings.title": "Configurações",
+  "settings.back": "Todas as configurações",
+  "settings.sections": "Seções das configurações",
+  "settings.you.description":
+    "Como seus bots chamam você, e o fuso horário que suas rotinas seguem.",
+  "settings.notifications.description":
+    "Quando o J3 Bots avisa que um bot precisa de você, e quanto o aviso diz.",
+  "settings.appearance.description": "Como o J3 Bots fica neste dispositivo, e o idioma dele.",
+  "settings.theme": "Tema",
+  "settings.providers": "Provedores",
+  "settings.providers.description":
+    "As assinaturas com que seus bots pensam, e o motor que os executa.",
+  "settings.usage.description":
+    "O quanto cada provedor está perto do limite, e quais bots o usaram.",
+  "settings.connectors.description":
+    "Serviços que seus bots podem usar, como o Notion ou o GitHub.",
+  "settings.vault.description":
+    "Os logins com que seus bots entram, e os sites em que o navegador deles continua conectado.",
+  "settings.devices.description": "Este dispositivo, e cada um dos outros pareados com seus bots.",
+  "settings.devices.paired": "Dispositivos pareados",
+  "settings.thisPhone": "Este celular",
+  "settings.where.description": "Onde seus bots rodam, e como mudá-los de lugar.",
+  "settings.about.description": "As versões que você usa, e como atualizá-las.",
+  "settings.needsYou": "Precisa de você",
   "settings.appearance": "Aparência",
   "settings.language": "Idioma",
   "settings.system": "Igual ao sistema",
@@ -1313,7 +1336,6 @@ const sentences = {
   "settings.botBrowser.signOut.confirm": "Sair",
   "settings.botBrowser.signOut.done": "Você saiu de todos os sites.",
   "settings.botBrowser.signOut.failed": "O navegador não saiu dos sites. Tente de novo.",
-  "settings.engine": "Motor",
   "settings.engine.ready": "Rodando, versão {version}",
   "settings.engine.lastKnown":
     "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",
@@ -1411,7 +1433,6 @@ const sentences = {
   "settings.pair.expires": "Vale uma vez, até {time}",
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",
   "settings.pair.offline": "Disponível quando este dispositivo voltar a se conectar ao J3 Bots.",
-  "settings.server": "Servidor",
   "settings.where": "Onde os bots ficam",
   "settings.where.local": "Neste computador",
   "settings.where.server": "Num servidor",
@@ -1803,8 +1824,6 @@ const sentences = {
   "signInReturn.body": "Você pode fechar esta aba. O J3 Bots termina de conectar no app.",
 
   "settings.connectors": "Conectores",
-  "settings.connectors.hint":
-    "Serviços que seus bots podem usar, como o Notion ou o GitHub. Você entra uma vez, no seu servidor; os bots nunca veem a senha nem a chave.",
   "settings.connectors.none": "Nenhum conectado ainda.",
   "settings.connectors.connected.one": "{count} conectado",
   "settings.connectors.connected.other": "{count} conectados",

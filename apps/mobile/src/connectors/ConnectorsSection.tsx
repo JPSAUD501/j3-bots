@@ -3,7 +3,7 @@ import { connectorNeedsYou, connectorTone } from "@j3-bots/client-runtime/presen
 import { useConnectors } from "@j3-bots/client-runtime/react";
 import { useNavigation } from "@react-navigation/native";
 import { View } from "react-native";
-import { Quiet, Section, SkeletonRows } from "../components/form.tsx";
+import { Section, SkeletonRows } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Navigation } from "../navigation.tsx";
 import { Text } from "../text.tsx";
@@ -24,8 +24,7 @@ export function ConnectorsSection() {
   // "0 connected" says nothing beside what needs the operator.
   const showWorking = working > 0 || needYou === 0;
   return (
-    <Section title={t("settings.connectors")}>
-      <Quiet>{t("settings.connectors.hint")}</Quiet>
+    <Section open>
       {connectors === null ? (
         <SkeletonRows count={1} />
       ) : connectors.length === 0 ? (

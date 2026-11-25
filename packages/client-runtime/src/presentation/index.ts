@@ -204,6 +204,7 @@ export {
 export { shownSaveProblem } from "./saves.ts";
 export { type Shared, sharedDraft, type SharedDraft, type SharedFile } from "./share.ts";
 export { editsAfterFailedSave, noEdits, type SettingsEdits, settingsPatch } from "./settings.ts";
+export { providersNeedYou, type SettingsPage, settingsGroups } from "./settingsPages.ts";
 export {
   isTemplateFileName,
   openTemplateChunks,
