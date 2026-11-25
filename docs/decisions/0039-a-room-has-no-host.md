@@ -1,6 +1,6 @@
 # 0039: A room has no host, and a message for nobody wakes everyone
 
-**Status:** Accepted
+**Status:** Accepted. Its loop guard, the room's count of messages, is superseded by [0042](0042-a-room-counts-rounds.md).
 
 ## Context
 

@@ -209,3 +209,14 @@ export const roomWakeStatuses = (botId: BotId, roomId: RoomId) =>
 /** Whether any envelope the member received carries the text. */
 export const sawText = (member: Member, text: string) =>
   Effect.map(envelopes(member), (all) => all.some((envelope) => envelope.includes(text)));
+
+/** Each message of the room, oldest first: its text and the round it took. */
+export const roundsIn = (roomId: RoomId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly text: string; readonly round: number | null }>`
+      SELECT json_extract(body_json, '$.text') AS text, room_round AS round FROM entries
+      WHERE room_id = ${roomId} AND kind = 'message' ORDER BY position
+    `.pipe(Effect.orDie);
+    return rows.map((row) => [row.text, row.round] as const);
+  });

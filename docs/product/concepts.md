@@ -107,7 +107,7 @@ From the bot's side, a connector is a set of tools named after it (`notion__sear
 
 **Vault access.** A bot's switch, in its details next to the browser's, off by default, that lets it sign in with the saved logins that allow it. The bot is never handed a value: it asks the server to **fill** one, and the server types it into the bot's browser tab, after checking that the page is one of the login's sites. A bot that runs a script in the page can still read what was typed there. Nobody confirms each fill; the operator decides ahead of time, per bot and per login. Each fill shows in the bot's work.
 
-**Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, how many hops a chain of teammate messages may take, how many turns may run at once. A room has its own guard instead of hops: after twelve bots' messages there since the operator last wrote, its bots' messages wake nobody until the operator writes again.
+**Budget.** The limits that keep bots from spending the operator's allowance on each other: how many teammates one bot turn may bring in besides those it answers, how many hops a chain of teammate messages may take, how many turns may run at once. A room has its own guard instead of hops: after four rounds of its bots answering each other since the operator last wrote there, whatever the room's size, its bots' messages wake nobody until the operator writes again.
 
 ## Names
 

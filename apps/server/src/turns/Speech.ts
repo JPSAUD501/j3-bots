@@ -9,7 +9,7 @@ import {
   MAX_VISUAL_BYTES,
   type MessageEntry,
   pairBotIds,
-  ROOM_QUIET_AFTER,
+  ROOM_QUIET_ROUND,
   RoomId,
   siteOriginOf,
   type Visual,
@@ -844,9 +844,10 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Counts a bot's room message, a `say`, a `message_bot` to the room or a
-     * kickoff, and wakes the members it wakes (`RoomRouting.botMessage`),
-     * unless the operator stopped the work that spoke.
+     * Gives a bot's room message, a `say`, a `message_bot` to the room or a
+     * kickoff, its round, and wakes the members it wakes
+     * (`RoomRouting.botMessage`), unless the operator stopped the work that
+     * spoke.
      */
     const routeRoomMessage = Effect.fn("Speech.routeRoomMessage")(function* (
       found: Pin,
@@ -858,6 +859,7 @@ export const layer = Layer.effect(
       return yield* routing.botMessage({
         room,
         botId: found.botId,
+        turn: { sessionId: found.sessionId, turnId: found.turnId },
         message,
         word,
         seq: work.seq,
@@ -874,7 +876,7 @@ export const layer = Layer.effect(
         ? ({
             status: "recorded",
             stopped: "room",
-            note: `Your message is in the room, but nobody was woken: the bots here have said ${ROOM_QUIET_AFTER} messages since your user last wrote, so the room waits for your user. Do not try to wake anyone for it again.`,
+            note: `Your message is in the room, but nobody was woken: the bots here have answered each other for ${ROOM_QUIET_ROUND} rounds since your user last wrote, so the room waits for your user. Do not try to wake anyone for it again.`,
           } satisfies Schema.Json)
         : null;
 
@@ -1201,11 +1203,10 @@ export const layer = Layer.effect(
      * Rooms), from a turn of any audience: posted there at once as the bot's,
      * and routed as a room `say` is, its `mention` checked against the room.
      * The first post of a turn the operator spoke in (`operatorSpokeIn`),
-     * other than a turn of this room, is their request relayed, and starts
-     * the room's count again, once, as their own message there would; any
-     * other post counts with the room's other bots' messages. A turn of this
-     * room is left out because the operator's message there already started
-     * the count again. Refused, with nothing
+     * other than a turn of this room, is their request relayed, and is round
+     * 0, once, as their own message there would be; any other post answers
+     * the rounds before it. A turn of this room is left out because the
+     * operator's message there already was their word. Refused, with nothing
      * written, for an archived room, one the bot is not in, and
      * work the operator stopped. `null` when no room has the id.
      */
@@ -1584,8 +1585,8 @@ export const layer = Layer.effect(
      * transaction that pins the request it creates the room with the caller
      * as its first member, shows a `room-started` notice there and in the
      * caller's conversation, posts the kickoff as the caller's message, and
-     * routes it as the operator's word: it starts the room's count of its
-     * bots' messages, and wakes the members it mentions, or every member when
+     * routes it as the operator's word, round 0 of the room's rounds, and
+     * wakes the members it mentions, or every member when
      * it mentions none. A member this turn's `create_bot` made opens in the room: its
      * hello, which waits for this turn (`MadeBy`), is cancelled, and its
      * conversation shows a `made-for-room` notice instead.

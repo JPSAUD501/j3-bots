@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type BotId, type MessageEntry, type Room, ROOM_QUIET_AFTER } from "@j3-bots/contracts";
+import {
+  type BotId,
+  type MessageEntry,
+  type Room,
+  ROOM_QUIET_ROUND,
+  RoomId,
+} from "@j3-bots/contracts";
+import { TurnId } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -7,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Entries } from "../entries/Entries.ts";
-import type { DispatchSeq, RoomReason } from "../turns/model.ts";
+import { type DispatchSeq, type RoomReason, SessionRowId } from "../turns/model.ts";
 import { notices } from "../turns/notices.ts";
 import { type NewWake, Wakes } from "../turns/Wakes.ts";
 import type { LiveRoom } from "./liveRoom.ts";
@@ -20,37 +27,48 @@ export type BotMessageRouted =
   /** The members it wakes have their wakes, unless the work that spoke was stopped. */
   | { readonly _tag: "routed" }
   /**
-   * The room's bots had already said `ROOM_QUIET_AFTER` messages since the
-   * operator last wrote, so none was written.
+   * It is of a round past `ROOM_QUIET_ROUND`, so none was written.
    */
   | { readonly _tag: "quiet" };
 
 /**
- * Whose word a bot's room message carries, which decides whether it counts
- * (`docs/architecture/server.md`, Rooms):
+ * Whose word a bot's room message carries, which decides its round
+ * (`docs/architecture/server.md`, The room's rounds):
  *
  * - `kickoff`: the first message of a room the bot started, which a bot does
- *   only in a turn the operator spoke in. It starts the room's count.
+ *   only in a turn the operator spoke in. It is round 0, as their own message
+ *   there would be.
  * - `relayed`: the first `message_bot` to the room from a turn the operator
  *   spoke in, outside the room's own turns: their request, brought to the
- *   room. It starts the count again, as their own message there would; the
- *   turn's later posts there are `bot`.
- * - `bot`: any other, the bot's own. It counts.
+ *   room. It is round 0 too; the turn's later posts there are `bot`.
+ * - `bot`: any other, the bot's own, which answers the rounds before it.
  */
 export type BotWord = "kickoff" | "relayed" | "bot";
+
+/** The speaking turn: what it was shown of the room decides its messages' round. */
+export interface SpeakingTurn {
+  readonly sessionId: SessionRowId;
+  readonly turnId: TurnId;
+}
 
 /**
  * Who a room message wakes (`docs/architecture/server.md`, Rooms), the
  * operator's message and a bot's alike: the members it mentions, or every
  * member but its author when it mentions nobody or everyone. Every member
- * reads it in its next envelope either way. The room counts its bots'
- * messages since the operator's word last reached it: a message of theirs
- * there, a bot's kickoff, or a request of theirs a bot relayed
- * (`rooms.bot_streak`, `BotWord`). Past `ROOM_QUIET_AFTER` a bot's message
- * wakes nobody, and the first such message shows one `chain-stopped` notice
- * in the room until their word reaches it again. Each wake is a `room` wake
- * for the room, written in the caller's transaction, the one that writes the
- * message.
+ * reads it in its next envelope either way.
+ *
+ * Each message takes a round, kept with its entry (`entries.room_round`). The
+ * operator's word is round 0: their message, a bot's kickoff, or a request of
+ * theirs a bot relayed (`BotWord`), and the room's newest round-0 message is
+ * their latest word there. A bot's message is one round past the newest round
+ * its turn was shown since that word: the highest `dispatches.room_round` of
+ * the turn's room dispatches written since, or round 1 when the turn was shown
+ * none of it. A turn shown nothing of the room, one from outside it or one the
+ * engine started on its own, answers the whole room: one round past its
+ * highest since that word. Past `ROOM_QUIET_ROUND` a bot's message wakes
+ * nobody, and the first such message shows one `chain-stopped` notice in the
+ * room until their word reaches it again. Each wake is a `room` wake for the
+ * room, written in the caller's transaction, the one that writes the message.
  */
 export class RoomRouting extends Context.Service<
   RoomRouting,
@@ -63,13 +81,15 @@ export class RoomRouting extends Context.Service<
      * A bot spoke in a room: in a `say` or a `message_bot` to it, in the
      * `kickoff` of a room it started, or in the engine's own speech of a room
      * turn; `word` says whether it carries the operator's word. Its mentions
-     * are already checked to be other members. `seq` is the dispatch that began the speaking turn's
-     * work, `null` for a turn no dispatch began. A message of work the
-     * operator `stopped` is in the room, so it counts, but wakes nobody.
+     * are already checked to be other members. `seq` is the dispatch that
+     * began the speaking turn's work, `null` for a turn no dispatch began. A
+     * message of work the operator `stopped` is in the room, so it takes its
+     * round, but wakes nobody.
      */
     readonly botMessage: (input: {
       readonly room: LiveRoom;
       readonly botId: BotId;
+      readonly turn: SpeakingTurn;
       readonly message: MessageEntry;
       readonly word: BotWord;
       readonly seq: DispatchSeq | null;
@@ -106,23 +126,91 @@ export const layer = Layer.effect(
     const wakes = yield* Wakes;
     const { notify } = notices(sql, yield* Entries);
 
-    const restart = (room: { readonly id: Room["id"] }) =>
-      sql`UPDATE rooms SET bot_streak = 0 WHERE id = ${room.id}`.pipe(Effect.orDie);
+    /** Gives a room message its round, in the transaction that wrote it. */
+    const setRound = (message: MessageEntry, round: number) =>
+      sql`UPDATE entries SET room_round = ${round} WHERE id = ${message.id}`.pipe(Effect.orDie);
 
-    /** One more bot's message in the room, and how many there are now. */
-    const counted = SqlSchema.findOne({
-      Request: Schema.String,
-      Result: Schema.Struct({ bot_streak: Schema.Int }),
-      execute: (id) => sql`
-        UPDATE rooms SET bot_streak = bot_streak + 1 WHERE id = ${id} RETURNING bot_streak
+    /** The place of the operator's latest word in the room, `null` before any. */
+    const latestWord = SqlSchema.findOne({
+      Request: RoomId,
+      Result: Schema.Struct({ word: Schema.NullOr(Schema.Int) }),
+      execute: (roomId) => sql`
+        SELECT MAX(position) AS word FROM entries WHERE room_id = ${roomId} AND room_round = 0
       `,
     });
+
+    /** The room's highest round from a place on, `null` when nothing there has one. */
+    const highestFrom = SqlSchema.findOne({
+      Request: Schema.Struct({ roomId: RoomId, from: Schema.Int }),
+      Result: Schema.Struct({ round: Schema.NullOr(Schema.Int) }),
+      execute: ({ roomId, from }) => sql`
+        SELECT MAX(room_round) AS round FROM entries
+        WHERE room_id = ${roomId} AND position >= ${from} AND room_round IS NOT NULL
+      `,
+    });
+
+    /**
+     * What the speaking turn was shown of the room: how many of its room
+     * dispatches the engine took, a steer riding it included, and the
+     * highest round their replies take among those written since the place
+     * given, `null` when none was.
+     */
+    const shownTo = SqlSchema.findOne({
+      Request: Schema.Struct({
+        roomId: RoomId,
+        sessionId: SessionRowId,
+        turnId: TurnId,
+        from: Schema.Int,
+      }),
+      Result: Schema.Struct({ dispatches: Schema.Int, round: Schema.NullOr(Schema.Int) }),
+      execute: ({ roomId, sessionId, turnId, from }) => sql`
+        SELECT COUNT(*) AS dispatches,
+          MAX(CASE WHEN room_through >= ${from} THEN room_round END) AS round
+        FROM dispatches
+        WHERE audience_room_id = ${roomId} AND session_id = ${sessionId}
+          AND status IN ('accepted', 'delivered', 'finished')
+          AND (
+            engine_turn_id = ${turnId}
+            OR (engine_turn_id IS NULL AND steer_turn_id = ${turnId})
+          )
+      `,
+    });
+
+    /** Whether a message of the room other than this one went past the quiet round since a place. */
+    const quietBefore = (roomId: RoomId, from: number, message: MessageEntry) =>
+      sql<{ readonly id: string }>`
+        SELECT id FROM entries
+        WHERE room_id = ${roomId} AND position >= ${from} AND room_round > ${ROOM_QUIET_ROUND}
+          AND id <> ${message.id}
+        LIMIT 1
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
+
+    /** The round of a bot's own message (`BotWord` `bot`), and from where its room counts. */
+    const roundOf = Effect.fn("RoomRouting.roundOf")(function* (
+      room: LiveRoom,
+      turn: SpeakingTurn,
+    ) {
+      const { word } = yield* latestWord(room.id);
+      const from = word ?? 0;
+      const shown = yield* shownTo({
+        roomId: room.id,
+        sessionId: turn.sessionId,
+        turnId: turn.turnId,
+        from,
+      });
+      if (shown.dispatches > 0) return { round: shown.round ?? 1, from };
+      const { round } = yield* highestFrom({ roomId: room.id, from });
+      return { round: (round ?? 0) + 1, from };
+    }, Effect.orDie);
 
     const operatorMessage = Effect.fn("RoomRouting.operatorMessage")(function* (input: {
       readonly room: ActiveRoom;
       readonly message: MessageEntry;
     }) {
-      yield* restart(input.room);
+      yield* setRound(input.message, 0);
       const audience = { _tag: "room", roomId: input.room.id } as const;
       yield* wakes.record(
         woken(input.room.members, input.message, "user").map(([botId, reason]): NewWake => ({
@@ -141,17 +229,19 @@ export const layer = Layer.effect(
     const botMessage = Effect.fn("RoomRouting.botMessage")(function* (input: {
       readonly room: LiveRoom;
       readonly botId: BotId;
+      readonly turn: SpeakingTurn;
       readonly message: MessageEntry;
       readonly word: BotWord;
       readonly seq: DispatchSeq | null;
       readonly stopped: boolean;
     }) {
       const audience = { _tag: "room", roomId: input.room.id } as const;
-      if (input.word !== "bot") yield* restart(input.room);
+      if (input.word !== "bot") yield* setRound(input.message, 0);
       else {
-        const { bot_streak: streak } = yield* counted(input.room.id).pipe(Effect.orDie);
-        if (streak > ROOM_QUIET_AFTER) {
-          if (streak === ROOM_QUIET_AFTER + 1) {
+        const { round, from } = yield* roundOf(input.room, input.turn);
+        yield* setRound(input.message, round);
+        if (round > ROOM_QUIET_ROUND) {
+          if (!(yield* quietBefore(input.room.id, from, input.message))) {
             yield* notify(input.botId, audience, { _tag: "chain-stopped", limit: "room" }, null);
           }
           return { _tag: "quiet" } as const;
@@ -160,7 +250,7 @@ export const layer = Layer.effect(
       if (input.stopped) return { _tag: "routed" } as const;
       // The speaking turn's work: a Stop that covers it, or the room's
       // archival, leaves these wakes unwritten (`Wakes.record`). A room
-      // counts its own messages, so its wakes carry no hops: a teammate
+      // counts its own rounds, so its wakes carry no hops: a teammate
       // message a member sends from them starts a chain of its own.
       yield* wakes.record(
         woken(

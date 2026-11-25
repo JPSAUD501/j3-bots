@@ -278,7 +278,7 @@ const failures = (run: Run): ReadonlyArray<string> => {
 };
 
 const HEADER = [
-  `| Run | Result | File | Content | Bot turns | Turns | ${BYSTANDER}'s messages | Chain stopped | Bot messages | Minutes |`,
+  `| Run | Result | File | Content | Bot turns | Turns | ${BYSTANDER}'s messages | Chain stopped | Rounds | Minutes |`,
   "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
 ];
 
@@ -303,7 +303,7 @@ const row = (index: number, outcome: Run | Broken) => {
     s.sequence.join(" → "),
     s.bystanderMessages,
     s.chainStopped,
-    s.botMessages,
+    s.rounds,
     outcome.minutes.toFixed(1),
   ];
   return `| ${cells.join(" | ")} |`;

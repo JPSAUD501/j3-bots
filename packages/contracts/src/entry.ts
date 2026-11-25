@@ -534,9 +534,10 @@ const notices = <Failure extends Schema.Top>(failure: Failure) =>
   [
     /**
      * Bots talking among themselves hit a limit: a chain of teammate
-     * messages its `hops` or `fan-out` budget, or a room `ROOM_QUIET_AFTER`
-     * bots' messages since the operator last wrote there (`room`), after
-     * which their messages there wake nobody until the operator writes.
+     * messages its `hops` or `fan-out` budget, or a room `ROOM_QUIET_ROUND`
+     * rounds of its bots answering each other since the operator's word last
+     * reached it (`room`), after which their messages there wake nobody
+     * until it reaches it again.
      */
     Schema.TaggedStruct("chain-stopped", {
       limit: Schema.Literals(["hops", "fan-out", "room"]),

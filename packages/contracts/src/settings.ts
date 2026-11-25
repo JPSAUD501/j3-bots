@@ -67,7 +67,8 @@ export const keepsUtcClock = (timeZone: string, year: number): boolean => {
 
 /**
  * The limits that keep bots from spending the operator's allowance on each
- * other. A room counts its bots' messages instead (`ROOM_QUIET_AFTER`).
+ * other. A room counts rounds of its bots answering each other instead
+ * (`ROOM_QUIET_ROUND`).
  */
 export const Budgets = Schema.Struct({
   /** Consecutive bot-caused wakes in one chain of teammate messages since the operator last spoke. */

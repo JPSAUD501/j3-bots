@@ -5,7 +5,7 @@ import {
   BotId,
   type ModelChoice,
   type Notice,
-  ROOM_QUIET_AFTER,
+  ROOM_QUIET_ROUND,
   RoomId,
 } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
@@ -700,7 +700,7 @@ const wokeNobody = (response: ToolCallResponse) =>
   Schema.is(Schema.Struct({ stopped: Schema.Literal("room") }))(resultOf(response));
 
 it.effect(
-  "counts a room post from a turn the operator did not speak in, and from a turn of that room",
+  "gives a room post from a turn of that room the round it was shown, and one from a turn nobody asked for the round past the room's newest",
   () =>
     Effect.gen(function* () {
       const control = yield* TestEngineControl;
@@ -708,11 +708,11 @@ it.effect(
       const wren = yield* member("Wren");
       const room = yield* roomWith(scout, [wren]);
 
-      // The operator's word in the room is spent by the room's own turn: its
-      // posts count, though the operator spoke in it.
+      // The room's own turn answers the operator's message there: every post
+      // of it is round 1, however many it makes.
       yield* operatorWrites(room.id, [scout, wren], "Scout, gather the options.", to(scout));
       const roomTurn = yield* nextTurn(scout.bot.id);
-      for (let n = 1; n <= ROOM_QUIET_AFTER; n++) {
+      for (let n = 1; n <= ROOM_QUIET_ROUND + 1; n++) {
         const posted = yield* call(scout.session, roomTurn, "message_bot", {
           to: room.id,
           text: `Wren, option ${n}?`,
@@ -720,17 +720,21 @@ it.effect(
         });
         assert.isFalse(wokeNobody(posted));
       }
-      const past = yield* call(scout.session, roomTurn, "message_bot", {
-        to: room.id,
-        text: "Wren, one more?",
-        mention: [wren.bot.id],
-      });
-      assert.isTrue(wokeNobody(past));
       yield* endTurn(scout.bot.id, scout.session, roomTurn);
 
-      // A turn of Scout's own conversation nobody asked for brings no word.
+      // A turn of Scout's own conversation nobody asked for brings no word,
+      // and was shown nothing of the room: each post is a round past its
+      // newest, until one is past the quiet round.
       const own = yield* control.startEngineTurn(scout.session);
       yield* nextTurn(scout.bot.id, roomTurn);
+      for (let round = 2; round <= ROOM_QUIET_ROUND; round++) {
+        const posted = yield* call(scout.session, own, "message_bot", {
+          to: room.id,
+          text: `Wren, round ${round}?`,
+          mention: [wren.bot.id],
+        });
+        assert.isFalse(wokeNobody(posted));
+      }
       const unasked = yield* call(scout.session, own, "message_bot", {
         to: room.id,
         text: "Wren, still there?",
@@ -754,10 +758,10 @@ it.effect(
       const room = yield* roomWith(scout, [wren, pip]);
 
       // The room goes quiet on Scout's posts to Pip, from a turn of its own
-      // conversation that nobody asked for.
+      // conversation that nobody asked for: each is a round past the last.
       const unasked = yield* control.startEngineTurn(scout.session);
       yield* nextTurn(scout.bot.id);
-      for (let n = 0; n <= ROOM_QUIET_AFTER; n++) {
+      for (let n = 1; n <= ROOM_QUIET_ROUND; n++) {
         yield* call(scout.session, unasked, "message_bot", {
           to: room.id,
           text: `Pip, note ${n}.`,
@@ -773,8 +777,8 @@ it.effect(
       yield* endTurn(scout.bot.id, scout.session, unasked);
 
       // In Scout's own conversation, the operator asks for the room's work:
-      // the post carries their word, so it wakes Wren and the room's count
-      // starts again.
+      // the post carries their word, so it wakes Wren and the room's rounds
+      // start again.
       const { session, turnId } = yield* operatorAsks(scout.bot, "Start the test in the group.");
       const posted = yield* call(session, turnId, "message_bot", {
         to: room.id,
@@ -796,7 +800,7 @@ it.effect(
 );
 
 it.effect(
-  "relays the operator's word to a room once a turn, counting the turn's later posts there",
+  "relays the operator's word to a room once a turn, the turn's later posts there taking rounds",
   () =>
     Effect.gen(function* () {
       const scout = yield* member("Scout");
@@ -804,9 +808,10 @@ it.effect(
       const room = yield* roomWith(scout, [wren]);
       const { session, turnId } = yield* operatorAsks(scout.bot, "Keep the group posted.");
 
-      // The first post carries the operator's word; the turn's next ones are
-      // Scout's own, so the room goes quiet as it would after their message.
-      for (let n = 0; n <= ROOM_QUIET_AFTER; n++) {
+      // The first post carries the operator's word, round 0; the turn's next
+      // ones are Scout's own, each a round past the room's newest, so the
+      // room goes quiet as it would after their message.
+      for (let n = 0; n <= ROOM_QUIET_ROUND; n++) {
         const posted = yield* call(session, turnId, "message_bot", {
           to: room.id,
           text: `Update ${n}.`,
