@@ -30,10 +30,8 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { ServerConfig } from "../config.ts";
-import { findOnPath } from "../engine/harnesses.ts";
 import { Layout } from "../Layout.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
-import { Host } from "../system/Host.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
 import type { Distribution, Release } from "./distributions.ts";
@@ -654,8 +652,8 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
 
 /**
  * The service as the server runs it: in the server's home, with the
- * distributions and probe of `HarnessSources`, the operator's own found as
- * the engine finds it, the `autoUpdateHarnesses` setting, and a switch that
+ * distributions, probe and operator's own of `HarnessSources`, the
+ * `autoUpdateHarnesses` setting, and a switch that
  * holds bots' first sends, counts the bots whose work runs in a session on
  * the provider, and has the engine release that provider's sessions.
  */
@@ -664,7 +662,6 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const { home } = yield* ServerConfig;
     const sources = yield* HarnessSources;
-    const host = yield* Host;
     const settings = yield* SettingsService;
     const pause = yield* SendPause;
     const runningWork = yield* RunningWork;
@@ -674,11 +671,7 @@ export const layer = Layer.effect(
       platform: sources.platform,
       distributions: sources.distributions,
       probe: sources.probe,
-      onPath: (harness) =>
-        findOnPath(harness, Option.none()).pipe(
-          Effect.map(({ executable }) => Option.isSome(executable)),
-          Effect.provideService(Host, host),
-        ),
+      onPath: sources.onPath,
       autoUpdate: settings.changes.pipe(Stream.map((saved) => saved.autoUpdateHarnesses)),
       work: {
         paused: pause.paused,

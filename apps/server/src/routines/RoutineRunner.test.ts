@@ -30,6 +30,7 @@ import {
   deliveryIs,
   engineSession,
   eventually,
+  finishRunning,
   flushed,
   gateSettled,
   holdGate,
@@ -799,10 +800,10 @@ it.effect(
       const control = yield* TestEngineControl;
       yield* concurrentTurns(1);
       const bot = yield* createBot("Ana");
-      const main = yield* engineSession(bot.id);
+      yield* engineSession(bot.id);
       // The bot's own turn takes the only slot: the routine's session opens and waits.
       yield* sendToBot(bot.id, "Plan the sprint.");
-      const turn = yield* nextTurn(bot.id);
+      yield* nextTurn(bot.id);
       const routine = yield* routineOf(bot.id);
       yield* (yield* Routines).run({ commandId: command(), routineId: routine.id });
       yield* until(sideSessions(bot.id).pipe(Effect.map((opened) => opened.length === 1)));
@@ -818,7 +819,8 @@ it.effect(
       yield* until(sideSessions(bot.id).pipe(Effect.map((opened) => opened.length === 2)));
       const [, second] = yield* sideSessions(bot.id);
       assert.isDefined(second);
-      yield* control.finishTurn({ sessionId: main, turnId: turn, outcome: { _tag: "completed" } });
+      // The bot answers, so no `undelivered` follow-up of its own takes the freed slot.
+      yield* finishRunning(bot.id);
       yield* turnEnded(bot.id);
       // A freed slot nudges no runner: it looks again on its own, which a pass stands for.
       const runner = yield* RoutineRunner;

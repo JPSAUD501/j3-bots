@@ -71,18 +71,18 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
  * Every service of the server's domain, over a migrated database, the server's
  * configuration, the filesystem, an `Engine` with its `BrowserBridge`, a
  * `PushSender`, the HTTP client connectors' sign-ins use (`OAuthHttp`), an
- * `McpRegistry` and the `HarnessSources` J3 Bots installs harnesses from.
- * Which engine, sender, client, registry and sources are the caller's: the real ones in `server.ts`, in-memory ones in tests. Building
- * it starts the turn machinery and the push worker, which run for as long as
- * the layer's scope.
+ * `McpRegistry` and the `HarnessSources` J3 Bots installs harnesses from and
+ * finds the operator's own with. Which engine, sender, client, registry and
+ * sources are the caller's: the real ones in `server.ts`, in-memory ones in
+ * tests. Building it starts the turn machinery and the push worker, which run
+ * for as long as the layer's scope.
  */
 export const layer = Layer.mergeAll(
   BotTools.layer,
   ToolLists.layer,
   Turns.layer,
   PushWorker.layer,
-  // J3 Bots' own copies of the harnesses, found beside the operator's on the server's `PATH`.
-  Harnesses.layer.pipe(Layer.provide(Host.layer.pipe(Layer.provide(FetchHttpClient.layer)))),
+  Harnesses.layer,
 ).pipe(
   // A fill is claimed for its call's turn, through `Speech`'s turn tools.
   Layer.provideMerge(CredentialFills.layer),

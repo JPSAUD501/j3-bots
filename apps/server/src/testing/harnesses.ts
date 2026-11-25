@@ -19,12 +19,17 @@ const nothing: Distribution = {
   ),
 };
 
-/** Harness sources as a test that is not about them sees them: nothing to install. */
+/**
+ * Harness sources as a test that is not about them sees them: nothing to
+ * install, and no harness of the operator's, whatever the machine running
+ * the test has on its `PATH`.
+ */
 export const layer = Layer.succeed(
   HarnessSources,
   HarnessSources.of({
     platform: "linux",
     distributions: { "claude-code": nothing, codex: nothing },
     probe: () => () => Effect.succeedNone,
+    onPath: () => Effect.succeed(false),
   }),
 );
