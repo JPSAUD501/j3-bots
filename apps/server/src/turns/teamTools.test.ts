@@ -820,6 +820,8 @@ it.effect(
         mention: [wren.bot.id],
       });
       assert.isTrue(wokeNobody(past));
+      // The operator's word was counted: the bot is not told to have them ask again.
+      assert.notInclude(decodeNote(resultOf(past)).note, "ask again");
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

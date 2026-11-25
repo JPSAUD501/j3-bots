@@ -1281,17 +1281,17 @@ export const layer = Layer.effect(
         text: input.text,
       });
       const inThisRoom = found.audience._tag === "room" && found.audience.roomId === roomId;
-      const word =
-        !inThisRoom && (yield* operatorSpokeIn(found)) && (yield* firstRelay(found, roomId))
-          ? "relayed"
-          : "bot";
+      const spoke = !inThisRoom && (yield* operatorSpokeIn(found));
+      const word = spoke && (yield* firstRelay(found, roomId)) ? "relayed" : "bot";
       const routed =
         entry._tag === "message" ? yield* routeRoomMessage(found, live.value, entry, word) : null;
       const quiet = roomPosted(routed);
-      // From outside the room, only the operator's word in this turn could
-      // have woken it: a message of theirs steered into the turn does not
-      // count, so they are asked again.
-      if (quiet !== null && !inThisRoom) return { ...quiet, note: `${quiet.note} ${LATE_WORD}` };
+      // A turn from outside the room that the operator did not speak in may
+      // carry a message of theirs steered into it, which does not count: they
+      // are asked again, as the other tools that take only their word ask.
+      if (quiet !== null && !inThisRoom && !spoke) {
+        return { ...quiet, note: `${quiet.note} ${LATE_WORD}` };
+      }
       return (
         quiet ??
         ({
