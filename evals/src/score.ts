@@ -171,7 +171,7 @@ const Author = Schema.Struct({ author_bot_id: BotId });
 
 const Text = Schema.Struct({ text: Schema.String });
 
-const Provider = Schema.Struct({ provider_id: Schema.String });
+const MadeBot = Schema.Struct({ name: Schema.String, provider_id: Schema.String });
 
 const WakeState = Schema.Struct({
   status: Schema.String,
@@ -183,6 +183,8 @@ export interface TeamScore {
   readonly tools: ReadonlyArray<string>;
   /** The bots its `create_bot` calls made. */
   readonly made: ReadonlyArray<BotId>;
+  /** The name each of them was given, in the order made. */
+  readonly madeNames: ReadonlyArray<string>;
   /** The provider each of them runs on, in the order made. */
   readonly madeOn: ReadonlyArray<string>;
   /** The first room it is the first member of, as `start_room` makes it, with its members in order. */
@@ -283,13 +285,13 @@ export const scoreTeam = Effect.fn("scoreTeam")(function* (database: string, pri
           primary,
         );
   const madeIds = made.map((row) => row.id);
-  const madeOn =
+  const madeBots =
     madeIds.length === 0
       ? []
       : yield* query(
           database,
-          Provider,
-          `SELECT provider_id FROM bots WHERE id IN (${madeIds.map(() => "?").join(", ")})
+          MadeBot,
+          `SELECT name, provider_id FROM bots WHERE id IN (${madeIds.map(() => "?").join(", ")})
              ORDER BY rowid`,
           ...madeIds,
         );
@@ -316,7 +318,8 @@ export const scoreTeam = Effect.fn("scoreTeam")(function* (database: string, pri
   return {
     tools: tools.map((row) => row.tool),
     made: madeIds,
-    madeOn: madeOn.map((row) => row.provider_id),
+    madeNames: madeBots.map((row) => row.name),
+    madeOn: madeBots.map((row) => row.provider_id),
     room:
       hosted === undefined
         ? Option.none()

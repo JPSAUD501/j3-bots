@@ -2640,7 +2640,7 @@ function FirstRunAt({
       engine={engine}
       vault={vault}
       initialStep={step}
-      initialName="Nova"
+      initialName="Maya"
       providerSetup={providerSetup}
       onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
@@ -3218,7 +3218,7 @@ function WhereBotsLiveSection() {
           <Onboarding
             engine={team.engine}
             initialStep="look"
-            initialName="Nova"
+            initialName="Maya"
             providerSetup={localSetup(harnessesFound.both)}
             waiting={t("local.waiting")}
             onCreate={() => new Promise(() => {})}

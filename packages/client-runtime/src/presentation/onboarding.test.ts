@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   type EngineStatus,
+  LANGUAGES,
   ModelId,
   ProviderId,
   type ProviderStatus,
@@ -10,7 +11,14 @@ import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../../test/fixtures.ts";
 import { hasDefaultModel, openingHeld } from "./engine.ts";
 import type { VaultView } from "../stores/Vault.ts";
-import { makingProgress, nextStep, previousStep, showsConnect, showsVault } from "./onboarding.ts";
+import {
+  defaultBotName,
+  makingProgress,
+  nextStep,
+  previousStep,
+  showsConnect,
+  showsVault,
+} from "./onboarding.ts";
 
 const engine = (status: ProviderStatus["status"]): EngineStatus => ({
   state: { _tag: "ready" },
@@ -151,5 +159,18 @@ describe("what holds a first bot's hello back", () => {
   it("holds while the engine does not report the bot's provider, as the server does", () => {
     expect(openingHeld(opening, { ...ready, providers: [] })).toEqual({ _tag: "provider" });
     expect(openingHeld(opening, ready)).toBeNull();
+  });
+});
+
+describe("the first bot's default name", () => {
+  const seeds = Array.from({ length: 8 }, (_, seed) => seed);
+
+  it("comes from the operator's language, varying with the seed", () => {
+    for (const language of LANGUAGES) {
+      const names = new Set(seeds.map((seed) => defaultBotName(language, seed)));
+      expect(names.size).toBe(seeds.length);
+    }
+    const english = new Set(seeds.map((seed) => defaultBotName("en", seed)));
+    expect(seeds.filter((seed) => english.has(defaultBotName("pt-BR", seed)))).toEqual([]);
   });
 });

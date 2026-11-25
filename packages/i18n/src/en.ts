@@ -759,7 +759,7 @@ export const en = {
   "provider.updateUnverified": "The update ran, but the engine couldn’t confirm a newer version",
   "provider.updateRefused": "Couldn’t start the update. Try again in a moment.",
   "firstRun.create.name": "Bot name",
-  "firstRun.create.placeholder": "A name, such as Scout",
+  "firstRun.create.placeholder": "A name, such as Maya",
   "firstRun.create.primary": "Make it my primary bot: requests that belong to nobody go to it.",
   "firstRun.create.submit": "Create bot",
   "firstRun.create.failed": "The bot wasn’t created. Try again.",

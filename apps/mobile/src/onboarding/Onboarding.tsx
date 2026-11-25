@@ -234,8 +234,11 @@ export function Onboarding({
   const engine = status._tag === "ready" ? status.value : null;
   const vaultView = useReadable(client.vault.view);
   const reduced = useReducedMotion();
-  const [fallbackName] = useState(() => defaultBotName(ExpoCrypto.getRandomBytes(1)[0] ?? 0));
-  const [name, setName] = useState(fallbackName);
+  const [seed] = useState(() => ExpoCrypto.getRandomBytes(1)[0] ?? 0);
+  // In the language the operator reads now, until they type one of their own.
+  const fallbackName = defaultBotName(i18n.locale, seed);
+  const [typed, setTyped] = useState<string | null>(null);
+  const name = typed ?? fallbackName;
   const [look, setLook] = useState<AvatarChoice>(avatarCast[0]);
   const [view, setView] = useState<{
     readonly step: OnboardingStep;
@@ -365,8 +368,8 @@ export function Onboarding({
         <NameStep
           name={name}
           fallback={fallbackName}
-          onName={(typed) => {
-            setName(typed);
+          onName={(next) => {
+            setTyped(next);
             setPokes((count) => count + 1);
           }}
           onContinue={forward}

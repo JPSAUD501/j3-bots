@@ -128,10 +128,11 @@ export function Onboarding({
   const i18n = useI18n();
   const { t } = i18n;
   const reduced = useReducedMotion();
-  const [fallbackName] = useState(
-    () => initialName ?? defaultBotName(crypto.getRandomValues(new Uint32Array(1))[0] ?? 0),
-  );
-  const [name, setName] = useState(fallbackName);
+  const [seed] = useState(() => crypto.getRandomValues(new Uint32Array(1))[0] ?? 0);
+  // In the language the operator reads now, until they type one of their own.
+  const fallbackName = initialName ?? defaultBotName(i18n.locale, seed);
+  const [typed, setTyped] = useState<string | null>(null);
+  const name = typed ?? fallbackName;
   const [look, setLook] = useState<AvatarChoice>(avatarCast[0]);
   const [view, setView] = useState<{
     readonly step: OnboardingStep;
@@ -286,8 +287,8 @@ export function Onboarding({
           <NameStep
             name={name}
             fallback={fallbackName}
-            onName={(typed) => {
-              setName(typed);
+            onName={(next) => {
+              setTyped(next);
               setPokes((count) => count + 1);
             }}
             onContinue={forward}

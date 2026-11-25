@@ -111,7 +111,7 @@ A run passes when all of these hold:
 | A message of hers in the room: the kickoff  | the room's entries          |
 | A message of another member in the room     | the room's entries          |
 
-The report also gives, per run, the provider each made bot runs on, how the other members' room wakes ended and the tools they called there, the hellos the made bots wrote in their own conversations (a bot made for a room opens there, so these should be none), Lia's tool calls in order, and her last message to the operator.
+The report also gives, per run, the names of the bots she made, the provider each runs on, how the other members' room wakes ended and the tools they called there, the hellos the made bots wrote in their own conversations (a bot made for a room opens there, so these should be none), Lia's tool calls in order, and her last message to the operator.
 
 A run must be over within 20 minutes of its start, boot included.
 

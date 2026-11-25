@@ -761,7 +761,7 @@ const sentences = {
     "A atualização rodou, mas o motor não confirmou uma versão mais nova",
   "provider.updateRefused": "Não deu para começar a atualização. Tente de novo daqui a pouco.",
   "firstRun.create.name": "Nome do bot",
-  "firstRun.create.placeholder": "Um nome, como Scout",
+  "firstRun.create.placeholder": "Um nome, como Bia",
   "firstRun.create.primary":
     "Tornar meu bot principal: pedidos que não são de ninguém vão para ele.",
   "firstRun.create.submit": "Criar bot",
