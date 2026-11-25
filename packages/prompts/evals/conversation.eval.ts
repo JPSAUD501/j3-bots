@@ -542,14 +542,18 @@ const botsMade = (calls: ReadonlyArray<Call>): ReadonlyArray<ToolInput<"create_b
 const NOT_A_PERSON =
   /bot|\bai\b|\bia\b|assist|rob[oô]|pesquis|research|analis|escrit|writ|redat|post|insta|concorr|confeit|doce|scout|inator/iu;
 
-/** The first letter of `name`, accents aside, for telling names apart. */
-const initial = (name: string): string =>
-  name.normalize("NFD").replace(/\p{M}/gu, "").trim().charAt(0).toLowerCase();
+/** `name` in lowercase, accents aside, for telling names apart. */
+const folded = (name: string): string =>
+  name.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
 
-/** Problems with the names of the two bots the request asks for: two made, none a role or a product word, each with its own first letter. */
+/**
+ * Problems with the names of the two bots the request asks for: two made,
+ * none a role or a product word, and the two told apart: by their first
+ * letters, and by more than those, so Lia and Bia, which rhyme, are not.
+ */
 const namesMadeProblems = (calls: ReadonlyArray<Call>): ReadonlyArray<string> => {
   const names = botsMade(calls).map((made) => made.name);
-  const [first, second] = names;
+  const [first, second] = names.map(folded);
   return [
     ...(names.length === 2
       ? []
@@ -557,9 +561,14 @@ const namesMadeProblems = (calls: ReadonlyArray<Call>): ReadonlyArray<string> =>
     ...names.flatMap((name) =>
       NOT_A_PERSON.test(name) ? [`"${name}" is made from a role, the product or the work`] : [],
     ),
-    ...(first !== undefined && second !== undefined && initial(first) === initial(second)
-      ? [`"${first}" and "${second}" start with the same letter`]
-      : []),
+    ...(first === undefined || second === undefined
+      ? []
+      : [
+          ...(first.at(0) === second.at(0) ? [`${JSON.stringify(names)} start alike`] : []),
+          ...(first.slice(1) === second.slice(1)
+            ? [`${JSON.stringify(names)} differ only in their first letter`]
+            : []),
+        ]),
   ];
 };
 
@@ -1845,7 +1854,7 @@ const cases: ReadonlyArray<Case> = [
       operator: MARINA,
     },
     grades: ({ calls }) => [
-      gradeFromCalls("made two, each with a name of its own", namesMadeProblems(calls)),
+      gradeFromCalls("made two, with names told apart", namesMadeProblems(calls)),
       {
         name: "named like people in Brazil",
         problems:

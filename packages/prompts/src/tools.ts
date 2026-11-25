@@ -353,7 +353,7 @@ const SetRoutineInput = SetRoutineFields.check(
 /** A bot's name, as a teammate's or its own: how to choose one, and that a name the operator gave is kept. */
 const BotName = described(
   Profile.fields.name,
-  "A person's name, as a colleague on your user's team would have: a real first name, or its usual short form, common where your user lives and in the language they write (a Brazilian name for a Brazilian user). Fit it to the bot's character more than its work, and where you can, unlike their other bots' names in sound and first letter. Never a role or task word, a pun on the job, a made-up product-style word, or Bot, AI or Assistant in any form: the role goes in `title`. A name your user gave is used exactly as given.",
+  "A person's name, as a colleague on your user's team would have: a real first name, or its usual short form, common where your user lives and in the language they write (a Brazilian name for a Brazilian user). Fit it to the bot's character more than its work and, where you can, set it apart from the names of their other bots, those you create with it included: another first letter, and no rhyme with any of them. Never a role or task word, a pun on the job, a made-up product-style word, or Bot, AI or Assistant in any form: the role goes in `title`. A name your user gave is used exactly as given.",
 );
 
 const CreateBotInput = toolInput({
@@ -618,7 +618,7 @@ export const tools = {
     [
       `Create a new teammate for your user. Only the primary bot can, only in a turn whose message from your user asked for one or agreed to it, and at most ${MAX_BOTS_PER_REQUEST} for one request of theirs, counting those made before a retry of it.`,
       "The job says what the bot is for and where its limits end, in a few sentences; how every bot behaves comes from J3 Bots, not the job.",
-      "Name it as `name` says, and any bot whose name you suggest to your user.",
+      "Name it as `name` says, and any bot whose name you suggest to your user. Bots you create together need names as distinct as two colleagues' are: never two that rhyme or differ by one letter.",
       "No tool deletes a bot; your user can delete one in the app.",
       "A bot you create greets your user in its own conversation once your turn ends, unless `start_room` puts it in a room in this same turn: then it opens there.",
       "Returns the new bot's id.",
