@@ -31,9 +31,10 @@ export type BotMessageRouted =
  *
  * - `kickoff`: the first message of a room the bot started, which a bot does
  *   only in a turn the operator spoke in. It starts the room's count.
- * - `relayed`: a `message_bot` to the room from a turn the operator spoke in,
- *   outside the room's own turns: their request, brought to the room. It
- *   starts the count again, as their own message there would.
+ * - `relayed`: the first `message_bot` to the room from a turn the operator
+ *   spoke in, outside the room's own turns: their request, brought to the
+ *   room. It starts the count again, as their own message there would; the
+ *   turn's later posts there are `bot`.
  * - `bot`: any other, the bot's own. It counts.
  */
 export type BotWord = "kickoff" | "relayed" | "bot";

@@ -791,6 +791,34 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "relays the operator's word to a room once a turn, counting the turn's later posts there",
+  () =>
+    Effect.gen(function* () {
+      const scout = yield* member("Scout");
+      const wren = yield* member("Wren");
+      const room = yield* roomWith(scout, [wren]);
+      const { session, turnId } = yield* operatorAsks(scout.bot, "Keep the group posted.");
+
+      // The first post carries the operator's word; the turn's next ones are
+      // Scout's own, so the room goes quiet as it would after their message.
+      for (let n = 0; n <= ROOM_QUIET_AFTER; n++) {
+        const posted = yield* call(session, turnId, "message_bot", {
+          to: room.id,
+          text: `Update ${n}.`,
+          mention: [wren.bot.id],
+        });
+        assert.isFalse(wokeNobody(posted));
+      }
+      const past = yield* call(session, turnId, "message_bot", {
+        to: room.id,
+        text: "One update too many.",
+        mention: [wren.bot.id],
+      });
+      assert.isTrue(wokeNobody(past));
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("posts nothing in a room the operator stopped from a turn begun before the Stop", () =>
   Effect.gen(function* () {
     const scout = yield* member("Scout");

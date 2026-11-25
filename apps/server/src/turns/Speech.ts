@@ -1200,14 +1200,30 @@ export const layer = Layer.effect(
      * A message to a room the bot is a member of (`docs/architecture/server.md`,
      * Rooms), from a turn of any audience: posted there at once as the bot's,
      * and routed as a room `say` is, its `mention` checked against the room.
-     * From a turn the operator spoke in (`operatorSpokeIn`), other than a turn
-     * of this room, it is their request relayed, and starts the room's count
-     * again; from any other turn it counts with the room's other bots'
-     * messages. A turn of this room is left out because the operator's
-     * message there already started the count again. Refused, with nothing
+     * The first post of a turn the operator spoke in (`operatorSpokeIn`),
+     * other than a turn of this room, is their request relayed, and starts
+     * the room's count again, once, as their own message there would; any
+     * other post counts with the room's other bots' messages. A turn of this
+     * room is left out because the operator's message there already started
+     * the count again. Refused, with nothing
      * written, for an archived room, one the bot is not in, and
      * work the operator stopped. `null` when no room has the id.
      */
+    /**
+     * Records that the pinned turn relays the operator's word to the room
+     * (`room_relays`): `true` for its first post there, `false` once it has.
+     */
+    const firstRelay = (found: Pin, roomId: RoomId) =>
+      sql<{ readonly room_id: string }>`
+        INSERT INTO room_relays (room_id, session_id, engine_turn_id)
+        VALUES (${roomId}, ${found.sessionId}, ${found.turnId})
+        ON CONFLICT DO NOTHING
+        RETURNING room_id
+      `.pipe(
+        Effect.orDie,
+        Effect.map((rows) => rows.length > 0),
+      );
+
     const messageRoom = Effect.fn("Speech.messageRoom")(function* (
       found: Pin,
       input: ToolInput<"message_bot">,
@@ -1265,7 +1281,10 @@ export const layer = Layer.effect(
         text: input.text,
       });
       const inThisRoom = found.audience._tag === "room" && found.audience.roomId === roomId;
-      const word = !inThisRoom && (yield* operatorSpokeIn(found)) ? "relayed" : "bot";
+      const word =
+        !inThisRoom && (yield* operatorSpokeIn(found)) && (yield* firstRelay(found, roomId))
+          ? "relayed"
+          : "bot";
       const routed =
         entry._tag === "message" ? yield* routeRoomMessage(found, live.value, entry, word) : null;
       return (
