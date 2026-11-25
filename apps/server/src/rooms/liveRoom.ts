@@ -6,22 +6,14 @@ import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-/**
- * An active room as routing reads it: who is in it, in member order, and how
- * many messages its bots have said since the operator last wrote there.
- */
+/** An active room as routing reads it: who is in it, in member order. */
 export interface LiveRoom {
   readonly id: RoomId;
   readonly name: string;
-  readonly botStreak: number;
   readonly members: ReadonlyArray<BotId>;
 }
 
-const RoomRow = Schema.Struct({
-  id: RoomId,
-  name: Schema.String,
-  bot_streak: Schema.Int,
-});
+const RoomRow = Schema.Struct({ id: RoomId, name: Schema.String });
 
 /**
  * The room, if it is active, read in the caller's transaction straight from
@@ -33,7 +25,7 @@ export const liveRoom = (sql: SqlClient.SqlClient) => {
     Request: RoomId,
     Result: RoomRow,
     execute: (id) => sql`
-      SELECT id, name, bot_streak FROM rooms WHERE id = ${id} AND status = 'active'
+      SELECT id, name FROM rooms WHERE id = ${id} AND status = 'active'
     `,
   });
   const members = SqlSchema.findAll({
@@ -48,7 +40,6 @@ export const liveRoom = (sql: SqlClient.SqlClient) => {
       return Option.some({
         id: found.value.id,
         name: found.value.name,
-        botStreak: found.value.bot_streak,
         members: (yield* members(roomId)).map((row) => row.bot_id),
       });
     }).pipe(Effect.orDie);

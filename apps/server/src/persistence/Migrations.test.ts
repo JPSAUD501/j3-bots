@@ -864,7 +864,7 @@ it.effect(
         const sql = yield* SqlClient.SqlClient;
         assert.deepStrictEqual(
           yield* sql`
-            SELECT id, name, status, pinned, archived_at, bot_streak FROM rooms ORDER BY id
+            SELECT id, name, status, pinned, archived_at FROM rooms ORDER BY id
           `,
           [
             {
@@ -873,7 +873,6 @@ it.effect(
               status: "active",
               pinned: 1,
               archived_at: null,
-              bot_streak: 0,
             },
             {
               id: "old",
@@ -881,7 +880,6 @@ it.effect(
               status: "archived",
               pinned: 0,
               archived_at: now,
-              bot_streak: 0,
             },
           ],
         );
@@ -948,6 +946,96 @@ it.effect(
           yield* sql`SELECT bot_id FROM room_members WHERE room_id = 'launch'`,
           [{ bot_id: "bo" }],
         );
+      }).pipe(
+        Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "starts every room at round 0, a room dispatch waiting for its answer at round 1, and keeps each round once given",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+
+      // 0.7.0's rows: a room where the operator and Ana wrote, with a notice,
+      // Ana's conversation, and a dispatch of each audience to her session.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA foreign_keys = ON`;
+        yield* migrate(migrationsThrough(33));
+        yield* sql`
+          INSERT INTO bots (
+            id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+            permission_mode, workspace_path, created_at, updated_at
+          ) VALUES (
+            'ana', 'ana', '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', '/bots/ana',
+            ${now}, ${now}
+          )
+        `;
+        yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('ana', ${now})`;
+        yield* sql`
+          INSERT INTO rooms (id, name, bot_streak, created_at, updated_at)
+          VALUES ('launch', 'Launch', 7, ${now}, ${now})
+        `;
+        yield* sql`
+          INSERT INTO entries (
+            id, conversation_bot_id, room_id, position, kind, author_kind, author_bot_id,
+            body_json, created_at, updated_at
+          ) VALUES
+            ('asked', NULL, 'launch', 0, 'message', 'operator', NULL, '{}', ${now}, ${now}),
+            ('answered', NULL, 'launch', 1, 'message', 'bot', 'ana', '{}', ${now}, ${now}),
+            ('noticed', NULL, 'launch', 2, 'notice', 'system', NULL, '{}', ${now}, ${now}),
+            ('private', 'ana', NULL, 0, 'message', 'operator', NULL, '{}', ${now}, ${now})
+        `;
+        yield* sql`
+          INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at)
+          VALUES ('session-1', 'ana', 'main', 'v1', ${now})
+        `;
+        yield* sql`
+          INSERT INTO dispatches (
+            id, bot_id, session_id, audience, audience_room_id, delivery, envelope, room_through,
+            status, created_at, updated_at
+          ) VALUES
+            ('to-room', 'ana', 'session-1', 'room', 'launch', 'start', '<j3-wake/>', 2,
+              'intended', ${now}, ${now}),
+            ('to-ana', 'ana', 'session-1', 'conversation', NULL, 'start', '<j3-wake/>', NULL,
+              'intended', ${now}, ${now})
+        `;
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(yield* sql`SELECT id, room_round FROM entries ORDER BY seq`, [
+          { id: "asked", room_round: 0 },
+          { id: "answered", room_round: 0 },
+          { id: "noticed", room_round: null },
+          { id: "private", room_round: null },
+        ]);
+        assert.deepStrictEqual(yield* sql`SELECT id, room_round FROM dispatches ORDER BY seq`, [
+          { id: "to-room", room_round: 1 },
+          { id: "to-ana", room_round: null },
+        ]);
+        assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);
+
+        // A round once given stays; a message without one gets it once.
+        const changed = yield* sql`UPDATE entries SET room_round = 2 WHERE id = 'answered'`.pipe(
+          Effect.flip,
+        );
+        assert.include(String(changed.reason.cause), "keeps its round");
+        yield* sql`
+          INSERT INTO entries (
+            id, room_id, position, kind, author_kind, author_bot_id, body_json, created_at,
+            updated_at
+          ) VALUES ('next', 'launch', 3, 'message', 'bot', 'ana', '{}', ${now}, ${now})
+        `;
+        yield* sql`UPDATE entries SET room_round = 1 WHERE id = 'next'`;
+        const rewritten = yield* sql`
+          UPDATE dispatches SET room_round = 2 WHERE id = 'to-room'
+        `.pipe(Effect.flip);
+        assert.include(String(rewritten.reason.cause), "keeps the session, audience and envelope");
       }).pipe(
         Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
       );

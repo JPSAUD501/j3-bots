@@ -70,8 +70,11 @@ export interface Score {
   /** Messages in the room from the member the task gives no part. */
   readonly bystanderMessages: number;
   readonly chainStopped: number;
-  /** The bots' messages in the room, the count its quiet limit (`ROOM_QUIET_AFTER`) is on. */
-  readonly botMessages: number;
+  /**
+   * The highest round a bot's message in the room took, the rounds its
+   * closing and quiet limits (`ROOM_CLOSING_ROUND`, `ROOM_QUIET_ROUND`) are on.
+   */
+  readonly rounds: number;
   /** The files bots shared in the room, in the order they were shared. */
   readonly files: ReadonlyArray<typeof SharedFile.Type>;
 }
@@ -89,10 +92,10 @@ export const score = Effect.fn("score")(function* (
        WHERE t.audience_room_id = ? ORDER BY t.started_at, t.rowid`,
     roomId,
   );
-  const botMessages = yield* query(
+  const rounds = yield* query(
     database,
     Count,
-    `SELECT COUNT(*) AS n FROM entries
+    `SELECT COALESCE(MAX(room_round), 0) AS n FROM entries
        WHERE room_id = ? AND kind = 'message' AND author_bot_id IS NOT NULL`,
     roomId,
   );
@@ -118,7 +121,7 @@ export const score = Effect.fn("score")(function* (
     botTurns: turns.length,
     bystanderMessages: bystanderMessages[0]?.n ?? 0,
     chainStopped: chainStopped[0]?.n ?? 0,
-    botMessages: botMessages[0]?.n ?? 0,
+    rounds: rounds[0]?.n ?? 0,
     files,
   } satisfies Score;
 });

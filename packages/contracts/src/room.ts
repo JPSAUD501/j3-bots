@@ -15,19 +15,21 @@ export const RoomMembers = Schema.Array(BotId).check(
 export const RoomName = Label;
 
 /**
- * After this many bots' messages in a room since the operator last wrote there
- * (or a bot's kickoff started it), every member's envelope says the
- * conversation is closing: answer only if it is essential.
+ * A room counts rounds of its bots answering each other since the operator's
+ * word last reached it (decision 0042). Their word is round 0: their message
+ * there, a bot's kickoff, or a request of theirs a bot relayed. A bot's
+ * message there is one round past the newest round it answers. An envelope
+ * whose reply would be this round or later says the conversation is closing:
+ * answer only if it is essential.
  */
-export const ROOM_CLOSING_AFTER = 6;
+export const ROOM_CLOSING_ROUND = 3;
 
 /**
- * After this many bots' messages in a room since the operator last wrote there
- * (or a bot's kickoff started it), a bot's message there is posted but wakes
- * nobody, and the room shows one `chain-stopped` notice (`room`), until the
- * operator writes again.
+ * A bot's room message of a round past this one is posted but wakes nobody,
+ * and the room shows one `chain-stopped` notice (`room`), until the operator's
+ * word reaches it again (`ROOM_CLOSING_ROUND`).
  */
-export const ROOM_QUIET_AFTER = 12;
+export const ROOM_QUIET_ROUND = 4;
 
 /**
  * Whether work addressed to an active room is under way, so a client offers

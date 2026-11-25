@@ -926,8 +926,8 @@ export const layer = Layer.effect(
     /**
      * What the bot said through the engine rather than `say`: a message of
      * its turn's audience, with no mentions. In a room it is a bot's message
-     * like any other (`RoomRouting.botMessage`): it counts, and wakes every
-     * other member.
+     * like any other (`RoomRouting.botMessage`): it takes its round, and
+     * wakes every other member.
      */
     const hostSpeech = Effect.fn("Observer.hostSpeech")(function* (
       session: Watched,
@@ -977,6 +977,7 @@ export const layer = Layer.effect(
           yield* routing.botMessage({
             room: room.value,
             botId: session.bot_id,
+            turn: { sessionId: session.id, turnId: speech.turnId },
             message: entry,
             word: "bot",
             seq: work.seq,

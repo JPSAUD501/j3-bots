@@ -181,9 +181,10 @@ export interface RoomWake extends WakeBase {
    */
   readonly reason: RoomReason;
   /**
-   * The room's bots have said so much since the operator last wrote that the
-   * conversation is closing: the closing line asks for an answer only if it
-   * is essential.
+   * The bot's reply would take the room's closing round or a later one: its
+   * bots have answered each other for so many rounds since the operator last
+   * wrote that the conversation is closing, and the closing line asks for an
+   * answer only if it is essential.
    */
   readonly closing: boolean;
   /**
@@ -308,7 +309,7 @@ export const ROOM_CLOSING_LINES: { readonly [R in RoomReason]: string } = {
 
 /** What a room envelope's closing line adds once the conversation is closing (`RoomWake.closing`). */
 export const ROOM_CLOSING_NOTE =
-  "The bots here have said a lot since your user last wrote, so the conversation is closing: speak only if it is essential.";
+  "The bots here have answered each other for several rounds since your user last wrote, so the conversation is closing: speak only if it is essential.";
 
 /** The line an envelope ends with. */
 const closingLine = (wake: Wake): string =>

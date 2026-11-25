@@ -450,7 +450,7 @@ export const tools = {
     [
       "Send a message to your user. Nothing else you write reaches them: reply text outside this tool goes nowhere.",
       'During a room turn it goes to the room; `to: "dm"` sends it to your user privately instead. In any other turn it reaches only your user: to post in a room from there, use `message_bot` with the room\'s id.',
-      "In a room, the members you list in `mention` are woken to answer; with none listed, every other member is, and each reads what you said in its next turn either way. Your user limits how much bots may say in a room since they last wrote, so speak there only when the room needs it, and mention the one who must act next when there is one. A name typed with @ in the text is only shown; `mention` is what wakes a member.",
+      "In a room, the members you list in `mention` are woken to answer; with none listed, every other member is, and each reads what you said in its next turn either way. Your user limits how many rounds bots may answer each other in a room since they last wrote, so speak there only when the room needs it, and mention the one who must act next when there is one. A name typed with @ in the text is only shown; `mention` is what wakes a member.",
       "Attach files you produced, rather than linking workspace paths they cannot open.",
       "Set `done: true` on the message that delivers the result and make it your last call, after every other call has returned; in a routine run, once it returns, never alongside it, only reads, an update of a file the instruction names and, last, a `pause` the instruction asks for may follow it. Then end your turn.",
       "Returns once the message is recorded.",
@@ -568,7 +568,7 @@ export const tools = {
       "Start a room: a group chat where you and the teammates you name work on something together, and where your user reads along and writes too. Only when your user asked for group work in this turn's message. When they asked for a group or a team of bots, first create the teammates it lacks with `create_bot`, in this same turn. Work for a room you are already in goes there with `message_bot`, not a new room.",
       "You join as its first member. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and what each member should answer first.",
       "The kickoff wakes the members in `mention`, every other member by default, and each answers in the room what it asks of them; none waits for you or your user to speak first. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
-      "A room holds two to six bots, you included. Your user's limit on how much bots may say in a room since they last wrote holds here too, and starts with your kickoff.",
+      "A room holds two to six bots, you included. Your user's limit on how many rounds bots may answer each other in a room since they last wrote holds here too, and starts with your kickoff.",
       "Returns the room's id. Then tell your user, in a `say`, what you set up and who owns what.",
       BOT_ONLY,
     ],

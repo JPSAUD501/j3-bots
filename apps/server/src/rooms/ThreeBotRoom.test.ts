@@ -9,7 +9,7 @@
  * and beside which, is the server's choice, not the test's.
  */
 import { assert, it } from "@effect/vitest";
-import { ROOM_QUIET_AFTER, type RoomId } from "@j3-bots/contracts";
+import { ROOM_QUIET_ROUND, type RoomId } from "@j3-bots/contracts";
 import type { TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import * as Effect from "effect/Effect";
@@ -307,7 +307,7 @@ it.effect(
 );
 
 it.effect(
-  "quiets two bots that always hand back to each other once they have said enough without the operator, with one notice",
+  "quiets two bots that always hand back to each other once they have answered each other for enough rounds without the operator, with one notice",
   () =>
     Effect.gen(function* () {
       const [ana, bo] = [yield* member("Ana"), yield* member("Bo")];
@@ -323,10 +323,10 @@ it.effect(
         });
       });
 
-      // Each answers the other, one message a turn, until the message past
-      // the room's limit since the operator wrote is posted and wakes nobody.
-      assert.strictEqual(ran.length, ROOM_QUIET_AFTER + 1);
-      assert.strictEqual((yield* assertOneTurnPerMember(room.id)).turns, ROOM_QUIET_AFTER + 1);
+      // Each answers the other, a round a turn, until the message past the
+      // room's quiet round since the operator wrote is posted and wakes nobody.
+      assert.strictEqual(ran.length, ROOM_QUIET_ROUND + 1);
+      assert.strictEqual((yield* assertOneTurnPerMember(room.id)).turns, ROOM_QUIET_ROUND + 1);
       assert.deepStrictEqual(yield* noticesIn(room.id), [{ _tag: "chain-stopped", limit: "room" }]);
       // From the closing point on, each was told the conversation is closing.
       assert.isTrue(yield* sawText(ana, ROOM_CLOSING_NOTE));

@@ -15,7 +15,7 @@ import {
   ProviderId,
   type QuestionEntry,
   RoomId,
-  ROOM_CLOSING_AFTER,
+  ROOM_CLOSING_ROUND,
 } from "@j3-bots/contracts";
 import { attachmentLimitViolation, type TurnId } from "@j3-bots/engine-t3";
 import type {
@@ -1237,7 +1237,9 @@ export const layer = Layer.effect(
      * The room's messages the bot has not seen: always those its wakes are
      * for, and, newest first, at most `ROOM_ENTRIES_READ` of the others after
      * what it has seen; and how many unseen messages there are in all. Its
-     * own are not among them; it wrote them.
+     * own are not among them; it wrote them. With them, the round of each
+     * unseen message since the operator's latest word there, the room's
+     * newest round-0 message (`RoomRouting`).
      */
     const unseenEntries = Effect.fn("Pipeline.unseenEntries")(function* (
       botId: BotId,
@@ -1271,10 +1273,24 @@ export const layer = Layer.effect(
               Option.isSome(one) && one.value.entry._tag === "message" ? [one.value.entry] : [],
             ),
         );
+      const rounds = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ id: EntryId, round: Schema.Int }),
+        execute: () => sql`
+          SELECT id, room_round AS round FROM entries
+          WHERE ${fromOthers} AND (position > ${through ?? -1} OR ${isSource})
+            AND room_round IS NOT NULL
+            AND position >= (
+              SELECT COALESCE(MAX(position), 0) FROM entries
+              WHERE room_id = ${roomId} AND room_round = 0
+            )
+        `,
+      })(undefined);
       return {
         sources: yield* messagesOf(sources),
         newestFirst: yield* messagesOf(newest.map((row) => row.id)),
         total: count?.n ?? 0,
+        rounds: new Map(rounds.map((row) => [row.id, row.round])),
       };
     }, Effect.orDie);
 
@@ -1366,6 +1382,19 @@ export const layer = Layer.effect(
       };
       const filesOf = (wakes: number, newest: number) =>
         picked(wakes, newest).flatMap(({ message }) => message.attachments);
+      /**
+       * The round the bot's reply takes: one past the newest round among the
+       * messages the envelope shows since the operator's latest word, round 1
+       * when it shows none of them.
+       */
+      const replyRound = (wakes: number, newest: number) =>
+        Math.max(
+          0,
+          ...picked(wakes, newest).flatMap(({ message }) => {
+            const round = unseen.rounds.get(message.id);
+            return round === undefined ? [] : [round];
+          }),
+        ) + 1;
       const render = (wakes: number, newest: number, seen: number): RoomWake | null => {
         const entries = picked(wakes, newest);
         const [first, ...rest] = entries.map(({ entry }) => entry);
@@ -1382,7 +1411,7 @@ export const layer = Layer.effect(
           kind: "room",
           room: header,
           reason: reasonOf(wakes),
-          closing: room.botStreak >= ROOM_CLOSING_AFTER,
+          closing: replyRound(wakes, newest) >= ROOM_CLOSING_ROUND,
           omitted: unseen.total - entries.length - waiting,
           entries: [first, ...rest],
         };
@@ -1405,6 +1434,7 @@ export const layer = Layer.effect(
           seen: 0,
           files: filesOf(1, least),
           through: end,
+          round: replyRound(1, least),
           fits: false,
         };
       }
@@ -1423,6 +1453,7 @@ export const layer = Layer.effect(
         seen,
         files: filesOf(wakes, newest),
         through: end,
+        round: replyRound(wakes, newest),
         fits: true,
       };
     });
@@ -1504,7 +1535,7 @@ export const layer = Layer.effect(
           consumed: carried.slice(0, fitted.seen).map(({ source }) => source),
           dropped,
           oversized: !fitted.fits && fitted.wake !== null,
-          room: { files: fitted.files, through: fitted.through },
+          room: { files: fitted.files, through: fitted.through, round: fitted.round },
         };
       }
       const event =
@@ -1647,11 +1678,12 @@ export const layer = Layer.effect(
           yield* sql`
             INSERT INTO dispatches (
               id, bot_id, session_id, audience, audience_room_id, delivery, steer_turn_id,
-              envelope, room_through, status, created_at, updated_at
+              envelope, room_through, room_round, status, created_at, updated_at
             ) VALUES (
               ${id}, ${plan.botId}, ${plan.sessionId}, ${audience}, ${roomId}, ${plan.delivery._tag},
               ${plan.delivery._tag === "steer" ? plan.delivery.turnId : null},
-              ${envelope}, ${fitted.room?.through ?? null}, 'intended', ${at}, ${at}
+              ${envelope}, ${fitted.room?.through ?? null}, ${fitted.room?.round ?? null},
+              'intended', ${at}, ${at}
             )
           `;
           const files =
