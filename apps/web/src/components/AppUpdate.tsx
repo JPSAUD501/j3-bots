@@ -2,11 +2,13 @@
 import { releasePage } from "@j3-bots/desktop-bridge";
 import { channelOf } from "@j3-bots/release";
 import * as Option from "effect/Option";
+import { useId } from "react";
 import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import type { DesktopUpdate } from "../shell/data";
 import { UpdateChannelChoice } from "./UpdateChannelChoice";
 import { Button } from "./ui/button";
+import { Switch } from "./ui/switch";
 
 /**
  * Whether a newer version of the app waits for the operator: downloaded and
@@ -15,13 +17,57 @@ import { Button } from "./ui/button";
 export const appUpdateWaiting = ({ status: { phase } }: DesktopUpdate): boolean =>
   phase._tag === "released" || (phase._tag === "downloaded" && phase.restart === "offered");
 
+/** The line that says where updating the app stands, as a sentence; `null` when there is nothing to say. */
+export function useUpdateLine({ status }: DesktopUpdate): string | null {
+  const { t, locale } = useI18n();
+  const { phase } = status;
+  switch (phase._tag) {
+    case "unavailable":
+      return t("update.unavailable");
+    case "idle":
+      return phase.checked ? t("update.upToDate") : null;
+    case "checking":
+      return t("update.checking");
+    case "released":
+      return t("update.released", { version: phase.version });
+    case "available":
+    case "downloading":
+      return t("update.downloading", {
+        version: phase.version,
+        percent: new Intl.NumberFormat(locale, { style: "percent" }).format(
+          phase._tag === "available" ? 0 : phase.percent / 100,
+        ),
+      });
+    case "verifying":
+      return t("update.verifying", { version: phase.version });
+    case "downloaded":
+      if (phase.restart === "waiting-for-save") return t("update.waiting");
+      return status.automatic === true
+        ? t("update.readyOnQuit", { version: phase.version })
+        : t("update.ready", { version: phase.version });
+    case "installing":
+      return t("update.installing");
+    case "failed":
+      switch (phase.stage) {
+        case "check":
+          return t("update.failed");
+        case "verify":
+          return t("update.verifyFailed");
+        case "install":
+          return t("update.installFailed");
+      }
+  }
+}
+
 /**
  * The desktop app's version and where updating it stands: a check, a
  * download or the check of the download against the release's signature
  * under way, "Restart to update" once a newer version is ready, a way to
- * check again otherwise. A build that does not install updates says a newer
- * version is out and links to its release. The app never restarts by itself.
- * With `channel`, the releases it follows, which the operator can change.
+ * check again otherwise. Where updates install by themselves, a version that
+ * is ready installs as the app quits, and the restart only brings it sooner.
+ * A build that does not install updates says a newer version is out and
+ * links to its release. With `channel`, the releases it follows and whether
+ * it updates by itself, which the operator can change.
  */
 export function AppUpdate({
   update,
@@ -29,49 +75,13 @@ export function AppUpdate({
   className,
 }: {
   update: DesktopUpdate;
-  /** Shows the channel the app follows, and lets the operator choose it. */
+  /** Shows the channel the app follows and whether it updates by itself, and lets the operator choose. */
   channel?: boolean;
   className?: string;
 }) {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const { current, phase } = update.status;
-  const line = (() => {
-    switch (phase._tag) {
-      case "unavailable":
-        return t("update.unavailable");
-      case "idle":
-        return phase.checked ? t("update.upToDate") : null;
-      case "checking":
-        return t("update.checking");
-      case "released":
-        return t("update.released", { version: phase.version });
-      case "available":
-      case "downloading":
-        return t("update.downloading", {
-          version: phase.version,
-          percent: new Intl.NumberFormat(locale, { style: "percent" }).format(
-            phase._tag === "available" ? 0 : phase.percent / 100,
-          ),
-        });
-      case "verifying":
-        return t("update.verifying", { version: phase.version });
-      case "downloaded":
-        return phase.restart === "offered"
-          ? t("update.ready", { version: phase.version })
-          : t("update.waiting");
-      case "installing":
-        return t("update.installing");
-      case "failed":
-        switch (phase.stage) {
-          case "check":
-            return t("update.failed");
-          case "verify":
-            return t("update.verifyFailed");
-          case "install":
-            return t("update.installFailed");
-        }
-    }
-  })();
+  const line = useUpdateLine(update);
   const changing =
     phase._tag === "checking" ||
     phase._tag === "available" ||
@@ -106,6 +116,9 @@ export function AppUpdate({
           </Button>
         )}
       </div>
+      {channel && update.status.automatic !== null && (
+        <AutomaticUpdates on={update.status.automatic} onChange={update.setAutomatic} />
+      )}
       {channel && phase._tag !== "unavailable" && (
         <UpdateChannelChoice
           label={t("updateChannel.app")}
@@ -115,6 +128,31 @@ export function AppUpdate({
           waitingForStable={update.status.channel === "stable" && onNightly ? current : null}
         />
       )}
+    </div>
+  );
+}
+
+/** "Update automatically": whether a verified version installs at launch or as the app quits. */
+function AutomaticUpdates({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  const { t } = useI18n();
+  const labelId = useId();
+  const hintId = useId();
+  return (
+    <div className="flex items-start gap-3 self-stretch text-start">
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span id={labelId} className="text-xs">
+          {t("update.automatic")}
+        </span>
+        <span id={hintId} className="text-2xs text-muted-foreground">
+          {t("update.automatic.hint")}
+        </span>
+      </span>
+      <Switch
+        checked={on}
+        aria-labelledby={labelId}
+        aria-describedby={hintId}
+        onCheckedChange={onChange}
+      />
     </div>
   );
 }

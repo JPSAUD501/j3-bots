@@ -37,6 +37,11 @@ export const IPC_CHANNELS = {
    * version is on its way or installing. Answers the `UpdateStatus` after it.
    */
   setUpdateChannel: "j3bots:set-update-channel",
+  /**
+   * `AutomaticUpdatesRequest`: whether a verified version installs by itself,
+   * at launch or as the app quits. Answers the `UpdateStatus` after it.
+   */
+  setAutomaticUpdates: "j3bots:set-automatic-updates",
   /** `SavingReport`: whether a save is under way in the page. Not answered. */
   saving: "j3bots:saving",
   /** `NotificationRequest`: shows a notification on the system's screen. Not answered. */
@@ -123,6 +128,8 @@ export interface DesktopBridge {
   readonly restartToUpdate: () => void;
   /** Chooses the releases the app follows (an `UpdateChannelRequest`). */
   readonly setUpdateChannel: (channel: string) => Promise<unknown>;
+  /** Turns installing a verified version by itself on or off (an `AutomaticUpdatesRequest`). */
+  readonly setAutomaticUpdates: (on: boolean) => Promise<unknown>;
   readonly reportSaving: (saving: boolean) => void;
   /** Shows a notification (a `NotificationRequest`) on the system's screen. */
   readonly notify: (request: unknown) => void;

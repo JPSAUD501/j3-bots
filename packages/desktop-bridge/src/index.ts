@@ -390,7 +390,9 @@ export type AppVersion = typeof AppVersion.Type;
  * `verifying`: it is downloaded, and the app checks it against the release's
  * signed checksums before it offers anything. `downloaded`: it matched, and
  * restarting into it is `offered`, or was asked for and waits until no save is
- * under way (`waiting-for-save`). `installing`: the app is restarting into it.
+ * under way (`waiting-for-save`); where updates install by themselves, it
+ * also installs as the app quits. `installing`: the app is restarting into
+ * it, or installing it as it quits.
  * `failed`: the last check or download (`check`) failed, the download did not
  * match the release's signed checksums, or they could not be read (`verify`),
  * or the install (`install`) failed; the next check tries again.
@@ -432,19 +434,39 @@ export const releaseFile = (version: AppVersion, name: string): string =>
   `${releaseFolder(version)}${encodeURIComponent(name)}`;
 
 /**
- * The app's own version, the releases it follows (`channel`), and where
- * updating it stands.
+ * Where the update the app makes as it starts stands, in a build that
+ * installs updates by itself. `checking`: the check at launch is under way,
+ * for at most a few seconds. `updating`: it found a newer version, which the
+ * app downloads, checks and restarts into, and the page shows only that.
+ * `over`: the app opened as usual, nothing newer found in time, the check
+ * failed, or the update did; anything found from now on installs as the app
+ * quits.
+ */
+export const LaunchUpdate = Schema.Literals(["checking", "updating", "over"]);
+export type LaunchUpdate = typeof LaunchUpdate.Type;
+
+/**
+ * The app's own version, the releases it follows (`channel`), where updating
+ * it stands, whether a verified version installs by itself (`automatic`, the
+ * operator's "Update automatically"; `null` in a build that does not install
+ * updates), and the update it makes as it starts (`launch`).
  */
 export const UpdateStatus = Schema.Struct({
   current: AppVersion,
   channel: UpdateChannel,
   phase: UpdatePhase,
+  automatic: Schema.NullOr(Schema.Boolean),
+  launch: LaunchUpdate,
 });
 export type UpdateStatus = typeof UpdateStatus.Type;
 
 /** The releases the operator chose for the app to follow. */
 export const UpdateChannelRequest = Schema.Struct({ channel: UpdateChannel });
 export type UpdateChannelRequest = typeof UpdateChannelRequest.Type;
+
+/** Whether the operator wants a verified version to install by itself ("Update automatically"). */
+export const AutomaticUpdatesRequest = Schema.Struct({ on: Schema.Boolean });
+export type AutomaticUpdatesRequest = typeof AutomaticUpdatesRequest.Type;
 
 /** Whether a save is under way in the page, as it reports each change. */
 export const SavingReport = Schema.Struct({ saving: Schema.Boolean });
@@ -665,6 +687,7 @@ export const HostedBridge = Schema.Struct({
   checkForUpdates: Callable,
   restartToUpdate: Callable,
   setUpdateChannel: Callable,
+  setAutomaticUpdates: Callable,
   reportSaving: Callable,
   notify: Callable,
   closeNotifications: Callable,

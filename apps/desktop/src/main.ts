@@ -62,7 +62,6 @@ import { thisComputer } from "./localServer/thisComputer.ts";
 import * as Menus from "./menus.ts";
 import { externalUrl, isAppUrl, isVisualFrameUrl } from "./navigation.ts";
 import * as Notifier from "./notifier.ts";
-import { restartApp } from "./restart.ts";
 import * as SignInRelay from "./signInRelay.ts";
 import * as ServerChoice from "./serverChoice.ts";
 import { checkServer } from "./serverCheck.ts";
@@ -432,12 +431,6 @@ const program = Effect.gen(function* () {
       ipcMain.handle(IPC_CHANNELS.localPairingLink, (event, request: unknown) =>
         runPromise(localPairingLink(event, request)),
       );
-      // A restart, as once a keyring is unlocked: Chromium keeps the
-      // encryption it set up for the process, so only a new one sees the
-      // unlocked keyring.
-      ipcMain.on(IPC_CHANNELS.relaunch, (event) => {
-        if (fromApp(event)) restartApp();
-      });
     }),
     () =>
       Effect.sync(() => {
@@ -456,7 +449,6 @@ const program = Effect.gen(function* () {
         ipcMain.removeHandler(IPC_CHANNELS.setPhoneAccess);
         ipcMain.removeHandler(IPC_CHANNELS.phoneAccess);
         ipcMain.removeHandler(IPC_CHANNELS.localPairingLink);
-        ipcMain.removeAllListeners(IPC_CHANNELS.relaunch);
       }),
   );
 
@@ -505,7 +497,10 @@ const program = Effect.gen(function* () {
   });
   if (placed.maximized) window.maximize();
   yield* Appearance.serve({ window, appearance, fromApp });
-  yield* Updater.serve(window, fromApp, {
+  // A restart the page asks for, as once a keyring is unlocked (Chromium
+  // keeps the encryption it set up for the process, so only a new one sees
+  // the unlocked keyring), is the updater's: it may be into an update.
+  const updates = yield* Updater.serve(window, fromApp, {
     beforeInstall: supervisor.stop,
     installFailed: Effect.gen(function* () {
       if ((yield* settings.get).mode === "local") yield* supervisor.start;
@@ -634,7 +629,14 @@ const program = Effect.gen(function* () {
   // macOS: a click on the dock's icon brings back a window that was hidden.
   app.on("activate", forward);
 
-  if ((yield* settings.get).mode === "local" && localHost.available) yield* supervisor.start;
+  // The server this computer runs starts once the launch's update is over:
+  // at once, before the page loads, where the launch installs nothing first;
+  // not at all when the app restarts into a newer version.
+  const startLocal = Effect.gen(function* () {
+    if ((yield* settings.get).mode === "local" && localHost.available) yield* supervisor.start;
+  });
+  if (updates.updatesFirst) yield* Effect.forkScoped(Effect.andThen(updates.launched, startLocal));
+  else yield* startLocal;
 
   // A load that fails (the page navigating away first, or a build that will
   // not load) leaves the window open on what it shows: the app keeps running.

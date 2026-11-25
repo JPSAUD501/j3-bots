@@ -90,6 +90,7 @@ import type { AppLink } from "@j3-bots/desktop-bridge";
 import { memoryFileName, updateResultLine } from "@j3-bots/client-runtime/wording";
 import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
+import { LaunchUpdate } from "../components/LaunchUpdate";
 import { ConnectionBanner, updateHasDetails } from "../components/ConnectionBanner";
 import { restartingTo } from "../components/ServerUpdate";
 import {
@@ -144,7 +145,7 @@ import { loadRasterizer, notificationIcon, systemTheme } from "./notificationIco
 import { onAppLink } from "./appLinks";
 import { deliverFile, reserveWindow, saveText } from "./openFile";
 import { readTemplate, useTemplateDrop } from "./templateFiles";
-import { updatable, useDesktopUpdate, useReportSaving } from "./appUpdate";
+import { updatable, useDesktopUpdate, useLaunchUpdate, useReportSaving } from "./appUpdate";
 import { useRemoteServerUpdate } from "./serverUpdate";
 import {
   useDesktopShortcut,
@@ -201,12 +202,24 @@ const client = (origin: URL) => (started ??= createJ3Client(makePlatform(origin)
 /**
  * The shell's source in a build: the client runtime, connected to the server.
  * Before the shell, it answers whatever stands between the operator and their
- * bots: choosing where they live and naming the server (in the desktop app),
- * pairing, a server of another version, storage the browser refuses.
+ * bots: the desktop app updating itself as it starts, choosing where they
+ * live and naming the server (in the desktop app), pairing, a server of
+ * another version, storage the browser refuses.
  */
 export function LiveSourceProvider({ children }: { children: ReactNode }) {
   useReportLanguage();
   useReportAppearance();
+  const launchUpdate = useLaunchUpdate();
+  // Nothing opens before the app says whether it is updating first, which it
+  // answers at once, nor while it is: what would open goes with the restart.
+  if (launchUpdate === "unread") return null;
+  if (launchUpdate !== null) {
+    return (
+      <Screen>
+        <LaunchUpdate update={launchUpdate} />
+      </Screen>
+    );
+  }
   if (server === null) return <FirstScreens />;
   return <Connected origin={server}>{children}</Connected>;
 }

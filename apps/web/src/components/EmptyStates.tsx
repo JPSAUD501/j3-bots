@@ -57,7 +57,7 @@ export function StateMark({ icon: Icon }: { icon: LucideIcon }) {
 }
 
 /** Three dots that pulse in turn: something is under way and will take a moment. */
-function Working() {
+export function Working() {
   return (
     <span aria-hidden className="flex items-center gap-1.5">
       {[0, 1, 2].map((dot) => (

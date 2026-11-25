@@ -1581,6 +1581,12 @@ export const en = {
   "update.download": "Download",
   "update.downloading": "Downloading version {version}… {percent}",
   "update.ready": "Version {version} is ready.",
+  "update.readyOnQuit": "Version {version} is ready. It installs when you quit J3 Bots.",
+  "update.automatic": "Update automatically",
+  "update.automatic.hint":
+    "A new version installs when J3 Bots opens, or when you quit it. Off, it waits for Restart to update.",
+  "launchUpdate.title": "Updating to version {version}",
+  "launchUpdate.body": "J3 Bots opens again by itself once it’s done.",
   "update.waiting": "Restarting once your changes are saved…",
   "update.installing": "Restarting…",
   "update.failed": "Couldn’t get the latest version. J3 Bots tries again later.",
