@@ -380,18 +380,24 @@ export class Engine extends Context.Service<
     /**
      * Runs the Claude Code or Codex provider on `executable`, a harness J3
      * Bots installed, by its absolute path, from now on; null runs the one
-     * the engine finds on its `PATH`. Every later start of the engine is
-     * given it, and an engine that runs applies it at once: it replaces the
-     * provider's instance, which ends that instance's harness processes, a
-     * turn or background work running there included, so the caller makes
-     * sure none runs first; each session starts its harness again, on the
-     * new executable, at its next turn. The engine then checks the provider
-     * again, and its status reads as `checking` until that check ends.
-     * Sends nothing for a provider that already runs `executable`.
+     * the engine finds on its `PATH`. An engine that runs applies it at once:
+     * it replaces the provider's instance, which ends that instance's harness
+     * processes, a turn or background work running there included, so the
+     * caller makes sure none runs first; each session starts its harness
+     * again, on the new executable, at its next turn. With `version`, it
+     * answers only once the engine's check of the new instance reports that
+     * version, so the engine runs it; its status reads as `checking` until
+     * then. Every later start of the engine is given it only once it
+     * succeeded. `EngineUnavailable` when the engine is not ready, which
+     * leaves what it runs as it was; `EngineIndeterminate` when it may or
+     * may not run `executable` now: asking again, for either executable,
+     * sends it again. Sends nothing for a provider that already runs
+     * `executable`.
      */
     readonly setHarnessExecutable: (input: {
       readonly providerId: ProviderId;
       readonly executable: string | null;
+      readonly version: string | null;
     }) => Effect.Effect<void, EngineDown>;
 
     /**

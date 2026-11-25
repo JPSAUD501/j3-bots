@@ -122,6 +122,7 @@ import {
   withoutSecrets,
   providersOfEvent,
   type ReportedProvider,
+  versionNumberIn,
   withFirstCheckBudget,
 } from "./Providers.ts";
 import {
@@ -407,6 +408,13 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
    * each runs now (`setHarnessExecutable`).
    */
   const providers = yield* Ref.make(options.providers);
+  /**
+   * The providers whose instance the engine may run with another executable
+   * than `providers` names: an upsert whose outcome is not known, or one the
+   * engine took without showing it runs the new executable. Each provisioning
+   * writes every instance again, which settles them all.
+   */
+  const unsettled = yield* Ref.make<ReadonlySet<ProviderId>>(new Set());
   const instancesNow = Effect.map(Ref.get(providers), (current) =>
     current.map(instanceSpecOf(options.toolBridge)),
   );
@@ -444,6 +452,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   });
   const provisionEngine = Effect.gen(function* () {
     const { key, disabled } = yield* provision(yield* provisionInput);
+    yield* Ref.set(unsettled, new Set());
     yield* Ref.set(givenKey, key);
     yield* Ref.set(provisioned, { connected: key !== null, disabled });
   }).pipe(
@@ -2283,32 +2292,36 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
 
   /**
    * One instance, as provisioning writes it, upserted through the engine's
-   * own settings: the engine replaces a changed instance, closing what ran
-   * on it, and builds it again from the new entry (**Read** at `59651c1`,
-   * `ProviderInstanceRegistry.ts`, `reconcile`, which closes the scope of
-   * each entry that changed, and `serverSettings.ts`,
-   * `updateProviderInstance`). The entry's secret variables are marked
+   * own settings. The engine saves them and answers; a watcher of its own
+   * then closes the instance that changed, ending what ran on it, and builds
+   * it again from the new entry (**Read** at `59651c1`,
+   * `ProviderInstanceRegistryHydration.ts`, `layerSettingsWatcher`, and
+   * `ProviderInstanceRegistry.ts`, `makeReconcile`, which closes the old
+   * instance's scope before it builds the new one). So the answer does not
+   * say the engine runs the new executable yet: a check of the rebuilt
+   * instance that reports `version` does, and the adapter waits for it, up
+   * to the first check's budget. The entry's secret variables are marked
    * redacted, which keeps the values the engine stores (**Read**,
    * `settingsSecrets.ts`, `mapSettingsSecrets`).
    */
-  const setHarnessExecutable = Effect.fn("Engine.setHarnessExecutable")(function* (input: {
+  const upsertExecutable = Effect.fn("Engine.upsertExecutable")(function* (input: {
     readonly providerId: ProviderId;
-    readonly executable: string | null;
+    readonly executable: string | undefined;
   }) {
-    const executable = input.executable ?? undefined;
     const current = yield* Ref.get(providers);
     const provider = current.find((each) => each.id === input.providerId);
-    if (provider === undefined || provider.harness === "acp-command") return;
-    if (provider.executable === executable) return;
-    const next = { ...provider, executable };
-    yield* Ref.set(
-      providers,
-      current.map((each) => (each.id === next.id ? next : each)),
-    );
-    // Not running: its next start is provisioned with it.
-    if ((yield* SubscriptionRef.get(state))._tag !== "ready") return;
+    if (provider === undefined || provider.harness === "acp-command") return null;
+    const settled = !(yield* Ref.get(unsettled)).has(input.providerId);
+    if (provider.executable === input.executable && settled) return null;
+    // Starting, the engine may have been given the executable before; down,
+    // its next start is. Either way it cannot say now which one it runs.
+    if ((yield* SubscriptionRef.get(state))._tag !== "ready") {
+      return yield* new EngineUnavailable();
+    }
+    const next = { ...provider, executable: input.executable };
     const spec = instanceSpecOf(options.toolBridge)(next);
     const entry = instanceEntry(path, yield* provisionInput, spec, yield* Ref.get(provisioned));
+    yield* Ref.update(unsettled, (now) => new Set([...now, input.providerId]));
     yield* rpc["server.updateSettings"]({
       patch: {},
       providerInstanceMutation: {
@@ -2328,7 +2341,46 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       }),
     );
     yield* markReplaced(input.providerId);
+    return { next, instanceId: spec.instanceId };
   }, provisioning.withPermits(1));
+
+  const setHarnessExecutable = Effect.fn("Engine.setHarnessExecutable")(function* (input: {
+    readonly providerId: ProviderId;
+    readonly executable: string | null;
+    readonly version: string | null;
+  }) {
+    const sent = yield* upsertExecutable({
+      providerId: input.providerId,
+      executable: input.executable ?? undefined,
+    });
+    if (sent === null) return;
+    const { version } = input;
+    if (version !== null) {
+      yield* SubscriptionRef.changes(reported).pipe(
+        Stream.filter((engineProviders) =>
+          engineProviders.some(
+            (each) =>
+              each.instanceId === sent.instanceId &&
+              each.installed &&
+              (versionNumberIn(each.installedVersion) === version ||
+                versionNumberIn(each.version) === version),
+          ),
+        ),
+        Stream.runHead,
+        Effect.timeoutOrElse({
+          duration: FIRST_CHECK_BUDGET,
+          orElse: () => Effect.fail(new EngineIndeterminate()),
+        }),
+      );
+    }
+    yield* Ref.update(providers, (current) =>
+      current.map((each) => (each.id === sent.next.id ? sent.next : each)),
+    );
+    yield* Ref.update(
+      unsettled,
+      (now) => new Set([...now].filter((each) => each !== input.providerId)),
+    );
+  });
 
   const consoleLink = Effect.gen(function* () {
     yield* ready;

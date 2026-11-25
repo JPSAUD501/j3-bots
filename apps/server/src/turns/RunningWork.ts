@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId } from "@j3-bots/contracts";
+import { BotId, ProviderId } from "@j3-bots/contracts";
 import { isBackgroundWorkPending, SessionId } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -32,7 +32,15 @@ const READ_CONCURRENCY = 4;
  */
 export class RunningWork extends Context.Service<
   RunningWork,
-  { readonly bots: Effect.Effect<ReadonlyArray<BotId>> }
+  {
+    readonly bots: Effect.Effect<ReadonlyArray<BotId>>;
+    /**
+     * The bots with work running in sessions on `providerId`: the provider
+     * each session runs on, which a bot whose model changed may still have
+     * a session of until it is stopped.
+     */
+    readonly botsOn: (providerId: ProviderId) => Effect.Effect<ReadonlyArray<BotId>>;
+  }
 >()("@j3-bots/server/turns/RunningWork") {}
 
 export const layer = Layer.effect(
@@ -43,13 +51,14 @@ export const layer = Layer.effect(
     const observer = yield* Observer;
     const work = sessionWork(sql);
 
-    /** Every session the engine still has in use, retired by J3 Bots or not. */
+    /** Every session the engine still has in use, retired by J3 Bots or not; on one provider when given. */
     const inEngine = SqlSchema.findAll({
-      Request: Schema.Void,
+      Request: Schema.NullOr(ProviderId),
       Result: EngineSessionRow,
-      execute: () => sql`
+      execute: (providerId) => sql`
         SELECT id, bot_id, engine_session_id FROM sessions
         WHERE lost_at IS NULL AND engine_session_id IS NOT NULL AND engine_retired_at IS NULL
+          AND (${providerId} IS NULL OR provider_id = ${providerId})
         ORDER BY rowid
       `,
     });
@@ -87,17 +96,17 @@ export const layer = Layer.effect(
       );
     });
 
-    const bots = Effect.gen(function* () {
+    const busy = Effect.fn("RunningWork.busy")(function* (providerId: ProviderId | null) {
       if ((yield* engineState.current).state._tag !== "ready") return [];
-      const sessions = yield* inEngine(undefined).pipe(Effect.orDie);
+      const sessions = yield* inEngine(providerId).pipe(Effect.orDie);
       const found = yield* Effect.forEach(
         sessions,
-        (session) => Effect.map(running(session), (busy) => (busy ? [session.bot_id] : [])),
+        (session) => Effect.map(running(session), (runs) => (runs ? [session.bot_id] : [])),
         { concurrency: READ_CONCURRENCY },
       );
       return [...new Set(found.flat())];
-    }).pipe(Effect.withSpan("RunningWork.bots"));
+    });
 
-    return RunningWork.of({ bots });
+    return RunningWork.of({ bots: busy(null), botsOn: busy });
   }),
 );

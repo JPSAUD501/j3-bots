@@ -146,39 +146,40 @@ const unreachable = () => new HarnessFailed({ reason: "unreachable" });
 const checksum = () => new HarnessFailed({ reason: "checksum" });
 
 /**
- * A small file of the distribution, whole, as bytes. Only a 200 is an
- * answer; a redirect is not followed, so the file comes from `origin` or not
- * at all, and one past `MAX_LISTING_BYTES` is not a listing.
+ * A small file of the distribution, whole, as bytes, within
+ * `LISTING_TIMEOUT` to its last byte. Only a 200 is an answer; a redirect is
+ * not followed, so the file comes from `origin` or not at all, and one past
+ * `MAX_LISTING_BYTES` is not a listing.
  */
-const readSmall = Effect.fn("harnesses.readSmall")(function* (
-  client: DistributionClient,
-  url: string,
-) {
-  const response = yield* client
-    .execute(HttpClientRequest.get(url))
-    .pipe(Effect.timeout(LISTING_TIMEOUT), Effect.mapError(unreachable));
-  if (response.status !== 200) return yield* unreachable();
-  const read = yield* response.stream.pipe(
-    Stream.mapError(unreachable),
-    Stream.runFoldEffect(
-      () => ({ size: 0, chunks: new Array<Uint8Array>() }),
-      (sofar, chunk) =>
-        sofar.size + chunk.byteLength > MAX_LISTING_BYTES
-          ? Effect.fail(unreachable())
-          : Effect.succeed({
-              size: sofar.size + chunk.byteLength,
-              chunks: [...sofar.chunks, chunk],
-            }),
-    ),
-  );
-  const body = new Uint8Array(read.size);
-  let offset = 0;
-  for (const chunk of read.chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
-});
+const readSmall = Effect.fn("harnesses.readSmall")(
+  function* (client: DistributionClient, url: string) {
+    const response = yield* client
+      .execute(HttpClientRequest.get(url))
+      .pipe(Effect.mapError(unreachable));
+    if (response.status !== 200) return yield* unreachable();
+    const read = yield* response.stream.pipe(
+      Stream.mapError(unreachable),
+      Stream.runFoldEffect(
+        () => ({ size: 0, chunks: new Array<Uint8Array>() }),
+        (sofar, chunk) =>
+          sofar.size + chunk.byteLength > MAX_LISTING_BYTES
+            ? Effect.fail(unreachable())
+            : Effect.succeed({
+                size: sofar.size + chunk.byteLength,
+                chunks: [...sofar.chunks, chunk],
+              }),
+      ),
+    );
+    const body = new Uint8Array(read.size);
+    let offset = 0;
+    for (const chunk of read.chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  },
+  Effect.timeoutOrElse({ duration: LISTING_TIMEOUT, orElse: () => Effect.fail(unreachable()) }),
+);
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 

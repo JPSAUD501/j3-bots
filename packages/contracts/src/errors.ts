@@ -134,7 +134,7 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "provider-not-updatable",
     /**
      * J3 Bots installs no copy of the harness on this server: it runs the one
-     * the operator installed, or the harness's publisher ships no build for
+     * the operator installed, or J3 Bots has no build of it for
      * the server's system and processor.
      */
     "harness-not-installable",

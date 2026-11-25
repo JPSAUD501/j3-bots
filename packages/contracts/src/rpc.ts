@@ -910,8 +910,8 @@ export const ProviderRpcs = RpcGroup.make(
    * or at once when one is under way already. A client sends it only to a
    * server whose providers carry `copy` (new in 0.7.1, at protocol 10).
    * `Conflict("harness-not-installable")` when J3 Bots installs no copy of
-   * it here: the server runs the one the operator installed, or the
-   * publisher ships no build for the server's system. No command id: doing
+   * it here: the server runs the one the operator installed, or
+   * J3 Bots has no build of it for the server's system. No command id: doing
    * it again does nothing more.
    */
   Rpc.make("provider.installHarness", {

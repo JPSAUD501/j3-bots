@@ -145,6 +145,15 @@ const notCheckedYet = (provider: ProviderInstance, engine: ReportedProvider) =>
 export const FIRST_CHECK_BUDGET = Duration.seconds(90);
 
 /**
+ * The version number in a version the engine reports: the whole of it, as
+ * Codex's (the part of its user agent after the slash, **Read** at
+ * `59651c1`, `CodexProvider.ts`), or the first `x.y.z` in it, with its
+ * prerelease, as in what `claude --version` prints.
+ */
+export const versionNumberIn = (reported: string | null | undefined): string | null =>
+  /\b(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\b/.exec(reported ?? "")?.[1] ?? null;
+
+/**
  * Each engine state, with whether the engine is within its first-check
  * budget: from each time it becomes ready until `FIRST_CHECK_BUDGET` passes,
  * when the same state comes again without it, so what depends on the budget
