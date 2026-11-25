@@ -292,12 +292,18 @@ export interface EngineOptions {
    * The folder of the skills every bot shares, one folder per skill with a
    * `SKILL.md`. Each Claude Code and Codex instance lists them as its own
    * user-level skills: the adapter links each one into the harness home's
-   * skill folder at every start of the engine, so a skill added or removed
-   * here reaches the harnesses at the engine's next start. A skill of the
-   * home's own under the same name wins. A skill whose folder leads out of
-   * private state, by `isPrivate`, is not linked.
+   * skill folder at every start of the engine, and again at
+   * `linkSharedSkills`. A skill of the home's own under the same name wins. A
+   * skill whose folder leads out of private state, by `isPrivate`, is not
+   * linked.
    */
   readonly sharedSkills: string;
+  /**
+   * The folder of a bot's own skills, relative to its workspace folder:
+   * `skills`. `linkBotSkills` links each one where every harness lists a
+   * project's skills.
+   */
+  readonly botSkills: string;
   /**
    * The caller's containment check: whether `location`, links resolved, is
    * still private state the adapter may write. The adapter asks it for every
@@ -405,6 +411,22 @@ export class Engine extends Context.Service<
      * up providers until J3 Bots has its own screen. Short-lived.
      */
     readonly consoleLink: Effect.Effect<string, EngineDown>;
+
+    /**
+     * Links the shared skills into every harness home now, while the engine
+     * runs: a skill added to the shared folder, or removed from it, reaches
+     * each harness without a restart. Never fails: a home it cannot link is
+     * logged and left as it was.
+     */
+    readonly linkSharedSkills: Effect.Effect<void>;
+
+    /**
+     * Links the bot's own skills, the folders of `botSkills` in the
+     * workspace, into the folders each harness lists a project's skills from
+     * there, so the bot's harness offers them. A folder the bot or the
+     * operator put there under a skill's name is left alone. Never fails.
+     */
+    readonly linkBotSkills: (workspacePath: string) => Effect.Effect<void>;
 
     /**
      * The project for a workspace folder, created if missing. Looked up by

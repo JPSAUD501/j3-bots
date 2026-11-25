@@ -22,6 +22,7 @@ import { Memory } from "../memory/Memory.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import { Routines } from "../routines/Routines.ts";
 import { CredentialFills, type ListAnswer } from "../vault/Fill.ts";
+import { type Caller, Management, type ManagementRefused } from "./Management.ts";
 import type { ToolCallRequest, ToolCallResponse } from "./protocol.ts";
 import {
   RoomReadResult,
@@ -104,6 +105,7 @@ export const layer = Layer.effect(
     const turnTools = yield* TurnTools;
     const logins = yield* CredentialFills;
     const connectors = yield* Connectors;
+    const management = yield* Management;
 
     /** A command id for a tool call, the same on every retry of its forward. */
     const commandIdOf = (requestId: string) => CommandId.make(`tool:${requestId}`);
@@ -147,6 +149,43 @@ export const layer = Layer.effect(
       framedHandler(schema, (input, call) =>
         Effect.map(run(input, call), (value): Answered => ({ _tag: "result", value })),
       );
+
+    /**
+     * Claims a `j3` call for its turn before it acts, so it acts once and
+     * only for a running turn: a connector's, or one that changes MCP
+     * servers or skills, which the harness ran only once its permission mode
+     * let it (decision 0049).
+     */
+    const claim = (tool: string, call: Call) =>
+      turnTools
+        .claimConnectorCall({
+          tool,
+          requestId: call.requestId,
+          caller: call.caller,
+          arguments: call.arguments,
+        })
+        .pipe(
+          Effect.catchTags({
+            TurnEnded: (error) => new Refused({ reason: error.message }),
+            CallCutOff: (error) => new Refused({ reason: error.message }),
+          }),
+        );
+
+    const callerOf = (call: Call): Caller => ({
+      botId: call.caller.botId,
+      requestId: call.requestId,
+    });
+
+    /** A management tool's answer, its refusal in the bot's words. */
+    const managed = (effect: Effect.Effect<Schema.Json, ManagementRefused>) =>
+      Effect.mapError(effect, (refused) => new Refused({ reason: refused.reason }));
+
+    /** A management tool that changes something: claimed for its turn, then run. */
+    const changing = (
+      tool: ToolName,
+      call: Call,
+      run: Effect.Effect<Schema.Json, ManagementRefused>,
+    ) => Effect.andThen(claim(tool, call), managed(run));
 
     /** Hands a turn tool's call to the turn it belongs to. */
     const admit = (call: TurnToolCall) =>
@@ -200,9 +239,6 @@ export const layer = Layer.effect(
               Conflict: (error) => new Refused({ reason: error.message }),
             }),
           ),
-      ),
-      suggest_connector: handler(tools.suggest_connector.input, (input, call) =>
-        admit({ tool: "suggest_connector", input, ...call }),
       ),
       remember: handler(tools.remember.input, (input, { caller }) =>
         memory
@@ -314,6 +350,36 @@ export const layer = Layer.effect(
           return yield* encodeJson(Profile)(bot.profile).pipe(Effect.orDie);
         }),
       ),
+      search_mcp_servers: handler(tools.search_mcp_servers.input, (input, call) =>
+        managed(management.searchServers(callerOf(call), input)),
+      ),
+      list_mcp_servers: handler(tools.list_mcp_servers.input, (_input, call) =>
+        managed(management.listServers(callerOf(call))),
+      ),
+      add_mcp_server: handler(tools.add_mcp_server.input, (input, call) =>
+        changing("add_mcp_server", call, management.addServer(callerOf(call), input)),
+      ),
+      update_mcp_server: handler(tools.update_mcp_server.input, (input, call) =>
+        changing("update_mcp_server", call, management.updateServer(callerOf(call), input)),
+      ),
+      remove_mcp_server: handler(tools.remove_mcp_server.input, (input, call) =>
+        changing("remove_mcp_server", call, management.removeServer(callerOf(call), input)),
+      ),
+      set_mcp_server_bots: handler(tools.set_mcp_server_bots.input, (input, call) =>
+        changing("set_mcp_server_bots", call, management.setServerBots(callerOf(call), input)),
+      ),
+      list_skills: handler(tools.list_skills.input, (_input, call) =>
+        managed(management.listSkills(callerOf(call))),
+      ),
+      save_skill: handler(tools.save_skill.input, (input, call) =>
+        changing("save_skill", call, management.saveSkill(callerOf(call), input)),
+      ),
+      install_skill: handler(tools.install_skill.input, (input, call) =>
+        changing("install_skill", call, management.installSkill(callerOf(call), input)),
+      ),
+      remove_skill: handler(tools.remove_skill.input, (input, call) =>
+        changing("remove_skill", call, management.removeSkill(callerOf(call), input)),
+      ),
       update_profile: handler(tools.update_profile.input, (input, call) =>
         Effect.gen(function* () {
           const bot = yield* bots
@@ -344,19 +410,7 @@ export const layer = Layer.effect(
       }
       const tooLarge = inputCapRefusal(input);
       if (tooLarge !== undefined) return yield* new Refused({ reason: tooLarge });
-      yield* turnTools
-        .claimConnectorCall({
-          tool,
-          requestId: call.requestId,
-          caller: call.caller,
-          arguments: input,
-        })
-        .pipe(
-          Effect.catchTags({
-            TurnEnded: (error) => new Refused({ reason: error.message }),
-            CallCutOff: (error) => new Refused({ reason: error.message }),
-          }),
-        );
+      yield* claim(tool, call);
       return yield* connectors
         .call({ botId: call.caller.botId, name: tool, arguments: input })
         .pipe(Effect.catchTag("ToolNotOffered", (error) => new Refused({ reason: error.message })));

@@ -81,7 +81,7 @@ const setUp = (
       id: ID,
       source: remote(headers),
       grant: { _tag: "bots", ids: [ana.id] },
-      suggestion: null,
+      by: { _tag: "operator" },
     });
     const secret = yield* vault.connectorSecrets.get(vaultIdOf(ID));
     assert.isTrue(Option.isSome(secret));
@@ -292,6 +292,7 @@ describe("Connectors", () => {
         assert.deepStrictEqual(needs.status, { _tag: "needs-sign-in", reason: "rejected" });
 
         const updated = yield* connectors.update({
+          by: { _tag: "operator" },
           connectorId: ID,
           values: [
             { key: FieldKey.make("Authorization"), value: Redacted.make(`Bearer ${NEW_KEY}`) },
@@ -429,7 +430,7 @@ describe("Connectors", () => {
         connectors.add({
           id: ID,
           source: { ...remote([]), url: Redacted.make("https://10.0.0.8/mcp") },
-          suggestion: null,
+          by: { _tag: "operator" },
         }),
       );
       assert.strictEqual(conflictOf(refused), "private-network");

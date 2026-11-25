@@ -200,7 +200,7 @@ describe("connecting from the gallery", () => {
           id,
           source: listing("notion"),
           grant: { _tag: "all-bots" },
-          suggestion: null,
+          by: { _tag: "operator" },
         });
         assert.deepStrictEqual(
           {
@@ -285,7 +285,7 @@ describe("connecting from the gallery", () => {
         const id = ConnectorId.make("conn_gallerygmail00001");
 
         const withoutClient = yield* Effect.flip(
-          connectors.add({ id, source: listing("google-gmail"), suggestion: null }),
+          connectors.add({ id, source: listing("google-gmail"), by: { _tag: "operator" } }),
         );
         assert.strictEqual(invalidReason(withoutClient), "connector-fields");
 
@@ -296,7 +296,7 @@ describe("connecting from the gallery", () => {
             clientId: "own-app-client",
             clientSecret: Redacted.make(CLIENT_SECRET),
           }),
-          suggestion: null,
+          by: { _tag: "operator" },
         });
         assert.strictEqual(added.signIn, "oauth");
 
@@ -335,7 +335,7 @@ describe("connecting from the gallery", () => {
           id,
           source: listing("github", [value(TOKEN_FIELD, KEY)]),
           grant: { _tag: "all-bots" },
-          suggestion: null,
+          by: { _tag: "operator" },
         });
         assert.strictEqual(added.signIn, "fields");
         // The key's field, in the operator's language, to give it again.
@@ -365,10 +365,11 @@ describe("connecting from the gallery", () => {
             connector.status._tag === "needs-sign-in" && connector.status.reason === "rejected",
         );
         const outside = yield* Effect.flip(
-          connectors.update({ connectorId: id, values: [value(FieldKey.make("url:host"), "x")] }),
+          connectors.update({ by: { _tag: "operator" }, connectorId: id, values: [value(FieldKey.make("url:host"), "x")] }),
         );
         assert.strictEqual(invalidReason(outside), "connector-fields");
         const updated = yield* connectors.update({
+          by: { _tag: "operator" },
           connectorId: id,
           values: [value(TOKEN_FIELD, NEW_KEY)],
         });
@@ -426,7 +427,7 @@ describe("connecting from the gallery", () => {
               clientSecret: null,
             }),
             grant: { _tag: "all-bots" },
-            suggestion: null,
+            by: { _tag: "operator" },
           }),
         );
         assert.strictEqual(invalidReason(withClient), "connector-fields");
@@ -436,7 +437,7 @@ describe("connecting from the gallery", () => {
           id,
           source: source(null),
           grant: { _tag: "all-bots" },
-          suggestion: null,
+          by: { _tag: "operator" },
         });
         assert.strictEqual(added.signIn, "fields");
         assert.deepStrictEqual(
@@ -471,6 +472,7 @@ describe("connecting from the gallery", () => {
           { name: "whoami", description: `Signed in as ${NEW_VAULT_TOKEN} in ${WORKSPACE_KEY}` },
         ]);
         yield* connectors.update({
+          by: { _tag: "operator" },
           connectorId: id,
           values: [
             value(VAULT_TOKEN_FIELD, NEW_VAULT_TOKEN),

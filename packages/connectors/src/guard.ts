@@ -192,6 +192,41 @@ const guardedLookup =
     );
   };
 
+/**
+ * Every address `url`'s host resolves to, when `url` may be requested under
+ * `policy` and each of them may be connected to, as the guarded fetch would
+ * judge them: for a client J3 Bots starts but does not connect for, `git`
+ * installing a skill, which is then pinned to these addresses so that what it
+ * connects to is what was checked.
+ */
+export const checkedAddresses = (
+  url: URL,
+  policy: UrlPolicy,
+  resolve: Resolver = DEFAULT_GUARD.resolve,
+): Effect.Effect<ReadonlyArray<ResolvedAddress>, UrlRefused | Unreachable> =>
+  Effect.gen(function* () {
+    const checked = checkUrl(url, policy);
+    if (Result.isFailure(checked)) return yield* checked.failure;
+    const { protocol } = checked.success;
+    const host = bareHost(checked.success.hostname);
+    const resolved: ReadonlyArray<ResolvedAddress> = isAddressLiteral(host)
+      ? [{ address: host, family: host.includes(":") ? 6 : 4 }]
+      : yield* Effect.tryPromise({
+          try: () => resolve(host),
+          catch: () => new Unreachable({ reason: "dns" }),
+        });
+    if (resolved.length === 0) return yield* new UrlRefused({ reason: "private-address" });
+    if (!resolved.every((a) => addressAllowed(a.address, protocol, policy))) {
+      const reason = refusalOf(
+        resolved.map((a) => a.address),
+        protocol,
+        policy,
+      );
+      return yield* new UrlRefused({ reason });
+    }
+    return resolved;
+  });
+
 const isOwnError = Schema.is(Schema.Union([UrlRefused, Unreachable, ResponseTooLarge, TimedOut]));
 
 const TLS_ERROR = /^(ERR_TLS_|ERR_SSL_|CERT_|UNABLE_TO_|DEPTH_ZERO|SELF_SIGNED|HOSTNAME_MISMATCH)/;

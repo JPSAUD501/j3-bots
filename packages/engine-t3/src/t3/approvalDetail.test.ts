@@ -142,6 +142,28 @@ describe("approvalOf", () => {
     assert.strictEqual(approvalOf(asked, asks, [other, asked], none).action, "ls -la");
   });
 
+  it("names J3 Bots' own tool that adds a command server, never the server's command alone", () => {
+    const input = { command: "npx", args: ["-y", "example-mcp"] };
+    const asks = request("toolu-2", "claudeAgent");
+    const asked = approval("toolu-2", { requestKind: "command", prompt: "npx" }, "claudeAgent");
+    const held = item(
+      "toolu-2",
+      { type: "dynamic_tool", toolName: "mcp__j3__add_mcp_server", input },
+      "claudeAgent",
+    );
+    assert.strictEqual(
+      approvalOf(asked, asks, [held, asked], none).action,
+      'add_mcp_server {"command":"npx","args":["-y","example-mcp"]}',
+    );
+    // A `j3` tool that is no step, such as `say`, is pre-approved and never held.
+    const say = item(
+      "toolu-2",
+      { type: "dynamic_tool", toolName: "mcp__j3__say", input },
+      "claudeAgent",
+    );
+    assert.strictEqual(approvalOf(asked, asks, [say, asked], none).action, "npx");
+  });
+
   it("keeps every line of a multi-line command, indentation included", () => {
     const command = "cat > notes.txt <<'EOF'\n  indented first line\n\tthen a tab\nEOF\n";
     const asks = request("cmd-2");

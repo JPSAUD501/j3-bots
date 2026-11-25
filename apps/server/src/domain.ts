@@ -43,6 +43,7 @@ import * as SettingsService from "./settings/SettingsService.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as Host from "./system/Host.ts";
 import * as BotTools from "./tools/BotTools.ts";
+import * as Management from "./tools/Management.ts";
 import * as ToolLists from "./tools/ToolLists.ts";
 import * as CredentialFills from "./vault/Fill.ts";
 import * as Vault from "./vault/Vault.ts";
@@ -59,6 +60,7 @@ import * as Sender from "./turns/Sender.ts";
 import * as SendPause from "./turns/SendPause.ts";
 import * as SessionGate from "./turns/SessionGate.ts";
 import * as Signals from "./turns/Signals.ts";
+import * as Skills from "./skills/Skills.ts";
 import * as Speech from "./turns/Speech.ts";
 import * as HeldQueues from "./turns/HeldQueues.ts";
 import * as Stops from "./turns/Stops.ts";
@@ -71,11 +73,12 @@ import * as WorkSteps from "./turns/WorkSteps.ts";
  * Every service of the server's domain, over a migrated database, the server's
  * configuration, the filesystem, an `Engine` with its `BrowserBridge`, a
  * `PushSender`, the HTTP client connectors' sign-ins use (`OAuthHttp`), an
- * `McpRegistry` and the `HarnessSources` J3 Bots installs harnesses from and
- * finds the operator's own with. Which engine, sender, client, registry and
- * sources are the caller's: the real ones in `server.ts`, in-memory ones in
- * tests. Building it starts the turn machinery and the push worker, which run
- * for as long as the layer's scope.
+ * `McpRegistry`, the `HarnessSources` J3 Bots installs harnesses from and
+ * finds the operator's own with, and the `SkillRepositories` skills are
+ * installed from. Which engine, sender, client, registry, sources and
+ * repositories are the caller's: the real ones in `server.ts`, in-memory or
+ * local ones in tests. Building it starts the turn machinery and the push
+ * worker, which run for as long as the layer's scope.
  */
 export const layer = Layer.mergeAll(
   BotTools.layer,
@@ -84,6 +87,7 @@ export const layer = Layer.mergeAll(
   PushWorker.layer,
   Harnesses.layer,
 ).pipe(
+  Layer.provideMerge(Management.layer),
   // A fill is claimed for its call's turn, through `Speech`'s turn tools.
   Layer.provideMerge(CredentialFills.layer),
   Layer.provideMerge(
@@ -112,6 +116,7 @@ export const layer = Layer.mergeAll(
       SettingsService.layer,
       Routines.layer,
       Connectors.layer,
+      Skills.layer,
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(Workspaces.layer, Stops.roomWorkLayer, Scheduler.layer)),

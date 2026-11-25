@@ -57,7 +57,7 @@ import {
 } from "./approvalDetail.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
-import { isConnectorTool, toolStep } from "./toolNames.ts";
+import { isStepTool, toolStep } from "./toolNames.ts";
 import { hasPersistentFlag, type ToolPersistence } from "./toolPersistence.ts";
 
 // The engine's thread, mirrored entity by entity, and the J3 Bots events it
@@ -1139,9 +1139,10 @@ const stepKind = (item: Item): WorkStep["kind"] | undefined => {
       return "delegation";
     case "dynamic_tool": {
       // Host speech and J3 Bots' own tools are events of their own; a
-      // connector's tool is also a step of the bot's work.
+      // connector's tool, and one that manages MCP servers or skills, is also
+      // a step of the bot's work.
       const j3Tool = j3ToolOf(item);
-      return isHostSpeech(item) || (j3Tool !== undefined && !isConnectorTool(j3Tool))
+      return isHostSpeech(item) || (j3Tool !== undefined && !isStepTool(j3Tool))
         ? undefined
         : dynamicToolStep(item).kind;
     }

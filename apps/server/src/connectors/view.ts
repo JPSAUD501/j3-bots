@@ -142,5 +142,6 @@ export const connectorOf = (
     tools: offeredOf(connector, seen).map(toolOf),
     review: reviewOf(connector, seen),
     createdAt: connector.createdAt,
+    lastChange: connector.lastChange,
   };
 };

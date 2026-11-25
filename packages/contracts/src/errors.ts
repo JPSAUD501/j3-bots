@@ -43,6 +43,8 @@ export const Resource = Schema.Literals([
   "sign-in",
   /** A provider, which only `engine.recheckProvider`, new in 0.8.0, names: an older client never asks it. */
   "provider",
+  /** A skill, which only skill requests name. */
+  "skill",
 ]);
 export type Resource = typeof Resource.Type;
 
@@ -138,6 +140,17 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      * the server's system and processor.
      */
     "harness-not-installable",
+    /** The skill is one J3 Bots ships (`j3-…`), which it installs again at every start. */
+    "skill-shipped",
+    /**
+     * A skill of the other scope has that name: a bot's own and a shared one
+     * would share it, and Claude Code lists only one of the two.
+     */
+    "skill-name-taken",
+    /** The scope holds as many skills as it may (`SKILL_LIMITS.perScope`). */
+    "skill-limit",
+    /** The repository could not be fetched: unreachable, refused, or no such commit or branch. */
+    "skill-fetch",
   ]),
 }) {
   override get message(): string {
@@ -178,6 +191,17 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
      * it runs: its command line names it at an exact version instead.
      */
     "command-unpinned",
+    /**
+     * A skill's `SKILL.md` does not open with frontmatter naming the skill,
+     * with a one-line `description` of when it applies, or a file of it breaks
+     * a limit (`SKILL_LIMITS`).
+     */
+    "skill-text",
+    /**
+     * The folder of the repository is not a skill (no `SKILL.md`), holds a
+     * link or a submodule, or breaks a limit (`SKILL_LIMITS`).
+     */
+    "skill-repository",
   ]),
 }) {
   override get message(): string {

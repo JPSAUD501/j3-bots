@@ -25,6 +25,12 @@ import { OpenLiterals } from "./base.ts";
  * - `plan`: keeps the harness's list of what is left to do.
  * - `image`: looks at an image.
  * - `built-in`: any other tool the engine itself offers.
+ * - `mcp-server-added`, `mcp-server-changed`, `mcp-server-removed`: the bot
+ *   added an MCP server, changed one (its values, command or bots) or removed
+ *   one (decision 0049); `mcp-servers-read`: it searched for servers or
+ *   listed its own.
+ * - `skill-saved`, `skill-removed`: the bot saved or installed a skill, or
+ *   removed one; `skills-read`: it listed its skills.
  */
 export const WorkTool = Schema.Literals([
   "background-task",
@@ -42,6 +48,13 @@ export const WorkTool = Schema.Literals([
   "plan",
   "image",
   "built-in",
+  "mcp-server-added",
+  "mcp-server-changed",
+  "mcp-server-removed",
+  "mcp-servers-read",
+  "skill-saved",
+  "skill-removed",
+  "skills-read",
 ]);
 export type WorkTool = typeof WorkTool.Type;
 

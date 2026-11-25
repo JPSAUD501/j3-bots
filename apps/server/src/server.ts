@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as EngineLive from "@j3-bots/engine-t3/live";
-import { toolList } from "@j3-bots/prompts";
+import { preApprovedTools } from "@j3-bots/prompts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,7 +20,7 @@ import * as HarnessSources from "./harnesses/sources.ts";
 import * as Home from "./home/Home.ts";
 import * as Http from "./http.ts";
 import * as Installation from "./installation.ts";
-import { SYSTEM_PROMPT_FILE } from "./home/entries.ts";
+import { SYSTEM_PROMPT_FILE, WORKSPACE_ENTRIES } from "./home/entries.ts";
 import * as Layout from "./Layout.ts";
 import * as Listener from "./listener.ts";
 import * as Sqlite from "./persistence/Sqlite.ts";
@@ -29,6 +29,7 @@ import * as ExpoPushSender from "./push/ExpoPushSender.ts";
 import * as BasePrompt from "./settings/BasePrompt.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
 import * as SharedSkills from "./skills/SharedSkills.ts";
+import * as SkillRepositories from "./skills/SkillRepositories.ts";
 import * as Host from "./system/Host.ts";
 import * as Network from "./system/Network.ts";
 import * as Systemd from "./system/Systemd.ts";
@@ -67,13 +68,15 @@ const engine = Layer.unwrap(
       toolBridge: {
         command: process.execPath,
         args: [bridge, "--server", `http://127.0.0.1:${config.toolPort}`],
-        // J3 Bots' own tools run without asking; a connector's follow the bot's permission mode.
-        preApproved: toolList.map((tool) => tool.name),
+        // J3 Bots' own tools run without asking, but those that change its MCP
+        // servers and skills; those and a connector's follow the bot's permission mode.
+        preApproved: preApprovedTools,
         callTimeoutSeconds: Duration.toSeconds(CONNECTOR_CALL_DEADLINE) + 60,
       },
       systemPromptFile: SYSTEM_PROMPT_FILE,
       basePrompt: basePrompt.text,
       sharedSkills: layout.sharedSkills,
+      botSkills: WORKSPACE_ENTRIES.skills,
       // The adapter's writes go through the same containment check as the server's.
       isPrivate: (location) => layout.writable(location).pipe(Effect.isSuccess),
     });
@@ -122,7 +125,7 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
         HarnessSources.layer.pipe(Layer.provide(Host.layer)),
       ),
     ),
-    Layer.provide(McpRegistry.layer),
+    Layer.provide(Layer.merge(McpRegistry.layer, SkillRepositories.layer)),
     // One base prompt for the engine and the settings that change it.
     Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),
     Layer.provide(Sqlite.layer),

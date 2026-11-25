@@ -71,7 +71,6 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     // engine's secret requests do, Android's channel for them included.
     case "credential-request":
       return "secret-request";
-    case "connector-suggestion":
     case "connector-auth":
       return "connector";
     case "work-fold":
@@ -84,8 +83,6 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
 /** Which connector card a `connector` notification is about; null for any other entry. */
 const connectorCard = (entry: Entry): ConnectorNotice | null => {
   switch (entry._tag) {
-    case "connector-suggestion":
-      return "suggestion";
     case "connector-auth":
       return "sign-in";
     default:

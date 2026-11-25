@@ -112,6 +112,7 @@ const options = Effect.map(paths, ({ home, agent, sharedSkills }): EngineOptions
   basePrompt: Stream.make(""),
   // Only Claude Code and Codex list skills, and the bench runs neither.
   sharedSkills,
+  botSkills: "skills",
   // The bench's home is a fresh folder of its own, with no web client to publish through.
   isPrivate: () => Effect.succeed(true),
 }));

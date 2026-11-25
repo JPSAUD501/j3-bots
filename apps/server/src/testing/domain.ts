@@ -7,6 +7,8 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { DEFAULT_GUARD } from "@j3-bots/connectors";
+import { make as makeSkillRepositories, SkillRepositories } from "../skills/SkillRepositories.ts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -128,6 +130,19 @@ const engineWith = (starting: StartingStatuses) =>
   );
 
 /**
+ * Skills are installed from a git host on this machine's loopback, over
+ * plain HTTP, which only tests allow (`testing/gitHost.ts`): no test reaches
+ * the network.
+ */
+const repositories = Layer.effect(
+  SkillRepositories,
+  makeSkillRepositories({
+    policy: { loopback: "allow-http", privateNetwork: "refuse", redirects: "refuse" },
+    resolve: DEFAULT_GUARD.resolve,
+  }),
+);
+
+/**
  * The database `database` gives, the home, the engine, its providers as
  * `starting` says, a fake authorization server for connectors' sign-ins,
  * and harness sources with nothing to install.
@@ -140,6 +155,7 @@ const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatu
     Layer.succeed(VaultKdf, LEAST_KDF_PARAMS),
     TestOAuth.layer,
     TestHarnesses.layer,
+    repositories,
   ).pipe(Layer.provideMerge(database));
 
 const stores = storesOver(TestDatabase.layer, new Map());

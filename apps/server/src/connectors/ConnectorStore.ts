@@ -2,6 +2,7 @@
 import { CatalogTool, ConnectorSlug, slugFor } from "@j3-bots/connectors";
 import {
   BotId,
+  ChangeAuthor,
   ConnectorField,
   ConnectorGlyph,
   type ConnectorGrant,
@@ -10,6 +11,7 @@ import {
   ConnectorSignIn,
   ConnectorTransport,
   Label,
+  type LastChange,
   ListingRef,
 } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
@@ -50,6 +52,8 @@ export interface StoredConnector {
   /** The review the operator answered with "keep", which stays closed until the tools change again. */
   readonly keptRevision: string | null;
   readonly createdAt: DateTime.Utc;
+  /** Who last added, changed or granted it; null for one last changed before 0.9.0. */
+  readonly lastChange: LastChange | null;
 }
 
 /**
@@ -79,6 +83,7 @@ export type ConnectorChanges = Partial<
     | "transport"
     | "fields"
     | "signIn"
+    | "lastChange"
   >
 >;
 
@@ -98,6 +103,8 @@ const Row = Schema.Struct({
   tools_json: Schema.NullOr(json(Schema.Array(CatalogTool))),
   kept_revision: Schema.NullOr(Schema.String),
   created_at: Time,
+  changed_by_json: Schema.NullOr(json(ChangeAuthor)),
+  changed_at: Schema.NullOr(Time),
 });
 type Row = typeof Row.Type;
 
@@ -106,13 +113,15 @@ const GrantRow = Schema.Struct({ connector_id: ConnectorId, bot_id: BotId });
 const RemovalRow = Schema.Struct({ connector_id: ConnectorId, revoke: Flag });
 
 const COLUMNS = `id, name, slug, glyph, publisher_json, listing_json, transport_json, sign_in,
-  fields_json, private_network, all_bots, signed_in_at, tools_json, kept_revision, created_at`;
+  fields_json, private_network, all_bots, signed_in_at, tools_json, kept_revision, created_at,
+  changed_by_json, changed_at`;
 
 const encodePublisher = Schema.encodeSync(json(ConnectorPublisher));
 const encodeListing = Schema.encodeSync(json(ListingRef));
 const encodeTransport = Schema.encodeSync(json(ConnectorTransport));
 const encodeFields = Schema.encodeSync(json(Schema.Array(ConnectorField)));
 const encodeTools = Schema.encodeSync(json(Schema.Array(CatalogTool)));
+const encodeAuthor = Schema.encodeSync(json(ChangeAuthor));
 
 const toStored = (row: Row, bots: ReadonlyArray<BotId>): StoredConnector => ({
   id: row.id,
@@ -130,6 +139,10 @@ const toStored = (row: Row, bots: ReadonlyArray<BotId>): StoredConnector => ({
   accepted: row.tools_json,
   keptRevision: row.kept_revision,
   createdAt: row.created_at,
+  lastChange:
+    row.changed_by_json === null || row.changed_at === null
+      ? null
+      : { by: row.changed_by_json, at: row.changed_at },
 });
 
 /**
@@ -258,7 +271,7 @@ export const layer = Layer.effect(
         INSERT INTO connectors (
           id, name, slug, glyph, publisher_json, listing_json, transport_json, sign_in,
           fields_json, private_network, all_bots, signed_in_at, tools_json,
-          kept_revision, created_at, updated_at
+          kept_revision, created_at, updated_at, changed_by_json, changed_at
         ) VALUES (
           ${connector.id}, ${connector.name}, ${connector.slug}, ${connector.glyph},
           ${encodePublisher(connector.publisher)},
@@ -268,7 +281,9 @@ export const layer = Layer.effect(
           ${connector.grant._tag === "all-bots" ? 1 : 0},
           ${connector.signedInAt === null ? null : timeText(connector.signedInAt)},
           ${connector.accepted === null ? null : encodeTools(connector.accepted)},
-          ${connector.keptRevision}, ${at}, ${at}
+          ${connector.keptRevision}, ${at}, ${at},
+          ${connector.lastChange === null ? null : encodeAuthor(connector.lastChange.by)},
+          ${connector.lastChange === null ? null : timeText(connector.lastChange.at)}
         )
       `;
         yield* writeGrant(connector.id, connector.grant);
@@ -293,6 +308,8 @@ export const layer = Layer.effect(
             signed_in_at = ${next.signedInAt === null ? null : timeText(next.signedInAt)},
             tools_json = ${next.accepted === null ? null : encodeTools(next.accepted)},
             kept_revision = ${next.keptRevision},
+            changed_by_json = ${next.lastChange === null ? null : encodeAuthor(next.lastChange.by)},
+            changed_at = ${next.lastChange === null ? null : timeText(next.lastChange.at)},
             updated_at = ${timeText(at)}
           WHERE id = ${id}
         `;
