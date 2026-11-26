@@ -5,8 +5,8 @@ import {
   nextStep,
   type OnboardingFlow,
   type OnboardingStep,
-  preparation,
-  preparedShare,
+  gettingReady,
+  readyingShare,
   previousStep,
   providerDetail,
   providerGate,
@@ -465,7 +465,7 @@ function Preparing({
   readonly quiet: boolean;
 }) {
   const { t, locale } = useI18n();
-  const now = preparation(engine, starting);
+  const now = gettingReady(engine, starting);
   const [prepared, setPrepared] = useState<"never" | "under-way" | "said">("never");
   if (now._tag === "preparing" && prepared !== "under-way") setPrepared("under-way");
   const ready = now._tag === "ready" && prepared === "under-way";
@@ -474,7 +474,7 @@ function Preparing({
     const said = window.setTimeout(() => setPrepared("said"), READY_STAYS);
     return () => window.clearTimeout(said);
   }, [ready]);
-  const share = preparedShare(now);
+  const share = readyingShare(now);
   const line =
     quiet || (now._tag !== "preparing" && !ready)
       ? null

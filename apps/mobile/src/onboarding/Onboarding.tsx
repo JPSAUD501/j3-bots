@@ -6,8 +6,8 @@ import {
   nextStep,
   type OnboardingFlow,
   type OnboardingStep,
-  preparation,
-  preparedShare,
+  gettingReady,
+  readyingShare,
   previousStep,
   providerGate,
   resumedStep,
@@ -661,7 +661,7 @@ function Preparing({
   const { t, locale } = useI18n();
   const muted = useColor("accent-muted-foreground");
   // A phone's bots live on a server it pairs with: it never starts one.
-  const now = preparation(engine, false);
+  const now = gettingReady(engine, false);
   const [prepared, setPrepared] = useState<"never" | "under-way" | "said">("never");
   if (now._tag === "preparing" && prepared !== "under-way") setPrepared("under-way");
   const ready = now._tag === "ready" && prepared === "under-way";
@@ -670,7 +670,7 @@ function Preparing({
     const said = setTimeout(() => setPrepared("said"), READY_STAYS);
     return () => clearTimeout(said);
   }, [ready]);
-  const share = preparedShare(now);
+  const share = readyingShare(now);
   const line =
     quiet || (now._tag !== "preparing" && !ready)
       ? null

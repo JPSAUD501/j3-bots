@@ -238,7 +238,7 @@ export const resumedStep = (step: OnboardingStep, flow: OnboardingFlow): Onboard
  *   not running for a reason that does not pass by itself, or a harness is
  *   missing with no install under way, which the connect step says.
  */
-export type Preparation =
+export type GettingReady =
   | { readonly _tag: "idle" }
   | { readonly _tag: "preparing"; readonly fraction: number | null }
   | { readonly _tag: "ready" };
@@ -247,11 +247,11 @@ const downloaded = (received: number, total: number | null): number | null =>
   total === null || total === 0 ? null : Math.min(1, received / total);
 
 /**
- * What the server is getting ready now (`Preparation`), from the status the
+ * What the server is getting ready now (`GettingReady`), from the status the
  * clients already read. `starting` is what only the device knows: that its
  * server is starting and has not answered yet, as on the computer that runs it.
  */
-export const preparation = (engine: EngineStatus | null, starting: boolean): Preparation => {
+export const gettingReady = (engine: EngineStatus | null, starting: boolean): GettingReady => {
   if (engine === null) return starting ? { _tag: "preparing", fraction: null } : { _tag: "idle" };
   if (engine.state._tag === "starting") {
     const { install } = engine.state;
@@ -283,10 +283,10 @@ export const preparation = (engine: EngineStatus | null, starting: boolean): Pre
 };
 
 /**
- * The share a preparation under way shows, from 0 to 0.99: never the whole,
+ * The share shown while something is being got ready, from 0 to 0.99: never the whole,
  * which would say it is done while it is not. Null where there is none to show.
  */
-export const preparedShare = (now: Preparation): number | null =>
+export const readyingShare = (now: GettingReady): number | null =>
   now._tag !== "preparing" || now.fraction === null
     ? null
     : Math.min(0.99, Math.max(0, Math.floor(now.fraction * 100) / 100));

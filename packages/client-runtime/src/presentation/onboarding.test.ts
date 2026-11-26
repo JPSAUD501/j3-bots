@@ -14,8 +14,8 @@ import {
   defaultBotName,
   nextStep,
   type OnboardingStep,
-  preparation,
-  preparedShare,
+  gettingReady,
+  readyingShare,
   previousStep,
   resumedStep,
   showsConnect,
@@ -173,8 +173,8 @@ describe("what the server is getting ready", () => {
   };
 
   it("says nothing before the server reports, unless the device knows it is starting", () => {
-    expect(preparation(null, false)).toEqual({ _tag: "idle" });
-    expect(preparation(null, true)).toEqual({ _tag: "preparing", fraction: null });
+    expect(gettingReady(null, false)).toEqual({ _tag: "idle" });
+    expect(gettingReady(null, true)).toEqual({ _tag: "preparing", fraction: null });
   });
 
   it("follows the engine's download, and shows no share while its size is unknown", () => {
@@ -182,9 +182,9 @@ describe("what the server is getting ready", () => {
       ...ready,
       state: { _tag: "starting", install: { receivedBytes: 45, totalBytes } },
     });
-    expect(preparedShare(preparation(downloading(180), false))).toBe(0.25);
-    expect(preparedShare(preparation(downloading(null), false))).toBeNull();
-    expect(preparation({ ...ready, state: { _tag: "starting" } }, false)._tag).toBe("preparing");
+    expect(readyingShare(gettingReady(downloading(180), false))).toBe(0.25);
+    expect(readyingShare(gettingReady(downloading(null), false))).toBeNull();
+    expect(gettingReady({ ...ready, state: { _tag: "starting" } }, false)._tag).toBe("preparing");
   });
 
   it("puts the harnesses on their way together into one share", () => {
@@ -192,19 +192,19 @@ describe("what the server is getting ready", () => {
       { ...copy, task: { _tag: "downloading", receivedBytes: 50, totalBytes: 100 } },
       { ...copy, task: { _tag: "verifying" } },
     );
-    expect(preparedShare(preparation(engine, false))).toBe(0.75);
+    expect(readyingShare(gettingReady(engine, false))).toBe(0.75);
   });
 
   it("never shows the whole while something is still under way", () => {
     const engine = withCopies({ ...copy, task: { _tag: "verifying" } });
-    expect(preparation(engine, false)._tag).toBe("preparing");
-    expect(preparedShare(preparation(engine, false))).toBe(0.99);
+    expect(gettingReady(engine, false)._tag).toBe("preparing");
+    expect(readyingShare(gettingReady(engine, false))).toBe(0.99);
   });
 
   it("is ready once the engine runs and nothing it installs is missing", () => {
-    expect(preparation(ready, false)).toEqual({ _tag: "ready" });
+    expect(gettingReady(ready, false)).toEqual({ _tag: "ready" });
     const own = withCopies({ ...copy, source: "j3", version: "2.1.330" });
-    expect(preparation(own, false)).toEqual({ _tag: "ready" });
+    expect(gettingReady(own, false)).toEqual({ _tag: "ready" });
   });
 
   it("does not wait for an update that waits for the bots, nor call it getting ready", () => {
@@ -214,17 +214,17 @@ describe("what the server is getting ready", () => {
       version: "2.1.300",
       task: { _tag: "waiting" },
     });
-    expect(preparation(waiting, false)).toEqual({ _tag: "ready" });
+    expect(gettingReady(waiting, false)).toEqual({ _tag: "ready" });
   });
 
   it("claims neither while a harness is missing with no install under way, or the engine is out", () => {
     // As an install that failed: the connect step says so; this line must not say "ready".
-    expect(preparation(withCopies(copy), false)).toEqual({ _tag: "idle" });
+    expect(gettingReady(withCopies(copy), false)).toEqual({ _tag: "idle" });
     const out: EngineStatus = {
       ...ready,
       state: { _tag: "unavailable", reason: "install-failed" },
     };
-    expect(preparation(out, false)).toEqual({ _tag: "idle" });
+    expect(gettingReady(out, false)).toEqual({ _tag: "idle" });
   });
 });
 
