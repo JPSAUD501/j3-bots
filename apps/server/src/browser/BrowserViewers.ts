@@ -25,6 +25,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -107,6 +108,18 @@ interface Attached {
   readonly detached: Deferred.Deferred<void>;
 }
 
+/** How a viewer ended, for its socket: the last frame it gets and the code it closes with. */
+interface Closing {
+  readonly frame: BrowserServerFrame | null;
+  readonly code: number;
+  readonly reason: string;
+  /**
+   * The device may not view the tab again, as once it is revoked: a socket
+   * that meets this ending as it attaches closes with it, and opens nothing.
+   */
+  readonly final: boolean;
+}
+
 interface Entry {
   readonly key: string;
   readonly deviceId: DeviceId;
@@ -125,7 +138,8 @@ interface Entry {
   control: Extract<ViewerOutput, { readonly _tag: "control" }> | null;
   /** Whether this device holds the tab, as the engine last said. */
   holds: boolean;
-  ended: boolean;
+  /** How the viewer ended, once it has. */
+  ended: Closing | null;
   fibers: Set<Fiber.Fiber<unknown, unknown>>;
   grace: Fiber.Fiber<unknown, unknown> | null;
 }
@@ -157,29 +171,47 @@ const controlFrame = (
   dialog: control.dialog,
 });
 
-/** The last frame a socket gets when its viewer ends, and the code it closes with. */
-const ending = (
-  closed: ViewerClosed,
-): {
-  readonly frame: BrowserServerFrame | null;
-  readonly code: number;
-  readonly reason: string;
-} => {
+/** How a socket is closed when the engine's viewer ends for `closed`. */
+const ending = (closed: ViewerClosed): Closing => {
   switch (closed.reason) {
     case "gone":
-      return { frame: { type: "gone" }, code: 1000, reason: "gone" };
+      return { frame: { type: "gone" }, code: 1000, reason: "gone", final: false };
     case "setup-needed":
       return {
         frame: { type: "setup-needed", need: closed.need ?? "libraries" },
         code: 1000,
         reason: "setup-needed",
+        final: false,
       };
     case "reconnect":
-      return { frame: null, code: BROWSER_CLOSE_CODES.reconnect, reason: "reconnect" };
+      return {
+        frame: null,
+        code: BROWSER_CLOSE_CODES.reconnect,
+        reason: "reconnect",
+        final: false,
+      };
     case "lost":
-      return { frame: null, code: BROWSER_CLOSE_CODES.unavailable, reason: "unavailable" };
+      return {
+        frame: null,
+        code: BROWSER_CLOSE_CODES.unavailable,
+        reason: "unavailable",
+        final: false,
+      };
   }
 };
+
+const REVOKED: Closing = {
+  frame: null,
+  code: BROWSER_CLOSE_CODES.invalid,
+  reason: "revoked",
+  final: true,
+};
+
+/** Closes `link` as `closing` says. */
+const closeAs = Effect.fnUntraced(function* (link: ClientLink, closing: Closing) {
+  if (closing.frame !== null) yield* link.send(closing.frame).pipe(Effect.ignore);
+  yield* link.close(closing.code, closing.reason);
+});
 
 export const layer = Layer.effect(
   BrowserViewers,
@@ -225,25 +257,16 @@ export const layer = Layer.effect(
      * which gives the tab back, and the device holds the tab no more. Runs
      * with the entry's lock held, and is never interrupted halfway.
      */
-    const endLocked = (
-      entry: Entry,
-      closing: {
-        readonly frame: BrowserServerFrame | null;
-        readonly code: number;
-        readonly reason: string;
-      },
-    ) =>
+    const endLocked = (entry: Entry, closing: Closing) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
-          if (entry.ended) return;
-          entry.ended = true;
+          if (entry.ended !== null) return;
+          entry.ended = closing;
           if (entries.get(entry.key) === entry) entries.delete(entry.key);
           const attached = entry.attached;
           entry.attached = null;
           if (attached !== null) {
-            if (closing.frame !== null)
-              yield* attached.link.send(closing.frame).pipe(Effect.ignore);
-            yield* attached.link.close(closing.code, closing.reason);
+            yield* closeAs(attached.link, closing);
             yield* Deferred.succeed(attached.detached, undefined);
           }
           entry.inFlight = null;
@@ -256,7 +279,7 @@ export const layer = Layer.effect(
         }),
       );
 
-    const end = (entry: Entry, closing: Parameters<typeof endLocked>[1]) =>
+    const end = (entry: Entry, closing: Closing) =>
       entry.lock.withPermits(1)(endLocked(entry, closing));
 
     /** What the engine's viewer sends, for as long as it is open. */
@@ -265,7 +288,7 @@ export const layer = Layer.effect(
         Stream.runForEach((output) =>
           entry.lock.withPermits(1)(
             Effect.gen(function* () {
-              if (entry.ended) return;
+              if (entry.ended !== null) return;
               switch (output._tag) {
                 case "frame": {
                   const picture = { jpeg: output.jpeg, owed: true };
@@ -345,7 +368,7 @@ export const layer = Layer.effect(
         viewport: null,
         control: null,
         holds: false,
-        ended: false,
+        ended: null,
         fibers: new Set(),
         grace: null,
       };
@@ -353,24 +376,16 @@ export const layer = Layer.effect(
       entry.fibers.add(yield* background(pump(entry)));
       // Revoking the device closes its viewers at once, held tabs included.
       entry.fibers.add(
-        yield* background(
-          auth
-            .revoked(deviceId)
-            .pipe(
-              Effect.andThen(
-                end(entry, { frame: null, code: BROWSER_CLOSE_CODES.invalid, reason: "revoked" }),
-              ),
-            ),
-        ),
+        yield* background(auth.revoked(deviceId).pipe(Effect.andThen(end(entry, REVOKED)))),
       );
       return entry;
     });
 
-    /** Attaches `link` to the entry, in place of any socket before it; none if the entry ended. */
+    /** Attaches `link` to the entry, in place of any socket before it; how it ended, if it has. */
     const attach = (entry: Entry, link: ClientLink) =>
       entry.lock.withPermits(1)(
         Effect.gen(function* () {
-          if (entry.ended) return Option.none<Attached>();
+          if (entry.ended !== null) return Result.fail(entry.ended);
           const previous = entry.attached;
           if (previous !== null) {
             yield* recall(entry);
@@ -392,7 +407,7 @@ export const layer = Layer.effect(
             entry.pending = { jpeg: entry.shown, owed: false };
           }
           yield* sendPending(entry);
-          return Option.some(attached);
+          return Result.succeed(attached);
         }),
       );
 
@@ -400,15 +415,22 @@ export const layer = Layer.effect(
     const detach = (entry: Entry, attached: Attached) =>
       entry.lock.withPermits(1)(
         Effect.gen(function* () {
-          if (entry.ended || entry.attached !== attached) return;
+          if (entry.ended !== null || entry.attached !== attached) return;
           entry.attached = null;
           yield* recall(entry);
           if (!entry.holds) {
-            return yield* endLocked(entry, { frame: null, code: 1000, reason: "closed" });
+            return yield* endLocked(entry, {
+              frame: null,
+              code: 1000,
+              reason: "closed",
+              final: false,
+            });
           }
           const grace = yield* background(
             Effect.sleep(CONTROL_GRACE).pipe(
-              Effect.andThen(end(entry, { frame: null, code: 1000, reason: "grace" })),
+              Effect.andThen(
+                end(entry, { frame: null, code: 1000, reason: "grace", final: false }),
+              ),
             ),
           );
           entry.grace = grace;
@@ -424,7 +446,9 @@ export const layer = Layer.effect(
         case "ack":
           return entry.lock.withPermits(1)(
             Effect.gen(function* () {
-              if (entry.ended || entry.attached !== attached || entry.inFlight === null) return;
+              if (entry.ended !== null || entry.attached !== attached || entry.inFlight === null) {
+                return;
+              }
               const picture = entry.inFlight;
               entry.inFlight = null;
               entry.shown = picture.jpeg;
@@ -472,9 +496,9 @@ export const layer = Layer.effect(
             ));
           if (entry === undefined) return { _tag: "unavailable" } as const;
           const attached = yield* attach(entry, link);
-          return Option.isSome(attached)
-            ? ({ _tag: "attached", entry, attached: attached.value } as const)
-            : ({ _tag: "ended" } as const);
+          return Result.isSuccess(attached)
+            ? ({ _tag: "attached", entry, attached: attached.success } as const)
+            : ({ _tag: "ended", closing: attached.failure } as const);
         }),
       );
 
@@ -503,8 +527,11 @@ export const layer = Layer.effect(
           yield* link.send({ type: "ping" }).pipe(Effect.ignore);
         }
       });
-      yield* Effect.raceAll([listen, keepAlive, Deferred.await(socket.detached)]);
-      yield* detach(current, socket);
+      // The socket's request ends with the socket: it may be interrupted
+      // here, and the viewer must still learn the socket left.
+      yield* Effect.raceAll([listen, keepAlive, Deferred.await(socket.detached)]).pipe(
+        Effect.ensuring(detach(current, socket)),
+      );
     });
 
     const connect = Effect.fn("BrowserViewers.connect")(function* (input: {
@@ -514,7 +541,8 @@ export const layer = Layer.effect(
       readonly link: ClientLink;
     }) {
       const { deviceId, link } = input;
-      // A viewer that ends as this socket attaches is opened again, once, if the tab is still there.
+      // A viewer that ends as this socket attaches is opened again, once, if the
+      // tab is still there and the device may still view it.
       for (let attempt = 0; ; attempt++) {
         const tab = yield* tabs.resolve(input.ref);
         if (Option.isNone(tab)) {
@@ -523,6 +551,9 @@ export const layer = Layer.effect(
         }
         const joined = yield* join(deviceId, tab.value, input.size, link);
         if (joined._tag === "attached") return yield* serve(joined.entry, joined.attached);
+        if (joined._tag === "ended" && joined.closing.final) {
+          return yield* closeAs(link, joined.closing);
+        }
         if (joined._tag === "unavailable" || attempt === REOPENS) {
           return yield* link.close(BROWSER_CLOSE_CODES.unavailable, "unavailable");
         }
@@ -535,7 +566,9 @@ export const layer = Layer.effect(
         [...entries.values()].filter((entry) => wanted.has(entry.tab)),
         (entry) =>
           entry.lock.withPermits(1)(
-            entry.ended || !entry.holds ? Effect.void : entry.viewer.send({ type: "release" }),
+            entry.ended !== null || !entry.holds
+              ? Effect.void
+              : entry.viewer.send({ type: "release" }),
           ),
         { discard: true },
       );

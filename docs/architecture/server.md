@@ -905,7 +905,7 @@ A query that does not decode becomes a socket that closes at once with 1008. A r
 
 **One viewer per device and tab.** `BrowserViewers` opens one engine viewer for a device's first socket on a tab. The device's next socket on the same tab takes that viewer over, control included, and the socket before it closes with 4409. Two devices on one tab have a viewer each, so each can tell who holds it.
 - A device's sockets on one tab take their turns, in the order they came: each finds the device's viewer, or opens it when there is none, and attaches to it before the next socket does. So a socket that comes while the viewer is still opening waits for it, and the device never has two engine viewers of one tab. The last socket to come is the one left attached.
-- A viewer that ends while a socket attaches, its tab closing or its device revoked, is opened again once, if the tab is still listed. Otherwise the socket closes with 1013.
+- A viewer that ends while a socket attaches, its tab closing for one, is opened again once, if the tab is still listed. Otherwise the socket closes with 1013. A viewer that ended because its device was revoked is not opened again: the socket closes as the device's other sockets did, with 1008.
 - A client message over 4 MiB closes its socket with 1009. The limit is shared with the RPC socket, whose largest message is a bot template; the media socket's are a few kilobytes.
 
 **Pacing.** One picture is in flight to a client at a time.
@@ -916,7 +916,7 @@ A query that does not decode becomes a socket that closes at once with 1008. A r
 
 **Dropped links, and the grace.**
 - The server pings every 15 s, and a socket it has heard nothing from for 45 s counts as dropped.
-- A device that does not hold the tab gives up its viewer when its socket leaves.
+- A device that does not hold the tab gives up its viewer when its socket leaves, however it leaves: closed, dropped for a full buffer, or cut off with its connection.
 - A device that holds the tab keeps it, and its viewer, for 60 s. A socket of that device that comes back within that time gets the viewer as it was: control, the page's size and the last picture the client drew. After 60 s the viewer closes, which gives the tab back to the bot.
 
 **Revocation.** Revoking a device closes its viewers at once, those in their grace included, and their sockets with 1008. A held tab goes back to the bot then, not after the grace.
