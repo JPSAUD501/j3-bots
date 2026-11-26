@@ -9,10 +9,13 @@ import {
   avatarMood,
   avatarSeed,
   avatarStates,
+  avatarBusy,
+  avatarNearness,
   createAvatar,
-  gazeToward,
   notificationState,
   plainTraits,
+  pointerNear,
+  pokeAvatar,
   setAvatarState,
   speakingUntil,
   stepAvatar,
@@ -166,11 +169,26 @@ describe("still forms", () => {
   );
 });
 
-/** `sim` stepped at 60 fps for `seconds`. */
-const run = (sim: AvatarSim, seconds: number) => {
+/** `sim` stepped at `rate` frames a second for `seconds`. */
+const run = (sim: AvatarSim, seconds: number, rate = 60) => {
   let next = sim;
-  for (let i = 0; i < Math.round(seconds * 60); i++) next = stepAvatar(next, 1 / 60, null);
+  for (let i = 0; i < Math.round(seconds * rate); i++) next = stepAvatar(next, 1 / rate, null);
   return next;
+};
+
+/** The highest `sim` rises off the ground over `seconds`, in the avatar's units. */
+const highest = (
+  sim: AvatarSim,
+  seconds: number,
+  each?: (sim: AvatarSim, frame: number) => AvatarSim,
+) => {
+  let next = sim;
+  let top = 0;
+  for (let frame = 0; frame < Math.round(seconds * 60); frame++) {
+    next = stepAvatar(each?.(next, frame) ?? next, 1 / 60, null);
+    top = Math.max(top, -next.hop.x);
+  }
+  return { top, sim: next };
 };
 
 describe("an avatar's variation", () => {
@@ -200,9 +218,9 @@ describe("an avatar's variation", () => {
   });
 });
 
-describe("a change of state", () => {
-  const seed = avatarSeed("bot-1");
+const seed = avatarSeed("bot-1");
 
+describe("a change of state", () => {
   it("eases into the new pose within a second", () => {
     const sim = run(setAvatarState(createAvatar(seed, "idle"), "working"), 1.2);
     const face = avatarFace(sim);
@@ -211,26 +229,162 @@ describe("a change of state", () => {
     expect(face.pupil).toBeCloseTo(pose.pupil, 2);
   });
 
-  it("kicks the body once, its own way: a hop up for waiting, a slump for blocked", () => {
+  it("moves the body once, its own way: a hop up for waiting, a slump for blocked", () => {
     const idle = createAvatar(seed, "idle");
-    expect(setAvatarState(idle, "waiting").hop.v).toBeLessThan(0);
-    expect(setAvatarState(idle, "blocked").hop.v).toBeGreaterThan(0);
+    expect(highest(setAvatarState(idle, "waiting"), 0.5).top).toBeGreaterThan(4);
+    const blocked = run(setAvatarState(idle, "blocked"), 0.2);
+    expect(blocked.hop.x).toBeGreaterThan(1);
+    expect(blocked.air).toBe(false);
     expect(setAvatarState(idle, "idle")).toBe(idle);
   });
 
-  it("settles its springs after the kick", () => {
+  it("comes to rest afterwards", () => {
     const sim = run(setAvatarState(createAvatar(seed, "idle"), "blocked"), 4);
     expect(Math.abs(sim.hop.x)).toBeLessThan(0.5);
     expect(Math.abs(sim.lagX.x)).toBeLessThan(0.5);
   });
 });
 
-describe("gazeToward", () => {
-  it("looks straight at the pointer, reaching the eye's edge from 220 px", () => {
-    expect(gazeToward(440, 0)).toEqual({ x: 1, y: 0 });
-    const near = gazeToward(0, 110);
-    expect(near.x).toBeCloseTo(0, 6);
-    expect(near.y).toBeCloseTo(0.5, 6);
+describe("the pointer", () => {
+  const { full, none } = avatarNearness;
+
+  it("has an avatar's eye only within a close radius of it", () => {
+    expect(pointerNear(none * 40 + 1, 0, 40)).toBeNull();
+    expect(pointerNear(0, 400, 96)).toBeNull();
+    expect(pointerNear(full * 40 - 1, 0, 40)?.attention).toBe(1);
+    expect(pointerNear(30, 30, 96)?.attention).toBe(1);
+  });
+
+  it("eases in at the edge of that radius, never all at once", () => {
+    const at = (widths: number) => pointerNear(widths * 96, 0, 96)?.attention ?? 0;
+    const edge = [2.95, 2.75, 2.5, 2.25, 2.05].map(at);
+    expect(edge[0]).toBeLessThan(0.02);
+    expect(edge.at(-1)).toBeGreaterThan(0.98);
+    for (let i = 1; i < edge.length; i++) expect(edge[i]).toBeGreaterThan(edge[i - 1] ?? 1);
+  });
+
+  it("turns the eye toward it, and straight out when it is right over the avatar", () => {
+    const right = pointerNear(120, 0, 96);
+    expect(right?.x).toBeCloseTo(1, 6);
+    expect(right?.y).toBeCloseTo(0, 6);
+    expect(pointerNear(0, 0, 96)).toMatchObject({ x: 0, y: 0, closeness: 1 });
+  });
+
+  it("leads the eye of a bot that looks out, and not of one at work", () => {
+    const near = pointerNear(100, 0, 96);
+    const follow = (state: AvatarState) => {
+      let sim = createAvatar(seed, state);
+      for (let i = 0; i < 90; i++) sim = stepAvatar(sim, 1 / 60, near);
+      return avatarFace(sim).gazeX;
+    };
+    expect(follow("idle")).toBeGreaterThan(0.9);
+    expect(follow("working")).toBeLessThan(0.7);
+  });
+
+  it("lets the eye go gently once it is out of reach", () => {
+    let sim = createAvatar(seed, "waiting");
+    for (let i = 0; i < 90; i++) sim = stepAvatar(sim, 1 / 60, pointerNear(100, 0, 96));
+    const held = avatarFace(sim).gazeX;
+    const after = avatarFace(stepAvatar(sim, 1 / 60, null)).gazeX;
+    expect(held - after).toBeLessThan(0.08);
+    expect(avatarFace(run(sim, 1.5)).gazeX).toBeCloseTo(0, 1);
+  });
+});
+
+describe("a press and a tap", () => {
+  const idle = () => run(createAvatar(seed, "idle"), 0.5);
+
+  it("holds the body down while pressed, and lets it up when let go", () => {
+    const pressed = run(pokeAvatar(idle(), "press"), 0.5);
+    expect(pressed.hop.x).toBeGreaterThan(4);
+    expect(avatarFace(pressed).squash).toBeGreaterThan(0.05);
+    const released = run(pokeAvatar(pressed, "release"), 1.5);
+    expect(Math.abs(released.hop.x)).toBeLessThan(0.2);
+  });
+
+  it("answers a tap differently from the tap before", () => {
+    let sim = idle();
+    const acts: Array<AvatarSim["act"]> = [];
+    for (let i = 0; i < 6; i++) {
+      sim = pokeAvatar(pokeAvatar(sim, "press"), "tap");
+      acts.push(sim.act);
+      sim = run(sim, 1.4);
+    }
+    for (let i = 1; i < acts.length; i++) expect(acts[i]).not.toBe(acts[i - 1]);
+  });
+
+  it("does not add up: ten taps in a second rise no higher than a hop can", () => {
+    const { top: once } = highest(pokeAvatar(idle(), "hop"), 1);
+    const { top, sim } = highest(idle(), 1, (now, frame) =>
+      frame % 6 === 0 ? pokeAvatar(pokeAvatar(now, "press"), "tap") : now,
+    );
+    expect(once).toBeGreaterThan(4);
+    expect(top).toBeLessThan(once * 3);
+    const rested = run(sim, 2.5);
+    expect(Math.abs(rested.hop.x)).toBeLessThan(0.2);
+    expect(Math.abs(rested.tilt.x)).toBeLessThan(3);
+  });
+
+  it("moves on from where it is: a tap mid-hop never jumps what is drawn", () => {
+    let sim = pokeAvatar(idle(), "hop");
+    let before = avatarFace(sim);
+    for (let frame = 0; frame < 90; frame++) {
+      if (frame % 7 === 3) sim = pokeAvatar(pokeAvatar(sim, "press"), "tap");
+      sim = stepAvatar(sim, 1 / 60, null);
+      const now = avatarFace(sim);
+      // A frame moves the body no further than its fastest launch does, and reshapes it a little.
+      expect(Math.abs(now.hop - before.hop)).toBeLessThan(3.5);
+      expect(Math.abs(now.squash - before.squash)).toBeLessThan(0.07);
+      expect(Math.abs(now.tilt - before.tilt)).toBeLessThan(1.5);
+      before = now;
+    }
+  });
+});
+
+describe("an entrance", () => {
+  const entering = () => pokeAvatar(createAvatar(seed, "idle"), "arrive");
+
+  it("comes down from above, lands, and only then lights its antenna", () => {
+    const start = entering();
+    expect(-start.hop.x).toBeGreaterThan(100);
+    const falling = run(start, 0.3);
+    expect(falling.air).toBe(true);
+    expect(avatarFace(falling).lightScale).toBeLessThan(0.7);
+    const landed = run(start, 1.4);
+    expect(landed.entering).toBe(false);
+    expect(avatarFace(landed).lightScale).toBeGreaterThan(0.9);
+    expect(avatarBusy(run(start, 4))).toBe(false);
+  });
+
+  it("lands with weight: it squashes as it meets the ground", () => {
+    let sim = entering();
+    let deepest = 0;
+    for (let i = 0; i < 120; i++) {
+      sim = stepAvatar(sim, 1 / 60, null);
+      deepest = Math.max(deepest, avatarFace(sim).squash);
+    }
+    expect(deepest).toBeGreaterThan(0.12);
+    expect(deepest).toBeLessThan(0.4);
+  });
+
+  it("is the same motion at any frame rate", () => {
+    const smooth = run(entering(), 0.5, 120);
+    const coarse = run(entering(), 0.5, 20);
+    expect(coarse.hop.x).toBeCloseTo(smooth.hop.x, 3);
+    expect(coarse.hop.v).toBeCloseTo(smooth.hop.v, 2);
+    // Past the landing and the rebound, which fall inside a frame at one rate and on one at the other.
+    const after = (rate: number) => run(entering(), 0.875, rate);
+    expect(after(24).hop.x).toBeCloseTo(after(120).hop.x, 3);
+  });
+
+  it("survives a frame of any length", () => {
+    const stalled = stepAvatar(pokeAvatar(pokeAvatar(entering(), "press"), "tap"), 30, null);
+    const face = avatarFace(stalled);
+    for (const value of [face.hop, face.squash, face.tilt, face.lagX, face.lagY, face.gazeX]) {
+      expect(Number.isFinite(value)).toBe(true);
+    }
+    expect(Math.abs(face.hop)).toBeLessThan(1);
+    expect(Math.abs(face.squash)).toBeLessThan(0.2);
   });
 });
 

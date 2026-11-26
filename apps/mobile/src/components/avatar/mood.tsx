@@ -33,6 +33,7 @@ export function LiveBotAvatar({
   ground,
   label,
   markPrimary = false,
+  entrance = false,
   ref,
 }: {
   readonly bot: Bot;
@@ -42,6 +43,8 @@ export function LiveBotAvatar({
   readonly ground?: AvatarGround;
   readonly label?: string;
   readonly markPrimary?: boolean;
+  /** Comes in from above as it first shows (`BotAvatar`). */
+  readonly entrance?: boolean;
   readonly ref?: Ref<AvatarHandle>;
 }) {
   const offline = useContext(AvatarsAsleep);
@@ -53,6 +56,7 @@ export function LiveBotAvatar({
       state={mood.state}
       stalled={mood.stalled}
       size={size}
+      entrance={entrance}
       {...(ground === undefined ? {} : { ground })}
       {...(label === undefined ? {} : { label })}
       {...(ref === undefined ? {} : { ref })}

@@ -29,6 +29,7 @@ const idle: AvatarFace = {
   lagX: 0,
   lagY: 0,
   lightScale: 1,
+  glow: 0,
   light: "body",
   hop: 0,
   bob: 0,

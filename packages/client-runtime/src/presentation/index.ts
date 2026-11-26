@@ -5,11 +5,13 @@
  * formatted. Free of any interface library and of the interface's sentences.
  */
 export {
+  avatarBusy,
   avatarFace,
   type AvatarContext,
-  type AvatarGaze,
   avatarMood,
   type AvatarMood,
+  type AvatarNear,
+  avatarNearness,
   type AvatarPoke,
   avatarSeed,
   type AvatarSim,
@@ -17,9 +19,9 @@ export {
   avatarStates,
   type AvatarTraits,
   createAvatar,
-  gazeToward,
   notificationState,
   plainTraits,
+  pointerNear,
   pokeAvatar,
   setAvatarState,
   speakingUntil,
@@ -131,12 +133,16 @@ export {
 export { type Inline, type MentionName, parseMessageText } from "./messageText.ts";
 export {
   defaultBotName,
+  FirstRunProgress,
   makingProgress,
   nextStep,
   type OnboardingFlow,
   type OnboardingStep,
   previousStep,
+  resumedStep,
   showsConnect,
+  type StageScene,
+  stageScene,
 } from "./onboarding.ts";
 export {
   notificationOpening,
@@ -193,9 +199,13 @@ export {
   rosterTarget,
 } from "./roster.ts";
 export {
+  arrivalsSettled,
   keptPlaces,
   lifts,
   moveDelay,
+  noArrivals,
+  type RosterArrivals,
+  rosterArrivals,
   rosterMotion,
   type RosterView,
   type RowMove,

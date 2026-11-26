@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { AvatarChoice } from "@j3-bots/contracts";
-import { avatarCast, firstRun, springs } from "@j3-bots/design-tokens";
+import { avatarCast, easeOutCurve, springs, stage } from "@j3-bots/design-tokens";
 import { type ComponentRef, type ReactNode, type Ref, useEffect, useRef } from "react";
 import { AccessibilityInfo, View } from "react-native";
 import Animated, {
@@ -8,12 +8,11 @@ import Animated, {
   FadeIn,
   useAnimatedStyle,
   useSharedValue,
-  withRepeat,
-  withSequence,
+  withDelay,
   withTiming,
 } from "react-native-reanimated";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
-import { popIn, useReducedMotion } from "../motion.ts";
+import { useTint } from "../conversation/tint.ts";
 import { PressScale } from "../press.tsx";
 import { displaySpacing, Text } from "../text.tsx";
 
@@ -85,26 +84,30 @@ export function BigButton({
 interface CastMember {
   readonly look: AvatarChoice;
   readonly size: number;
-  /** Where its centre sits, in % of the cast's box. */
+  /** Where it stands across the stage, in % of its width. */
   readonly x: number;
-  readonly y: number;
-  /** How long one float takes, in ms: each its own, so no two move together. */
-  readonly float: number;
+  /** How far upstage it stands: each step back is a little higher. */
+  readonly depth: 0 | 1 | 2;
 }
 
 /** The cast's look at `index`: the first is the one the first bot starts with. */
 const at = (index: number): AvatarChoice => avatarCast[index % avatarCast.length] ?? avatarCast[0];
 
+/** The cast: the lead at the front, in the middle, and four more around and behind it, in the order they come in. */
 const cast: ReadonlyArray<CastMember> = [
-  { look: at(0), size: 96, x: 50, y: 40, float: 3400 },
-  { look: at(3), size: 64, x: 17, y: 52, float: 2900 },
-  { look: at(1), size: 68, x: 83, y: 50, float: 3700 },
-  { look: at(2), size: 60, x: 33, y: 76, float: 3100 },
-  { look: at(5), size: 52, x: 69, y: 80, float: 2700 },
+  { look: at(0), size: 96, x: 50, depth: 0 },
+  { look: at(3), size: 60, x: 16, depth: 1 },
+  { look: at(1), size: 64, x: 84, depth: 1 },
+  { look: at(2), size: 50, x: 31, depth: 2 },
+  { look: at(5), size: 46, x: 70, depth: 2 },
 ];
 
+/** How far above the stage's bottom the floor is, and how much higher each step upstage stands, in px. */
+const FLOOR = 20;
+const UPSTAGE = 11;
+
 /**
- * How the cast's first bot is shown: popping in with the rest, not at all
+ * How the cast's first bot is shown: coming down with the rest, not at all
  * while the bot being made stands for it, or once the bot being made has been
  * carried back into its place.
  */
@@ -113,11 +116,53 @@ export type Lead = "pops" | "away" | "after";
 /** The cast's first bot showing in its place, the moment the bot being made lands there. */
 const landed = FadeIn.delay(springs.slide.duration).duration(1);
 
+const easeOut = Easing.bezier(...easeOutCurve);
+
 /**
- * The team still to come: each bot pops in after the one before, then floats
- * on its own clock. `compact` is for screens with a form under it. `leadRef`
- * is the first bot's place, which the bot being made leaves from and comes
- * back to.
+ * A bot's light: a pool of its own color at its feet, which comes up
+ * `stage.spotLead` ms before the bot sets off, `delay` ms after the stage
+ * first shows.
+ */
+export function Pool({
+  look,
+  size,
+  delay,
+}: {
+  readonly look: AvatarChoice;
+  readonly size: number;
+  readonly delay: number;
+}) {
+  const backgroundColor = useTint(look).color;
+  const lit = useSharedValue(0);
+  useEffect(() => {
+    lit.set(withDelay(delay, withTiming(1, { duration: stage.spotIn, easing: easeOut })));
+  }, [delay, lit]);
+  const style = useAnimatedStyle(() => ({ opacity: 0.26 * lit.get() }));
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: "absolute",
+          left: -size * 0.32,
+          right: -size * 0.32,
+          bottom: -size * 0.13,
+          height: size * 0.34,
+          borderRadius: size,
+          backgroundColor,
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+/**
+ * The team still to come, standing on a stage: each bot comes down into its
+ * own light after the one before, lands and lights its antenna, which is the
+ * avatar's own entrance. `compact` is for screens with a form under it.
+ * `leadRef` is the first bot's place, which the bot being made leaves from and
+ * comes back to.
  */
 export function Cast({
   compact = false,
@@ -128,7 +173,6 @@ export function Cast({
   readonly lead?: Lead;
   readonly leadRef?: Ref<ComponentRef<typeof View>>;
 }) {
-  const reduced = useReducedMotion();
   const scale = compact ? 0.72 : 1;
   return (
     <View
@@ -139,6 +183,7 @@ export function Cast({
       {cast.map((member, index) => {
         const size = Math.round(member.size * scale);
         const first = index === 0;
+        const delay = index * stage.stagger;
         return (
           <View
             key={`${member.look.shape}/${member.look.color}`}
@@ -146,58 +191,27 @@ export function Cast({
             className="absolute"
             style={{
               left: `${member.x}%`,
-              top: `${member.y}%`,
+              bottom: FLOOR + member.depth * UPSTAGE * scale,
               marginLeft: -size / 2,
-              marginTop: -size / 2,
               width: size,
               height: size,
+              zIndex: 3 - member.depth,
               opacity: first && lead === "away" ? 0 : 1,
             }}
           >
-            <Animated.View
-              entering={first && lead === "after" ? landed : popIn(firstRun.stagger * index)}
-            >
-              <Float period={member.float} still={reduced}>
-                <BotAvatar
-                  avatar={member.look}
-                  seed={`cast-${member.look.shape}`}
-                  state="idle"
-                  size={size}
-                />
-              </Float>
+            <Pool look={member.look} size={size} delay={delay} />
+            <Animated.View {...(first && lead === "after" ? { entering: landed } : {})}>
+              <BotAvatar
+                avatar={member.look}
+                seed={`cast-${member.look.shape}`}
+                state="idle"
+                size={size}
+                entrance={!(first && lead === "after") && { delay: delay + stage.spotLead }}
+              />
             </Animated.View>
           </View>
         );
       })}
     </View>
   );
-}
-
-function Float({
-  period,
-  still,
-  children,
-}: {
-  readonly period: number;
-  readonly still: boolean;
-  readonly children: ReactNode;
-}) {
-  const y = useSharedValue(0);
-  useEffect(() => {
-    if (still) {
-      y.set(0);
-      return;
-    }
-    y.set(
-      withRepeat(
-        withSequence(
-          withTiming(-firstRun.float, { duration: period / 2, easing: Easing.inOut(Easing.sin) }),
-          withTiming(0, { duration: period / 2, easing: Easing.inOut(Easing.sin) }),
-        ),
-        -1,
-      ),
-    );
-  }, [period, still, y]);
-  const style = useAnimatedStyle(() => ({ transform: [{ translateY: y.get() }] }));
-  return <Animated.View style={style}>{children}</Animated.View>;
 }

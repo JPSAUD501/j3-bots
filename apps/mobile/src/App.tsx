@@ -10,6 +10,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 // The tokens' theme and the utilities every className names.
 import "../global.css";
 import { I18nContext, useI18n } from "./i18n.ts";
+import { fingerWatch } from "./components/avatar/finger.ts";
 import { AvatarConnection } from "./components/avatar/mood.tsx";
 import { Confirmations } from "./confirm.tsx";
 import { ForgetSignIn } from "./Leave.tsx";
@@ -177,7 +178,7 @@ export function App() {
     <I18nContext value={i18n}>
       <SafeAreaProvider>
         <StatusBar />
-        <View className="flex-1 bg-background" onLayout={hideSplash}>
+        <View className="flex-1 bg-background" onLayout={hideSplash} {...fingerWatch}>
           <Confirmations>
             <Root />
           </Confirmations>

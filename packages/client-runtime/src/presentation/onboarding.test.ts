@@ -14,7 +14,9 @@ import {
   makingProgress,
   nextStep,
   previousStep,
+  resumedStep,
   showsConnect,
+  stageScene,
 } from "./onboarding.ts";
 
 const engine = (status: ProviderStatus["status"]): EngineStatus => ({
@@ -68,6 +70,27 @@ describe("the first run's steps", () => {
     expect(previousStep("welcome", flow(false))).toBeNull();
     expect(previousStep("arrival", flow(true))).toBeNull();
     expect(previousStep("name", flow(false))).toBe("welcome");
+  });
+});
+
+describe("a first run picked up again", () => {
+  it("starts from the step it was left at, while the flow still has it", () => {
+    expect(resumedStep("name", { connect: false })).toBe("name");
+    expect(resumedStep("connect", { connect: true })).toBe("connect");
+  });
+
+  it("goes back to the look from a step the flow no longer has, and from the arrival", () => {
+    expect(resumedStep("connect", { connect: false })).toBe("look");
+    expect(resumedStep("arrival", { connect: true })).toBe("look");
+  });
+});
+
+describe("the stage's set", () => {
+  it("closes in on the bot being made, and opens on everyone once it exists", () => {
+    expect(stageScene("welcome", false)).toMatchObject({ camera: "wide", cast: "lit" });
+    expect(stageScene("name", false)).toMatchObject({ camera: "close", cast: "dim", named: true });
+    expect(stageScene("arrival", false)).toMatchObject({ camera: "close", cast: "dim" });
+    expect(stageScene("arrival", true)).toMatchObject({ camera: "finale", cast: "lit" });
   });
 });
 

@@ -154,3 +154,42 @@ export const moveDelay = (
   moves: ReadonlyMap<string, RowMove>,
   stepDelay: number,
 ): number => (move === "step" && [...moves.values()].some(lifts) ? stepDelay : 0);
+
+/** Who the roster has listed so far, and who among them is new and still coming in. */
+export interface RosterArrivals {
+  /** Null until the roster has listed anyone: the first rows drawn are nobody's entrance. */
+  readonly known: ReadonlySet<string> | null;
+  readonly entering: ReadonlySet<string>;
+}
+
+/** Before the roster has listed anyone. */
+export const noArrivals: RosterArrivals = { known: null, entering: new Set() };
+
+/**
+ * `arrivals` now that the roster lists `keys`, every bot and room it has, the
+ * hidden ones too: whoever was not listed before is new and comes in with an
+ * entrance, whoever made it. The roster's first rows are nobody's entrance,
+ * and more than `burst` new at once, as when the roster is read again after a
+ * while away, simply appear. The same object when nobody came or went.
+ */
+export function rosterArrivals(
+  arrivals: RosterArrivals,
+  keys: ReadonlyArray<string>,
+  burst: number,
+): RosterArrivals {
+  const { known } = arrivals;
+  if (known === null) return keys.length === 0 ? arrivals : { ...arrivals, known: new Set(keys) };
+  const news = keys.filter((key) => !known.has(key));
+  if (news.length === 0 && known.size === keys.length) return arrivals;
+  return {
+    known: new Set(keys),
+    entering:
+      news.length > 0 && news.length <= burst
+        ? new Set([...arrivals.entering, ...news])
+        : arrivals.entering,
+  };
+}
+
+/** `arrivals` once those entering are in: rows like the others, which listed again just appear. */
+export const arrivalsSettled = (arrivals: RosterArrivals): RosterArrivals =>
+  arrivals.entering.size === 0 ? arrivals : { ...arrivals, entering: new Set() };

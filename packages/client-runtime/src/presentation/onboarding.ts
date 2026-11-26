@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { EngineStatus, Language } from "@j3-bots/contracts";
+import { AvatarChoice, type EngineStatus, type Language } from "@j3-bots/contracts";
+import * as Schema from "effect/Schema";
 import { providerGate } from "./engine.ts";
 
 /**
@@ -63,6 +64,63 @@ export const makingProgress = (
   const index = making.indexOf(at);
   return index === -1 ? null : { index, count: making.length };
 };
+
+/**
+ * How the stage is set for a step: every surface draws the first run as one
+ * stage, the bots standing on it in their lights, and changes the set, never
+ * the stage, from step to step.
+ */
+export interface StageScene {
+  /**
+   * Where the camera is: `wide` on the whole cast, `close` on the bot being
+   * made, `finale` pulled back a little past wide as the bot arrives.
+   */
+  readonly camera: "wide" | "close" | "finale";
+  /** The rest of the cast: in their lights, or standing back in the dark, watching. */
+  readonly cast: "lit" | "dim";
+  /** The lead's light: `tight` while the operator fills in a form, so the form has the eye. */
+  readonly spot: "open" | "tight";
+  /** Whether the bot being made wears its name. */
+  readonly named: boolean;
+}
+
+/** The set for `step`; `created` once the bot exists, which turns the arrival into the finale. */
+export const stageScene = (step: OnboardingStep, created: boolean): StageScene => {
+  switch (step) {
+    case "welcome":
+      return { camera: "wide", cast: "lit", spot: "open", named: false };
+    case "name":
+    case "look":
+      return { camera: "close", cast: "dim", spot: "open", named: true };
+    case "connect":
+      return { camera: "close", cast: "dim", spot: "tight", named: true };
+    case "arrival":
+      return created
+        ? { camera: "finale", cast: "lit", spot: "open", named: false }
+        : { camera: "close", cast: "dim", spot: "tight", named: false };
+  }
+};
+
+/**
+ * What a first run left off at, kept by the device so that leaving it, a
+ * closed tab or an app put away, does not start it over: the step, the name
+ * typed if any, and the look picked.
+ */
+export const FirstRunProgress = Schema.Struct({
+  step: Schema.Literals(["welcome", "name", "look", "connect", "arrival"]),
+  name: Schema.NullOr(Schema.String),
+  look: AvatarChoice,
+});
+export type FirstRunProgress = typeof FirstRunProgress.Type;
+
+/**
+ * The step a first run left at `step` starts again from. A step the flow no
+ * longer has, as a connect step once a provider connected, and the arrival,
+ * which only a bot being created shows, go back to the look, the last step
+ * every flow has before them.
+ */
+export const resumedStep = (step: OnboardingStep, flow: OnboardingFlow): OnboardingStep =>
+  step !== "arrival" && order(flow).includes(step) ? step : "look";
 
 /** Where the install guide says how to sign a harness in with its own account (`provider login`). */
 export const providerLoginGuide =
