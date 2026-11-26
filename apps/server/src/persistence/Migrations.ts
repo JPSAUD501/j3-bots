@@ -49,6 +49,7 @@ import Migration0043 from "./migrations/0043_connector_apps.ts";
 import Migration0044 from "./migrations/0044_local_device.ts";
 import Migration0045 from "./migrations/0045_requested_openings.ts";
 import Migration0046 from "./migrations/0046_refusal_engine_start.ts";
+import Migration0047 from "./migrations/0047_browser_help_pushes.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -99,6 +100,7 @@ const migrations = SqliteMigrator.fromRecord({
   "44_local_device": Migration0044,
   "45_requested_openings": Migration0045,
   "46_refusal_engine_start": Migration0046,
+  "47_browser_help_pushes": Migration0047,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

@@ -1351,3 +1351,57 @@ it.effect(
       );
     }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("sends a browser help push written before with the fixed sentence, not the note", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+
+    // A browser help push and a message's, both waiting to be sent.
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`PRAGMA foreign_keys = ON`;
+      yield* migrate(migrationsThrough(46));
+      yield* sql`
+        INSERT INTO bots (
+          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+          permission_mode, workspace_path, created_at, updated_at
+        ) VALUES (
+          'ana', 'ana', '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', '/bots/ana',
+          ${now}, ${now}
+        )
+      `;
+      yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('ana', ${now})`;
+      yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+          created_at, updated_at
+        ) VALUES
+          ('help', 'ana', 0, 'browser-help', 'bot', 'ana', '{}', ${now}, ${now}),
+          ('said', 'ana', 1, 'message', 'bot', 'ana', '{}', ${now}, ${now})
+      `;
+      yield* sql`
+        INSERT INTO devices (id, name, token_hash, paired_at)
+        VALUES ('device-1', 'Phone', 'fixture-token-hash', ${now})
+      `;
+      yield* sql`
+        INSERT INTO push_deliveries (
+          id, entry_id, device_id, status, title, body, plain_body, due_at, deadline_at, created_at
+        ) VALUES
+          ('push-help', 'help', 'device-1', 'pending', 'Ana', 'Enter the code 4821',
+            'Needs your help in the browser', ${now}, ${now}, ${now}),
+          ('push-said', 'said', 'device-1', 'pending', 'Ana', 'The build is green',
+            'Sent you a message', ${now}, ${now}, ${now})
+      `;
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepStrictEqual(yield* sql`SELECT id, body FROM push_deliveries ORDER BY id`, [
+        { id: "push-help", body: "Needs your help in the browser" },
+        { id: "push-said", body: "The build is green" },
+      ]);
+    }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
