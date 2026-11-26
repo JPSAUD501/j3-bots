@@ -7,6 +7,7 @@
 export {
   type AiAccount,
   aiAccountNames,
+  aiNameOf,
   aiAccountProvider,
   aiAccounts,
   type AiAccountState,
@@ -219,7 +220,8 @@ export {
   type ArrangedRoster,
   betweenBots,
   type BotItem,
-  canStop,
+  botStop,
+  type BotStop,
   filterPairs,
   filterRoster,
   firstLine,

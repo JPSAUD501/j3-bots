@@ -281,6 +281,84 @@ export function galleryVariants(now: DateTime.Utc) {
       ],
       status: { _tag: "pending" },
     },
+    {
+      // More questions than a card held before, one with seven options, with
+      // the harness's headers and previews. Older apps show the placeholder.
+      _tag: "question",
+      ...base("question-whole"),
+      origin: "engine",
+      questions: [
+        {
+          id: "update-to-answer",
+          prompt: "This question needs a newer version of the app. Update it to answer.",
+          options: [],
+          acceptsText: false,
+          multiple: false,
+        },
+      ],
+      whole: [
+        {
+          id: "question-1",
+          header: "Layout",
+          prompt: "How should the invoice page be laid out?",
+          options: [
+            {
+              ...option("option-1", "Totals on top"),
+              preview:
+                "┌──────────────┐\n│ Total  $420  │\n├──────────────┤\n│ Line items…  │\n└──────────────┘",
+            },
+            {
+              ...option("option-2", "Totals at the bottom"),
+              preview:
+                "┌──────────────┐\n│ Line items…  │\n├──────────────┤\n│ Total  $420  │\n└──────────────┘",
+            },
+          ],
+          acceptsText: false,
+          multiple: false,
+        },
+        {
+          id: "question-2",
+          header: "Currency",
+          prompt: "Which currencies should it show?",
+          options: [
+            option("option-1", "US dollar"),
+            option("option-2", "Euro"),
+            option("option-3", "Brazilian real"),
+            option("option-4", "Pound sterling"),
+            option("option-5", "Japanese yen"),
+            option("option-6", "Canadian dollar"),
+            option("option-7", "Swiss franc"),
+          ],
+          acceptsText: false,
+          multiple: true,
+        },
+        {
+          id: "question-3",
+          header: "Dates",
+          prompt: "How should dates read?",
+          options: [option("option-1", "Nov 26, 2026"), option("option-2", "26/11/2026")],
+          acceptsText: true,
+          multiple: false,
+        },
+        {
+          id: "question-4",
+          header: "Logo",
+          prompt: "Keep the logo in the header?",
+          options: [option("option-1", "Yes"), option("option-2", "No")],
+          acceptsText: false,
+          multiple: false,
+        },
+        {
+          id: "question-5",
+          header: "Footer",
+          prompt: "What goes in the footer?",
+          options: [],
+          acceptsText: true,
+          multiple: false,
+        },
+      ],
+      status: { _tag: "pending" },
+    },
     question("question-answered", {
       _tag: "answered",
       answers: { when: { optionIds: ["fri"], text: null } },
@@ -905,6 +983,16 @@ export function galleryVariants(now: DateTime.Utc) {
     notice("notice-limit", { _tag: "turn-failed", failure: "usage-limit" }, true),
     notice("notice-provider", { _tag: "turn-failed", failure: "provider-error" }, true),
     notice("notice-session", { _tag: "turn-failed", failure: "session-lost" }),
+    notice(
+      "notice-unreachable",
+      {
+        _tag: "turn-failed",
+        failure: "unreachable",
+        details: "transport_error: The connection to the provider closed before it answered.",
+      },
+      true,
+    ),
+    notice("notice-signed-out", { _tag: "turn-failed", failure: "permission-error" }),
     notice("notice-undelivered", { _tag: "undelivered" }, true),
     notice("notice-handoff-failed", { _tag: "handoff-failed", senders: [ids.wren] }, true),
     notice(

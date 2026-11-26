@@ -97,6 +97,13 @@ export class Roster extends Context.Service<
      * Its bots' work for anyone else goes on.
      */
     readonly stopRoom: (roomId: RoomId) => Effect.Effect<IntentResult>;
+    /**
+     * Stop, for an AI that ignores it (`Bot.forceStop`): stops the bot as
+     * `stop` does, and has its AI's program ended.
+     */
+    readonly forceStop: (botId: BotId) => Effect.Effect<IntentResult>;
+    /** `forceStop`, for the work addressed to the room (`Room.forceStop`). */
+    readonly forceStopRoom: (roomId: RoomId) => Effect.Effect<IntentResult>;
   }
 >()("@j3-bots/client-runtime/stores/Roster") {}
 
@@ -153,23 +160,34 @@ export const layer = Layer.effect(
       )
       .pipe(Effect.forkScoped);
 
-    const stop = Effect.fn("Roster.stop")(function* (botId: BotId) {
-      const commandId = yield* actions.commandId;
-      return yield* actions.run(
-        stopAction(botId),
-        null,
-        connection.call((client) => client["bot.stop"]({ commandId, botId })),
-      );
-    });
+    // A Force stop is the same action as the Stop it follows: one of them at a time.
+    const stopping = (force: boolean) =>
+      Effect.fn("Roster.stop")(function* (botId: BotId) {
+        const commandId = yield* actions.commandId;
+        return yield* actions.run(
+          stopAction(botId),
+          null,
+          connection.call((client) =>
+            client[force ? "bot.forceStop" : "bot.stop"]({ commandId, botId }),
+          ),
+        );
+      });
+    const stop = stopping(false);
+    const forceStop = stopping(true);
 
-    const stopRoom = Effect.fn("Roster.stopRoom")(function* (roomId: RoomId) {
-      const commandId = yield* actions.commandId;
-      return yield* actions.run(
-        roomStopAction(roomId),
-        null,
-        connection.call((client) => client["room.stop"]({ commandId, roomId })),
-      );
-    });
+    const roomStopping = (force: boolean) =>
+      Effect.fn("Roster.stopRoom")(function* (roomId: RoomId) {
+        const commandId = yield* actions.commandId;
+        return yield* actions.run(
+          roomStopAction(roomId),
+          null,
+          connection.call((client) =>
+            client[force ? "room.forceStop" : "room.stop"]({ commandId, roomId }),
+          ),
+        );
+      });
+    const stopRoom = roomStopping(false);
+    const forceStopRoom = roomStopping(true);
 
     const placeBot = Effect.fn("Roster.placeBot")(function* (
       botId: BotId,
@@ -233,6 +251,8 @@ export const layer = Layer.effect(
       sections,
       stop,
       stopRoom,
+      forceStop,
+      forceStopRoom,
       placeBot,
       markRead,
       markUnread,

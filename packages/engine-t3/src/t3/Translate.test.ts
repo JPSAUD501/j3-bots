@@ -2076,15 +2076,15 @@ describe("a provider the engine retries", () => {
     applyEvent(mirror, run("running", 1));
     applyEvent(mirror, retryItem("running"));
     assert.deepStrictEqual(retrying(diff(mirror, view, at, noProviders)), [true]);
-    assert.isTrue(replacement(mirror, false, at, new Map(), noProviders).event.openTurns[0]?.retrying);
+    assert.isTrue(
+      replacement(mirror, false, at, new Map(), noProviders).event.openTurns[0]?.retrying,
+    );
 
     applyEvent(mirror, retryItem("completed"));
     assert.deepStrictEqual(retrying(diff(mirror, view, at, noProviders)), [false]);
     // A recovered failure leaves no trace in how the turn ends.
     applyEvent(mirror, run("completed", 1));
-    const ended = diff(mirror, view, at, noProviders).find(
-      (told) => told._tag === "turn-finished",
-    );
+    const ended = diff(mirror, view, at, noProviders).find((told) => told._tag === "turn-finished");
     assert.deepStrictEqual(ended?._tag === "turn-finished" && ended.outcome, {
       _tag: "completed",
     });

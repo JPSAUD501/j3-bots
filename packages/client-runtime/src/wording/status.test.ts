@@ -2,7 +2,7 @@
 import { EntryId, RoomId, type Bot, type EntryPreview, type RosterItem } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, bot, context, plain, preview } from "../../test/fixtures.ts";
-import { presenceLine, quietConversationText, rosterLine } from "./status.ts";
+import { noticeText, presenceLine, quietConversationText, rosterLine } from "./status.ts";
 
 const ctx = context("2026-11-20T15:00:00Z", "en", { scout: "Scout", wren: "Wren" });
 
@@ -25,6 +25,7 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     hidden: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
+    forceStop: false,
     answering: [],
     memberWork: [],
   },
@@ -135,6 +136,7 @@ describe("rosterLine", () => {
       stalled: false,
       quietSince: null,
       typing: false,
+      retrying: false,
     });
     const quiet = [opening, thinking, opening].map((b) => quietConversationText(b, ctx));
     expect(new Set(quiet).size).toBe(1);
@@ -165,6 +167,7 @@ describe("rosterLine", () => {
               stalled: false,
               quietSince: null,
               typing: true,
+              retrying: false,
             }
           : {
               _tag: "working",
@@ -172,6 +175,7 @@ describe("rosterLine", () => {
               stalled: false,
               quietSince: null,
               typing: true,
+              retrying: false,
               activity: "Reading",
               tool: null,
               littleOnes: 0,
@@ -191,6 +195,7 @@ describe("rosterLine", () => {
         stalled: true,
         quietSince: quietSince === null ? null : at(quietSince),
         typing: false,
+        retrying: false,
         activity: "Reading",
         tool: null,
         littleOnes: 0,
@@ -214,5 +219,41 @@ describe("rosterLine", () => {
     expect(rosterLine(room(inRoom), ctx).text).toBe("Wren: Drafted it");
     const files = preview("2026-11-20T14:00:00Z", "message", "", wren);
     expect(rosterLine(row(bot("Wren"), files), ctx).text).toBe("Sent files");
+  });
+});
+
+describe("a turn's trouble", () => {
+  const retrying = bot("Scout", {
+    _tag: "working",
+    since: at("2026-11-20T14:59:00Z"),
+    stalled: true,
+    quietSince: at("2026-11-20T14:50:00Z"),
+    typing: false,
+    retrying: true,
+    activity: "Reading",
+    tool: null,
+    littleOnes: 0,
+  });
+
+  it("says the bot's AI is being tried again, by name, over a quiet stretch", () => {
+    const line = { text: "Having trouble reaching Claude, trying again", tone: "waiting" };
+    expect(presenceLine(retrying, ctx)).toEqual(line);
+    expect(rosterLine(row(retrying), ctx)).toEqual(line);
+    expect(presenceLine(retrying, { ...ctx, aiName: () => null })?.text).toBe(
+      "Having trouble reaching its AI, trying again",
+    );
+  });
+
+  it("says a failure in plain words with what to do, naming the AI only when it is known", () => {
+    const failed = (failure: "unreachable" | "permission-error") =>
+      noticeText({ _tag: "turn-failed", failure }, ctx);
+    expect(failed("unreachable")).toBe(
+      "Couldn’t reach the AI. Check the internet connection, then try again.",
+    );
+    expect(failed("permission-error")).toBe("Its AI was signed out. Sign in again in Settings.");
+    const signedOut = bot("Scout", { _tag: "blocked", failure: "permission-error", retryAt: null });
+    expect(presenceLine(signedOut, ctx)?.text).toBe(
+      "Claude was signed out. Sign in again in Settings.",
+    );
   });
 });

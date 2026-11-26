@@ -31,6 +31,7 @@ const working: BotState = {
   stalled: false,
   quietSince: null,
   typing: false,
+  retrying: false,
   activity: null,
   tool: null,
   littleOnes: 0,
@@ -42,7 +43,14 @@ describe("avatarMood", () => {
     expect(avatarMood({ _tag: "idle" }, quiet)).toEqual({ state: "idle", stalled: false });
     expect(
       avatarMood(
-        { _tag: "thinking", since, stalled: false, quietSince: null, typing: false },
+        {
+          _tag: "thinking",
+          since,
+          stalled: false,
+          quietSince: null,
+          typing: false,
+          retrying: false,
+        },
         quiet,
       ).state,
     ).toBe("thinking");
@@ -82,7 +90,14 @@ describe("avatarMood", () => {
     });
     expect(
       avatarMood(
-        { _tag: "thinking", since, stalled: true, quietSince: since, typing: false },
+        {
+          _tag: "thinking",
+          since,
+          stalled: true,
+          quietSince: since,
+          typing: false,
+          retrying: false,
+        },
         quiet,
       ).stalled,
     ).toBe(true);

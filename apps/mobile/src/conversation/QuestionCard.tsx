@@ -6,11 +6,17 @@ import {
   type QuestionDraft,
 } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client } from "@j3-bots/client-runtime/react";
-import type { Question, QuestionAnswers, QuestionEntry, QuestionOption } from "@j3-bots/contracts";
+import {
+  cardQuestions,
+  type QuestionAnswers,
+  type QuestionEntry,
+  type QuestionOption,
+  type WholeQuestion,
+} from "@j3-bots/contracts";
 import { springs } from "@j3-bots/design-tokens";
 import { Check, MessageCircleQuestionMark } from "lucide-react-native";
 import { useState } from "react";
-import { View } from "react-native";
+import { ScrollView, View } from "react-native";
 import { Text, TextInput } from "../text.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
@@ -36,7 +42,9 @@ export const choiceRow = (picked: boolean) =>
  * text. Only an `ask` question can be dismissed, which reads as "no", and its
  * button says so: the harness's own question holds its turn until it is
  * answered or the turn is stopped. An answer too long to reach the bot leaves
- * the card open with what was typed.
+ * the card open with what was typed. A harness's question can come with a
+ * header over it and a preview under an option, shown as the harness gives
+ * them. Several questions stack, each under the one before, however many.
  */
 export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
   const { t } = useI18n();
@@ -46,7 +54,8 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
   const { status } = entry;
   const pending = status._tag === "pending";
   const { outcome, answered } = useOutcomeFocus(pending);
-  const [first] = entry.questions;
+  const questions = cardQuestions(entry);
+  const [first] = questions;
 
   const answer = (answers: QuestionAnswers) => {
     if (submitting) return;
@@ -63,8 +72,7 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
           void client.answerCard(entry.id, { _tag: "dismiss" });
         }
       : null;
-  const answersOnTap =
-    pending && entry.questions.length === 1 && !first.multiple && !first.acceptsText;
+  const answersOnTap = pending && questions.length === 1 && !first.multiple && !first.acceptsText;
   // The option tapped confirms while its answer is on its way: it takes a check, and the others
   // step back. Refused, the card waits again with every option as it was.
   const [tapped, setTapped] = useState<string | null>(null);
@@ -75,7 +83,7 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
     <CardFrame icon={MessageCircleQuestionMark} title={t("question.title")} attention={pending}>
       {!pending ? (
         <AnimatedView {...enteringWhen(closedHere, settleIn(springs.soft))} className="gap-3">
-          {entry.questions.map((question) => (
+          {questions.map((question) => (
             <Resolved
               key={question.id}
               question={question}
@@ -96,6 +104,7 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
       ) : answersOnTap ? (
         <>
           <View className="gap-1.5">
+            <QuestionHeader question={first} />
             <Text className="mb-1 text-sm font-medium text-foreground">{first.prompt}</Text>
             {first.options.map((option) => (
               <PressScale
@@ -128,7 +137,7 @@ export function QuestionCard({ entry }: { readonly entry: QuestionEntry }) {
         // Keyed by the entry, so a draft never outlives the card it was typed into.
         <QuestionForm
           key={entry.id}
-          questions={entry.questions}
+          questions={questions}
           textReplacesChoice={entry.origin === "engine"}
           onAnswer={answer}
           onDismiss={dismiss}
@@ -146,7 +155,7 @@ function QuestionForm({
   onDismiss,
   submitting,
 }: {
-  readonly questions: ReadonlyArray<Question>;
+  readonly questions: ReadonlyArray<WholeQuestion>;
   readonly textReplacesChoice: boolean;
   readonly onAnswer: (answers: QuestionAnswers) => void;
   readonly onDismiss: (() => void) | null;
@@ -162,9 +171,10 @@ function QuestionForm({
     });
   return (
     <>
-      {questions.map((question) => (
+      {questions.map((question, index) => (
         <QuestionFields
           key={question.id}
+          separated={index > 0}
           question={question}
           draft={drafts.get(question.id) ?? null}
           textReplacesChoice={textReplacesChoice}
@@ -189,12 +199,15 @@ function QuestionForm({
 /** One question's fields. While the answer is on its way they take no change but keep focus. */
 function QuestionFields({
   question,
+  separated,
   draft,
   textReplacesChoice,
   readOnly,
   onChange,
 }: {
-  readonly question: Question;
+  readonly question: WholeQuestion;
+  /** Under another question of the card: a line between them. */
+  readonly separated: boolean;
   readonly draft: QuestionDraft | null;
   /** A typed answer goes instead of a choice, never beside it. */
   readonly textReplacesChoice: boolean;
@@ -227,7 +240,8 @@ function QuestionFields({
     );
   };
   return (
-    <View className="gap-2">
+    <View className={`gap-2 ${separated ? "border-t border-border pt-3" : ""}`}>
+      <QuestionHeader question={question} />
       <Text className="text-sm font-medium text-foreground">{question.prompt}</Text>
       {question.options.length > 0 && (
         <View
@@ -312,6 +326,23 @@ function OptionText({ option }: { readonly option: QuestionOption }) {
         )}
       </View>
       {description !== null && <Text className="text-xs text-muted-foreground">{description}</Text>}
+      {option.preview !== undefined && (
+        <ScrollView horizontal className="mt-1.5 max-h-48 rounded-sm bg-muted">
+          <Text className="px-2.5 py-2 font-mono text-xs text-muted-foreground">
+            {option.preview}
+          </Text>
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
+/** What a harness's question is about, in a few words over it, when it says. */
+function QuestionHeader({ question }: { readonly question: WholeQuestion }) {
+  if (question.header === undefined) return null;
+  return (
+    <View className="self-start rounded-sm bg-muted px-1.5 py-0.5">
+      <Text className="text-2xs font-medium text-muted-foreground">{question.header}</Text>
     </View>
   );
 }
@@ -360,7 +391,7 @@ function Resolved({
   answer,
   popped,
 }: {
-  readonly question: Question;
+  readonly question: WholeQuestion;
   readonly answer: QuestionAnswers[string] | null;
   /** Answered while on screen: each chosen option's check pops in. */
   readonly popped: boolean;
@@ -368,6 +399,7 @@ function Resolved({
   const chosen = question.options.filter((option) => answer?.optionIds.includes(option.id));
   return (
     <View className="gap-2">
+      <QuestionHeader question={question} />
       <Text className="text-sm font-medium text-foreground">{question.prompt}</Text>
       {chosen.map((option) => (
         <View key={option.id} className={choiceRow(true)}>

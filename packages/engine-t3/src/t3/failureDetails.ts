@@ -32,7 +32,10 @@ const SECRETS: ReadonlyArray<readonly [RegExp, string]> = [
 
 /** `text` with anything shaped like a credential replaced by `[redacted]`. */
 export const scrubSecrets = (text: string): string =>
-  SECRETS.reduce((scrubbed, [pattern, replacement]) => scrubbed.replace(pattern, replacement), text);
+  SECRETS.reduce(
+    (scrubbed, [pattern, replacement]) => scrubbed.replace(pattern, replacement),
+    text,
+  );
 
 /**
  * A provider failure in the engine's words, for "Details" and the server's

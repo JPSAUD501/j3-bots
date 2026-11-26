@@ -1,5 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, BotId, Language, Room, RoomId, RosterItem } from "@j3-bots/contracts";
+import type {
+  Bot,
+  BotId,
+  EngineStatus,
+  Language,
+  Room,
+  RoomId,
+  RosterItem,
+} from "@j3-bots/contracts";
+import { aiNameOf } from "@j3-bots/client-runtime/presentation";
 import { createContext, use, useEffect, useMemo, type ReactNode } from "react";
 import { createI18n, resolveLocale, type I18n } from "@j3-bots/i18n";
 import { usePreferences } from "../preferences/preferences";
@@ -24,16 +33,20 @@ export const useI18n = () => use(I18nContext);
 
 const BotsContext = createContext<ReadonlyMap<BotId, Bot>>(new Map());
 const RoomsContext = createContext<ReadonlyMap<RoomId, Room>>(new Map());
+const EngineContext = createContext<EngineStatus | null>(null);
 
 /**
  * Every bot and room the operator has, so any entry can show who said or was
- * asked something, and a notice can name a room as it is called now.
+ * asked something, and a notice can name a room as it is called now; and the
+ * engine's status, so a line can name the AI a bot thinks with.
  */
 export function RosterProvider({
   roster,
+  engine,
   children,
 }: {
   roster: ReadonlyArray<RosterItem>;
+  engine: EngineStatus | null;
   children: ReactNode;
 }) {
   const bots = useMemo(
@@ -54,7 +67,9 @@ export function RosterProvider({
   );
   return (
     <BotsContext value={bots}>
-      <RoomsContext value={rooms}>{children}</RoomsContext>
+      <RoomsContext value={rooms}>
+        <EngineContext value={engine}>{children}</EngineContext>
+      </RoomsContext>
     </BotsContext>
   );
 }
@@ -67,6 +82,7 @@ export function usePresentation(): PresentationContext {
   const { now, timeZone } = useClock();
   const bots = use(BotsContext);
   const rooms = use(RoomsContext);
+  const engine = use(EngineContext);
   return useMemo(
     () => ({
       i18n,
@@ -74,7 +90,8 @@ export function usePresentation(): PresentationContext {
       timeZone,
       botName: (id: BotId) => bots.get(id)?.profile.name ?? null,
       roomName: (id: RoomId) => rooms.get(id)?.name ?? null,
+      aiName: (bot: Bot) => aiNameOf(engine, bot.model.providerId),
     }),
-    [i18n, now, timeZone, bots, rooms],
+    [i18n, now, timeZone, bots, rooms, engine],
   );
 }

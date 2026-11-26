@@ -138,6 +138,7 @@ export function bot(
     sectionId: null,
     state,
     settingsHeld: false,
+    forceStop: false,
     opening: false,
     suggestedReply: null,
     createdAt: at("2026-01-01T00:00:00Z"),
@@ -157,6 +158,7 @@ export function context(
     timeZone: "America/Sao_Paulo",
     now: at(now),
     botName: (id) => names[id] ?? null,
+    aiName: () => "Claude",
     roomName: (id) => roomNames[id] ?? null,
   };
 }

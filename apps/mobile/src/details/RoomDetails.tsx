@@ -73,7 +73,15 @@ export function RoomDetails({ room }: { readonly room: Room }) {
         )}
       </Profile>
 
-      {stopping !== "hidden" && (
+      {stopping === "force" && (
+        // The operator confirmed the Stop already: Force stop goes at once.
+        <StopRow
+          label={t("room.forceStop")}
+          why={t("room.forceStop.why", { name })}
+          onPress={() => stopFocus.stopped(actions.forceStop(room))}
+        />
+      )}
+      {(stopping === "offered" || stopping === "stopping") && (
         <StopRow
           label={stopping === "stopping" ? t("room.stopping") : t("room.stop")}
           onPress={

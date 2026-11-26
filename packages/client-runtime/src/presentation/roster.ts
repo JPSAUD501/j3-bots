@@ -15,17 +15,25 @@ import { type IntentResult, refusedWith } from "../intents/Actions.ts";
 import { isHidden, needsOperator } from "../stores/Roster.ts";
 
 /**
- * Whether the operator can stop the bot: a turn runs, or background work holds
- * a change of its settings, which stopping applies.
+ * What the bot's Stop offers: `force` while its AI ignores a Stop
+ * (`Bot.forceStop`), which a Force stop ends; `offered` while a turn runs, or
+ * background work holds a change of its settings, which stopping applies.
  */
-export const canStop = (bot: Bot): boolean =>
-  bot.state._tag === "thinking" || bot.state._tag === "working" || bot.settingsHeld;
+export type BotStop = "hidden" | "offered" | "force";
+
+export const botStop = (bot: Bot): BotStop => {
+  if (bot.forceStop) return "force";
+  return bot.state._tag === "thinking" || bot.state._tag === "working" || bot.settingsHeld
+    ? "offered"
+    : "hidden";
+};
 
 /**
- * Whether a room's header offers Stop: `stopping` while the server ends the
- * room's work, which then offers nothing to press.
+ * What a room's header offers: Stop, `stopping` while the server ends the
+ * room's work, which then offers nothing to press, or `force` while a
+ * member's AI ignores the Stop (`Room.forceStop`).
  */
-export type RoomStop = "hidden" | "offered" | "stopping";
+export type RoomStop = "hidden" | "offered" | "stopping" | "force";
 
 /**
  * The room's Stop follows the work the server counts for it (`Room.work`):
@@ -35,6 +43,7 @@ export type RoomStop = "hidden" | "offered" | "stopping";
  */
 export const roomStop = (room: Room): RoomStop => {
   if (room.status === "archived") return "hidden";
+  if (room.forceStop) return "force";
   switch (room.work) {
     case "none":
       return "hidden";

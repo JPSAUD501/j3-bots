@@ -8,6 +8,7 @@ import {
   OctagonPauseIcon,
   UserRoundCheckIcon,
 } from "lucide-react";
+import { useId, useState } from "react";
 import { usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { noticeText } from "@j3-bots/client-runtime/wording";
@@ -16,8 +17,9 @@ import { Button } from "./ui/button";
 /**
  * A quiet line where something stopped, or where a bot changed something the
  * operator should know about, with a way to retry when the server still
- * accepts one. It is part of the timeline, not an announcement: the
- * header's live region is what tells a screen reader the state changed.
+ * accepts one. A failed turn's technical words stay behind Details. It is
+ * part of the timeline, not an announcement: the header's live region is
+ * what tells a screen reader the state changed.
  */
 export function NoticeLine({
   entry,
@@ -31,6 +33,9 @@ export function NoticeLine({
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const { notice } = entry;
+  const details = notice._tag === "turn-failed" ? notice.details : undefined;
+  const [showDetails, setShowDetails] = useState(false);
+  const detailsId = useId();
   const failed =
     notice._tag === "turn-failed" ||
     notice._tag === "handoff-failed" ||
@@ -44,28 +49,50 @@ export function NoticeLine({
           ? UserRoundCheckIcon
           : CircleAlertIcon;
   return (
-    <div
-      className={cn(
-        "my-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs",
-        failed
-          ? "text-blocked"
-          : notice._tag === "waiting-in-conversation"
-            ? "text-waiting"
-            : "text-muted-foreground",
-      )}
-    >
-      <Icon aria-hidden className="size-3.5 shrink-0" />
-      <span>{noticeText(notice, ctx)}</span>
-      {entry.retryable && (
-        <Button variant="ghost" size="sm" onClick={onRetry}>
-          {t("notice.retry")}
-        </Button>
-      )}
-      {notice._tag === "waiting-in-conversation" && (
-        <Button variant="ghost" size="sm" onClick={onOpenConversation}>
-          <CornerDownRightIcon aria-hidden />
-          {t("notice.openConversation")}
-        </Button>
+    <div className="my-2 flex flex-col items-center gap-1">
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-center text-xs",
+          failed
+            ? "text-blocked"
+            : notice._tag === "waiting-in-conversation"
+              ? "text-waiting"
+              : "text-muted-foreground",
+        )}
+      >
+        <Icon aria-hidden className="size-3.5 shrink-0" />
+        <span>{noticeText(notice, ctx)}</span>
+        {entry.retryable && (
+          <Button variant="ghost" size="sm" onClick={onRetry}>
+            {t("notice.retry")}
+          </Button>
+        )}
+        {notice._tag === "waiting-in-conversation" && (
+          <Button variant="ghost" size="sm" onClick={onOpenConversation}>
+            <CornerDownRightIcon aria-hidden />
+            {t("notice.openConversation")}
+          </Button>
+        )}
+        {details !== undefined && (
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={showDetails}
+            aria-controls={detailsId}
+            onClick={() => setShowDetails((shown) => !shown)}
+            className="text-muted-foreground"
+          >
+            {t("failure.details")}
+          </Button>
+        )}
+      </div>
+      {details !== undefined && showDetails && (
+        <pre
+          id={detailsId}
+          className="max-w-full rounded-md bg-muted px-3 py-2 font-mono text-xs break-words whitespace-pre-wrap text-muted-foreground select-text"
+        >
+          {details}
+        </pre>
       )}
     </div>
   );

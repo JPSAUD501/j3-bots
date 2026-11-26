@@ -5,6 +5,7 @@ import {
   type HarnessInstallFailure,
   type HarnessLocation,
   type HarnessTask,
+  type ProviderId,
   type ProviderStatus,
   type SignInFailure,
   type SignInHarness,
@@ -34,6 +35,17 @@ export const aiAccountNames: Readonly<
 > = {
   "claude-code": { name: "Claude", maker: "Anthropic", product: "Claude Code" },
   codex: { name: "ChatGPT", maker: "OpenAI", product: "Codex" },
+};
+
+/**
+ * What the operator calls the AI a bot thinks with: its account's name, such
+ * as Claude, or the engine's name for any other provider. Null while the
+ * engine does not list the provider.
+ */
+export const aiNameOf = (engine: EngineStatus | null, providerId: ProviderId): string | null => {
+  const provider = engine?.providers.find((one) => one.id === providerId);
+  if (provider === undefined) return null;
+  return provider.harness === "other" ? provider.name : aiAccountNames[provider.harness].name;
 };
 
 /** The account that is not `account`: what "Use ChatGPT instead" switches to. */

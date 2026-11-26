@@ -18,7 +18,7 @@ import {
   arrangedOrder,
   arrangeRoster,
   betweenBots,
-  canStop,
+  botStop,
   filterPairs,
   filterRoster,
   memberStack,
@@ -49,6 +49,7 @@ const room = (
     hidden: options.hidden ?? false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
+    forceStop: false,
     answering: [],
     memberWork: [],
   },
@@ -164,29 +165,43 @@ describe("filterRoster", () => {
   });
 });
 
-describe("canStop", () => {
+describe("botStop", () => {
   const since = {
     since: at("2026-11-20T15:00:00Z"),
     stalled: false,
     quietSince: null,
     typing: false,
+    retrying: false,
   };
 
   it("offers Stop while a turn runs", () => {
-    expect(canStop(bot("Scout", { _tag: "thinking", ...since }))).toBe(true);
+    expect(botStop(bot("Scout", { _tag: "thinking", ...since }))).toBe("offered");
     expect(
-      canStop(
+      botStop(
         bot("Scout", { _tag: "working", ...since, activity: null, tool: null, littleOnes: 0 }),
       ),
-    ).toBe(true);
+    ).toBe("offered");
   });
 
   it("offers Stop to a bot at rest whose background work holds a change of its settings", () => {
-    expect(canStop(bot("Scout", { _tag: "idle" }, { settingsHeld: true }))).toBe(true);
+    expect(botStop(bot("Scout", { _tag: "idle" }, { settingsHeld: true }))).toBe("offered");
+  });
+
+  it("offers Force stop while the bot's AI ignores a Stop, also of work it left running", () => {
+    expect(
+      botStop(
+        bot(
+          "Scout",
+          { _tag: "working", ...since, activity: null, tool: null, littleOnes: 0 },
+          { forceStop: true },
+        ),
+      ),
+    ).toBe("force");
+    expect(botStop(bot("Scout", { _tag: "idle" }, { forceStop: true }))).toBe("force");
   });
 
   it("offers nothing to a bot at rest with nothing held", () => {
-    expect(canStop(bot("Scout"))).toBe(false);
+    expect(botStop(bot("Scout"))).toBe("hidden");
   });
 });
 
@@ -202,12 +217,17 @@ describe("roomStop", () => {
     work: "none",
     answering: [],
     memberWork: [],
+    forceStop: false,
   };
 
   it("offers Stop while the room's work runs, and shows it stopping until the server ends it", () => {
     expect(roomStop({ ...launch, work: "running" })).toBe("offered");
     expect(roomStop({ ...launch, work: "stopping" })).toBe("stopping");
     expect(roomStop(launch)).toBe("hidden");
+  });
+
+  it("offers Force stop while a member's AI ignores the room's Stop", () => {
+    expect(roomStop({ ...launch, work: "stopping", forceStop: true })).toBe("force");
   });
 
   it("offers nothing in an archived room, whose archiving stopped its work", () => {

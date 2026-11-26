@@ -145,6 +145,7 @@ export function sampleTeam(now: DateTime.Utc) {
       sectionId: extra.sectionId ?? null,
       state,
       settingsHeld: false,
+      forceStop: false,
       opening: false,
       suggestedReply: null,
       createdAt: ago(60 * 24 * 30),
@@ -171,6 +172,7 @@ export function sampleTeam(now: DateTime.Utc) {
         stalled: false,
         quietSince: null,
         typing: false,
+        retrying: false,
         activity: "Checking which of the three the shop has in stock",
         tool: "browser",
         littleOnes: 0,
@@ -209,6 +211,7 @@ export function sampleTeam(now: DateTime.Utc) {
         stalled: true,
         quietSince: ago(12),
         typing: false,
+        retrying: false,
         activity: "Comparing prices",
         tool: null,
         littleOnes: 0,
@@ -236,6 +239,7 @@ export function sampleTeam(now: DateTime.Utc) {
     createdAt: ago(60 * 24 * 7),
     // Juniper and Scout are answering in it, in member order.
     work: "running",
+    forceStop: false,
     answering: [ids.juniper, ids.scout],
     memberWork: [],
   };
