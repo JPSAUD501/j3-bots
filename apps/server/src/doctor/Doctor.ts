@@ -180,15 +180,18 @@ const installedReleases = Effect.fn("doctor.installedReleases")(function* (
   return Option.some({ service, command });
 });
 
+/** The release the service runs and the one the j3-bots command runs, as far as each is known. */
+interface Releases {
+  readonly service: Option.Option<string>;
+  readonly command: Option.Option<string>;
+}
+
 /**
  * Whether the j3-bots command runs the release the service runs. An update or
  * a rollback cut off after the unit was written, and before the command was
  * pointed, leaves them apart.
  */
-const commandCheck = (releases: {
-  readonly service: Option.Option<string>;
-  readonly command: Option.Option<string>;
-}) => {
+const commandCheck = (releases: Releases) => {
   if (Option.isNone(releases.service)) return Option.none<Check>();
   const service = releases.service.value;
   return Option.some(
@@ -247,6 +250,7 @@ const snapshotCheck = Effect.fn("doctor.snapshot")(function* (
   home: string,
   running: Option.Option<string>,
   rollback: Rollback,
+  releases: Option.Option<Releases>,
 ) {
   if (Option.isSome(rollback)) {
     const { snapshot, mark } = rollback.value;
@@ -257,6 +261,19 @@ const snapshotCheck = Effect.fn("doctor.snapshot")(function* (
       mark.stage === "copying"
         ? `Run \`j3-bots update --rollback\`, which finishes it. If it fails every time, as when a file of the snapshot is lost, \`j3-bots update --rollback --abandon\` gives it up and starts J3 Bots ${snapshot.manifest.to.version} again on the data as it is.`
         : "Run `j3-bots update --rollback`, which finishes it.",
+    );
+  }
+  // As `--rollback` refuses then: the snapshot it would find is an older update's.
+  const apart = Option.exists(
+    releases,
+    ({ service, command }) =>
+      Option.isSome(service) && Option.isSome(command) && command.value !== service.value,
+  );
+  if (apart) {
+    return check(
+      "Snapshot",
+      "skipped",
+      "`j3-bots update --rollback` puts nothing back while the j3-bots command runs another release than the service. Waits for the command: see Command.",
     );
   }
   const snapshots = yield* listSnapshots(home);
@@ -959,7 +976,7 @@ export const diagnose = Effect.gen(function* () {
     const home = yield* ServerConfig.resolveHome.pipe(Effect.provide(described));
     const rollback = yield* unfinishedRollback(home);
     checks.push(yield* homeCheck(home));
-    checks.push(yield* snapshotCheck(home, running, rollback));
+    checks.push(yield* snapshotCheck(home, running, rollback, releases));
     checks.push(whileRollingBack(rollback, serverCheck(live)));
     checks.push(...(yield* serviceChecks(unitText, rollback)));
     if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
@@ -979,7 +996,7 @@ export const diagnose = Effect.gen(function* () {
   checks.push(yield* homeCheck(config.home));
   checks.push(yield* diskCheck(config.home));
   const rollback = yield* unfinishedRollback(config.home);
-  checks.push(yield* snapshotCheck(config.home, running, rollback));
+  checks.push(yield* snapshotCheck(config.home, running, rollback, releases));
 
   // Only a server the report describes lends it live diagnostics.
   const status = live._tag === "described" ? Option.some(live.status) : Option.none();

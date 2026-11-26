@@ -294,10 +294,13 @@ export const checkOwnFolder = Effect.fn("install.checkOwnFolder")(function* (fol
     }
   });
   // Name by name from the root, as a lookup makes the way: `at` is a folder
-  // with no link in its path, and a link's target goes before what is left.
+  // with no link in its path, a link's target goes before what is left, and
+  // `..` leaves the folder reached, not the name before it, which resolving
+  // the path first would drop along with a link.
   const checked = new Set<string>();
-  let rest = path.resolve(folder).split(path.sep);
-  let at = path.parse(path.resolve(folder)).root;
+  const full = path.isAbsolute(folder) ? folder : `${process.cwd()}${path.sep}${folder}`;
+  let rest = full.split(path.sep);
+  let at = path.parse(full).root;
   let links = 0;
   while (rest.length > 0) {
     const [name = "", ...after] = rest;

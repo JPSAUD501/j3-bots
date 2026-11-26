@@ -87,7 +87,8 @@ const carryingOnAfterHangup = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
  * What a rollback to `snapshot` that stopped at `step` leaves: from its mark
  * until the old release runs and is recorded, the rollback is unfinished
  * until `--rollback` carries it on. Pointing the command comes after. A
- * rollback that stopped before it put anything back may be given up instead.
+ * rollback that stopped before it put anything back may be given up instead,
+ * unless its mark could not be read with a swap begun: that one only goes on.
  */
 const unfinishedRollback = (step: StepFailed, snapshot: Snapshot) => {
   const release = snapshot.manifest.from.version;
@@ -106,6 +107,11 @@ const unfinishedRollback = (step: StepFailed, snapshot: Snapshot) => {
         `The databases are back, but the rollback has not finished, so ${heldOff(release, true)}: \`j3-bots update --rollback\` finishes it.`,
       ];
     default:
+      if (Option.exists(snapshot.restoring, ({ stage }) => stage === "unread")) {
+        return [
+          `The rollback has not finished, so ${heldOff(release, false)}: \`j3-bots update --rollback\` finishes it.`,
+        ];
+      }
       return [
         `The rollback has not finished, so ${heldOff(release, false)}: \`j3-bots update --rollback\` finishes it. If it stops again before it puts any of the snapshot back, as it does every time when a file of the snapshot is lost or damaged, \`j3-bots update --rollback --abandon\` gives it up and starts J3 Bots ${snapshot.manifest.to.version} again on the data as it is.`,
       ];

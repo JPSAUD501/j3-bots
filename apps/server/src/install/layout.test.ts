@@ -66,6 +66,17 @@ it.layer(NodeServices.layer)("an install's folder", (it) => {
           yield* exposed(through),
           Option.some({ folder: shared, reason: "writable-by-all", onWayTo: through }),
         );
+
+        // `..` after a link leaves where the link leads, not the name before it.
+        const near = yield* fs.makeTempDirectoryScoped();
+        yield* fs.makeDirectory(path.join(near, "j3-bots"), { mode: 0o755 });
+        yield* fs.makeDirectory(path.join(shared, "inner"));
+        yield* fs.symlink(path.join(shared, "inner"), path.join(near, "alias"));
+        const back = `${near}/alias/../j3-bots`;
+        assert.deepStrictEqual(
+          yield* exposed(back),
+          Option.some({ folder: shared, reason: "writable-by-all", onWayTo: back }),
+        );
       }).pipe(Effect.scoped),
   );
 

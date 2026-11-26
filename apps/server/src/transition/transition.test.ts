@@ -598,7 +598,7 @@ it.layer(NodeServices.layer)("a version transition", (it) => {
         const path = yield* Path.Path;
         const marks = [
           { text: JSON.stringify({ release: OLD.version, stage: "swapping" }), stage: "swapping" },
-          // A mark a failing disk damaged may have said `swapping`.
+          // A mark a failing disk damaged, after a swap made its folder, may have said `swapping`.
           { text: '{"release":"0.3.0","sta', stage: "unread" },
         ];
         for (const mark of marks) {
@@ -607,6 +607,9 @@ it.layer(NodeServices.layer)("a version transition", (it) => {
           assert.strictEqual(outcome._tag, "updated");
           if (outcome._tag !== "updated") return;
           yield* fs.writeFileString(path.join(outcome.snapshot.folder, "restoring"), mark.text);
+          yield* fs.makeDirectory(
+            path.join(outcome.snapshot.folder, "replaced-20261122T000500Z-a1"),
+          );
           const left = Option.getOrThrow(yield* unfinishedRollback(home));
           host.log.length = 0;
 

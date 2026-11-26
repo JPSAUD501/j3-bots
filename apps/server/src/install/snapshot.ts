@@ -36,6 +36,9 @@ const MANIFEST = "manifest.json";
 /** In a snapshot's folder from the start of a rollback to it until the release it ends on runs. */
 const RESTORING = "restoring";
 
+/** How the folder a rollback moves the home's files into, in the snapshot's folder, is named. */
+const REPLACED_PREFIX = "replaced-";
+
 /** What a rollback names the copy of a snapshot's file it makes beside where it goes. */
 const COPY_SUFFIX = ".j3-restoring";
 
@@ -77,10 +80,12 @@ const RestoreMark = Schema.Struct({
 type RestoreMark = typeof RestoreMark.Type;
 
 /**
- * How far a rollback that has not finished got, as its mark says: `unread`
- * when the mark cannot be read or does not decode, which a rollback carries
- * on from as from `copying`, copying everything again, but which says nothing
- * of what it already put back.
+ * How far a rollback that has not finished got, as its mark says. A mark that
+ * cannot be read or does not decode is taken for `copying` when the
+ * snapshot's folder holds no `replaced-*`, since a swap makes one before it
+ * changes the home, and is `unread` otherwise: a rollback carries that on as
+ * from `copying`, copying everything again, but it says nothing of what was
+ * put back already.
  */
 export type RestoreState = RestoreMark | { readonly release: string; readonly stage: "unread" };
 
@@ -255,7 +260,11 @@ export const restoreBytes = Effect.fn("snapshot.restoreBytes")(function* (
   home: string,
   snapshot: Snapshot,
 ) {
-  if (Option.exists(snapshot.restoring, ({ stage }) => stage !== "copying")) return 0;
+  if (
+    Option.exists(snapshot.restoring, ({ stage }) => stage === "swapping" || stage === "restored")
+  ) {
+    return 0;
+  }
   const files = snapshot.manifest.files;
   const left = yield* bytesOf(
     home,
@@ -371,16 +380,21 @@ const readMark = Effect.fnUntraced(function* (folder: string, manifest: Snapshot
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const marker = path.join(folder, RESTORING);
-  const unread: RestoreState = { release: manifest.from.version, stage: "unread" };
   if (!(yield* fs.exists(marker).pipe(Effect.orElseSucceed(() => true)))) {
     return Option.none<RestoreState>();
   }
-  return Option.some(
-    yield* fs.readFileString(marker).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(RestoreMarkJson)),
-      Effect.orElseSucceed((): RestoreState => unread),
-    ),
+  const read = yield* fs
+    .readFileString(marker)
+    .pipe(Effect.flatMap(Schema.decodeUnknownEffect(RestoreMarkJson)), Effect.option);
+  if (Option.isSome(read)) return Option.some<RestoreState>(read.value);
+  const entries = yield* fs.readDirectory(folder).pipe(Effect.option);
+  const swapped = !Option.exists(entries, (names) =>
+    names.every((name) => !name.startsWith(REPLACED_PREFIX)),
   );
+  return Option.some<RestoreState>({
+    release: manifest.from.version,
+    stage: swapped ? "unread" : "copying",
+  });
 });
 
 /** A rollback could not be marked as started, moved on, or finished. */
@@ -503,8 +517,9 @@ export const restoreSnapshot = Effect.fn("snapshot.restore")(function* (
     placed.map(({ current }) => current),
   );
 
-  // A mark that cannot be read is carried on from the start: copying again
-  // is the safe side, and the swap passes over what is already in place.
+  // A mark that cannot be read is carried on from the start: everything is
+  // copied again, and swapped in again, the home's files moved into a new
+  // `replaced-*`, so what an earlier swap moved aside stays in its own.
   if (mark.stage === "copying" || mark.stage === "unread") {
     yield* Effect.forEach(
       placed,
@@ -547,13 +562,22 @@ export const restoreSnapshot = Effect.fn("snapshot.restore")(function* (
         leaving.push(file);
       }
     }
-    if (leaving.length > 0) {
+    // One is made, and flushed, before the home first changes, even with
+    // nothing to move: a mark that cannot be read is then known to have put
+    // nothing back while there is none.
+    const replacedBefore = (yield* fs
+      .readDirectory(snapshot.folder)
+      .pipe(Effect.mapError(failed(snapshot.folder)))).some((name) =>
+      name.startsWith(REPLACED_PREFIX),
+    );
+    if (leaving.length > 0 || (waiting.length > 0 && !replacedBefore)) {
       const replaced = yield* fs
         .makeTempDirectory({
           directory: snapshot.folder,
-          prefix: `replaced-${compact(yield* DateTime.now)}-`,
+          prefix: `${REPLACED_PREFIX}${compact(yield* DateTime.now)}-`,
         })
         .pipe(Effect.mapError(failed(snapshot.folder)));
+      yield* flushAll([snapshot.folder]);
       const asides = leaving.map((file) => path.join(replaced, file));
       for (const file of leaving) {
         const current = path.join(home, file);

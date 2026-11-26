@@ -217,7 +217,8 @@ private_folder() {
 # kernel makes it: name by name from /, and at a link, on from where it
 # leads, as many links as the kernel follows at most.
 private_way() {
-  way_rest="$1" way_at= way_links=0
+  way_rest="$1" way_at= way_links=0 way_newline='
+'
   while :; do
     while case "$way_rest" in /*) true ;; *) false ;; esac; do way_rest="${way_rest#/}"; done
     [ -n "$way_rest" ] || return 0
@@ -233,7 +234,10 @@ private_way() {
     if [ -L "$way_at/$way_name" ]; then
       way_links=$((way_links + 1))
       [ "$way_links" -le 40 ] || fail "The way to $1 goes through more links than a lookup follows. Choose a folder of your own, such as one under $HOME."
-      way_link="$(readlink -- "$way_at/$way_name")" || fail "Could not read the link $way_at/$way_name on the way to $1. Check that this user may open it, then run this again."
+      # The x keeps the newlines a target may end in, which $(…) would drop with readlink's own.
+      way_link="$(readlink -- "$way_at/$way_name" && printf x)" || fail "Could not read the link $way_at/$way_name on the way to $1. Check that this user may open it, then run this again."
+      way_link="${way_link%x}"
+      way_link="${way_link%"$way_newline"}"
       case "$way_link" in /*) way_at= ;; esac
       way_rest="$way_link/$way_rest"
     else

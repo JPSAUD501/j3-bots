@@ -446,7 +446,8 @@ export const rollBack = Effect.fn("transition.rollBack")(function* <R>(options: 
 
 /**
  * A rollback that may have put part of its snapshot back, which only
- * finishing makes whole: its mark says it did, or `unread`, cannot be read.
+ * finishing makes whole: its mark says it did, or, `unread`, cannot be read
+ * once a swap had begun.
  */
 class RollbackNotAbandonable extends Schema.TaggedError<RollbackNotAbandonable>()(
   "RollbackNotAbandonable",
@@ -454,7 +455,7 @@ class RollbackNotAbandonable extends Schema.TaggedError<RollbackNotAbandonable>(
 ) {
   override get message(): string {
     const why = this.unread
-      ? "has a mark that cannot be read, so it may have put part of the snapshot back"
+      ? "has a mark that cannot be read, and its swap had begun, so it may have put part of the snapshot back"
       : "has put part or all of the snapshot back";
     return `The rollback to J3 Bots ${this.from}, from ${this.snapshot}, ${why}: the data directory may no longer hold what J3 Bots ${this.to} ran on, and only finishing the rollback makes it whole. \`j3-bots update --rollback\` does. Nothing was changed.`;
   }
