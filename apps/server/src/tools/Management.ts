@@ -401,10 +401,10 @@ export const layer = Layer.effect(
      */
     const addWith = Effect.fnUntraced(function* (
       caller: Caller,
+      primary: boolean,
       input: ToolInput<"add_mcp_server">,
       consent: Consent,
     ) {
-      const primary = yield* isPrimary(caller.botId);
       const grant = yield* grantFor(caller, primary, input.scope);
       const source = yield* sourceOf(input, consent);
       if (source._tag === "needs") return source;
@@ -414,17 +414,22 @@ export const layer = Layer.effect(
           Effect.map((connector) => ({ _tag: "added", connector }) as const),
           Effect.catchIf(
             (error) => error._tag === "Conflict" && error.reason === "private-network",
-            () =>
-              // Their own network: added once the operator says it is theirs.
-              Effect.succeed({
-                _tag: "needs",
-                needs: { _tag: "private-network" },
-                name: source._tag === "remote" ? source.name : "",
-                glyph: null,
-                ask: { _tag: "private-network", host: hostOf(input.url ?? "") },
-              } satisfies NeedsYes),
+            (): Effect.Effect<NeedsYes, ManagementRefused> =>
+              // An address the bot gave, in their own network: added once the
+              // operator says it is theirs. A gallery entry's never is.
+              source._tag === "remote" && input.url !== undefined
+                ? Effect.succeed({
+                    _tag: "needs",
+                    needs: { _tag: "private-network" },
+                    name: source.name,
+                    glyph: null,
+                    ask: { _tag: "private-network", host: hostOf(input.url) },
+                  })
+                : Effect.fail(refuse(MANAGEMENT_REFUSED.galleryPrivateNetwork)),
           ),
-          Effect.mapError(connectorRefusal),
+          Effect.mapError((error) =>
+            error._tag === "ManagementRefused" ? error : connectorRefusal(error),
+          ),
         );
       if (added._tag === "needs") return added;
       return {
@@ -487,14 +492,21 @@ export const layer = Layer.effect(
       caller: TurnCaller,
       input: ToolInput<"add_mcp_server">,
     ) {
-      const added = yield* addWith(caller, input, NO_CONSENT);
+      const primary = yield* isPrimary(caller.botId);
+      const added = yield* addWith(caller, primary, input, NO_CONSENT);
       if (added._tag === "added") return added.answer;
       const shown = yield* asks.open({
         turn: caller.turn,
         name: added.name,
         glyph: added.glyph,
         ask: added.ask,
-        add: { botId: caller.botId, requestId: caller.requestId, input, needs: added.needs },
+        add: {
+          botId: caller.botId,
+          requestId: caller.requestId,
+          input,
+          needs: added.needs,
+          primary,
+        },
       });
       if (!shown) return yield* refuse(MANAGEMENT_REFUSED.workStopped);
       return { asked: added.name, note: MANAGEMENT_NOTES.asked } satisfies Schema.Json;
@@ -517,8 +529,11 @@ export const layer = Layer.effect(
                   oauthClient: { issuer: add.needs.issuer, ...input.client },
                 }
               : { privateNetwork: true, oauthClient: null };
+          // A bot that is primary no longer, or was not when it asked, gets no wider a grant.
+          const primary = add.primary && (yield* isPrimary(add.botId));
           return yield* addWith(
             { botId: add.botId, requestId: add.requestId },
+            primary,
             add.input,
             consent,
           ).pipe(

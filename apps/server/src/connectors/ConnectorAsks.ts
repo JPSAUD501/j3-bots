@@ -61,6 +61,11 @@ export interface PendingAdd {
   readonly requestId: string;
   readonly input: ToolInput<"add_mcp_server">;
   readonly needs: Needs;
+  /**
+   * Whether the bot was the primary bot when it asked: the yes grants the
+   * server no more widely than the bot could have then.
+   */
+  readonly primary: boolean;
 }
 
 /** How the operator's yes ended: the connector added, or the add refused. */
@@ -270,6 +275,14 @@ export const layer = Layer.effect(
         return [found.add, new Map(map).set(entryId, { add: found.add, adding: true })];
       });
 
+    const deadline = SqlSchema.findAll({
+      Request: EntryId,
+      Result: Schema.Struct({ expires_at: Schema.String }),
+      execute: (entryId) => sql`
+        SELECT expires_at FROM connector_asks WHERE entry_id = ${entryId} AND closed_at IS NULL
+      `,
+    });
+
     const answer = Effect.fn("ConnectorAsks.answer")(function* (
       entryId: EntryId,
       run: (add: PendingAdd) => Effect.Effect<Settled, Invalid>,
@@ -278,16 +291,30 @@ export const layer = Layer.effect(
       if (Option.isNone(found) || found.value.entry._tag !== "connector-ask") {
         return yield* new NotFound({ resource: "entry" });
       }
-      const add = yield* take(entryId);
-      if (found.value.entry.status._tag !== "pending" || add === null) {
+      // Past its wait, an ask the sweep has not reached yet is closed all the same.
+      const [open] = yield* deadline(entryId).pipe(Effect.orDie);
+      const now = timeText(yield* DateTime.now);
+      if (
+        found.value.entry.status._tag !== "pending" ||
+        open === undefined ||
+        open.expires_at <= now
+      ) {
         return yield* new Conflict({ reason: "card-closed" });
       }
-      // The add calls the connector's server: no transaction is held meanwhile.
-      const settled = yield* run(add).pipe(
-        Effect.onError(() => setHeld(entryId, { add, adding: false })),
+      // The yes is the operator's: once taken, the add and the close finish
+      // even when the connection that carried it drops. The add calls the
+      // connector's server, so no transaction is held meanwhile.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          const add = yield* take(entryId);
+          if (add === null) return yield* new Conflict({ reason: "card-closed" });
+          const settled = yield* run(add).pipe(
+            Effect.onError(() => setHeld(entryId, { add, adding: false })),
+          );
+          yield* transaction(close(entryId, settled));
+          yield* setHeld(entryId, null);
+        }),
       );
-      yield* transaction(close(entryId, settled));
-      yield* setHeld(entryId, null);
     });
 
     const decline = Effect.fn("ConnectorAsks.decline")(function* (card: ConnectorAskEntry) {

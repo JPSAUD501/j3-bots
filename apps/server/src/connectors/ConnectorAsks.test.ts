@@ -167,9 +167,12 @@ it.effect(
 
 it.effect("closes an ask nobody answers once it waited too long, and tells the bot", () =>
   Effect.gen(function* () {
-    const { bot, session, turnId } = yield* asked({ gallery: "curated:google-gmail" });
+    const { bot, session, turnId, card } = yield* asked({ gallery: "curated:google-gmail" });
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE connector_asks SET expires_at = ${timeText(yield* DateTime.now)}`;
+    // A yes past the wait adds nothing, even before the sweep closes the card.
+    assert.include(failureOf(yield* Effect.exit(answer(card.id, CLIENT))), "card-closed");
+    assert.deepStrictEqual(yield* (yield* Connectors).listed, []);
     yield* TestClock.adjust(Duration.minutes(1));
     assert.strictEqual((yield* statusOf(bot.id))._tag, "expired");
     assert.include(yield* nextWake(bot.id, session, turnId), "waited too long");

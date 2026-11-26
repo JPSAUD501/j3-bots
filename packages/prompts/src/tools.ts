@@ -1134,6 +1134,8 @@ export const MANAGEMENT_REFUSED = {
     `This server sends the secret ${name}, so you can't change where it sends it: its address, headers, command, arguments and other variables. You may change which secrets it names. Your user can change a command server's command line on its page in Settings → MCP and skills, on the web or the desktop app. For anything else, remove it and add a new one, asking your user for the secret again with \`ask_for_secret\`. Nothing changed.`,
   ownApp:
     "That server signs in only with an app your user registers, at a service J3 Bots doesn't know, so it can't be added. Nothing changed.",
+  galleryPrivateNetwork:
+    "That gallery server's address is in your user's own network, which a gallery entry never reaches. If they want it there, add it by its address instead: your user is then asked to allow it. Nothing changed.",
   workStopped: "Nothing was shown: your user stopped this work. Stop here.",
   askChanged:
     "What your user allowed no longer matches what adding this server needs, so it was not added. Nothing changed.",
