@@ -40,7 +40,7 @@ describe("delivery line", () => {
   it("says when a message the server holds behind the bot's hello goes, as what holds the hello says", () => {
     const behind = { _tag: "queued", behindOpening: true } as const;
     const connect = { ...settled, openingHold: { _tag: "connect", command: "connect" } } as const;
-    expect(deliveryLine(behind, connect, en)).toBe("Sent once a model is connected");
+    expect(deliveryLine(behind, connect, en)).toBe("Sent once the AI is connected");
     const limit = (resetsAt: string | null) =>
       ({
         ...settled,

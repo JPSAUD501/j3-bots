@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  cannotRun,
+  type AiAccount,
+  aiOutage,
+  connectStepSaysProgress,
   defaultBotName,
   nextStep,
   type OnboardingFlow,
@@ -8,7 +10,6 @@ import {
   gettingReady,
   readyingShare,
   previousStep,
-  providerDetail,
   providerGate,
   resumedStep,
   showsConnect,
@@ -19,8 +20,9 @@ import {
   workTurn,
 } from "@j3-bots/client-runtime/presentation";
 import { avatarCast, stage } from "@j3-bots/design-tokens";
-import { type IntentResult, refusedWith } from "@j3-bots/client-runtime";
-import { connectStepText, providerLine } from "@j3-bots/client-runtime/wording";
+import { type IntentResult, refusedWith, type ServerUpdateView } from "@j3-bots/client-runtime";
+import { AiSessionProvider, useAiOpened } from "@j3-bots/client-runtime/react";
+import { aiActionLabel, connectStepText } from "@j3-bots/client-runtime/wording";
 import type { AvatarChoice, BotId, EngineStatus } from "@j3-bots/contracts";
 import { CheckIcon, ChevronLeftIcon } from "lucide-react";
 import {
@@ -33,11 +35,20 @@ import {
   useRef,
   useState,
 } from "react";
-import { useI18n, usePresentation } from "../app/context";
+import { useI18n } from "../app/context";
+import {
+  AdvancedEndpoint,
+  AiAccountPanel,
+  AiChoice,
+  AiDetails,
+  connectPlaceOf,
+  OtherAccount,
+  useAiText,
+  useWebAiConnect,
+} from "../components/AiConnect";
 import { AvatarChoices } from "../components/avatar/AvatarPicker";
-import { CommandLine } from "../components/CommandLine";
-import { type ProviderActions, ProviderFix } from "../components/ProviderFix";
-import { engineFindings, type LocalProviderSetup, LocalSignIn } from "../components/ProviderSetup";
+import type { ProviderActions } from "../components/ProviderFix";
+import type { LocalProviderSetup } from "../components/ProviderSetup";
 import { Button } from "../components/ui/button";
 import { cn } from "../lib/cn";
 import { openArrived } from "./handoff";
@@ -61,7 +72,7 @@ interface OnboardingProps {
   }) => Promise<IntentResult<BotId>>;
   /** Opens the new bot's conversation, which ends the first run. */
   readonly onArrived: (botId: BotId) => void;
-  /** What the connect step's lines ask of the server: check a provider again, install its harness. */
+  /** What the connect step asks of the server: check an AI account again, download what it needs. */
   readonly providerActions: ProviderActions;
   /**
    * Where it starts, for the gallery: that step, with nothing remembered.
@@ -71,14 +82,22 @@ interface OnboardingProps {
   readonly initialStep?: OnboardingStep;
   /** The first bot's name until the operator changes it; a random one by default. */
   readonly initialName?: string;
+  /** The AI account the connect step opens on, for the gallery; without it, the step asks which. */
+  readonly initialAccount?: AiAccount | undefined;
   /** Under the welcome's action: the ways out before there is a roster, such as signing out. */
   readonly footer?: ReactNode;
   /**
-   * Signing the providers in from this app, while its server runs on this
-   * computer; `undefined` elsewhere, where the connect step gives the command
-   * to run on the server. Every first run says which it is.
+   * Signing the AI accounts in from this app, while its server runs on this
+   * computer; `undefined` elsewhere, where the connect step says where they
+   * sign in. Every first run says which it is.
    */
   readonly providerSetup: LocalProviderSetup | undefined;
+  /**
+   * What the server last said of its own updates, which tells a client that
+   * reaches the desktop app's server that the accounts sign in in that app;
+   * `undefined` where it is not known.
+   */
+  readonly serverUpdate?: ServerUpdateView | undefined;
   /**
    * Whether the server on this computer is still starting and has not answered
    * yet: the first run goes on meanwhile, says so in its one quiet line, and
@@ -119,8 +138,10 @@ export function Onboarding({
   providerActions,
   initialStep,
   initialName,
+  initialAccount,
   footer,
   providerSetup,
+  serverUpdate,
   starting = false,
 }: OnboardingProps) {
   const i18n = useI18n();
@@ -303,6 +324,7 @@ export function Onboarding({
             onCreate={create}
             providerActions={providerActions}
             providerSetup={providerSetup}
+            serverUpdate={serverUpdate}
           />
         );
       case "arrival":
@@ -318,51 +340,59 @@ export function Onboarding({
   };
 
   return (
-    <div
-      className="onboarding dark @container relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
-      style={style}
-    >
-      <div className="relative mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col @3xl:my-auto @3xl:max-h-180">
-        <header className="relative z-10 flex h-14 shrink-0 items-center px-3">
-          <span className="w-10">
-            {canGoBack && (
-              <Button
-                variant="ghost-muted"
-                size="icon"
-                aria-label={t("onboarding.back")}
-                onClick={back}
-              >
-                <ChevronLeftIcon className="size-5 rtl:-scale-x-100" />
-              </Button>
+    // One memory of the AI picked for the whole first run: the step and the line under it agree.
+    <AiSessionProvider initial={initialAccount}>
+      <div
+        className="onboarding dark @container relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
+        style={style}
+      >
+        <div className="relative mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col @3xl:my-auto @3xl:max-h-180">
+          <header className="relative z-10 flex h-14 shrink-0 items-center px-3">
+            <span className="w-10">
+              {canGoBack && (
+                <Button
+                  variant="ghost-muted"
+                  size="icon"
+                  aria-label={t("onboarding.back")}
+                  onClick={back}
+                >
+                  <ChevronLeftIcon className="size-5 rtl:-scale-x-100" />
+                </Button>
+              )}
+            </span>
+            <span className="flex flex-1 justify-center">
+              {progress !== null && <Progress {...progress} />}
+            </span>
+            <span className="w-10" />
+          </header>
+          <Stage
+            ref={cast}
+            scene={stageScene(step, created)}
+            featured={step === "work" && !reduced ? workTurn(turn).featured : "all"}
+            look={look}
+            name={botName}
+            arrived={arrived}
+          />
+          <div className="relative min-h-0 flex-1">
+            {view.leaving !== null && (
+              <Layer key={`out:${view.move}`} motion="out" reduced={reduced}>
+                {screen(view.leaving.step, false)}
+              </Layer>
             )}
-          </span>
-          <span className="flex flex-1 justify-center">
-            {progress !== null && <Progress {...progress} />}
-          </span>
-          <span className="w-10" />
-        </header>
-        <Stage
-          ref={cast}
-          scene={stageScene(step, created)}
-          featured={step === "work" && !reduced ? workTurn(turn).featured : "all"}
-          look={look}
-          name={botName}
-          arrived={arrived}
-        />
-        <div className="relative min-h-0 flex-1">
-          {view.leaving !== null && (
-            <Layer key={`out:${view.move}`} motion="out" reduced={reduced}>
-              {screen(view.leaving.step, false)}
+            <Layer key={`in:${view.move}`} ref={currentRef} motion="in" reduced={reduced}>
+              {screen(step, true)}
             </Layer>
-          )}
-          <Layer key={`in:${view.move}`} ref={currentRef} motion="in" reduced={reduced}>
-            {screen(step, true)}
-          </Layer>
+          </div>
+          <StepPreparing
+            engine={engine}
+            starting={starting}
+            here={here}
+            step={step}
+            signIns={providerSetup?.signIns}
+          />
         </div>
-        {/* The arrival says what it waits for itself, under the bot. */}
-        <Preparing engine={engine} starting={starting} here={here} quiet={step === "arrival"} />
       </div>
-    </div>
+    </AiSessionProvider>
   );
 }
 
@@ -442,6 +472,33 @@ function StepFrame({
       <div className="focus-last flex shrink-0 flex-col gap-3 px-6 pt-4">{actions}</div>
     </div>
   );
+}
+
+const noSignIns: LocalProviderSetup["signIns"] = new Map();
+
+/**
+ * The quiet line under a step (`Preparing`), silent where the step says the
+ * same itself: the arrival, which says what it waits for under the bot, and
+ * the connect step while an account is open on it or J3 Bots is out
+ * (`connectStepSaysProgress`), so one screen never shows two progress lines.
+ */
+function StepPreparing({
+  engine,
+  starting,
+  here,
+  step,
+  signIns = noSignIns,
+}: {
+  readonly engine: EngineStatus | null;
+  readonly starting: boolean;
+  readonly here: boolean;
+  readonly step: OnboardingStep;
+  readonly signIns?: LocalProviderSetup["signIns"] | undefined;
+}) {
+  const opened = useAiOpened({ engine, locations: null, signIns });
+  const quiet =
+    step === "arrival" || (step === "connect" && connectStepSaysProgress(engine, opened));
+  return <Preparing engine={engine} starting={starting} here={here} quiet={quiet} />;
 }
 
 /**
@@ -736,12 +793,15 @@ function FailureLine({
   );
 }
 
-const toneClass = {
-  waiting: "text-waiting",
-  ready: "text-success",
-  muted: "text-muted-foreground",
-} as const;
-
+/**
+ * The AI the bot thinks with, asked as one question: which one the operator
+ * has. Picking one leaves that account alone on the screen, with its sign-in
+ * drawn and one big button; the other stays one press away. While something
+ * is still asked of the operator, picking an account or pressing its button,
+ * that leads, and creating the bot is the quieter way on under it; once
+ * nothing is, as while it downloads or once it is connected, the big button
+ * creates the bot, which says hello when its AI is ready.
+ */
 function ConnectStep({
   engine,
   name,
@@ -749,6 +809,7 @@ function ConnectStep({
   onCreate,
   providerActions,
   providerSetup,
+  serverUpdate,
 }: {
   readonly engine: EngineStatus | null;
   readonly name: string;
@@ -756,61 +817,62 @@ function ConnectStep({
   readonly onCreate: () => void;
   readonly providerActions: ProviderActions;
   readonly providerSetup: LocalProviderSetup | undefined;
+  readonly serverUpdate: ServerUpdateView | undefined;
 }) {
   const i18n = useI18n();
-  const ctx = usePresentation();
   const { t } = i18n;
-  const text = connectStepText(engine, name, i18n);
-  const waitsId = useId();
-  const place = providerSetup === undefined ? "server" : "this-computer";
-  const gate = engine !== null && engine.state._tag === "ready" ? providerGate(engine) : null;
-  // Each provider that cannot run, with why and what fixes it: all of them
-  // when none can, and beside the sign-in, those that signing in would not fix.
-  const listed =
-    engine === null || gate === null
-      ? []
-      : gate._tag === "unavailable"
-        ? engine.providers
-        : gate._tag === "connect"
-          ? engine.providers.filter(cannotRun)
-          : [];
-  // On this computer, the harnesses sign in from here; the command stays for when they cannot.
-  const signInHere = gate?._tag === "connect" ? providerSetup : undefined;
-  const command = (
-    <>
-      {text.command !== null && (
-        <div className="mt-1 w-full text-start">
-          <CommandLine command={text.command} copyLabel={t("firstRun.connect.copy")} large />
-        </div>
-      )}
-      {text.login !== null && (
-        <p className="text-sm text-pretty text-muted-foreground">
-          {text.login.text}{" "}
-          <a
-            href={text.login.url}
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-foreground underline underline-offset-2"
-          >
-            {text.login.link}
-          </a>
-        </p>
-      )}
-    </>
+  const ai = useWebAiConnect({
+    engine,
+    connect: connectPlaceOf(providerSetup, serverUpdate),
+    actions: providerActions,
+  });
+  const { opened } = ai;
+  const openedText = useAiText(ai, opened ?? ai.accounts["claude-code"]);
+  const text = connectStepText(
+    engine,
+    opened === null ? null : { account: opened.account, text: openedText },
+    opened?.state ?? null,
+    name,
+    i18n,
   );
+  const waitsId = useId();
+  const out = aiOutage(engine) !== null;
+  // The account's own button leads while it asks something of the operator.
+  const asked = out || opened === null ? null : opened.action;
+  // Creating the bot leads once nothing is asked of them: no account to pick, no button of its own.
+  const leads = out || (opened !== null && asked === null);
+  const createWaits = text.createWaits !== null;
   return (
     <StepFrame
       actions={
         <>
           <FailureLine failure={failure} name={name} />
-          <BigButton
-            onClick={onCreate}
-            disabled={text.createWaits !== null}
-            describedBy={text.createWaits === null ? undefined : waitsId}
-          >
-            {t("onboarding.create", { name })}
-          </BigButton>
-          {(text.createWaits ?? text.later) !== null && (
+          {opened !== null && asked !== null ? (
+            <BigButton onClick={opened.act} disabled={opened.asking === "asking"}>
+              {aiActionLabel(asked, opened.account, i18n)}
+            </BigButton>
+          ) : (
+            leads && (
+              <BigButton
+                onClick={onCreate}
+                disabled={createWaits}
+                describedBy={createWaits ? waitsId : undefined}
+              >
+                {t("onboarding.create", { name })}
+              </BigButton>
+            )
+          )}
+          {!leads && (
+            <Button
+              variant="ghost-muted"
+              onClick={createWaits ? undefined : onCreate}
+              aria-disabled={createWaits}
+              aria-describedby={createWaits ? waitsId : undefined}
+            >
+              {t("onboarding.connect.createLater", { name })}
+            </Button>
+          )}
+          {(text.createWaits ?? (leads ? text.later : null)) !== null && (
             <p id={waitsId} className="text-center text-sm text-pretty text-muted-foreground">
               {text.createWaits ?? text.later}
             </p>
@@ -819,50 +881,29 @@ function ConnectStep({
       }
     >
       <StepTitle>{text.title}</StepTitle>
-      <p className="text-lg text-pretty text-muted-foreground">
-        {signInHere !== undefined ? t("onboarding.connect.local.body") : text.body}
+      {/* Live: the step says when the account connects, without moving on by itself. */}
+      <p role="status" className="text-lg text-pretty text-muted-foreground">
+        {text.body}
       </p>
-      {signInHere !== undefined ? (
-        <LocalSignIn setup={signInHere} fallback={command} findings={engineFindings(engine)} />
-      ) : (
-        command
+      {!out &&
+        (opened === null ? (
+          <AiChoice ai={ai} />
+        ) : (
+          <>
+            <AiAccountPanel ai={ai} account={opened} said={text.says} button={false} />
+            <OtherAccount ai={ai} account={opened.account} />
+          </>
+        ))}
+      {!out && <AdvancedEndpoint ai={ai} />}
+      {text.details.length > 0 && (
+        <AiDetails>
+          {text.details.map((detail) => (
+            <p key={detail} className="select-text">
+              {detail}
+            </p>
+          ))}
+        </AiDetails>
       )}
-      {listed.length > 0 && (
-        <ul className="flex w-full flex-col gap-3 text-start text-sm">
-          {listed.map((provider) => {
-            const line = providerLine(provider, ctx, place);
-            const detail = providerDetail(provider);
-            return (
-              <li key={provider.id} className="flex flex-col gap-1.5">
-                <div className="flex justify-between gap-3">
-                  <span>{provider.name}</span>
-                  <span className="text-muted-foreground">{line.text}</span>
-                </div>
-                {detail !== null && (
-                  <p className="text-xs break-words text-pretty text-muted-foreground">
-                    {t("provider.detail", { detail })}
-                  </p>
-                )}
-                <ProviderFix provider={provider} place={place} actions={providerActions} />
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {/* Live: the step says when a provider connects, without moving on by itself. */}
-      <p
-        role="status"
-        className={cn("flex items-center gap-2 text-sm font-medium", toneClass[text.status.tone])}
-      >
-        <span
-          aria-hidden
-          className={cn(
-            "size-2 rounded-full bg-current",
-            text.status.tone === "waiting" && "onboarding-pulse",
-          )}
-        />
-        {text.status.text}
-      </p>
     </StepFrame>
   );
 }

@@ -272,8 +272,16 @@ describe("whether the server has a model for a first bot", () => {
     expect(hasDefaultModel(engine({ _tag: "unavailable", checking: true }))).toBe(true);
   });
 
-  it("has none on a provider the engine checked and cannot run, though it lists models", () => {
-    // As Claude Code not installed: the engine lists its catalog all the same.
+  it("has one on a harness still to be installed, which the server installs, so the bot is made meanwhile", () => {
+    expect(
+      hasDefaultModel(engine({ _tag: "unavailable", checking: false, reason: "not-installed" })),
+    ).toBe(true);
+  });
+
+  it("has none on a provider the engine found and cannot run, though it lists models", () => {
+    expect(
+      hasDefaultModel(engine({ _tag: "unavailable", checking: false, reason: "failed" })),
+    ).toBe(false);
     expect(hasDefaultModel(engine({ _tag: "unavailable", checking: false }))).toBe(false);
     expect(hasDefaultModel(null)).toBe(false);
   });

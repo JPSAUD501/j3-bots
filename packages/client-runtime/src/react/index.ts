@@ -41,6 +41,7 @@ import type { PairConversationState } from "../stores/TeammatePairs.ts";
 import { pairKeyText } from "../presentation/pairs.ts";
 import { type RecentTurnsState, turnsNotRead } from "../stores/Usage.ts";
 import type { WorkStepsState } from "../stores/WorkSteps.ts";
+import { AiSessionProvider } from "./aiConnect.ts";
 import { holding, type Releasable } from "./held.ts";
 
 // Thin bindings: every decision lives in the runtime. A hook reads a
@@ -53,7 +54,13 @@ const ClientContext = createContext<J3Client | null>(null);
 export const J3ClientProvider = (props: {
   readonly client: J3Client;
   readonly children?: ReactNode;
-}) => createElement(ClientContext.Provider, { value: props.client }, props.children);
+}) =>
+  createElement(
+    ClientContext.Provider,
+    { value: props.client },
+    // What the app remembers of connecting an AI lasts as long as its client does.
+    createElement(AiSessionProvider, null, props.children),
+  );
 
 export const useJ3Client = (): J3Client => {
   const client = useContext(ClientContext);
@@ -268,6 +275,14 @@ export const useRecentTurns = (
 };
 
 export { type ConversationEnd, useArrivals, useConversationEnd, useRestored } from "./arrivals.ts";
+export {
+  type AiAccountModel,
+  type AiConnectModel,
+  type AiIntents,
+  AiSessionProvider,
+  useAiConnect,
+  useAiOpened,
+} from "./aiConnect.ts";
 export { type BotEdit, type ProfileFieldProblem, useBotEdit } from "./botEdit.ts";
 export { type MemoryEdit, type MemoryReading, useMemoryEdit } from "./memoryEdit.ts";
 export { type ProfileEdits, type ProfileForm, useProfileEdits, useProfileForm } from "./profile.ts";

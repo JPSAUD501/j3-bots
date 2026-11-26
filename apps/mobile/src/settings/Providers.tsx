@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { SettingsSaves } from "@j3-bots/client-runtime";
-import { connectCommand, installsHarnesses } from "@j3-bots/client-runtime/presentation";
+import type { EngineStatus } from "@j3-bots/contracts";
+import {
+  aiAccountProvider,
+  aiAccounts,
+  installsHarnesses,
+  ownHarness,
+} from "@j3-bots/client-runtime/presentation";
 import {
   useConnection,
   useEngineStatus,
@@ -11,16 +17,18 @@ import {
 import { engineProblem } from "@j3-bots/client-runtime/wording";
 import { useState } from "react";
 import { View } from "react-native";
-import { ConnectCommand, ProviderRow } from "../components/Engine.tsx";
+import { AiAccountCard, useMobileAiConnect } from "../components/AiConnect.tsx";
+import { OwnHarnessLine, ProviderRow, ProviderUpdate } from "../components/Engine.tsx";
 import { Problem, Quiet, Section, SkeletonRows, SwitchRow } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
 import { Text } from "../text.tsx";
 
 /**
- * Whether the engine runs, and if not, why and what to do; then each provider,
- * and, on a server that installs its own copies of the harnesses, whether it
- * keeps them up to date by itself. Disconnected, it is what the server last
- * reported, muted and said to be so.
+ * Whether J3 Bots can run bots, and if not, why and what to do; then each AI
+ * account, with the same way to connect it as the first run, any other
+ * provider, and, on a server that installs its own copies of the harnesses,
+ * whether it keeps them up to date by itself. Disconnected, it is what the
+ * server last reported, muted and said to be so.
  */
 export function ProvidersSection() {
   const i18n = useI18n();
@@ -36,7 +44,6 @@ export function ProvidersSection() {
   }
   const { value: engine, stale } = status;
   const problem = engineProblem(engine, i18n);
-  const connect = connectCommand(engine);
   return (
     <Section open>
       {stale && <Quiet>{t("settings.engine.lastKnown")}</Quiet>}
@@ -61,12 +68,40 @@ export function ProvidersSection() {
           <Quiet>{problem.body}</Quiet>
         </View>
       )}
-      {engine.providers.map((provider) => (
-        <ProviderRow key={provider.id} provider={provider} stale={stale} version />
-      ))}
+      <AiAccounts engine={engine} stale={stale} />
+      {engine.providers
+        .filter((provider) => provider.harness === "other")
+        .map((provider) => (
+          <ProviderRow key={provider.id} provider={provider} stale={stale} />
+        ))}
       {installsHarnesses(engine) && <AutoUpdateHarnesses connected={connected} />}
-      {!stale && connect !== null && <ConnectCommand command={connect} />}
     </Section>
+  );
+}
+
+/**
+ * Each AI account, one card each: where it stands and its one button, then
+ * the version it runs, with Update when a newer one is out.
+ */
+function AiAccounts(props: { readonly engine: EngineStatus; readonly stale: boolean }) {
+  const ai = useMobileAiConnect(props.engine);
+  return (
+    <>
+      {aiAccounts.map((account) => {
+        const provider = aiAccountProvider(props.engine, account);
+        const own = provider === undefined ? null : ownHarness(provider);
+        return (
+          <AiAccountCard key={account} ai={ai} account={account} stale={props.stale}>
+            {provider !== undefined &&
+              (own === null ? (
+                <ProviderUpdate provider={provider} />
+              ) : (
+                <OwnHarnessLine own={own} />
+              ))}
+          </AiAccountCard>
+        );
+      })}
+    </>
   );
 }
 

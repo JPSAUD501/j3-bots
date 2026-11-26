@@ -93,11 +93,16 @@ import {
   teammatesOf,
   withLiveTurn,
   mentionOptions,
+  type AiAccount,
   type OnboardingStep,
   type SettingsPage,
 } from "@j3-bots/client-runtime/presentation";
 import { Dialog } from "@base-ui/react/dialog";
-import { type SignInRoute, useProfileEdits } from "@j3-bots/client-runtime/react";
+import {
+  AiSessionProvider,
+  type SignInRoute,
+  useProfileEdits,
+} from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
@@ -2766,6 +2771,33 @@ const engines = {
     providers: [],
     harnesses: copiesArriving,
   },
+  /** Claude Code being downloaded for the first time, Codex still to be. */
+  gettingClaude: engineWithCopies(
+    {
+      status: notInstalled,
+      copy: {
+        ...noCopy,
+        task: { _tag: "downloading", receivedBytes: 84_000_000, totalBytes: 200_434_347 },
+      },
+    },
+    { status: notInstalled, copy: noCopy },
+  ),
+  /** Claude Code's first download did not check, with the engine's own account of the missing harness. */
+  gettingFailed: engineWithCopies(
+    {
+      status: {
+        ...notInstalled,
+        detail: "Claude Agent CLI (`claude`) was not found on PATH.",
+      },
+      copy: { ...noCopy, last: { _tag: "failed", reason: "checksum", at: minutesAgo(2) } },
+    },
+    { status: notInstalled, copy: noCopy },
+  ),
+  /** A machine J3 Bots installs no build for: the operator installs the harness themselves. */
+  cannotGet: engineWithCopies(
+    { status: notInstalled, copy: { ...noCopy, installable: false } },
+    { status: notInstalled, copy: { ...noCopy, installable: false } },
+  ),
   /** Claude Code's update waits for its bots; Codex's install failed its checksum. */
   copyWaitingAndFailed: engineWithCopies(
     {
@@ -2929,20 +2961,20 @@ function EngineSettingsSection() {
   return (
     <Section title="Settings: the engine">
       <div className="flex flex-wrap gap-4">
-        <Frame padded label="Downloading, on the first start" width={420} height={160}>
+        <Frame padded label="Downloading, on the first start" width={420} height={320}>
           <EngineSection engine={engines.downloading} stale={false} actions={providerActions} />
         </Frame>
-        <Frame padded label="Downloading, with no size known" width={420} height={160}>
+        <Frame padded label="Downloading, with no size known" width={420} height={320}>
           <EngineSection
             engine={engines.downloadingNoTotal}
             stale={false}
             actions={providerActions}
           />
         </Frame>
-        <Frame padded label="Starting, once downloaded" width={420} height={160}>
+        <Frame padded label="Starting, once downloaded" width={420} height={320}>
           <EngineSection engine={engines.engineStarting} stale={false} actions={providerActions} />
         </Frame>
-        <Frame padded label="The download failed" width={420} height={160}>
+        <Frame padded label="The download failed" width={420} height={320}>
           <EngineSection
             engine={{ ...engines.installFailed, providers: [] }}
             stale={false}
@@ -2953,7 +2985,7 @@ function EngineSettingsSection() {
           padded
           label="The download failed: another program held the engine's files"
           width={420}
-          height={180}
+          height={340}
         >
           <EngineSection
             engine={{ ...engines.installFailedInUse, providers: [] }}
@@ -2963,18 +2995,18 @@ function EngineSettingsSection() {
         </Frame>
         <Frame
           padded
-          label="A provider that failed to start, in the engine's words, and one not installed"
+          label="An account that failed to start, the engine's words under Details, and one not downloaded"
           width={420}
-          height={360}
+          height={460}
         >
           <EngineSection
             engine={engines.failed}
             stale={false}
             actions={providerActions}
-            providerSetup={localSetup(harnessesFound.claudeOnly)}
+            connect={{ _tag: "here", setup: localSetup(harnessesFound.claudeOnly) }}
           />
         </Frame>
-        <Frame padded label="A newer version to update, and one updating" width={420} height={260}>
+        <Frame padded label="A newer version to update, and one updating" width={420} height={360}>
           <EngineSection
             engine={withVersions(behindUpdatable, {
               version: { installed: "0.170.0", latest: "0.171.0", canUpdate: true },
@@ -2999,8 +3031,14 @@ function EngineSettingsSection() {
             actions={providerActions}
           />
         </Frame>
-        <Frame padded label="Providers turned off on the server" width={420} height={200}>
+        <Frame padded label="Accounts turned off on the server" width={420} height={260}>
           <EngineSection engine={engines.disabled} stale={false} actions={providerActions} />
+        </Frame>
+        <Frame padded label="On a server: each account with its command" width={420} height={560}>
+          <EngineSection engine={engines.connect} stale={false} actions={providerActions} />
+        </Frame>
+        <Frame padded label="Offline: what the server last said, muted" width={420} height={260}>
+          <EngineSection engine={engines.connect} stale actions={providerActions} />
         </Frame>
         <Frame
           padded
@@ -3181,20 +3219,28 @@ function FirstRunAt({
   engine = team.engine,
   providerSetup,
   starting = false,
+  account,
+  inDesktopApp = false,
 }: {
   step: OnboardingStep;
   engine?: EngineStatus | null;
   providerSetup?: LocalProviderSetup;
   /** The server on this computer has not answered yet. */
   starting?: boolean;
+  /** The AI account the connect step is open on; without it, it asks which. */
+  account?: AiAccount;
+  /** Seen from a device that reaches the desktop app's server. */
+  inDesktopApp?: boolean;
 }) {
   return (
     <Onboarding
       engine={engine}
       initialStep={step}
       initialName="Maya"
+      initialAccount={account}
       providerSetup={providerSetup}
       starting={starting}
+      serverUpdate={inDesktopApp ? said(serverStatuses.desktopManaged) : undefined}
       onCreate={() => Promise.resolve({ _tag: "done", value: ids.scout })}
       onArrived={arrived}
       providerActions={providerActions}
@@ -3249,60 +3295,92 @@ function FirstRunSection() {
         <Frame label="Its look" width={390} height={760} replay>
           <FirstRunAt step="look" />
         </Frame>
-        <Frame label="No provider connected: one command, live" width={390} height={760}>
+        <Frame label="The AI: which one do you have?" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.connect} />
         </Frame>
-        <Frame label="The engine still checking its providers" width={390} height={760}>
-          <FirstRunAt step="connect" engine={engines.checking} />
-        </Frame>
         <Frame
-          label="No provider can run a bot now, one at its limit: Create still works"
+          label="Claude picked, on a server: the sign-in drawn, one command"
           width={390}
           height={760}
         >
+          <FirstRunAt step="connect" engine={engines.connect} account="claude-code" />
+        </Frame>
+        <Frame
+          label="ChatGPT picked, from a device that reaches the desktop app: sign in there"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.connect} account="codex" inDesktopApp />
+        </Frame>
+        <Frame label="Claude still being checked" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.checking} account="claude-code" />
+        </Frame>
+        <Frame
+          label="Claude downloading: calm progress, and Create works meanwhile"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.gettingClaude} account="claude-code" />
+        </Frame>
+        <Frame
+          label="The download did not finish: why, Try again, and the rest under Details"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.gettingFailed} account="claude-code" />
+        </Frame>
+        <Frame
+          label="A machine J3 Bots downloads nothing for: its maker's page, and Look again"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.cannotGet} account="claude-code" />
+        </Frame>
+        <Frame
+          label="Claude found but not starting: Try again, the engine's words under Details"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={engines.failed} account="claude-code" />
+        </Frame>
+        <Frame label="Claude turned off on the server" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.disabled} account="claude-code" />
+        </Frame>
+        <Frame label="Claude connected, at its usage limit" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.unusable} />
         </Frame>
         <Frame
-          label="Neither harness installed on the server: Create waits"
+          label="As the server starts: Claude downloading by itself, with the engine's “not found” kept off"
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.notInstalled} />
+          <FirstRunAt step="connect" engine={engines.bothInstalling} account="claude-code" />
         </Frame>
         <Frame
-          label="First run: the server installing both harnesses, the engine's “not found” kept off"
+          label="Claude's download refused while another program held it: the true reason, Try again"
           width={390}
           height={760}
         >
-          <FirstRunAt step="connect" engine={engines.bothInstalling} />
+          <FirstRunAt step="connect" engine={engines.copyInUse} account="claude-code" />
         </Frame>
-        <Frame
-          label="Claude Code's install refused while another program held it, with its own fix"
-          width={390}
-          height={760}
-        >
-          <FirstRunAt step="connect" engine={engines.copyInUse} />
-        </Frame>
-        <Frame label="Providers turned off on the server" width={390} height={760}>
-          <FirstRunAt step="connect" engine={engines.disabled} />
-        </Frame>
-        <Frame
-          label="One provider to connect, the other found but failing, with its own fix"
-          width={390}
-          height={760}
-        >
-          <FirstRunAt step="connect" engine={engines.failedBesideSignIn} />
-        </Frame>
-        <Frame label="The engine downloading, on the first start" width={390} height={760}>
+        <Frame label="J3 Bots still starting: Create waits, and says so" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.downloading} />
         </Frame>
-        <Frame label="A download that doesn't say its size" width={390} height={760}>
-          <FirstRunAt step="connect" engine={engines.downloadingNoTotal} />
+        <Frame label="Still starting, with an account picked" width={390} height={760}>
+          <FirstRunAt step="connect" engine={engines.downloadingNoTotal} account="codex" />
         </Frame>
-        <Frame label="The engine not running" width={390} height={760}>
-          <FirstRunAt step="connect" engine={engines.down} />
+        <Frame label="J3 Bots restarting: said plainly, nothing to choose" width={390} height={760}>
+          {/* As the server sends it: no provider is reported while the engine is out. */}
+          <FirstRunAt step="connect" engine={{ ...engines.down, providers: [] }} />
         </Frame>
-        <Frame label="A provider connected while the step is read" width={390} height={760}>
+        <Frame
+          label="J3 Bots cannot run bots: said plainly, its own account under Details"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt step="connect" engine={{ ...engines.portInUse, providers: [] }} />
+        </Frame>
+        <Frame label="Connected: unmistakable" width={390} height={760}>
           <FirstRunAt step="connect" />
         </Frame>
         <Frame
@@ -3418,21 +3496,29 @@ function LocalFirstRunSection() {
         <Frame label="Preparing a server elsewhere" width={390} height={760}>
           <FirstRunAt step="look" engine={engines.harnessesArriving} />
         </Frame>
-        <Frame label="Both harnesses found: sign in with either" width={390} height={760}>
+        <Frame label="The AI: which one do you have?" width={390} height={760}>
           <FirstRunAt
             step="connect"
             engine={engines.connect}
             providerSetup={localSetup(harnessesFound.both)}
           />
         </Frame>
-        <Frame label="Only Claude Code found" width={390} height={760}>
+        <Frame label="Claude picked: the sign-in drawn, one big button" width={390} height={760}>
           <FirstRunAt
             step="connect"
             engine={engines.connect}
-            providerSetup={localSetup(harnessesFound.claudeOnly)}
+            account="claude-code"
+            providerSetup={localSetup(harnessesFound.both)}
           />
         </Frame>
-        <Frame label="Waiting for the browser" width={390} height={760}>
+        <Frame label="Opening the sign-in page" width={390} height={760}>
+          <FirstRunAt
+            step="connect"
+            engine={engines.connect}
+            providerSetup={localSetup(harnessesFound.both, [["claude-code", { _tag: "starting" }]])}
+          />
+        </Frame>
+        <Frame label="Signing in, in the browser" width={390} height={760}>
           <FirstRunAt
             step="connect"
             engine={engines.connect}
@@ -3441,16 +3527,12 @@ function LocalFirstRunSection() {
             ])}
           />
         </Frame>
-        <Frame
-          label="A harness that needs a terminal: an endpoint instead"
-          width={390}
-          height={760}
-        >
+        <Frame label="Signed in, being checked" width={390} height={760}>
           <FirstRunAt
             step="connect"
             engine={engines.connect}
             providerSetup={localSetup(harnessesFound.both, [
-              ["claude-code", { _tag: "failed", reason: "needs-terminal" }],
+              ["claude-code", { _tag: "succeeded", endpoint: null }],
             ])}
           />
         </Frame>
@@ -3463,68 +3545,95 @@ function LocalFirstRunSection() {
             ])}
           />
         </Frame>
-        <Frame label="Timed out, with the other still to try" width={390} height={760}>
+        <Frame label="The sign-in timed out: why, Try again, Details" width={390} height={760}>
           <FirstRunAt
             step="connect"
             engine={engines.connect}
+            account="codex"
             providerSetup={localSetup(harnessesFound.both, [
               ["codex", { _tag: "failed", reason: "timed-out" }],
             ])}
           />
         </Frame>
-        <Frame label="Neither harness installed" width={390} height={760}>
-          <FirstRunAt
-            step="connect"
-            engine={engines.connect}
-            providerSetup={localSetup(harnessesFound.none)}
-          />
-        </Frame>
         <Frame
-          label="Neither harness installed on this computer, as the engine finds it: Create waits"
+          label="A sign-in that cannot run here: said plainly, the reason under Details"
           width={390}
           height={760}
         >
           <FirstRunAt
             step="connect"
-            engine={engines.notInstalled}
+            engine={engines.connect}
+            account="claude-code"
+            providerSetup={localSetup(harnessesFound.both, [
+              ["claude-code", { _tag: "failed", reason: "needs-terminal" }],
+            ])}
+          />
+        </Frame>
+        <Frame
+          label="Claude downloading: press Sign in now, the browser opens when it is done"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt
+            step="connect"
+            engine={engines.gettingClaude}
+            account="claude-code"
             providerSetup={localSetup(harnessesFound.none)}
           />
         </Frame>
         <Frame
-          label="Claude Code found but failed to start, with where the log is"
+          label="J3 Bots still starting, Claude already here: sign in meanwhile"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt
+            step="connect"
+            engine={engines.downloading}
+            account="claude-code"
+            providerSetup={localSetup(harnessesFound.claudeOnly)}
+          />
+        </Frame>
+        <Frame
+          label="Claude found but not starting, with where the log is under Details"
           width={390}
           height={760}
         >
           <FirstRunAt
             step="connect"
             engine={engines.failed}
+            account="claude-code"
             providerSetup={localSetup(harnessesFound.claudeOnly)}
           />
         </Frame>
         <Frame
           padded
-          label="Settings: where the harnesses are, and signing in"
+          label="Settings: both accounts to sign in, an endpoint folded away"
           width={420}
-          height={420}
+          height={560}
         >
           <EngineSection
             engine={engines.connect}
             stale={false}
             actions={providerActions}
-            providerSetup={localSetup(harnessesFound.claudeOnly)}
+            connect={{ _tag: "here", setup: localSetup(harnessesFound.claudeOnly) }}
           />
         </Frame>
         <Frame
           padded
-          label="Settings: one provider ready, the other to sign in"
+          label="Settings: one account connected, the other signing in"
           width={420}
-          height={420}
+          height={560}
         >
           <EngineSection
             engine={team.engine}
             stale={false}
             actions={providerActions}
-            providerSetup={localSetup(harnessesFound.both)}
+            connect={{
+              _tag: "here",
+              setup: localSetup(harnessesFound.both, [
+                ["codex", { _tag: "waiting-for-browser", url: signInPage, opened: true }],
+              ]),
+            }}
           />
         </Frame>
       </div>
@@ -3559,6 +3668,7 @@ function EmptyStatesSection() {
             bot={team.bots.moss}
             engine={team.engine}
             connect={{ _tag: "server" }}
+            actions={providerActions}
           />
         </Frame>
         <Frame label="A new bot, about to speak first" width={340} height={360}>
@@ -3566,28 +3676,48 @@ function EmptyStatesSection() {
             bot={speakingFirst}
             engine={team.engine}
             connect={{ _tag: "server" }}
+            actions={providerActions}
           />
         </Frame>
         <Frame
-          label="A new bot whose provider is not connected: its hello waits"
+          label="A new bot whose AI is not connected: its hello waits, with the way to connect one"
           width={340}
-          height={420}
+          height={560}
         >
           <QuietConversation
             bot={waitingFirst}
             engine={engines.connect}
             connect={{ _tag: "server" }}
+            actions={providerActions}
           />
         </Frame>
         <Frame
           label="Its hello waits, on a server the desktop app runs, seen from another device"
           width={340}
-          height={420}
+          height={560}
         >
           <QuietConversation
             bot={waitingFirst}
             engine={engines.connect}
             connect={{ _tag: "desktop-app" }}
+            actions={providerActions}
+          />
+        </Frame>
+        <Frame
+          label="Its hello waits, in the app on this computer: Claude signing in"
+          width={340}
+          height={560}
+        >
+          <QuietConversation
+            bot={waitingFirst}
+            engine={engines.connect}
+            connect={{
+              _tag: "here",
+              setup: localSetup(harnessesFound.both, [
+                ["claude-code", { _tag: "waiting-for-browser", url: signInPage, opened: true }],
+              ]),
+            }}
+            actions={providerActions}
           />
         </Frame>
         <Frame label="A quiet room" width={340} height={360}>
@@ -4484,38 +4614,41 @@ function ShellFrame({
     browser ? "front" : null,
   );
   return (
-    <Shell
-      data={source.data}
-      intents={source.intents}
-      browser={source.browser}
-      keyboard={false}
-      navigation={{
-        selected,
-        detailsOpen: detailsOpen && selected !== null,
-        select: (key) => {
-          setSelected(key);
-          setPair(null);
-          setBrowserTarget(null);
-        },
-        setDetailsOpen: (open) => {
-          setDetailsOpen(open);
-          if (open) setBrowserTarget(null);
-        },
-        browser: browserTarget,
-        setBrowser: (target) => {
-          setBrowserTarget(target);
-          if (target !== null) setDetailsOpen(false);
-        },
-        rowLink: (item) =>
-          rowButton(() => {
-            setSelected(rowKey(item));
+    // One app, one memory of the AI picked: the first run's choice opens in the conversation.
+    <AiSessionProvider>
+      <Shell
+        data={source.data}
+        intents={source.intents}
+        browser={source.browser}
+        keyboard={false}
+        navigation={{
+          selected,
+          detailsOpen: detailsOpen && selected !== null,
+          select: (key) => {
+            setSelected(key);
             setPair(null);
-          }),
-        pair,
-        openPair,
-        pairLink: (botIds) => rowButton(() => openPair(botIds, null)),
-      }}
-    />
+            setBrowserTarget(null);
+          },
+          setDetailsOpen: (open) => {
+            setDetailsOpen(open);
+            if (open) setBrowserTarget(null);
+          },
+          browser: browserTarget,
+          setBrowser: (target) => {
+            setBrowserTarget(target);
+            if (target !== null) setDetailsOpen(false);
+          },
+          rowLink: (item) =>
+            rowButton(() => {
+              setSelected(rowKey(item));
+              setPair(null);
+            }),
+          pair,
+          openPair,
+          pairLink: (botIds) => rowButton(() => openPair(botIds, null)),
+        }}
+      />
+    </AiSessionProvider>
   );
 }
 

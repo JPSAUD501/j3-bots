@@ -75,7 +75,16 @@ export {
   type StatusLine,
   usageLimitText,
 } from "./status.ts";
-export { connectStepText, type ConnectStepText } from "./onboarding.ts";
+export {
+  type AiAccountContext,
+  type AiAccountText,
+  aiAccountText,
+  aiActionLabel,
+  type AiTone,
+  connectStepText,
+  type ConnectStepText,
+  signInStepLabel,
+} from "./aiAccount.ts";
 export {
   type LineName,
   type NamedLine,
@@ -86,7 +95,6 @@ export {
   type TeamNotice,
   teamNoticeLine,
 } from "./pairs.ts";
-export { endpointInstead, type SignInLine, signInLine } from "./providerSetup.ts";
 export { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
 export { secretsFailureText, secretsStateText } from "./secrets.ts";
 export { settingsPageWords } from "./settings.ts";

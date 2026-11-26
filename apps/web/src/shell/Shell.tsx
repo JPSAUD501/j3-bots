@@ -8,7 +8,6 @@ import type {
   RosterItem,
   RosterItemKey,
 } from "@j3-bots/contracts";
-import { runByDesktopApp } from "@j3-bots/client-runtime";
 import {
   useEffect,
   useEffectEvent,
@@ -50,6 +49,7 @@ import { Composer, type MentionCandidate } from "../components/Composer";
 import type { PromptMenu } from "../components/PromptPicker";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
+import { connectPlaceOf } from "../components/AiConnect";
 import {
   Connecting,
   ConversationGone,
@@ -411,6 +411,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           <Onboarding
             engine={data.engine}
             footer={ways}
+            serverUpdate={intents.serverUpdate?.view}
             providerSetup={
               intents.providerSetup === undefined
                 ? undefined
@@ -557,13 +558,13 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
           <QuietConversation
             bot={item.bot}
             engine={data.engine}
-            connect={
-              intents.providerSetup !== undefined
-                ? { _tag: "here", setup: { ...intents.providerSetup, signIns: data.signIns } }
-                : intents.serverUpdate !== undefined && runByDesktopApp(intents.serverUpdate.view)
-                  ? { _tag: "desktop-app" }
-                  : { _tag: "server" }
-            }
+            actions={intents.providerActions}
+            connect={connectPlaceOf(
+              intents.providerSetup === undefined
+                ? undefined
+                : { ...intents.providerSetup, signIns: data.signIns },
+              intents.serverUpdate?.view,
+            )}
           />
         ) : view.phase === "ready" &&
           view.items.length === 0 &&

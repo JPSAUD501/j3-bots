@@ -22,11 +22,19 @@ const canRunBots = (provider: ProviderStatus): boolean =>
 /**
  * Whether the server has a model for a bot created without one: a provider
  * that lists one and may still run it, as the server picks a default (one the
- * engine checked and cannot run is never it). False before the engine reports.
+ * engine found and cannot run is never it; one whose harness is still to be
+ * installed is, since the server installs it once a client asks). False
+ * before the engine reports.
  */
 export const hasDefaultModel = (engine: EngineStatus | null): boolean =>
   engine !== null &&
-  engine.providers.some((provider) => provider.models.length > 0 && !cannotRun(provider));
+  engine.providers.some(
+    (provider) => provider.models.length > 0 && (!cannotRun(provider) || notInstalled(provider)),
+  );
+
+/** Whether the engine did not find `provider`'s harness where the server runs. */
+const notInstalled = (provider: ProviderStatus): boolean =>
+  provider.status._tag === "unavailable" && provider.status.reason === "not-installed";
 
 /** Whether the engine is done checking `provider` and cannot run it. */
 export const cannotRun = (provider: ProviderStatus): boolean =>

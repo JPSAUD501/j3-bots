@@ -20,6 +20,18 @@ export const signInHarnesses: Readonly<
   codex: { name: "Codex", installPage: "https://developers.openai.com/codex/cli" },
 };
 
+/**
+ * The command that signs each harness in with its maker's account, run in a
+ * terminal on the machine J3 Bots is installed on: what a client shows where
+ * it cannot run the sign-in itself. Codex's shows a code to enter in a
+ * browser on any device, since a browser sign-in waits for a callback a
+ * machine reached over SSH never gets.
+ */
+export const signInCommands: Readonly<Record<SignInHarness, string>> = {
+  "claude-code": "j3-bots provider login claude-code",
+  codex: "j3-bots provider login codex --device-auth",
+};
+
 /** Where the server finds a harness, on the `PATH` it runs harnesses with; null when it is not there. */
 export const HarnessLocation = Schema.Struct({
   harness: SignInHarness,

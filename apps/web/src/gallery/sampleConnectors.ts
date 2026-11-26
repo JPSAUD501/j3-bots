@@ -228,7 +228,7 @@ const done = <A>(value: A) => later({ _tag: "done", value } as const);
 const failed = () => later({ _tag: "failed", failure: { _tag: "unexpected" } } as const);
 
 /** The connector a yes to a bot's ask adds in the sample. */
-export const SAMPLE_ASKED_CONNECTOR = connectorId("home-lights");
+export const SAMPLE_ASKED_CONNECTOR = connectorId("homelights");
 
 /**
  * The own app's setup a bot's ask to add a gallery entry shows, as the

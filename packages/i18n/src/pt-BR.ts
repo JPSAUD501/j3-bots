@@ -182,7 +182,7 @@ const sentences = {
   "conversation.details": "Detalhes",
 
   "message.queued": "Na fila",
-  "message.waitingForModel": "Enviada assim que um modelo conectar",
+  "message.waitingForModel": "Enviada assim que a IA for conectada",
   "message.waitingForReset": "Enviada quando o limite de uso renovar",
   "message.waitingForResetAt": "Enviada quando o limite de uso renovar {when}",
   "message.cancelled": "Não enviada: você parou o bot antes",
@@ -815,8 +815,6 @@ const sentences = {
   "provider.failed": "Encontrado, mas não conseguiu iniciar",
   "provider.timedOut": "A verificação demorou demais. O J3 Bots verifica de novo sozinho",
   "provider.disabled": "Desativado no servidor",
-  "provider.retry": "Tentar de novo",
-  "provider.recheckFailed": "Não deu para alcançar o motor. Tente de novo daqui a pouco.",
   "provider.failed.log":
     "O log do servidor diz o motivo: server/server.log, na pasta de dados do app J3 Bots.",
   "provider.detail": "O motor diz: {detail}",
@@ -832,7 +830,6 @@ const sentences = {
   "provider.updateUnverified":
     "A atualização rodou, mas o motor não confirmou uma versão mais nova",
   "provider.updateRefused": "Não deu para começar a atualização. Tente de novo daqui a pouco.",
-  "provider.install": "Instalar",
   "provider.install.downloading": "Baixando… {received} de {total} MB",
   "provider.install.downloadingNoTotal": "Baixando… {received} MB",
   "provider.install.verifying": "Verificando o download…",
@@ -900,66 +897,115 @@ const sentences = {
   "onboarding.look.title": "Escolha o visual de {name}",
   "onboarding.look.hint": "Dá para trocar depois, nos detalhes do bot.",
   "onboarding.create": "Criar {name}",
-  "onboarding.connect.title": "{name} precisa de um modelo para pensar",
-  "onboarding.connect.body":
-    "Os bots pensam com modelos de IA como o Claude ou o GPT, e nenhum está conectado ao seu servidor ainda. Rode isto na máquina onde o J3 Bots está instalado: ele pede o endereço do serviço que acessa seus modelos e a chave dele.",
-  "onboarding.connect.login": "Prefere entrar com sua própria conta do Claude ou do ChatGPT?",
-  "onboarding.connect.loginLink": "Veja o provider login no guia de instalação",
-  "onboarding.connect.later":
-    "Sem pressa: crie {name} agora. O bot dá oi assim que um modelo for conectado.",
-  "onboarding.connect.createWaits":
-    "Dá para criar {name} assim que o Claude Code ou o Codex puder rodar.",
-  "onboarding.connect.ready.title": "Um modelo está conectado",
+  "onboarding.connect.choice.title": "Qual IA {name} vai usar?",
+  "onboarding.connect.choice.body": "Seus bots pensam com uma IA. Use a que você já tem.",
+  "onboarding.connect.signIn.title": "Entre no {account}",
+  "onboarding.connect.signIn.body": "Leva um minuto, no seu navegador.",
+  "onboarding.connect.getting.title": "Preparando o {account}",
+  "onboarding.connect.finishing.title": "Quase lá",
+  "onboarding.connect.failed.title": "O login não terminou",
+  "onboarding.connect.stuck.title": "O {account} ainda não está pronto",
+  "onboarding.connect.ready.title": "O {account} está conectado",
   "onboarding.connect.ready.body": "Tudo pronto para {name} dar oi.",
-  "onboarding.connect.checking.title": "Procurando um modelo para {name}",
-  "onboarding.connect.checking.body":
-    "O J3 Bots confere o Claude Code e o Codex sempre que inicia. Leva até um minuto.",
-  "onboarding.connect.unavailable.title": "Nenhum modelo consegue rodar {name} agora",
-  "onboarding.connect.unavailable.body":
-    "Nem o Claude Code nem o Codex conseguem rodar um bot no seu servidor ainda. Cada um diz o motivo abaixo, com o que resolve.",
-  "onboarding.connect.status.waiting": "Esperando um modelo…",
-  "onboarding.connect.status.ready": "Conectado",
-  "onboarding.connect.status.checking": "Verificando…",
-  "onboarding.connect.status.unavailable": "Nada consegue rodar um bot ainda",
-  "onboarding.connect.status.connecting": "Esperando o servidor…",
-  "onboarding.connect.status.starting": "Iniciando…",
-  "onboarding.connect.status.engineOut": "Parado",
-  "onboarding.connect.local.body":
-    "Os bots pensam com modelos de IA como o Claude ou o GPT. Entre com uma conta que você já tem: o J3 Bots guarda um login só dele, e o seu Claude Code e o seu Codex ficam como estão.",
-  "providers.signIn.claude-code": "Entrar com Claude",
-  "providers.signIn.codex": "Entrar com ChatGPT (Codex)",
-  "providers.signIn.plan": "Os bots usam o seu próprio plano: o uso deles conta nos seus limites.",
-  "providers.signIn.starting": "Iniciando o login do {harness}…",
-  "providers.signIn.waiting": "Termine de entrar no {harness} pelo navegador.",
-  "providers.signIn.openAgain": "Abrir a página de novo",
-  "providers.signIn.cancel": "Cancelar",
-  "providers.signIn.succeeded": "O {harness} entrou. Verificando…",
-  "providers.signIn.succeededEndpoint":
-    "O {harness} entrou, mas o endpoint em {endpoint} continua conectado, e os bots acessam os modelos por ele enquanto ele estiver.",
-  "providers.signIn.tryAgain": "Tentar de novo",
-  "providers.signIn.failed.notInstalled":
-    "O {harness} não está mais neste computador. Procure de novo depois de instalá-lo.",
-  "providers.signIn.failed.needsTerminal":
-    "O {harness} só consegue entrar por um terminal neste computador, e o app não tem um. Use um endpoint.",
-  "providers.signIn.failed.ended": "O login do {harness} parou antes de terminar. Tente de novo.",
-  "providers.signIn.failed.noCredential":
-    "O {harness} terminou sem deixar um login que o J3 Bots consiga usar. Se ele guarda o login no chaveiro do sistema, use um endpoint.",
-  "providers.signIn.failed.linkedHome":
-    "A pasta do J3 Bots para o {harness} é um link para outra pasta, então nada foi feito nela. Remova o link e tente de novo.",
-  "providers.signIn.failed.homeRefused":
-    "O J3 Bots não conseguiu usar a pasta dele para o {harness}: outros usuários podem abri-la, ou ela não aceita escrita. O log do servidor diz qual é.",
-  "providers.signIn.failed.timedOut":
-    "O login esperou 10 minutos pelo navegador e parou. Tente de novo.",
-  "providers.signIn.failed.other": "O login do {harness} não deu certo. Tente de novo.",
-  "providers.signIn.unsupported":
-    "Este servidor só faz o login dos harnesses por um terminal na máquina dele.",
-  "providers.notFound":
-    "Nem o Claude Code nem o Codex estão instalados neste computador. Instale um deles e procure de novo.",
-  "providers.notFound.install": "Instalar o {harness}",
-  "providers.notFound.lookAgain": "Procurar de novo",
-  "providers.notFound.looking": "Procurando…",
-  "providers.endpoint.open": "Avançado: usar um endpoint",
-  "providers.endpoint.use": "Usar um endpoint",
+  "onboarding.connect.restarting.title": "O J3 Bots está reiniciando",
+  "onboarding.connect.restarting.body": "Leva um instante. Esta tela atualiza sozinha.",
+  "onboarding.connect.out.title": "O J3 Bots não consegue rodar seus bots agora",
+  "onboarding.connect.out.body":
+    "Algo na máquina onde ele roda precisa ser resolvido antes. Os Detalhes dizem o quê.",
+  "onboarding.connect.later":
+    "Sem pressa: crie {name} agora. O bot dá oi assim que a IA dele for conectada.",
+  "onboarding.connect.createLater": "Criar {name} e fazer isso depois",
+  "onboarding.connect.createWaits":
+    "O J3 Bots ainda está se preparando. Dá para criar {name} em instantes.",
+  "onboarding.connect.createWaits.none":
+    "Dá para criar {name} assim que o Claude ou o ChatGPT estiver pronto.",
+  "onboarding.connect.createWaits.out": "Dá para criar {name} quando o J3 Bots voltar a rodar.",
+  "ai.by": "da {maker}",
+  "ai.choice.label": "A IA que você tem",
+  "ai.plan": "Ela usa o plano que você já tem: o que seus bots fazem conta nos limites dele.",
+  "ai.other": "Usar o {account}",
+  "ai.signIn": "Entrar com o {account}",
+  "ai.download": "Baixar o {account}",
+  "ai.tryAgain": "Tentar de novo",
+  "ai.lookAgain": "Procurar de novo",
+  "ai.openAgain": "Abrir a página de novo",
+  "ai.cancel": "Cancelar",
+  "ai.stopDownload": "Parar o download",
+  "ai.details": "Detalhes",
+  "ai.requestFailed": "Não deu para falar com o J3 Bots. Tente de novo em instantes.",
+  "ai.howToInstall": "Como instalar o {product}",
+  "ai.copyCommand": "Copiar o comando",
+  "ai.steps.label": "Como é o login",
+  "ai.steps.page.here": "Uma página abre no seu navegador",
+  "ai.steps.page.desktopApp": "Abra o J3 Bots no seu computador",
+  "ai.steps.page.server": "Rode um comando",
+  "ai.steps.signIn": "Você entra no {account}",
+  "ai.steps.back": "Você volta para cá",
+  "ai.ready": "O {account} está conectado.",
+  "ai.finishing": "Você entrou. Verificando o {account}…",
+  "ai.finishing.endpoint":
+    "O endpoint em {endpoint} continua conectado, e seus bots acessam a IA por ele enquanto ele estiver.",
+  "ai.signingIn.opening": "Abrindo a página de login…",
+  "ai.signingIn.browser": "Entre no {account} pelo seu navegador.",
+  "ai.signingIn.notices":
+    "Esta tela percebe sozinha quando você terminar. Não precisa copiar nada.",
+  "ai.getting": "Baixando o {account}…",
+  "ai.getting.progress": "Baixando o {account}… {percent}%",
+  "ai.getting.verifying": "Quase pronto. Verificando o download…",
+  "ai.queued": "Seu navegador abre assim que isto terminar.",
+  "ai.signedOut": "Ainda não conectado.",
+  "ai.signedOut.desktopApp":
+    "Abra o J3 Bots no seu computador e entre por lá. Esta tela percebe sozinha.",
+  "ai.signedOut.server":
+    "Rode isto na máquina onde o J3 Bots está instalado. Esta tela percebe sozinha.",
+  "ai.missing": "Ainda não baixado.",
+  "ai.missing.failed.checksum":
+    "O download veio corrompido, então nada foi instalado. Tente de novo.",
+  "ai.missing.failed.engine":
+    "O {account} foi baixado, mas o J3 Bots ainda não conseguiu começar a usá-lo.",
+  "ai.missing.cannotGet.here":
+    "O J3 Bots não consegue baixar o {account} sozinho para este computador.",
+  "ai.missing.cannotGet.server":
+    "O J3 Bots não consegue baixar o {account} sozinho para o servidor dele.",
+  "ai.missing.cannotGet.hint":
+    "Instale o {product} pela página de quem o faz e depois procure de novo.",
+  "ai.checking": "Verificando o {account}…",
+  "ai.preparing": "O J3 Bots está se preparando…",
+  "ai.preparing.progress": "O J3 Bots está se preparando… {percent}%",
+  "ai.problem.failed": "O {account} está aqui, mas não iniciou.",
+  "ai.problem.failed.hint": "Tente de novo. Se continuar, os Detalhes dizem mais.",
+  "ai.problem.timedOut":
+    "Verificar o {account} está demorando mais que o normal. O J3 Bots continua tentando sozinho.",
+  "ai.problem.off": "O {account} está desligado neste servidor.",
+  "ai.problem.unknown": "O {account} não pode ser usado agora.",
+  "ai.signIn.failed.notInstalled":
+    "O {account} ainda não está pronto neste computador. Tente de novo em instantes.",
+  "ai.signIn.failed.needsTerminal":
+    "O {account} não conseguiu abrir a página de login a partir deste app.",
+  "ai.signIn.failed.ended": "O login parou antes de terminar.",
+  "ai.signIn.failed.noCredential":
+    "O {account} entrou, mas guardou o login onde o J3 Bots não consegue usar.",
+  "ai.signIn.failed.home":
+    "O J3 Bots não conseguiu guardar o login com segurança neste computador.",
+  "ai.signIn.failed.timedOut": "A página de login esperou 10 minutos e desistiu.",
+  "ai.signIn.failed.other": "O login não deu certo.",
+  "ai.signIn.details.notInstalled":
+    "O {product} não está mais neste computador. Procure de novo depois de instalá-lo.",
+  "ai.signIn.details.needsTerminal":
+    "O {product} só consegue entrar por um terminal neste computador, e o app não tem um. Use um endpoint.",
+  "ai.signIn.details.ended": "O login do {product} terminou sem entrar.",
+  "ai.signIn.details.noCredential":
+    "O {product} terminou sem deixar um login que o J3 Bots consiga usar. Se ele guarda o login no chaveiro do sistema, use um endpoint.",
+  "ai.signIn.details.linkedHome":
+    "A pasta do J3 Bots para o {product} é um link para outra pasta, então nada foi feito nela. Remova o link e tente de novo.",
+  "ai.signIn.details.homeRefused":
+    "O J3 Bots não conseguiu usar a pasta dele para o {product}: outros usuários podem abri-la, ou ela não aceita escrita. O log do servidor diz qual é.",
+  "ai.signIn.details.timedOut": "O login do {product} esperou 10 minutos pelo navegador e parou.",
+  "ai.signIn.details.other":
+    "Não deu para rodar o login do {product}. O log do servidor diz o motivo.",
+  "ai.details.download": "{product}, download: {reason}",
+  "ai.details.found": "{product}: {path}",
+  "providers.endpoint.open": "Avançado",
   "providers.endpoint.body":
     "Um endpoint serve os modelos do Claude Code e do Codex de outro lugar, como um proxy na frente das suas assinaturas. Ele precisa falar a Messages API da Anthropic e a Responses API da OpenAI.",
   "providers.endpoint.url": "URL base",
@@ -983,26 +1029,22 @@ const sentences = {
     "Não deu para falar com o servidor, então nada mudou. Tente de novo.",
   "onboarding.arrival.title": "{name} chegou",
   "onboarding.arrival.hello": "Dando oi…",
-  "onboarding.arrival.waiting": "{name} dá oi assim que um modelo for conectado.",
+  "onboarding.arrival.waiting": "{name} dá oi assim que a IA dele for conectada.",
   "onboarding.failed":
     "Não deu para criar {name}. Veja se este aparelho ainda alcança seu servidor e tente de novo.",
   "onboarding.failedNoModel":
-    "Não deu para criar {name}: seu servidor ainda não tem um modelo para usar. Conecte um e tente de novo.",
+    "Não deu para criar {name}: o J3 Bots ainda não tem uma IA para dar a ele. Conecte uma e tente de novo.",
 
   "empty.noSelection.title": "Escolha com quem falar",
   "empty.noSelection.body": "Escolha um bot ou uma sala na lista.",
   "empty.noSelection.shortcut": "vai para o próximo",
   "empty.quiet.speaksFirst": "{name} fala primeiro. Está se preparando.",
   "empty.quiet.body": "Nenhuma mensagem ainda. Diga a {name} do que você precisa.",
-  "empty.quiet.waitingForModel": "{name} dá oi assim que um modelo for conectado.",
+  "empty.quiet.waitingForModel": "{name} dá oi assim que a IA dele for conectada.",
   "empty.quiet.waitingForReset": "{name} dá oi quando o limite de uso renovar.",
   "empty.quiet.waitingForResetAt": "{name} dá oi quando o limite de uso renovar {when}.",
   "empty.quiet.room":
     "Nenhuma mensagem ainda. Todos aqui leem o que você escreve: sem @, responde quem tiver algo a acrescentar; um @ fala com os bots que você citar.",
-  "empty.quiet.connectInApp":
-    "Para conectar um, entre em Configurações → Provedores no J3 Bots, no computador onde ele roda.",
-  "empty.quiet.connectHint":
-    "Para conectar um, rode isto na máquina onde o J3 Bots está instalado.",
 
   "message.sending": "Enviando…",
   "message.notSent.left.one": "Não enviada: {names} não está mais nesta sala",
@@ -1478,8 +1520,6 @@ const sentences = {
   "settings.engine.ready": "Rodando, versão {version}",
   "settings.engine.lastKnown":
     "Último estado conhecido. Este dispositivo não está conectado ao J3 Bots agora.",
-  "settings.engine.harness.found": "{harness}: encontrado em {path}",
-  "settings.engine.harness.missing": "{harness}: não encontrado",
   "settings.usage": "Uso",
   "usage.engineNotRunning": "O uso aparece enquanto o motor está rodando.",
   "usage.noProviders": "Nenhum provedor pode rodar bots ainda.",
