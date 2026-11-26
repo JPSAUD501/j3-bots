@@ -59,5 +59,6 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0051](0051-an-update-asks-in-front-and-goes-server-first.md) | An update asks in front of the app, and goes server first, then the client | Accepted |
 | [0052](0052-motion-follows-palco.md) | Motion follows Palco: a stage for entrances, and motion that carries on | Accepted |
 | [0055](0055-a-delegated-report-goes-back-to-its-audience.md) | A delegated task's report goes back to the audience that delegated it | Accepted |
+| [0062](0062-a-home-moves-as-an-export.md) | A home moves as an export: secrets sealed under a passphrase, sessions left behind | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

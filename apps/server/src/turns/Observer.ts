@@ -6,6 +6,7 @@ import {
   Engine,
   type EngineDown,
   type EngineIncompatible,
+  EngineInstanceId,
   type EngineRequest,
   EventCursor,
   type IdempotencyKey,
@@ -251,7 +252,11 @@ export class Observer extends Context.Service<
      * event that makes a session ready nudges the dispatcher.
      */
     readonly ready: (sessionId: SessionRowId) => Effect.Effect<boolean>;
-    /** Follows every session that is live or still has work to settle. */
+    /**
+     * Follows every session that is live or still has work to settle, once
+     * the engine that is ready is recorded as the one they belong to: when
+     * they belonged to another, every session it had is lost first.
+     */
     readonly watchAll: Effect.Effect<void>;
     /**
      * Returns once every event the engine had recorded for the session when it
@@ -1840,7 +1845,74 @@ export const layer = Layer.effect(
       Effect.forkIn(scope),
     );
 
+    const recordedEngine = SqlSchema.findOneOption({
+      Request: Schema.Void,
+      Result: Schema.Struct({ instance_id: Schema.NullOr(EngineInstanceId) }),
+      execute: () => sql`SELECT instance_id FROM engine_instance WHERE id = 1`,
+    });
+
+    /**
+     * Every session the engine was given, or is still to open, and has not
+     * been taken out of use. One still to open is the engine's too: it opens
+     * under a key of its row's (`EngineSessions`), which the engine that had
+     * it may have opened already, so only a new row gets a fresh one.
+     */
+    const sessionsInEngine = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({ id: SessionRowId, bot_id: BotId }),
+      execute: () => sql`
+        SELECT id, bot_id FROM sessions
+        WHERE lost_at IS NULL AND engine_retired_at IS NULL
+        ORDER BY rowid
+      `,
+    });
+
+    /**
+     * Records the engine that is ready now as the one the sessions belong to.
+     * When they belonged to another one (`engine_instance`), that engine had
+     * every session and every project: in one transaction each session it had
+     * is lost, as one the engine answers it does not have, and every bot's
+     * project is forgotten, so the rotator opens each bot a new one there.
+     */
+    const adoptEngine = Effect.fn("Observer.adoptEngine")(function* () {
+      const current = yield* engine.instance;
+      const lost = yield* transaction(
+        Effect.gen(function* () {
+          const recorded = yield* recordedEngine(undefined).pipe(Effect.orDie);
+          if (Option.isSome(recorded) && recorded.value.instance_id === current) return [];
+          yield* sql`
+            INSERT INTO engine_instance (id, instance_id, recorded_at)
+            VALUES (1, ${current}, ${timeText(yield* DateTime.now)})
+            ON CONFLICT (id) DO UPDATE
+            SET instance_id = excluded.instance_id, recorded_at = excluded.recorded_at
+          `;
+          // None recorded yet: a database from before the record, whose
+          // sessions are this engine's.
+          if (Option.isNone(recorded)) return [];
+          const sessions = yield* sessionsInEngine(undefined).pipe(Effect.orDie);
+          for (const { id } of sessions) yield* sessionLost(id);
+          for (const botId of new Set(sessions.map(({ bot_id }) => bot_id))) {
+            yield* changes.touch({ _tag: "bot", botId });
+          }
+          yield* sql`UPDATE bots SET engine_project_id = NULL`;
+          return sessions;
+        }),
+      );
+      if (lost.length > 0) {
+        yield* Effect.logWarning(
+          "The engine is not the one the sessions were opened on: every session it had is lost",
+        ).pipe(Effect.annotateLogs({ sessions: lost.length }));
+      }
+      for (const { id } of lost) yield* close(id);
+    });
+
     const watchAll = Effect.gen(function* () {
+      // Not ready any more: the next time it is, this runs again.
+      const adopted = yield* adoptEngine().pipe(
+        Effect.as(true),
+        Effect.catchTag("EngineUnavailable", () => Effect.succeed(false)),
+      );
+      if (!adopted) return;
       for (const { id } of yield* sessionsToWatch(undefined).pipe(Effect.orDie)) yield* watch(id);
     }).pipe(Effect.withSpan("Observer.watchAll"));
 

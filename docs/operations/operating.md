@@ -265,7 +265,7 @@ systemctl --user start j3-bots
 
 The archive leaves out the secrets' key file, which `cp` copies on its own, and any temporary file beside it a write that was cut short left, which can hold the key. Keep that copy apart from the archive, on another disk or in a password manager: either one alone opens no secret.
 
-`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the secrets (sealed, and of no use without the key file you keep apart), the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, and `engine/tools` the browser it downloaded, which it downloads again. `engine/userdata/server-browser` is that browser's profile: it holds live session cookies for every site you signed in to there, which let whoever has them act on those sites as you, so the command above leaves it out, and after a restore you sign in again. Moving bots to another server with `j3-bots export` and `import` ([#154](https://github.com/JPSAUD501/j3-bots/issues/154), planned) leaves out the engine's directory, and the profile with it. The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
+`umask 077` creates the archive readable by you alone from the start. Keep it where only you can read it: it holds the bots' files, the secrets (sealed, and of no use without the key file you keep apart), the device tokens' hashes, the provider key in `engine/userdata/secrets`, and `engine/j3/credential.json`, the credential the server signs in to its engine with, which lets whoever has it start agents with full access. `engine/j3/runtime` is the downloaded engine, and `engine/tools` the browser it downloaded, which it downloads again. `engine/userdata/server-browser` is that browser's profile: it holds live session cookies for every site you signed in to there, which let whoever has them act on those sites as you, so the command above leaves it out, and after a restore you sign in again. Moving the bots to another server with `j3-bots export` and `import` leaves out the engine's directory, and the profile with it ([below](#move-to-another-server)). The archive includes `backups/`, the snapshots `j3-bots update` took; add `--exclude=./backups` to leave them out.
 
 ## Restore
 
@@ -278,7 +278,57 @@ systemctl --user start j3-bots
 j3-bots doctor
 ```
 
-Restore onto the version the backup was taken with, or a newer one. The secrets come back as they were when the backup was taken; without the key file they stay unreadable until you put it back. Once `doctor` shows the server and the engine ready and your conversations are back, delete `~/.j3-bots.before-restore`.
+Restore onto the version the backup was taken with, or a newer one, into a data directory at the same path: the database names each bot's workspace by it. To move the bots to another path or another server, [export and import them](#move-to-another-server). The secrets come back as they were when the backup was taken; without the key file they stay unreadable until you put it back. Once `doctor` shows the server and the engine ready and your conversations are back, delete `~/.j3-bots.before-restore`.
+
+## Move to another server
+
+To run the bots somewhere else, export them where they are and import them there. An export comes from a server or from the desktop app, on Linux or Windows, and goes to a server you install ([Install](install.md)), at any path. A backup restores only at the same path. The desktop app has no import.
+
+Where the bots are now:
+
+```sh
+systemctl --user stop j3-bots
+j3-bots export --output ~/j3-bots-export.tar.gz
+```
+
+The bots the desktop app runs on this computer have no service and no `j3-bots` command ([The server the desktop app runs](#the-server-the-desktop-app-runs)). Quit the app from its tray, so their server stops, then run the server it carries on their data home. On Linux, with `<version>` the newest folder in `server-runtime`:
+
+```sh
+cd ~/.config/"J3 Bots"/server-runtime/<version>
+J3_HOME=~/.config/"J3 Bots"/server/home node/bin/node server/bin.mjs export --output ~/j3-bots-export.tar.gz
+```
+
+On Windows, in PowerShell, from `current`, the copy of the release that runs:
+
+```powershell
+cd "$env:APPDATA\J3 Bots\server-runtime\current"
+$env:J3_HOME = "$env:APPDATA\J3 Bots\server\home"
+.\node\node.exe server\bin.mjs export --output "$HOME\j3-bots-export.tar.gz"
+```
+
+The export asks for a passphrase for the secrets, twice, at least eight characters. **It cannot be recovered**: without it, the secrets in the export are lost. Without `--output`, it writes `j3-bots-export-<date>.tar.gz` in the folder you are in; it never writes over a file. It tells you how many bots and secrets it holds, and what it left out: links in the bots' folders, files whose name has a `\` in it (each named, to rename and export again), attachments already missing, and secrets it could not read, with the reason.
+
+Keep the file private, as you would a backup: it holds every conversation, memory and file. Copy it to the other server over a private channel, such as `scp`. There, install J3 Bots ([Install](install.md)), then:
+
+```sh
+systemctl --user stop j3-bots
+j3-bots import ~/j3-bots-export.tar.gz
+systemctl --user start j3-bots
+```
+
+The import checks every file against what the export recorded before it changes anything, asks for the passphrase, and puts the bots in place. On its first start, the server opens a new session for each bot. Each bot's conversation, memory, skills and files are as they were.
+
+- **What moves.** The bots, their conversations, memory, skills and files, the shared memory and skills, the attachments, the routines, the rooms, sections and settings, and the secrets and connector secrets.
+- **What stays behind.** The configuration (`config.json`), the engine's directory, the provider connection and sign-ins, J3 Bots' own copies of the harnesses, the update snapshots, the paired devices and the webhooks' secrets. The new server keeps its own configuration and sign-ins.
+- **After the import.**
+  - Pair every device again with `j3-bots pair`.
+  - If the new server has no provider, run `j3-bots provider login` or `j3-bots provider connect`.
+  - Each webhook has a new address, on the new server and with a new secret. Give it to whatever calls it: the old one stops working.
+- **A server that already has something the import would delete** refuses it: bots, secrets, files kept from a deleted bot, shared memory, attachments, shared skills of your own, or a link you put in place of one of those folders. `j3-bots import <file> --replace` deletes them and puts the export's in their place.
+- **A newer release's export** is refused: update J3 Bots on the new server first. An older release's export is updated as it is imported.
+- **If an import stops halfway**, the server refuses to start until you run the same `j3-bots import` with the same file again, which finishes it. Another file is imported in its place only with `--replace`.
+- **For a script,** `--passphrase-stdin` reads the passphrase from the first line of standard input on both commands, instead of asking at the terminal.
+- **The server you exported from still has everything.** If you start it again, the bots run in two places, each with its own copy of what they remember. Once the new server works, delete the old data directory (`j3-bots uninstall --delete-data`), or keep it stopped.
 
 ## Remove
 

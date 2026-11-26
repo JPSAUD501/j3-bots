@@ -29,6 +29,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 | Blob | File bytes, stored once per digest: size and where they are stored |
 | Attachment | A file the operator sent or a bot produced: a name and a media type over a blob |
 | Routine | Bot, name, instruction, trigger, enabled, next run, run count, webhook secret, and the runs it missed since its last run started (how many, the first and the last). Its runs: status, when a scheduled run was due, start and end, the wake of its latest attempt, how many attempts started and when the next may start, trigger data, the webhook request's idempotency key, and why its last attempt failed when J3 Bots can name it |
+| Engine instance | The engine the sessions and the bots' projects belong to, recorded at each time the engine becomes ready, or none: an engine this home does not have, as after an import ([Another engine](#another-engine)). One row |
 | Device | A paired client: its token hash, when it was revoked |
 | Push registration | Where to push to one device: the push service, the token, the platform, the language to write in, when it was registered, its generation (new at each registration, also one made again with the same token) and how many sends failed since. One per device at most, deleted with the device's revocation |
 | Push service | When the next send to the push service may begin, after a request it did not answer. One row |
@@ -303,7 +304,7 @@ In the server these are typed records: every token, secret and value is a redact
 
 **What carries a value.** Values travel as redacted types from the client to the server and back, in the contract and in the server, and are decoded as redacted types at the RPC boundary. A client gets a value only from `secrets.reveal` and `secrets.totpPreview`; a bot, never. No value reaches an entry, a change, a command receipt, a log line, an error or a tool result. None of the secrets' requests takes a command id, so no receipt keeps one: `secrets.add` is made safe to repeat by the id it carries instead. A test drives the secrets' requests over the socket and checks that no value appears in any log, error or answer except the one that reveals it.
 
-**Backups.** No update snapshot copies the secrets or their key file, and no rollback puts an older one back ([decision 0016](../decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md)). A rollback to a release that predates them leaves the files in place, and a later update finds them as they were. A release that finds them `newer` leaves them alone. The secrets' file is useless without the key file, and the key file opens it for whoever has both: a backup that keeps them apart keeps them safe ([Operating](../operations/operating.md#secrets)). Exporting them re-encrypted under a password of the export's own is planned with the operator's export ([#154](https://github.com/JPSAUD501/j3-bots/issues/154)).
+**Backups.** No update snapshot copies the secrets or their key file, and no rollback puts an older one back ([decision 0016](../decisions/0016-an-update-keeps-a-snapshot-to-roll-back-to.md)). A rollback to a release that predates them leaves the files in place, and a later update finds them as they were. A release that finds them `newer` leaves them alone. The secrets' file is useless without the key file, and the key file opens it for whoever has both: a backup that keeps them apart keeps them safe ([Operating](../operations/operating.md#secrets)). An export carries them to another server sealed again under a passphrase of the export's own, and never the key file ([Moving to another server](#moving-to-another-server)).
 
 What the key file means for a bot with a shell is in [Security: secrets](security.md#the-operators-secrets).
 
@@ -410,6 +411,16 @@ The rotator aligns such a session on its next pass, which the change nudges and 
 The digest is the delivered messages of the bot's conversation, the operator's and the bot's own, newest kept: at most the last 60 such messages, each cut to 1,000 characters, 6,000 characters in all with the names of their files, oldest first. Each message is kept apart with its author, so the envelope renders it as its own block ([Prompts](../prompts/architecture.md)). Notices and messages that never reached the bot neither appear nor count toward the 60. Memory, not the digest, is what a bot relies on across rotations ([decision 0003](../decisions/0003-conversation-is-not-session.md)).
 
 **A lost session.** When the engine answers that it has no such session (`SessionNotFound`), to a send, a Stop round, a resume, an answer or the event stream, the session is recorded **lost**, once. The event stream ends so when the engine deletes the session's thread or archives it, from its console say: the archive cancels the turns still queued or preparing there, and the stream ends after those cancels, but it gives a turn already starting or running no end of its own ([Engine: protocol facts](engine.md#protocol-facts-the-adapter-depends-on)), so the archive is the end of all of them. A session J3 Bots had retired is recorded archived instead, as when the rotator's own archive ends its stream. Everything open in a lost session is settled in the transaction that records the loss, since nothing runs there any more: its Stop targets settle, each round keeping what the engine answered for it, a refusal included; a dispatch the engine had accepted, also one it queued, fails as `unresolved` and keeps the engine's first answer, its wakes failed and retryable, or cancelled when a Stop covers them ([What a Stop covers](#stop)); a delivered one, every open turn and its work fold end interrupted, each where the turn last showed activity, since the session may have been gone long before the loss was known, as across an outage; its open requests close as expired. A dispatch whose answer is not known is due at once and the sender settles it in the gate, as `unresolved` when it was sent. Nothing is planned into the session or watched in it again, and it counts toward no budget. Its loss only holds back its own work: every other bot goes on. A lost main session shows a `session-lost` notice in the bot's conversation, unless the server had already retired it, so its disappearing was intended; when the loss cut short a new bot's opening turn that no Stop covers, a retryable `turn-failed` notice follows it ([1. A wake is recorded](#1-a-wake-is-recorded-before-anything-happens)); the bot's wakes wait until it has a new main session, which the rotator opens at once, with the same digest a rotation brings ([Rotation](#sessions)).
+
+### Another engine
+
+Projects, sessions and the keys they were opened under are one engine's. A fresh data directory starts another engine, which has none of them, as when the engine's directory is deleted or a home is moved with `j3-bots import` ([Moving to another server](#moving-to-another-server)). So the server records the engine its sessions belong to (`engine_instance`), by the id the adapter answers for the engine that is ready (`instance`, [Engine](engine.md#the-adapters-interface)), and compares it each time the engine becomes ready, before it follows any session or sends anything:
+
+- the same engine: nothing changes;
+- none recorded, as in a database from before the record: the sessions are taken to be this engine's, and it is recorded;
+- another engine, or the record says the sessions belong to an engine this home does not have, as an import writes: in one transaction every session the engine was given, or is still to open, and has not taken out of use is lost (**A lost session**, above), since a session still to open is opened under its row's key, which the engine before may have opened already; each bot told once, and every bot's project is forgotten, then the new engine is recorded. The rotator opens each bot a new main session in a new project, with the digest a loss brings, and nothing is sent to a session of the engine before.
+
+Without the record, the server would learn of each loss only when the new engine answered a read of the session, and never for one whose stream it still followed on the engine before.
 
 ## Bot tools
 
@@ -1046,6 +1057,64 @@ When the engine finds neither Claude Code nor Codex where the server runs, the s
 A failure names its reason (`unreachable`, `checksum`, `check`, `storage`, `engine`) in `last`, and the provider offers to try again. A cancel removes what was downloaded; a stop of the server keeps a partial download, which the next install of that version resumes.
 
 **Updates by themselves.** For each harness with J3 Bots' own copy, the server reads the maker's newest version a minute after it starts, then about every six hours, up to half an hour later so the checks spread out, and an hour after a check that failed. With `autoUpdateHarnesses` on, as it is unless the operator turns it off in Settings, a newer version is installed as above, and so waits for the provider's bots like any update. Turning it on checks at once. A harness on the operator's own `PATH`, or one J3 Bots has no build of for the server, is never checked.
+
+## Moving to another server
+
+`j3-bots export` writes a home's bots to one file, and `j3-bots import` puts them in another home, on this machine or another, on Linux or Windows ([decision 0062](../decisions/0062-a-home-moves-as-an-export.md); the commands are in [Operating](../operations/operating.md#move-to-another-server)). Both run with no server on the home. Each holds `server.lock` while it works, so neither starts while a server or an update holds it, and no server starts while either runs.
+
+**The archive.** It is a gzipped tar that the server writes and reads in its own code, so it needs no system `tar`. Its first file is `manifest.json`, which holds:
+
+- the format (`j3-bots-export-1`);
+- the release that wrote it and that release's protocol;
+- the database's last migration, when it was written, and how many bots it holds;
+- what it holds of the secrets;
+- every file after it, in order, with its size and SHA-256.
+
+Then come these files, each named by its path in the home:
+
+- `j3.sqlite`: a copy of the database as it stood (`VACUUM INTO`), with no paired device, push registration or push delivery, since every device pairs with the new server, no webhook secret, since each is a credential, and no command receipt, since each answers a device's retry on this server, and a webhook routine's holds its address with the secret.
+- `vault/vault.sqlite`: the secrets, sealed again (below), when there are any.
+- `state/shipped-skills.json`.
+- Each bot's `memory/`, `skills/` and `files/`, and the shared `memory/` and `skills/`. These hold regular files only, each with whether its owner may run it, as a skill's script. A link inside them is left out, and so is a folder that is a link or leads out of the home; the export counts each one it leaves out. A file whose name has a `\` in it, which no import takes, is left out too, and the export names it.
+- Each attachment the database names. One whose bytes are missing is left out and counted.
+
+The archive does not hold:
+
+- the configuration;
+- the engine's folder: its database, its credential, the provider key;
+- the providers' homes and their sign-ins;
+- J3 Bots' own copies of the harnesses;
+- the update snapshots;
+- the secrets' key file.
+
+What the server renders into a workspace, its instructions and `.j3/`, is rendered again on the new server. The import gives each webhook routine a new secret, so its address is new: the new server's origin and the new secret.
+
+**Writing the file.** The export first takes the file's name, as an empty file made new, mode 0600: something already at that path is refused and left as it is, and of two exports to one name the second is refused before it asks anything. The archive is written in a folder beside it, made private first (mode 0700, or on Windows an access list for this user, SYSTEM and Administrators alone, which the file takes), and renamed over the name once whole, so it is never half an archive, nor one another account may open. A file that changes between being measured and being written fails the export, and nothing is left behind.
+
+**The secrets.** The key file never leaves its home.
+
+- **The export.** The export copies the secrets' database. In the copy it opens every value under the home's key and seals it again under a key that scrypt derives from a passphrase of the export's own: N 2^17, r 8 and p 1 (128 MiB), with a fresh 16-byte salt. It seals with AES-256-GCM, with the record id and field name as associated data, as the secrets are sealed at home. The key check is sealed again too, so the import tells a wrong passphrase. The manifest records the secrets' last migration and the scrypt settings.
+- **The passphrase.** It is typed twice and has at least eight characters. The command says it cannot be recovered: without it, the secrets in the export are lost. A program gives it as the first line of stdin (`--passphrase-stdin`), which is read up to its end only.
+- **Secrets this release cannot read** are left out, and the export says why. That covers an old vault waiting for its password, a key file that is missing or holds another key, and secrets a newer release changed.
+- **The import.** The import asks for the passphrase, three times at most at a terminal. In one transaction of the copy it seals every value again under the key of the home it lands in. When that home has no key yet, a new one goes into place with the secrets.
+- **Redaction.** No value is in the archive or the manifest unsealed, or in a log or an error: those name a record and a field only. A test reads every file of an export, and every log line of the export, the import and the first start after it, for a value.
+
+**The import.**
+
+1. **The manifest is read first.** An archive in a format this release does not read is refused. So is one a newer release wrote, by its release or by a migration of its database or secrets this release does not know: this server is updated first. An older one is migrated. Each name must be one of the files above, listed once, and a name this system can keep: on Windows, no reserved name or character, and on Windows and macOS, no two names that differ only in case. The archive's reader takes regular files only, with one extended header at most before each, of 64 KiB at most.
+2. **The home must hold nothing the import would delete.** A home that holds a bot, a secret, or a file of the bots' folders, the shared memory or the attachments (as a deleted bot's files that were kept) is refused unless the import is given `--replace`, which deletes them. So is one whose shared skills hold anything but this release's own copies of the skills it ships, and one where a link or a file stands in for the bots' folder, the shared memory or skills, or the attachments, whatever it leads to now. The home's `state/`, `vault/` and `shared/` must be folders, not links, so nothing the import writes or deletes is outside the home.
+3. **It unpacks into the home.** It needs free room for every file and 256 MiB more. The archive is unpacked into `state/import/`, each file written whole, flushed to the disk and checked against the manifest's size and SHA-256, then each folder made for them flushed. A file the manifest does not list, out of its order or of another size, is refused.
+4. **It readies the copy.** The secrets are sealed again. The database is migrated and checked: a bot whose id is not a plain folder name, or an attachment kept anywhere but under its digest in `attachments/`, refuses the archive, since each becomes a path in the home. Then it is pointed at this home, in one transaction:
+   - each bot's workspace path is set here;
+   - its real path (`workspace_root`) and its engine project are cleared, and set again when it is provisioned;
+   - each webhook routine gets a new secret;
+   - no paired device remains;
+   - the engine instance is recorded as one this home does not have.
+5. **It puts the copy in place.** It writes the mark `state/import-underway`, which names the archive by its manifest's SHA-256, and puts each entry in place of the home's: the database (with its log files removed), the secrets' database, the key when it is new, `state/shipped-skills.json`, `bots/`, the shared `memory/` and `skills/`, and `attachments/`. It flushes each folder it changed, the home's last, then removes the mark.
+   - A failure before the mark leaves the home as it was.
+   - While the mark is there, the server refuses to start and `export` refuses the home. The import of the same archive, run again, finishes it, with or without `--replace`. Another archive goes in its place only with `--replace`.
+
+The home it lands in keeps its configuration, its engine's folder and its providers' sign-ins. On the first start the server finds that its engine is not the one the sessions belong to ([Another engine](#another-engine)). Every session is lost, one still to open included, and each bot is told once. Each bot then opens a new session in a new project, with its conversation, memory and files as they were.
 
 ## Configuration
 

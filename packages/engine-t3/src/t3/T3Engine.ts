@@ -86,6 +86,7 @@ import {
 import { type BackgroundWork, isBackgroundWorkPending, type SessionEvent } from "../events.ts";
 import {
   EngineAttachmentId,
+  EngineInstanceId,
   EngineProjectId,
   EventCursor,
   IdempotencyKey,
@@ -704,6 +705,17 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     }
     if (current._tag !== "ready") return yield* new EngineUnavailable();
   });
+
+  /**
+   * The engine that is ready, by the environment id its descriptor answers
+   * with: a fresh data directory comes up with another one (**Verified**,
+   * docs/architecture/engine.md, Isolation).
+   */
+  const instance = Effect.gen(function* () {
+    const current = yield* SubscriptionRef.get(state);
+    if (current._tag !== "ready") return yield* new EngineUnavailable();
+    return EngineInstanceId.make(current.environmentId);
+  }).pipe(Effect.withSpan("Engine.instance"));
 
   /**
    * After a command has gone out, nothing that follows proves it was not
@@ -2577,6 +2589,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       Stream.map((current) => (current._tag === "ready" ? current.start : null)),
       Stream.changes,
     ),
+    instance,
     connectProviders,
     connectedEndpoint: connectedNow,
     recheckProvider,

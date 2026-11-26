@@ -18,6 +18,7 @@ import {
   takeSnapshot,
   unmarkRestoring,
 } from "../install/snapshot.ts";
+import { importMark } from "../transfer/importMark.ts";
 import * as Home from "./Home.ts";
 import { openToOthers, REPAIR } from "./testPrivacy.ts";
 
@@ -265,5 +266,17 @@ it.layer(NodeServices.layer)("home", (it) => {
         yield* restoreSnapshot(config.home, toAnother);
         assert.deepInclude(failure(yield* reserved), { _tag: "RollbackUnfinished" });
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses a home an import stopped in while it put an export in place", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* freshHome;
+      yield* fs.makeDirectory(path.join(config.home, "state"));
+      yield* fs.writeFileString(importMark(path, config.home), "j3-bots import underway\n");
+      const reserved = yield* Effect.scoped(reserveIn(config)).pipe(Effect.exit);
+      assert.deepInclude(failure(reserved), { _tag: "ImportUnfinished" });
+    }).pipe(Effect.scoped),
   );
 });

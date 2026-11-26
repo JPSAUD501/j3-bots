@@ -36,7 +36,8 @@ import {
   secretsFolder,
 } from "../testing/secrets.ts";
 import { referencesIn } from "./references.ts";
-import { KEY_FILE, Secrets } from "./Secrets.ts";
+import { Secrets } from "./Secrets.ts";
+import { KEY_FILE } from "./store.ts";
 
 const WRONG = Redacted.make("incorrect horse battery");
 const DEVICE = DeviceId.make("device-laptop");

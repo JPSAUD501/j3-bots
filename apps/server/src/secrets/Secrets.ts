@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
-import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import {
   accessAllows,
   BotId,
@@ -46,7 +44,6 @@ import { ServerConfig } from "../config.ts";
 import { HOME_ENTRIES } from "../home/entries.ts";
 import { Layout } from "../Layout.ts";
 import { json, Time, timeText } from "../persistence/columns.ts";
-import { migrate } from "../persistence/Migrations.ts";
 import { transactional } from "../persistence/transaction.ts";
 import {
   KEY_BYTES,
@@ -64,36 +61,26 @@ import {
   connectorRecordId,
   NamedSecret,
 } from "./ConnectorSecret.ts";
-import Migration0001 from "./migrations/0001_initial.ts";
-import Migration0002 from "./migrations/0002_secrets.ts";
 import { accessCovers, nameFromLabel, referenceText, type SecretReference } from "./references.ts";
+import {
+  base64,
+  bytesOf,
+  KEY_FILE,
+  keyFileText,
+  keyOfText,
+  opensKeyCheck,
+  openSecretsFile,
+  SECRETS_FILE,
+  type SecretsFile,
+  sealKeyCheck,
+} from "./store.ts";
 import { parseTotpSetup, TotpConfig, totpAt } from "./totp.ts";
-
-/** The secrets' file, inside their own folder of the home. */
-export const SECRETS_FILE = "vault.sqlite";
-
-/** The key file beside it: the data key every value is sealed under. */
-export const KEY_FILE = "key";
-
-/** The secrets' migrations, forward only, like the database's (`persistence/Migrations.ts`). */
-const migrations = SqliteMigrator.fromRecord({
-  "1_initial": Migration0001,
-  "2_secrets": Migration0002,
-});
-
-/** The first line of the key file, which says what the second holds. */
-const KEY_FILE_HEADER = "j3-bots secrets key v1";
 
 /**
  * How seldom a secret's last use is written again for the same bot and the
  * same place: a connector may send it with every request.
  */
 const USE_WRITTEN_EVERY = Duration.minutes(1);
-
-/** The record and field the key check is sealed for: no record has that id. */
-const KEY_CHECK_RECORD = "key-check";
-const KEY_CHECK_FIELD = "key";
-const KEY_CHECK_TEXT = "j3-bots secrets";
 
 const KeyringRow = Schema.Struct({
   kdf_n: Schema.Int,
@@ -163,8 +150,6 @@ const CONNECTOR_FIELDS = [
   "formValues",
 ] as const;
 
-const base64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
-const bytesOf = (text: string) => Buffer.from(text, "base64");
 const utf8 = (text: string) => Buffer.from(text, "utf8");
 
 /**
@@ -337,56 +322,6 @@ export class Secrets extends Context.Service<
   }
 >()("@j3-bots/server/secrets/Secrets") {}
 
-/** The secrets' database, open and migrated, or left alone because a newer release wrote it. */
-type SecretsFile =
-  | { readonly _tag: "open"; readonly sql: SqlClient.SqlClient }
-  | { readonly _tag: "newer" };
-
-/**
- * Opens the secrets' database at `location`, migrated. One that records a
- * migration this release does not know is left as it is: the release that
- * wrote it can still read it, so it is refused here without stopping the
- * server.
- */
-const openSecretsFile = Effect.fn("Secrets.open")(function* (location: string) {
-  const sql = yield* SqliteClient.make({ filename: location });
-  const provided = Effect.provideService(SqlClient.SqlClient, sql);
-  yield* sql`PRAGMA foreign_keys = ON`;
-  // What is deleted is overwritten, not only unlinked: a deleted value, or an
-  // old vault's keyring, never stays readable in the file's free space.
-  yield* sql`PRAGMA secure_delete = ON`;
-  const [table] = yield* sql`
-    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
-  `;
-  if (table !== undefined) {
-    const known = new Set((yield* migrations).map(([id]) => id));
-    const recorded = yield* sql<{ readonly migration_id: number }>`
-      SELECT migration_id FROM effect_sql_migrations
-    `;
-    if (recorded.some(({ migration_id }) => !known.has(migration_id))) {
-      yield* Effect.logWarning(
-        "A newer release of J3 Bots changed the secrets, which this one cannot read; they stay as they are",
-      );
-      return { _tag: "newer" } as const satisfies SecretsFile;
-    }
-  }
-  yield* provided(migrate(migrations));
-  return { _tag: "open", sql } as const satisfies SecretsFile;
-});
-
-/** The key file's text for `key`. */
-const keyFileText = (key: Uint8Array) => `${KEY_FILE_HEADER}\n${base64(key)}\n`;
-
-/** The key a key file's text holds; none when it is not one. */
-const keyOfText = (text: string): Option.Option<Buffer> => {
-  const [header, encoded] = text.split("\n");
-  if (header !== KEY_FILE_HEADER || encoded === undefined) return Option.none();
-  const key = bytesOf(encoded);
-  if (key.length === KEY_BYTES) return Option.some(key);
-  key.fill(0);
-  return Option.none();
-};
-
 export const layer = Layer.effect(
   Secrets,
   Effect.gen(function* () {
@@ -454,35 +389,9 @@ export const layer = Layer.effect(
     const hasRecords = (sql: SqlClient.SqlClient) =>
       Effect.map(sql`SELECT 1 FROM records LIMIT 1`.pipe(Effect.orDie), (rows) => rows.length > 0);
 
-    /** Whether `key` is the one the key check was sealed under. */
-    const opensCheck = (key: Uint8Array, check: typeof SealedRow.Type) =>
-      Option.match(
-        openField(key, KEY_CHECK_RECORD, KEY_CHECK_FIELD, {
-          nonce: bytesOf(check.nonce),
-          sealed: bytesOf(check.sealed),
-        }),
-        {
-          onNone: () => false,
-          onSome: (plain) => {
-            const right = plain.toString("utf8") === KEY_CHECK_TEXT;
-            plain.fill(0);
-            return right;
-          },
-        },
-      );
-
     /** The key check for `key`, sealed. */
     const keyCheckRow = (key: Uint8Array) =>
-      Effect.map(randomBuffer(NONCE_BYTES), (nonce) => {
-        const value = sealField(
-          key,
-          KEY_CHECK_RECORD,
-          KEY_CHECK_FIELD,
-          utf8(KEY_CHECK_TEXT),
-          nonce,
-        );
-        return { nonce: base64(value.nonce), sealed: base64(value.sealed) };
-      });
+      Effect.map(randomBuffer(NONCE_BYTES), (nonce) => sealKeyCheck(key, nonce));
 
     const writeKeyCheck = Effect.fn("Secrets.writeKeyCheck")(function* (
       sql: SqlClient.SqlClient,
@@ -517,7 +426,7 @@ export const layer = Layer.effect(
       const check = yield* keyCheckOf(sql);
       const stored = yield* readKeyFile;
       if (Option.isSome(check)) {
-        if (Option.isSome(stored) && opensCheck(stored.value, check.value)) {
+        if (Option.isSome(stored) && opensKeyCheck(stored.value, check.value)) {
           return { state: "ready", key: stored.value } as const;
         }
         if (Option.isSome(stored)) stored.value.fill(0);

@@ -19,7 +19,7 @@ import {
   wrapDataKey,
 } from "../secrets/crypto.ts";
 import Migration0001 from "../secrets/migrations/0001_initial.ts";
-import { KEY_FILE, SECRETS_FILE } from "../secrets/Secrets.ts";
+import { KEY_FILE, SECRETS_FILE } from "../secrets/store.ts";
 
 /** The master password of the vault `oldVault` writes. */
 export const OLD_VAULT_PASSWORD = Redacted.make("correct horse battery");

@@ -64,6 +64,7 @@ import type {
 import {
   DelegatedResultId,
   EngineAttachmentId,
+  EngineInstanceId,
   EngineProjectId,
   EventCursor,
   HostSpeechId,
@@ -145,6 +146,13 @@ export class TestEngineControl extends Context.Service<
      * reach that start meanwhile.
      */
     readonly holdNextStartNotice: Effect.Effect<{ readonly release: Effect.Effect<void> }>;
+    /**
+     * The engine goes down and comes back on an empty data directory: another
+     * engine (`instance`), with none of the projects, sessions, keys or staged
+     * files of the one before. The streams opened on the one before get
+     * nothing more.
+     */
+    readonly startFresh: Effect.Effect<void>;
     /** The base URL of the provider connection last set; never its key. */
     readonly providerConnection: Effect.Effect<Option.Option<string>>;
     /** The providers `recheckProvider` was asked to check again, in order. */
@@ -691,6 +699,7 @@ const make = Effect.gen(function* () {
   let startNoticeHeld: "next" | "held" | null = null;
   /** Tells `starts` where the engine stands now. */
   const noticeStart = Effect.suspend(() => SubscriptionRef.set(started, reachable ? start : null));
+  let instances = 1;
   /** The base URL of the provider connection, once one is set. */
   let connection = Option.none<string>();
   const rechecked: Array<ProviderId> = [];
@@ -1417,6 +1426,12 @@ const make = Effect.gen(function* () {
     status: SubscriptionRef.changes(status),
     starts: SubscriptionRef.changes(started).pipe(Stream.changes),
 
+    instance: Effect.suspend(() =>
+      reachable
+        ? Effect.succeed(EngineInstanceId.make(`engine-${instances}`))
+        : Effect.fail(new EngineUnavailable()),
+    ),
+
     connectProviders: (input) =>
       Effect.sync(() => {
         connection = Option.some(input.baseUrl);
@@ -1511,7 +1526,9 @@ const make = Effect.gen(function* () {
             keys.set(key, { command: "openSession", sessionId: null });
             return yield* new OpenRejected({ key });
           }
-          const sessionId = SessionId.make(newId("session"));
+          // Named after its key, as the adapter names the engine's thread
+          // (`threadIdFor`): no other engine, a fresh one included, gives it.
+          const sessionId = SessionId.make(`session-${key}`);
           keys.set(key, { command: "openSession", sessionId });
           sessions.set(sessionId, {
             id: sessionId,
@@ -1888,6 +1905,22 @@ const make = Effect.gen(function* () {
       ),
   });
 
+  const setReachable = (value: boolean) =>
+    Effect.gen(function* () {
+      const restarted = value && !reachable;
+      if (restarted) start++;
+      reachable = value;
+      if (restarted && startNoticeHeld === "next") {
+        startNoticeHeld = "held";
+      } else if (startNoticeHeld !== "held") {
+        yield* noticeStart;
+      }
+      yield* SubscriptionRef.update(status, (current): EngineStatus => ({
+        ...current,
+        state: value ? { _tag: "ready" } : { _tag: "unavailable", reason: "down" },
+      }));
+    });
+
   const control = TestEngineControl.of({
     providerConnection: Effect.sync(() => connection),
     recheckedProviders: Effect.sync(() => [...rechecked]),
@@ -1896,21 +1929,18 @@ const make = Effect.gen(function* () {
     updatedProviders: Effect.sync(() => [...updated]),
     harnessExecutables: Effect.sync(() => [...executables]),
 
-    setReachable: (value) =>
-      Effect.gen(function* () {
-        const restarted = value && !reachable;
-        if (restarted) start++;
-        reachable = value;
-        if (restarted && startNoticeHeld === "next") {
-          startNoticeHeld = "held";
-        } else if (startNoticeHeld !== "held") {
-          yield* noticeStart;
-        }
-        yield* SubscriptionRef.update(status, (current): EngineStatus => ({
-          ...current,
-          state: value ? { _tag: "ready" } : { _tag: "unavailable", reason: "down" },
-        }));
-      }),
+    setReachable,
+
+    startFresh: Effect.gen(function* () {
+      yield* setReachable(false);
+      instances++;
+      projects.clear();
+      browserProjects.clear();
+      sessions.clear();
+      keys.clear();
+      staged.clear();
+      yield* setReachable(true);
+    }),
 
     holdNextStartNotice: Effect.sync(() => {
       startNoticeHeld = "next";
