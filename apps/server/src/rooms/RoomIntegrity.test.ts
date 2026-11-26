@@ -521,6 +521,48 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "holds a room's Stop for work a room turn's end did not tell of while a turn no event shows starts",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const stops = yield* Stops;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({
+        sessionId: hal.session,
+        turnId: watching,
+        announced: false,
+      });
+      const lost = yield* control.dropNextMarker;
+      yield* finish(hal, watching, members);
+      yield* lost.requested;
+
+      // A harness's wake starts a turn no event shows yet: while it may run,
+      // the engine's report lists no background work at all.
+      const startup = yield* control.holdNextStartup(hal.session);
+      yield* control.startEngineTurn(hal.session);
+      yield* (yield* Rooms).stop({ commandId: command(), roomId: room.id });
+      yield* TestClock.adjust(SYNC_DEADLINE);
+      yield* stops.runPending;
+      assert.strictEqual(yield* issuedRounds, 0);
+      assert.strictEqual(yield* unsettledTargets, 1);
+
+      // The turn shows and ends: the report then lists the monitor, and the
+      // room's Stop ends it.
+      yield* startup.release;
+      const woken = yield* nextTurn(hal.bot.id, watching);
+      assert.isTrue(yield* backgroundRuns(hal));
+      yield* finish(hal, woken, members);
+      yield* until(Effect.map(backgroundRuns(hal), (runs) => !runs));
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 /** Whether the session's background check is due (`Stops`). */
 const checkDue = (one: Member) =>
   Effect.gen(function* () {

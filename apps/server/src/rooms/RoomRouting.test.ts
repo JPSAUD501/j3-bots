@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import {
   type Attachment,
   type BotId,
+  type Entry,
   MAX_MESSAGE_LENGTH,
   type Mentions,
   ROOM_CLOSING_ROUND,
@@ -1055,6 +1056,132 @@ it.effect("cancels the wakes a room's work wrote in another room when the operat
     yield* finish(scout, again, members);
     yield* nextTurn(pip.bot.id, pipTurn);
     assert.isTrue(yield* sawText(pip, "the launch is back on"));
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "retries only the room's own post when a Stop of another room cancelled its post in the same failed start",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const [scout, wren, hal, pip] = [
+        yield* member("Scout"),
+        yield* member("Wren"),
+        yield* member("Hal"),
+        yield* member("Pip"),
+      ];
+      const members = [scout, wren, hal, pip];
+      const launch = yield* roomWith(scout, [wren]);
+      const release = yield* roomWith(hal, [scout, pip]);
+      // Pip works in its own conversation while two posts for it arrive in
+      // the release room: one from the launch room's work, one of its own.
+      yield* sendToBot(pip.bot.id, "Check the logs.");
+      const pipTurn = yield* nextTurn(pip.bot.id);
+      yield* operatorWrites(launch.id, [scout, wren], "Scout, tell the release room.", to(scout));
+      const scoutTurn = yield* nextTurn(scout.bot.id);
+      yield* postIn(scout, scoutTurn, release.id, "Pip, the launch moved.", pip);
+      yield* finish(scout, scoutTurn, [scout, wren]);
+      yield* operatorWrites(release.id, [hal, scout], "Hal, share the notes.", to(hal));
+      const halTurn = yield* nextTurn(hal.bot.id);
+      yield* say(hal, halTurn, { text: "Pip, the notes are ready.", mention: [pip.bot.id] });
+      yield* finish(hal, halTurn, [hal, scout]);
+
+      // Both go in one start, which the engine takes and then fails, what
+      // tells of it still on its way when the operator stops the launch room.
+      const gate = yield* holdGate(pip.bot.id);
+      yield* control.failNextStart({ sessionId: pip.session, failure: "provider-error" });
+      yield* say(pip, pipTurn, { text: "The logs are clean.", done: true });
+      yield* control.finishTurn({
+        sessionId: pip.session,
+        turnId: pipTurn,
+        outcome: { _tag: "completed" },
+      });
+      yield* turnEnded(pip.bot.id);
+      yield* until(
+        Effect.map(roomDispatchStatuses(pip.bot.id, release.id), (all) => all.length > 0),
+      );
+      const stalled = yield* control.stallEvents(pip.session);
+      yield* gate.release;
+      yield* until(
+        Effect.map(roomDispatchStatuses(pip.bot.id, release.id), (all) => all.includes("accepted")),
+      );
+      yield* stopRoom(launch.id);
+      yield* stalled.release;
+      yield* until(
+        Effect.map(roomEntries(release.id), (entries) =>
+          entries.some((entry) => entry._tag === "notice" && entry.retryable),
+        ),
+      );
+      assert.deepStrictEqual(yield* roomWakeStatuses(pip.bot.id, release.id), [
+        "cancelled",
+        "failed",
+      ]);
+
+      // The Retry is the operator's, for what failed: the launch room's post stays cancelled.
+      const notice = Option.getOrThrow(
+        Option.fromNullishOr(
+          (yield* roomEntries(release.id)).find(
+            (entry): entry is Extract<Entry, { readonly _tag: "notice" }> =>
+              entry._tag === "notice" && entry.retryable,
+          ),
+        ),
+      );
+      yield* (yield* Pipeline).retryNotice({ commandId: command(), entryId: notice.id });
+      yield* settle(members);
+      yield* nextTurn(pip.bot.id, pipTurn);
+      assert.include(yield* lastEnvelope(pip), "the notes are ready");
+      assert.deepStrictEqual(yield* roomWakeStatuses(pip.bot.id, release.id), [
+        "cancelled",
+        "failed",
+        "dispatched",
+      ]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("keeps the wakes a member's posts wrote in its room when the member leaves it", () =>
+  Effect.gen(function* () {
+    const [wren, scout, pip, mo] = [
+      yield* member("Wren"),
+      yield* member("Scout"),
+      yield* member("Pip"),
+      yield* member("Mo"),
+    ];
+    const members = [wren, scout, pip, mo];
+    const room = yield* roomWith(wren, [scout, pip, mo]);
+    // Pip works in its own conversation, so its wake for the room waits.
+    yield* sendToBot(pip.bot.id, "Check the logs.");
+    const pipTurn = yield* nextTurn(pip.bot.id);
+    // Mo's start for the room waits at its gate, written and never sent.
+    const moGate = yield* holdGate(mo.bot.id);
+    yield* operatorWrites(room.id, [wren, scout, pip], "Scout, ask for a review.", to(scout));
+    const turn = yield* nextTurn(scout.bot.id);
+    yield* say(scout, turn, {
+      text: "Pip and Mo, can you check the tests?",
+      mention: [pip.bot.id, mo.bot.id],
+    });
+    yield* (yield* TestEngineControl).finishTurn({
+      sessionId: scout.session,
+      turnId: turn,
+      outcome: { _tag: "completed" },
+    });
+    yield* turnEnded(scout.bot.id);
+    yield* until(Effect.map(roomDispatchStatuses(mo.bot.id, room.id), (all) => all.length > 0));
+
+    // What Scout said was said: its leaving takes none of it back.
+    yield* (yield* Rooms).update({
+      commandId: command(),
+      roomId: room.id,
+      changes: { members: [wren.bot.id, pip.bot.id, mo.bot.id] },
+    });
+    assert.deepStrictEqual(yield* roomWakeStatuses(pip.bot.id, room.id), ["pending"]);
+    assert.deepStrictEqual(yield* roomDispatchStatuses(mo.bot.id, room.id), ["intended"]);
+    yield* moGate.release;
+    yield* nextTurn(mo.bot.id);
+    assert.isTrue(yield* sawText(mo, "check the tests"));
+    yield* say(pip, pipTurn, { text: "The logs are clean.", done: true });
+    yield* finish(pip, pipTurn, members);
+    yield* nextTurn(pip.bot.id, pipTurn);
+    assert.isTrue(yield* sawText(pip, "check the tests"));
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

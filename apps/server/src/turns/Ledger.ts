@@ -84,13 +84,14 @@ export const WakeRow = Schema.Struct({
   payload_json: json(WakePayload),
   status: WakeStatus,
   source_entry_id: Schema.NullOr(EntryId),
+  cause_room_id: Schema.NullOr(RoomId),
   created_at: Time,
 });
 export type WakeRow = typeof WakeRow.Type;
 
 export const WAKE_COLUMNS = `
   id, bot_id, kind, priority, audience, audience_room_id, hops, payload_json, status,
-  source_entry_id, created_at
+  source_entry_id, cause_room_id, created_at
 `;
 
 /** What becomes of the wakes of a dispatch that ends undelivered. */

@@ -290,15 +290,14 @@ export const layer = Layer.effect(
       const landing = mayLand(sql);
       // Every session of the bot with work in scope that may be in the engine:
       // a turn running, a turn whose background work the engine last
-      // reported still pending, or a dispatch the engine has or may yet take.
-      // So a room's Stop reaches the background work its turns started, by
-      // the turn that started it, never by the session's work as a whole;
-      // also while the report that attributes it is still due after a turn
-      // of the room, as for work the turn's end did not tell of: its round is
-      // judged on a report, which settles it unsent when it lists none. A
-      // bot Stop reaches every live session too, for background work the
-      // server does not see. A session the engine retired has nothing left in
-      // it to stop: its retirement ended what ran there.
+      // reported still pending or has not reported since it ended, or a
+      // dispatch the engine has or may yet take. So a room's Stop reaches the
+      // background work its turns started, by the turn that started it, never
+      // by the session's work as a whole, also work a turn's end did not tell
+      // of: its round is judged on a report, which settles it unsent when it
+      // lists none. A bot Stop reaches every live session too, for background
+      // work the server does not see. A session the engine retired has
+      // nothing left in it to stop: its retirement ended what ran there.
       const sessions = yield* sql<{ readonly id: string }>`
         SELECT s.id FROM sessions s
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND s.engine_retired_at IS NULL AND (
@@ -308,15 +307,9 @@ export const layer = Layer.effect(
           )
           OR EXISTS (
             SELECT 1 FROM turns
-            WHERE session_id = s.id AND background_pending = 1 AND ${inScope(scope)}
+            WHERE session_id = s.id AND (background_pending = 1 OR background_unreported = 1)
+              AND ${inScope(scope)}
           )
-          ${
-            scope._tag === "room"
-              ? sql`OR (s.background_check_due = 1 AND EXISTS (
-                  SELECT 1 FROM turns WHERE session_id = s.id AND ${inScope(scope)}
-                ))`
-              : sql``
-          }
           OR EXISTS (
             SELECT 1 FROM dispatches WHERE session_id = s.id AND ${inScope(scope)} AND (
               (status = 'intended' AND attempts > 0) OR status IN ('accepted', 'delivered')
@@ -699,7 +692,9 @@ export const layer = Layer.effect(
      * What of the narrow Stop's own work the session's applied events still
      * show: `running`, a turn of it not finished or a dispatch of it the
      * engine has or may be taking; `flagged`, a turn of it whose background
-     * work the engine last reported pending. A dispatch whose recovery gave
+     * work the engine last reported pending, or has not reported since the
+     * turn ended, which may have left work its end did not tell of. A
+     * dispatch whose recovery gave
      * up counts as neither: its fence reopens the Stop if its key lands
      * (`stopTargets.openRound`).
      */
@@ -722,7 +717,8 @@ export const layer = Layer.effect(
             ) AS running,
             EXISTS (
               SELECT 1 FROM turns ow_flagged WHERE ow_flagged.session_id = ${sessionId}
-                AND ow_flagged.background_pending = 1 AND ${own(narrow, "ow_flagged")}
+                AND (ow_flagged.background_pending = 1 OR ow_flagged.background_unreported = 1)
+                AND ${own(narrow, "ow_flagged")}
             ) AS flagged
         `,
       })(undefined).pipe(Effect.orDie);
@@ -955,22 +951,6 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The session's events are brought past every round acknowledged so far,
-     * and the targets are judged from what they show. Confirmation comes only
-     * from here, after a `synchronize`, never from one event as it is
-     * applied: the event after it may start a turn the engine had waiting.
-     *
-     * With nothing at the marker beyond the applied events, the rounds are
-     * observed, and the targets are confirmed if the events show nothing left
-     * running. Background work the engine still counts as pending, or a run
-     * it can still run (waiting, preparing, starting or running), also one no
-     * event told of, leaves them unobserved, and the session is synchronized
-     * again a few seconds later. Either way, while
-     * the engine still shows work the Stop targets, a target whose latest
-     * round's grace passed gets a fresh round (`stopTargets.recheck`): the
-     * rule holds by the runner's own deadlines, whatever the events say.
-     */
-    /**
      * The engine settles a steer after the turn it rode ends: taken, dropped
      * or requeued as a turn of its own. A report that shows nothing it can
      * run, with every event it had applied, leaves nothing to settle one the
@@ -1008,6 +988,22 @@ export const layer = Layer.effect(
       }
     }, Effect.orDie);
 
+    /**
+     * The session's events are brought past every round acknowledged so far,
+     * and the targets are judged from what they show. Confirmation comes only
+     * from here, after a `synchronize`, never from one event as it is
+     * applied: the event after it may start a turn the engine had waiting.
+     *
+     * With nothing at the marker beyond the applied events, the rounds are
+     * observed, and the targets are confirmed if the events show nothing left
+     * running. Background work the engine still counts as pending, or a run
+     * it can still run (waiting, preparing, starting or running), also one no
+     * event told of, leaves them unobserved, and the session is synchronized
+     * again a few seconds later. Either way, while
+     * the engine still shows work the Stop targets, a target whose latest
+     * round's grace passed gets a fresh round (`stopTargets.recheck`): the
+     * rule holds by the runner's own deadlines, whatever the events say.
+     */
     const observe = Effect.fn("Stops.observe")(function* (
       sessionId: SessionRowId,
       engineSessionId: SessionId,

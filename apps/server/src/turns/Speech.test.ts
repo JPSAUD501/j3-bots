@@ -1731,6 +1731,37 @@ it.effect("keeps the hop count a harness's wake took on admission for the work i
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "sends nothing from a delegated task's completion the engine began before a Stop that showed it only after",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { ana, anaSession, notice } = yield* delegatingNotice;
+      const dee = yield* createBot("Dee");
+
+      // The report the notice delegated completes just before the
+      // operator's Stop: the turn it starts names the notice, which no Stop
+      // covers, and the event that tells of it is still on its way.
+      const stalled = yield* control.stallEvents(anaSession);
+      const reporting = yield* control.startEngineTurn(anaSession, notice);
+      const gate = yield* holdGate(ana.id);
+      yield* (yield* Stops).stopBot({ commandId: command(), botId: ana.id });
+      yield* stalled.release;
+      yield* nextTurn(ana.id, notice);
+
+      const reply = yield* messageTeammate(anaSession, reporting, {
+        to: dee.id,
+        text: "The report is attached.",
+        urgent: true,
+      });
+      assert.include(refusal(reply), "Your user stopped this work");
+      yield* gate.release;
+      yield* stopSettled;
+      yield* turnEnded(ana.id);
+      assert.deepStrictEqual(yield* handoffs(dee.id), []);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("counts a harness's wake from another such wake whose work is pending", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
