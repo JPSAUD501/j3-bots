@@ -85,6 +85,7 @@ import {
 import { modeRefusedSql } from "./modeRefusals.ts";
 import { Sender, type SendOwner, type SendResult } from "./Sender.ts";
 import { notices } from "./notices.ts";
+import { newcomer as newcomerOf } from "./firstContact.ts";
 import { behindOpeningSql, openingOpenSql, openingUnsentSql } from "./openings.ts";
 import { isIdle, sessionWork } from "./sessionWork.ts";
 import { Observer } from "./Observer.ts";
@@ -299,6 +300,7 @@ export const layer = Layer.effect(
   Pipeline,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const isNewcomer = newcomerOf(sql);
     const transaction = transactional(sql);
     const ids = yield* Ids;
     const wakes = yield* Wakes;
@@ -529,6 +531,7 @@ export const layer = Layer.effect(
                   // and a line counting entries left out.
                   reason: LONGEST_ROOM_REASON,
                   closing: true,
+                  newcomer: true,
                   omitted: Number.MAX_SAFE_INTEGER,
                   entries: [
                     {
@@ -1346,6 +1349,8 @@ export const layer = Layer.effect(
       );
       const newestFirst = yield* Effect.forEach(unseen.newestFirst, shown);
       const header = yield* roomHeader(room);
+      // A member made for the room that has not spoken yet: the operator meets it here.
+      const newcomer = yield* isNewcomer(plan.botId);
       /** Why the first `wakes` wakes woke the bot: those left for later choose nothing here. */
       const reasonOf = (wakes: number) =>
         strongestReason(
@@ -1395,6 +1400,7 @@ export const layer = Layer.effect(
           room: header,
           reason: reasonOf(wakes),
           closing: replyRound(wakes, newest) >= ROOM_CLOSING_ROUND,
+          newcomer,
           omitted: unseen.total - entries.length - waiting,
           entries: [first, ...rest],
         };

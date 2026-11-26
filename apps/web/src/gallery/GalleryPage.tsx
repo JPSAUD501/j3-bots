@@ -1452,7 +1452,12 @@ const turnStates = (() => {
   return [
     {
       name: "thinking",
-      bot: as({ _tag: "thinking", since: ago(7), stalled: false, quietSince: null }),
+      bot: as({ _tag: "thinking", since: ago(7), stalled: false, quietSince: null, typing: false }),
+      fold: null,
+    },
+    {
+      name: "typing",
+      bot: as({ _tag: "thinking", since: ago(3), stalled: false, quietSince: null, typing: true }),
       fold: null,
     },
     {
@@ -1462,6 +1467,7 @@ const turnStates = (() => {
         since: ago(72),
         stalled: false,
         quietSince: null,
+        typing: false,
         activity: "pnpm test billing",
         tool: null,
       }),
@@ -1479,6 +1485,7 @@ const turnStates = (() => {
         since: ago(1220),
         stalled: true,
         quietSince: ago(780),
+        typing: false,
         activity: null,
         tool: null,
       }),
@@ -1491,6 +1498,7 @@ const turnStates = (() => {
         since: ago(3723),
         stalled: false,
         quietSince: null,
+        typing: false,
         activity: null,
         tool: "browser",
       }),
@@ -1502,7 +1510,7 @@ const turnStates = (() => {
 function WorkSection() {
   return (
     <Section title="A turn's work">
-      <Labeled label="Under way: thinking before any step, working on a step (its steps open), waiting on the operator, stalled, past an hour">
+      <Labeled label="Under way: thinking before any step, typing the next message of a first contact, working on a step (its steps open), waiting on the operator, stalled, past an hour">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
           {turnStates.map(({ name, bot, fold }) => (
             <WorkFold
@@ -3054,7 +3062,7 @@ function UsageGallerySection() {
 /** A bot just created: its first turn has started and nothing is in its conversation yet. */
 const speakingFirst = {
   ...team.bots.moss,
-  state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false, quietSince: null },
+  state: { _tag: "thinking", since: SAMPLE_NOW, stalled: false, quietSince: null, typing: false },
   opening: true,
 } as const;
 

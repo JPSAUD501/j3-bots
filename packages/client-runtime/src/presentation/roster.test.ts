@@ -164,7 +164,12 @@ describe("filterRoster", () => {
 });
 
 describe("canStop", () => {
-  const since = { since: at("2026-11-20T15:00:00Z"), stalled: false, quietSince: null };
+  const since = {
+    since: at("2026-11-20T15:00:00Z"),
+    stalled: false,
+    quietSince: null,
+    typing: false,
+  };
 
   it("offers Stop while a turn runs", () => {
     expect(canStop(bot("Scout", { _tag: "thinking", ...since }))).toBe(true);

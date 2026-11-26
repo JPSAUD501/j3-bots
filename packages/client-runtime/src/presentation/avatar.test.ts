@@ -30,6 +30,7 @@ const working: BotState = {
   since,
   stalled: false,
   quietSince: null,
+  typing: false,
   activity: null,
   tool: null,
 };
@@ -39,7 +40,10 @@ describe("avatarMood", () => {
   it("shows a turn under way as thinking or working, and an idle bot as idle", () => {
     expect(avatarMood({ _tag: "idle" }, quiet)).toEqual({ state: "idle", stalled: false });
     expect(
-      avatarMood({ _tag: "thinking", since, stalled: false, quietSince: null }, quiet).state,
+      avatarMood(
+        { _tag: "thinking", since, stalled: false, quietSince: null, typing: false },
+        quiet,
+      ).state,
     ).toBe("thinking");
     expect(avatarMood(working, quiet).state).toBe("working");
   });
@@ -76,7 +80,10 @@ describe("avatarMood", () => {
       stalled: true,
     });
     expect(
-      avatarMood({ _tag: "thinking", since, stalled: true, quietSince: since }, quiet).stalled,
+      avatarMood(
+        { _tag: "thinking", since, stalled: true, quietSince: since, typing: false },
+        quiet,
+      ).stalled,
     ).toBe(true);
   });
 });

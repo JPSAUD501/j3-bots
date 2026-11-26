@@ -106,6 +106,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     },
     reason: "user",
     closing: true,
+    newcomer: true,
     omitted: 1,
     entries: [
       { author: "user", at, text: "text", mentions: "everyone", attachments: [] },
@@ -122,6 +123,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     },
     reason,
     closing: false,
+    newcomer: false,
     omitted: 0,
     entries: [{ author: teammate, at, text: "text", mentions: [], files: [] }],
   })),

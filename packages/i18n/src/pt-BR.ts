@@ -96,6 +96,7 @@ const sentences = {
   "roster.section.name.placeholder": "Trabalho, casa, um projeto…",
   "roster.section.name.cancel": "Cancelar",
 
+  "presence.typing": "Digitando",
   "presence.thinking": "Pensando",
   "presence.working": "Trabalhando",
   "presence.waiting": "Esperando por você",

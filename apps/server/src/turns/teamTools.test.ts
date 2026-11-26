@@ -10,7 +10,7 @@ import {
 } from "@j3-bots/contracts";
 import type { SessionId, TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
-import { ROOM_CLOSING_NOTE } from "@j3-bots/prompts";
+import { ROOM_CLOSING_NOTE, ROOM_NEWCOMER_LINE } from "@j3-bots/prompts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -19,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
 import { BotStore } from "../bots/BotStore.ts";
+import { Entries } from "../entries/Entries.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -62,6 +63,7 @@ import {
 import type { ToolCallResponse } from "../tools/protocol.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { Cards } from "./Cards.ts";
+import { newcomer } from "./firstContact.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Stops } from "./Stops.ts";
 
@@ -491,6 +493,8 @@ it.effect(
         assert.include(envelope, "Pip takes billing");
         // It reads as the kickoff, which names its part, not as any message that mentions it.
         assert.include(envelope, 'reason="kickoff"');
+        // A bot made for the room meets the operator here, and opens with who it is.
+        assert.strictEqual(envelope.includes(ROOM_NEWCOMER_LINE), one !== wren);
         if (one === pip) yield* say(one, turn, { text: "On it.", done: true });
       }
       for (const [one, turn] of kicked) yield* finish(one, turn, team);
@@ -505,6 +509,8 @@ it.effect(
         const envelope = yield* lastEnvelope(one);
         assert.include(envelope, "On it.");
         assert.include(envelope, 'reason="member"');
+        // Mole has not spoken yet: still new to the operator.
+        assert.strictEqual(envelope.includes(ROOM_NEWCOMER_LINE), one === mole);
         yield* finish(one, reply, team);
       }
       assert.deepStrictEqual(yield* running(team), []);
@@ -517,6 +523,33 @@ it.effect(
         "finished",
         "finished",
       ]);
+      // Pip has met the operator, which it does not forget once it leaves the
+      // room it spoke in; Mole still has not.
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId,
+        changes: { members: [scout.id, mole.bot.id, wren.bot.id] },
+      });
+      const isNewcomer = newcomer(yield* SqlClient.SqlClient);
+      assert.isFalse(yield* isNewcomer(pip.bot.id));
+      assert.isTrue(yield* isNewcomer(mole.bot.id));
+      // Any message of Mole's in the room counts, as its engine's own text
+      // does, and the room's deletion takes none of it back.
+      yield* (yield* Entries).append({
+        target: { _tag: "room", roomId },
+        entry: {
+          _tag: "message",
+          author: { _tag: "bot", botId: mole.bot.id },
+          text: "Billing is clear.",
+          attachments: [],
+          mentions: { _tag: "bots", ids: [] },
+          delivery: { _tag: "delivered" },
+          commandId: null,
+        },
+      });
+      yield* (yield* Rooms).remove({ commandId: command(), roomId });
+      assert.isFalse(yield* isNewcomer(pip.bot.id));
+      assert.isFalse(yield* isNewcomer(mole.bot.id));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

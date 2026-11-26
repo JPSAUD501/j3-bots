@@ -372,7 +372,7 @@ const unfinished = (reason: string, turn: Turn) =>
   new TurnUnfinished({ message: `The turn did not finish: ${reason}.\n${transcript(turn)}` });
 
 /** A call the bot made in an earlier turn, with what it answered. */
-export interface EarlierCall {
+interface EarlierCall {
   readonly name: string;
   readonly input: Schema.Json;
   readonly output: string;

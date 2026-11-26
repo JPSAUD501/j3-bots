@@ -13,6 +13,7 @@ const working = (activity: string | null, stalled = false): BotState => ({
   since: at(started),
   stalled,
   quietSince: stalled ? at(started) : null,
+  typing: false,
   activity,
   tool: null,
 });
