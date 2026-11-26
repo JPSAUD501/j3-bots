@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { FailureClass, Question, QuestionAnswers, WorkStep } from "@j3-bots/contracts";
+import type {
+  FailureClass,
+  ModelChoice,
+  Question,
+  QuestionAnswers,
+  WorkStep,
+} from "@j3-bots/contracts";
 import { MAX_CARD_QUESTIONS, MAX_QUESTION_OPTIONS, WorkStepId } from "@j3-bots/contracts";
 import {
   isOrchestrationV2WorkActive,
@@ -26,6 +32,7 @@ import * as Schema from "effect/Schema";
 import type { DispatchDisposition } from "../Engine.ts";
 import {
   type BackgroundWork,
+  type DelegatedResult,
   type EndedTurn,
   type EngineRequest,
   type HostSpeech,
@@ -40,6 +47,7 @@ import {
   type TurnOutcome,
 } from "../events.ts";
 import {
+  DelegatedResultId,
   HostSpeechId,
   IdempotencyKey,
   RequestId,
@@ -101,12 +109,17 @@ export interface Mirror {
    */
   readonly openings: Map<string, string>;
   /**
-   * The run each run's opening message names as the one that delegated the
-   * task whose completion it reports, or `null` for a message that names
-   * none, by run id, once the mirror has the message: the origin of the
-   * `background` turn the run is (`causeOf`).
+   * The run that delegated the task each run's opening message reports on
+   * (`delegatorOf`), or `null` for a message that reports on none, by run
+   * id, once the mirror has the message: the origin of the `background`
+   * turn the run is (`causeOf`).
    */
   readonly origins: Map<string, string | null>;
+  /**
+   * Each report of a delegated task the engine put into a run other than the
+   * one that delegated the task, by message id (`delegatedResultOf`).
+   */
+  readonly delegatedResults: Map<string, DelegatedResultRecord>;
   /**
    * `toolInputDigest` of each `j3` tool call's input, by item id, with the
    * input it was taken of. Kept by `digestToolCalls`, which `diff` relies on.
@@ -137,6 +150,7 @@ export const emptyMirror = (): Mirror => ({
   providerSessions: new Map(),
   openings: new Map(),
   origins: new Map(),
+  delegatedResults: new Map(),
   toolDigests: new Map(),
   fetched: new Map(),
   toolPersistence: new Map(),
@@ -152,6 +166,7 @@ export const copyMirror = (mirror: Mirror): Mirror => ({
   providerSessions: new Map(mirror.providerSessions),
   openings: new Map(mirror.openings),
   origins: new Map(mirror.origins),
+  delegatedResults: new Map(mirror.delegatedResults),
   toolDigests: new Map(mirror.toolDigests),
   fetched: new Map(mirror.fetched),
   toolPersistence: new Map(mirror.toolPersistence),
@@ -189,8 +204,14 @@ export const mirrorOf = (
     origins: new Map(
       [...openings].map(([runId, messageId]) => [
         runId,
-        delegatedOriginOf(messages.get(messageId)),
+        delegatorOf(messages.get(messageId), items.values()),
       ]),
+    ),
+    delegatedResults: new Map(
+      projection.messages.flatMap((message) => {
+        const result = delegatedResultOf(message, openings, items.values());
+        return result === undefined ? [] : [[message.id, result]];
+      }),
     ),
     toolDigests: new Map(),
     fetched: new Map(before.fetched),
@@ -202,9 +223,52 @@ export const mirrorOf = (
 
 const isThread = Schema.is(OrchestrationV2AppThread);
 
-/** The run a delegated task's completion message names as the one that delegated it. */
-const delegatedOriginOf = (message: Message | undefined): string | null =>
-  message?.delegatedCompletion?.parentRunId ?? null;
+/**
+ * The run that delegated the task a message reports on, if it is one: a
+ * completion names it (`delegatedCompletion.parentRunId`); a notice of a
+ * delegated task, such as its question (**Read** at `59651c1`,
+ * `DelegatedTaskQuestionReactor.ts`, `wakeParent`, L35-61), names only the
+ * task, whose `subagent` item is in the run that delegated it.
+ */
+const delegatorOf = (message: Message | undefined, items: Iterable<Item>): string | null => {
+  if (message === undefined) return null;
+  if (message.delegatedCompletion !== undefined) return message.delegatedCompletion.parentRunId;
+  const source = message.notification?.source;
+  if (source?.kind !== "delegated_task") return null;
+  for (const item of items) {
+    if (item.type === "subagent" && source.taskIds.includes(item.subagentId)) return item.runId;
+  }
+  return null;
+};
+
+/** A delegated task's report in a run other than the one that delegated it. */
+interface DelegatedResultRecord {
+  readonly runId: string;
+  readonly origin: string;
+  readonly text: string;
+}
+
+/**
+ * The report of a delegated task a message carries into a run other than the
+ * one that delegated the task (`delegatorOf`): its completion or a notice the
+ * engine steered into a running run, which is not that run's opening
+ * message. The engine steers either so whenever a run of the session runs as
+ * it arrives, whichever run delegated the task (**Read** at `59651c1`,
+ * `Orchestrator.ts`, L7631-7673). One that opens a run of its own names the
+ * delegating run as that run's origin instead (`causeOf`), and one steered
+ * into the delegating run reaches it there.
+ */
+const delegatedResultOf = (
+  message: Message,
+  openings: ReadonlyMap<string, string>,
+  items: Iterable<Item>,
+): DelegatedResultRecord | undefined => {
+  const { runId } = message;
+  if (runId === null || openings.get(runId) === message.id) return undefined;
+  const origin = delegatorOf(message, items);
+  if (origin === null || runId === origin) return undefined;
+  return { runId, origin, text: message.text };
+};
 
 /** Applies one engine event. Returns whether it touched what the session's events are made of. */
 export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): boolean => {
@@ -287,8 +351,15 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       // queued. Only the run's opening message counts: a delegated
       // completion steered into a running run is not that run's cause.
       const { id, runId } = event.payload;
-      if (runId === null || mirror.openings.get(runId) !== id) return false;
-      mirror.origins.set(runId, delegatedOriginOf(event.payload));
+      if (runId === null) return false;
+      if (mirror.openings.get(runId) === id) {
+        mirror.origins.set(runId, delegatorOf(event.payload, mirror.items.values()));
+        return true;
+      }
+      // A completion steered into another run: the first record of it is kept.
+      const result = delegatedResultOf(event.payload, mirror.openings, mirror.items.values());
+      if (result === undefined || mirror.delegatedResults.has(id)) return false;
+      mirror.delegatedResults.set(id, result);
       return true;
     }
     default:
@@ -1746,6 +1817,10 @@ export interface View {
   >;
   /** Steers whose settlement was reported, by message id. */
   readonly steers: Set<string>;
+  /** Steers reported taken while their turn ran (`steer-taken`), by message id. */
+  readonly taken: Set<string>;
+  /** Delegated results reported (`delegated-result`), by message id. */
+  readonly delegatedResults: Set<string>;
   hold: HoldView;
 }
 
@@ -1756,6 +1831,8 @@ const emptyView = (): View => ({
   requests: new Map(),
   toolCalls: new Map(),
   steers: new Set(),
+  taken: new Set(),
+  delegatedResults: new Set(),
   hold: { state: "none" },
 });
 
@@ -1766,6 +1843,8 @@ export const copyView = (view: View): View => ({
   requests: new Map(view.requests),
   toolCalls: new Map(view.toolCalls),
   steers: new Set(view.steers),
+  taken: new Set(view.taken),
+  delegatedResults: new Set(view.delegatedResults),
   hold: view.hold,
 });
 
@@ -1841,7 +1920,39 @@ export type EventBody = DistributiveOmit<SessionEvent, "cursor" | "at">;
  * The events that bring a subscriber from `view` to `mirror`, in order, and
  * `view` updated to match. Applying them to `view` again yields nothing.
  */
-export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArray<EventBody> => {
+/**
+ * J3 Bots' name for the model a run runs on, from the engine's: the provider
+ * whose instance it names, or `null` for an instance J3 Bots did not set up.
+ */
+export type ModelOf = (selection: Run["modelSelection"]) => ModelChoice | null;
+
+/**
+ * Whether the run has taken the steer, while it runs: the engine's record of
+ * the steer in the run is past waiting for the provider, and not cancelled.
+ * The engine requeues only a steer whose record still waits
+ * (`requeueUnreadSteers`), so a steer taken is never run as a turn of its own.
+ */
+const isTaken = (steer: SteerRecord): boolean =>
+  steer.item !== undefined &&
+  steer.item.status !== "cancelled" &&
+  !LIVE_ITEM.has(steer.item.status);
+
+const delegatedResultEvent = (
+  messageId: string,
+  record: DelegatedResultRecord,
+): DelegatedResult => ({
+  resultId: DelegatedResultId.make(messageId),
+  turnId: TurnId.make(record.runId),
+  origin: TurnId.make(record.origin),
+  text: record.text,
+});
+
+export const diff = (
+  mirror: Mirror,
+  view: View,
+  now: DateTime.Utc,
+  modelOf: ModelOf,
+): ReadonlyArray<EventBody> => {
   const events: Array<EventBody> = [];
   const steers = steersOf(mirror);
   const runs = runsInOrder(mirror);
@@ -1877,9 +1988,25 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
       }
       if (!turn.started && hasStarted(run)) {
         turn.started = true;
-        events.push({ _tag: "turn-started", turnId, cause, startedAt: startedAtOf(run) });
+        events.push({
+          _tag: "turn-started",
+          turnId,
+          cause,
+          startedAt: startedAtOf(run),
+          model: modelOf(run.modelSelection),
+        });
       }
       const ended = isEnded(run);
+      // Told only while the turn runs: once it ends, the steer settles.
+      if (!ended) {
+        for (const steer of steers) {
+          if (steer.target !== run.id || view.taken.has(steer.messageId) || !isTaken(steer)) {
+            continue;
+          }
+          view.taken.add(steer.messageId);
+          events.push({ _tag: "steer-taken", key: steer.key, turnId });
+        }
+      }
       for (const state of requestsOf(mirror, run)) {
         if (state.closed !== undefined) continue;
         const seen = view.requests.get(state.requestId);
@@ -1983,6 +2110,11 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
       events.push(steerEventOf(steer, settled));
     }
   }
+  for (const [messageId, record] of mirror.delegatedResults) {
+    if (view.delegatedResults.has(messageId)) continue;
+    view.delegatedResults.add(messageId);
+    events.push({ _tag: "delegated-result", result: delegatedResultEvent(messageId, record) });
+  }
   events.push(
     ...holdEventsOf(mirror, view, {
       started: events.some((event) => event._tag === "turn-started"),
@@ -2007,7 +2139,8 @@ export const replacement = (
   history: boolean,
   now: DateTime.Utc,
   /** Whether each turn handed off, as a stream told it at the turn's end (`Batches`). */
-  toldHandoffs: ReadonlyMap<string, boolean> = new Map(),
+  toldHandoffs: ReadonlyMap<string, boolean>,
+  modelOf: ModelOf,
 ): { readonly event: EventBody & { _tag: "replaced" }; readonly view: View } => {
   const openTurns: Array<OpenTurn> = [];
   const openRequests: Array<OpenRequest> = [];
@@ -2032,7 +2165,11 @@ export const replacement = (
         turnId,
         cause,
         startedAt: hasStarted(run) ? startedAtOf(run) : null,
+        model: hasStarted(run) ? modelOf(run.modelSelection) : null,
         steps: stepsOf(mirror, run),
+        takenSteers: steers.flatMap((steer) =>
+          steer.target === run.id && isTaken(steer) ? [steer.key] : [],
+        ),
         toolCalls: itemsOf(mirror, run).flatMap((item) => {
           const call = toolCallOf(mirror, item);
           return call !== undefined && LIVE_ITEM.has(item.status) ? [call] : [];
@@ -2085,9 +2222,15 @@ export const replacement = (
     }
   }
 
+  const delegatedResults = history
+    ? [...mirror.delegatedResults].map(([messageId, record]) =>
+        delegatedResultEvent(messageId, record),
+      )
+    : [];
+
   // The subscriber now knows everything in the mirror.
   const view = emptyView();
-  diff(mirror, view, now);
+  diff(mirror, view, now, modelOf);
   return {
     event: {
       _tag: "replaced",
@@ -2097,6 +2240,7 @@ export const replacement = (
       hostSpeech,
       closedRequests,
       steers: steerSettlements,
+      delegatedResults,
       // Stands for a hold the fresh view reports.
       queueHeld: view.hold.state === "reported",
     },

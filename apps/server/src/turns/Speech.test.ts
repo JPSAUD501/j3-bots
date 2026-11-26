@@ -965,8 +965,9 @@ it.effect("delivers a held message to a teammate that read one before", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
-it.effect("starts the chain again once the engine took the operator's steer", () =>
+it.effect("starts the chain again once the turn took the operator's steer", () =>
   Effect.gen(function* () {
+    const control = yield* TestEngineControl;
     yield* chainLimits({ hops: 1, fanOut: 1 });
     const ana = yield* createBot("Ana");
     const bo = yield* createBot("Bo");
@@ -980,8 +981,18 @@ it.effect("starts the chain again once the engine took the operator's steer", ()
     });
     assert.include(refusal(refused), "reached your user's limit of 1");
 
-    // The operator steers Bo's running turn.
+    // The operator steers Bo's running turn. Until the turn takes the steer,
+    // the engine may still run it as a turn of its own, which their word starts.
     yield* sendToBot(bo.id, "Tell Ana it is Friday.");
+    yield* flushed(bo.id);
+    const early = yield* messageTeammate(boSession, boTurn, {
+      to: ana.id,
+      text: "It is Friday.",
+      urgent: false,
+    });
+    assert.include(refusal(early), "reached your user's limit of 1");
+
+    yield* control.readSteers({ sessionId: boSession, turnId: boTurn });
     yield* flushed(bo.id);
     const reply = yield* messageTeammate(boSession, boTurn, {
       to: ana.id,

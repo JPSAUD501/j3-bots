@@ -43,6 +43,14 @@ export const HostSpeechId = opaque.pipe(Schema.brand("HostSpeechId"));
 export type HostSpeechId = typeof HostSpeechId.Type;
 
 /**
+ * One delegated task's result the engine put into a turn other than the one
+ * that delegated it (`delegated-result`). Stable: a `replaced` may list
+ * results the server already applied, and this is how it tells.
+ */
+export const DelegatedResultId = opaque.pipe(Schema.brand("DelegatedResultId"));
+export type DelegatedResultId = typeof DelegatedResultId.Type;
+
+/**
  * One call the bot made to a `j3` tool, as the engine records it in its turn.
  * Stable: the server claims each one for at most one tool request.
  */

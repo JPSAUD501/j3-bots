@@ -47,6 +47,7 @@ import {
 } from "../errors.ts";
 import type {
   BackgroundWork,
+  DelegatedResult,
   EndedTurn,
   EngineRequest,
   HostSpeech,
@@ -61,6 +62,7 @@ import type {
   TurnOutcome,
 } from "../events.ts";
 import {
+  DelegatedResultId,
   EngineAttachmentId,
   EngineProjectId,
   EventCursor,
@@ -376,8 +378,8 @@ export class TestEngineControl extends Context.Service<
       readonly step: WorkStep;
     }) => Effect.Effect<void>;
     /**
-     * The agent takes every steer of the running turn. Each settles as
-     * `steered` when the turn ends.
+     * The agent takes every steer of the running turn, each told at once
+     * (`steer-taken`). Each settles as `steered` when the turn ends.
      */
     readonly readSteers: (input: {
       readonly sessionId: SessionId;
@@ -497,6 +499,17 @@ export class TestEngineControl extends Context.Service<
       sessionId: SessionId,
       origin?: TurnId | null,
     ) => Effect.Effect<TurnId>;
+    /**
+     * A task the turn `origin` delegated ends while `turnId`, another turn,
+     * runs: the engine steers its result into that turn, as it does whatever
+     * turn delegated it (`delegated-result`).
+     */
+    readonly delegatedResult: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly origin: TurnId;
+      readonly text: string;
+    }) => Effect.Effect<DelegatedResultId>;
     /** Forgets the session's event history, so a resume from any cursor gets a `replaced`. */
     readonly pruneHistory: (sessionId: SessionId) => Effect.Effect<void>;
     /**
@@ -534,6 +547,8 @@ interface SteerRecord {
   readonly key: IdempotencyKey;
   /** Turns waiting when the steer was sent: a follow-up turn runs after these. */
   readonly queuedAhead: ReadonlyArray<TurnId>;
+  /** The session's model when it was sent, which a follow-up turn runs on. */
+  readonly model: ModelChoice;
   /** `withheld`: its turn ended, and the engine settled it with no event (`withholdNextSteerSettlements`). */
   state: "unread" | "read" | "dropped" | "requeued" | "withheld";
 }
@@ -555,6 +570,16 @@ interface ToolCallRecord {
 interface TurnRecord {
   readonly turnId: TurnId;
   readonly cause: TurnCause;
+  /**
+   * The model the turn starts on, moving the session to it. A turn for a
+   * dispatch, or a steer's follow-up, takes the session's model when the
+   * engine took it, as the engine starts a queued run on the selection it
+   * was queued with; a turn the engine started on its own, as for a
+   * delegated task's completion, takes the session's model as it starts
+   * (`null` until then). **Read** at `59651c1`, `Orchestrator.ts`,
+   * `queuedRunModelSelection` and `followsCurrentConversation`, L1026-1053.
+   */
+  model: ModelChoice | null;
   startedAt: DateTime.Utc | null;
   readonly steps: Map<WorkStepId, WorkStep>;
   readonly steers: Array<SteerRecord>;
@@ -619,6 +644,8 @@ interface SessionRecord {
   readonly responses: Array<{ readonly requestId: RequestId; readonly response: RequestResponse }>;
   readonly rejectedAnswers: Array<RequestId>;
   readonly secretAnswers: Array<{ readonly requestId: RequestId; readonly answer: SecretAnswer }>;
+  /** Delegated results steered into a turn other than their own (`delegatedResult`). */
+  readonly delegatedResults: Array<DelegatedResult>;
   /** Each open stream, with the cursor of the last event it was given. */
   readonly subscribers: Map<Subscriber, { lastCursor: EventCursor }>;
   /** Set by `startEngineTurnDuringNextDispatch`: the turn it names, if any. */
@@ -881,10 +908,15 @@ const make = Effect.gen(function* () {
     deliver(session, event);
   };
 
-  const newTurn = (session: SessionRecord, cause: TurnCause): TurnRecord => {
+  const newTurn = (
+    session: SessionRecord,
+    cause: TurnCause,
+    model: ModelChoice | null = cause._tag === "background" ? null : session.model,
+  ): TurnRecord => {
     const turn: TurnRecord = {
       turnId: TurnId.make(newId("turn")),
       cause,
+      model,
       startedAt: null,
       steps: new Map(),
       steers: [],
@@ -1049,7 +1081,7 @@ const make = Effect.gen(function* () {
         }));
       } else {
         steer.state = "requeued";
-        const followUp = newTurn(session, { _tag: "dispatch", key: steer.key });
+        const followUp = newTurn(session, { _tag: "dispatch", key: steer.key }, steer.model);
         const place = session.waiting.filter((waiting) => steer.queuedAhead.includes(waiting));
         const last = place.at(-1);
         session.waiting.splice(
@@ -1111,13 +1143,17 @@ const make = Effect.gen(function* () {
 
   /** The turn's provider turn starts. */
   const beginTurn = (session: SessionRecord, turn: TurnRecord, at: DateTime.Utc): void => {
+    const model = turn.model ?? session.model;
     turn.startedAt = at;
+    turn.model = model;
+    session.model = model;
     emit(session, at, (stamp) => ({
       _tag: "turn-started",
       ...stamp,
       turnId: turn.turnId,
       cause: turn.cause,
       startedAt: at,
+      model,
     }));
   };
 
@@ -1228,7 +1264,9 @@ const make = Effect.gen(function* () {
           turnId: turn.turnId,
           cause: turn.cause,
           startedAt: turn.startedAt,
+          model: turn.startedAt === null ? null : turn.model,
           steps,
+          takenSteers: turn.steers.flatMap((steer) => (steer.state === "read" ? [steer.key] : [])),
           toolCalls: [...turn.toolCalls.values()].flatMap((record) =>
             record.state === "open" ? [record.call] : [],
           ),
@@ -1276,6 +1314,7 @@ const make = Effect.gen(function* () {
       hostSpeech: listed.flatMap((turn) => turn.hostSpeech),
       closedRequests: listed.flatMap((turn) => turn.closedRequests),
       steers,
+      delegatedResults: [...session.delegatedResults],
       queueHeld,
     };
   };
@@ -1338,7 +1377,12 @@ const make = Effect.gen(function* () {
       } else {
         const target = session.turns.get(delivery.turnId);
         if (target !== undefined && session.running === target.turnId) {
-          target.steers.push({ key, queuedAhead: [...session.waiting], state: "unread" });
+          target.steers.push({
+            key,
+            queuedAhead: [...session.waiting],
+            model: session.model,
+            state: "unread",
+          });
           disposition = { _tag: "steered", turnId: delivery.turnId };
         } else if (target?.ended?.outcome._tag === "completed") {
           // Too late to steer: the engine keeps the message as a turn of its own.
@@ -1482,6 +1526,7 @@ const make = Effect.gen(function* () {
             responses: [],
             rejectedAnswers: [],
             secretAnswers: [],
+            delegatedResults: [],
             subscribers: new Map(),
             raceNextStart: null,
             failNextStart: null,
@@ -2114,7 +2159,12 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const session = yield* existingSession(sessionId);
         const turn = yield* runningTurn(session, turnId);
-        for (const steer of turn.steers) if (steer.state === "unread") steer.state = "read";
+        const at = yield* DateTime.now;
+        for (const steer of turn.steers) {
+          if (steer.state !== "unread") continue;
+          steer.state = "read";
+          emit(session, at, (stamp) => ({ _tag: "steer-taken", ...stamp, key: steer.key, turnId }));
+        }
       }),
 
     toolCall: ({ sessionId, turnId, tool, input, recorded }) =>
@@ -2287,6 +2337,25 @@ const make = Effect.gen(function* () {
           return yield* misuse(`turn ${turnId} has no pending continuation`);
         }
         dropContinuation(session, turn, yield* DateTime.now);
+      }),
+
+    delegatedResult: ({ sessionId, turnId, origin, text }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        yield* runningTurn(session, turnId);
+        const result: DelegatedResult = {
+          resultId: DelegatedResultId.make(newId("result")),
+          turnId,
+          origin,
+          text,
+        };
+        session.delegatedResults.push(result);
+        emit(session, yield* DateTime.now, (stamp) => ({
+          _tag: "delegated-result",
+          ...stamp,
+          result,
+        }));
+        return result.resultId;
       }),
 
     startEngineTurn: (sessionId, origin = null) =>

@@ -44,17 +44,26 @@ export const hopCounts = (sql: SqlClient.SqlClient) => {
     SELECT turn_id FROM sp_chain
   `;
 
-  /** The dispatches the turn's chain delivered, as a subquery. */
+  /**
+   * The dispatches the turn's chain delivered, as a subquery. A steer still
+   * riding a turn counts once the turn has taken it (`steer-taken`): until
+   * then the engine may yet run it as a turn of its own, which delivers it
+   * there.
+   */
   const deliveredInSql = (sessionId: SessionRowId, turnId: TurnId) => sql`
     SELECT sp_dispatch.id FROM dispatches sp_dispatch
     WHERE sp_dispatch.session_id = ${sessionId}
       AND sp_dispatch.engine_turn_id IN (${chainSql(sessionId, turnId)})
       AND sp_dispatch.status IN ('accepted', 'delivered', 'finished')
+      AND NOT (
+        sp_dispatch.status = 'accepted' AND sp_dispatch.disposition = 'steered'
+        AND sp_dispatch.steer_taken = 0
+      )
   `;
 
   /**
    * What a turn's chain carries that budgets count: whether the operator's
-   * word, as a wake or a steer the engine accepted, the furthest hop count
+   * word, as a wake or a steer the turn took, the furthest hop count
    * of the wakes and held messages it delivers, and whether any dispatch
    * began it at all (`rooted`): a turn the engine started on its own for
    * work it does not name has none.

@@ -151,6 +151,14 @@ export const WakePayload = Schema.Union([
   /** The `user` dispatch this one follows up, whose turn delivered nothing. */
   Schema.TaggedStruct("undelivered", { dispatchId: DispatchRowId }),
   /**
+   * A delegated task's result the engine put into a turn of another
+   * audience, brought to the audience of the turn that delegated it
+   * (`origin`, in the same session): the turn it wakes goes on with that
+   * turn's work (`docs/architecture/server.md`, Sessions). `text` is what the
+   * engine told of the result.
+   */
+  Schema.TaggedStruct("delegated-result", { origin: TurnId, text: Schema.String }),
+  /**
    * The bot was just created: its first turn opens its conversation. A bot
    * another bot's `create_bot` made waits for the turn that made it
    * (`madeIn`) to end, which may place it in a room instead (`start_room`).

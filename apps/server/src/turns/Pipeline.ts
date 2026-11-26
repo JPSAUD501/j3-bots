@@ -207,6 +207,8 @@ const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<Sy
       });
     case "undelivered":
       return Effect.succeed({ name: "undelivered" });
+    case "delegated-result":
+      return Effect.succeed({ name: "delegated-result", text: payload.text });
     case "browser-help":
       return Effect.succeed({ name: "browser-help", outcome: payload.outcome, site: payload.site });
     case "secret-ask":

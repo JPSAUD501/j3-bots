@@ -163,6 +163,7 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     event: { name: "profile-changed", changes: [{ field: "name", value: "text" }] },
   },
   { ...base, kind: "system", event: { name: "undelivered" } },
+  { ...base, kind: "system", event: { name: "delegated-result", text: "text" } },
   ...(["done", "declined", "tab-closed", "timed-out", "handed-back"] as const).map(
     (outcome): Wake => ({
       ...base,
