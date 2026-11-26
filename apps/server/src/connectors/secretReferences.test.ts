@@ -274,6 +274,54 @@ describe("references to secrets in a connector's settings", () => {
   );
 
   it.live(
+    "sends the value with a connector app's requests through the bot's session, and none once the secret is gone",
+    () =>
+      Effect.gen(function* () {
+        logged.length = 0;
+        const { ana, secrets, connectors } = yield* withSecret((a) => onlyBots(a));
+        const fake = yield* fakeMcpServer({
+          tools: [
+            { name: "search", description: "Searches issues" },
+            { name: "hold", _meta: { ui: { visibility: ["app"] } } },
+          ],
+          call: (_name, _args, headers) => ({
+            _tag: "result",
+            text: `held with ${String(headers.authorization)}`,
+          }),
+        });
+        yield* tracker(grantTo(ana));
+        yield* pointAt(fake);
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+
+        const appCall = connectors.appCall({
+          botId: ana,
+          connectorId: ID,
+          name: "hold",
+          arguments: {},
+          permitted: Effect.succeed(true),
+        });
+        const answer = yield* appCall;
+        assert.strictEqual(answer._tag, "answer");
+        assert.strictEqual(authorizations(fake).at(-1), `Bearer ${VALUE}`);
+        // What the app is given, and the log, never hold the value its server echoed.
+        assert.include(JSON.stringify(answer), "held with [redacted]");
+        assert.notInclude(JSON.stringify([answer, logged]), VALUE);
+
+        yield* secrets.remove(TOKEN_ID);
+        yield* awaitConnector(needsSecret("missing"));
+        const before = fake.requests.length;
+        assert.deepStrictEqual(yield* appCall, { _tag: "refused", reason: "unavailable" });
+        assert.deepStrictEqual(
+          yield* connectors.appRead({ botId: ana, connectorId: ID, uri: "ui://tracker/board" }),
+          { _tag: "refused", reason: "unavailable" },
+        );
+        assert.strictEqual(fake.requests.length, before);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
     "opens a new session with a secret's new value",
     () =>
       Effect.gen(function* () {
