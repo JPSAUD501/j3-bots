@@ -242,15 +242,7 @@ export function LittleOnes({ littleOnes, live, avatar, face }: LittleOnesProps) 
   const bot = avatarBodyColor(color, theme, false);
   const paint = littleColors(color, theme, false);
   return (
-    <AnimatedView
-      style={block}
-      {...(shown.ones.length > 0
-        ? {
-            accessible: false,
-            accessibilityLabel: plural("littleOnes.label", shown.ones.length + shown.more),
-          }
-        : {})}
-    >
+    <AnimatedView style={block}>
       <View pointerEvents="none" style={{ position: "absolute", left: PARENT / 2, top: 0 }}>
         <Svg width={1} height={1} style={{ overflow: "visible" }}>
           <AnimatedPath animatedProps={strandProps} fill={bot} />
