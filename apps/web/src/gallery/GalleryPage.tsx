@@ -84,6 +84,7 @@ import {
   type SignInView,
 } from "@j3-bots/client-runtime";
 import {
+  type AvatarPoke,
   avatarSeed,
   avatarStates,
   buildTimeline,
@@ -105,7 +106,7 @@ import { ApprovalCard } from "../components/ApprovalCard";
 import { ConnectorAuthCard } from "../components/connectors/ConnectorCards";
 import { ConnectorsScreen } from "../components/connectors/ConnectorsDialog";
 import { AvatarPicker } from "../components/avatar/AvatarPicker";
-import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
+import { type AvatarHandle, BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
 import { Composer, type MentionCandidate, MentionList } from "../components/Composer";
 import { ConversationHeader } from "../components/ConversationHeader";
 import { BotDetails, RoomDetails } from "../components/DetailsPanel";
@@ -288,6 +289,9 @@ export default function GalleryPage() {
   );
 }
 
+/** A section's place in the page's address, from its title: "First run" is `#first-run`. */
+const anchor = (title: string) => title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-");
+
 function Section({
   title,
   children,
@@ -299,7 +303,7 @@ function Section({
   stacked?: boolean;
 }) {
   return (
-    <section className="flex flex-col gap-3">
+    <section id={anchor(title)} className="flex scroll-mt-4 flex-col gap-3">
       <h2 className="display-type text-2xl">{title}</h2>
       <div className={cn("grid gap-4", !stacked && "@wide:grid-cols-2")}>
         {(["light", "dark"] as const).map((theme) => (
@@ -591,9 +595,201 @@ function SpringCard({ name, spring }: { name: string; spring: Spring }) {
   );
 }
 
+/** Every look the gallery's lively rows draw from. */
+const looks = avatarShapeNames.flatMap((shape, row) =>
+  botColors.map((color, column) => ({ shape, color, order: (row * 7 + column * 5) % 144 })),
+);
+const lookAt = (index: number): AvatarChoice => {
+  const look = looks.toSorted((a, b) => a.order - b.order)[index % looks.length];
+  return look === undefined ? avatarCast[0] : { shape: look.shape, color: look.color };
+};
+
+/**
+ * Avatars alive, to try by hand: the eye follows the pointer only from close
+ * by, a press holds the bot down, and a tap gets an answer. The buttons ask
+ * all of them at once for what the app asks one of.
+ */
+function AliveAvatars() {
+  const handles = useRef(new Map<number, AvatarHandle>());
+  const [entrance, setEntrance] = useState(0);
+  const all = (poke: AvatarPoke) => {
+    for (const handle of handles.current.values()) handle.poke(poke);
+  };
+  const tapAll = () => {
+    all("press");
+    all("tap");
+  };
+  return (
+    <div data-gallery-block="alive" className="flex flex-col gap-4">
+      <div key={entrance} className="flex flex-wrap items-end gap-x-10 gap-y-6 pt-16 pb-2">
+        {[96, 96, 64, 40, 40, 24].map((size, index) => (
+          <BotAvatar
+            key={`${size}-${index === 1 ? "b" : index === 4 ? "d" : "a"}`}
+            ref={(handle) => {
+              if (handle === null) return;
+              handles.current.set(index, handle);
+              return () => {
+                handles.current.delete(index);
+              };
+            }}
+            avatar={lookAt(index * 13 + 2)}
+            seed={`alive-${index}`}
+            state="idle"
+            size={size}
+            entrance={entrance > 0 && { delay: index * 120 }}
+          />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button data-gallery="alive-tap" onClick={tapAll}>
+          Tap them all
+        </Button>
+        <Button
+          variant="ghost"
+          data-gallery="alive-enter"
+          onClick={() => setEntrance(entrance + 1)}
+        >
+          Bring them in
+        </Button>
+        <Button variant="ghost" onClick={() => all("cheer")}>
+          Good news
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** A bot the gallery makes on the spot, as the roster's row `count`. */
+const madeBot = (count: number): RosterItem => {
+  const look = lookAt(count * 7 + 3);
+  const names = ["Nora", "Leo", "Ruby", "Owen", "Ellie", "Sam", "Jack", "Maya"];
+  return {
+    _tag: "bot",
+    bot: {
+      ...team.bots.moss,
+      id: BotId.make(`made-${count}`),
+      primary: false,
+      profile: {
+        ...team.bots.moss.profile,
+        name: names[count % names.length] ?? "Nora",
+        avatar: look,
+      },
+    },
+    lastEntry: null,
+    lastActivityAt: DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) + count * 1000),
+    unread: false,
+  };
+};
+
+/** A room the gallery makes on the spot, of the sample team's bots. */
+const madeRoom = (count: number): RosterItem => ({
+  _tag: "room",
+  room: {
+    ...restingRoom,
+    id: RoomId.make(`made-room-${count}`),
+    name: ["Launch week", "Reading group", "Trip to Lisbon"][count % 3] ?? "Launch week",
+    members: [bots[count % bots.length], bots[(count + 3) % bots.length]].flatMap((bot) =>
+      bot === undefined ? [] : [bot.id],
+    ),
+  },
+  lastEntry: null,
+  lastActivityAt: DateTime.makeUnsafe(DateTime.toEpochMillis(SAMPLE_NOW) + count * 1000),
+  unread: false,
+});
+
+/** A roster of `items`, at its width beside a conversation, that only shows them. */
+function PlainRoster({ items }: { items: ReadonlyArray<RosterItem> }) {
+  const folded = useFoldedSections(null);
+  return (
+    <RosterProvider roster={[...team.roster, ...items]}>
+      <div className="flex h-full flex-col bg-sidebar">
+        <Roster
+          items={items}
+          sections={null}
+          selected={null}
+          rowLink={() => rowButton(nothing)}
+          pairs={[]}
+          selectedPair={null}
+          pairLink={() => rowButton(nothing)}
+          pairIntents={quietPairIntents}
+          onNewBot={nothing}
+          onNewFromTemplate={nothing}
+          onNewRoom={nothing}
+          intents={quietIntents}
+          folded={folded}
+        />
+      </div>
+    </RosterProvider>
+  );
+}
+
+/**
+ * Bots and rooms coming into the roster and leaving it: each button is what
+ * the server tells a client when someone, the operator or a bot, makes or
+ * deletes one.
+ */
+function RosterComings() {
+  const [made, setMade] = useState<ReadonlyArray<RosterItem>>([]);
+  const [count, setCount] = useState(0);
+  const add = (item: RosterItem) => {
+    setMade([...made, item]);
+    setCount(count + 1);
+  };
+  const base = team.roster.filter((item) => item._tag === "bot" && !item.bot.hidden).slice(0, 4);
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 flex-wrap gap-2 border-b border-border bg-background p-2">
+        <Button size="sm" data-gallery="roster-bot" onClick={() => add(madeBot(count))}>
+          New bot
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          data-gallery="roster-room"
+          onClick={() => add(madeRoom(count))}
+        >
+          New room
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          data-gallery="roster-remove"
+          onClick={() => setMade(made.slice(0, -1))}
+        >
+          Delete the newest
+        </Button>
+      </div>
+      <div className="min-h-0 flex-1">
+        <PlainRoster items={[...base, ...made]} />
+      </div>
+    </div>
+  );
+}
+
+/** A full roster, every bot idle and alive: what the frame loop is measured against. */
+const fullRoster: ReadonlyArray<RosterItem> = Array.from({ length: 40 }, (_, index) =>
+  madeBot(index),
+);
+
 function MotionSection() {
   return (
     <Section title="Motion">
+      <Labeled label="Alive: bring the pointer close to one (its eye follows within about two of its own widths, and lets go by three); press and hold; tap, and tap again">
+        <AliveAvatars />
+      </Labeled>
+      <div className="flex flex-wrap gap-4">
+        <Frame
+          label="Entering the roster and leaving it: a bot, a room with its members' faces"
+          width={340}
+          height={520}
+          replay
+        >
+          <RosterComings />
+        </Frame>
+        <Frame label="A full roster, forty bots, live" width={340} height={720}>
+          <PlainRoster items={fullRoster} />
+        </Frame>
+      </div>
       <Labeled label="Springs: press a card to replay it">
         <div className="grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-3">
           {Object.entries(springs).map(([name, spring]) => (
@@ -2294,6 +2490,7 @@ function Frame({
   width,
   height,
   padded = false,
+  replay = false,
   children,
 }: {
   label: string;
@@ -2301,19 +2498,31 @@ function Frame({
   height: number;
   /** As a page of Settings sets its groups in. */
   padded?: boolean;
+  /** Offers Replay, which starts what the frame shows again from its first moment. */
+  replay?: boolean;
   children: ReactNode;
 }) {
+  const [run, setRun] = useState(0);
   return (
     <Labeled label={label} className="max-w-full">
       <div
+        key={run}
+        data-gallery-frame={label}
+        // What a frame shows stays in it: a sheet's scrim, fixed to the window in the app, is fixed
+        // to the frame here, so one frame's open sheet never covers the rest of the gallery.
         className={cn(
-          "max-w-full overflow-hidden rounded-md border border-border",
+          "max-w-full overflow-hidden rounded-md border border-border [contain:layout]",
           padded && "overflow-y-auto p-5",
         )}
         style={{ width: `${width / 16}rem`, height: `${height / 16}rem` }}
       >
         {children}
       </div>
+      {replay && (
+        <Button size="sm" variant="ghost" className="self-start" onClick={() => setRun(run + 1)}>
+          Replay
+        </Button>
+      )}
     </Labeled>
   );
 }
@@ -2896,13 +3105,13 @@ function FirstRunSection() {
   return (
     <Section title="First run">
       <div className="flex flex-wrap gap-4">
-        <Frame label="Welcome" width={390} height={760}>
+        <Frame label="Welcome" width={390} height={760} replay>
           <FirstRunAt step="welcome" />
         </Frame>
-        <Frame label="The first bot's name, with a default" width={390} height={760}>
+        <Frame label="The first bot's name, with a default" width={390} height={760} replay>
           <FirstRunAt step="name" />
         </Frame>
-        <Frame label="Its look" width={390} height={760}>
+        <Frame label="Its look" width={390} height={760} replay>
           <FirstRunAt step="look" />
         </Frame>
         <Frame label="No provider connected: one command, live" width={390} height={760}>
@@ -2947,13 +3156,13 @@ function FirstRunSection() {
         <Frame label="A provider connected while the step is read" width={390} height={760}>
           <FirstRunAt step="connect" />
         </Frame>
-        <Frame label="The arrival, saying hello" width={390} height={760}>
+        <Frame label="The arrival, saying hello" width={390} height={760} replay>
           <FirstRunAt step="arrival" />
         </Frame>
         <Frame label="The arrival, before a provider is connected" width={390} height={760}>
           <FirstRunAt step="arrival" engine={engines.connect} />
         </Frame>
-        <Frame label="The whole first run, live, with a provider" width={390} height={760}>
+        <Frame label="The whole first run, live, with a provider" width={390} height={760} replay>
           <ShellFrame initial={null} firstRun />
         </Frame>
         <Frame label="The whole first run, live, with no provider" width={390} height={760}>
@@ -3116,7 +3325,7 @@ function FirstRunWideSection() {
   return (
     <Section title="First run on a wide window" stacked>
       <div className="flex flex-col gap-6">
-        <Frame label="Wide, live, with a provider" width={1280} height={760}>
+        <Frame label="Wide, live, with a provider" width={1280} height={760} replay>
           <ShellFrame initial={null} firstRun />
         </Frame>
         <Frame label="Wide, live, with no provider" width={1280} height={760}>

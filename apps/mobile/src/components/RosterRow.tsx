@@ -37,6 +37,7 @@ export function RosterRow({
   height,
   selected,
   avatarRef,
+  entrance = false,
   onOpen,
   onMenu,
   lifted = false,
@@ -47,6 +48,8 @@ export function RosterRow({
   readonly selected: boolean;
   /** A bot row's avatar, to make it move: a row that rises makes its bot hop. */
   readonly avatarRef?: Ref<AvatarHandle>;
+  /** The bot or room is new to the roster: it comes down into its row. */
+  readonly entrance?: boolean;
   /** Opens its conversation; a row drawn only to be seen, as over a menu, has none. */
   readonly onOpen?: () => void;
   /** Opens the row's menu, given where the row is on screen. */
@@ -109,10 +112,16 @@ export function RosterRow({
           size={40}
           ground={ground}
           markPrimary
+          entrance={entrance}
           {...(avatarRef === undefined ? {} : { ref: avatarRef })}
         />
       ) : (
-        <RoomAvatar size={40} ground={ground} members={roomAvatarMembers(item.room, bots)} />
+        <RoomAvatar
+          size={40}
+          ground={ground}
+          members={roomAvatarMembers(item.room, bots)}
+          entrance={entrance}
+        />
       )}
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="flex-row items-baseline gap-2">

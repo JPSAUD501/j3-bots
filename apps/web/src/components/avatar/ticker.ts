@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * The one frame loop every avatar on the page shares. It runs only while some
- * avatar moves, steps each one that is on screen, and draws the rest still:
+ * The one frame loop of the page. Everything that moves frame by frame moves
+ * from here: every avatar, and whatever travels on a spring it can be
+ * interrupted on (`drive`, which `lib/sprung.ts` builds on). It runs only while
+ * something moves, steps each avatar that is on screen, and draws the rest
+ * still:
  *
  * - an avatar scrolled out of view (IntersectionObserver) is not stepped;
  * - an avatar at list size, under 44 px, steps every other frame;
@@ -10,11 +13,15 @@
  *   changes;
  * - under reduced motion nothing moves, and every avatar shows its still form.
  *
- * Each frame first reads what it must of the layout (the boxes of avatars
- * whose eye follows the pointer, and only after the pointer moved or the page
- * scrolled), then writes, so drawing never forces a layout.
+ * Each frame first reads what it must of the layout, then writes, so drawing
+ * never forces a layout. What it reads are the avatars' boxes, only while a
+ * pointer that moved lately may be near one, and only after the page scrolled
+ * or something travelled, or `RECTS_KEPT` ms after it last read them: the
+ * pointer moving does not move an avatar, so it is no reason to read again.
+ * The pointer reaches an avatar only from close by (`pointerNear`): past that
+ * the avatar is not told of it.
  */
-import { gazeToward, type AvatarGaze } from "@j3-bots/client-runtime/presentation";
+import { pointerNear, type AvatarNear } from "@j3-bots/client-runtime/presentation";
 
 /** One avatar as the loop drives it. */
 export interface Animated {
@@ -24,8 +31,8 @@ export interface Animated {
   readonly moving: () => boolean;
   /** Its box on the page, for an eye that follows the pointer; null when it does not. */
   readonly measure: (() => DOMRect) | null;
-  /** Steps it `dt` seconds and draws it. */
-  readonly step: (dt: number, gaze: AvatarGaze | null) => void;
+  /** Steps it `dt` seconds and draws it; `near` is the pointer, when it is close by. */
+  readonly step: (dt: number, near: AvatarNear | null) => void;
   /** Draws its still form. */
   readonly still: () => void;
 }
@@ -46,8 +53,19 @@ export interface Running {
 const MAX_MOVING = 24;
 /** Under this size, in px, an avatar steps at half rate. */
 const LIST_SIZE = 44;
-/** How long after the pointer last moved the eyes keep following it, in ms. */
-const POINTER_HOLD = 2400;
+/**
+ * How long after the pointer last moved an avatar near it keeps looking at
+ * it, in ms: a pointer left lying beside a bot stops being interesting.
+ */
+const POINTER_HOLD = 3500;
+/**
+ * How long the avatars' boxes are trusted while nothing says they moved, in
+ * ms: a layout that changed with no scroll and nothing travelling, as a pane
+ * opening, is caught up with this soon.
+ */
+const RECTS_KEPT = 500;
+/** The longest a frame counts for, in seconds: a tab that slept does not fast-forward. */
+const LONGEST_FRAME = 0.1;
 
 interface Entry {
   readonly avatar: Animated;
@@ -65,17 +83,21 @@ interface Entry {
 const entries = new Set<Entry>();
 /** The entries whose element the observer watches, by that element. */
 const observed = new Map<Element, Entry>();
+/** What else the loop steps: each returns whether it still moves. */
+const drivers = new Set<(dt: number) => boolean>();
 let frame = 0;
 let raf = 0;
 let last = 0;
 let order = 0;
 let rectsStale = true;
+let rectsAt = 0;
+let listening = false;
 const pointer = { x: 0, y: 0, at: Number.NEGATIVE_INFINITY };
 
 const reducedQuery =
-  typeof window === "undefined" ? null : window.matchMedia("(prefers-reduced-motion: reduce)");
-const finePointer =
-  typeof window === "undefined" ? null : window.matchMedia("(hover: hover) and (pointer: fine)");
+  typeof window === "undefined" || typeof window.matchMedia !== "function"
+    ? null
+    : window.matchMedia("(prefers-reduced-motion: reduce)");
 
 /** Whether the platform asks for reduced motion now. */
 export const reducedMotion = () => reducedQuery?.matches ?? false;
@@ -108,15 +130,47 @@ const onPointer = (event: PointerEvent) => {
   pointer.x = event.clientX;
   pointer.y = event.clientY;
   pointer.at = performance.now();
-  rectsStale = true;
+};
+/** The pointer is gone: a finger lifted, or the mouse left the window, which is leaving for nothing. */
+const onPointerGone = (event: PointerEvent) => {
+  const left = event.type === "pointerout" ? event.relatedTarget === null : true;
+  if (left && (event.type === "pointerout" || event.pointerType !== "mouse")) {
+    pointer.at = Number.NEGATIVE_INFINITY;
+  }
 };
 const onScroll = () => {
   rectsStale = true;
 };
 
-/** Starts the loop when something can move, and stops listening when nothing is left. */
+function listen() {
+  if (listening || typeof window === "undefined") return;
+  listening = true;
+  window.addEventListener("pointermove", onPointer, { passive: true });
+  window.addEventListener("pointerdown", onPointer, { passive: true });
+  window.addEventListener("pointerup", onPointerGone, { passive: true });
+  window.addEventListener("pointercancel", onPointerGone, { passive: true });
+  window.addEventListener("pointerout", onPointerGone, { passive: true });
+  window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+  window.addEventListener("resize", onScroll, { passive: true });
+  reducedQuery?.addEventListener("change", onReducedChange);
+}
+
+function unlisten() {
+  if (!listening || entries.size > 0 || drivers.size > 0) return;
+  listening = false;
+  window.removeEventListener("pointermove", onPointer);
+  window.removeEventListener("pointerdown", onPointer);
+  window.removeEventListener("pointerup", onPointerGone);
+  window.removeEventListener("pointercancel", onPointerGone);
+  window.removeEventListener("pointerout", onPointerGone);
+  window.removeEventListener("scroll", onScroll, { capture: true });
+  window.removeEventListener("resize", onScroll);
+  reducedQuery?.removeEventListener("change", onReducedChange);
+}
+
+/** Starts the loop when something can move. */
 function wake() {
-  if (raf !== 0 || entries.size === 0 || reducedMotion()) return;
+  if (raf !== 0 || (entries.size === 0 && drivers.size === 0) || reducedMotion()) return;
   last = performance.now();
   raf = requestAnimationFrame(loop);
 }
@@ -124,7 +178,7 @@ function wake() {
 function loop(now: number) {
   raf = 0;
   if (reducedMotion()) return;
-  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  const dt = Math.min(LONGEST_FRAME, Math.max(0, (now - last) / 1000));
   last = now;
   frame++;
 
@@ -133,16 +187,24 @@ function loop(now: number) {
   candidates.sort((a, b) => b.avatar.size - a.avatar.size || a.order - b.order);
   const moving = new Set(candidates.slice(0, MAX_MOVING));
   for (const entry of entries) if (!moving.has(entry)) settle(entry);
-  if (moving.size === 0) return;
 
-  // Reads first: the boxes of avatars that follow a pointer that just moved.
-  const following = finePointer?.matches === true && now - pointer.at < POINTER_HOLD;
-  if (following && rectsStale) {
+  // Reads first: the boxes of the avatars, when a pointer that moved lately may be near one.
+  const following = now - pointer.at < POINTER_HOLD;
+  if (following && (rectsStale || now - rectsAt > RECTS_KEPT)) {
     for (const entry of moving) entry.rect = entry.avatar.measure?.() ?? null;
     rectsStale = false;
+    rectsAt = now;
   }
 
-  // Then writes.
+  // Then writes: what travels on its springs, then the avatars.
+  let driving = false;
+  for (const step of drivers) {
+    if (step(dt)) driving = true;
+    else drivers.delete(step);
+  }
+  // What travelled may have carried an avatar with it.
+  if (driving) rectsStale = true;
+
   for (const entry of moving) {
     const half = entry.avatar.size < LIST_SIZE && (frame + entry.order) % 2 === 1;
     if (half) {
@@ -150,19 +212,21 @@ function loop(now: number) {
       continue;
     }
     const rect = entry.rect;
-    const gaze =
+    const near =
       following && rect !== null
-        ? gazeToward(
+        ? pointerNear(
             pointer.x - (rect.left + rect.width / 2),
             pointer.y - (rect.top + rect.height / 2),
+            rect.width,
           )
         : null;
-    entry.avatar.step(dt + entry.owed, gaze);
+    entry.avatar.step(dt + entry.owed, near);
     entry.owed = 0;
     entry.drawnMoving = true;
     entry.restated = false;
   }
-  raf = requestAnimationFrame(loop);
+  if (moving.size > 0 || drivers.size > 0) raf = requestAnimationFrame(loop);
+  else unlisten();
 }
 
 function onReducedChange() {
@@ -170,6 +234,9 @@ function onReducedChange() {
     cancelAnimationFrame(raf);
     raf = 0;
     for (const entry of entries) settle(entry);
+    // Whatever was travelling takes its place at once: a step of any length ends at rest.
+    for (const step of drivers) step(Number.POSITIVE_INFINITY);
+    drivers.clear();
   } else wake();
 }
 
@@ -179,12 +246,7 @@ function onReducedChange() {
  * is in view.
  */
 export function animate(avatar: Animated, element?: Element): Running {
-  if (entries.size === 0) {
-    window.addEventListener("pointermove", onPointer, { passive: true });
-    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
-    window.addEventListener("resize", onScroll, { passive: true });
-    reducedQuery?.addEventListener("change", onReducedChange);
-  }
+  listen();
   const watched = element !== undefined && observer !== null ? element : null;
   const entry: Entry = {
     avatar,
@@ -215,14 +277,31 @@ export function animate(avatar: Animated, element?: Element): Running {
         observed.delete(watched);
       }
       entries.delete(entry);
-      if (entries.size > 0) return;
+      if (entries.size > 0 || drivers.size > 0) return;
       cancelAnimationFrame(raf);
       raf = 0;
-      window.removeEventListener("pointermove", onPointer);
-      window.removeEventListener("scroll", onScroll, { capture: true });
-      window.removeEventListener("resize", onScroll);
-      reducedQuery?.removeEventListener("change", onReducedChange);
+      unlisten();
     },
+  };
+}
+
+/**
+ * Steps `step` on every frame, with the seconds since the last one, until it
+ * returns false: it is at rest. Under reduced motion it is stepped once, with
+ * no end of time, so it lands where it was going. Returns what takes it off
+ * the loop.
+ */
+export function drive(step: (dt: number) => boolean): () => void {
+  if (reducedMotion()) {
+    step(Number.POSITIVE_INFINITY);
+    return () => {};
+  }
+  listen();
+  drivers.add(step);
+  wake();
+  return () => {
+    drivers.delete(step);
+    if (entries.size === 0 && drivers.size === 0) unlisten();
   };
 }
 

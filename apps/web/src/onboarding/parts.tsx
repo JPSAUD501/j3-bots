@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Button } from "../components/ui/button";
 import { textField } from "../components/ui/field";
 import { cn } from "../lib/cn";
-import { Cast } from "./Cast";
+import { Cast } from "./Stage";
 
 /** The app's text field, in the larger type of the screens before the first bot. */
 export const bigFieldClass = cn(textField, "h-12 px-4 text-lg pointer-coarse:h-13");
@@ -52,8 +52,9 @@ export function BigButton({
 
 /**
  * A screen before the first bot that is not a step of making it, as pairing
- * and naming the server: the team still to come, a title, what it says
- * (`null` when the title says it all) and what to do.
+ * and naming the server, on the same dark stage as the first run: the cast
+ * coming down into its lights, a title, what it says (`null` when the title
+ * says it all) and what to do.
  */
 export function FirstScreen({
   title,
@@ -65,9 +66,9 @@ export function FirstScreen({
   readonly children: ReactNode;
 }) {
   return (
-    <div className="onboarding flex h-full min-h-0 flex-1 flex-col items-center overflow-y-auto px-6 py-10">
+    <div className="onboarding dark flex h-full min-h-0 flex-1 flex-col items-center overflow-x-hidden overflow-y-auto bg-background px-6 py-10 text-foreground">
       <div className="my-auto flex w-full max-w-sm flex-col items-center gap-5 text-center">
-        <Cast compact />
+        <Cast />
         <div className="flex flex-col gap-2">
           <StepTitle>{title}</StepTitle>
           {body !== null && <p className="text-lg text-muted-foreground">{body}</p>}

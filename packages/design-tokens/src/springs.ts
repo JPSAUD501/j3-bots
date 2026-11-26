@@ -28,6 +28,47 @@ export interface ReanimatedSpring {
   readonly damping: number;
 }
 
+/** Where something on a spring is, and how fast it moves, per second. */
+export interface SpringState {
+  readonly x: number;
+  readonly v: number;
+}
+
+/**
+ * `state` after `seconds` on the spring of `frequency` and `damping`, pulled
+ * toward `to`. It is the spring's own solution, not a sum of small steps, so
+ * it draws the same motion at any frame rate and after any pause, and it
+ * cannot run away. Retargeting is giving another `to`: the place and the speed
+ * carry on, so a move interrupted mid-way bends into the next one. Everything
+ * that can be interrupted moves through here: the avatars, the first run's
+ * stage and the roster's rows on the web. A CSS easing (`Spring.easing`) is the
+ * same spring sampled once, for moves nothing interrupts.
+ *
+ * A worklet, so the mobile app runs it on the UI thread. Every spring here
+ * overshoots (damping under 1), which is the case this solves.
+ */
+export function springStep(
+  state: SpringState,
+  to: number,
+  frequency: number,
+  damping: number,
+  seconds: number,
+): SpringState {
+  "worklet";
+  const omega = 2 * Math.PI * frequency;
+  const decay = damping * omega;
+  const turn = omega * Math.sqrt(1 - damping * damping);
+  const from = state.x - to;
+  const swing = (state.v + decay * from) / turn;
+  const fade = Math.exp(-decay * seconds);
+  const cos = Math.cos(turn * seconds);
+  const sin = Math.sin(turn * seconds);
+  return {
+    x: to + fade * (from * cos + swing * sin),
+    v: fade * ((swing * turn - decay * from) * cos - (from * turn + decay * swing) * sin),
+  };
+}
+
 /** Where a spring counts as at rest: this close to its target and this slow. */
 const REST_DISTANCE = 0.003;
 const REST_SPEED = 0.03;
@@ -146,35 +187,58 @@ export const lift = {
 } as const;
 
 /**
- * The first run's choreography, drawn the same way by every surface. Times
- * are in ms, distances in px; each move names the spring or ease it travels
+ * The stage: the first run and a bot's entrance into the roster, drawn the
+ * same way by every surface. A dark floor, a spotlight per bot, and bots that
+ * come down into the light and land with weight. Times are in ms, distances
+ * in px unless said otherwise; each move names the spring or ease it travels
  * on where it is played.
  */
-export const firstRun = {
+export const stage = {
   /**
-   * A screen comes in from this far along the direction of travel on `slide`,
-   * and the one before leaves the same way on the `out` ease, in `leave` ms,
-   * so the new one is mostly in place when the old one is gone.
+   * A bot comes down from this many times its own height above its place. In
+   * the air it falls as a thrown thing does (`avatarAir` in the client
+   * runtime); on the ground it rides `pop`.
    */
-  shift: 48,
-  leave: Math.round(springs.slide.duration / 2),
-  /** The cast pops in one bot after another, this far apart, on `pop`. */
-  stagger: 90,
-  /** Then each floats this high and back, on its own period, so no two move together. */
-  float: 6,
-  /** The bot being made hops this high at each step and change, and lands on `pop`. */
-  hop: 10,
-  /** Once it exists it drops this far and grows by this share, on `pop`. */
-  arrivalDrop: 56,
-  arrivalGrowth: 0.5,
+  drop: 2,
+  /** In a list it comes from just above its row, this many times its height, so it does not fall through the row above. */
+  rowDrop: 0.9,
+  /** The bots of one scene come down one after another, this far apart. */
+  stagger: 140,
+  /** A bot's spotlight comes on this long before the bot sets off, on the `out` ease over `spotIn`. */
+  spotLead: 180,
+  spotIn: 320,
+  /** Text arrives out of focus: this blurred, this far below, clearing on `soft`. */
+  focus: { blur: 10, rise: 14, gap: 90 },
+  /** Text that leaves fades on the `out` ease in this long, so the next lines never wait for it. */
+  leave: 160,
+  /**
+   * The camera: how much larger the stage is drawn when a scene is about one
+   * bot, and how far it pulls back for the finale. It travels on `soft`.
+   */
+  close: 1.18,
+  wide: 0.94,
+  /** The finale's sweep of light crosses the stage in this long, on the `out` ease. */
+  sweep: 1100,
+  /** Once the first bot exists it grows by this share, on `pop`. */
+  arrivalGrowth: 0.35,
   /**
    * Its rings start half a `pop` later, `gap` apart, and spread on the `out`
    * ease from 0.8 to `reach` times the grown bot as they fade.
    */
-  rings: { count: 3, gap: 220, duration: 1400, reach: 1.8 },
+  rings: { count: 3, gap: 220, duration: 1400, reach: 1.9 },
   /** Its name pops in, then the line under it rises, this long after it starts to grow. */
   nameDelay: 260,
   lineDelay: 420,
   /** The arrival stays at least this long, so the bot is seen arriving before its conversation opens. */
-  hold: 1600,
+  hold: 1900,
+  /**
+   * A bot or a room new to the roster: its row's light stays this long, and
+   * its words come in this long after it sets off. More than `burst` new at
+   * once, as when a roster loads again, simply appear.
+   */
+  rowLight: 1500,
+  rowWords: 260,
+  burst: 3,
+  /** One that leaves the roster sinks and fades in this long, on the `out` ease. */
+  rowLeave: 220,
 } as const;

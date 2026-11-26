@@ -25,6 +25,7 @@ export function LiveBotAvatar({
   lastEntry = null,
   size,
   label,
+  entrance = false,
   ref,
 }: {
   readonly bot: Bot;
@@ -32,6 +33,8 @@ export function LiveBotAvatar({
   readonly lastEntry?: EntryPreview | null;
   readonly size: number;
   readonly label?: string;
+  /** Comes in from above as it first shows (`BotAvatar`). */
+  readonly entrance?: boolean;
   readonly ref?: Ref<AvatarHandle>;
 }) {
   const offline = use(AvatarsAsleep);
@@ -43,6 +46,7 @@ export function LiveBotAvatar({
       state={mood.state}
       stalled={mood.stalled}
       size={size}
+      entrance={entrance}
       {...(label === undefined ? {} : { label })}
       {...(ref === undefined ? {} : { ref })}
     />

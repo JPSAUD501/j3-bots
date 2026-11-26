@@ -17,6 +17,7 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  useEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -27,15 +28,19 @@ import {
 } from "react";
 import {
   arrangeRoster,
+  arrivalsSettled,
   betweenBots,
   type BotItem,
   filterPairs,
   filterRoster,
+  noArrivals,
   orderRoster,
   ROOM_MEMBERS,
+  rosterArrivals,
   rosterKeyOf,
   rosterKeyText,
 } from "@j3-bots/client-runtime/presentation";
+import { stage } from "@j3-bots/design-tokens";
 import { useBots, useI18n } from "../app/context";
 import type { AvatarHandle } from "./avatar/BotAvatar";
 import type { PairIntents } from "./PairHeader";
@@ -90,6 +95,27 @@ class RowAvatars {
   hop(key: string): void {
     this.handles.get(key)?.poke("hop");
   }
+}
+
+/**
+ * Who is new to the roster and comes in with an entrance (`rosterArrivals`),
+ * until they are in.
+ */
+function useArrivals(items: ReadonlyArray<RosterItem>): ReadonlySet<string> {
+  const [arrivals, setArrivals] = useState(noArrivals);
+  const now = rosterArrivals(
+    arrivals,
+    items.map((item) => rosterKeyText(rosterKeyOf(item))),
+    stage.burst,
+  );
+  if (now !== arrivals) setArrivals(now);
+  const { entering } = now;
+  useEffect(() => {
+    if (entering.size === 0) return;
+    const settled = window.setTimeout(() => setArrivals(arrivalsSettled), stage.rowLight + 600);
+    return () => window.clearTimeout(settled);
+  }, [entering]);
+  return entering;
 }
 
 /**
@@ -185,6 +211,7 @@ export function Roster({
   const [renaming, setRenaming] = useState<SectionId | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [avatars] = useState(() => new RowAvatars());
+  const entering = useArrivals(items);
 
   const searching = query.trim() !== "";
   const ordered = orderRoster(items);
@@ -202,7 +229,7 @@ export function Roster({
     const key = rosterKeyText(rosterKeyOf(item));
     const name = item._tag === "bot" ? item.bot.profile.name : item.room.name;
     return (
-      <ReorderRow key={key} rowKey={key}>
+      <ReorderRow key={key} rowKey={key} entering={entering.has(key)}>
         <WithMenu
           rows={<RosterItemRows item={item} menu={menu} />}
           label={t("roster.menu", { name })}
@@ -213,6 +240,7 @@ export function Roster({
             item={item}
             withMenu
             avatarRef={avatars.ref(key)}
+            entrance={entering.has(key)}
             selected={sameKey(item, selected)}
             render={rowLink(item)}
             memberAvatars={memberAvatarsOf(item, bots)}

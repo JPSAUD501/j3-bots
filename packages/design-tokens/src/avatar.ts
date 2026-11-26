@@ -84,7 +84,9 @@ export interface AvatarFace {
   /** The light's size, 1 normal. */
   readonly lightScale: number;
   readonly light: AvatarLight;
-  /** The body's rise off the ground: negative is up, positive squashes on landing. */
+  /** A halo about the light as it comes on, 0 none to 1. */
+  readonly glow: number;
+  /** The body's rise off the ground, 0 or negative: up is negative. */
   readonly hop: number;
   /** A small vertical bounce on top of `hop`. */
   readonly bob: number;
@@ -92,7 +94,7 @@ export interface AvatarFace {
   readonly tilt: number;
   /** Breathing, a small share that stretches the body up. */
   readonly breath: number;
-  /** A lasting squash, as a share of the body's height. */
+  /** A squash, as a share of the body's height; negative stretches it, as a fall does. */
   readonly squash: number;
   readonly signal: AvatarSignal | null;
   /** The working ring's turn, in degrees. */
@@ -147,6 +149,9 @@ export interface AvatarFrame {
   readonly stalk: string;
   readonly stalkWidth: number;
   readonly light: AvatarCircle;
+  /** A ring about the light in the light's color, `haloOpacity` strong; nothing drawn at 0. */
+  readonly halo: AvatarCircle;
+  readonly haloOpacity: number;
   /**
    * The radius of a disc about the light in the color of what the avatar sits
    * on, under a light in a state's color: a band around it, so it stands
@@ -247,16 +252,16 @@ export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: nu
   // A turn or scale of this much moves a point 50 units out, the body's reach from its feet, by the grain.
   const turnOf = (n: number) => onStep(n, grain / 50);
 
-  // The body: a squash and stretch about its feet, a lean, and the hop.
-  const land = Math.max(0, face.hop) * 0.016;
-  const sy = 1 + face.breath - face.squash - land + Math.max(0, -face.hop) * 0.0022;
-  const sx = 1 - face.breath * 0.6 + face.squash * 0.5 + land * 0.8;
+  // The body: a squash or a stretch about its feet, a lean, and its rise off the ground.
+  // What it loses in height it gains in width, and the other way when it stretches.
+  const sy = 1 + face.breath - face.squash;
+  const sx = 1 - face.breath * 0.6 + face.squash * 0.5 + Math.max(0, face.squash - 0.07) * 0.35;
   const t = (face.tilt * Math.PI) / 180;
   const a = turnOf(Math.cos(t) * sx);
   const b = turnOf(Math.sin(t) * sx);
   const c = turnOf(-Math.sin(t) * sy);
   const d = turnOf(Math.cos(t) * sy);
-  const rise = Math.min(0, face.hop) + face.bob;
+  const rise = face.hop + face.bob;
   const body: AvatarMatrix = [
     a,
     b,
@@ -315,6 +320,8 @@ export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: nu
     stalk: `M${root.x} ${root.y + 4}Q${root.x} ${length(root.y - face.antennaLength * 0.62)} ${tipX} ${tipY}`,
     stalkWidth: small ? 5.5 : 4,
     light: { x: tipX, y: tipY, r: lightR },
+    halo: { x: tipX, y: tipY, r: length(lightR * (1.5 + 1.7 * face.glow)) },
+    haloOpacity: onStep(clamp01(face.glow) * 0.55, 1 / 32),
     lightCut: face.light === "body" ? 0 : length(lightR + (small ? 4 : 2.6)),
     signal: [signalScale, 0, 0, signalScale, tipX, tipY],
     ring: [Math.cos(ring), Math.sin(ring), -Math.sin(ring), Math.cos(ring), 0, 0],

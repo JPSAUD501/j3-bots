@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vite-plus/test";
-import { keptPlaces, moveDelay, rosterMotion, rosterMoves, rowTops } from "./rosterMotion.ts";
+import {
+  arrivalsSettled,
+  keptPlaces,
+  moveDelay,
+  noArrivals,
+  rosterArrivals,
+  rosterMotion,
+  rosterMoves,
+  rowTops,
+} from "./rosterMotion.ts";
 
 const moves = (before: string, after: string) =>
   Object.fromEntries(rosterMoves([...before], [...after]));
@@ -95,5 +104,42 @@ describe("moveDelay", () => {
     expect(moveDelay("step", rising, 40)).toBe(40);
     const pushed = rosterMoves([..."AB"], [..."XAB"]);
     expect(moveDelay("step", pushed, 40)).toBe(0);
+  });
+});
+
+describe("rosterArrivals", () => {
+  const listed = (keys: string) => rosterArrivals(noArrivals, [...keys], 3);
+  const entering = (before: string, after: string) => [
+    ...rosterArrivals(listed(before), [...after], 3).entering,
+  ];
+
+  it("gives the roster's first rows no entrance, however late they load", () => {
+    expect([...rosterArrivals(noArrivals, [], 3).entering]).toEqual([]);
+    expect([...listed("ABC").entering]).toEqual([]);
+  });
+
+  it("brings in a bot or a room that was not listed before", () => {
+    expect(entering("ABC", "DABC")).toEqual(["D"]);
+    expect(entering("ABC", "ABCDE")).toEqual(["D", "E"]);
+  });
+
+  it("lets a roster read again after a while away simply appear", () => {
+    expect(entering("AB", "ABCDEFG")).toEqual([]);
+  });
+
+  it("gives no entrance to one that only left, and none again to one already in", () => {
+    expect(entering("ABC", "AC")).toEqual([]);
+    const settled = arrivalsSettled(rosterArrivals(listed("AB"), [..."ABC"], 3));
+    expect([...rosterArrivals(settled, [..."CAB"], 3).entering]).toEqual([]);
+  });
+
+  it("keeps one still coming in as another arrives", () => {
+    const first = rosterArrivals(listed("AB"), [..."ABC"], 3);
+    expect([...rosterArrivals(first, [..."ABCD"], 3).entering]).toEqual(["C", "D"]);
+  });
+
+  it("is the same when nobody came or went, so nothing draws again for it", () => {
+    const now = listed("ABC");
+    expect(rosterArrivals(now, [..."CBA"], 3)).toBe(now);
   });
 });

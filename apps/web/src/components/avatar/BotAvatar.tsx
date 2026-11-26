@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Avatar, Bot, BotId, Room } from "@j3-bots/contracts";
 import {
+  avatarBusy,
   avatarFace,
   avatarSeed,
   createAvatar,
@@ -21,6 +22,7 @@ import {
   matrixAttribute,
   resolveAvatar,
   roomAvatarShare,
+  stage,
   type AvatarFace,
   type AvatarShapeName,
 } from "@j3-bots/design-tokens";
@@ -41,7 +43,7 @@ export const AvatarsAsleep = createContext(false);
 
 /** What the avatar's owner can do to it. */
 export interface AvatarHandle {
-  /** Makes the bot answer with a small move: a hop, a nod, a morph. */
+  /** Makes the bot answer: a hop, a nod, a morph, an entrance. */
   readonly poke: (poke: AvatarPoke) => void;
 }
 
@@ -56,6 +58,12 @@ export interface BotAvatarProps {
   readonly size: number;
   /** Draws the state without motion: for previews of reduced motion, and quiet places. */
   readonly still?: boolean;
+  /**
+   * Comes in from above as it first shows: it drops into its place, lands and
+   * lights its antenna, after `delay` ms when one is given. A `still` avatar
+   * moves for its entrance and then rests.
+   */
+  readonly entrance?: boolean | { readonly delay: number };
   /**
    * Draws a band of what it sits on (`--avatar-cutout`, the page's background
    * unless set) around the body, to stand clear of what it overlaps. A status
@@ -84,6 +92,7 @@ interface Parts {
   readonly mouth: SVGEllipseElement;
   readonly stalk: SVGPathElement;
   readonly light: SVGCircleElement;
+  readonly halo: SVGCircleElement;
   readonly lightCut: SVGCircleElement;
   readonly signal: SVGGElement;
   readonly ring: SVGCircleElement;
@@ -113,6 +122,7 @@ function partsOf(svg: SVGSVGElement): Parts {
     mouth: part("mouth", SVGEllipseElement),
     stalk: part("stalk", SVGPathElement),
     light: part("light", SVGCircleElement),
+    halo: part("halo", SVGCircleElement),
     lightCut: part("light-cut", SVGCircleElement),
     signal: part("signal", SVGGElement),
     ring: part("ring", SVGCircleElement),
@@ -182,6 +192,14 @@ function painter(svg: SVGSVGElement, size: () => number, shape: () => AvatarShap
     set(p.light, "cy", n(f.light.y));
     set(p.light, "r", n(f.light.r));
     set(p.light, "fill", LIGHT[face.light]);
+    set(p.halo, "visibility", f.haloOpacity > 0 ? "visible" : "hidden");
+    if (f.haloOpacity > 0) {
+      set(p.halo, "cx", n(f.halo.x));
+      set(p.halo, "cy", n(f.halo.y));
+      set(p.halo, "r", n(f.halo.r));
+      set(p.halo, "opacity", n(f.haloOpacity));
+      set(p.halo, "stroke", LIGHT[face.light]);
+    }
     set(p.lightCut, "cx", n(f.light.x));
     set(p.lightCut, "cy", n(f.light.y));
     set(p.lightCut, "r", n(f.lightCut));
@@ -223,6 +241,11 @@ interface Controller {
   readonly poke: (poke: AvatarPoke) => void;
 }
 
+/** Under this size, in px, an avatar is at list size: its entrance comes from just above its row. */
+const LIST_SIZE = 44;
+/** How long an avatar takes to show as its entrance begins, in ms: it fades in as it starts to fall. */
+const ENTRANCE_FADE = 140;
+
 /**
  * Starts the avatar drawn in `svg` on the shared frame loop, with its own sim
  * from `seed`. Returns what drives it and what takes it off the loop.
@@ -232,6 +255,7 @@ function mountAvatar(
   seed: number,
   size: number,
   initial: Live,
+  entrance: number | null,
 ): { readonly controller: Controller; readonly stop: () => void } {
   let live = initial;
   let sim = createAvatar(seed, live.state);
@@ -241,24 +265,65 @@ function mountAvatar(
     () => live.shape,
   );
   // Asleep is a resting state: an offline avatar holds its still form, which spares
-  // the page redrawing its washed-out filter every frame.
-  const moving = () => !live.still && !live.stalled && live.state !== "offline" && !reducedMotion();
+  // the page redrawing its washed-out filter every frame. A still avatar moves only
+  // while it is in the middle of something it was asked for, as its entrance.
+  const moving = () =>
+    !live.stalled &&
+    live.state !== "offline" &&
+    !reducedMotion() &&
+    (!live.still || avatarBusy(sim));
   const drawStill = () => draw(stillFace(live.state, sim.traits, live.stalled));
   const running = animate(
     {
       size,
       moving,
       measure: () => svg.getBoundingClientRect(),
-      step: (dt, gaze) => {
-        sim = stepAvatar(sim, dt, gaze);
+      step: (dt, near) => {
+        sim = stepAvatar(sim, dt, near);
         draw(avatarFace(sim));
       },
       still: drawStill,
     },
     svg,
   );
+  const poke = (how: AvatarPoke) => {
+    if (live.stalled || live.state === "offline" || reducedMotion()) return;
+    // A still avatar is in a quiet place: it comes in when it is new, and answers nothing else.
+    if (live.still && how !== "arrive" && how !== "drop") return;
+    sim = pokeAvatar(sim, how);
+    nudge();
+  };
+  let waiting = 0;
+  let fade: Animation | null = null;
+  if (entrance !== null && !reducedMotion()) {
+    const enter = () => {
+      waiting = 0;
+      poke(size < LIST_SIZE ? "drop" : "arrive");
+      // Its first frame, in the air, at once: it never shows standing in its place first.
+      draw(avatarFace(sim));
+      fade = svg.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: ENTRANCE_FADE,
+        easing: "linear",
+      });
+    };
+    if (entrance > 0) {
+      // Until its turn comes it is not there.
+      fade = svg.animate([{ opacity: 0 }, { opacity: 0 }], {
+        duration: entrance,
+        fill: "forwards",
+      });
+      waiting = window.setTimeout(() => {
+        fade?.cancel();
+        enter();
+      }, entrance);
+    } else enter();
+  }
   return {
-    stop: running.stop,
+    stop: () => {
+      window.clearTimeout(waiting);
+      fade?.cancel();
+      running.stop();
+    },
     controller: {
       update: (next) => {
         live = next;
@@ -266,11 +331,7 @@ function mountAvatar(
         if (moving()) running.restate();
         else drawStill();
       },
-      poke: (poke) => {
-        if (!moving()) return;
-        sim = pokeAvatar(sim, poke);
-        nudge();
-      },
+      poke,
     },
   };
 }
@@ -279,9 +340,10 @@ function mountAvatar(
  * A bot's face: its silhouette in its color, one lens eye, and an antenna
  * whose tip is the status light. It lives on the page's shared frame loop
  * (`ticker.ts`): it blinks, glances, breathes and moves the way its state
- * does, on its own seeded clock, and its eye follows the pointer on desktop.
- * Off screen, under reduced motion, when `still`, asleep, or while its turn
- * is stalled, it holds its state's still form.
+ * does, on its own seeded clock. Its eye follows the pointer from close by,
+ * it goes down under a press and springs back, and it answers a tap. Off
+ * screen, under reduced motion, when `still`, asleep, or while its turn is
+ * stalled, it holds its state's still form.
  */
 export function BotAvatar({
   avatar,
@@ -290,6 +352,7 @@ export function BotAvatar({
   stalled = false,
   size,
   still = false,
+  entrance = false,
   cutout = false,
   label,
   className,
@@ -306,13 +369,20 @@ export function BotAvatar({
     controller.current?.update(latest.current);
   }, [state, stalled, still, shape]);
 
-  // One sim per bot: a new seed or size starts it again.
+  // One sim per bot: a new seed or size starts it again. Its entrance is its first mount's alone.
+  const entranceAt = useRef(entrance === false ? null : entrance === true ? 0 : entrance.delay);
   useEffect(() => {
     const svg = svgRef.current;
     if (svg === null) return;
-    const mounted = mountAvatar(svg, seedNumber, size, latest.current);
+    const mounted = mountAvatar(svg, seedNumber, size, latest.current, entranceAt.current);
+    // Spent once this mount has outlived the tick it was made in: a mount React makes only to
+    // take down again at once, as its development checks do, leaves the entrance for the next.
+    const spent = window.setTimeout(() => {
+      entranceAt.current = null;
+    }, 0);
     controller.current = mounted.controller;
     return () => {
+      window.clearTimeout(spent);
       mounted.stop();
       controller.current = null;
     };
@@ -334,7 +404,12 @@ export function BotAvatar({
       onPointerEnter={(event) => {
         if (event.pointerType === "mouse") controller.current?.poke("hover");
       }}
-      onPointerDown={() => controller.current?.poke("press")}
+      onPointerDown={(event) => {
+        if (event.button === 0) controller.current?.poke("press");
+      }}
+      onPointerUp={() => controller.current?.poke("tap")}
+      onPointerLeave={() => controller.current?.poke("release")}
+      onPointerCancel={() => controller.current?.poke("release")}
     >
       <g data-part="body">
         {cutout && (
@@ -396,6 +471,7 @@ export function BotAvatar({
             ))}
           </g>
         </g>
+        <circle data-part="halo" fill="none" strokeWidth={1.6} visibility="hidden" />
         <circle data-part="light" />
       </g>
     </svg>
@@ -418,13 +494,18 @@ export function roomAvatarMembers(
   });
 }
 
-/** Two members overlapping and still: a room, idle, or asleep with the bots while offline. */
+/**
+ * Two members overlapping and still: a room, idle, or asleep with the bots
+ * while offline. With `entrance`, its members come in one after the other.
+ */
 export function RoomAvatar({
   members,
   size,
+  entrance = false,
 }: {
   readonly members: ReadonlyArray<RoomAvatarMember>;
   readonly size: number;
+  readonly entrance?: boolean;
 }) {
   const [back, front] = members;
   const part = Math.round(size * roomAvatarShare);
@@ -437,12 +518,27 @@ export function RoomAvatar({
     >
       {back && (
         <span className="absolute top-0 left-0">
-          <BotAvatar avatar={back.avatar} seed={back.id} state={state} size={part} still />
+          <BotAvatar
+            avatar={back.avatar}
+            seed={back.id}
+            state={state}
+            size={part}
+            still
+            entrance={entrance}
+          />
         </span>
       )}
       {front && (
         <span className="absolute right-0 bottom-0">
-          <BotAvatar avatar={front.avatar} seed={front.id} state={state} size={part} still cutout />
+          <BotAvatar
+            avatar={front.avatar}
+            seed={front.id}
+            state={state}
+            size={part}
+            still
+            cutout
+            entrance={entrance && { delay: stage.stagger }}
+          />
         </span>
       )}
     </span>

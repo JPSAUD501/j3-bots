@@ -92,7 +92,8 @@
 /*
  * A roster row that changes place (components/ReorderList.tsx) lifts while it travels: a little
  * larger, over an opaque ground with the lift shadow, above the rows it passes. Its travel is a
- * transform the list plays; the lift is `scale` and opacities, so neither lays anything out.
+ * `translate` the list writes from the row's spring; the lift is `scale` and opacities, so
+ * neither lays anything out and neither writes what the other does.
  * Under reduced motion no row is ever lifted.
  */
 @layer components {
@@ -145,6 +146,84 @@
 
   .reorder-row[data-lifted]::after {
     opacity: 1;
+  }
+}
+
+/*
+ * A bot or a room new to the roster (components/RosterRow.tsx) comes down into a light of its own
+ * color: a cone from above and a pool at its feet, which come up, hold and go; its name and line
+ * follow it in. The fall, the landing and the antenna lighting are the avatar's own (the shared
+ * frame loop); these are opacities and one transform. Under reduced motion none of it plays.
+ */
+@layer components {
+  .row-spot {
+    position: absolute;
+    z-index: -1;
+    bottom: -6%;
+    left: 50%;
+    width: 230%;
+    height: 330%;
+    translate: -50% 0;
+    pointer-events: none;
+    animation: row-spot var(--row-light) var(--ease-out) both;
+  }
+
+  .row-spot::before,
+  .row-spot::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+  }
+
+  .row-spot::before {
+    inset-block: 0 8%;
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      color-mix(in oklab, var(--row-spot) 30%, transparent)
+    );
+    clip-path: polygon(40% 0, 60% 0, 100% 100%, 0 100%);
+  }
+
+  .row-spot::after {
+    bottom: 0;
+    height: 16%;
+    border-radius: 50%;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklab, var(--row-spot) 42%, transparent),
+      transparent
+    );
+  }
+
+  .row-words {
+    animation: row-words var(--duration-soft) var(--ease-soft) var(--row-words) backwards;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .row-spot {
+      display: none;
+    }
+  }
+}
+
+@keyframes row-spot {
+  0% {
+    opacity: 0;
+  }
+  16%,
+  62% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes row-words {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
   }
 }
 
@@ -309,44 +388,241 @@
 }
 
 /*
- * The first run's motion. Each animation is drawn along a spring the element's
- * style names (`springAnimation`), with its distances from the design tokens'
- * `firstRun` in custom properties; these say only where it starts or ends.
- * A step slides along the reading direction, so it reverses in right-to-left.
- * Under reduced motion its screens crossfade (`crossfade`, below).
+ * The first run's stage (onboarding/Stage.tsx): a dark floor, a light for each bot, and each
+ * step's lines arriving under it out of focus. The bots' own motion, their fall, their landing and
+ * their antennas lighting, is the avatars' (the shared frame loop), and so is the camera, which
+ * rides a spring there; what is here are the lights and the words, opacities and transforms the
+ * compositor plays. Times and distances come from the design tokens' `stage`, in custom properties.
+ * Under reduced motion the lights are simply on and the steps crossfade (`crossfade`, below).
  */
+@property --onboarding-bot {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+
 @layer components {
   .onboarding {
-    --onboarding-dir: 1;
+    --onboarding-bot: var(--foreground);
+    /* A new color picked for the bot crosses the stage's light over, instead of cutting to it. */
+    transition: --onboarding-bot var(--duration-slow) var(--ease-out);
   }
 
-  .onboarding:dir(rtl) {
-    --onboarding-dir: -1;
+  /* The house: a haze of the bot's color from above, and the dark closing in at the edges. */
+  .onboarding::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(
+        80% 46% at 50% 0%,
+        color-mix(in oklab, var(--onboarding-bot) 13%, transparent),
+        transparent 72%
+      ),
+      radial-gradient(120% 90% at 50% 40%, transparent 40%, oklch(0 0 0 / 0.5) 100%);
   }
 
   .onboarding-pulse {
     animation: onboarding-pulse 1.6s ease-in-out infinite;
   }
-}
 
-@keyframes onboarding-in {
-  from {
+  .onboarding-fade-in {
+    animation: onboarding-fade-in var(--duration-state) var(--ease-out) both;
+  }
+
+  .onboarding-fade-out {
+    animation: onboarding-fade-out var(--duration-state) var(--ease-out) both;
+  }
+
+  /* The floor under the cast, lit in the bot's color. */
+  .stage-floor {
+    position: absolute;
+    inset-inline: -18%;
+    height: 5.5rem;
+    border-radius: 50%;
+    pointer-events: none;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in oklab, var(--onboarding-bot) 24%, transparent),
+      transparent
+    );
+  }
+
+  .stage-actor {
+    position: absolute;
+    translate: -50% 0;
+    transition: opacity var(--duration-slow) var(--ease-out);
+  }
+
+  .stage-actor[data-depth="1"] {
+    opacity: 0.94;
+  }
+
+  .stage-actor[data-depth="2"] {
+    opacity: 0.86;
+  }
+
+  /* The others step back into the dark and watch. */
+  .stage-set[data-cast="dim"] .stage-actor:not(.stage-lead) {
+    opacity: 0.24;
+  }
+
+  /* A bot's light: a cone from above the stage and a pool at its feet. */
+  .stage-spot {
+    position: absolute;
+    bottom: -9%;
+    left: 50%;
+    width: 210%;
+    height: 21rem;
+    translate: -50% 0;
+    transform-origin: 50% 100%;
+    pointer-events: none;
+    transition:
+      opacity var(--stage-spot-in) var(--ease-out),
+      scale var(--duration-soft) var(--ease-soft);
+    animation: onboarding-fade-in var(--stage-spot-in) var(--ease-out) var(--stage-cue, 0ms)
+      backwards;
+  }
+
+  .stage-spot::before,
+  .stage-spot::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+  }
+
+  .stage-spot::before {
+    inset-block: 0 0.5rem;
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      color-mix(in oklab, var(--onboarding-bot) 22%, oklch(1 0.03 90 / 0.17))
+    );
+    clip-path: polygon(41% 0, 59% 0, 100% 100%, 0 100%);
+  }
+
+  .stage-spot::after {
+    bottom: 0;
+    height: 1.25rem;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, oklch(1 0.03 90 / 0.3), transparent);
+  }
+
+  .stage-actor:not(.stage-lead) .stage-spot {
+    opacity: 0.6;
+  }
+
+  .stage-set[data-cast="dim"] .stage-actor:not(.stage-lead) .stage-spot {
     opacity: 0;
-    transform: translateX(calc(var(--onboarding-shift, 0px) * var(--onboarding-dir, 1)));
+  }
+
+  /* While a form has the operator's eye, the lead's light closes around it. */
+  .stage-set[data-spot="tight"] .stage-lead .stage-spot {
+    scale: 0.62 1;
+  }
+
+  /* The bot grows where it stands once it exists. */
+  .stage-grows {
+    transform-origin: 50% 100%;
+    transition: scale var(--duration-pop) var(--ease-pop);
+  }
+
+  .stage-grows[data-arrived] {
+    scale: var(--stage-grown);
+  }
+
+  .stage-ring {
+    border-color: var(--onboarding-bot);
+    animation-name: stage-ring;
+    animation-timing-function: var(--ease-out);
+    animation-fill-mode: both;
+  }
+
+  /* The name the bot wears, under its feet. */
+  .stage-name {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    left: 50%;
+    max-width: 14rem;
+    overflow: hidden;
+    border-radius: var(--radius-pill);
+    padding: 0.125rem 0.625rem;
+    background: color-mix(in oklab, var(--foreground) 13%, transparent);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    line-height: 1.5;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0;
+    translate: -50% 0;
+    scale: 0.4;
+    transition:
+      opacity var(--duration-state) var(--ease-out),
+      scale var(--duration-pop) var(--ease-pop);
+  }
+
+  .stage-name[data-shown] {
+    opacity: 1;
+    scale: 1;
+  }
+
+  /* A step's lines pull into focus one after another; its action is live from its first frame. */
+  .focus-pull .focus-lines > *,
+  .focus-pull .focus-last {
+    animation: focus-pull var(--duration-soft) var(--ease-soft) backwards;
+  }
+
+  .focus-pull .focus-lines > :nth-child(2) {
+    animation-delay: var(--stage-gap);
+  }
+
+  .focus-pull .focus-lines > :nth-child(3) {
+    animation-delay: calc(var(--stage-gap) * 2);
+  }
+
+  .focus-pull .focus-lines > :nth-child(n + 4),
+  .focus-pull .focus-last {
+    animation-delay: calc(var(--stage-gap) * 3);
+  }
+
+  .stage-leaves {
+    animation: stage-leaves var(--stage-leave) var(--ease-out) both;
+  }
+
+  /* The finale: a band of light crosses the stage once. */
+  .stage-sweep {
+    position: absolute;
+    inset-block: -20%;
+    left: 0;
+    width: 45%;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, oklch(1 0 0 / 0.13), transparent);
+    animation: stage-sweep var(--stage-sweep) var(--ease-out) both;
   }
 }
 
-@keyframes onboarding-out {
+@keyframes focus-pull {
+  from {
+    opacity: 0;
+    filter: blur(var(--stage-blur, 10px));
+    transform: translateY(var(--stage-rise, 14px));
+  }
+}
+
+@keyframes stage-leaves {
   to {
     opacity: 0;
-    transform: translateX(calc(var(--onboarding-shift, 0px) * var(--onboarding-dir, 1)));
+    filter: blur(6px);
   }
 }
 
-@keyframes onboarding-rise {
+@keyframes stage-sweep {
   from {
-    opacity: 0;
-    transform: translateY(12px);
+    transform: translateX(-140%) skewX(-18deg);
+  }
+  to {
+    transform: translateX(340%) skewX(-18deg);
   }
 }
 
@@ -362,20 +638,14 @@
   }
 }
 
-@keyframes onboarding-float {
-  50% {
-    transform: translateY(var(--onboarding-float, 0px));
-  }
-}
-
-@keyframes onboarding-ring {
+@keyframes stage-ring {
   from {
     opacity: 0.55;
     transform: scale(0.8);
   }
   to {
     opacity: 0;
-    transform: scale(var(--onboarding-reach, 1));
+    transform: scale(var(--stage-reach, 1));
   }
 }
 

@@ -5,7 +5,8 @@ import type { Avatar, BotId, RosterItem } from "@j3-bots/contracts";
 import { needsOperator } from "@j3-bots/client-runtime";
 import { rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
-import type { ComponentProps, Ref } from "react";
+import { resolveAvatar, stage } from "@j3-bots/design-tokens";
+import type { ComponentProps, CSSProperties, Ref } from "react";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
@@ -34,7 +35,19 @@ interface RosterRowProps extends useRender.ComponentProps<"button"> {
    * hovered or holds focus, the time and the unread dot make way for it.
    */
   readonly withMenu?: boolean;
+  /**
+   * The bot or room is new to the roster: it comes down into its row in a
+   * light of its own color, and its words follow it in.
+   */
+  readonly entrance?: boolean;
 }
+
+/** The light a bot or a room comes down into, and how long it and the words after it take. */
+const entranceStyle = (color: string): CSSProperties & Record<`--row-${string}`, string> => ({
+  "--row-spot": color,
+  "--row-light": `${stage.rowLight}ms`,
+  "--row-words": `${stage.rowWords}ms`,
+});
 
 /**
  * One bot or room in the roster: avatar, name, time, and one line of status.
@@ -48,6 +61,7 @@ export function RosterRow({
   selected,
   avatarRef,
   withMenu = false,
+  entrance = false,
   render,
   ...props
 }: RosterRowProps) {
@@ -61,9 +75,13 @@ export function RosterRow({
   const makesWay = withMenu
     ? "transition-opacity duration-(--duration-fast) pointer-fine:group-hover/entry:opacity-0 pointer-fine:group-focus-within/entry:opacity-0 pointer-fine:group-has-data-popup-open/entry:opacity-0"
     : undefined;
+  // A room's light is its first member's color.
+  const face = item._tag === "bot" ? item.bot.profile.avatar : memberAvatars[0]?.avatar;
+  const spot = face === undefined ? "var(--foreground)" : `var(--bot-${resolveAvatar(face).color})`;
   const content = (
     <>
-      <span className="[--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
+      <span className="relative isolate [--avatar-cutout:var(--sidebar)] group-hover/row:[--avatar-cutout:var(--row-hover)] group-data-selected/row:[--avatar-cutout:var(--muted)]">
+        {entrance && <span aria-hidden className="row-spot" />}
         {item._tag === "bot" ? (
           <PrimaryBadge primary={item.bot.primary} size={40}>
             <LiveBotAvatar
@@ -71,14 +89,15 @@ export function RosterRow({
               unread={item.unread}
               lastEntry={item.lastEntry}
               size={40}
+              entrance={entrance}
               {...(avatarRef === undefined ? {} : { ref: avatarRef })}
             />
           </PrimaryBadge>
         ) : (
-          <RoomAvatar members={memberAvatars} size={40} />
+          <RoomAvatar members={memberAvatars} size={40} entrance={entrance} />
         )}
       </span>
-      <span className="flex min-w-0 flex-1 flex-col">
+      <span className={cn("flex min-w-0 flex-1 flex-col", entrance && "row-words")}>
         <span className="flex items-baseline gap-2">
           <span className={cn("truncate text-sm", needs ? "font-semibold" : "font-medium")}>
             {name}
@@ -116,6 +135,7 @@ export function RosterRow({
     "aria-current": selected ? "page" : undefined,
     // Which bot or room the row is, so focus can come back to it.
     "data-roster-row": rosterKeyText(rosterKeyOf(item)),
+    ...(entrance ? { style: entranceStyle(spot) } : {}),
     children: content,
   };
   return useRender({

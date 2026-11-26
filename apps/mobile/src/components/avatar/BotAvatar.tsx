@@ -6,6 +6,7 @@ import {
   type AvatarState,
   createAvatar,
   memberStack,
+  pointerNear,
   pokeAvatar,
   plainTraits,
   setAvatarState,
@@ -28,8 +29,11 @@ import {
   type AvatarSignal,
   avatarViewBox,
   motion,
+  reanimatedSpring,
   resolveAvatar,
   roomAvatarShare,
+  springs,
+  stage,
 } from "@j3-bots/design-tokens";
 import { NavigationContext } from "@react-navigation/native";
 import {
@@ -48,12 +52,18 @@ import {
 } from "react";
 import { View } from "react-native";
 import Animated, {
+  type EntryExitAnimationFunction,
   makeMutable,
+  measure,
   type SharedValue,
   useAnimatedProps,
+  useAnimatedRef,
+  useAnimatedStyle,
   useDerivedValue,
   useFrameCallback,
   useSharedValue,
+  withDelay,
+  withSpring,
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Circle, Ellipse, G, type GProps, Path } from "react-native-svg";
@@ -61,6 +71,7 @@ import { useUniwind } from "uniwind";
 import { useReducedMotion } from "../../motion.ts";
 import { Text } from "../../text.tsx";
 import { useColor } from "../../theme.ts";
+import { finger } from "./finger.ts";
 import { join } from "./scheduler.ts";
 
 /**
@@ -126,8 +137,14 @@ function level(n: number): number {
   "worklet";
   return Math.round(n * 32) / 32;
 }
-/** Under this size, in px, an avatar steps at half rate. */
+/** Under this size, in px, an avatar is at list size: it steps at half rate, and its entrance comes from just above its row. */
 const LIST_SIZE = 44;
+/** How long an avatar takes to show as its entrance begins, in ms: it fades in as it starts to fall. */
+const ENTRANCE_FADE = 140;
+/** How long an avatar with an entrance waits for a frame to draw it falling before it simply shows, in ms. */
+const ENTRANCE_WAIT = 500;
+/** How far from an avatar's centre a finger still lands on it, in its own widths. */
+const ON_IT = 0.6;
 
 /** What an avatar sits on, which a room's front member is cut out of. */
 export type AvatarGround = "background" | "surface" | "muted";
@@ -233,9 +250,12 @@ function usePaint(color: ReturnType<typeof resolveAvatar>["color"], asleep: bool
 }
 
 export interface AvatarHandle {
-  /** Answers something the operator did: a new name, shape or color in the picker. */
+  /** Answers something that happened: a new name, shape or color in the picker, a step of the first run. */
   readonly poke: (poke: AvatarPoke) => void;
 }
+
+/** When an avatar comes in from above as it first shows: at once, or after `delay` ms. */
+type AvatarEntrance = boolean | { readonly delay: number };
 
 export interface BotAvatarProps {
   readonly avatar: Avatar;
@@ -248,6 +268,8 @@ export interface BotAvatarProps {
   readonly size: number;
   /** Draws the still form and never moves, as beside a message. */
   readonly still?: boolean;
+  /** Comes in from above as it first shows: it drops into its place, lands and lights its antenna. */
+  readonly entrance?: AvatarEntrance;
   /** Draws a band of what it sits on around the body, to stand clear of what it overlaps. */
   readonly cutout?: boolean;
   /** What it sits on, which the body's cutout and a status light's are drawn in: `background` unless given. */
@@ -260,9 +282,10 @@ export interface BotAvatarProps {
 /**
  * A bot's face: its silhouette in its color, one lens eye, and an antenna
  * whose tip is the status light. It moves on the UI thread, on its own seeded
- * clock, in the way its state does. Off screen, on a screen behind another,
- * in the background, under reduced motion, when `still` or while its turn is
- * stalled, it holds its state's still form.
+ * clock, in the way its state does. Its eye follows a finger that is close to
+ * it, it goes down under one that lands on it, and answers when it lifts. Off
+ * screen, on a screen behind another, in the background, under reduced motion,
+ * when `still` or while its turn is stalled, it holds its state's still form.
  */
 export function BotAvatar(props: BotAvatarProps) {
   const { still = false } = props;
@@ -394,12 +417,20 @@ function MovingAvatar({
   size,
   cutout = false,
   ground = "background",
+  entrance = false,
   ref,
 }: BotAvatarProps) {
   const { shape, color } = resolveAvatar(avatar);
   const paint = usePaint(color, state === "offline");
   const cut = useColor(groundColor[ground]);
   const reduced = useReducedMotion();
+  const box = useAnimatedRef<Animated.View>();
+  // Whether a finger that landed on it holds it down.
+  const pressed = useSharedValue(false);
+  // An avatar with an entrance is not there until it starts to fall: `entered` once its
+  // entrance was asked for, and shown by the first frame that draws it in the air.
+  const shown = useSharedValue(entrance === false ? 1 : 0);
+  const entered = useSharedValue(false);
   const visible = useContext(Visible);
   const held = useContext(Held);
   const focused = useScreenFocused();
@@ -425,11 +456,58 @@ function MovingAvatar({
         return;
       }
     }
-    const next = stepAvatar(sim.get(), dt + owed.get(), null);
+    // The finger, when one is down: close by it has the eye, and one that landed here presses.
+    let current = sim.get();
+    let near = null;
+    const touch = finger.get();
+    if (touch.down) {
+      const at = measure(box);
+      if (at !== null) {
+        const x = at.pageX + at.width / 2;
+        const y = at.pageY + at.height / 2;
+        near = pointerNear(touch.x - x, touch.y - y, at.width);
+        const landed = Math.hypot(touch.startX - x, touch.startY - y) < at.width * ON_IT;
+        if (landed && !pressed.get()) {
+          pressed.set(true);
+          current = pokeAvatar(current, "press");
+        }
+      }
+    } else if (pressed.get()) {
+      pressed.set(false);
+      current = pokeAvatar(current, "tap");
+    }
+    const next = stepAvatar(current, dt + owed.get(), near);
     owed.set(0);
     sim.set(next);
     face.set(avatarFace(next));
+    if (entered.get() && shown.get() === 0) shown.set(withTiming(1, { duration: ENTRANCE_FADE }));
   }, false);
+
+  // Its entrance, once, as it first shows. It appears with the first frame that draws it
+  // falling, so it is never seen standing in its place first. Where no frame comes, off screen,
+  // over the cap or under reduced motion, it is simply there a moment later, in its still form.
+  const entranceAt = useRef(entrance);
+  useEffect(() => {
+    const due = entranceAt.current;
+    if (due === false) return;
+    const delay = due === true ? 0 : due.delay;
+    const enter = setTimeout(() => {
+      sim.modify((current) => {
+        "worklet";
+        return pokeAvatar(current, size < LIST_SIZE ? "drop" : "arrive");
+      });
+      entered.set(true);
+    }, delay);
+    const anyway = setTimeout(
+      () => shown.set(withTiming(1, { duration: ENTRANCE_FADE })),
+      delay + ENTRANCE_WAIT,
+    );
+    return () => {
+      clearTimeout(enter);
+      clearTimeout(anyway);
+    };
+  }, [sim, shown, entered, size]);
+  const appearing = useAnimatedStyle(() => ({ opacity: shown.get() }));
 
   useEffect(() => {
     shapeValue.set(shape);
@@ -508,38 +586,58 @@ function MovingAvatar({
   });
   const lightProps = useAnimatedProps(() => circleOf(lightPart.get()));
   const cutProps = useAnimatedProps(() => circleOf(cutPart.get()));
+  const haloPart = useDerivedValue(() => {
+    const { halo, haloOpacity } = frame.get();
+    return joined([halo.x, halo.y, halo.r, haloOpacity]);
+  });
+  const haloProps = useAnimatedProps(() => {
+    const [cx = 0, cy = 0, r = 0, opacity = 0] = numbers(haloPart.get(), 4, 0);
+    return { cx, cy, r, opacity };
+  });
   const still = stillFace(state, plainTraits, stalled);
   return (
-    <Svg width={size} height={size} viewBox={VIEW_BOX} style={{ overflow: "visible" }}>
-      <AnimatedG animatedProps={bodyProps}>
-        {cutout && <Cutout shape={shape} ground={ground} />}
-        <AnimatedPath
-          animatedProps={stalkProps}
-          fill="none"
-          stroke={paint.body}
-          strokeWidth={avatarFrame(shape, still, size).stalkWidth}
-          strokeLinecap="round"
-        />
-        <Silhouette shape={shape} body={paint.body} />
-        <Eye frame={frame} body={paint.body} arcWidth={avatarFrame(shape, still, size).arcWidth} />
-        {state === "speaking" && (
-          <AnimatedEllipse animatedProps={mouthProps} rx={5.2} fill={avatarEye.pupil} />
-        )}
-        <AnimatedCircle animatedProps={cutProps} fill={cut} />
-        <AnimatedG animatedProps={signalProps}>
-          <Signal
-            key={still.signal ?? "none"}
-            signal={still.signal}
-            face={face}
+    <Animated.View ref={box} collapsable={false} style={[{ width: size, height: size }, appearing]}>
+      <Svg width={size} height={size} viewBox={VIEW_BOX} style={{ overflow: "visible" }}>
+        <AnimatedG animatedProps={bodyProps}>
+          {cutout && <Cutout shape={shape} ground={ground} />}
+          <AnimatedPath
+            animatedProps={stalkProps}
+            fill="none"
+            stroke={paint.body}
+            strokeWidth={avatarFrame(shape, still, size).stalkWidth}
+            strokeLinecap="round"
+          />
+          <Silhouette shape={shape} body={paint.body} />
+          <Eye
             frame={frame}
             body={paint.body}
-            waiting={paint.light("waiting")}
-            reduced={reduced}
+            arcWidth={avatarFrame(shape, still, size).arcWidth}
           />
+          {state === "speaking" && (
+            <AnimatedEllipse animatedProps={mouthProps} rx={5.2} fill={avatarEye.pupil} />
+          )}
+          <AnimatedCircle animatedProps={cutProps} fill={cut} />
+          <AnimatedG animatedProps={signalProps}>
+            <Signal
+              key={still.signal ?? "none"}
+              signal={still.signal}
+              face={face}
+              frame={frame}
+              body={paint.body}
+              waiting={paint.light("waiting")}
+              reduced={reduced}
+            />
+          </AnimatedG>
+          <AnimatedCircle
+            animatedProps={haloProps}
+            fill="none"
+            stroke={paint.light(still.light)}
+            strokeWidth={1.6}
+          />
+          <AnimatedCircle animatedProps={lightProps} fill={paint.light(still.light)} />
         </AnimatedG>
-        <AnimatedCircle animatedProps={lightProps} fill={paint.light(still.light)} />
-      </AnimatedG>
-    </Svg>
+      </Svg>
+    </Animated.View>
   );
 }
 
@@ -696,19 +794,42 @@ export function roomAvatarMembers(
   });
 }
 
-/** Two members overlapping and still: a room, idle, or asleep with the bots while offline. */
+const pop = reanimatedSpring(springs.pop);
+
+/** A room's member coming down into its place, on `pop`, after `delay` ms: a still face, dropped in. */
+const dropIn = (size: number, delay: number): EntryExitAnimationFunction => {
+  const from = -size * stage.rowDrop;
+  return () => {
+    "worklet";
+    return {
+      initialValues: { opacity: 0, transform: [{ translateY: from }] },
+      animations: {
+        opacity: withDelay(delay, withTiming(1, { duration: ENTRANCE_FADE })),
+        transform: [{ translateY: withDelay(delay, withSpring(0, pop)) }],
+      },
+    };
+  };
+};
+
+/**
+ * Two members overlapping and still: a room, idle, or asleep with the bots
+ * while offline. With `entrance`, its members come in one after the other.
+ */
 export function RoomAvatar({
   members,
   size,
   ground = "background",
+  entrance = false,
 }: {
   readonly members: ReadonlyArray<{ readonly id: string; readonly avatar: Avatar }>;
   readonly size: number;
   readonly ground?: AvatarGround;
+  readonly entrance?: boolean;
 }) {
   const [back, front] = members;
   const state = useContext(AvatarsAsleep) ? "offline" : "idle";
   const part = Math.round(size * roomAvatarShare);
+  const entering = (delay: number) => (entrance ? { entering: dropIn(part, delay) } : {});
   return (
     <View
       style={{ width: size, height: size }}
@@ -716,12 +837,15 @@ export function RoomAvatar({
       importantForAccessibility="no-hide-descendants"
     >
       {back !== undefined && (
-        <View style={{ position: "absolute", top: 0, left: 0 }}>
+        <Animated.View style={{ position: "absolute", top: 0, left: 0 }} {...entering(0)}>
           <BotAvatar avatar={back.avatar} seed={back.id} state={state} size={part} still />
-        </View>
+        </Animated.View>
       )}
       {front !== undefined && (
-        <View style={{ position: "absolute", right: 0, bottom: 0 }}>
+        <Animated.View
+          style={{ position: "absolute", right: 0, bottom: 0 }}
+          {...entering(stage.stagger)}
+        >
           <BotAvatar
             avatar={front.avatar}
             seed={front.id}
@@ -731,7 +855,7 @@ export function RoomAvatar({
             cutout
             ground={ground}
           />
-        </View>
+        </Animated.View>
       )}
     </View>
   );

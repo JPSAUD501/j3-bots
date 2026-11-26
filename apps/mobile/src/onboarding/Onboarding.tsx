@@ -8,6 +8,7 @@ import {
   type OnboardingStep,
   previousStep,
   providerGate,
+  resumedStep,
   showsConnect,
 } from "@j3-bots/client-runtime/presentation";
 import { refusedWith } from "@j3-bots/client-runtime";
@@ -22,10 +23,10 @@ import {
 import {
   avatarCast,
   easeOutCurve,
-  firstRun,
   motion,
   reanimatedSpring,
   springs,
+  stage,
 } from "@j3-bots/design-tokens";
 import * as ExpoCrypto from "expo-crypto";
 import { ChevronLeft } from "lucide-react-native";
@@ -35,6 +36,7 @@ import {
   type Ref,
   useEffect,
   useEffectEvent,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -50,7 +52,6 @@ import {
 import Animated, {
   Easing,
   type EntryAnimationsValues,
-  type EntryExitAnimationFunction,
   type ExitAnimationsValues,
   FadeIn,
   type LayoutAnimation,
@@ -60,11 +61,11 @@ import Animated, {
   useSharedValue,
   withDelay,
   withRepeat,
-  withSequence,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { AvatarChoices } from "../components/avatar/AvatarPicker.tsx";
 import { type AvatarHandle, BotAvatar } from "../components/avatar/BotAvatar.tsx";
 import { ProviderRow } from "../components/Engine.tsx";
@@ -78,17 +79,18 @@ import { useTint } from "../conversation/tint.ts";
 import { PressScale } from "../press.tsx";
 import { displaySpacing, Text, TextInput } from "../text.tsx";
 import { type Box, boxFrom, sendOff, useSentOff } from "./handoff.tsx";
-import { BigButton, bigFieldClass, Cast, type Lead, StepTitle } from "./parts.tsx";
+import { BigButton, bigFieldClass, Cast, type Lead, Pool, StepTitle } from "./parts.tsx";
+import { clearProgress, readProgress, writeProgress } from "./progress.ts";
 
 const pop = reanimatedSpring(springs.pop);
 const soft = reanimatedSpring(springs.soft);
 const slide = reanimatedSpring(springs.slide);
 const easeOut = Easing.bezier(...easeOutCurve);
 
-/** The bot above the steps, in px, and the room above and under it, which every step but the welcome leaves free. */
+/** The bot above the steps, in px, and the room above and under it, which every step but the welcome leaves free; under it, its name. */
 const HERO_SIZE = 96;
-const HERO_ABOVE = 16;
-const HERO_BELOW = 24;
+const HERO_ABOVE = 20;
+const HERO_BELOW = 44;
 const HERO_ROOM = HERO_ABOVE + HERO_SIZE + HERO_BELOW;
 /**
  * Where the arrival's title starts under that room, below the farthest ring,
@@ -96,55 +98,23 @@ const HERO_ROOM = HERO_ABOVE + HERO_SIZE + HERO_BELOW;
  * centre sits above the room's end, and a little space.
  */
 const ARRIVAL_TITLE_TOP =
-  (HERO_SIZE * (1 + firstRun.arrivalGrowth) * firstRun.rings.reach) / 2 -
-  (HERO_SIZE / 2 + HERO_BELOW - firstRun.arrivalDrop) +
+  (HERO_SIZE * (1 + stage.arrivalGrowth) * stage.rings.reach) / 2 -
+  (HERO_SIZE / 2 + HERO_BELOW) +
   12;
 
 const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-type Direction = "forward" | "back";
-
 /** Why the bot was not created: the server has no model for it, or anything else. */
 type Failure = "no-model" | "other";
-
-/** Which way along the screen a move goes: toward the end of the reading direction going forward. */
-const sideOf = (direction: Direction): number =>
-  (direction === "forward") !== I18nManager.isRTL ? 1 : -1;
 
 /** A crossfade, which reduced motion keeps: it moves nothing. */
 const fadeIn = FadeIn.duration(motion.state).reduceMotion(ReduceMotion.Never);
 const fadeOut = FadeOut.duration(motion.state).reduceMotion(ReduceMotion.Never);
 
-/** A screen coming in from the side it comes from, on `slide`, as the web's do. */
-const enterFrom = (direction: Direction): EntryExitAnimationFunction => {
-  const shift = sideOf(direction) * firstRun.shift;
-  return () => {
-    "worklet";
-    return {
-      initialValues: { opacity: 0, transform: [{ translateX: shift }] },
-      animations: {
-        opacity: withSpring(1, slide),
-        transform: [{ translateX: withSpring(0, slide) }],
-      },
-    };
-  };
-};
-
-/** The screen before leaving the same way, on the `out` ease, in half the time. */
-const leaveTo = (direction: Direction): EntryExitAnimationFunction => {
-  const shift = -sideOf(direction) * firstRun.shift;
-  const timing = { duration: firstRun.leave, easing: easeOut };
-  return () => {
-    "worklet";
-    return {
-      initialValues: { opacity: 1, transform: [{ translateX: 0 }] },
-      animations: {
-        opacity: withTiming(0, timing),
-        transform: [{ translateX: withTiming(shift, timing) }],
-      },
-    };
-  };
-};
+/** A step's lines arriving under the stage: up into place on `soft` as they clear, as the web's pull into focus. */
+const arrive = settleIn(springs.soft);
+/** The step before giving way at once, so the new lines never wait for it. */
+const giveWay = FadeOut.duration(stage.leave).easing(easeOut);
 
 /*
  * The carries work in the steps' space. The bot being made is held at the
@@ -197,14 +167,18 @@ const carryOut =
   };
 
 /**
- * The first run, from the welcome to the first bot's arrival, one thing per
- * screen, as on the web: each screen slides in from the side it comes from,
- * Back returns to the one before, the bot being made is the cast's first bot,
- * carried from the welcome to its place above the screens and back, where it
- * answers what the operator does, and once it exists it travels on into its
- * conversation (`sendOff`). Continue always works. A provider not connected
- * yet never holds the bot back: it says hello once one is. Every move runs on
- * the UI thread; under reduced motion the screens and the bot only crossfade.
+ * The first run, from the welcome to the first bot's arrival, played on a
+ * stage as on the web: the cast comes down into its lights, the bot being
+ * made is the cast's first bot, carried closer to its place above the steps
+ * and back, and each step's lines arrive under it. There it answers what the
+ * operator does with its own motion: it looks down at the name as it is typed
+ * and wears it, takes each shape and color as it is picked, and once it exists
+ * a light crosses the stage, it cheers, and it travels on into its
+ * conversation (`sendOff`). Back returns to the step before, and Continue
+ * always works: a provider not connected yet never holds the bot back, which
+ * says hello once one is. Put away mid-way, it starts again where it was
+ * (`progress.ts`). Every move runs on the UI thread; under reduced motion the
+ * steps and the bot only crossfade.
  */
 export function Onboarding({
   onCreating,
@@ -231,32 +205,46 @@ export function Onboarding({
   const engine = status._tag === "ready" ? status.value : null;
   const reduced = useReducedMotion();
   const [seed] = useState(() => ExpoCrypto.getRandomBytes(1)[0] ?? 0);
+  // What this phone left the first run at.
+  const [saved] = useState(readProgress);
   // In the language the operator reads now, until they type one of their own.
   const fallbackName = defaultBotName(i18n.locale, seed);
-  const [typed, setTyped] = useState<string | null>(null);
+  const [typed, setTyped] = useState<string | null>(saved?.name ?? null);
   const name = typed ?? fallbackName;
-  const [look, setLook] = useState<AvatarChoice>(avatarCast[0]);
-  const [view, setView] = useState<{
-    readonly step: OnboardingStep;
-    readonly direction: Direction;
-    readonly move: number;
-  }>({ step: "welcome", direction: "forward", move: 0 });
+  const [look, setLook] = useState<AvatarChoice>(saved?.look ?? avatarCast[0]);
   const [failure, setFailure] = useState<Failure | null>(null);
+  // Where it starts: the welcome, or the step this phone left it at.
+  const [started] = useState<OnboardingStep>(() =>
+    saved === null ? "welcome" : resumedStep(saved.step, { connect: showsConnect(engine, false) }),
+  );
   // Whether the connect step was shown: from then on it stays in the flow (`showsConnect`).
-  const [connectShown, setConnectShown] = useState(false);
+  // Starting on it counts, so a provider that connects while the operator reads it does not
+  // take the step, its dot and the way Back away under them.
+  const [connectShown, setConnectShown] = useState(started === "connect");
   // Whether the bot exists: the arrival names it only then.
   const [created, setCreated] = useState(false);
-  const [pokes, setPokes] = useState(0);
-  const { step } = view;
-  const botName = name.trim() === "" ? fallbackName : name.trim();
   const flow: OnboardingFlow = {
     connect: showsConnect(engine, connectShown),
   };
+  const [view, setView] = useState<{
+    readonly step: OnboardingStep;
+    readonly move: number;
+  }>({ step: started, move: 0 });
+  const { step } = view;
+  const botName = name.trim() === "" ? fallbackName : name.trim();
+  // The bot being made, which answers what the operator does.
+  const bot = useRef<AvatarHandle>(null);
 
-  const go = (to: OnboardingStep, direction: Direction) => {
+  // Kept as it goes, so putting the app away does not start the first run over.
+  useEffect(() => {
+    if (!created) writeProgress({ step, name: typed, look });
+  }, [created, step, typed, look]);
+
+  const go = (to: OnboardingStep) => {
     if (to === "connect") setConnectShown(true);
-    setView((now) => ({ step: to, direction, move: now.move + 1 }));
-    if (to !== "welcome") setPokes((count) => count + 1);
+    setView((now) => ({ step: to, move: now.move + 1 }));
+    // The bot being made takes each step with the operator.
+    if (to !== "welcome") bot.current?.poke(to === "arrival" ? "hover" : "nod");
   };
   // Leaving the welcome, the bot being made first takes the cast's first bot's place, and once it
   // is laid out there the welcome goes (`lifted`): so the welcome leaves without it.
@@ -266,7 +254,7 @@ export function Onboarding({
     const lead = leadRef.current;
     const steps = stepsRef.current;
     if (reduced || lead === null || steps === null) {
-      go("name", "forward");
+      go("name");
       return;
     }
     lead.measureLayout(
@@ -275,40 +263,42 @@ export function Onboarding({
         setHome(boxFrom(x, y, width, height));
         setLifting(true);
       },
-      () => go("name", "forward"),
+      () => go("name"),
     );
   };
   const lifted = () => {
     setLifting(false);
-    go("name", "forward");
+    go("name");
   };
 
   const create = () => {
     setFailure(null);
     const from = step;
-    go("arrival", "forward");
+    go("arrival");
     onCreating(true);
     void client.createBot({ name: botName, primary: true, avatar: look }).then((result) => {
       if (result._tag !== "done") {
         onCreating(false);
         setFailure(refusedWith(result, "model") ? "no-model" : "other");
-        go(from, "back");
+        go(from);
         return;
       }
       // The bot exists: it is seen arriving before its conversation opens, then travels into it.
+      clearProgress();
       setCreated(true);
-      void after(reduced ? 0 : firstRun.hold).then(() => {
+      bot.current?.poke("cheer");
+      void after(reduced ? 0 : stage.hold).then(() => {
         const hero = heroRef.current;
         if (reduced || hero === null) {
           onArrived(result.value.id);
           return;
         }
         hero.measureInWindow((x, y, width) => {
-          // Where the grown bot is drawn: its place, lowered and grown as it arrived.
+          // Where the grown bot is drawn: its place, grown as it arrived.
           sendOff(result.value.id, look, {
             x: x + width / 2,
-            y: y + HERO_ABOVE + HERO_SIZE / 2 + firstRun.arrivalDrop,
-            width: HERO_SIZE * (1 + firstRun.arrivalGrowth),
+            y: y + HERO_ABOVE + HERO_SIZE / 2,
+            width: HERO_SIZE * (1 + stage.arrivalGrowth),
           });
           onArrived(result.value.id);
         });
@@ -321,11 +311,11 @@ export function Onboarding({
     if (to === null) return;
     if (to === "arrival") create();
     else if (step === "welcome") leaveWelcome();
-    else go(to, "forward");
+    else go(to);
   };
   const back = () => {
     const to = previousStep(step, flow);
-    if (to !== null) go(to, "back");
+    if (to !== null) go(to);
   };
   const canGoBack = previousStep(step, flow) !== null;
   const progress = makingProgress(step, flow);
@@ -362,7 +352,7 @@ export function Onboarding({
           fallback={fallbackName}
           onName={(next) => {
             setTyped(next);
-            setPokes((count) => count + 1);
+            bot.current?.poke("type");
           }}
           onContinue={forward}
         />
@@ -374,8 +364,9 @@ export function Onboarding({
           name={botName}
           look={look}
           onLook={(next) => {
+            // A new shape is taken in a squash; a new color is good news.
+            bot.current?.poke(next.shape === look.shape ? "hop" : "morph");
             setLook(next);
-            setPokes((count) => count + 1);
           }}
           ready={nextStep("look", flow) === "arrival"}
           failure={failure}
@@ -424,22 +415,24 @@ export function Onboarding({
           key={view.move}
           className="flex-1"
           style={{ paddingTop: step === "welcome" ? 0 : HERO_ROOM }}
-          {...(view.move === 0 ? {} : { entering: reduced ? fadeIn : enterFrom(view.direction) })}
-          exiting={reduced ? fadeOut : leaveTo(view.direction)}
+          {...(view.move === 0 ? {} : { entering: reduced ? fadeIn : arrive })}
+          exiting={reduced ? fadeOut : giveWay}
         >
           {screen}
         </Animated.View>
         {(step !== "welcome" || lifting) && (
           <Hero
             ref={heroRef}
+            botRef={bot}
             look={look}
-            pokes={pokes}
+            name={step === "name" || step === "look" || step === "connect" ? botName : null}
             arrived={step === "arrival" && created}
             reduced={reduced}
             home={home}
             {...(lifting ? { onPlaced: lifted } : {})}
           />
         )}
+        {step === "arrival" && created && !reduced && <Sweep />}
       </View>
     </KeyboardAvoidingView>
   );
@@ -476,23 +469,27 @@ function Dot({ current }: { readonly current: boolean }) {
 }
 
 /**
- * The bot being made, over the top of the screens: carried there from the
- * cast and back (`home`), it hops at every step and every change, morphs into
- * a new shape, and grows when it arrives, with rings in its colour. Once sent
- * off into its conversation, the bot in flight stands for it. Under reduced
- * motion it fades in and out and keeps still.
+ * The bot being made, over the top of the steps, in its own light: carried
+ * there from the cast and back (`home`), drawn closer than the cast was, as
+ * the web's camera closes in. It wears its name once it has one. What the
+ * operator does it answers with its own motion (`botRef`), and when it exists
+ * it grows, with rings in its colour. Once sent off into its conversation, the
+ * bot in flight stands for it. Under reduced motion it fades in and out and
+ * keeps still.
  */
 function Hero({
   look,
-  pokes,
+  name,
   arrived,
   reduced,
   home,
   onPlaced,
   ref,
+  botRef,
 }: {
   readonly look: AvatarChoice;
-  readonly pokes: number;
+  /** The name it wears under its feet; null where it wears none. */
+  readonly name: string | null;
   readonly arrived: boolean;
   readonly reduced: boolean;
   /** Where the cast's first bot is, which the bot being made is carried from and back to. */
@@ -501,30 +498,16 @@ function Hero({
   readonly onPlaced?: () => void;
   /** Its place, which its arrival sets off from. */
   readonly ref: Ref<ComponentRef<typeof View>>;
+  /** What makes it answer. */
+  readonly botRef: Ref<AvatarHandle>;
 }) {
-  const bot = useRef<AvatarHandle>(null);
-  const shape = useRef(look.shape);
+  // How large it is drawn: closer than the cast, and grown once it exists.
+  const size = arrived ? 1 + stage.arrivalGrowth : stage.close;
+  const scale = useSharedValue(1);
   useEffect(() => {
-    if (look.shape !== shape.current) bot.current?.poke("morph");
-    shape.current = look.shape;
-  }, [look.shape]);
-  // 1 at the top of a hop, squashed a little, 0 landed.
-  const hop = useSharedValue(0);
-  const grow = useSharedValue(0);
-  useEffect(() => {
-    if (pokes === 0 || reduced) return;
-    hop.set(withSequence(withTiming(1, { duration: 0 }), withSpring(0, pop)));
-  }, [pokes, reduced, hop]);
-  useEffect(() => {
-    grow.set(reduced ? (arrived ? 1 : 0) : withSpring(arrived ? 1 : 0, pop));
-  }, [arrived, reduced, grow]);
-  const style = useAnimatedStyle(() => ({
-    transform: [
-      { translateY: -firstRun.hop * hop.get() + grow.get() * firstRun.arrivalDrop },
-      { scaleX: (1 + 0.06 * hop.get()) * (1 + grow.get() * firstRun.arrivalGrowth) },
-      { scaleY: (1 - 0.05 * hop.get()) * (1 + grow.get() * firstRun.arrivalGrowth) },
-    ],
-  }));
+    scale.set(reduced ? size : withSpring(size, arrived ? pop : soft));
+  }, [size, arrived, reduced, scale]);
+  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
   const sentOff = useSentOff();
   return (
     <View
@@ -541,15 +524,61 @@ function Hero({
         exiting={reduced || home === null ? fadeOut : carryOut(home)}
       >
         <Animated.View style={style}>
+          <Pool look={look} size={HERO_SIZE} delay={0} />
           {arrived &&
             !reduced &&
-            Array.from({ length: firstRun.rings.count }, (_, ring) => (
+            Array.from({ length: stage.rings.count }, (_, ring) => (
               <Ring key={ring} index={ring} look={look} />
             ))}
-          <BotAvatar ref={bot} avatar={look} seed="first-bot" state="idle" size={HERO_SIZE} />
+          <BotAvatar ref={botRef} avatar={look} seed="first-bot" state="idle" size={HERO_SIZE} />
         </Animated.View>
       </Animated.View>
+      {name !== null && (
+        <Animated.View
+          entering={reduced ? fadeIn : popIn(springs.slide.duration / 2)}
+          exiting={fadeOut}
+          className="mt-3.5 max-w-56 rounded-pill bg-muted px-2.5 py-0.5"
+        >
+          <Text numberOfLines={1} className="text-xs font-semibold text-foreground">
+            {name}
+          </Text>
+        </Animated.View>
+      )}
     </View>
+  );
+}
+
+/** The finale's light: a soft band that crosses the stage once, in the text's color so it shows on either theme. */
+function Sweep() {
+  const id = useId();
+  const light = useColor("accent-foreground");
+  const across = useSharedValue(0);
+  useEffect(() => {
+    across.set(withTiming(1, { duration: stage.sweep, easing: easeOut }));
+  }, [across]);
+  const style = useAnimatedStyle(() => ({
+    left: `${-60 + 200 * across.get()}%`,
+    transform: [{ skewX: "-18deg" }],
+  }));
+  return (
+    <Animated.View
+      pointerEvents="none"
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      className="absolute inset-y-0 w-[45%]"
+      style={[{ zIndex: 2 }, style]}
+    >
+      <Svg width="100%" height="100%" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id={id} x1="0" y1="0" x2="1" y2="0">
+            <Stop offset="0" stopColor={light} stopOpacity={0} />
+            <Stop offset="0.5" stopColor={light} stopOpacity={0.12} />
+            <Stop offset="1" stopColor={light} stopOpacity={0} />
+          </LinearGradient>
+        </Defs>
+        <Rect width="100%" height="100%" fill={`url(#${id})`} />
+      </Svg>
+    </Animated.View>
   );
 }
 
@@ -559,14 +588,14 @@ function Ring({ index, look }: { readonly index: number; readonly look: AvatarCh
   useEffect(() => {
     progress.set(
       withDelay(
-        springs.pop.duration / 2 + index * firstRun.rings.gap,
-        withTiming(1, { duration: firstRun.rings.duration, easing: easeOut }),
+        springs.pop.duration / 2 + index * stage.rings.gap,
+        withTiming(1, { duration: stage.rings.duration, easing: easeOut }),
       ),
     );
   }, [index, progress]);
   const style = useAnimatedStyle(() => ({
     opacity: 0.55 * (1 - progress.get()),
-    transform: [{ scale: 0.8 + (firstRun.rings.reach - 0.8) * progress.get() }],
+    transform: [{ scale: 0.8 + (stage.rings.reach - 0.8) * progress.get() }],
   }));
   return (
     <Animated.View
@@ -599,8 +628,9 @@ function StepFrame({
 }
 
 /**
- * The first screen: the cast, what J3 Bots is, and the way in. The first time
- * it shows, its words rise in after the cast has started popping in.
+ * The first screen: the cast coming down onto the stage, what J3 Bots is, and
+ * the way in, which is there from the first frame. The first time it shows,
+ * its words arrive as the cast does.
  */
 function Welcome({
   onStart,
@@ -615,18 +645,12 @@ function Welcome({
 }) {
   const { t } = useI18n();
   const rise = (order: number) =>
-    first ? { entering: settleIn(springs.soft).delay(firstRun.stagger * order) } : {};
+    first ? { entering: settleIn(springs.soft).delay(stage.focus.gap * order) } : {};
   return (
-    <StepFrame
-      actions={
-        <Animated.View {...rise(3)}>
-          <BigButton label={t("onboarding.welcome.start")} onPress={onStart} />
-        </Animated.View>
-      }
-    >
+    <StepFrame actions={<BigButton label={t("onboarding.welcome.start")} onPress={onStart} />}>
       <View className="flex-1 items-center justify-center gap-6">
         <Cast lead={lead} leadRef={leadRef} />
-        <Animated.View className="items-center gap-3" {...rise(2)}>
+        <Animated.View className="items-center gap-3" {...rise(1)}>
           <StepTitle size="display">J3 Bots</StepTitle>
           <Text className="max-w-xs text-center text-lg text-muted-foreground">
             {t("onboarding.welcome.body")}
@@ -862,11 +886,11 @@ function Arrival({
   return (
     <StepFrame actions={null}>
       <View className="items-center gap-2" style={{ marginTop: ARRIVAL_TITLE_TOP }}>
-        <Animated.View entering={popIn(firstRun.nameDelay)}>
+        <Animated.View entering={popIn(stage.nameDelay)}>
           <StepTitle size="display">{t("onboarding.arrival.title", { name })}</StepTitle>
         </Animated.View>
         <Animated.Text
-          entering={settleIn(springs.soft).delay(firstRun.lineDelay)}
+          entering={settleIn(springs.soft).delay(stage.lineDelay)}
           exiting={fadeOut}
           accessibilityLiveRegion="polite"
           className="text-center text-lg text-muted-foreground"

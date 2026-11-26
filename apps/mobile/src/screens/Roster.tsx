@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   arrangeRoster,
+  arrivalsSettled,
   betweenBots,
   type BotItem,
   filterPairs,
   filterRoster,
+  noArrivals,
   orderRoster,
   ROOM_MEMBERS,
+  rosterArrivals,
   rosterKeyOf,
   rosterKeyText,
 } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, usePairs, useReadable } from "@j3-bots/client-runtime/react";
 import { pairTitle } from "@j3-bots/client-runtime/wording";
 import type { PairBotIds, RosterItem, RosterItemKey, Section } from "@j3-bots/contracts";
-import { layout } from "@j3-bots/design-tokens";
+import { layout, stage } from "@j3-bots/design-tokens";
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import {
@@ -203,6 +206,23 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   const [newAt, setNewAt] = useState<MenuAnchor | null>(null);
   const sideBySide = useSideBySide();
   const selectedText = selected === null ? null : rosterKeyText(selected);
+  // Who is new to the roster and comes down into their row, until they are in.
+  const [arrivals, setArrivals] = useState(noArrivals);
+  const comings =
+    roster._tag === "loading"
+      ? arrivals
+      : rosterArrivals(
+          arrivals,
+          roster.value.map((item) => rosterKeyText(rosterKeyOf(item))),
+          stage.burst,
+        );
+  if (comings !== arrivals) setArrivals(comings);
+  const { entering } = comings;
+  useEffect(() => {
+    if (entering.size === 0) return;
+    const settled = setTimeout(() => setArrivals(arrivalsSettled), stage.rowLight + 600);
+    return () => clearTimeout(settled);
+  }, [entering]);
   // The rows on screen, by key; the others' avatars hold still. Stable, as the list requires.
   const [onScreen] = useState(rowsOnScreen);
   const onViewable = useCallback<Viewable>(
@@ -459,6 +479,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
                             height={entry.height}
                             selected={selected}
                             avatarRef={avatar}
+                            entrance={entering.has(entry.key)}
                             onOpen={() => openConversation(key)}
                             onMenu={(anchor) =>
                               item._tag === "bot"
