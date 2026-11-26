@@ -170,6 +170,20 @@ export class Stops extends Context.Service<
       readonly botId: BotId;
     }) => Effect.Effect<void, NotFound | Conflict>;
     /**
+     * Records, in the caller's transaction, a Force stop of the bot's work in
+     * scope, which goes with a Stop of it (`docs/architecture/server.md`,
+     * Force stop): each of the bot's sessions whose AI ignores the engine's
+     * stop of a turn in scope (`stop-ignored`) asks the engine to end that
+     * turn's program, which the runner sends (`Engine.forceStop`). A session
+     * whose AI ignores nothing in scope is left to the Stop.
+     */
+    readonly force: (botId: BotId, scope: StopScope) => Effect.Effect<void>;
+    /** `bot.forceStop`: `bot.stop`, and a Force stop of all the bot's work. */
+    readonly forceStopBot: (input: {
+      readonly commandId: CommandId;
+      readonly botId: BotId;
+    }) => Effect.Effect<void, NotFound | Conflict>;
+    /**
      * One pass of the runner over every unsettled target, and every session
      * whose background work is due a check.
      */
@@ -492,6 +506,50 @@ export const layer = Layer.effect(
             return yield* new NotFound({ resource: "bot" });
           }
           yield* record(input.botId, { _tag: "bot" });
+        }),
+      });
+    });
+
+    const force = Effect.fn("Stops.force")(function* (botId: BotId, scope: StopScope) {
+      const ignoredInScope =
+        scope._tag === "bot"
+          ? sql`1`
+          : sql`EXISTS (
+              SELECT 1 FROM turns fs_turn
+              WHERE fs_turn.session_id = sessions.id
+                AND fs_turn.engine_turn_id = sessions.stop_ignored_turn_id
+                AND fs_turn.audience = 'room' AND fs_turn.audience_room_id = ${scope.roomId}
+            )`;
+      const forced = yield* sql`
+        UPDATE sessions SET force_stop_turn_id = stop_ignored_turn_id
+        WHERE bot_id = ${botId} AND lost_at IS NULL AND engine_retired_at IS NULL
+          AND stop_ignored_turn_id IS NOT NULL
+          AND force_stop_turn_id IS NOT stop_ignored_turn_id
+          AND ${ignoredInScope}
+        RETURNING id
+      `;
+      if (forced.length === 0) return;
+      // The bot no longer offers Force stop, nor do its rooms (`BotStates`,
+      // `RoomStates`).
+      yield* changes.touch({ _tag: "bot", botId });
+      yield* sql.afterCommit(signals.stops.fire);
+    }, Effect.orDie);
+
+    const forceStopBot = Effect.fn("Stops.forceStopBot")(function* (input: {
+      readonly commandId: CommandId;
+      readonly botId: BotId;
+    }) {
+      yield* receipts.once({
+        commandId: input.commandId,
+        method: "bot.forceStop",
+        payload: input,
+        result: Schema.Void,
+        apply: Effect.gen(function* () {
+          if (Option.isNone(yield* bots.find(input.botId))) {
+            return yield* new NotFound({ resource: "bot" });
+          }
+          yield* record(input.botId, { _tag: "bot" });
+          yield* force(input.botId, { _tag: "bot" });
         }),
       });
     });
@@ -1261,6 +1319,53 @@ export const layer = Layer.effect(
       ),
     );
 
+    /** Sessions whose Force stop the engine has not taken yet. */
+    const forceDue = SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: Schema.Struct({
+        id: SessionRowId,
+        engine_session_id: SessionId,
+        force_stop_turn_id: TurnId,
+      }),
+      execute: () => sql`
+        SELECT id, engine_session_id, force_stop_turn_id FROM sessions
+        WHERE force_stop_turn_id IS NOT NULL AND lost_at IS NULL AND engine_retired_at IS NULL
+          AND engine_session_id IS NOT NULL
+      `,
+    });
+
+    /**
+     * Sends a session's Force stop through its gate. Once the engine took it,
+     * the request is done; the session's events then show the turn ending,
+     * and the AI no longer ignoring the stop. A newer turn the engine started
+     * meanwhile is not ended: nothing ignores the stop the operator saw.
+     */
+    const forceSession = Effect.fn("Stops.forceSession")(function* (session: {
+      readonly id: SessionRowId;
+      readonly engine_session_id: SessionId;
+      readonly force_stop_turn_id: TurnId;
+    }) {
+      return yield* gate.run(session.id)(
+        engine
+          .forceStop({ sessionId: session.engine_session_id, turnId: session.force_stop_turn_id })
+          .pipe(
+            Effect.andThen(
+              sql`
+                UPDATE sessions SET force_stop_turn_id = NULL
+                WHERE id = ${session.id} AND force_stop_turn_id = ${session.force_stop_turn_id}
+              `.pipe(Effect.orDie),
+            ),
+            Effect.as<Progress>("done"),
+            Effect.catchTags({
+              // The engine has no such session: nothing runs there.
+              SessionNotFound: () =>
+                transaction(sessionLost(session.id)).pipe(Effect.as<Progress>("done")),
+              ...downProgress,
+            }),
+          ),
+      );
+    });
+
     const runPass: Effect.Effect<Pass> = yield* onePassAtATime(
       Effect.gen(function* () {
         const outcome = passOutcome();
@@ -1273,6 +1378,11 @@ export const layer = Layer.effect(
             continue;
           }
           const progress = yield* supervised(sessionId, session, outcome);
+          if (progress === "unavailable") return { _tag: "unavailable" } as const;
+          if (progress === "deferred") outcome.defer();
+        }
+        for (const session of yield* forceDue(undefined).pipe(Effect.orDie)) {
+          const progress = yield* forceSession(session);
           if (progress === "unavailable") return { _tag: "unavailable" } as const;
           if (progress === "deferred") outcome.defer();
         }
@@ -1294,7 +1404,7 @@ export const layer = Layer.effect(
       readiness,
     });
 
-    return Stops.of({ record, endTurn, stopBot, runPending, run });
+    return Stops.of({ record, endTurn, stopBot, force, forceStopBot, runPending, run });
   }),
 );
 
@@ -1365,6 +1475,24 @@ export const roomWorkLayer = Layer.effect(
           yield* entries.update({ ...card.value.entry, status: { _tag: "expired" } });
         }
       }
+    }, Effect.orDie);
+
+    /**
+     * A Force stop of the room's work for each bot whose AI ignores the stop
+     * of a turn of the room (`Stops.force`), in the caller's transaction,
+     * after its Stop.
+     */
+    const force = Effect.fn("RoomWork.force")(function* (roomId: RoomId) {
+      const ignoring = yield* SqlSchema.findAll({
+        Request: Schema.Void,
+        Result: Schema.Struct({ bot_id: BotId }),
+        execute: () => sql`
+          SELECT DISTINCT s.bot_id FROM sessions s JOIN turns t
+            ON t.session_id = s.id AND t.engine_turn_id = s.stop_ignored_turn_id
+          WHERE t.audience = 'room' AND t.audience_room_id = ${roomId}
+        `,
+      })(undefined);
+      for (const { bot_id } of ignoring) yield* stops.force(bot_id, { _tag: "room", roomId });
     }, Effect.orDie);
 
     const end = Effect.fn("RoomWork.end")(function* (roomId: RoomId) {
@@ -1452,6 +1580,6 @@ export const roomWorkLayer = Layer.effect(
       }
     }, Effect.orDie);
 
-    return RoomWork.of({ end, stop, leave });
+    return RoomWork.of({ end, stop, force, leave });
   }),
 );

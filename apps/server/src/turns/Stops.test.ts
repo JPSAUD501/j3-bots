@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Domain from "../domain.ts";
+import { BotStore } from "../bots/BotStore.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -1190,5 +1191,56 @@ it.effect("opens no round for a refusal its session's loss overtook", () =>
     `.pipe(Effect.orDie);
     yield* until(Effect.map(rounds, ([first]) => first?.refused === 1));
     assert.deepStrictEqual(yield* rounds, [{ round: 0, refused: 1, settled: 1 }]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** Whether the bot offers Force stop, as the roster sends it. */
+const offersForceStop = (botId: BotId) =>
+  Effect.gen(function* () {
+    const found = yield* (yield* BotStore).find(botId);
+    return Option.isSome(found) && found.value.bot.forceStop;
+  });
+
+it.effect("offers Force stop once the AI ignores a Stop, and ends its turn with it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const stops = yield* Stops;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* control.ignoreStops(session);
+    yield* sendToBot(bot.id, "Rewrite the intro.");
+    const turnId = yield* nextTurn(bot.id);
+
+    // The Stop reaches the engine, whose AI goes on.
+    yield* stops.stopBot({ commandId: command(), botId: bot.id });
+    yield* until(offersForceStop(bot.id));
+    assert.deepStrictEqual(yield* admittedTurn(bot.id), Option.some(turnId));
+
+    // Force stop ends the turn, and the Stop settles; nothing failed.
+    yield* stops.forceStopBot({ commandId: command(), botId: bot.id });
+    yield* turnEnded(bot.id);
+    yield* stopSettled;
+    assert.deepStrictEqual(yield* control.forcedStops, [{ sessionId: session, turnId }]);
+    yield* until(Effect.map(offersForceStop(bot.id), (offered) => !offered));
+    assert.deepStrictEqual(yield* noticesOf(bot.id), []);
+
+    // The bot takes work again.
+    yield* sendToBot(bot.id, "Now the outro.");
+    yield* nextTurn(bot.id, turnId);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("is the Stop alone when no AI ignores it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Rewrite the intro.");
+    yield* nextTurn(bot.id);
+
+    yield* (yield* Stops).forceStopBot({ commandId: command(), botId: bot.id });
+    yield* turnEnded(bot.id);
+    yield* stopSettled;
+    assert.deepStrictEqual(yield* control.forcedStops, []);
   }).pipe(Effect.provide(TestDomain.layer)),
 );

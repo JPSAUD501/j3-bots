@@ -28,6 +28,7 @@ const RunningTurn = Schema.Struct({
   last_activity_at: Time,
   work_fold_entry_id: Schema.NullOr(EntryId),
   work_json: WorkColumn,
+  retrying: Schema.BooleanFromBit,
 });
 
 const Continuation = Schema.Struct({
@@ -53,6 +54,12 @@ export class BotStates extends Context.Service<
      * main session, which a Stop ends (`EngineSessions`, Settings alignment).
      */
     readonly settingsHeld: (botId: BotId) => Effect.Effect<boolean>;
+    /**
+     * Whether the AI of one of the bot's sessions ignores the engine's stop
+     * there (`Bot.forceStop`): the session records the turn it ignores it on,
+     * and no Force stop of that turn waits for the engine yet.
+     */
+    readonly forceStop: (botId: BotId) => Effect.Effect<boolean>;
     /**
      * Whether the bot's opening is still to come or under way: its
      * `first-run` wake waits or is with the engine (`Bot.opening`).
@@ -112,7 +119,7 @@ export const layer = Layer.effect(
       Request: BotId,
       Result: RunningTurn,
       execute: (botId) => sql`
-        SELECT t.started_at, t.last_activity_at, t.work_fold_entry_id, t.work_json
+        SELECT t.started_at, t.last_activity_at, t.work_fold_entry_id, t.work_json, t.retrying
         FROM sessions s JOIN turns t
           ON t.session_id = s.id AND t.engine_turn_id = s.admitted_turn_id
         WHERE s.bot_id = ${botId} AND s.lost_at IS NULL AND t.finished_at IS NULL
@@ -168,6 +175,22 @@ export const layer = Layer.effect(
       return Option.isSome(yield* heldSession(botId));
     }, Effect.orDie);
 
+    const ignoringSession = SqlSchema.findOneOption({
+      Request: BotId,
+      Result: Schema.Struct({ id: Schema.String }),
+      execute: (botId) => sql`
+        SELECT id FROM sessions
+        WHERE bot_id = ${botId} AND lost_at IS NULL AND engine_retired_at IS NULL
+          AND stop_ignored_turn_id IS NOT NULL
+          AND force_stop_turn_id IS NOT stop_ignored_turn_id
+        LIMIT 1
+      `,
+    });
+
+    const forceStop = Effect.fn("BotStates.forceStop")(function* (botId: BotId) {
+      return Option.isSome(yield* ignoringSession(botId));
+    }, Effect.orDie);
+
     const openingWake = SqlSchema.findOneOption({
       Request: BotId,
       Result: Schema.Struct({ id: Schema.String }),
@@ -213,9 +236,10 @@ export const layer = Layer.effect(
         const step = fold === null ? Option.none() : yield* shown(fold);
         const work = turn.value.work_json;
         const typing = typists.has(botId);
+        const retrying = turn.value.retrying;
         // A plan or a little one is work as visible as a step.
         if (Option.isNone(step) && work === null) {
-          return { _tag: "thinking", since, stalled, quietSince, typing } as const;
+          return { _tag: "thinking", since, stalled, quietSince, typing, retrying } as const;
         }
         const running = Option.isSome(step) && step.value.status === "running";
         return {
@@ -224,6 +248,7 @@ export const layer = Layer.effect(
           stalled,
           quietSince,
           typing,
+          retrying,
           activity: running ? step.value.label : null,
           tool: running ? step.value.tool : null,
           littleOnes: work?.littleOnes.working ?? 0,
@@ -308,6 +333,6 @@ export const layer = Layer.effect(
         () => touched(botId, -1),
       );
 
-    return BotStates.of({ of, settingsHeld, opening, watchStalls, typing });
+    return BotStates.of({ of, settingsHeld, forceStop, opening, watchStalls, typing });
   }),
 );

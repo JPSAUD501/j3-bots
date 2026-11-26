@@ -79,9 +79,10 @@ export class Roster extends Context.Service<
   }
 >()("@j3-bots/server/roster/Roster") {}
 
-/** Whether a room's work, who answers there and their plans and little ones read the same. */
+/** Whether a room's work, who answers there, their plans and little ones, and its Force stop read the same. */
 const sameActivity = (a: RoomActivity, b: RoomActivity) =>
   a.work === b.work &&
+  a.forceStop === b.forceStop &&
   a.answering.length === b.answering.length &&
   a.answering.every((id, index) => id === b.answering[index]) &&
   a.memberWork.length === b.memberWork.length &&
@@ -150,8 +151,8 @@ export const layer = Layer.effect(
         const sent = (item: RosterItem) => {
           if (item._tag !== "room") return item;
           if (item.room.status === "active") {
-            const { work, answering, memberWork } = item.room;
-            sentActivity.set(item.room.id, { work, answering, memberWork });
+            const { work, answering, memberWork, forceStop } = item.room;
+            sentActivity.set(item.room.id, { work, answering, memberWork, forceStop });
           } else sentActivity.delete(item.room.id);
           return item;
         };

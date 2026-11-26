@@ -69,6 +69,7 @@ const toStored = (
   row: typeof BotRow.Type,
   state: BotState,
   settingsHeld: boolean,
+  forceStop: boolean,
   opening: boolean,
   suggestedReply: SuggestedReply | null,
 ): StoredBot => ({
@@ -89,6 +90,7 @@ const toStored = (
     sectionId: row.section_id,
     state,
     settingsHeld,
+    forceStop,
     opening,
     suggestedReply,
     createdAt: row.created_at,
@@ -299,11 +301,12 @@ export const layer = Layer.effect(
       Effect.all([
         states.of(row.id),
         states.settingsHeld(row.id),
+        states.forceStop(row.id),
         states.opening(row.id),
         suggestedReplies.of(row.id),
       ]).pipe(
-        Effect.map(([state, held, opening, suggestedReply]) =>
-          toStored(row, state, held, opening, suggestedReply),
+        Effect.map(([state, held, forceStop, opening, suggestedReply]) =>
+          toStored(row, state, held, forceStop, opening, suggestedReply),
         ),
       );
 

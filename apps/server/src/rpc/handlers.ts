@@ -209,6 +209,7 @@ export const handlers = J3Rpcs.toLayer(
       },
       "secret.provide": (input) => cards.provideSecret(input),
       "bot.stop": (input) => stops.stopBot(input),
+    "bot.forceStop": (input) => stops.forceStopBot(input),
       "bot.create": ({ commandId, ...draft }) => bots.create({ commandId, draft }),
       "bot.update": ({ commandId, botId, ...changes }) =>
         bots.update({ commandId, botId, changes }),
@@ -226,6 +227,7 @@ export const handlers = J3Rpcs.toLayer(
         rooms.update({ commandId, roomId, changes }),
       "room.delete": (input) => rooms.remove(input),
       "room.stop": (input) => rooms.stop(input),
+    "room.forceStop": (input) => rooms.forceStop(input),
       "routines.subscribe": ({ botId, after }) => routines.subscribe(botId, after),
       "routine.runs": (input) => routines.runs(input),
       "routine.create": ({ commandId, botId, ...draft }) =>

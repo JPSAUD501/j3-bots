@@ -248,3 +248,31 @@ it.effect(
 /** The works in order, each change once. */
 const dedupe = (works: ReadonlyArray<RoomWorkState>) =>
   works.filter((work, index) => index === 0 || works[index - 1] !== work);
+
+it.effect(
+  "offers Force stop in a room whose member's AI ignores its Stop, and ends that turn with it",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const rooms = yield* Rooms;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      const seen = yield* watchRoom(room.id, (sent) => sent.forceStop);
+      yield* control.ignoreStops(hal.session);
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
+      const watching = yield* nextTurn(hal.bot.id);
+
+      yield* rooms.stop({ commandId: command(), roomId: room.id });
+      yield* until(Effect.map(Ref.get(seen), (sent) => sent.at(-1) === true));
+
+      yield* rooms.forceStop({ commandId: command(), roomId: room.id });
+      yield* until(Effect.map(Ref.get(seen), (sent) => sent.at(-1) === false));
+      yield* until(admittedTurn(hal.bot.id).pipe(Effect.map(Option.isNone)));
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+      assert.deepStrictEqual(yield* control.forcedStops, [
+        { sessionId: hal.session, turnId: watching },
+      ]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);

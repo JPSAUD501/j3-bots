@@ -58,6 +58,7 @@ import Migration0052 from "./migrations/0052_connector_asks.ts";
 import Migration0053 from "./migrations/0053_work_images.ts";
 import Migration0054 from "./migrations/0054_suggested_replies.ts";
 import Migration0055 from "./migrations/0055_turn_work.ts";
+import Migration0056 from "./migrations/0056_retries_and_ignored_stops.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -117,6 +118,7 @@ const migrations = SqliteMigrator.fromRecord({
   "53_work_images": Migration0053,
   "54_suggested_replies": Migration0054,
   "55_turn_work": Migration0055,
+  "56_retries_and_ignored_stops": Migration0056,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

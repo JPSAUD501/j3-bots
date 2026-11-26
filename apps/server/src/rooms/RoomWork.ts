@@ -18,6 +18,12 @@ export class RoomWork extends Context.Service<
      * has the room as its audience. Its cards stay open.
      */
     readonly stop: (roomId: RoomId) => Effect.Effect<void>;
+    /**
+     * The operator's Force stop of the room (`room.forceStop`), after its
+     * Stop: a member whose AI ignores the stop of a turn of the room has the
+     * engine end that turn's program (`Stops.force`).
+     */
+    readonly force: (roomId: RoomId) => Effect.Effect<void>;
     /** The room is archived or deleted: it is stopped, and its open `ask` cards expire. */
     readonly end: (roomId: RoomId) => Effect.Effect<void>;
     /**

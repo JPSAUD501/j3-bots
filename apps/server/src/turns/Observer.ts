@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { BotId, type Entry, EntryId, type ModelChoice, RoomId, WorkStep } from "@j3-bots/contracts";
+import {
+  BotId,
+  type Entry,
+  EntryId,
+  MAX_CARD_QUESTIONS,
+  MAX_QUESTION_OPTIONS,
+  type ModelChoice,
+  type Question,
+  type QuestionEntry,
+  RoomId,
+  type WholeQuestion,
+  WorkStep,
+} from "@j3-bots/contracts";
 import {
   type BackgroundWork,
   type DelegatedResult,
@@ -177,6 +189,8 @@ const changesWork = (event: SessionEvent): boolean => {
     case "request-closed":
       return true;
     case "turn-queued":
+    case "turn-retrying":
+    case "stop-ignored":
     case "steer-taken":
     case "delegated-result":
     case "request-updated":
@@ -189,6 +203,31 @@ const changesWork = (event: SessionEvent): boolean => {
       return false;
   }
 };
+
+/**
+ * The line a client that predates `QuestionEntry.whole` shows for a question
+ * past its card's limits, which it would otherwise refuse. It takes no
+ * answer: the operator answers on an updated app.
+ */
+const UPDATE_TO_ANSWER: Question = {
+  id: "update-to-answer",
+  prompt: "This question needs a newer version of the app. Update it to answer.",
+  options: [],
+  acceptsText: false,
+  multiple: false,
+};
+
+/**
+ * An engine question as a card holds it: as it is when it fits what every
+ * client shows, else whole, beside the line an older client shows.
+ */
+const engineQuestions = (
+  questions: readonly [WholeQuestion, ...Array<WholeQuestion>],
+): Pick<QuestionEntry, "questions" | "whole"> =>
+  questions.length <= MAX_CARD_QUESTIONS &&
+  questions.every((question) => question.options.length <= MAX_QUESTION_OPTIONS)
+    ? { questions }
+    : { questions: [UPDATE_TO_ANSWER], whole: questions };
 
 const SessionNow = Schema.Struct({
   /** Lost, or archived by the engine once J3 Bots retired it: nothing of it is applied. */
@@ -204,8 +243,11 @@ const SessionNow = Schema.Struct({
 const withContent = (card: Entry, draft: EntryDraft): Entry | undefined => {
   if (card._tag === "approval" && draft._tag === "approval")
     return { ...card, ...draft, status: card.status };
-  if (card._tag === "question" && draft._tag === "question")
-    return { ...card, ...draft, status: card.status };
+  if (card._tag === "question" && draft._tag === "question") {
+    // The record may now fit where it did not, or no longer fit: `whole` is the draft's.
+    const { whole: _, ...kept } = card;
+    return { ...kept, ...draft, status: card.status };
+  }
   if (card._tag === "secret-request" && draft._tag === "secret-request")
     return { ...card, ...draft, status: card.status };
   return undefined;
@@ -860,10 +902,16 @@ export const layer = Layer.effect(
       // did not get to its end.
       if (outcome._tag !== "completed") {
         const failure = outcome._tag === "failed" ? outcome.failure : "unknown";
+        // The engine's own words stay behind the notice's "Details", already
+        // scrubbed of secrets by the adapter; the server log keeps them too.
+        const details = outcome._tag === "failed" ? outcome.details : undefined;
+        if (details !== undefined) {
+          yield* Effect.logWarning("A bot's turn failed", { failure, details });
+        }
         yield* notify(
           session.bot_id,
           audience,
-          { _tag: "turn-failed", failure },
+          { _tag: "turn-failed", failure, ...(details === undefined ? {} : { details }) },
           retryOf(dispatch.id, carried),
         );
         return;
@@ -1288,29 +1336,7 @@ export const layer = Layer.effect(
             _tag: "question",
             author,
             origin: "engine",
-            questions: request.questions,
-            status: { _tag: "pending" },
-          };
-        case "unsupported-question":
-          // Never part of a question: a card that says why it cannot be shown.
-          // It takes no answer, and the engine no dismissal, so the turn goes
-          // on only once it is stopped.
-          return {
-            _tag: "question",
-            author,
-            origin: "engine",
-            questions: [
-              {
-                id: "unsupported",
-                prompt:
-                  request.exceeds === "questions"
-                    ? `The bot asked ${request.count} questions at once, and a card holds at most ${request.max}. Stop the bot, then ask it to put the questions in a message.`
-                    : `The bot asked a question with ${request.count} options, and a card shows at most ${request.max}. Stop the bot, then ask it to put the question in a message.`,
-                options: [],
-                acceptsText: false,
-                multiple: false,
-              },
-            ],
+            ...engineQuestions(request.questions),
             status: { _tag: "pending" },
           };
         case "secret":
@@ -1472,6 +1498,7 @@ export const layer = Layer.effect(
         // Recorded closed, also when this is the first sight of them.
         for (const call of turn.closedToolCalls)
           yield* toolCall(session, turn.turnId, call, false, event.at);
+        yield* retrying(session, turn.turnId, turn.retrying);
         const listed = turn.toolCalls.map((call) => call.callId);
         yield* sql`
           UPDATE engine_tool_calls SET open = 0
@@ -1523,6 +1550,7 @@ export const layer = Layer.effect(
       // A turn that started on an older model during the gap, and has ended
       // since, left the session on it.
       if (event.model !== null) yield* modelStarted(session, event.model);
+      yield* stopIgnored(session, event.stopIgnored);
       if (event.queueHeld) {
         yield* queueHeld(session, event.cursor);
       } else {
@@ -1533,6 +1561,38 @@ export const layer = Layer.effect(
           WHERE id = ${session.id}
         `;
       }
+    }, Effect.orDie);
+
+    // ---- How a turn fares -------------------------------------------------------------
+
+    /** Whether the engine is retrying the turn's AI, which its bot's state says while it runs. */
+    const retrying = Effect.fn("Observer.retrying")(function* (
+      session: Watched,
+      turnId: TurnId,
+      retrying: boolean,
+    ) {
+      yield* sql`
+        UPDATE turns SET retrying = ${retrying ? 1 : 0}
+        WHERE session_id = ${session.id} AND engine_turn_id = ${turnId} AND finished_at IS NULL
+      `;
+    }, Effect.orDie);
+
+    /**
+     * The turn whose stop the session's AI ignores, for which clients offer
+     * Force stop. A Force stop asked for another turn, or for one the AI no
+     * longer ignores, has nothing left to end: it is dropped (`Stops`).
+     */
+    const stopIgnored = Effect.fn("Observer.stopIgnored")(function* (
+      session: Watched,
+      turnId: TurnId | null,
+    ) {
+      yield* sql`
+        UPDATE sessions SET stop_ignored_turn_id = ${turnId},
+          force_stop_turn_id = CASE
+            WHEN force_stop_turn_id = ${turnId} THEN force_stop_turn_id ELSE NULL
+          END
+        WHERE id = ${session.id}
+      `;
     }, Effect.orDie);
 
     // ---- Held queues ------------------------------------------------------------------
@@ -1574,6 +1634,10 @@ export const layer = Layer.effect(
           return yield* steerDropped(session, event.key, event.turnId);
         case "steer-requeued":
           return yield* steerRequeued(session, event.key, event.followUpTurnId);
+        case "turn-retrying":
+          return yield* retrying(session, event.turnId, event.retrying);
+        case "stop-ignored":
+          return yield* stopIgnored(session, event.turnId);
         case "step":
           return yield* step(session, event.turnId, event.step, event.at);
         case "turn-work":

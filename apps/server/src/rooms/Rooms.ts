@@ -123,6 +123,14 @@ export class Rooms extends Context.Service<
      * archived.
      */
     readonly releaseBot: (botId: BotId) => Effect.Effect<void>;
+    /**
+     * `room.forceStop`: `room.stop`, and a Force stop of the room's work
+     * whose AI ignores the Stop (`RoomWork.force`).
+     */
+    readonly forceStop: (input: {
+      readonly commandId: CommandId;
+      readonly roomId: RoomId;
+    }) => Effect.Effect<void, CommandError>;
   }
 >()("@j3-bots/server/rooms/Rooms") {}
 
@@ -182,6 +190,7 @@ export const layer = Layer.effect(
             ? {
                 work: activity.get(row.id)?.work ?? "none",
                 answering: activity.get(row.id)?.answering ?? [],
+                forceStop: activity.get(row.id)?.forceStop ?? false,
               }
             : { archivedAt: row.archived_at }),
         }).pipe(
@@ -438,25 +447,31 @@ export const layer = Layer.effect(
       });
     });
 
-    const stop = Effect.fn("Rooms.stop")(function* (input: {
-      readonly commandId: CommandId;
-      readonly roomId: RoomId;
-    }) {
-      yield* receipts.once({
-        commandId: input.commandId,
-        method: "room.stop",
-        payload: input,
-        result: Schema.Void,
-        apply: Effect.gen(function* () {
-          const room = yield* require(input.roomId);
-          // An archived room's work was stopped when it was archived.
-          if (room.status === "archived") return yield* new Conflict({ reason: "room-archived" });
-          yield* work.stop(room.id);
-          // The roster shows the room's work stopping, or already ended.
-          yield* changes.touch({ _tag: "room", roomId: room.id });
-        }),
+    const stopping = (method: "room.stop" | "room.forceStop", forced: boolean) =>
+      Effect.fn(method)(function* (input: {
+        readonly commandId: CommandId;
+        readonly roomId: RoomId;
+      }) {
+        yield* receipts.once({
+          commandId: input.commandId,
+          method,
+          payload: input,
+          result: Schema.Void,
+          apply: Effect.gen(function* () {
+            const room = yield* require(input.roomId);
+            // An archived room's work was stopped when it was archived.
+            if (room.status === "archived") {
+              return yield* new Conflict({ reason: "room-archived" });
+            }
+            yield* work.stop(room.id);
+            if (forced) yield* work.force(room.id);
+            // The roster shows the room's work stopping, or already ended.
+            yield* changes.touch({ _tag: "room", roomId: room.id });
+          }),
+        });
       });
-    });
+    const stop = stopping("room.stop", false);
+    const forceStop = stopping("room.forceStop", true);
 
     const releaseBot = Effect.fn("Rooms.releaseBot")(function* (botId: BotId) {
       const now = yield* DateTime.now;
@@ -487,6 +502,7 @@ export const layer = Layer.effect(
       showOrHide,
       remove,
       stop,
+      forceStop,
       releaseBot,
     });
   }),

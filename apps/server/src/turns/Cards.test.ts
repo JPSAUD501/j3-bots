@@ -947,3 +947,58 @@ it.effect("waits on an ask card after its turn with no turn's start to count fro
     });
   }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "shows an engine question larger than a card used to hold whole, and sends its answer",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const cards = yield* Cards;
+      const bot = yield* createBot("Ana");
+      const session = yield* engineSession(bot.id);
+      yield* sendToBot(bot.id, "Plan the trip.");
+      const turnId = yield* nextTurn(bot.id);
+      const questions = Array.from({ length: 5 }, (_, at) => ({
+        id: `question-${at + 1}`,
+        header: `Step ${at + 1}`,
+        prompt: `Which city on day ${at + 1}?`,
+        options: Array.from({ length: 8 }, (_, option) => ({
+          id: `option-${option + 1}`,
+          label: `City ${option + 1}`,
+          description: null,
+          style: "default" as const,
+        })),
+        acceptsText: false,
+        multiple: false,
+      }));
+      const [first, ...rest] = questions;
+      if (first === undefined) return assert.fail("no question");
+      const requestId = yield* control.openRequest({
+        sessionId: session,
+        turnId,
+        request: { _tag: "question", questions: [first, ...rest] },
+      });
+
+      // A client that knows `whole` shows all of it; an older one, the
+      // placeholder that asks for an update.
+      const card = yield* awaitEntry(bot.id, "question");
+      assert.deepStrictEqual(card.whole, [first, ...rest]);
+      assert.deepStrictEqual(
+        card.questions.map((question) => question.options.length),
+        [0],
+      );
+
+      const answers = Object.fromEntries(
+        questions.map((question) => [question.id, { optionIds: ["option-8"], text: null }]),
+      );
+      yield* cards.answer({
+        commandId: command(),
+        entryId: card.id,
+        answer: { _tag: "question", answers },
+      });
+      yield* cards.respondPending;
+      assert.deepStrictEqual(yield* control.responses(session), [
+        { requestId, response: { _tag: "question", answers } },
+      ]);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);

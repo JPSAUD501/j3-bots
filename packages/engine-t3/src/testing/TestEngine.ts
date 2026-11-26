@@ -1283,9 +1283,10 @@ const make = Effect.gen(function* () {
     const running = session.running === null ? undefined : session.turns.get(session.running);
     if (session.ignoresStops) {
       // The provider never confirms: the running turn, or the work the latest
-      // turn left, goes on, and the engine marks the stop unresponsive.
+      // turn left, goes on, and the engine marks the stop unresponsive. With
+      // neither, there is nothing to ignore.
       const latest = [...session.turns.values()].findLast((turn) => turn.startedAt !== null);
-      const target = running ?? latest;
+      const target = running ?? (latest?.background === true ? latest : undefined);
       if (target !== undefined && session.stopIgnored !== target.turnId) {
         session.stopIgnored = target.turnId;
         emit(session, at, (stamp) => ({ _tag: "stop-ignored", ...stamp, turnId: target.turnId }));
