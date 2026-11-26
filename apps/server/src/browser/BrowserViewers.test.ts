@@ -332,6 +332,51 @@ it.effect("closes every viewer of a revoked device at once, a held tab's include
   }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
 );
 
+it.effect(
+  "closes a socket that meets its device's revocation as revoked, and opens no viewer again",
+  () =>
+    Effect.gen(function* () {
+      const { browser, device, refOf } = yield* scene("one");
+      const first = yield* fakeLink;
+      // The first socket stops taking messages, so the viewer's lock stays held
+      // while the revocation and a second socket of the device wait for it.
+      const stuck = yield* Deferred.make<void>();
+      const stalling: ClientLink = {
+        ...first.link,
+        send: (message) => Deferred.await(stuck).pipe(Effect.andThen(first.link.send(message))),
+      };
+      const { viewer } = yield* connect(device, refOf("one"), stalling, browser.nextViewer);
+      if (viewer === null) return;
+      yield* viewer.emit(viewport);
+      yield* Effect.yieldNow;
+
+      yield* (yield* DeviceAuth).revoke(device);
+      for (let step = 0; step < 5; step++) yield* Effect.yieldNow;
+      const second = yield* fakeLink;
+      yield* connect(device, refOf("one"), second.link, null);
+      for (let step = 0; step < 5; step++) yield* Effect.yieldNow;
+      yield* Deferred.succeed(stuck, undefined);
+
+      assert.deepStrictEqual(yield* second.closed, { code: 1008, reason: "revoked" });
+      assert.strictEqual(yield* browser.opens, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
+it.effect("closes a socket as revoked while the engine has not opened its viewer yet", () =>
+  Effect.gen(function* () {
+    const { browser, device, refOf } = yield* scene("one");
+    yield* browser.holdOpens(true);
+    const waiting = yield* fakeLink;
+    const { viewer } = yield* connect(device, refOf("one"), waiting.link, browser.nextViewer);
+    if (viewer === null) return;
+
+    yield* (yield* DeviceAuth).revoke(device);
+
+    assert.deepStrictEqual(yield* waiting.closed, { code: 1008, reason: "revoked" });
+    yield* viewer.released;
+  }).pipe(Effect.scoped, Effect.provide(TestDomain.layer)),
+);
+
 it.effect("tells the client a tab is gone, and why a viewer could not go on", () =>
   Effect.gen(function* () {
     const { browser, device, refOf } = yield* scene("one", "two");

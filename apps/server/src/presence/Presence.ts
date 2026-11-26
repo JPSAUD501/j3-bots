@@ -93,12 +93,22 @@ const connectorCard = (entry: Entry): ConnectorNotice | null => {
   }
 };
 
-/** The entry's first line, when the operator allows previews and it has one. */
+/**
+ * The entry's first line, when the operator allows previews and it has one.
+ * A browser help card's note is the bot's own words, which could quote a
+ * sign-in link or a code onto a lock screen: its preview is `browserHelpOf`.
+ */
 const previewText = (entry: Entry, settings: NotificationSettings): string | null => {
-  if (!settings.previews) return null;
+  if (!settings.previews || entry._tag === "browser-help") return null;
   const line = (previewOf(entry, null).text.split("\n")[0] ?? "").trim();
   return line === "" ? null : line;
 };
+
+/** A browser help card's preview, in fixed words: why the bot asks, and the site. */
+const browserHelpOf = (entry: Entry, settings: NotificationSettings) =>
+  settings.previews && entry._tag === "browser-help"
+    ? { reason: entry.reason, site: entry.site }
+    : null;
 
 interface Socket {
   target: EntryTarget | null;
@@ -217,6 +227,7 @@ export const layer = Layer.effect(
           kind: made.kind,
           preview: previewText(entry, notifications),
           connector: connectorCard(entry),
+          browserHelp: browserHelpOf(entry, notifications),
         },
         live: paired.filter(({ id }) => sockets.has(id)).map(({ id }) => id),
         push: paired

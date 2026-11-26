@@ -106,9 +106,13 @@ export const layer = Layer.effect(
         const text = notificationText(notification, names, catalog.value);
         if (text === null) continue;
         const plain =
-          notification.preview === null
+          notification.preview === null && notification.browserHelp === null
             ? text
-            : notificationText({ ...notification, preview: null }, names, catalog.value);
+            : notificationText(
+                { ...notification, preview: null, browserHelp: null },
+                names,
+                catalog.value,
+              );
         if (plain === null) continue;
         yield* sql`
           INSERT INTO push_deliveries (

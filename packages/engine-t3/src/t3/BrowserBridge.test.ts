@@ -6,7 +6,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Socket from "effect/socket/Socket";
 import type { ViewerOutput } from "../Browser.ts";
-import { viewerOf } from "./BrowserBridge.ts";
+import { type BrowserStart, reportingStart, viewerOf } from "./BrowserBridge.ts";
 
 type Incoming = Uint8Array | string | { readonly close: number; readonly reason?: string };
 
@@ -115,6 +115,32 @@ describe("viewerOf", () => {
         }
       }
     }),
+  );
+
+  it.effect(
+    "tells the browser started once a viewer sees anything, and could not when the host lacks what it needs",
+    () =>
+      Effect.gen(function* () {
+        const reported: Array<BrowserStart> = [];
+        const report = (start: BrowserStart) => Effect.sync(() => void reported.push(start));
+        const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+        const watching = yield* fakeStream;
+        const started = yield* reportingStart(watching.viewer, report);
+        yield* Queue.offerAll(watching.incoming, [jpeg, jpeg, { close: 4404 }]);
+        yield* outputsUntilClosed(started.output);
+        assert.deepStrictEqual(reported, [{ _tag: "started" }]);
+
+        reported.length = 0;
+        const refused = yield* fakeStream;
+        const blocked = yield* reportingStart(refused.viewer, report);
+        yield* Queue.offer(refused.incoming, {
+          close: 4503,
+          reason: JSON.stringify({ need: "sandbox", command: "t3 browser setup" }),
+        });
+        yield* outputsUntilClosed(blocked.output);
+        assert.deepStrictEqual(reported, [{ _tag: "setup-needed", need: "sandbox" }]);
+      }),
   );
 
   it.effect("writes input in the engine's terms", () =>

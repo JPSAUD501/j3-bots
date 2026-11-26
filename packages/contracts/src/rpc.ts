@@ -50,6 +50,7 @@ import { ElicitationAnswer } from "./elicitation.ts";
 import { EngineStatus, MAX_USAGE_TURNS, UsageTurn } from "./engineStatus.ts";
 import {
   ApprovalDecision,
+  BrowserHelpEntry,
   EntryPreview,
   EntryTarget,
   Mentions,
@@ -824,13 +825,24 @@ export const Notification = Schema.Struct({
   /**
    * The first line of the entry's text, at most `PREVIEW_LENGTH` characters:
    * the message, the question or the action. Null when the operator does not
-   * allow previews, or when the entry has no text of its own.
+   * allow previews, or when the entry has no text of its own, and always for
+   * a `browser-help` notification, whose card's note is the bot's own words
+   * and could quote a sign-in link or a code: `browserHelp` stands for it.
    */
   preview: Schema.NullOr(Schema.String.check(Schema.isMaxLength(PREVIEW_LENGTH))),
   /** For a `connector` notification, which card made it; null for every other kind. */
   connector: Schema.NullOr(ConnectorNotice).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
   ),
+  /**
+   * A `browser-help` notification's preview, in fixed words: why the bot
+   * asks and the site its tab is on, never its note. Null when the operator
+   * does not allow previews, for every other kind, and from a server that
+   * predates it.
+   */
+  browserHelp: Schema.NullOr(
+    Schema.Struct({ reason: BrowserHelpEntry.fields.reason, site: BrowserHelpEntry.fields.site }),
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });
 export type Notification = typeof Notification.Type;
 

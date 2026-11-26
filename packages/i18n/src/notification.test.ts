@@ -27,6 +27,7 @@ const notification = (extra: Partial<Notification>): Notification => ({
   kind: "message",
   preview: null,
   connector: null,
+  browserHelp: null,
   ...extra,
 });
 
@@ -34,9 +35,10 @@ type Said = Record<Language, { readonly bare: string; readonly preview: string }
 
 /**
  * What each kind says in each language, without a preview and with "Ship it?";
- * a connector card's, for each card.
+ * a connector card's, for each card. A browser help card's preview is not
+ * text: it has a case of its own.
  */
-const wording: Record<Exclude<NotificationKind, "connector">, Said> & {
+const wording: Record<Exclude<NotificationKind, "connector" | "browser-help">, Said> & {
   readonly connector: Record<ConnectorNotice, Said>;
 } = {
   message: {
@@ -54,16 +56,6 @@ const wording: Record<Exclude<NotificationKind, "connector">, Said> & {
   "secret-request": {
     en: { bare: "Needs a credential", preview: "Needs a credential: Ship it?" },
     "pt-BR": { bare: "Precisa de uma credencial", preview: "Precisa de uma credencial: Ship it?" },
-  },
-  "browser-help": {
-    en: {
-      bare: "Needs your help in the browser",
-      preview: "Needs your help in the browser: Ship it?",
-    },
-    "pt-BR": {
-      bare: "Precisa da sua ajuda no navegador",
-      preview: "Precisa da sua ajuda no navegador: Ship it?",
-    },
   },
   connector: {
     "sign-in": {
@@ -94,13 +86,15 @@ const wording: Record<Exclude<NotificationKind, "connector">, Said> & {
 };
 
 const cases = NotificationKind.literals.flatMap((kind) =>
-  (kind === "connector"
-    ? ConnectorNotice.literals.map((card) => ({
-        kind,
-        connector: card,
-        said: wording.connector[card],
-      }))
-    : [{ kind, connector: null, said: wording[kind] }]
+  (kind === "browser-help"
+    ? []
+    : kind === "connector"
+      ? ConnectorNotice.literals.map((card) => ({
+          kind,
+          connector: card,
+          said: wording.connector[card],
+        }))
+      : [{ kind, connector: null, said: wording[kind] }]
   ).flatMap((made) =>
     LANGUAGES.map((language) => ({ ...made, language, said: made.said[language] })),
   ),
@@ -113,6 +107,22 @@ describe("notificationText", () => {
       notificationText(notification({ kind, connector, preview }), names, i18n);
     expect(of(null)).toEqual({ title: "Scout", body: said.bare });
     expect(of("Ship it?")).toEqual({ title: "Scout", body: said.preview });
+  });
+
+  it("words a browser help card by why the bot asks and the site, never by a note", () => {
+    const help = (browserHelp: Notification["browserHelp"], language: Language) =>
+      notificationText(
+        notification({ kind: "browser-help", preview: "Use code 482913", browserHelp }),
+        names,
+        createI18n(language),
+      )?.body;
+    expect(help(null, "en")).toBe("Needs your help in the browser");
+    expect(help({ reason: "login", site: "example.com" }, "en")).toBe(
+      "Needs your help in the browser: Sign in on example.com",
+    );
+    expect(help({ reason: "qr-code", site: "" }, "pt-BR")).toBe(
+      "Precisa da sua ajuda no navegador: Escanear um código",
+    );
   });
 
   it("comes from the room, naming the bot, for what was said in one", () => {

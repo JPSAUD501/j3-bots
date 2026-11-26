@@ -76,14 +76,22 @@ const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
  */
 const LIBRARY_NAME = /^[A-Za-z0-9_+-][A-Za-z0-9._+-]*\.so(\.[0-9]+)*$/;
 
+/**
+ * Whether Chrome's sandbox can start, and if not, why:
+ * - `no-profile`: AppArmor restricts unprivileged user namespaces and the
+ *   engine's profile is not on disk;
+ * - `profile-unloaded`: the profile is on disk, yet the engine found the
+ *   sandbox blocked when it last started the browser: the kernel has not
+ *   loaded it, as on a host restored from an image. Only root can read the
+ *   loaded profiles, so only a start shows it;
+ * - `unknown`: the engine found the sandbox blocked on a host without the
+ *   restriction, for a cause this check does not know.
+ */
+export type SandboxBlock = "none" | "no-profile" | "profile-unloaded" | "unknown";
+
 /** What stands between this host and the engine's browser, on Linux. */
 export interface BrowserHostNeeds {
-  /**
-   * AppArmor restricts unprivileged user namespaces and the engine's profile
-   * is not on disk, so Chrome's sandbox cannot start. A profile on disk that
-   * the kernel has not loaded only shows when the browser starts.
-   */
-  readonly sandboxBlocked: boolean;
+  readonly sandbox: SandboxBlock;
   /**
    * Whether the browser is downloaded yet: the engine downloads it, about
    * 130 MB, the first time a bot uses it.
@@ -98,7 +106,7 @@ export interface BrowserHostNeeds {
    * run once. Each runs as root, through sudo, only a system tool: `tee` and
    * `apparmor_parser` for the sandbox, apt-get or dnf for the libraries and
    * fonts. Nothing the service account can write runs as root. Empty when
-   * nothing is missing.
+   * nothing is missing, and for a sandbox blocked for an `unknown` cause.
    */
   readonly setup: ReadonlyArray<string>;
   /**
@@ -130,17 +138,19 @@ export const missingLibrariesOf = (loaderError: string, lddOutput: string) => {
 
 /** The commands that fix what is missing (`BrowserHostNeeds.setup`). */
 export const setupOf = (input: {
-  readonly sandboxBlocked: boolean;
+  readonly sandbox: SandboxBlock;
   readonly missingLibraries: ReadonlyArray<string>;
   readonly noFonts: boolean;
   readonly packageManager: PackageManager;
 }): Pick<BrowserHostNeeds, "setup" | "packagesByHand"> => {
   const setup: Array<string> = [];
-  if (input.sandboxBlocked) {
+  if (input.sandbox === "no-profile") {
     setup.push(
       `printf '%s\\n' ${APPARMOR_PROFILE_LINES.map(word).join(" ")} | ${line(["sudo", "tee", APPARMOR_PROFILE])} > /dev/null`,
-      line(["sudo", "apparmor_parser", "-r", APPARMOR_PROFILE]),
     );
+  }
+  if (input.sandbox === "no-profile" || input.sandbox === "profile-unloaded") {
+    setup.push(line(["sudo", "apparmor_parser", "-r", APPARMOR_PROFILE]));
   }
   const libraries = input.missingLibraries.length > 0;
   if (!libraries && !input.noFonts) return { setup, packagesByHand: false };
@@ -199,9 +209,14 @@ const installedBrowser = Effect.fn("engine.installedBrowser")(function* (home: s
   return Option.none<string>();
 });
 
-/** What the engine's browser needs from this Linux host, for the engine's data directory `home`. */
+/**
+ * What the engine's browser needs from this Linux host, for the engine's data
+ * directory `home`. `sandboxRefused`: the engine found the sandbox blocked
+ * when it last started the browser, which the files here may not show.
+ */
 export const inspectBrowserHost = Effect.fn("engine.inspectBrowserHost")(function* (input: {
   readonly home: string;
+  readonly sandboxRefused: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -230,7 +245,15 @@ export const inspectBrowserHost = Effect.fn("engine.inspectBrowserHost")(functio
   // Without fontconfig there is no `fc-match`, which counts as no font.
   const noFonts =
     (yield* output("fc-match", ["--format=%{file}", "sans-serif"], false)).trim() === "";
-  const sandboxBlocked = restricted && !(yield* exists(APPARMOR_PROFILE));
+  const sandbox: SandboxBlock = restricted
+    ? !(yield* exists(APPARMOR_PROFILE))
+      ? "no-profile"
+      : input.sandboxRefused
+        ? "profile-unloaded"
+        : "none"
+    : input.sandboxRefused
+      ? "unknown"
+      : "none";
   // apt-cache reads the package lists without root.
   const offered = (name: string) =>
     output("apt-cache", ["policy", name], false).pipe(
@@ -253,10 +276,10 @@ export const inspectBrowserHost = Effect.fn("engine.inspectBrowserHost")(functio
       ? { _tag: "dnf" }
       : { _tag: "none" };
   return {
-    sandboxBlocked,
+    sandbox,
     downloaded: Option.isSome(browser),
     missingLibraries,
     noFonts,
-    ...setupOf({ sandboxBlocked, missingLibraries, noFonts, packageManager }),
+    ...setupOf({ sandbox, missingLibraries, noFonts, packageManager }),
   } satisfies BrowserHostNeeds;
 });

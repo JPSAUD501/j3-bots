@@ -8,7 +8,6 @@ import {
   type EntryTarget,
   PushToken,
 } from "@j3-bots/contracts";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -207,50 +206,54 @@ it.effect(
     }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
-it.effect("sends nothing to a device revoked while the pass was sending to another", () =>
-  Effect.gen(function* () {
-    const service = yield* TestPushService;
-    const auth = yield* DeviceAuth;
-    const scout = yield* createBot("Scout");
-    const phone = yield* pushDevice("Phone");
-    const tablet = yield* pushDevice("Tablet");
-    // Whichever goes first, the other device is revoked while it is on its way.
-    yield* service.answer([
-      {
-        _tag: "after",
-        before: (message) =>
-          auth.revoke(message.data.deviceId === phone ? tablet : phone).pipe(Effect.orDie),
-        answer: "take",
-      },
-    ]);
-    yield* says(scout.id, "Done");
-    yield* deliverPending;
-    yield* deliverPending;
+it.effect(
+  "sends nothing to a device revoked after the pass read its delivery, before its claim",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const auth = yield* DeviceAuth;
+      const scout = yield* createBot("Scout");
+      const phone = yield* pushDevice("Phone");
+      const tablet = yield* pushDevice("Tablet");
+      // Whichever is claimed first, the other device is revoked with that claim.
+      yield* sql.unsafe(`
+      CREATE TRIGGER revoke_with_claim AFTER UPDATE OF attempts ON push_deliveries
+      BEGIN DELETE FROM push_registrations WHERE device_id <> NEW.device_id; END
+    `);
+      yield* says(scout.id, "Done");
+      yield* deliverPending;
+      yield* sql`DROP TRIGGER revoke_with_claim`;
+      const [sent] = yield* sends;
+      yield* auth.revoke(sent?.data.deviceId === phone ? tablet : phone);
+      yield* deliverPending;
 
-    assert.strictEqual((yield* sends).length, 1);
-    // The revoked device's delivery is gone; the other waits for its receipt.
-    assert.deepStrictEqual(yield* deliveries, [{ status: "accepted", attempts: 1 }]);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.strictEqual((yield* sends).length, 1);
+      // The revoked device's delivery is gone; the other waits for its receipt.
+      assert.deepStrictEqual(yield* deliveries, [{ status: "accepted", attempts: 1 }]);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
+it.effect(
+  "never sends past a delivery's deadline, even one that passed after the pass read it",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const scout = yield* createBot("Scout");
+      yield* pushDevice("Phone");
+      yield* pushDevice("Tablet");
+      // Whichever is claimed first, the other's deadline passes with that claim.
+      yield* sql.unsafe(`
+      CREATE TRIGGER expire_with_claim AFTER UPDATE OF attempts ON push_deliveries
+      BEGIN
+        UPDATE push_deliveries SET deadline_at = '0000-01-01T00:00:00.000Z'
+        WHERE id <> NEW.id;
+      END
+    `);
+      yield* says(scout.id, "Done");
+      yield* deliverPending;
 
-it.effect("never sends past a delivery's deadline, even when it passed during the pass", () =>
-  Effect.gen(function* () {
-    const service = yield* TestPushService;
-    const scout = yield* createBot("Scout");
-    yield* pushDevice("Phone");
-    yield* pushDevice("Tablet");
-    // The first send takes longer than the other's deadline leaves.
-    yield* service.answer([
-      { _tag: "after", before: () => TestClock.adjust("2 hours"), answer: "take" },
-    ]);
-    yield* says(scout.id, "Done");
-    yield* deliverPending;
-    yield* deliverPending;
-
-    assert.strictEqual((yield* sends).length, 1);
-  }).pipe(Effect.provide(TestDomain.layer)),
+      assert.strictEqual((yield* sends).length, 1);
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
-
 it.effect(
   "follows the settings at each send: no preview turned off since, nothing once notifications are off",
   () =>
@@ -365,7 +368,7 @@ it.effect(
 );
 
 it.effect(
-  "stops sending for the pass when the service does not answer, sparing the others' attempts but not the receipts",
+  "holds every send when the service does not answer a request, one in it counting a send, but not the receipts",
   () =>
     Effect.gen(function* () {
       const service = yield* TestPushService;
@@ -385,24 +388,46 @@ it.effect(
       yield* says(scout.id, "The build is green");
       yield* deliverPending;
 
-      assert.strictEqual((yield* sends).length, 3);
-      // The receipts were read; of the sends, one began, the other waits unspent.
-      assert.sameDeepMembers(
-        [...(yield* deliveries)],
-        [
-          { status: "pending", attempts: 1 },
-          { status: "pending", attempts: 0 },
-        ],
+      assert.deepStrictEqual(yield* service.requests, [2, 2]);
+      // The receipts were read; of the request not answered, one send counts.
+      assert.deepStrictEqual(
+        (yield* deliveries).map(({ status, attempts }) => `${status} ${attempts}`).toSorted(),
+        ["pending 0", "pending 1"],
       );
-      // It waits as long as the send that was not answered.
+      // They wait as long as that request's backoff.
       yield* deliverPending;
-      assert.strictEqual((yield* sends).length, 3);
+      assert.strictEqual((yield* service.requests).length, 2);
       yield* TestClock.adjust(sendBackoff(1));
       yield* deliverPending;
-      assert.strictEqual((yield* sends).length, 5);
+      assert.deepStrictEqual(yield* service.requests, [2, 2, 2]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("spends one push's sends at a time while the service does not answer", () =>
+  Effect.gen(function* () {
+    const service = yield* TestPushService;
+    const scout = yield* createBot("Scout");
+    yield* pushDevice("Phone");
+    yield* pushDevice("Tablet");
+    // Each request carries both pushes, until the first runs out of sends.
+    yield* service.answer(
+      Array.from({ length: 2 * MAX_ATTEMPTS }, () => new PushUnavailable({ reason: "HTTP 503" })),
+    );
+    yield* says(scout.id, "Done");
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      yield* deliverPending;
+      yield* TestClock.adjust(sendBackoff(attempt));
+    }
+    yield* deliverPending;
+
+    // The service answers again: the other push goes, its sends unspent.
+    assert.deepStrictEqual(yield* service.requests, [
+      ...Array.from({ length: MAX_ATTEMPTS }, () => 2),
+      1,
+    ]);
+    assert.deepStrictEqual(yield* deliveries, [{ status: "accepted", attempts: 1 }]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
 it.effect(
   "holds every send, one written since included, until the service may be tried again, across a restart",
   () =>
@@ -431,36 +456,41 @@ it.effect(
 );
 
 it.effect(
-  "stops sending once a pass spent its time, and the next reads a receipt come due before sending more",
+  "sends a pass's pushes in one request, each answered alone, after reading the receipts due",
   () =>
     Effect.gen(function* () {
       const service = yield* TestPushService;
+      const devices = yield* Devices;
       const scout = yield* createBot("Scout");
       yield* pushDevice("Phone");
       yield* says(scout.id, "Done");
       yield* deliverPending;
-      assert.deepStrictEqual(yield* deliveries, [{ status: "accepted", attempts: 1 }]);
 
-      // Five sends of 29 seconds each, starting a minute before the receipt is due.
-      for (const name of ["Tablet", "Laptop", "Watch", "Television"]) yield* pushDevice(name);
-      yield* TestClock.adjust(Duration.subtract(RECEIPT_DELAY, Duration.minutes(1)));
-      yield* service.answer(
-        Array.from({ length: 5 }, () => ({
-          _tag: "after" as const,
-          before: () => TestClock.adjust("29 seconds"),
-          answer: "take" as const,
-        })),
-      );
+      for (const name of ["Tablet", "Watch", "Television"]) yield* pushDevice(name);
+      yield* TestClock.adjust(RECEIPT_DELAY);
+      yield* service.answer(["take", new PushUnregistered(), new PushRejected({ reason: "test" })]);
       yield* says(scout.id, "The build is green");
       yield* deliverPending;
-      yield* deliverPending;
 
-      assert.strictEqual((yield* sends).length, 6);
-      // Asked once the first pass stopped, after three of the five sends.
-      assert.deepStrictEqual(yield* service.receiptsAsked, [4]);
+      assert.deepStrictEqual(yield* service.requests, [1, 4]);
+      // The receipt due was read before the request went.
+      assert.deepStrictEqual(yield* service.receiptsAsked, [1]);
+      const [, unreached, refused] = (yield* sends)
+        .slice(1)
+        .map((message) => message.data.deviceId);
+      // Of the four, the two taken wait for their receipts.
+      assert.deepStrictEqual(yield* deliveries, [
+        { status: "accepted", attempts: 1 },
+        { status: "accepted", attempts: 1 },
+      ]);
+      const unregistered = (yield* devices.paired).filter((device) => !device.pushRegistered);
+      assert.deepStrictEqual(
+        unregistered.map((device) => device.id),
+        [unreached],
+      );
+      if (refused !== undefined) assert.strictEqual(yield* failuresOf(refused), 1);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
-
 it.effect(
   "keeps a registration made again in the millisecond a send to the one before it began",
   () =>

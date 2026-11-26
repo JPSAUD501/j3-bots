@@ -773,7 +773,7 @@ export const layer = Layer.effect(
       // Every request still open on the turn expires with it.
       const open = yield* openRequestRows({ sessionId: session.id, turnId: end.turnId });
       for (const request of open)
-        yield* closeRequest(session, request.engine_request_id, "expired");
+        yield* closeRequest(session, request.engine_request_id, "expired", end.at);
 
       // A continuation that ended before it started still ends its chain's work.
       if (end.cause?._tag === "continuation") {
@@ -1167,15 +1167,16 @@ export const layer = Layer.effect(
       yield* touchActivity(session.id, open.turnId, open.openedAt);
     }, Effect.orDie);
 
-    /** The card shows how its request closed, once. */
+    /** The card shows how its request closed, once, at `closedAt`. */
     const closeRequest = Effect.fn("Observer.closeRequest")(function* (
       session: Watched,
       requestId: RequestId,
       resolution: RequestResolution,
+      closedAt: DateTime.Utc,
     ) {
       const known = yield* requestRow({ sessionId: session.id, requestId });
       if (Option.isNone(known) || known.value.closed_at !== null) return;
-      yield* closeCard(known.value, resolution);
+      yield* closeCard(known.value, resolution, closedAt);
     }, Effect.orDie);
 
     // ---- Replacement ----------------------------------------------------------------
@@ -1188,7 +1189,7 @@ export const layer = Layer.effect(
       // afterwards and not listed has expired, and an answered card must not
       // read as expired because the turn that asked it ended before.
       for (const closed of event.closedRequests) {
-        yield* closeRequest(session, closed.requestId, closed.resolution);
+        yield* closeRequest(session, closed.requestId, closed.resolution, closed.closedAt);
       }
       // The turns some later turn continued: their dispatches follow the link
       // rather than settle, wherever in the snapshot the successor is.
@@ -1269,8 +1270,9 @@ export const layer = Layer.effect(
       for (const open of event.openRequests) yield* openRequest(session, open);
       const stillOpen = new Set<string>(event.openRequests.map((open) => open.requestId));
       for (const request of yield* openRequestRows({ sessionId: session.id, turnId: null })) {
+        // The snapshot says only that it is no longer open: it expired by the time it was taken.
         if (!stillOpen.has(request.engine_request_id)) {
-          yield* closeRequest(session, request.engine_request_id, "expired");
+          yield* closeRequest(session, request.engine_request_id, "expired", event.at);
         }
       }
       for (const speech of event.hostSpeech) yield* hostSpeech(session, speech);
@@ -1338,7 +1340,7 @@ export const layer = Layer.effect(
         case "request-updated":
           return yield* updateRequest(session, event.requestId, event.request, event.heldCall);
         case "request-closed":
-          return yield* closeRequest(session, event.requestId, event.resolution);
+          return yield* closeRequest(session, event.requestId, event.resolution, event.closedAt);
         case "turn-finished":
           return yield* finishTurn(session, {
             turnId: event.turnId,

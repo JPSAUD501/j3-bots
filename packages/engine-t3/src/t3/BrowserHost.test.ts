@@ -7,7 +7,7 @@ import { apparmorProfile, missingLibrariesOf, setupOf } from "./BrowserHost.ts";
 describe("the browser's host setup", () => {
   it("writes, through sudo tee, exactly the profile it shows", () => {
     const { setup } = setupOf({
-      sandboxBlocked: true,
+      sandbox: "no-profile",
       missingLibraries: [],
       noFonts: false,
       packageManager: { _tag: "none" },
@@ -22,8 +22,24 @@ describe("the browser's host setup", () => {
     assert.strictEqual(load, "sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell");
   });
 
+  it("loads a profile on disk the system has not loaded, and has no command for a cause it does not know", () => {
+    const needs = {
+      missingLibraries: [],
+      noFonts: false,
+      packageManager: { _tag: "none" },
+    } as const;
+    assert.deepStrictEqual(setupOf({ ...needs, sandbox: "profile-unloaded" }), {
+      setup: ["sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell"],
+      packagesByHand: false,
+    });
+    assert.deepStrictEqual(setupOf({ ...needs, sandbox: "unknown" }), {
+      setup: [],
+      packagesByHand: false,
+    });
+  });
+
   it("installs the libraries and fonts with the host's package manager, or leaves them to the administrator", () => {
-    const needs = { sandboxBlocked: false, missingLibraries: ["libnss3.so"], noFonts: true };
+    const needs = { sandbox: "none" as const, missingLibraries: ["libnss3.so"], noFonts: true };
     assert.deepStrictEqual(
       setupOf({ ...needs, packageManager: { _tag: "apt-get", libraries: ["libnss3", "libgbm1"] } }),
       {

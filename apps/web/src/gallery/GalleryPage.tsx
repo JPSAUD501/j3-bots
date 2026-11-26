@@ -947,6 +947,7 @@ const sampleNotification = (
   kind,
   preview: null,
   connector: kind === "connector" ? "sign-in" : null,
+  browserHelp: kind === "browser-help" ? { reason: "login", site: "tickets.example.com" } : null,
 });
 
 /**

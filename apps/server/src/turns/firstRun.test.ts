@@ -183,6 +183,26 @@ it.effect("asks the operator's name in the first bot's opening only, also when i
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("asks the operator's name in the next bot's opening when the first one's failed", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const first = yield* createNewBot("Juno");
+    const firstSession = yield* engineSession(first.id);
+    const hello = yield* nextTurn(first.id);
+    yield* control.finishTurn({
+      sessionId: firstSession,
+      turnId: hello,
+      outcome: { _tag: "failed", failure: "provider-error", retryAt: null },
+    });
+    yield* awaitEntry(first.id, "notice");
+
+    // Never retried, it asked nobody: the next bot to open asks.
+    const second = yield* createNewBot("Pixel");
+    yield* finishRunning(second.id);
+    assert.strictEqual(yield* dispatchesWith(yield* engineSession(second.id), ASKS_NAME), 1);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("asks no name in an opening once the operator has one", () =>
   Effect.gen(function* () {
     yield* (yield* SettingsService).update({

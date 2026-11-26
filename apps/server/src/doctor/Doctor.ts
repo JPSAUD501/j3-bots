@@ -473,21 +473,37 @@ const engineCheck = Effect.fn("doctor.engine")(function* (
   }
 });
 
+/** What a blocked sandbox reads as, by why it is blocked. */
+const SANDBOX_BLOCKS = {
+  "no-profile": "AppArmor blocks the sandbox it runs in",
+  "profile-unloaded":
+    "AppArmor blocked the sandbox it runs in when the engine last started it, though the profile that allows it is on disk: the system has not loaded that profile",
+  unknown:
+    "the engine could not start the sandbox it runs in when it last tried, for a cause this check does not know",
+} as const;
+
 /**
  * What the engine's headless browser needs from this Linux host: a sandbox
  * AppArmor allows, the libraries it loads, and fonts. A warning, not a
  * problem: only a bot the operator gives the browser uses it
- * (docs/operations/operating.md#the-browser). `None` off Linux, where it
- * needs nothing.
+ * (docs/operations/operating.md#the-browser). A running server that says the
+ * sandbox is blocked may know it from the browser's start, which the files
+ * here cannot show without root. `None` off Linux, where it needs nothing.
  */
 const browserCheck = Effect.fn("doctor.browser")(function* (
   config: ServerConfig.ServerConfigShape,
+  status: Option.Option<AdminStatus>,
 ) {
   const host = yield* Host;
   if (host.platform !== "linux") return Option.none<Check>();
-  const needs = yield* host.browserNeeds({ home: config.engineHome });
+  const sandboxRefused = Option.exists(
+    status,
+    ({ engine }) =>
+      engine.browser?._tag === "setup-required" && engine.browser.needs.includes("sandbox"),
+  );
+  const needs = yield* host.browserNeeds({ home: config.engineHome, sandboxRefused });
   const missing = [
-    ...(needs.sandboxBlocked ? ["AppArmor blocks the sandbox it runs in"] : []),
+    ...(needs.sandbox === "none" ? [] : [SANDBOX_BLOCKS[needs.sandbox]]),
     ...(needs.missingLibraries.length > 0
       ? [`it cannot load ${needs.missingLibraries.join(", ")}`]
       : []),
@@ -519,12 +535,21 @@ const browserCheck = Effect.fn("doctor.browser")(function* (
           ...needs.setup.map((command) => `  ${command}`),
         ]
       : [];
+  const sandboxLater =
+    needs.sandbox === "none" || needs.sandbox === "no-profile"
+      ? []
+      : [
+          ...(needs.sandbox === "unknown"
+            ? [`The engine's account of it is in ${SERVICE_LOG}.`]
+            : []),
+          "The server checks the sandbox again when someone next opens a bot's browser.",
+        ];
   return Option.some(
     check(
       "Browser",
       "warning",
       `A bot given the browser cannot use it: ${missing.join("; ")}.`,
-      [...commands, ...byHand].join("\n"),
+      [...commands, ...byHand, ...sandboxLater].join("\n"),
     ),
   );
 });
@@ -1086,7 +1111,7 @@ export const diagnose = Effect.gen(function* () {
   }
   const engine = yield* engineCheck(config, status, live._tag === "none");
   checks.push(engine);
-  const browser = yield* browserCheck(config);
+  const browser = yield* browserCheck(config, status);
   if (Option.isSome(browser)) checks.push(browser.value);
   const scripted = scriptedAgentCheck(config);
   if (Option.isSome(scripted)) checks.push(scripted.value);

@@ -482,9 +482,14 @@ describe("TestEngine", () => {
         replaced.hostSpeech.map((speech) => [speech.speechId, speech.text]),
         [[speechId, "On it."]],
       );
-      assert.deepStrictEqual(replaced.closedRequests, [
-        { requestId: secretId, turnId: missed, resolution: "provided" },
-      ]);
+      assert.deepStrictEqual(
+        replaced.closedRequests.map(({ requestId, turnId, resolution }) => ({
+          requestId,
+          turnId,
+          resolution,
+        })),
+        [{ requestId: secretId, turnId: missed, resolution: "provided" }],
+      );
     }).pipe(Effect.provide(TestEngine.layer)),
   );
 

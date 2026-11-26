@@ -42,7 +42,7 @@ const WEBSOCKET_CLOSE_MILLIS = 2_000;
  * client sends is a bot template, whose file is at most
  * `MAX_TEMPLATE_FILE_SIZE`, and the media socket's frames are a few kilobytes.
  */
-const MAX_SOCKET_MESSAGE_BYTES = 4 * MAX_TEMPLATE_FILE_SIZE;
+export const MAX_SOCKET_MESSAGE_BYTES = 4 * MAX_TEMPLATE_FILE_SIZE;
 
 const websocket: WebSocketOptions = {
   closeTimeout: WEBSOCKET_CLOSE_MILLIS,

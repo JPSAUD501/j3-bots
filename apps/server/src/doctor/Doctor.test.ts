@@ -115,8 +115,11 @@ interface World {
    * counts as installed; a server started from this shell, not the service, uses it.
    */
   readonly engineBinary: boolean;
-  /** What the engine's browser needs from this host. */
-  readonly browser: BrowserHostNeeds;
+  /**
+   * What the engine's browser needs from this host, as the host check finds
+   * it given whether the running server says the sandbox is blocked.
+   */
+  readonly browser: (sandboxRefused: boolean) => BrowserHostNeeds;
 }
 
 const HEALTHY: World = {
@@ -146,14 +149,14 @@ const HEALTHY: World = {
   socketBlocked: false,
   rollbackUnfinished: false,
   engineBinary: false,
-  browser: {
-    sandboxBlocked: false,
+  browser: () => ({
+    sandbox: "none",
     downloaded: true,
     missingLibraries: [],
     noFonts: false,
     setup: [],
     packagesByHand: false,
-  },
+  }),
 };
 
 const diagnoseIn = (changes: Partial<World> = {}) =>
@@ -229,7 +232,7 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
               requests.push(url);
               return world.reachable;
             }),
-          browserNeeds: () => Effect.succeed(world.browser),
+          browserNeeds: ({ sandboxRefused }) => Effect.succeed(world.browser(sandboxRefused)),
           findExecutable: (name, searchPath) =>
             Effect.succeed(
               Option.fromNullishOr(
@@ -475,17 +478,17 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       const ready = yield* diagnoseIn();
       assert.strictEqual(named(ready.checks, "Browser").status, "ok");
       const missing = {
-        sandboxBlocked: true,
+        sandbox: "no-profile",
         downloaded: true,
         missingLibraries: ["libnss3.so", "libgbm.so.1"],
         noFonts: true,
-      };
+      } as const;
       const blocked = yield* diagnoseIn({
-        browser: {
+        browser: () => ({
           ...missing,
           setup: ["sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell"],
           packagesByHand: false,
-        },
+        }),
       });
       const browser = named(blocked.checks, "Browser");
       assertFlagged(browser, "warning", "AppArmor blocks the sandbox");
@@ -498,7 +501,7 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
       // On a system with neither apt-get nor dnf, the libraries and fonts are the administrator's to install.
       const byHand = yield* diagnoseIn({
-        browser: { ...missing, sandboxBlocked: false, setup: [], packagesByHand: true },
+        browser: () => ({ ...missing, sandbox: "none", setup: [], packagesByHand: true }),
       });
       assert.strictEqual(
         Option.getOrElse(named(byHand.checks, "Browser").fix, () => ""),
@@ -507,11 +510,46 @@ it.layer(NodeServices.layer)("doctor", (it) => {
 
       // Off Linux the browser needs nothing.
       const { checks } = yield* diagnoseIn({
-        browser: { ...HEALTHY.browser, sandboxBlocked: true },
+        browser: () => ({ ...HEALTHY.browser(false), sandbox: "no-profile" }),
         platform: "darwin",
       });
       assert.isUndefined(checks.find((check) => check.name === "Browser"));
     }),
+  );
+
+  it.effect(
+    "says to load the sandbox's profile when the server found it blocked though it is on disk",
+    () =>
+      Effect.gen(function* () {
+        const reload = "sudo apparmor_parser -r /etc/apparmor.d/t3-chrome-headless-shell";
+        // The profile is on disk: blocked only if the engine found it so.
+        const onDisk = (sandboxRefused: boolean) => ({
+          ...HEALTHY.browser(false),
+          ...(sandboxRefused ? { sandbox: "profile-unloaded" as const, setup: [reload] } : {}),
+        });
+        const server = (needs: ReadonlyArray<"sandbox" | "fonts">) =>
+          Option.some(
+            running({
+              engine: {
+                state: { _tag: "ready" },
+                pinnedVersion: "0.1.11",
+                providers: [provider("claude-code", "ready"), provider("codex", "ready")],
+                browser: { _tag: "setup-required", needs },
+              },
+            }),
+          );
+
+        const refused = yield* diagnoseIn({ browser: onDisk, server: server(["sandbox"]) });
+        const browser = named(refused.checks, "Browser");
+        assertFlagged(browser, "warning", "has not loaded that profile");
+        assert.include(
+          Option.getOrElse(browser.fix, () => ""),
+          `\n  ${reload}\n`,
+        );
+
+        const fonts = yield* diagnoseIn({ browser: onDisk, server: server(["fonts"]) });
+        assert.strictEqual(named(fonts.checks, "Browser").status, "ok");
+      }),
   );
 
   it.effect("checks each harness is found and signed in, from the engine's provider status", () =>

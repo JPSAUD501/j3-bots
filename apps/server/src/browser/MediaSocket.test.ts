@@ -27,13 +27,16 @@ import { DeviceAuth } from "../auth/DeviceAuth.ts";
 import { Bots } from "../bots/Bots.ts";
 import { Devices } from "../devices/Devices.ts";
 import * as Http from "../http.ts";
+import * as Listener from "../listener.ts";
 import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as TestUpdates from "../testing/update.ts";
 import * as RefusedNames from "../web/RefusedNames.ts";
 import { engineSession } from "../testing/turns.ts";
+import * as WebClient from "../web/WebClient.ts";
 import { BrowserTabs } from "./BrowserTabs.ts";
 import * as MediaSocket from "./MediaSocket.ts";
+import { MAX_SOCKET_BUFFER_BYTES } from "./MediaSocket.ts";
 
 const decodeFrame = Schema.decodeUnknownSync(Schema.fromJsonString(BrowserServerFrame));
 
@@ -210,5 +213,52 @@ it.layer(server, { excludeTestServices: true })("media socket", (it) => {
       });
       assert.strictEqual(refused.status, 401);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("drops a client a picture would leave owing more than its socket may hold", () =>
+    Effect.gen(function* () {
+      const { browser, token, ref } = yield* scene;
+      const client = yield* open(`?ref=${ref}`, { authorization: `Bearer ${token}` });
+      const viewer = yield* browser.nextViewer;
+
+      const fits = new Uint8Array(MAX_SOCKET_BUFFER_BYTES / 2).fill(7);
+      yield* viewer.emit({ _tag: "frame", jpeg: fits });
+      const shown = yield* client.next;
+      assert.strictEqual(shown._tag === "picture" ? shown.bytes.byteLength : 0, fits.byteLength);
+      yield* client.send(JSON.stringify({ type: "ack" }));
+
+      yield* viewer.emit({ _tag: "frame", jpeg: new Uint8Array(MAX_SOCKET_BUFFER_BYTES).fill(7) });
+      assert.strictEqual((yield* client.next)._tag, "closed");
+      yield* viewer.released;
+    }).pipe(Effect.scoped),
+  );
+});
+
+// The client listener as the server runs it, whose socket server bounds what a client sends.
+it.layer(
+  Http.serve(Listener.layer, { logAddress: false }).pipe(
+    Layer.provide([WebClient.statusLayer, RefusedNames.layer]),
+    Layer.provide(TestUpdates.layer),
+    Layer.provideMerge(TestDomain.servedLayer),
+  ),
+  { excludeTestServices: true },
+)("media socket on the client listener", (it) => {
+  it.effect(
+    "closes a socket whose client sends a message over the limit, and keeps one at it",
+    () =>
+      Effect.gen(function* () {
+        const { browser, token, ref } = yield* scene;
+        const bearer = { authorization: `Bearer ${token}` };
+        const client = yield* open(`?ref=${ref}`, bearer);
+        const viewer = yield* browser.nextViewer;
+
+        // At the limit: read, found not to be a frame, and dropped.
+        yield* client.send("x".repeat(Listener.MAX_SOCKET_MESSAGE_BYTES));
+        yield* client.send(JSON.stringify({ type: "text", text: "hello" }));
+        assert.deepStrictEqual(yield* viewer.nextInput, { type: "text", text: "hello" });
+
+        yield* client.send("x".repeat(Listener.MAX_SOCKET_MESSAGE_BYTES + 1));
+        assert.deepStrictEqual(yield* client.next, { _tag: "closed", code: 1009 });
+      }).pipe(Effect.scoped),
   );
 });

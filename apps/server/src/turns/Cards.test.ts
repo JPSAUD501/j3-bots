@@ -873,6 +873,48 @@ it.effect("counts the operator's answer to a card as the turn's activity", () =>
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("counts an answer as activity from when the engine took it, also when seen late", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const states = yield* BotStates;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Clean up.");
+    const turnId = yield* nextTurn(bot.id);
+    yield* control.openRequest({
+      sessionId: session,
+      turnId,
+      request: {
+        _tag: "approval",
+        kind: "command",
+        action: "rm -rf build",
+        detail: null,
+        reason: null,
+        exact: true,
+        sessionGrant: null,
+      },
+    });
+    const card = yield* awaitEntry(bot.id, "approval");
+    // The engine takes the answer, and its close reaches the server long after.
+    const stalled = yield* control.stallEvents(session);
+    const answeredAt = yield* DateTime.now;
+    yield* (yield* Cards).answer({
+      commandId: command(),
+      entryId: card.id,
+      answer: { _tag: "approval", decision: "allow-once" },
+    });
+    yield* (yield* Cards).respondPending;
+    yield* TestClock.adjust(Duration.sum(STALL_AFTER, Duration.minutes(5)));
+    yield* stalled.release;
+    yield* until(states.of(bot.id).pipe(Effect.map((state) => state._tag !== "waiting")));
+    const after = yield* states.of(bot.id);
+    assert.deepStrictEqual(
+      after._tag === "thinking" ? [after.stalled, after.quietSince] : after._tag,
+      [true, answeredAt],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect("waits on an ask card after its turn with no turn's start to count from", () =>
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
