@@ -39,6 +39,7 @@ import {
   type Bot,
   type BotState,
   type Connector,
+  type Skill,
   type EngineStatus,
   type Entry,
   type EntryTarget,
@@ -64,6 +65,7 @@ import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleBrowser } from "./sampleBrowser";
 import { sampleVault } from "./sampleVault";
 import { sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
+import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** Cards whose answer is on its way, as it would be to a server. */
@@ -73,6 +75,7 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly settingsSaves: SettingsSaves;
   readonly settingsOpen: boolean;
   readonly connectors: ReadonlyArray<Connector>;
+  readonly skills: ReadonlyArray<Skill>;
   /** The connectors screen, and what opened it; null while it is closed. */
   readonly connectorsOpening: ConnectorsOpening | null;
 }
@@ -885,6 +888,7 @@ export function useSampleSource({
       },
       settingsOpen: false,
       connectors: sampleConnectors,
+      skills: sampleSkills,
       connectorsOpening: null,
     };
     const started = firstRun ? withoutBots(team) : team;
@@ -926,6 +930,14 @@ export function useSampleSource({
     }),
     [store],
   );
+  const skillsIntents = useMemo(
+    () =>
+      sampleSkillsIntents({
+        get: () => store.get().skills,
+        set: (skills) => store.update((s) => ({ ...s, skills })),
+      }),
+    [store],
+  );
   // Scout shops in its browser.
   const [browser] = useState(() => sampleBrowser([ids.scout]));
   return {
@@ -938,8 +950,10 @@ export function useSampleSource({
         aside={state.settingsOpen}
         connectors={state.connectors}
         bots={botsOf(state)}
+        skills={state.skills}
         connected
         intents={connectorsIntents}
+        skillsIntents={skillsIntents}
         onClose={() => store.update((s) => ({ ...s, connectorsOpening: null }))}
       />
     ),

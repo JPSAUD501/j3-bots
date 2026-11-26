@@ -167,6 +167,7 @@ import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
 import { connectorsHolder, sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
+import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 import { sampleProviderActions, useSampleSource } from "./sampleSource";
 import { SAMPLE_VAULT_PASSWORD, useSampleVault } from "./sampleVault";
 import { galleryVariants } from "./variants";
@@ -1966,6 +1967,17 @@ function ConnectorsVariant({
   const [intents] = useState(() =>
     sampleConnectorsIntents(connectorsHolder(initial, setConnectors), route),
   );
+  const [skills, setSkills] = useState(sampleSkills);
+  const [skillsIntents] = useState(() => {
+    let current = sampleSkills;
+    return sampleSkillsIntents({
+      get: () => current,
+      set: (next) => {
+        current = next;
+        setSkills(next);
+      },
+    });
+  });
   return (
     <Frame label={label} width={400} height={720}>
       <div className="flex h-full flex-col bg-background">
@@ -1974,8 +1986,10 @@ function ConnectorsVariant({
           opening={{ at, forBot: ids.scout }}
           connectors={connectors}
           bots={Object.values(team.bots)}
+          skills={skills}
           connected={connected}
           intents={intents}
+          skillsIntents={skillsIntents}
           onClose={nothing}
         />
       </div>

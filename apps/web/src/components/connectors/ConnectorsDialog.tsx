@@ -10,12 +10,12 @@ import {
   listingPlace,
 } from "@j3-bots/client-runtime/presentation";
 import { useAnswer } from "@j3-bots/client-runtime/react";
-import { grantText } from "@j3-bots/client-runtime/wording";
-import type { Bot, Connector, ConnectorId, ConnectorListing } from "@j3-bots/contracts";
+import { grantText, lastChangeText } from "@j3-bots/client-runtime/wording";
+import type { Bot, Connector, ConnectorId, ConnectorListing, Skill } from "@j3-bots/contracts";
 import type { KeyWith } from "@j3-bots/i18n";
 import { ArrowLeftIcon, ChevronRightIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react";
 import { type ReactNode, useEffect, useId, useState } from "react";
-import { useI18n } from "../../app/context";
+import { useI18n, usePresentation } from "../../app/context";
 import { useHeldWhileClosing } from "../../lib/useHeldWhileClosing";
 import { Button } from "../ui/button";
 import { dialogBackdrop, screenDialog } from "../ui/dialog";
@@ -27,6 +27,14 @@ import { ConnectorPage } from "./ConnectorPage";
 import { ListingPage } from "./ListingPage";
 import { ConnectorTile, StatusWord } from "./parts";
 import { type ConnectorsIntents, Failed } from "./screen";
+import {
+  NewSkill,
+  skillAt,
+  type SkillPlace,
+  SkillPage,
+  SkillsGroup,
+  type SkillsIntents,
+} from "./Skills";
 
 interface ConnectorsDialogProps {
   /** Null while it is closed. */
@@ -40,16 +48,19 @@ interface ConnectorsDialogProps {
   /** Null until they load. */
   readonly connectors: ReadonlyArray<Connector> | null;
   readonly bots: ReadonlyArray<Bot>;
+  /** Every bot's skills and each bot's own; null until they load. */
+  readonly skills: ReadonlyArray<Skill> | null;
   /** A connection to the server is open now: adding and changing a connector needs one. */
   readonly connected: boolean;
   readonly intents: ConnectorsIntents;
+  readonly skillsIntents: SkillsIntents;
   readonly onClose: () => void;
 }
 
 /**
  * Where the operator finds services for their bots, connects them and looks
- * after them: their connectors and what the gallery features, a search of the
- * gallery, and a page for each. Each page opens over the one before, and Back
+ * after them, and their bots' skills: their connectors and what the gallery
+ * features, a search of the gallery, the skills, and a page for each. Each page opens over the one before, and Back
  * returns to it. On a phone it takes the screen; from the tablet layout up it
  * is a panel.
  */
@@ -99,16 +110,23 @@ export type ConnectorsScreenProps = Omit<ConnectorsDialogProps, "opening" | "asi
  */
 export function ConnectorsScreen({ titleId, opening, onClose, ...props }: ConnectorsScreenProps) {
   const { t } = useI18n();
-  const [stack, setStack] = useState<ReadonlyArray<ConnectorsPlace>>(
+  const [stack, setStack] = useState<ReadonlyArray<ConnectorsPlace | SkillPlace>>(
     opening.at._tag === "home" ? [opening.at] : [{ _tag: "home" }, opening.at],
   );
   const place = stack.at(-1) ?? { _tag: "home" };
-  const go = (next: ConnectorsPlace) => setStack([...stack, next]);
+  const go = (next: ConnectorsPlace | SkillPlace) => setStack([...stack, next]);
   /** In place of the page shown, so Back skips the form that led to it. */
-  const replace = (next: ConnectorsPlace) => setStack([...stack.slice(0, -1), next]);
+  const replace = (next: ConnectorsPlace | SkillPlace) => setStack([...stack.slice(0, -1), next]);
   const back = () => setStack(stack.slice(0, -1));
 
-  const title = place._tag === "add-own" ? t("addOwn.title") : t("connectors.title");
+  const title =
+    place._tag === "add-own"
+      ? t("addOwn.title")
+      : place._tag === "new-skill"
+        ? t("skills.new.title")
+        : place._tag === "skill"
+          ? t("skills.title")
+          : t("connectors.title");
   return (
     <>
       <header className="flex h-14 shrink-0 items-center gap-1 border-b border-border ps-2 pe-2">
@@ -148,6 +166,9 @@ export function ConnectorsScreen({ titleId, opening, onClose, ...props }: Connec
               go({ _tag: "connector", connectorId, signIn: false, added: false })
             }
             onAddOwn={() => go({ _tag: "add-own" })}
+            skills={props.skills}
+            onOpenSkill={(skill) => go({ _tag: "skill", scope: skill.scope, name: skill.name })}
+            onAddSkill={() => go({ _tag: "new-skill" })}
           />
         )}
         {place._tag === "listing" && (
@@ -187,6 +208,26 @@ export function ConnectorsScreen({ titleId, opening, onClose, ...props }: Connec
             onAdded={(connector) => replace(addedPlace(connector))}
           />
         )}
+        {place._tag === "skill" && (
+          <SkillPage
+            key={`${place.scope._tag === "bot" ? place.scope.botId : "all-bots"}/${place.name}`}
+            skill={skillAt(props.skills, place)}
+            loading={props.skills === null}
+            bots={props.bots}
+            connected={props.connected}
+            intents={props.skillsIntents}
+            onRemoved={back}
+          />
+        )}
+        {place._tag === "new-skill" && (
+          <NewSkill
+            bots={props.bots}
+            forBot={opening.forBot}
+            connected={props.connected}
+            intents={props.skillsIntents}
+            onSaved={(skill) => replace({ _tag: "skill", scope: skill.scope, name: skill.name })}
+          />
+        )}
       </div>
     </>
   );
@@ -204,8 +245,9 @@ const kindNote: Partial<Record<ConnectorListing["connect"], KeyWith>> = {
 
 /**
  * The screen's first page: a search of the gallery, and with nothing typed,
- * the operator's connectors, each with its status and its bots, then what
- * the gallery features; last, adding one of the operator's own.
+ * the operator's connectors, each with its status, its bots and who changed
+ * it last, then what the gallery features, adding one of the operator's own,
+ * and the skills.
  */
 function Home({
   connectors,
@@ -215,6 +257,9 @@ function Home({
   onOpenListing,
   onOpenConnector,
   onAddOwn,
+  skills,
+  onOpenSkill,
+  onAddSkill,
 }: {
   connectors: ReadonlyArray<Connector> | null;
   bots: ReadonlyArray<Bot>;
@@ -223,8 +268,12 @@ function Home({
   onOpenListing: (listing: ConnectorListing) => void;
   onOpenConnector: (connectorId: ConnectorId) => void;
   onAddOwn: () => void;
+  skills: ReadonlyArray<Skill> | null;
+  onOpenSkill: (skill: Skill) => void;
+  onAddSkill: () => void;
 }) {
-  const i18n = useI18n();
+  const ctx = usePresentation();
+  const i18n = ctx.i18n;
   const { t } = i18n;
   const [typed, setTyped] = useState("");
   const [query, setQuery] = useState("");
@@ -353,8 +402,11 @@ function Home({
                           <span className="truncate text-sm font-medium">{connector.name}</span>
                           <StatusWord connector={connector} />
                         </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {grantText(connector.grant, bots, i18n)}
+                        <span className="flex shrink-0 flex-col items-end text-xs text-muted-foreground">
+                          <span>{grantText(connector.grant, bots, i18n)}</span>
+                          {connector.lastChange !== null && (
+                            <span>{lastChangeText(connector.lastChange, bots, ctx)}</span>
+                          )}
                         </span>
                       </Row>
                     </li>
@@ -389,6 +441,10 @@ function Home({
           </span>
         </Row>
       </Group>
+
+      {!searching && (
+        <SkillsGroup skills={skills} bots={bots} onOpen={onOpenSkill} onAdd={onAddSkill} />
+      )}
     </div>
   );
 }

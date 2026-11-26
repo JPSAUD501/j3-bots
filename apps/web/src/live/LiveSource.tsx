@@ -8,6 +8,7 @@ import {
   type SignInRoute,
   useConnection,
   useConnectors,
+  useSkills,
   useConversation,
   useDevices,
   useEngineStatus,
@@ -962,6 +963,8 @@ function LiveShell({
   };
   const connectorsState = useConnectors();
   const connectors = connectorsState._tag === "ready" ? connectorsState.value : null;
+  const skillsState = useSkills();
+  const skills = skillsState._tag === "ready" ? skillsState.value : null;
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
   // Read each time Settings opens, and on every socket while it stays open.
@@ -1217,6 +1220,7 @@ function LiveShell({
         ? { _tag: "server" }
         : { _tag: "paste" };
   const { state: _connectorsState, ...connectorsClient } = j3.connectors;
+  const { state: _skillsState, ...skillsIntents } = j3.skills;
   const connectorsIntents: ConnectorsIntents = {
     ...connectorsClient,
     signInRoute,
@@ -1739,8 +1743,10 @@ function LiveShell({
         aside={settingsOpen}
         connectors={connectors}
         bots={bots}
+        skills={skills}
         connected={data.connected}
         intents={connectorsIntents}
+        skillsIntents={skillsIntents}
         onClose={() => setConnectorsOpening(null)}
       />
       <RoomDialog

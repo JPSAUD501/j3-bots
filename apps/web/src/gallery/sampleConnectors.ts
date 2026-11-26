@@ -214,6 +214,7 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     account: "sam@example.com",
     signedInAt: ago(60 * 24 * 12),
     tools: notesTools,
+    lastChange: { by: { _tag: "operator" }, at: ago(60 * 24 * 12) },
   },
   {
     ...base,
@@ -229,6 +230,7 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     account: "sam@example.com",
     signedInAt: ago(60 * 24 * 30),
     tools: trackerTools,
+    lastChange: { by: { _tag: "bot", botId: ids.scout }, at: ago(60 * 24 * 30) },
   },
   {
     ...base,

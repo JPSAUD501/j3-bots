@@ -88,7 +88,11 @@ const refOf = decodes(GitRef);
 const nameOf = decodes(SkillName);
 
 /** The install the server takes, or the fields that do not hold. */
-export const skillInstall = (draft: InstallDraft): SkillInstall | ReadonlyArray<InstallProblem> => {
+export const skillInstall = (
+  draft: InstallDraft,
+):
+  | { readonly _tag: "valid"; readonly install: SkillInstall }
+  | { readonly _tag: "invalid"; readonly problems: ReadonlyArray<InstallProblem> } => {
   const repository = repositoryOf(draft.repository.trim());
   const path = pathOf(draft.path.trim().replace(/^\/+|\/+$/g, ""));
   const ref = refOf(draft.ref.trim());
@@ -103,19 +107,25 @@ export const skillInstall = (draft: InstallDraft): SkillInstall | ReadonlyArray<
     Option.isSome(name)
   ) {
     return {
-      scope: draft.scope,
-      repository: repository.value,
-      path: path.value,
-      ref: ref.value,
-      name: name.value,
+      _tag: "valid",
+      install: {
+        scope: draft.scope,
+        repository: repository.value,
+        path: path.value,
+        ref: ref.value,
+        name: name.value,
+      },
     };
   }
-  return [
-    ...(Option.isNone(repository) ? (["repository"] as const) : []),
-    ...(Option.isNone(path) ? (["path"] as const) : []),
-    ...(Option.isNone(ref) ? (["ref"] as const) : []),
-    ...(Option.isNone(name) ? (["name"] as const) : []),
-  ];
+  return {
+    _tag: "invalid",
+    problems: [
+      ...(Option.isNone(repository) ? (["repository"] as const) : []),
+      ...(Option.isNone(path) ? (["path"] as const) : []),
+      ...(Option.isNone(ref) ? (["ref"] as const) : []),
+      ...(Option.isNone(name) ? (["name"] as const) : []),
+    ],
+  };
 };
 
 /** A name and `SKILL.md` the server takes, or none. */

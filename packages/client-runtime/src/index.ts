@@ -2,6 +2,7 @@
 export {
   type BrowserViewHandle,
   type ConnectorsClient,
+  type SkillsClient,
   type ConversationHandle,
   type VaultHandle,
   createJ3Client,
