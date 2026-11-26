@@ -2357,6 +2357,7 @@ function ConnectorsGallerySection() {
         />
         <ConnectorsVariant label="Can't reach, on an older revision" at={connectorAt(2)} />
         <ConnectorsVariant label="Secrets unavailable" at={connectorAt(3)} />
+        <ConnectorsVariant label="Names a secret one of its bots may not use" at={connectorAt(4)} />
         <ConnectorsVariant label="Add your own" at={{ _tag: "add-own" }} />
       </div>
     </Section>

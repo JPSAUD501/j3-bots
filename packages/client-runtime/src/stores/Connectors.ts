@@ -3,6 +3,7 @@ import {
   type BotId,
   type CommandError,
   type CommandLine,
+  type ConnectorCommandError,
   type Connector,
   type ConnectorAppAnswer,
   type ConnectorAppView,
@@ -28,7 +29,13 @@ import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { Connection, type NotPaired } from "../connection/Connection.ts";
-import { Actions, type IntentResult, intentResult } from "../intents/Actions.ts";
+import {
+  Actions,
+  type ConnectorIntentFailure,
+  connectorIntentResult,
+  type IntentResult,
+  intentResult,
+} from "../intents/Actions.ts";
 import { applyConnectorChange } from "../presentation/connectors.ts";
 import { Cell, type Readable } from "../Store.ts";
 import { loading, markStale, ready, type Synced } from "./synced.ts";
@@ -93,16 +100,18 @@ export class Connectors extends Context.Service<
       language: Language,
     ) => Effect.Effect<IntentResult<ConnectorListingDetails>>;
     /** Adds it under an id of this client's, so a retry finds the connector it added. */
-    readonly add: (addition: ConnectorAddition) => Effect.Effect<IntentResult<Connector>>;
+    readonly add: (
+      addition: ConnectorAddition,
+    ) => Effect.Effect<IntentResult<Connector, ConnectorIntentFailure>>;
     readonly update: (
       connectorId: ConnectorId,
       changes: ConnectorChanges,
-    ) => Effect.Effect<IntentResult<Connector>>;
+    ) => Effect.Effect<IntentResult<Connector, ConnectorIntentFailure>>;
     readonly remove: (connectorId: ConnectorId) => Effect.Effect<IntentResult>;
     readonly setBots: (
       connectorId: ConnectorId,
       grant: ConnectorGrant,
-    ) => Effect.Effect<IntentResult<Connector>>;
+    ) => Effect.Effect<IntentResult<Connector, ConnectorIntentFailure>>;
     /** A sign-in only this device can finish, which it opens in the system browser. */
     readonly beginSignIn: (
       connectorId: ConnectorId,
@@ -171,6 +180,10 @@ export const layer = Layer.effect(
     const answered = <A>(effect: Effect.Effect<A, CommandError | NotPaired>) =>
       effect.pipe(Effect.exit, Effect.map(intentResult));
 
+    /** A command that sets what a connector sends or which bots it goes to, which a secret it names can refuse. */
+    const settled = <A>(effect: Effect.Effect<A, ConnectorCommandError | NotPaired>) =>
+      effect.pipe(Effect.exit, Effect.map(connectorIntentResult));
+
     const connectorId = random
       .randomBytes(24)
       .pipe(
@@ -183,7 +196,7 @@ export const layer = Layer.effect(
 
     const add = Effect.fn("Connectors.add")(function* (addition: ConnectorAddition) {
       const id = yield* connectorId;
-      return yield* answered(
+      return yield* settled(
         connection
           .call((client) =>
             client["connector.add"]({
@@ -201,7 +214,7 @@ export const layer = Layer.effect(
       grant: ConnectorGrant,
     ) {
       const commandId = yield* actions.commandId;
-      return yield* answered(
+      return yield* settled(
         connection
           .call((client) => client["connector.setBots"]({ commandId, connectorId, grant }))
           .pipe(Effect.tap(show)),
@@ -265,7 +278,7 @@ export const layer = Layer.effect(
       connectorId: ConnectorId,
       changes: ConnectorChanges,
     ) {
-      return yield* answered(
+      return yield* settled(
         connection
           .call((client) => client["connector.update"]({ connectorId, ...changes }))
           .pipe(Effect.tap(show)),

@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { FAILURE_REASONS, Invalid, SIGN_IN_REASONS } from "@j3-bots/contracts";
+import {
+  FAILURE_REASONS,
+  Invalid,
+  SECRET_NEED_REASONS,
+  SecretName,
+  SecretRefused,
+  SIGN_IN_REASONS,
+} from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { at, context } from "../../test/fixtures.ts";
 import { connectFailureText, connectorStatusText } from "./connectors.ts";
+
+const secret = SecretName.make("tracker-token");
 
 const languages = ["en", "pt-BR"] as const;
 const since = at("2026-11-20T14:00:00Z");
@@ -42,6 +51,19 @@ describe("connectorStatusText", () => {
     expect(details).not.toContain(words("unknown"));
     expect(new Set(details).size).toBe(SIGN_IN_REASONS.length);
   });
+
+  it.each(languages)(
+    "names the secret a connector needs, and why, for every reason (%s)",
+    (lang) => {
+      const ctx = context("2026-11-20T15:00:00Z", lang);
+      const words = (reason: (typeof SECRET_NEED_REASONS)[number] | "unknown") =>
+        connectorStatusText({ _tag: "needs-secret", secret, reason }, ctx).detail;
+      const details = SECRET_NEED_REASONS.map(words);
+      expect(details).not.toContain(words("unknown"));
+      expect(new Set(details).size).toBe(SECRET_NEED_REASONS.length);
+      for (const detail of details) expect(detail).toContain(secret);
+    },
+  );
 });
 
 describe("connectFailureText", () => {
@@ -55,4 +77,23 @@ describe("connectFailureText", () => {
       expect(refused("command-unpinned")).toContain("@scope/server@1.2.3");
     },
   );
+
+  it.each(languages)("names the secret a change was refused over, and why (%s)", (lang) => {
+    const { i18n } = context("2026-11-20T15:00:00Z", lang);
+    const problems = ["missing", "no-value", "not-shared", "not-yours"] as const;
+    const texts = problems.map((problem) =>
+      connectFailureText(
+        { _tag: "secret-refused", error: new SecretRefused({ secret, problem }) },
+        i18n,
+      ),
+    );
+    for (const text of texts) expect(text).toContain(secret);
+    const inAddress = connectFailureText(
+      { _tag: "secret-refused", error: new SecretRefused({ secret, problem: "in-address" }) },
+      i18n,
+    );
+    expect(
+      new Set([...texts, inAddress, connectFailureText({ _tag: "unexpected" }, i18n)]).size,
+    ).toBe(problems.length + 2);
+  });
 });

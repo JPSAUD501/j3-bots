@@ -242,16 +242,16 @@ export interface ConnectorsClient {
   ) => Promise<Actions.IntentResult<ConnectorListingDetails>>;
   readonly add: (
     addition: Connectors.ConnectorAddition,
-  ) => Promise<Actions.IntentResult<Connector>>;
+  ) => Promise<Actions.IntentResult<Connector, Actions.ConnectorIntentFailure>>;
   readonly update: (
     connectorId: ConnectorId,
     changes: Connectors.ConnectorChanges,
-  ) => Promise<Actions.IntentResult<Connector>>;
+  ) => Promise<Actions.IntentResult<Connector, Actions.ConnectorIntentFailure>>;
   readonly remove: (connectorId: ConnectorId) => Promise<Actions.IntentResult>;
   readonly setBots: (
     connectorId: ConnectorId,
     grant: ConnectorGrant,
-  ) => Promise<Actions.IntentResult<Connector>>;
+  ) => Promise<Actions.IntentResult<Connector, Actions.ConnectorIntentFailure>>;
   readonly beginSignIn: (
     connectorId: ConnectorId,
     redirect: SignInRedirect,

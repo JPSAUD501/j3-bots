@@ -46,6 +46,7 @@ import {
   TimedOut,
   Unreachable,
   UrlRefused,
+  SecretNeeded,
   SecretsUnavailable,
   Withdrawn,
 } from "./errors.ts";
@@ -447,6 +448,7 @@ const isConnectorFailure = Schema.is(
   Schema.Union([
     NeedsSignIn,
     SecretsUnavailable,
+    SecretNeeded,
     AuthFailing,
     UrlRefused,
     Unreachable,

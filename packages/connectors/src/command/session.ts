@@ -57,6 +57,11 @@ export interface CommandSessionOptions extends ClientSetup {
   readonly args: ReadonlyArray<Redacted.Redacted<string>>;
   /** The variables the operator gave it, with their values from the secrets. */
   readonly variables: ReadonlyArray<CommandVariable>;
+  /**
+   * Values of the operator's secrets its arguments carry: its answers are
+   * scrubbed of them, as of its variables' values.
+   */
+  readonly hidden: ReadonlyArray<Redacted.Redacted<string>>;
   /** The server's own environment, of which only a few variables reach the process. */
   readonly serverEnvironment: Readonly<Record<string, string | undefined>>;
   /** The folder the process runs in. */
@@ -81,7 +86,8 @@ export interface CommandSession {
  *
  * What the process answers is scrubbed of the values of its environment the
  * operator gave, should it echo one, as a remote server's answers are of
- * its credentials. Its arguments are not: they are the command's own words,
+ * its credentials, and of the secrets' values its arguments carry
+ * (`hidden`). Its other arguments are not: they are the command's own words,
  * such as a folder it serves, which its answers name as a matter of course.
  */
 export const openCommandSession = (
@@ -119,7 +125,11 @@ export const openCommandSession = (
       );
       return yield* new CommandFailed({ reason: "exited" });
     }
-    const scrub = scrubberOf(options.variables.map((variable) => Redacted.value(variable.value)));
+    const scrub = scrubberOf(
+      [...options.variables.map((variable) => variable.value), ...options.hidden].map(
+        Redacted.value,
+      ),
+    );
     const context = yield* Effect.context<never>();
     const fork = (effect: Effect.Effect<void>) => void Effect.runForkWith(context)(effect);
 

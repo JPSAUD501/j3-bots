@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ConnectorStatus } from "@j3-bots/contracts";
+import type { ConnectorStatus, SECRET_NEED_REASONS, SecretName } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import type { ConnectorFailure } from "./errors.ts";
@@ -30,16 +30,30 @@ export interface Failing {
   readonly since: DateTime.Utc;
 }
 
+/** A secret the connector's settings name and cannot use, as its status says it. */
+export interface SecretNeed {
+  readonly secret: SecretName;
+  readonly reason: (typeof SECRET_NEED_REASONS)[number];
+}
+
 export interface StatusInputs {
   readonly secretsUnavailable: boolean;
+  /** None while every secret its settings name can be used, or it names none. */
+  readonly secretNeed: Option.Option<SecretNeed>;
   /** None while it is signed in, or signs in no way at all. */
   readonly signIn: Option.Option<SignInNeed>;
   readonly failing: Option.Option<Failing>;
 }
 
-/** The status the operator sees: secrets that cannot be read first, then a sign-in, then a failing server. */
+/**
+ * The status the operator sees: secrets that cannot be read first, then a
+ * secret its settings need, then a sign-in, then a failing server.
+ */
 export const statusOf = (inputs: StatusInputs): ConnectorStatus => {
   if (inputs.secretsUnavailable) return { _tag: "secrets-unavailable" };
+  if (Option.isSome(inputs.secretNeed)) {
+    return { _tag: "needs-secret", ...inputs.secretNeed.value };
+  }
   if (Option.isSome(inputs.signIn)) return { _tag: "needs-sign-in", reason: inputs.signIn.value };
   if (Option.isSome(inputs.failing)) {
     return {
@@ -62,15 +76,17 @@ export type Observation =
   | { readonly _tag: "unchanged" };
 
 /**
- * What a failure says about the connector. Secrets that cannot be read are
- * their own status, which reaches the connector from them, and a withdrawn
- * request says nothing of the connector. A call that timed out,
+ * What a failure says about the connector. Secrets that cannot be read, and
+ * a secret its settings need, are their own status, which reaches the
+ * connector from the secrets, and a withdrawn request says nothing of the
+ * connector. A call that timed out,
  * answered too much, or got an MCP error is that call's trouble; the same
  * while connecting or listing means the server is not working.
  */
 export const observe = (failure: ConnectorFailure, activity: Activity): Observation => {
   switch (failure._tag) {
     case "SecretsUnavailable":
+    case "SecretNeeded":
     case "Withdrawn":
       return { _tag: "unchanged" };
     case "NeedsSignIn":

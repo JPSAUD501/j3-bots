@@ -6,7 +6,7 @@ import { APPROVAL_URL, sdkHttpServer } from "@j3-bots/connectors/testing/sdk";
 import {
   type BotId,
   CommandId,
-  type CommandError,
+  type ConnectorCommandError,
   type Connector,
   type ConnectorInputEntry,
   type ElicitationAnswer,
@@ -115,7 +115,8 @@ const listed = (connector: Connector) =>
   connector.status._tag === "connected" && connector.tools.length > 0;
 
 /** The reason a command was refused with, when it conflicts with the state. */
-const conflictOf = (error: CommandError) => (error._tag === "Conflict" ? error.reason : null);
+const conflictOf = (error: ConnectorCommandError) =>
+  error._tag === "Conflict" ? error.reason : null;
 
 /** Every way a secret could reach a client or a bot: what they are sent. */
 const shown = (...values: ReadonlyArray<unknown>) => JSON.stringify(values);

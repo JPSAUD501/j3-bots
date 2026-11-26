@@ -53,11 +53,13 @@ export type ConnectorData =
  * Why a connector gave no answer, as the bot is told:
  * - `needs-sign-in`: the operator must sign in again, and was shown a card;
  * - `secrets-unavailable`: the operator's secrets cannot be read now (`SecretsState`);
+ * - `needs-secret`: a secret its settings name is missing, or not shared with every bot it goes to;
  * - `busy`: J3 Bots has as many connector sessions open as it keeps.
  */
 export const CONNECTOR_UNAVAILABLE = [
   "needs-sign-in",
   "secrets-unavailable",
+  "needs-secret",
   "unreachable",
   "timed-out",
   "too-large",
@@ -71,6 +73,8 @@ const UNAVAILABLE: { readonly [K in ConnectorUnavailable]: (connector: string) =
     `${c} needs your user to sign in again, and they were shown a card for it. Tell them briefly; don't retry.`,
   "secrets-unavailable": (c) =>
     `${c} can't be used until your user opens their secrets in J3 Bots' settings. Tell them briefly; don't retry.`,
+  "needs-secret": (c) =>
+    `${c}'s settings name a secret it can't use: missing, or not shared with every bot that uses ${c}. \`list_mcp_servers\` names it. Tell your user briefly; don't retry.`,
   unreachable: (c) => `${c}'s server could not be reached. Try again later, or tell your user.`,
   "timed-out": (c) =>
     `${c}'s server did not answer in time, so the call was stopped. It may or may not have taken effect.`,

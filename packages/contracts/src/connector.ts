@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { BotId, Label, Language, NonNegativeInt, OpenLiterals } from "./base.ts";
+import { SecretName } from "./secrets.ts";
 import { OptionalLastChange } from "./skill.ts";
 
 // ---------------------------------------------------------------------------
@@ -346,6 +347,14 @@ export const FAILURE_REASONS = [
 ] as const;
 
 /**
+ * Why a connector cannot use a secret its settings name:
+ * - `missing`: no secret has that name;
+ * - `no-value`: the secret has no such value, as a single value's user name;
+ * - `not-shared`: a bot the connector goes to may not use the secret.
+ */
+export const SECRET_NEED_REASONS = ["missing", "no-value", "not-shared"] as const;
+
+/**
  * Whether bots can use a connector now. The reasons are open: one added after
  * a client's build decodes as `unknown`, which it words as a connector that
  * needs a sign-in, or that cannot be reached, without saying why.
@@ -357,7 +366,11 @@ export const FAILURE_REASONS = [
  *   result that says it is unavailable;
  * - `secrets-unavailable`: its secrets cannot be read: the operator's
  *   secrets wait for an old vault's password, or their key is missing
- *   (`SecretsState`).
+ *   (`SecretsState`);
+ * - `needs-secret`: its settings name a secret (`${secret:<name>}`) it cannot
+ *   use (`SECRET_NEED_REASONS`). No bot gets its tools, and nothing is sent to
+ *   its server, until the operator saves or shares that secret, or narrows
+ *   who uses the connector.
  */
 export const ConnectorStatus = Schema.Union([
   Schema.TaggedStruct("connected", {}),
@@ -367,6 +380,10 @@ export const ConnectorStatus = Schema.Union([
     since: Schema.DateTimeUtc,
   }),
   Schema.TaggedStruct("secrets-unavailable", {}),
+  Schema.TaggedStruct("needs-secret", {
+    secret: SecretName,
+    reason: OpenLiterals(SECRET_NEED_REASONS),
+  }),
 ]);
 export type ConnectorStatus = typeof ConnectorStatus.Type;
 

@@ -73,8 +73,8 @@ export const sameGrant = (a: ConnectorGrant, b: ConnectorGrant): boolean =>
 
 /**
  * What a connector's status light says: it works (`connected`), it waits on
- * the operator, for a sign-in or their secrets (`needs-you`), or it cannot be
- * reached (`failing`).
+ * the operator, for a sign-in, their secrets or one secret its settings use
+ * (`needs-you`), or it cannot be reached (`failing`).
  */
 export type ConnectorTone = "connected" | "needs-you" | "failing";
 
@@ -84,6 +84,7 @@ export const connectorTone = (connector: Connector): ConnectorTone => {
       return "connected";
     case "needs-sign-in":
     case "secrets-unavailable":
+    case "needs-secret":
       return "needs-you";
     case "failing":
       return "failing";

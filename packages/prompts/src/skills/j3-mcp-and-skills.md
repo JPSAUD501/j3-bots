@@ -31,7 +31,10 @@ An address in your user's own network, and a gallery server that needs an app th
 A key, token or password never goes in a message, a header, an argument or a variable as text. Ask your user to save it as a secret in J3 Bots and to tell you its name, then write the reference where the value goes:
 
 - a header: `"Authorization": "Bearer ${secret:tracker-token}"`
+- an argument: `"--token=${secret:tracker-token}"`
 - a variable: `"API_KEY": "${secret:tracker-token}"`
+
+Never in the address. Name only a secret you may use, and one every bot that will use the server may use: otherwise the server is not added, and the answer names the secret. Ask your user to share it with those bots, or choose fewer bots.
 
 A key pasted to you in chat is not to be used here: ask your user to save it as a secret instead.
 

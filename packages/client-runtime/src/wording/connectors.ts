@@ -8,7 +8,7 @@ import type {
   PinRefusal,
 } from "@j3-bots/contracts";
 import type { I18n } from "@j3-bots/i18n";
-import { type IntentFailure, refusedWith } from "../intents/Actions.ts";
+import { type ConnectorIntentFailure, refusedWith, secretRefusal } from "../intents/Actions.ts";
 import type { EnvProblem } from "../presentation/connectorForm.ts";
 import type { SignInProblem } from "../presentation/connectors.ts";
 import { type TimeContext, timeInSentence } from "./time.ts";
@@ -64,6 +64,22 @@ export function connectorStatusText(
       return {
         label: t("connector.status.secretsUnavailable"),
         detail: t("connector.status.secretsUnavailableDetail"),
+        next: null,
+        since: null,
+      };
+    case "needs-secret":
+      return {
+        label: t("connector.status.needsSecret"),
+        detail: t(
+          status.reason === "missing"
+            ? "connector.status.secretMissing"
+            : status.reason === "no-value"
+              ? "connector.status.secretNoValue"
+              : status.reason === "not-shared"
+                ? "connector.status.secretNotShared"
+                : "connector.status.secretOther",
+          { secret: status.secret },
+        ),
         next: null,
         since: null,
       };
@@ -134,8 +150,30 @@ export function signedInText(connector: Connector, ctx: TimeContext): string | n
     : ctx.i18n.t("connector.signedInOn", { when: timeInSentence(connector.signedInAt, ctx) });
 }
 
-/** Why adding a connector did not work, in words. */
-export function connectFailureText(failure: IntentFailure, { t }: I18n): string {
+/** Why a connector's change was refused over a secret its settings use, in words; null when it was not. */
+export function secretRefusalText(failure: ConnectorIntentFailure, { t }: I18n): string | null {
+  const refused = secretRefusal(failure);
+  if (refused === null) return null;
+  const secret = { secret: refused.secret };
+  switch (refused.problem) {
+    case "missing":
+      return t("connect.failed.secretMissing", secret);
+    case "no-value":
+      return t("connect.failed.secretNoValue", secret);
+    case "not-shared":
+      return t("connect.failed.secretNotShared", secret);
+    case "not-yours":
+      return t("connect.failed.secretNotYours", secret);
+    case "in-address":
+      return t("connect.failed.secretInAddress");
+  }
+}
+
+/** Why adding or changing a connector did not work, in words. */
+export function connectFailureText(failure: ConnectorIntentFailure, i18n: I18n): string {
+  const { t } = i18n;
+  const secret = secretRefusalText(failure, i18n);
+  if (secret !== null) return secret;
   if (refusedWith(failure, "connector-fields")) return t("connect.failed.fields");
   if (refusedWith(failure, "command-unpinned")) return t("connect.failed.unpinned");
   if (refusedWith(failure, "connector-unsupported")) return t("connector.unsupported");

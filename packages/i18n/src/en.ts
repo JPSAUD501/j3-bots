@@ -1867,6 +1867,14 @@ export const en = {
   "connector.status.needsSignIn": "Needs sign-in",
   "connector.status.failing": "Can't reach",
   "connector.status.secretsUnavailable": "Secrets unavailable",
+  "connector.status.needsSecret": "Needs a secret",
+  "connector.status.secretMissing":
+    "Its settings use the secret {secret}, and you have no secret of that name. Bots can’t use it until you save one in Secrets.",
+  "connector.status.secretNoValue":
+    "Its settings use a value the secret {secret} doesn’t have. Bots can’t use it until you change them.",
+  "connector.status.secretNotShared":
+    "Not every bot that uses it may use the secret {secret}. Share the secret with them in Secrets, or choose fewer bots here.",
+  "connector.status.secretOther": "Its settings use the secret {secret}, which it can’t use now.",
   "connector.status.notSignedIn": "Not signed in yet.",
   "connector.status.expired": "The sign-in ended. Bots can't use it until you sign in again.",
   "connector.status.rejected":
@@ -1974,6 +1982,15 @@ export const en = {
     "This command runs a package with no exact version. Name it at one, such as @scope/server@1.2.3 or server==1.2.3.",
   "connect.failed.secretsUnavailable":
     "Connectors keep their sign-in in your secrets, which can’t be read right now. Open Secrets to see why.",
+  "connect.failed.secretMissing":
+    "You have no secret named {secret}. Save it in Secrets, then try again.",
+  "connect.failed.secretNoValue":
+    "The secret {secret} doesn’t have that value: a single value has no user name.",
+  "connect.failed.secretNotShared":
+    "Not every bot you chose may use the secret {secret}. Share it with them in Secrets, or choose fewer bots.",
+  "connect.failed.secretNotYours": "The bot making this change may not use the secret {secret}.",
+  "connect.failed.secretInAddress":
+    "A secret goes in a header or a variable, not in the address, where J3 Bots doesn’t fill it in.",
   "connect.openSecrets": "Open Secrets",
   "connect.failed.offline": "The server is offline. Try again once it's back.",
   "connect.done.one": "Connected. {name} can use it from its next turn.",

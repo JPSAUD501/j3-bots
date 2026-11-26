@@ -51,6 +51,7 @@ export {
   Actions,
   type ActionState,
   cardAction,
+  type ConnectorIntentFailure,
   type IntentFailure,
   type IntentResult,
   type RefusalReason,

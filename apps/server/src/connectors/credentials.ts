@@ -15,17 +15,17 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import {
   type ConnectorSecret,
-  type NamedSecret,
   ConnectorId as SecretsConnectorId,
 } from "../secrets/ConnectorSecret.ts";
 import type { Secrets } from "../secrets/Secrets.ts";
 import type { ConnectorSignIns } from "./auth.ts";
 import type { StoredConnector } from "./ConnectorStore.ts";
+import { failureOf, referencesOf, type Resolved, usersOf, withValues } from "./secretReferences.ts";
 
 /**
  * How a connector's requests are signed: the headers and the address from
- * its connector secret, and an OAuth connector's token from its sign-in, each
- * read when a request is made.
+ * its connector secret, with the operator's secrets it names resolved, and an
+ * OAuth connector's token from its sign-in, each read when a request is made.
  */
 
 /** A connector's secrets are kept under the connector's own id. */
@@ -66,17 +66,45 @@ export const addressOf = (
   });
 
 /**
- * A gallery entry's secret values as a request can carry them, to take out
- * of what its server says: as given, and URL-encoded, as its form puts one
- * in the address. No form encodes a value any other way.
+ * Secret values a request can carry, to take out of what its server says: a
+ * gallery entry's secret values and the operator's secrets its settings name,
+ * as given and URL-encoded, as a form puts one in the address. No form
+ * encodes a value any other way.
  */
 export const hiddenOf = (
-  formSecrets: ReadonlyArray<NamedSecret>,
+  values: ReadonlyArray<Redacted.Redacted<string>>,
 ): ReadonlyArray<Redacted.Redacted<string>> =>
-  formSecrets.flatMap(({ value }) => {
+  values.flatMap((value) => {
     const raw = Redacted.value(value);
     const encoded = encodeURIComponent(raw);
     return encoded === raw ? [value] : [value, Redacted.make(encoded)];
+  });
+
+/** The values a resolved connector's server's answers are scrubbed of. */
+const hiddenOfResolved = (resolved: Resolved) =>
+  hiddenOf([...resolved.secret.formSecrets.map((named) => named.value), ...resolved.values]);
+
+/**
+ * The connector's secret with each reference to the operator's secrets
+ * resolved, for every bot the connector goes to: none when it has none. A
+ * reference that does not resolve fails the request before anything is sent,
+ * so no `${secret:…}` text, and no value for a bot that may not use it,
+ * reaches its server.
+ */
+const resolvedOf = (
+  secrets: typeof Secrets.Service,
+  connector: StoredConnector,
+): Effect.Effect<Option.Option<Resolved>, CredentialsUnavailable> =>
+  Effect.gen(function* () {
+    const secret = yield* secretOf(secrets, connector);
+    if (Option.isNone(secret)) return Option.none();
+    const values = yield* secrets
+      .referenceValues({
+        references: referencesOf(secret.value),
+        users: usersOf(connector.grant),
+      })
+      .pipe(Effect.mapError(failureOf));
+    return Option.some(withValues(secret.value, values));
   });
 
 /**
@@ -88,39 +116,44 @@ export const commandOf = (
   secrets: typeof Secrets.Service,
   connector: StoredConnector,
 ): Effect.Effect<
-  NonNullable<ConnectorSecret["command"]> & Pick<ConnectorSecret, "env">,
+  NonNullable<ConnectorSecret["command"]> &
+    Pick<ConnectorSecret, "env"> & {
+      /** The operator's secrets' values in it, which the process's answers are scrubbed of. */
+      readonly hidden: ReadonlyArray<Redacted.Redacted<string>>;
+    },
   CredentialsUnavailable
 > =>
   Effect.gen(function* () {
-    const secret = yield* secretOf(secrets, connector);
-    if (Option.isNone(secret) || secret.value.command === null) {
-      return yield* new AuthFailing({ reason: "secret-unusable" });
-    }
-    return { ...secret.value.command, env: secret.value.env };
+    const resolved = yield* resolvedOf(secrets, connector);
+    if (Option.isNone(resolved)) return yield* new AuthFailing({ reason: "secret-unusable" });
+    const { secret, values } = resolved.value;
+    const { command } = secret;
+    if (command === null) return yield* new AuthFailing({ reason: "secret-unusable" });
+    return { program: command.program, args: command.args, env: secret.env, hidden: values };
   });
 
 /**
  * Signs the connector's requests from its secret and, for an OAuth connector,
- * its sign-in. `allowed` is asked first, right before each request goes out:
- * a request it refuses is withdrawn unsigned.
+ * its sign-in. `current` is asked first, right before each request goes out:
+ * the connector as stored now, or none once the session's holder may no
+ * longer use it, which withdraws the request unsigned. Its references
+ * resolve for the bots it goes to now, not those of when the session opened.
  */
 export const credentialsOf = (
   secrets: typeof Secrets.Service,
   signIns: typeof ConnectorSignIns.Service,
   connector: StoredConnector,
-  allowed: Effect.Effect<boolean>,
+  current: Effect.Effect<Option.Option<StoredConnector>>,
 ): ConnectorCredentials => ({
   current: Effect.gen(function* () {
-    if (!(yield* allowed)) return yield* new Withdrawn();
-    const secret = yield* secretOf(secrets, connector);
-    const headers = Option.match(secret, { onNone: () => [], onSome: (s) => s.headers });
-    const hidden = Option.match(secret, {
-      onNone: () => [],
-      onSome: (s) => hiddenOf(s.formSecrets),
-    });
+    const now = yield* current;
+    if (Option.isNone(now)) return yield* new Withdrawn();
+    const resolved = yield* resolvedOf(secrets, now.value);
+    const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
+    const hidden = Option.match(resolved, { onNone: () => [], onSome: hiddenOfResolved });
     const bearer =
-      connector.signIn === "oauth"
-        ? Option.some(yield* signIns.accessToken(connector.id))
+      now.value.signIn === "oauth"
+        ? Option.some(yield* signIns.accessToken(now.value.id))
         : Option.none();
     return { bearer, headers, hidden } satisfies CallCredentials;
   }),

@@ -4,6 +4,7 @@ import {
   type BotId,
   DeviceId,
   Label,
+  type SecretAccess,
   SecretId,
   SecretName,
   type SecretDraft,
@@ -34,6 +35,7 @@ import {
   sealed,
   secretsFolder,
 } from "../testing/secrets.ts";
+import { referencesIn } from "./references.ts";
 import { KEY_FILE, Secrets } from "./Secrets.ts";
 
 const WRONG = Redacted.make("incorrect horse battery");
@@ -205,10 +207,9 @@ it.effect(
         assert.strictEqual(
           refusal(
             yield* Effect.exit(
-              secrets.resolve({
-                botId: bot.id,
-                text: "${secret:example-work}",
-                use: { _tag: "browser", origin: SiteOrigin.make("https://example.com") },
+              secrets.referenceValues({
+                references: [{ name: name("example-work"), field: null }],
+                users: onlyBots(bot.id),
               }),
             ),
           ),
@@ -326,74 +327,93 @@ it.effect(
     }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
-it.effect("gives a reference its value only for a bot that may use the secret", () =>
-  Effect.gen(function* () {
-    const secrets = yield* Secrets;
-    const ana = yield* createBot("Ana");
-    const bruno = yield* createBot("Bruno");
-    yield* secrets.add({
-      id: idOf(1),
-      name: name("weather-api"),
-      draft: value("weather-token-value"),
-      access: onlyBots(ana.id),
-    });
-    yield* secrets.add({
-      id: idOf(2),
-      name: name("example"),
-      draft: login("hunter2"),
-      access: everyBot,
-    });
-    const use = { _tag: "connector", name: Label.make("Weather") } as const;
-    const resolve = (botId: BotId, text: string) =>
-      secrets.resolve({ botId, text, use }).pipe(Effect.map(Redacted.value), Effect.exit);
+it.effect(
+  "gives references their values only for a connector every one of whose bots may use them",
+  () =>
+    Effect.gen(function* () {
+      const secrets = yield* Secrets;
+      const ana = yield* createBot("Ana");
+      const bruno = yield* createBot("Bruno");
+      yield* secrets.add({
+        id: idOf(1),
+        name: name("weather-api"),
+        draft: value("weather-token-value"),
+        access: onlyBots(ana.id),
+      });
+      yield* secrets.add({
+        id: idOf(2),
+        name: name("example"),
+        draft: login("hunter2"),
+        access: everyBot,
+      });
+      const reference = (text: string) => {
+        const [found] = referencesIn(text);
+        if (found === undefined) return assert.fail(`${text} is no reference`);
+        return found;
+      };
+      const valuesFor = (users: SecretAccess, ...texts: ReadonlyArray<string>) =>
+        secrets.referenceValues({ references: texts.map(reference), users }).pipe(
+          Effect.map((values) =>
+            Object.fromEntries([...values].map(([text, value]) => [text, Redacted.value(value)])),
+          ),
+          Effect.exit,
+        );
 
-    assert.deepStrictEqual(
-      yield* resolve(ana.id, "Bearer ${secret:weather-api}"),
-      Exit.succeed("Bearer weather-token-value"),
-    );
-    assert.deepStrictEqual(
-      yield* resolve(bruno.id, "${secret:example.username}:${secret:example}"),
-      Exit.succeed("ana@example.com:hunter2"),
-    );
-    assert.deepStrictEqual(yield* resolve(ana.id, "no reference"), Exit.succeed("no reference"));
+      assert.deepStrictEqual(
+        yield* valuesFor(onlyBots(ana.id), "${secret:weather-api}"),
+        Exit.succeed({ "${secret:weather-api}": "weather-token-value" }),
+      );
+      // A login's bare reference is its password; every bot may use this one, those to come too.
+      assert.deepStrictEqual(
+        yield* valuesFor(everyBot, "${secret:example.username}", "${secret:example}"),
+        Exit.succeed({
+          "${secret:example.username}": "ana@example.com",
+          "${secret:example}": "hunter2",
+        }),
+      );
 
-    const refused = (exit: Exit.Exit<string, unknown>) => {
-      const reason = refusal(exit);
-      if (Exit.isFailure(exit)) {
-        // A refusal names the secret, never a value.
-        assert.notInclude(Cause.pretty(exit.cause), "weather-token-value");
-        assert.notInclude(Cause.pretty(exit.cause), "hunter2");
-      }
-      return reason;
-    };
-    assert.strictEqual(
-      refused(yield* resolve(bruno.id, "Bearer ${secret:weather-api}")),
-      "not-allowed",
-    );
-    assert.strictEqual(refused(yield* resolve(ana.id, "${secret:nowhere}")), "missing");
-    assert.strictEqual(
-      refused(yield* resolve(ana.id, "${secret:weather-api.password}")),
-      "no-value",
-    );
-    // One reference it may not use refuses the whole text.
-    assert.strictEqual(
-      refused(yield* resolve(bruno.id, "${secret:example} ${secret:weather-api}")),
-      "not-allowed",
-    );
+      const refused = (exit: Exit.Exit<unknown, unknown>) => {
+        const reason = refusal(exit);
+        if (Exit.isFailure(exit)) {
+          // A refusal names the secret, never a value.
+          assert.notInclude(Cause.pretty(exit.cause), "weather-token-value");
+          assert.notInclude(Cause.pretty(exit.cause), "hunter2");
+        }
+        return reason;
+      };
+      // One bot of the connector that may not use it refuses it for all of them.
+      assert.strictEqual(
+        refused(yield* valuesFor(onlyBots(ana.id, bruno.id), "${secret:weather-api}")),
+        "not-allowed",
+      );
+      // Some bots' secret is not every bot's, whoever those are now.
+      assert.strictEqual(
+        refused(yield* valuesFor(everyBot, "${secret:weather-api}")),
+        "not-allowed",
+      );
+      assert.strictEqual(refused(yield* valuesFor(everyBot, "${secret:nowhere}")), "missing");
+      assert.strictEqual(
+        refused(yield* valuesFor(onlyBots(ana.id), "${secret:weather-api.password}")),
+        "no-value",
+      );
+      // Looking up records no use: a bot's call does.
+      const used = (yield* secrets.list).find((secret) => secret.name === "weather-api");
+      assert.isNull(used?.lastUse ?? null);
+      const use = { _tag: "connector", name: Label.make("Weather") } as const;
+      yield* secrets.noteUse({ names: [name("weather-api"), name("nowhere")], botId: ana.id, use });
+      const weather = (yield* secrets.list).find((secret) => secret.name === "weather-api");
+      assert.deepStrictEqual(
+        weather?.lastUse === null ? null : [weather?.lastUse?.botId, weather?.lastUse?.use],
+        [ana.id, use],
+      );
 
-    const weather = (yield* secrets.list).find((secret) => secret.name === "weather-api");
-    assert.deepStrictEqual(
-      weather?.lastUse === null ? null : [weather?.lastUse?.botId, weather?.lastUse?.use],
-      [ana.id, use],
-    );
-
-    // The operator widens it, and the same reference works for the other bot.
-    yield* secrets.setAccess(idOf(1), onlyBots(ana.id, bruno.id));
-    assert.deepStrictEqual(
-      yield* resolve(bruno.id, "${secret:weather-api}"),
-      Exit.succeed("weather-token-value"),
-    );
-  }).pipe(Effect.provide(TestDomain.layer)),
+      // The operator widens it, and the same reference works for both bots.
+      yield* secrets.setAccess(idOf(1), onlyBots(ana.id, bruno.id));
+      assert.deepStrictEqual(
+        yield* valuesFor(onlyBots(ana.id, bruno.id), "${secret:weather-api}"),
+        Exit.succeed({ "${secret:weather-api}": "weather-token-value" }),
+      );
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(

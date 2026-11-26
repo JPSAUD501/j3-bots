@@ -29,6 +29,7 @@ import {
   type ResponseCache,
   responseCache,
   type SecretHeader,
+  type SecretNeed,
   type SessionLimits,
   toolName,
   type UrlPolicy,
@@ -46,6 +47,7 @@ import {
   type ConnectorAppTool,
   MAX_CONNECTOR_APP_DATA_BYTES,
   type ConnectorField,
+  type ConnectorCommandError,
   type ConnectorFieldValue,
   type ConnectorGlyph,
   type ConnectorGrant,
@@ -68,6 +70,9 @@ import {
   type Elicitation,
   type ElicitationAnswer,
   type PromptArguments,
+  type SecretAccess,
+  type SecretName,
+  SecretRefused,
 } from "@j3-bots/contracts";
 import {
   CONNECTOR_UNAVAILABLE,
@@ -102,7 +107,8 @@ import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { keyedLock } from "../turns/keyedLock.ts";
 import type { ConnectorSecret, NamedSecret } from "../secrets/ConnectorSecret.ts";
-import { Secrets } from "../secrets/Secrets.ts";
+import { referenceText, type SecretReference } from "../secrets/references.ts";
+import { Secrets, type SecretUnavailable } from "../secrets/Secrets.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
 import {
@@ -113,9 +119,25 @@ import {
   connectorSecretIdOf,
 } from "./credentials.ts";
 import { makeListings } from "./listings.ts";
+import {
+  digestOf,
+  needOf,
+  referenceInAddress,
+  referencesInValues,
+  referencesOf,
+  usersOf,
+  withValues,
+} from "./secretReferences.ts";
 import { headerFieldKeys, refill, resolve } from "./sources/form.ts";
 import { ConnectorSources } from "./sources/Sources.ts";
-import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
+import {
+  type ConnectorState,
+  connectorOf,
+  NOTHING_SEEN,
+  offeredOf,
+  type Seen,
+  statusOfConnector,
+} from "./view.ts";
 
 /**
  * The operator's connectors (`docs/architecture/server.md`, "Connectors"):
@@ -292,14 +314,14 @@ export class Connectors extends Context.Service<
       /** Which bots get it; every bot when left out. */
       readonly grant?: ConnectorGrant;
       readonly by: ChangeAuthor;
-    }) => Effect.Effect<Connector, CommandError>;
+    }) => Effect.Effect<Connector, ConnectorCommandError>;
     readonly update: (input: {
       readonly connectorId: ConnectorId;
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
       readonly command?: CommandLine;
       readonly by: ChangeAuthor;
-    }) => Effect.Effect<Connector, CommandError>;
+    }) => Effect.Effect<Connector, ConnectorCommandError>;
     readonly remove: (input: {
       readonly commandId: CommandId;
       readonly connectorId: ConnectorId;
@@ -309,7 +331,7 @@ export class Connectors extends Context.Service<
       readonly connectorId: ConnectorId;
       readonly grant: ConnectorGrant;
       readonly by: ChangeAuthor;
-    }) => Effect.Effect<Connector, CommandError>;
+    }) => Effect.Effect<Connector, ConnectorCommandError>;
   }
 >()("@j3-bots/server/connectors/Connectors") {}
 
@@ -338,6 +360,25 @@ interface Stumble {
   readonly activity: Activity;
   readonly failure: ConnectorFailure;
 }
+
+/**
+ * What the references to the operator's secrets in a connector's settings
+ * resolved to, for a connector whose settings make one: kept since this
+ * server started, and checked again whenever the secrets change.
+ */
+interface References {
+  /** The secrets they name. */
+  readonly names: ReadonlyArray<SecretName>;
+  /** One that cannot be used, while one cannot. */
+  readonly need: Option.Option<SecretNeed>;
+  /** A digest of the values they resolved to, null while one does not resolve. */
+  readonly digest: string | null;
+}
+
+const sameNeed = (a: Option.Option<SecretNeed>, b: Option.Option<SecretNeed>) =>
+  Option.isNone(a)
+    ? Option.isNone(b)
+    : Option.isSome(b) && a.value.secret === b.value.secret && a.value.reason === b.value.reason;
 
 /** A session closes after this long unused. */
 const IDLE_CLOSE = Duration.minutes(10);
@@ -448,6 +489,8 @@ const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): Connector
       return failure.reason === "secret-unusable" ? "needs-sign-in" : "unreachable";
     case "SecretsUnavailable":
       return "secrets-unavailable";
+    case "SecretNeeded":
+      return "needs-secret";
     case "TimedOut":
       return "timed-out";
     case "ResponseTooLarge":
@@ -559,6 +602,7 @@ export const layer = Layer.effect(
     });
 
     const seenRef = yield* Ref.make<ReadonlyMap<ConnectorId, Seen>>(new Map());
+    const referencesRef = yield* Ref.make<ReadonlyMap<ConnectorId, References>>(new Map());
     const secretsUnavailable = yield* Ref.make(true);
     const signInStates = yield* Ref.make<ReadonlyMap<ConnectorId, SignInState>>(new Map());
     const changes = yield* PubSub.unbounded<Change>();
@@ -592,14 +636,24 @@ export const layer = Layer.effect(
     const updateSeen = (id: ConnectorId, f: (seen: Seen) => Seen) =>
       Ref.update(seenRef, (seen) => new Map(seen).set(id, f(seen.get(id) ?? NOTHING_SEEN)));
 
-    const render = Effect.fn("Connectors.render")(function* (connector: StoredConnector) {
-      const states = yield* Ref.get(signInStates);
-      return connectorOf(
-        connector,
-        yield* seenOf(connector.id),
-        yield* Ref.get(secretsUnavailable),
-        Option.fromNullishOr(states.get(connector.id)),
+    /** The secret the connector's settings name and cannot use, if one. */
+    const needOfConnector = (id: ConnectorId) =>
+      Effect.map(Ref.get(referencesRef), (all) =>
+        Option.flatMap(Option.fromNullishOr(all.get(id)), (references) => references.need),
       );
+
+    /** What the connector's status is worked out from, now. */
+    const stateOf = Effect.fn("Connectors.stateOf")(function* (id: ConnectorId) {
+      return {
+        seen: yield* seenOf(id),
+        secretsUnavailable: yield* Ref.get(secretsUnavailable),
+        secretNeed: yield* needOfConnector(id),
+        signIn: Option.fromNullishOr((yield* Ref.get(signInStates)).get(id)),
+      } satisfies ConnectorState;
+    });
+
+    const render = Effect.fn("Connectors.render")(function* (connector: StoredConnector) {
+      return connectorOf(connector, yield* stateOf(connector.id));
     });
 
     const require = Effect.fn("Connectors.require")(function* (id: ConnectorId) {
@@ -750,16 +804,18 @@ export const layer = Layer.effect(
       }
     });
 
-    /** Whether `holder` may still use the connector: the server's own session always, a bot's while it is granted. */
-    const allowed = (id: ConnectorId, holder: Holder): Effect.Effect<boolean> =>
-      holder === "catalog"
-        ? Effect.succeed(true)
-        : Effect.map(store.get(id), (connector) =>
-            Option.exists(
-              connector,
-              (c) => c.grant._tag === "all-bots" || c.grant.ids.includes(holder),
-            ),
-          );
+    /** The connector as stored now, while `holder` may still use it: the server's own session always, a bot's while it is granted. */
+    const heldBy = (
+      id: ConnectorId,
+      holder: Holder,
+    ): Effect.Effect<Option.Option<StoredConnector>> =>
+      Effect.map(
+        store.get(id),
+        Option.filter(
+          (c) =>
+            holder === "catalog" || c.grant._tag === "all-bots" || c.grant.ids.includes(holder),
+        ),
+      );
 
     const sessions = yield* RcMap.make({
       lookup: Effect.fn("Connectors.openSession")(function* (key: string) {
@@ -783,7 +839,7 @@ export const layer = Layer.effect(
             secrets,
             signIns,
             connector.value,
-            allowed(id.value, holder.value),
+            heldBy(id.value, holder.value),
           ),
           limits: reach.limits,
           client: CLIENT,
@@ -816,6 +872,7 @@ export const layer = Layer.effect(
         program: command.program,
         args: command.args,
         variables: command.env,
+        hidden: command.hidden,
         serverEnvironment: commandReach.environment,
         cwd: commandReach.cwd,
         limits: reach.limits,
@@ -903,6 +960,8 @@ export const layer = Layer.effect(
       const unlisted = Effect.gen(function* () {
         const connector = yield* store.get(id);
         if (Option.exists(connector, (c) => isCommand(c) && c.tools !== null)) return false;
+        // One whose settings name a secret it cannot use sends nothing until it can.
+        if (Option.isSome(yield* needOfConnector(id))) return false;
         return Option.isNone((yield* seenOf(id)).listed);
       });
       if (!(yield* unlisted)) return;
@@ -912,6 +971,117 @@ export const layer = Layer.effect(
           if (yield* unlisted) yield* relist(id);
         }),
         "while-unlisted",
+      );
+    });
+
+    /** One check of a connector's references at a time, so the last one read is the one kept. */
+    const rechecking = keyedLock();
+
+    /**
+     * Resolves the references to the operator's secrets in the connector's
+     * settings again, for every bot it goes to, and keeps what they resolved
+     * to. When that changed, the sessions and the process opened with the old
+     * values stop, and the next use opens new ones: a secret given a new
+     * value, shared, unshared, renamed or deleted reaches the connector
+     * without anyone adding it again. While the secrets cannot be read,
+     * nothing changes: that is their own status.
+     */
+    const recheck = (id: ConnectorId) =>
+      rechecking.run(id)(
+        Effect.gen(function* () {
+          const connector = yield* store.get(id);
+          const read = Option.isNone(connector)
+            ? Result.succeed(Option.none<ConnectorSecret>())
+            : yield* Effect.result(secrets.connectorSecrets.get(connectorSecretIdOf(id)));
+          if (Result.isFailure(read)) return;
+          const references = Option.match(read.success, { onNone: () => [], onSome: referencesOf });
+          let next: References | undefined;
+          if (Option.isSome(connector) && references.length > 0) {
+            const values = yield* Effect.result(
+              secrets.referenceValues({ references, users: usersOf(connector.value.grant) }),
+            );
+            const need = Result.isFailure(values) ? needOf(values.failure) : Option.none();
+            if (Result.isFailure(values) && Option.isNone(need)) return;
+            next = {
+              names: [...new Set(references.map((reference) => reference.name))],
+              need,
+              digest: Result.isSuccess(values) ? digestOf(values.success) : null,
+            };
+          }
+          const before = yield* Ref.modify(
+            referencesRef,
+            (all): [References | undefined, ReadonlyMap<ConnectorId, References>] => {
+              const rest = new Map(all);
+              if (next === undefined) rest.delete(id);
+              else rest.set(id, next);
+              return [all.get(id), rest];
+            },
+          );
+          const needBefore = before?.need ?? Option.none();
+          const needAfter = next?.need ?? Option.none();
+          const needChanged = !sameNeed(needBefore, needAfter);
+          // The first check of a connector whose references resolve finds nothing opened with others.
+          const valuesChanged =
+            before !== undefined && (before.digest ?? null) !== (next?.digest ?? null);
+          if (!needChanged && !valuesChanged) return;
+          if (Option.isNone(connector)) return;
+          yield* closeSessions(id);
+          // A server that refused the old values is tried with the new, as when they are given again.
+          const wasRefused = valuesChanged && (yield* seenOf(id)).refused;
+          if (wasRefused) yield* updateSeen(id, (seen) => ({ ...seen, refused: false }));
+          if (needChanged || wasRefused) {
+            yield* touch(id);
+            yield* toolsTouched(yield* botsOf(connector.value));
+          }
+          if (Option.isNone(needAfter)) yield* ensureListed(id);
+        }),
+      );
+
+    /** Checks every connector's references again: the secrets changed. */
+    const recheckAll = Effect.fn("Connectors.recheckAll")(function* () {
+      for (const connector of yield* store.all) yield* recheck(connector.id);
+    });
+
+    /**
+     * Whether settings can go to the bots `grant` names, and what their
+     * references resolve to there: every secret they name must be one each of
+     * those bots may use, with the value it names, and none may be in the
+     * address, where none is resolved. When a bot wrote them, each secret it
+     * named (`written`) must be one it may use itself, or a bot could send
+     * another's secret to a server of its choice.
+     */
+    const checkSecrets = Effect.fn("Connectors.checkSecrets")(function* (input: {
+      readonly secret: ConnectorSecret;
+      readonly grant: ConnectorGrant;
+      readonly by: ChangeAuthor;
+      readonly written: ReadonlyArray<SecretReference>;
+    }) {
+      if (input.secret.address !== null) {
+        const inAddress = referenceInAddress(input.secret.address);
+        if (Option.isSome(inAddress)) {
+          return yield* new SecretRefused({ secret: inAddress.value.name, problem: "in-address" });
+        }
+      }
+      const refusal =
+        (problem: "not-shared" | "not-yours") =>
+        (error: SecretUnavailable): SecretRefused | Conflict =>
+          Option.match(needOf(error), {
+            onNone: () => new Conflict({ reason: "secrets-unavailable" }),
+            onSome: (need) =>
+              new SecretRefused({
+                secret: need.secret,
+                problem: need.reason === "not-shared" ? problem : need.reason,
+              }),
+          });
+      const lookUpFor = (references: ReadonlyArray<SecretReference>, users: SecretAccess) =>
+        secrets.referenceValues({ references, users });
+      if (input.by._tag === "bot" && input.written.length > 0) {
+        yield* lookUpFor(input.written, { _tag: "bots", botIds: [input.by.botId] }).pipe(
+          Effect.mapError(refusal("not-yours")),
+        );
+      }
+      return yield* lookUpFor(referencesOf(input.secret), usersOf(input.grant)).pipe(
+        Effect.mapError(refusal("not-shared")),
       );
     });
 
@@ -936,11 +1106,19 @@ export const layer = Layer.effect(
 
     // The secrets' state: every connector keeps its address there, so is
     // "secrets unavailable" while they cannot be read, and is listed once they can.
+    // Any other change of the operator's secrets (a value, who may use one, a
+    // name) checks the connectors' references again.
     yield* Stream.runForEach(secrets.status, (status) =>
       Effect.gen(function* () {
         const unavailable = status.state !== "ready";
-        if ((yield* Ref.getAndSet(secretsUnavailable, unavailable)) === unavailable) return;
-        if (!unavailable) yield* finishRemovals();
+        if ((yield* Ref.getAndSet(secretsUnavailable, unavailable)) === unavailable) {
+          if (!unavailable) yield* recheckAll();
+          return;
+        }
+        if (!unavailable) {
+          yield* finishRemovals();
+          yield* recheckAll();
+        }
         for (const connector of yield* store.all) {
           // A session opened, or failing to open, under the other state is not used again.
           yield* closeSessions(connector.id);
@@ -994,16 +1172,11 @@ export const layer = Layer.effect(
       const granted = yield* grantedTo(botId);
       for (const connector of granted) yield* ensureListed(connector.id);
       const seen = yield* Ref.get(seenRef);
-      const unavailable = yield* Ref.get(secretsUnavailable);
-      const states = yield* Ref.get(signInStates);
-      const connected = granted.filter(
-        (connector) =>
-          statusOfConnector(
-            connector,
-            seen.get(connector.id) ?? NOTHING_SEEN,
-            unavailable,
-            Option.fromNullishOr(states.get(connector.id)),
-          )._tag === "connected",
+      const connected = yield* Effect.filter(granted, (connector) =>
+        Effect.map(
+          stateOf(connector.id),
+          (state) => statusOfConnector(connector, state)._tag === "connected",
+        ),
       );
       return connected.flatMap((connector) =>
         botToolsOf(connector, seen.get(connector.id) ?? NOTHING_SEEN).map((tool): OfferedTool => ({
@@ -1065,6 +1238,10 @@ export const layer = Layer.effect(
       botId: BotId,
       use: (session: McpSession) => Effect.Effect<A, ConnectorFailure>,
     ) {
+      // Nothing goes to a server whose settings name a secret they cannot use.
+      if (Option.isSome(yield* needOfConnector(connector.id))) {
+        return yield* new ConnectorUnavailableError({ reason: "needs-secret" });
+      }
       const outcome = yield* Effect.scoped(
         Effect.gen(function* () {
           const session = yield* openFor(connector, botId).pipe(
@@ -1081,6 +1258,13 @@ export const layer = Layer.effect(
       ).pipe(Effect.result);
       if (Result.isSuccess(outcome)) {
         yield* record(connector.id, { _tag: "answered" });
+        // It went out with the secrets its settings name: the bot used them there.
+        const names = (yield* Ref.get(referencesRef)).get(connector.id)?.names ?? [];
+        if (names.length > 0) {
+          yield* secrets
+            .noteUse({ names, botId, use: { _tag: "connector", name: connector.name } })
+            .pipe(Effect.ignore);
+        }
         return outcome.success;
       }
       const stumble = outcome.failure;
@@ -1103,6 +1287,8 @@ export const layer = Layer.effect(
       if (stumble.failure._tag === "NeedsSignIn") {
         yield* signIns.needed({ botId, connectorId: connector.id });
       }
+      // A secret changed since the last check: its status says so from now on.
+      if (stumble.failure._tag === "SecretNeeded") yield* recheck(connector.id);
       return yield* new ConnectorUnavailableError({ reason: unavailableOf(stumble.failure) });
     });
 
@@ -1203,17 +1389,11 @@ export const layer = Layer.effect(
         (connector) => slug === undefined || connector.slug === slug,
       );
       if (slug !== undefined && granted.length === 0) return yield* new ToolNotOffered();
-      const seen = yield* Ref.get(seenRef);
-      const unavailable = yield* Ref.get(secretsUnavailable);
-      const states = yield* Ref.get(signInStates);
-      return granted.filter(
-        (connector) =>
-          statusOfConnector(
-            connector,
-            seen.get(connector.id) ?? NOTHING_SEEN,
-            unavailable,
-            Option.fromNullishOr(states.get(connector.id)),
-          )._tag === "connected",
+      return yield* Effect.filter(granted, (connector) =>
+        Effect.map(
+          stateOf(connector.id),
+          (state) => statusOfConnector(connector, state)._tag === "connected",
+        ),
       );
     });
 
@@ -1418,17 +1598,13 @@ export const layer = Layer.effect(
 
     /** Why J3 Bots can't reach `connector` now, from what it last saw of it; none once it is connected. */
     const unusable = Effect.fn("Connectors.unusable")(function* (connector: StoredConnector) {
-      const status = statusOfConnector(
-        connector,
-        yield* seenOf(connector.id),
-        yield* Ref.get(secretsUnavailable),
-        Option.fromNullishOr((yield* Ref.get(signInStates)).get(connector.id)),
-      );
+      const status = statusOfConnector(connector, yield* stateOf(connector.id));
       switch (status._tag) {
         case "connected":
           return Option.none<ConnectorUnavailable>();
         case "needs-sign-in":
         case "secrets-unavailable":
+        case "needs-secret":
           return Option.some<ConnectorUnavailable>(status._tag);
         case "failing":
           return Option.some<ConnectorUnavailable>("unreachable");
@@ -1639,7 +1815,7 @@ export const layer = Layer.effect(
       url: URL,
       policy: UrlPolicy,
       headers: ReadonlyArray<SecretHeader>,
-      formSecrets: ReadonlyArray<NamedSecret>,
+      hidden: ReadonlyArray<Redacted.Redacted<string>>,
     ) =>
       Effect.scoped(
         Effect.flatMap(
@@ -1650,7 +1826,7 @@ export const layer = Layer.effect(
               current: Effect.succeed({
                 bearer: Option.none(),
                 headers,
-                hidden: hiddenOf(formSecrets),
+                hidden: hiddenOf(hidden),
               }),
               rejected: () => Effect.fail(new NeedsSignIn()),
             },
@@ -1777,6 +1953,21 @@ export const layer = Layer.effect(
       if (source._tag === "command") return yield* addCommand({ ...input, source });
       const prepared = source._tag === "remote" ? fromAddress(source) : yield* fromListing(source);
       const { headers } = prepared;
+      const grant = input.grant ?? EVERY_BOT;
+      const sealed: ConnectorSecret = {
+        connectorId: connectorSecretIdOf(input.id),
+        address: prepared.url,
+        oauth: null,
+        headers: headers.map((header) => ({ name: header.name, value: header.value })),
+        command: null,
+        env: [],
+        formSecrets: prepared.formSecrets,
+      };
+      // What the probe sends is what bots' sessions will: the secrets it names, resolved.
+      const resolved = withValues(
+        sealed,
+        yield* checkSecrets({ secret: sealed, grant, by: input.by, written: referencesOf(sealed) }),
+      );
       const policy = policyOf(prepared.privateNetwork);
       const checked = checkUrl(Redacted.value(prepared.url), policy);
       const listing: Result.Result<ReadonlyArray<CatalogTool>, ConnectorFailure> = Result.isFailure(
@@ -1784,7 +1975,10 @@ export const layer = Layer.effect(
       )
         ? Result.fail(checked.failure)
         : prepared.oauthClient === null
-          ? yield* probe(checked.success, policy, headers, prepared.formSecrets)
+          ? yield* probe(checked.success, policy, resolved.secret.headers, [
+              ...resolved.secret.formSecrets.map((named) => named.value),
+              ...resolved.values,
+            ])
           : Result.fail(new NeedsSignIn());
       if (
         Result.isFailure(listing) &&
@@ -1796,18 +1990,9 @@ export const layer = Layer.effect(
       const refused = Result.isFailure(listing) && listing.failure._tag === "NeedsSignIn";
       const signIn = prepared.signIn(listing);
       // A retry of the same add seals the same values under the same id.
-      yield* secrets.connectorSecrets.put({
-        connectorId: connectorSecretIdOf(input.id),
-        address: prepared.url,
-        oauth: null,
-        headers: headers.map((header) => ({ name: header.name, value: header.value })),
-        command: null,
-        env: [],
-        formSecrets: prepared.formSecrets,
-      });
+      yield* secrets.connectorSecrets.put(sealed);
       const now = yield* DateTime.now;
       const catalog = Result.isSuccess(listing) ? Option.some(listing.success) : Option.none();
-      const grant = input.grant ?? EVERY_BOT;
       const inserted = yield* store
         .insert({
           id: input.id,
@@ -1849,6 +2034,7 @@ export const layer = Layer.effect(
             Effect.tapError(() => store.remove(input.id).pipe(Effect.andThen(forget(input.id)))),
           );
       }
+      yield* recheck(input.id);
       yield* grantsChanged(yield* botsOf(connector));
       yield* toolsTouched(yield* botsOf(connector));
       yield* touch(input.id);
@@ -1874,8 +2060,8 @@ export const layer = Layer.effect(
     }) {
       const { source } = input;
       yield* checkCommand(source);
-      // A retry of the same add seals the same values under the same id.
-      yield* secrets.connectorSecrets.put({
+      const grant = input.grant ?? EVERY_BOT;
+      const sealed: ConnectorSecret = {
         connectorId: connectorSecretIdOf(input.id),
         address: null,
         oauth: null,
@@ -1883,7 +2069,10 @@ export const layer = Layer.effect(
         command: { program: source.command, args: source.args },
         env: source.env.map((variable) => ({ name: variable.name, value: variable.value })),
         formSecrets: [],
-      });
+      };
+      yield* checkSecrets({ secret: sealed, grant, by: input.by, written: referencesOf(sealed) });
+      // A retry of the same add seals the same values under the same id.
+      yield* secrets.connectorSecrets.put(sealed);
       const now = yield* DateTime.now;
       const fields = envFieldsOf(source);
       const inserted = yield* store
@@ -1897,7 +2086,7 @@ export const layer = Layer.effect(
           signIn: fields.length > 0 ? "fields" : "none",
           fields,
           privateNetwork: false,
-          grant: input.grant ?? EVERY_BOT,
+          grant,
           signedInAt: fields.length > 0 ? now : null,
           tools: null,
           createdAt: now,
@@ -1909,6 +2098,7 @@ export const layer = Layer.effect(
           ),
         );
       if (Option.isNone(inserted)) return yield* render(yield* require(input.id));
+      yield* recheck(input.id);
       yield* grantsChanged(yield* botsOf(inserted.value));
       yield* touch(input.id);
       yield* ensureListed(input.id);
@@ -1926,6 +2116,11 @@ export const layer = Layer.effect(
         next.delete(id);
         return next;
       });
+      yield* Ref.update(referencesRef, (all) => {
+        const next = new Map(all);
+        next.delete(id);
+        return next;
+      });
       yield* finishRemovals();
     });
 
@@ -1940,10 +2135,20 @@ export const layer = Layer.effect(
       yield* perConnector.run(input.connectorId)(
         Effect.gen(function* () {
           if (input.command !== undefined) {
-            yield* replaceCommand(yield* require(input.connectorId), input.command, now);
+            const current = yield* require(input.connectorId);
+            if (!isCommand(current)) return yield* new Invalid({ reason: "connector-unsupported" });
+            // Values given with a new command line are its variables': one write, checked whole,
+            // so a refusal leaves the old command as it was.
+            const command =
+              input.values === undefined
+                ? input.command
+                : yield* withVariables(input.command, input.values);
+            yield* replaceCommand(current, command, input.by, now);
           }
           const connector = yield* require(input.connectorId);
-          if (input.values !== undefined) yield* replaceValues(connector, input.values, now);
+          if (input.values !== undefined && input.command === undefined) {
+            yield* replaceValues(connector, input.values, input.by, now);
+          }
           yield* store.update(
             connector.id,
             {
@@ -1954,9 +2159,29 @@ export const layer = Layer.effect(
           );
         }),
       );
+      yield* recheck(input.connectorId);
       yield* touch(input.connectorId);
       return yield* render(yield* require(input.connectorId));
     });
+
+    /** `command` with each of `values` as the value of its variable of that name, which it must have. */
+    const withVariables = (
+      command: CommandLine,
+      values: ReadonlyArray<ConnectorFieldValue>,
+    ): Effect.Effect<CommandLine, Invalid> => {
+      const given = valuesOf(values);
+      const names = new Set<string>(command.env.map((variable) => variable.name));
+      if ([...given.keys()].some((key) => !names.has(key))) {
+        return Effect.fail(new Invalid({ reason: "connector-fields" }));
+      }
+      return Effect.succeed({
+        ...command,
+        env: command.env.map((variable) => ({
+          name: variable.name,
+          value: given.get(variable.name) ?? variable.value,
+        })),
+      });
+    };
 
     /**
      * A remote connector's secret with `values` given again: the
@@ -2012,6 +2237,7 @@ export const layer = Layer.effect(
     const replaceValues = Effect.fn("Connectors.replaceValues")(function* (
       connector: StoredConnector,
       values: ReadonlyArray<ConnectorFieldValue>,
+      by: ChangeAuthor,
       now: DateTime.Utc,
     ) {
       const fields = new Map(connector.fields.map((field) => [field.key, field]));
@@ -2035,6 +2261,19 @@ export const layer = Layer.effect(
             })),
           }
         : yield* withRemoteValues(connector, secret.value, values);
+      // The writer's are every reference its values hold, and every one the settings make now that
+      // they did not before: a gallery entry's header is rendered from its fields, and two fields
+      // side by side can make one.
+      const before = new Set(referencesOf(secret.value).map(referenceText));
+      yield* checkSecrets({
+        secret: next,
+        grant: connector.grant,
+        by,
+        written: [
+          ...referencesInValues(values.map((value) => value.value)),
+          ...referencesOf(next).filter((reference) => !before.has(referenceText(reference))),
+        ],
+      });
       // From the write on, nothing interrupts it: the process the old values started stops with it.
       yield* Effect.uninterruptible(
         Effect.gen(function* () {
@@ -2058,22 +2297,31 @@ export const layer = Layer.effect(
     const replaceCommand = Effect.fn("Connectors.replaceCommand")(function* (
       connector: StoredConnector,
       command: CommandLine,
+      by: ChangeAuthor,
       now: DateTime.Utc,
     ) {
       if (!isCommand(connector)) return yield* new Invalid({ reason: "connector-unsupported" });
       yield* checkCommand(command);
       const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));
       if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
+      const next: ConnectorSecret = {
+        ...secret.value,
+        command: { program: command.command, args: command.args },
+        env: command.env.map((variable) => ({ name: variable.name, value: variable.value })),
+      };
+      // The whole command line is the writer's: every secret it names is checked against them.
+      yield* checkSecrets({
+        secret: next,
+        grant: connector.grant,
+        by,
+        written: referencesOf(next),
+      });
       const fields = envFieldsOf(command);
       // The whole command line is replaced in one write, so no start mixes the old one with the
       // new; from the write on, nothing interrupts it, so the old process stops with it.
       yield* Effect.uninterruptible(
         Effect.andThen(
-          secrets.connectorSecrets.put({
-            ...secret.value,
-            command: { program: command.command, args: command.args },
-            env: command.env.map((variable) => ({ name: variable.name, value: variable.value })),
-          }),
+          secrets.connectorSecrets.put(next),
           changing(
             connector.id,
             Effect.gen(function* () {
@@ -2130,6 +2378,18 @@ export const layer = Layer.effect(
         payload: input,
         result: Schema.Void,
         apply: Effect.gen(function* () {
+          // Each bot it goes to now must be one that may use every secret its settings name.
+          const secret = yield* secrets.connectorSecrets.get(
+            connectorSecretIdOf(input.connectorId),
+          );
+          if (Option.isSome(secret)) {
+            yield* checkSecrets({
+              secret: secret.value,
+              grant: input.grant,
+              by: input.by,
+              written: [],
+            });
+          }
           const at = yield* DateTime.now;
           yield* store.update(
             input.connectorId,
@@ -2138,6 +2398,7 @@ export const layer = Layer.effect(
           );
         }),
       });
+      yield* recheck(input.connectorId);
       const connector = yield* require(input.connectorId);
       const after = yield* botsOf(connector);
       for (const lost of before.filter((id) => !after.includes(id))) {

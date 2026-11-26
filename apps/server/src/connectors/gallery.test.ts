@@ -4,7 +4,7 @@ import { DEFAULT_SESSION_LIMITS, type SessionLimits } from "@j3-bots/connectors"
 import { fakeMcpServer } from "@j3-bots/connectors/testing";
 import {
   CommandId,
-  type CommandError,
+  type ConnectorCommandError,
   type Connector,
   ConnectorId,
   type ConnectorFieldValue,
@@ -176,7 +176,8 @@ const signIn = <E = never, R = never>(
     return new URL(authorizationUrl);
   });
 
-const invalidReason = (error: CommandError) => (error._tag === "Invalid" ? error.reason : null);
+const invalidReason = (error: ConnectorCommandError) =>
+  error._tag === "Invalid" ? error.reason : null;
 
 /** Every way a secret could reach a client or a bot: what they are sent. */
 const shown = (...values: ReadonlyArray<unknown>) => JSON.stringify(values);

@@ -15,6 +15,7 @@ export {
   grantText,
   pinRefusalText,
   publisherText,
+  secretRefusalText,
   serverText,
   signedInText,
   signInProblemText,
