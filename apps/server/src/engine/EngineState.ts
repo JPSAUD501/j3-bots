@@ -22,13 +22,12 @@ const HARNESS_LABELS = { "claude-code": "Claude Code", codex: "Codex" } as const
  * Which provider a new bot lands on when none is named, lowest first: one
  * that runs it now, one that will once its limit resets, one a command
  * connects, one the engine is still checking, and last one whose harness is
- * not installed yet. J3 Bots installs a missing harness itself once a client
- * asks for it (docs/decisions/0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md),
- * which every screen that shows the bot waiting offers, and the engine lists
- * Claude Code's catalog even before it is there (**Read** at `59651c1`,
- * `checkClaudeProviderStatus` in `ClaudeProvider.ts`), so the operator's
- * first bot is made while its AI still downloads, and says hello once it
- * runs. One the engine found and cannot run, as a harness that
+ * not installed yet. J3 Bots installs a missing harness itself as the server
+ * starts (docs/decisions/0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md),
+ * and the engine lists Claude Code's catalog even before it is there
+ * (**Read** at `59651c1`, `checkClaudeProviderStatus` in `ClaudeProvider.ts`),
+ * so the operator's first bot is made while its AI still downloads, and says
+ * hello once it runs. One the engine found and cannot run, as a harness that
  * failed to start or a provider turned off, never: a bot put on it would
  * wait for a provider nothing is bringing.
  */

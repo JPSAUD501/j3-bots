@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type {
-  EngineStatus,
-  HarnessInstallFailure,
-  HarnessLocation,
-  HarnessTask,
-  ProviderStatus,
-  SignInFailure,
-  SignInHarness,
+import {
+  type EngineStatus,
+  type HarnessCopy,
+  type HarnessInstallFailure,
+  type HarnessLocation,
+  type HarnessTask,
+  type ProviderStatus,
+  type SignInFailure,
+  type SignInHarness,
+  signInHarnesses,
 } from "@j3-bots/contracts";
 import type * as DateTime from "effect/DateTime";
 import type { SignInView } from "../stores/ProviderSetup.ts";
-import { providerFix } from "./engine.ts";
+import { preparation, providerFix } from "./engine.ts";
 
 // Connecting an AI, as the operator meets it: the account they already have,
 // Claude or ChatGPT, never the harness that signs it in
@@ -68,8 +70,8 @@ export type AiPlace = "here" | "desktop-app" | "server";
  *   `off` when it is turned off on the server, `unknown` for a reason a
  *   newer server gives;
  * - `preparing`: nothing is known of it yet: the server has not answered, or
- *   J3 Bots is still starting. `progress` is how far J3 Bots' own first
- *   download is, when it says.
+ *   J3 Bots is still starting on a server that does not say what it installs.
+ *   `progress` is how far J3 Bots' own first download is, when it says.
  */
 export type AiAccountState =
   | { readonly _tag: "ready"; readonly limit: { readonly resetsAt: DateTime.Utc | null } | null }
@@ -140,18 +142,12 @@ const fromProvider = (provider: ProviderStatus): AiAccountState => {
     case "sign-in-required":
       return { _tag: "sign-in", failed: null };
     case "unavailable": {
-      if (status.checking) return { _tag: "checking" };
+      // J3 Bots' own install of what the account needs comes first, also
+      // while the engine still checks the provider (`providerFix`).
       const fix = providerFix(provider);
       switch (fix?._tag) {
         case "getting":
-          return {
-            _tag: "getting",
-            task: fix.task._tag,
-            progress:
-              fix.task._tag === "downloading"
-                ? part(fix.task.receivedBytes, fix.task.totalBytes)
-                : null,
-          };
+          return getting(fix.task);
         case "get":
           return { _tag: "missing", canGet: true, failed: fix.failed, page: null };
         case "install":
@@ -159,17 +155,57 @@ const fromProvider = (provider: ProviderStatus): AiAccountState => {
         case "retry":
           return { _tag: "problem", kind: fix.rechecking ? "timed-out" : "failed" };
         case undefined:
+          if (status.checking) return { _tag: "checking" };
           return { _tag: "problem", kind: status.reason === "disabled" ? "off" : "unknown" };
       }
     }
   }
 };
 
-/** How far J3 Bots' own first download is, while it starts; null when it does not say, or is past it. */
-const startProgress = (engine: EngineStatus | null): number | null =>
-  engine?.state._tag === "starting" && engine.state.install !== undefined
-    ? part(engine.state.install.receivedBytes, engine.state.install.totalBytes)
-    : null;
+/** An install of what the account needs, under way at `task`. */
+const getting = (task: HarnessTask): AiAccountState => ({
+  _tag: "getting",
+  task: task._tag,
+  progress: task._tag === "downloading" ? part(task.receivedBytes, task.totalBytes) : null,
+});
+
+/**
+ * Where an account stands before the engine reports its provider, as while
+ * J3 Bots starts, from the server's copy of what it needs
+ * (`EngineStatus.harnesses`), which the server starts downloading as it
+ * starts: there already, so the account can sign in; downloading; failed,
+ * and why; not one the server installs here; or not started, as after the
+ * operator stopped it.
+ */
+const fromCopy = (account: AiAccount, copy: HarnessCopy): AiAccountState => {
+  if (copy.source !== "none") return { _tag: "sign-in", failed: null };
+  if (copy.task !== null) return getting(copy.task);
+  if (!copy.installable) {
+    return {
+      _tag: "missing",
+      canGet: false,
+      failed: null,
+      page: signInHarnesses[account].installPage,
+    };
+  }
+  return {
+    _tag: "missing",
+    canGet: true,
+    failed: copy.last?._tag === "failed" ? copy.last.reason : null,
+    page: null,
+  };
+};
+
+/**
+ * How far J3 Bots' own first download is, while it starts, from what the
+ * server says it is getting ready (`preparation`); null when it does not
+ * say, or is past it.
+ */
+const startProgress = (engine: EngineStatus | null): number | null => {
+  const own =
+    engine === null ? undefined : preparation(engine).items.find((item) => item.id === "engine");
+  return own?.state === "downloading" ? part(own.receivedBytes, own.totalBytes) : null;
+};
 
 /**
  * Where `account` stands (`AiAccountState`). A sign-in under way comes
@@ -177,9 +213,10 @@ const startProgress = (engine: EngineStatus | null): number | null =>
  * the provider, with this client's last sign-in beside it: one that succeeded
  * is `finishing` until the engine has checked the provider again (unless
  * that success is `spent`), and one that failed says why on the signed-out
- * state. With no provider reported,
- * as while J3 Bots starts, the account can still sign in when the server
- * finds what it needs.
+ * state. With no provider reported, as while J3 Bots starts, the account
+ * stands where the server's copy of what it needs does (`fromCopy`): it can
+ * sign in already when that is there, and otherwise says how far its
+ * download is.
  */
 export const aiAccountState = (account: AiAccount, facts: AiFacts): AiAccountState => {
   const signIn = facts.signIns.get(account);
@@ -191,12 +228,15 @@ export const aiAccountState = (account: AiAccount, facts: AiFacts): AiAccountSta
   const found =
     facts.locations?.some((location) => location.harness === account && location.path !== null) ===
     true;
+  const copy = facts.engine?.harnesses?.[account];
   const reported: AiAccountState =
-    provider === undefined
-      ? found
+    provider !== undefined
+      ? fromProvider(provider)
+      : found
         ? { _tag: "sign-in", failed: null }
-        : { _tag: "preparing", progress: startProgress(facts.engine) }
-      : fromProvider(provider);
+        : copy !== undefined
+          ? fromCopy(account, copy)
+          : { _tag: "preparing", progress: startProgress(facts.engine) };
   if (reported._tag !== "sign-in") return reported;
   if (signIn?._tag === "succeeded") {
     return facts.spent?.has(account) === true ? reported : { _tag: "finishing" };

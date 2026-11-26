@@ -148,6 +148,58 @@ describe("where an AI account stands", () => {
     });
   });
 
+  it("follows J3 Bots' own install even while the engine still checks the provider", () => {
+    const downloading: HarnessCopy = {
+      ...noCopy,
+      task: { _tag: "downloading", receivedBytes: 50, totalBytes: 200 },
+    };
+    const checking = { _tag: "unavailable", checking: true } as const;
+    expect(
+      aiAccountState("codex", facts(engineWith(provider("codex", checking, downloading)))),
+    ).toEqual({ _tag: "getting", task: "downloading", progress: 0.25 });
+    expect(aiAccountState("codex", facts(engineWith(provider("codex", checking))))).toEqual({
+      _tag: "checking",
+    });
+  });
+
+  it("stands where the server's copy does while J3 Bots starts and reports no provider yet", () => {
+    const starting = (copy: HarnessCopy): EngineStatus => ({
+      state: { _tag: "starting", install: { receivedBytes: 30, totalBytes: 120 } },
+      pinnedVersion: "0.1.11",
+      providers: [],
+      harnesses: { "claude-code": copy, codex: noCopy },
+    });
+    const verifying: HarnessCopy = { ...noCopy, task: { _tag: "verifying" } };
+    expect(aiAccountState("claude-code", facts(starting(verifying)))).toEqual({
+      _tag: "getting",
+      task: "verifying",
+      progress: null,
+    });
+    const held: HarnessCopy = {
+      ...noCopy,
+      last: { _tag: "failed", reason: "in-use", at: DateTime.makeUnsafe(0) },
+    };
+    expect(aiAccountState("claude-code", facts(starting(held)))).toEqual({
+      _tag: "missing",
+      canGet: true,
+      failed: "in-use",
+      page: null,
+    });
+    // Its copy installed before the engine is up: the account can sign in already.
+    const installed: HarnessCopy = { ...noCopy, source: "j3", version: "2.1.330" };
+    expect(aiAccountState("claude-code", facts(starting(installed)))).toEqual({
+      _tag: "sign-in",
+      failed: null,
+    });
+    // One the operator stopped waits for its button.
+    expect(aiAccountState("codex", facts(starting(installed)))).toEqual({
+      _tag: "missing",
+      canGet: true,
+      failed: null,
+      page: null,
+    });
+  });
+
   it("can sign in while J3 Bots still starts, once the server finds what the account needs", () => {
     const starting: EngineStatus = {
       state: { _tag: "starting", install: { receivedBytes: 30, totalBytes: 120 } },

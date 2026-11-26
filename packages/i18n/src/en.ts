@@ -902,6 +902,8 @@ export const en = {
   "onboarding.connect.ready.body": "Everything is ready for {name} to say hello.",
   "onboarding.connect.restarting.title": "J3 Bots is restarting",
   "onboarding.connect.restarting.body": "It takes a moment. This screen updates on its own.",
+  "onboarding.connect.setup.title": "J3 Bots couldn’t finish getting ready",
+  "onboarding.connect.setup.body": "It keeps trying on its own. Details says what went wrong.",
   "onboarding.connect.out.title": "J3 Bots can’t run your bots right now",
   "onboarding.connect.out.body":
     "Something on the machine it runs on needs fixing first. Details says what.",

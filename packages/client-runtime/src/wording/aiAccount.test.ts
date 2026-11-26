@@ -214,6 +214,49 @@ describe("the connect step", () => {
     expect(text.details).toEqual(["Claude Code, download: unreachable"]);
   });
 
+  it("says what the operator can do when J3 Bots' own install failed on a full disk or a held file, and keeps the rest for the details", () => {
+    const failed = (installFailure: "storage" | "in-use" | "permission"): EngineStatus => ({
+      state: { _tag: "unavailable", reason: "install-failed", installFailure },
+      pinnedVersion: "0.1.12",
+      providers: [],
+    });
+    const full = connectStepText(failed("storage"), null, null, "Nova", en);
+    expect(full.title).toBe("J3 Bots couldn’t finish getting ready");
+    expect(full.body).toContain("Free up some space");
+    const held = connectStepText(failed("in-use"), null, null, "Nova", en);
+    const refused = connectStepText(failed("permission"), null, null, "Nova", en);
+    expect(refused.body).toBe("It keeps trying on its own. Details says what went wrong.");
+    for (const step of [full, held, refused]) {
+      expect(`${step.title} ${step.body}`).not.toMatch(jargon);
+      expect(step.details).toHaveLength(2);
+    }
+  });
+
+  it("leaves the engine's “not found” out of the details of an account J3 Bots is installing itself", () => {
+    const state: AiAccountState = { _tag: "missing", canGet: true, failed: "in-use", page: null };
+    const engine = ready({
+      ...claude({
+        _tag: "unavailable",
+        checking: false,
+        reason: "not-installed",
+        detail: "Claude Agent CLI (`claude`) is not installed.",
+      }),
+      copy: {
+        source: "none",
+        version: null,
+        latest: null,
+        installable: true,
+        task: null,
+        last: { _tag: "failed", reason: "in-use", at: DateTime.makeUnsafe(0) },
+      },
+    });
+    const text = aiAccountText("claude-code", state, at("here", engine), ctx);
+    expect(text.line).toBe(
+      "Another program, such as an antivirus, was using its files. Try again in a moment.",
+    );
+    expect(text.details).toEqual(["Claude Code, download: in-use"]);
+  });
+
   it("says a first download J3 Bots could not switch to of the account, not of a copy before it", () => {
     const state: AiAccountState = { _tag: "missing", canGet: true, failed: "engine", page: null };
     const text = aiAccountText("claude-code", state, at("here"), ctx);

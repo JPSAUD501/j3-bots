@@ -909,6 +909,9 @@ const sentences = {
   "onboarding.connect.ready.body": "Tudo pronto para {name} dar oi.",
   "onboarding.connect.restarting.title": "O J3 Bots está reiniciando",
   "onboarding.connect.restarting.body": "Leva um instante. Esta tela atualiza sozinha.",
+  "onboarding.connect.setup.title": "O J3 Bots não conseguiu terminar de se preparar",
+  "onboarding.connect.setup.body":
+    "Ele continua tentando sozinho. Os Detalhes dizem o que deu errado.",
   "onboarding.connect.out.title": "O J3 Bots não consegue rodar seus bots agora",
   "onboarding.connect.out.body":
     "Algo na máquina onde ele roda precisa ser resolvido antes. Os Detalhes dizem o quê.",

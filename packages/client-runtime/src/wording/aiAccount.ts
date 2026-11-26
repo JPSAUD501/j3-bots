@@ -16,7 +16,7 @@ import {
   type AiPlace,
   type SignInStep,
 } from "../presentation/aiAccount.ts";
-import { hasDefaultModel } from "../presentation/engine.ts";
+import { hasDefaultModel, providerDetail } from "../presentation/engine.ts";
 import type { SignInView } from "../stores/ProviderSetup.ts";
 import { engineProblem, harnessFailureText } from "./engine.ts";
 import { usageLimitText } from "./status.ts";
@@ -72,10 +72,9 @@ export function aiAccountText(
   const { name, product } = aiAccountNames[account];
   const { place, signIn } = context;
   const provider = aiAccountProvider(context.engine, account);
-  const said =
-    provider?.status._tag === "unavailable" && provider.status.detail !== undefined
-      ? [provider.status.detail]
-      : [];
+  // The engine's own words, which it does not give of a harness J3 Bots installs itself.
+  const engineSaid = provider === undefined ? null : providerDetail(provider);
+  const said = engineSaid === null ? [] : [engineSaid];
   const plain = { hint: null, command: null, details: [] } as const;
   switch (state._tag) {
     case "ready":
@@ -367,8 +366,9 @@ export function signInStepLabel(
  * The first run's connect step, in words, for the bot named `name`:
  * - `title` and `body`: with no account opened, the question, which AI the
  *   operator has; with one, where it stands. When J3 Bots itself cannot run
- *   any (`aiOutage`), that it cannot, and whether it is coming back by
- *   itself;
+ *   any (`aiOutage`), that it cannot, whether it is coming back by itself,
+ *   and what the operator can do when its own install failed on a full disk
+ *   or a file another program held;
  * - `says`: which of the account's own sentences the body already is, so the
  *   screen does not repeat it under itself: its `line`, its `hint`, or
  *   neither;
@@ -421,12 +421,22 @@ export function connectStepText(
   const outage = aiOutage(engine);
   if (engine !== null && outage !== null) {
     const problem = engineProblem(engine, i18n);
-    // Restarting is J3 Bots' own to do, and soon over; anything else needs someone at the machine.
-    const restarting = outage._tag === "unavailable" && outage.reason === "down";
+    // Restarting is J3 Bots' own to do, and soon over; so is trying its own
+    // install again, where two reasons are the operator's to act on, in the
+    // server's own plain words. Anything else needs someone at the machine.
+    const reason = outage._tag === "unavailable" ? outage.reason : null;
+    const mine =
+      reason === "down" ? "restarting" : reason === "install-failed" ? "setup" : ("out" as const);
+    const actionable =
+      outage._tag === "unavailable" &&
+      (outage.installFailure === "storage" || outage.installFailure === "in-use");
     return {
       ...rest,
-      title: t(restarting ? "onboarding.connect.restarting.title" : "onboarding.connect.out.title"),
-      body: t(restarting ? "onboarding.connect.restarting.body" : "onboarding.connect.out.body"),
+      title: t(`onboarding.connect.${mine}.title`),
+      body:
+        mine === "setup" && actionable && problem !== null
+          ? problem.body
+          : t(`onboarding.connect.${mine}.body`),
       says: null,
       details: problem === null ? [] : [problem.title, problem.body],
     };

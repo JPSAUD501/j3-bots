@@ -3369,6 +3369,40 @@ function FirstRunSection() {
         <Frame label="Still starting, with an account picked" width={390} height={760}>
           <FirstRunAt step="connect" engine={engines.downloadingNoTotal} account="codex" />
         </Frame>
+        <Frame
+          label="Still starting, the account already downloading beside it, as the server reports from its start"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt
+            step="connect"
+            engine={{
+              ...engines.downloading,
+              harnesses: {
+                "claude-code": {
+                  ...noCopy,
+                  task: { _tag: "downloading", receivedBytes: 61_000_000, totalBytes: 230_000_000 },
+                },
+                codex: noCopy,
+              },
+            }}
+            account="claude-code"
+          />
+        </Frame>
+        <Frame
+          label="J3 Bots could not finish getting ready: a full disk, said so it can be acted on"
+          width={390}
+          height={760}
+        >
+          <FirstRunAt
+            step="connect"
+            engine={{
+              ...engines.installFailed,
+              state: { _tag: "unavailable", reason: "install-failed", installFailure: "storage" },
+              providers: [],
+            }}
+          />
+        </Frame>
         <Frame label="J3 Bots restarting: said plainly, nothing to choose" width={390} height={760}>
           {/* As the server sends it: no provider is reported while the engine is out. */}
           <FirstRunAt step="connect" engine={{ ...engines.down, providers: [] }} />
