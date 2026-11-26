@@ -317,11 +317,14 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
         "20261122T000200Z-0.2.0-to-0.3.0/manifest.json": '{"takenAt":"2026-11',
       });
       // What is not one: another folder of the operator's, a newer release's
-      // manifest, and a folder a rollback marked.
+      // manifest, a folder a rollback marked, and one whose manifest was
+      // damaged after a rollback moved data aside in it.
       yield* writeAll(backups, {
         "mine/notes.txt": "kept",
         "20261122T000300Z-0.3.0-to-0.4.0/manifest.json": '{"format":"newer"}',
         "20261122T000400Z-0.3.0-to-0.4.0/restoring": "",
+        "20261122T000500Z-0.3.0-to-0.4.0/manifest.json": '{"takenAt":"2026-11',
+        "20261122T000500Z-0.3.0-to-0.4.0/replaced-20261123T000000Z-a1/j3.sqlite": "data",
       });
 
       assert.deepStrictEqual(yield* pruneSnapshots(home, 2), []);
@@ -331,6 +334,7 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
         [
           "20261122T000300Z-0.3.0-to-0.4.0",
           "20261122T000400Z-0.3.0-to-0.4.0",
+          "20261122T000500Z-0.3.0-to-0.4.0",
           path.basename(kept.folder),
           "mine",
         ].sort(),

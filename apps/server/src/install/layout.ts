@@ -191,12 +191,19 @@ class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
   "InstallFolderExposed",
   {
     folder: Schema.String,
-    reason: Schema.Literals(["not-owned", "writable-by-all", "writable-by-group", "unverifiable"]),
+    reason: Schema.Literals([
+      "not-owned",
+      "writable-by-all",
+      "writable-by-group",
+      "too-many-links",
+      "unverifiable",
+    ]),
     /**
-     * The install's own folder that `folder` holds, when `folder` is one above
-     * it: an account that may change `folder` could move it away.
+     * The install's own folder whose way passes through `folder`, when
+     * `folder` is one a lookup of it looks in: an account that may change
+     * `folder` could move what is on the way away and put its own there.
      */
-    holds: Schema.optionalKey(Schema.String),
+    onWayTo: Schema.optionalKey(Schema.String),
     /**
      * On Windows, the `icacls` command that leaves the folder to this user,
      * SYSTEM and the Administrators: a mode does not say who may write there.
@@ -207,16 +214,17 @@ class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
   },
 ) {
   override get message(): string {
-    const holds = this.holds;
-    if (holds !== undefined) {
-      const risk = `which could move ${holds} away and put a folder of its own in its place`;
+    const to = this.onWayTo;
+    if (to !== undefined) {
+      const risk = "which could move what is on the way away and put its own in its place";
       switch (this.reason) {
         case "not-owned":
-          return `${this.folder}, a folder ${holds} is in, belongs to another account, ${risk}. Nothing was changed.`;
+          return `${this.folder}, a folder on the way to ${to}, belongs to another account, ${risk}. Nothing was changed.`;
         case "writable-by-all":
-          return `${this.folder}, a folder ${holds} is in, can be written by every account, ${risk}. Take that away with \`chmod o-w ${this.folder}\`, then run this again. Nothing was changed.`;
+          return `${this.folder}, a folder on the way to ${to}, can be written by every account, ${risk}. Take that away with \`chmod o-w ${this.folder}\`, then run this again. Nothing was changed.`;
         case "writable-by-group":
-          return `${this.folder}, a folder ${holds} is in, can be written by its group, which is not this user's own, ${risk}. Take that away with \`chmod g-w ${this.folder}\`, then run this again. Nothing was changed.`;
+          return `${this.folder}, a folder on the way to ${to}, can be written by its group, which is not this user's own, ${risk}. Take that away with \`chmod g-w ${this.folder}\`, then run this again. Nothing was changed.`;
+        case "too-many-links":
         case "unverifiable":
           break;
       }
@@ -230,11 +238,16 @@ class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
           : `${this.folder} can be written by other accounts, which could change what runs from it. In PowerShell, run \`${this.windowsRepair}\`, then run this again. Nothing was changed.`;
       case "writable-by-group":
         return `${this.folder} can be written by its group, which is not this user's own, so other accounts could change what runs from it. Take that away with \`chmod g-w ${this.folder}\`, then run this again. Nothing was changed.`;
+      case "too-many-links":
+        return `The way to ${this.folder} goes through more links than a lookup follows. Nothing was changed.`;
       case "unverifiable":
         return `Windows did not say who may change ${this.folder} (${this.detail ?? "no answer"}), so what runs from it cannot be trusted. Check that Windows PowerShell runs, then run this again. Nothing was changed.`;
     }
   }
 }
+
+/** As many links as a lookup follows, as Linux's does at most. */
+const MAX_LINKS = 40;
 
 /**
  * Fails unless `folder` is this user's and no other account may write to it,
@@ -242,12 +255,13 @@ class InstallFolderExposed extends Schema.TaggedError<InstallFolderExposed>()(
  * folder: what is in them runs as this user. Its group may write when that is
  * this user's own group, as under umask 002.
  *
- * Every folder above it, up to the root, on the path as given and on the one
- * its links lead to, must be this user's or root's and written by no other
- * account, unless it is sticky, as /tmp is: an account that may write to one
- * could move `folder` away and put its own in its place. On Windows, where a
- * mode means nothing, the folder's access list is judged instead, and the
- * folders above it are not.
+ * Every folder the way to it passes through, up from the root, must be this
+ * user's or root's and written by no other account, unless it is sticky, as
+ * /tmp is: an account that may write to one could move what it holds away
+ * and put a folder or a link of its own there. The way is walked as a lookup
+ * makes it, so a link on it is checked where it is and where it leads. On
+ * Windows, where a mode means nothing, the folder's access list is judged
+ * instead, and the folders on the way are not.
  */
 export const checkOwnFolder = Effect.fn("install.checkOwnFolder")(function* (folder: string) {
   if (process.platform === "win32") return yield* checkOwnFolderOnWindows(folder);
@@ -265,40 +279,49 @@ export const checkOwnFolder = Effect.fn("install.checkOwnFolder")(function* (fol
   if ((info.mode & 0o020) !== 0 && gid !== undefined && !Option.contains(info.gid, gid)) {
     return yield* new InstallFolderExposed({ folder, reason: "writable-by-group" });
   }
-  const resolved = yield* fs.realPath(folder);
-  for (const start of new Set([folder, resolved])) {
-    for (let below = start, above = path.dirname(start); above !== below;) {
-      const parent = yield* fs.stat(above);
-      if (
-        uid !== undefined &&
-        !Option.contains(parent.uid, uid) &&
-        !Option.contains(parent.uid, 0)
-      ) {
-        return yield* new InstallFolderExposed({
-          folder: above,
-          reason: "not-owned",
-          holds: folder,
-        });
+  const onWay = Effect.fnUntraced(function* (looked: string) {
+    const parent = yield* fs.stat(looked);
+    const exposed = (reason: "not-owned" | "writable-by-all" | "writable-by-group") =>
+      new InstallFolderExposed({ folder: looked, reason, onWayTo: folder });
+    if (uid !== undefined && !Option.contains(parent.uid, uid) && !Option.contains(parent.uid, 0)) {
+      return yield* exposed("not-owned");
+    }
+    // Sticky: only the owner of what is in it may move that.
+    if ((parent.mode & 0o1000) !== 0) return;
+    if ((parent.mode & 0o002) !== 0) return yield* exposed("writable-by-all");
+    if ((parent.mode & 0o020) !== 0 && gid !== undefined && !Option.contains(parent.gid, gid)) {
+      return yield* exposed("writable-by-group");
+    }
+  });
+  // Name by name from the root, as a lookup makes the way: `at` is a folder
+  // with no link in its path, and a link's target goes before what is left.
+  const checked = new Set<string>();
+  let rest = path.resolve(folder).split(path.sep);
+  let at = path.parse(path.resolve(folder)).root;
+  let links = 0;
+  while (rest.length > 0) {
+    const [name = "", ...after] = rest;
+    rest = after;
+    if (name === "" || name === ".") continue;
+    if (name === "..") {
+      at = path.dirname(at);
+      continue;
+    }
+    if (!checked.has(at)) {
+      yield* onWay(at);
+      checked.add(at);
+    }
+    const next = path.join(at, name);
+    if ((yield* fs.lstat(next)).type === "SymbolicLink") {
+      links += 1;
+      if (links > MAX_LINKS) {
+        return yield* new InstallFolderExposed({ folder, reason: "too-many-links" });
       }
-      // Sticky: only the owner of a folder in it may move that folder.
-      if ((parent.mode & 0o1000) === 0) {
-        if ((parent.mode & 0o002) !== 0) {
-          return yield* new InstallFolderExposed({
-            folder: above,
-            reason: "writable-by-all",
-            holds: folder,
-          });
-        }
-        if ((parent.mode & 0o020) !== 0 && gid !== undefined && !Option.contains(parent.gid, gid)) {
-          return yield* new InstallFolderExposed({
-            folder: above,
-            reason: "writable-by-group",
-            holds: folder,
-          });
-        }
-      }
-      below = above;
-      above = path.dirname(above);
+      const target = yield* fs.readLink(next);
+      if (path.isAbsolute(target)) at = path.parse(target).root;
+      rest = [...target.split(path.sep), ...rest];
+    } else {
+      at = next;
     }
   }
 });

@@ -74,7 +74,15 @@ const RestoreMark = Schema.Struct({
   release: Schema.String,
   stage: Schema.Literals(["copying", "swapping", "restored"]),
 });
-export type RestoreMark = typeof RestoreMark.Type;
+type RestoreMark = typeof RestoreMark.Type;
+
+/**
+ * How far a rollback that has not finished got, as its mark says: `unread`
+ * when the mark cannot be read or does not decode, which a rollback carries
+ * on from as from `copying`, copying everything again, but which says nothing
+ * of what it already put back.
+ */
+export type RestoreState = RestoreMark | { readonly release: string; readonly stage: "unread" };
 
 const RestoreMarkJson = Schema.fromJsonString(Schema.toCodecJson(RestoreMark));
 
@@ -86,7 +94,7 @@ export interface Snapshot {
    * to start, pruning keeps the snapshot, and no server starts on the home
    * but `release` once the stage is `restored`.
    */
-  readonly restoring: Option.Option<RestoreMark>;
+  readonly restoring: Option.Option<RestoreState>;
 }
 
 /**
@@ -363,16 +371,14 @@ const readMark = Effect.fnUntraced(function* (folder: string, manifest: Snapshot
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const marker = path.join(folder, RESTORING);
-  // A mark that cannot be read counts as one that has copied nothing yet:
-  // keeping the snapshot and copying again is the safe side.
-  const unread: RestoreMark = { release: manifest.from.version, stage: "copying" };
+  const unread: RestoreState = { release: manifest.from.version, stage: "unread" };
   if (!(yield* fs.exists(marker).pipe(Effect.orElseSucceed(() => true)))) {
-    return Option.none<RestoreMark>();
+    return Option.none<RestoreState>();
   }
   return Option.some(
     yield* fs.readFileString(marker).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(RestoreMarkJson)),
-      Effect.orElseSucceed(() => unread),
+      Effect.orElseSucceed((): RestoreState => unread),
     ),
   );
 });
@@ -483,7 +489,7 @@ export const restoreSnapshot = Effect.fn("snapshot.restore")(function* (
     });
   const mark = Option.getOrElse(
     yield* readMark(snapshot.folder, snapshot.manifest),
-    (): RestoreMark => ({ release: snapshot.manifest.from.version, stage: "copying" }),
+    (): RestoreState => ({ release: snapshot.manifest.from.version, stage: "copying" }),
   );
   const placed = snapshot.manifest.files.map((file) => ({
     file,
@@ -497,7 +503,9 @@ export const restoreSnapshot = Effect.fn("snapshot.restore")(function* (
     placed.map(({ current }) => current),
   );
 
-  if (mark.stage === "copying") {
+  // A mark that cannot be read is carried on from the start: copying again
+  // is the safe side, and the swap passes over what is already in place.
+  if (mark.stage === "copying" || mark.stage === "unread") {
     yield* Effect.forEach(
       placed,
       ({ source, copy, current }) =>
@@ -518,7 +526,7 @@ export const restoreSnapshot = Effect.fn("snapshot.restore")(function* (
       ),
     );
     yield* flushAll(homeFolders);
-    yield* writeMark(snapshot.folder, { ...mark, stage: "swapping" });
+    yield* writeMark(snapshot.folder, { release: mark.release, stage: "swapping" });
   }
 
   if (mark.stage !== "restored") {
@@ -569,7 +577,7 @@ export const restoreSnapshot = Effect.fn("snapshot.restore")(function* (
       yield* fs.rename(copy, current).pipe(Effect.mapError(failed(current)));
     }
     yield* flushAll(homeFolders);
-    yield* writeMark(snapshot.folder, { ...mark, stage: "restored" });
+    yield* writeMark(snapshot.folder, { release: mark.release, stage: "restored" });
   }
 });
 
@@ -600,7 +608,7 @@ export const unfinishedRollback = Effect.fn("snapshot.unfinishedRollback")(funct
       return Option.some({ snapshot, mark: snapshot.restoring.value });
     }
   }
-  return Option.none<{ readonly snapshot: Snapshot; readonly mark: RestoreMark }>();
+  return Option.none<{ readonly snapshot: Snapshot; readonly mark: RestoreState }>();
 });
 
 /**
@@ -623,24 +631,29 @@ export const rollbackSnapshot = Effect.fn("snapshot.rollbackSnapshot")(function*
 
 /**
  * The folders in `home`'s backups that a take of a snapshot cut off left: a
- * folder named as a snapshot, not a link, whose manifest is missing or is not
- * JSON at all, as a cut while it was written leaves it, and with no mark of a
- * rollback. A manifest that is JSON but does not decode, as a newer
- * release's may not, and one that cannot be read, are not taken for a cut.
+ * folder named as a snapshot, not a link, holding nothing a take does not
+ * write, so no mark and no `replaced-*` of a rollback, whose manifest is
+ * missing or is not JSON at all, as a cut while it was written leaves it. A
+ * manifest that is JSON but does not decode, as a newer release's may not,
+ * and one that cannot be read, are not taken for a cut.
  */
 const cutOffTakes = Effect.fnUntraced(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const backups = path.join(home, HOME_ENTRIES.backups);
+  // What a take writes in its folder: the snapshot's files, by their first folder, and the manifest.
+  const written = new Set([
+    MANIFEST,
+    ...snapshotFiles(path, home).map((file) => file.split("/")[0] ?? file),
+  ]);
   const found: Array<string> = [];
   for (const name of yield* fs.readDirectory(backups).pipe(Effect.orElseSucceed(() => []))) {
     if (!SNAPSHOT_NAME.test(name)) continue;
     const folder = path.join(backups, name);
     const info = yield* fs.lstat(folder).pipe(Effect.option);
     if (!Option.exists(info, ({ type }) => type === "Directory")) continue;
-    if (yield* fs.exists(path.join(folder, RESTORING)).pipe(Effect.orElseSucceed(() => true))) {
-      continue;
-    }
+    const entries = yield* fs.readDirectory(folder).pipe(Effect.option);
+    if (!Option.exists(entries, (names) => names.every((entry) => written.has(entry)))) continue;
     const manifest = yield* Effect.result(fs.readFileString(path.join(folder, MANIFEST)));
     const cut =
       manifest._tag === "Failure"

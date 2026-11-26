@@ -11,7 +11,7 @@ import * as Ref from "effect/Ref";
 import * as Stdio from "effect/Stdio";
 import { Command, Flag, Prompt } from "effect/cli";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import { heldOff, takenAt } from "../install/snapshot.ts";
+import { heldOff, type Snapshot, takenAt } from "../install/snapshot.ts";
 import { trustedReleaseKeys } from "../releases/keys.ts";
 import type { UpdateFailure } from "@j3-bots/contracts";
 import type { StepFailed } from "../transition/switch.ts";
@@ -84,12 +84,13 @@ const carryingOnAfterHangup = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   );
 
 /**
- * What a rollback to `release` that stopped at `step` leaves: from its mark
+ * What a rollback to `snapshot` that stopped at `step` leaves: from its mark
  * until the old release runs and is recorded, the rollback is unfinished
  * until `--rollback` carries it on. Pointing the command comes after. A
  * rollback that stopped before it put anything back may be given up instead.
  */
-const unfinishedRollback = (step: StepFailed, release: string) => {
+const unfinishedRollback = (step: StepFailed, snapshot: Snapshot) => {
+  const release = snapshot.manifest.from.version;
   switch (step.step) {
     case "mark":
     case "adopt":
@@ -106,7 +107,7 @@ const unfinishedRollback = (step: StepFailed, release: string) => {
       ];
     default:
       return [
-        `The rollback has not finished, so ${heldOff(release, false)}: \`j3-bots update --rollback\` finishes it. If it stops again before it puts any of the snapshot back, as it does every time when a file of the snapshot is lost or damaged, \`j3-bots update --rollback --abandon\` gives it up and starts again the release that ran before it.`,
+        `The rollback has not finished, so ${heldOff(release, false)}: \`j3-bots update --rollback\` finishes it. If it stops again before it puts any of the snapshot back, as it does every time when a file of the snapshot is lost or damaged, \`j3-bots update --rollback --abandon\` gives it up and starts J3 Bots ${snapshot.manifest.to.version} again on the data as it is.`,
       ];
   }
 };
@@ -253,7 +254,7 @@ const reportOf = (result: UpdateResult): Report => {
       };
     case "cut-off-rollback-failed": {
       const reason = `Rolling back an earlier update that was cut off, to J3 Bots ${from}, failed: ${failure(outcome.rollback)}`;
-      const unfinished = unfinishedRollback(outcome.rollback, from);
+      const unfinished = unfinishedRollback(outcome.rollback, outcome.snapshot);
       return {
         ending: { _tag: "failed", reason: "other", detail: reason },
         text: [
@@ -318,7 +319,7 @@ const reportOf = (result: UpdateResult): Report => {
     case "rollback-failed": {
       const unfinished = Option.match(outcome.snapshot, {
         onNone: () => [],
-        onSome: () => unfinishedRollback(outcome.rollback, from),
+        onSome: (snapshot) => unfinishedRollback(outcome.rollback, snapshot),
       });
       return {
         ending: {
@@ -476,7 +477,7 @@ const runRollback = Effect.fn("update.runRollback")(function* (yes: boolean) {
       [
         `The rollback to J3 Bots ${from.version} did not finish: ${failure(result.failed.value)}`,
         `The snapshot is in ${result.snapshot.folder}; what it replaced is beside it, in its replaced-* folder.`,
-        ...unfinishedRollback(result.failed.value, from.version),
+        ...unfinishedRollback(result.failed.value, result.snapshot),
         LOG,
       ].join("\n"),
     );

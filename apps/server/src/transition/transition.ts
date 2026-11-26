@@ -444,17 +444,26 @@ export const rollBack = Effect.fn("transition.rollBack")(function* <R>(options: 
   );
 });
 
-/** A rollback that put part or all of its snapshot back, which only finishing makes whole. */
+/**
+ * A rollback that may have put part of its snapshot back, which only
+ * finishing makes whole: its mark says it did, or `unread`, cannot be read.
+ */
 class RollbackNotAbandonable extends Schema.TaggedError<RollbackNotAbandonable>()(
   "RollbackNotAbandonable",
-  { snapshot: Schema.String, from: Schema.String, to: Schema.String },
+  { snapshot: Schema.String, from: Schema.String, to: Schema.String, unread: Schema.Boolean },
 ) {
   override get message(): string {
-    return `The rollback to J3 Bots ${this.from}, from ${this.snapshot}, has put part or all of the snapshot back, so the data directory no longer holds what J3 Bots ${this.to} ran on, and only finishing the rollback makes it whole: \`j3-bots update --rollback\` does. Nothing was changed.`;
+    const why = this.unread
+      ? "has a mark that cannot be read, so it may have put part of the snapshot back"
+      : "has put part or all of the snapshot back";
+    return `The rollback to J3 Bots ${this.from}, from ${this.snapshot}, ${why}: the data directory may no longer hold what J3 Bots ${this.to} ran on, and only finishing the rollback makes it whole. \`j3-bots update --rollback\` does. Nothing was changed.`;
   }
 }
 
-/** Fails unless the rollback to `snapshot` has put nothing back: its mark at `copying`. */
+/**
+ * Fails unless the rollback to `snapshot` has put nothing back: its mark, as
+ * read, at `copying`.
+ */
 export const requireAbandonable = Effect.fn("transition.requireAbandonable")(function* (
   snapshot: Snapshot,
 ) {
@@ -463,6 +472,7 @@ export const requireAbandonable = Effect.fn("transition.requireAbandonable")(fun
     snapshot: snapshot.folder,
     from: snapshot.manifest.from.version,
     to: snapshot.manifest.to.version,
+    unread: Option.exists(snapshot.restoring, ({ stage }) => stage === "unread"),
   });
 });
 

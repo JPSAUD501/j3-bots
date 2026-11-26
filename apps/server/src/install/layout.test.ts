@@ -29,15 +29,15 @@ const exposed = (folder: string) =>
       const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : Option.none();
       return Option.map(error, (found) =>
         found._tag === "InstallFolderExposed"
-          ? { folder: found.folder, reason: found.reason, holds: found.holds }
-          : { folder: found._tag, reason: "other", holds: undefined },
+          ? { folder: found.folder, reason: found.reason, onWayTo: found.onWayTo }
+          : { folder: found._tag, reason: "other", onWayTo: undefined },
       );
     }),
   );
 
 it.layer(NodeServices.layer)("an install's folder", (it) => {
   it.effect.skipIf(process.platform === "win32")(
-    "is refused in a folder another account may write to, as a link into one is",
+    "is refused when its way passes through a folder another account may write to, by a link or not",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -45,14 +45,26 @@ it.layer(NodeServices.layer)("an install's folder", (it) => {
         const { shared, install } = yield* within(0o777);
         assert.deepStrictEqual(
           yield* exposed(install),
-          Option.some({ folder: shared, reason: "writable-by-all", holds: install }),
+          Option.some({ folder: shared, reason: "writable-by-all", onWayTo: install }),
         );
 
         const link = path.join(yield* fs.makeTempDirectoryScoped(), "j3-bots");
         yield* fs.symlink(install, link);
         assert.deepStrictEqual(
           yield* exposed(link),
-          Option.some({ folder: shared, reason: "writable-by-all", holds: link }),
+          Option.some({ folder: shared, reason: "writable-by-all", onWayTo: link }),
+        );
+
+        // A link in that folder, which another account could replace, to a private one.
+        const own = path.join(yield* fs.makeTempDirectoryScoped(), "j3-bots");
+        yield* fs.makeDirectory(own, { mode: 0o755 });
+        yield* fs.symlink(own, path.join(shared, "hop"));
+        const through = path.join(yield* fs.makeTempDirectoryScoped(), "j3-bots");
+        yield* fs.symlink(path.join(shared, "hop"), through);
+        assert.isTrue(Option.isNone(yield* exposed(own)));
+        assert.deepStrictEqual(
+          yield* exposed(through),
+          Option.some({ folder: shared, reason: "writable-by-all", onWayTo: through }),
         );
       }).pipe(Effect.scoped),
   );

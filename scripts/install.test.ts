@@ -280,15 +280,18 @@ describe("install.sh", () => {
       });
       expect(result.code, result.output).not.toBe(0);
       expect(result.output).toContain(
-        `${above}, a folder ${inside} is in, can be written by every account`,
+        `${above}, a folder on the way to ${inside}, can be written by every account`,
       );
       expect(site.served).toEqual([]);
     });
 
-    it("when a link leads it into such a folder", async () => {
-      const { above, inside } = within(0o777);
+    it("when a link on its way is in such a folder, though it leads to a private one", async () => {
+      const { above } = within(0o777);
+      const own = NodePath.join(folder("j3-install-own-"), "j3-bots");
+      NodeFS.mkdirSync(own, { mode: 0o755 });
+      NodeFS.symlinkSync(own, NodePath.join(above, "hop"));
       const link = NodePath.join(folder("j3-install-link-"), "j3-bots");
-      NodeFS.symlinkSync(inside, link);
+      NodeFS.symlinkSync(NodePath.join(above, "hop"), link);
       const signer = keyPair();
       const site = await mirror(release(signer));
       const result = await install(site.url, {
@@ -296,7 +299,7 @@ describe("install.sh", () => {
         J3_INSTALL_DIR: link,
       });
       expect(result.code, result.output).not.toBe(0);
-      expect(result.output).toContain(`${above}, a folder ${link} is in`);
+      expect(result.output).toContain(`${above}, a folder on the way to ${link}, can be written`);
       expect(site.served).toEqual([]);
     });
 

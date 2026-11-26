@@ -23,7 +23,7 @@ import {
 } from "../install/layout.ts";
 import {
   listSnapshots,
-  type RestoreMark,
+  type RestoreState,
   heldOff,
   rollbackSnapshot,
   type Snapshot,
@@ -209,7 +209,7 @@ const commandCheck = (releases: {
 };
 
 /** A rollback that has not finished, with its mark. */
-type Rollback = Option.Option<{ readonly snapshot: Snapshot; readonly mark: RestoreMark }>;
+type Rollback = Option.Option<{ readonly snapshot: Snapshot; readonly mark: RestoreState }>;
 
 /**
  * A check while a rollback has not finished: as it is when all is well, as
@@ -226,6 +226,19 @@ const whileRollingBack = (rollback: Rollback, found: Check) =>
       )
     : found;
 
+/** What the mark of a rollback that has not finished says it put back, as a clause. */
+const progressOf = (mark: RestoreState) => {
+  switch (mark.stage) {
+    case "copying":
+      return ", and has put none of it back";
+    case "unread":
+      return ", and its mark, which says how far it got, cannot be read";
+    case "swapping":
+    case "restored":
+      return "";
+  }
+};
+
 /**
  * The snapshot `j3-bots update --rollback` puts back while `running` runs,
  * and a rollback that has not finished, which is then the one thing to do.
@@ -240,7 +253,7 @@ const snapshotCheck = Effect.fn("doctor.snapshot")(function* (
     return check(
       "Snapshot",
       "problem",
-      `A rollback to J3 Bots ${mark.release}, from ${snapshot.folder}, has not finished${mark.stage === "copying" ? ", and has put none of it back" : ""}. Until it does, ${heldOff(mark.release, mark.stage === "restored")}.`,
+      `A rollback to J3 Bots ${mark.release}, from ${snapshot.folder}, has not finished${progressOf(mark)}. Until it does, ${heldOff(mark.release, mark.stage === "restored")}.`,
       mark.stage === "copying"
         ? `Run \`j3-bots update --rollback\`, which finishes it. If it fails every time, as when a file of the snapshot is lost, \`j3-bots update --rollback --abandon\` gives it up and starts J3 Bots ${snapshot.manifest.to.version} again on the data as it is.`
         : "Run `j3-bots update --rollback`, which finishes it.",

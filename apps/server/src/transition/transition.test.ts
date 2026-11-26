@@ -590,27 +590,38 @@ it.layer(NodeServices.layer)("a version transition", (it) => {
     }),
   );
 
-  it.effect("refuses to give up a rollback that put any of its snapshot back", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const { home, host, steps, lock } = yield* hostOn();
-      const { outcome } = yield* transition({ lock, from: OLD, to: NEW, steps });
-      assert.strictEqual(outcome._tag, "updated");
-      if (outcome._tag !== "updated") return;
-      yield* fs.writeFileString(
-        path.join(outcome.snapshot.folder, "restoring"),
-        JSON.stringify({ release: OLD.version, stage: "swapping" }),
-      );
-      const left = Option.getOrThrow(yield* unfinishedRollback(home));
-      host.log.length = 0;
+  it.effect(
+    "refuses to give up a rollback that put any of its snapshot back, or whose mark cannot be read",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const marks = [
+          { text: JSON.stringify({ release: OLD.version, stage: "swapping" }), stage: "swapping" },
+          // A mark a failing disk damaged may have said `swapping`.
+          { text: '{"release":"0.3.0","sta', stage: "unread" },
+        ];
+        for (const mark of marks) {
+          const { home, host, steps, lock } = yield* hostOn();
+          const { outcome } = yield* transition({ lock, from: OLD, to: NEW, steps });
+          assert.strictEqual(outcome._tag, "updated");
+          if (outcome._tag !== "updated") return;
+          yield* fs.writeFileString(path.join(outcome.snapshot.folder, "restoring"), mark.text);
+          const left = Option.getOrThrow(yield* unfinishedRollback(home));
+          host.log.length = 0;
 
-      const refused = yield* Effect.exit(abandonRollback({ lock, snapshot: left.snapshot, steps }));
+          const refused = yield* Effect.exit(
+            abandonRollback({ lock, snapshot: left.snapshot, steps }),
+          );
 
-      assert.isTrue(Exit.isFailure(refused));
-      assert.deepStrictEqual(host.log, []);
-      assert.strictEqual(Option.getOrThrow(yield* unfinishedRollback(home)).mark.stage, "swapping");
-    }),
+          assert.isTrue(Exit.isFailure(refused));
+          assert.deepStrictEqual(host.log, []);
+          assert.strictEqual(
+            Option.getOrThrow(yield* unfinishedRollback(home)).mark.stage,
+            mark.stage,
+          );
+        }
+      }),
   );
 
   it.effect("runs one operation at a time under a lock, and none once it is released", () =>
