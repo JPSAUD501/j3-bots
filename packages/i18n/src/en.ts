@@ -1297,6 +1297,8 @@ export const en = {
     "Another program, such as an antivirus, was using its files. J3 Bots keeps trying on its own.",
   "engine.installFailed.body.permission":
     "J3 Bots wasn’t allowed to save its engine’s files. It keeps trying; if it keeps failing, restart the computer.",
+  "engine.installFailed.body.outsideHome":
+    "A shortcut in J3 Bots’ folder points somewhere else, so J3 Bots won’t save its engine there. It keeps trying; if it keeps happening, ask for help.",
   "engine.installFailed.body.unsupported":
     "Its engine has no version for this kind of computer, so J3 Bots can’t run here.",
   "engine.credentialRefused.title": "The engine refused J3 Bots",

@@ -261,7 +261,9 @@ const unpack = Effect.fnUntraced(function* (
           ),
           Effect.orElseSucceed(() => -1),
         );
-      if (exit !== 0) return yield* check();
+      // The archive had the maker's checksum: a tar that fails could not
+      // write what it unpacked, and says why on the server's stderr.
+      if (exit !== 0) return yield* new HarnessFailed({ reason: "files" });
       const described = yield* fs
         .readFileString(path.join(into, "codex-package.json"))
         .pipe(

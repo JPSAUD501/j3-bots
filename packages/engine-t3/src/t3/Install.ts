@@ -482,7 +482,8 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
     yield* remove(staging);
     yield* fs.makeDirectory(staging, { mode: 0o700 }).pipe(Effect.catch(writeFailed));
     yield* Effect.gen(function* () {
-      if (!(yield* unpack(format, partial, staging))) return yield* fail("extract");
+      const refused = yield* unpack(format, partial, staging, input.platform);
+      if (refused !== null) return yield* fail(refused);
 
       // The archive holds the server either at its root or in one top-level folder.
       const entries = yield* fs.readDirectory(staging).pipe(Effect.catch(writeFailed));
@@ -510,17 +511,32 @@ export const ensureInstalled = Effect.fn("engine.ensureInstalled")(function* (in
 });
 
 /**
- * Unpacks `archive` into the empty folder `into`; whether it succeeded. A
- * gzipped tar goes through the system's `tar`, which every system with such
- * a release ships; a zip, Windows', is read in this process (`Unzip.ts`).
+ * Unpacks `archive` into the empty folder `into` on `platform`; null once it
+ * did, else why it did not. A gzipped tar goes through the system's `tar`,
+ * which every system with such a release ships; a zip, Windows', is read in
+ * this process (`Unzip.ts`), which tells a file it could not write, as on a
+ * full disk, from an archive it refused; `tar` says why it failed only on the
+ * server's stderr (`extract`).
  */
-const unpack = Effect.fnUntraced(function* (format: ArchiveFormat, archive: string, into: string) {
+const unpack = Effect.fnUntraced(function* (
+  format: ArchiveFormat,
+  archive: string,
+  into: string,
+  platform: string,
+) {
   switch (format) {
     case "zip":
       return yield* extractZip(archive, into).pipe(
-        Effect.as(true),
+        Effect.as(null),
         Effect.catch((cause) =>
-          Effect.as(Effect.logWarning("Unpacking the engine failed", cause), false),
+          Effect.as(
+            Effect.logWarning("Unpacking the engine failed", cause).pipe(
+              Effect.annotateLogs({ code: cause.code }),
+            ),
+            cause.reason === "write"
+              ? fileFailure(cause.code, { platform, moves: false })
+              : ("extract" as const),
+          ),
         ),
       );
     case "tar.gz": {
@@ -541,7 +557,7 @@ const unpack = Effect.fnUntraced(function* (format: ArchiveFormat, archive: stri
           ),
           Effect.orElseSucceed(() => -1),
         );
-      return exit === 0;
+      return exit === 0 ? null : ("extract" as const);
     }
   }
 });

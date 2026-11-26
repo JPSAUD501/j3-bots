@@ -12,6 +12,7 @@ import {
   SignInHarness as SignInHarnessSchema,
 } from "@j3-bots/contracts";
 import { Engine } from "@j3-bots/engine-t3";
+import { platformErrorCode, whileHeld } from "@j3-bots/processes";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -36,7 +37,7 @@ import { SettingsService } from "../settings/SettingsService.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
 import type { Distribution, Release } from "./distributions.ts";
-import { fileFailed, HarnessFailed } from "./failure.ts";
+import { fileFailed, HarnessFailed, renameRefused } from "./failure.ts";
 import { installRelease, type Probe } from "./install.ts";
 import {
   copyLayout,
@@ -361,12 +362,20 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
               }),
             );
           if (!taken) return { _tag: "waiting" } as const;
-          yield* currentText(copy).pipe(
-            // An installed copy always encodes: a failure is a defect.
-            Effect.orDie,
-            Effect.flatMap((text) => files.writeFile(layout.current, text)),
-            // Ends in a rename over the file, as a move does.
-            Effect.catch(fileFailed(options.platform, true)),
+          // The write ends in a rename over the file, which Windows refuses
+          // while another program holds it, as it may just after the write.
+          yield* whileHeld(
+            currentText(copy).pipe(
+              // An installed copy always encodes: a failure is a defect.
+              Effect.orDie,
+              Effect.flatMap((text) => files.writeFile(layout.current, text)),
+            ),
+            {
+              platform: options.platform,
+              codeOf: (error) => (renameRefused(error) ? platformErrorCode(error) : null),
+            },
+          ).pipe(
+            Effect.catch((error) => fileFailed(options.platform, renameRefused(error))(error)),
             Effect.tapError(() => putBack),
           );
           // Recorded in the same step: a cancel that lands meanwhile finds
@@ -514,11 +523,28 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
    * and leaves under it, recording how it ended, so it never leaves before
    * it is registered, and a job started after it never sees it still there.
    */
-  const start = (harness: SignInHarness, known: Option.Option<Release>, automatic: boolean) =>
+  /**
+   * Starts `harness`'s install, or joins the one under way. With `when`, only
+   * if its slot still says so once no other start, cancel or end runs: a
+   * cancel that lands while a check reads the listing is not overridden.
+   */
+  const start = (
+    harness: SignInHarness,
+    known: Option.Option<Release>,
+    automatic: boolean,
+    when?: (slot: Slot) => boolean,
+  ) =>
     lock.withPermits(1)(
       Effect.gen(function* () {
+        if (jobs.has(harness)) {
+          if (!automatic) requested.add(harness);
+          return;
+        }
+        if (when !== undefined) {
+          const slot = yield* slotOf(harness);
+          if (slot === undefined || !when(slot)) return;
+        }
         if (!automatic) requested.add(harness);
-        if (jobs.has(harness)) return;
         const fiber = yield* job(harness, known, automatic).pipe(
           Effect.onExit((exit) =>
             lock.withPermits(1)(
@@ -586,7 +612,7 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
     const release = yield* latestOf(harness).pipe(Effect.option);
     if (Option.isNone(release)) return false;
     if (missing(harness, slot)) {
-      yield* start(harness, release, false);
+      yield* start(harness, release, false, (now) => missing(harness, now));
     } else if (
       (yield* SubscriptionRef.get(autoUpdate)) &&
       Option.isSome(slot.installed) &&
@@ -642,13 +668,7 @@ export const make = Effect.fn("Harnesses.make")(function* (options: {
   // way. As a client's request, it is not given up when updates are off.
   yield* Effect.forEach(
     HARNESS_IDS,
-    (harness) =>
-      Effect.gen(function* () {
-        const slot = yield* slotOf(harness);
-        if (slot !== undefined && missing(harness, slot)) {
-          yield* start(harness, Option.none(), false);
-        }
-      }),
+    (harness) => start(harness, Option.none(), false, (slot) => missing(harness, slot)),
     { discard: true },
   );
 

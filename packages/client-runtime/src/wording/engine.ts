@@ -92,11 +92,12 @@ function engineInstallFailureText(reason: EngineInstallFailure | undefined, { t 
       return t("engine.installFailed.body.inUse");
     case "permission":
       return t("engine.installFailed.body.permission");
+    case "outside-home":
+      return t("engine.installFailed.body.outsideHome");
     case "unsupported-platform":
       return t("engine.installFailed.body.unsupported");
     case "checksum":
     case "extract":
-    case "outside-home":
     case "files":
     case "unknown":
     case undefined:

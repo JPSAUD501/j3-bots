@@ -36,6 +36,16 @@ const described = (error: FileError) => {
 };
 
 /**
+ * Whether `error` is a rename the system refused, which Windows does while
+ * another program holds the file, where a failure to create or write one
+ * means it may not be written at all.
+ */
+export const renameRefused = (error: FileError): error is PlatformError.PlatformError =>
+  error._tag === "PlatformError" &&
+  error.reason._tag !== "BadArgument" &&
+  error.reason.syscall === "rename";
+
+/**
  * Fails an install for `error` with the reason it truly comes down to
  * (`fileFailure`; a location that leads out of the home is `outside-home`),
  * logged with the system's code and the file, for the operator's log. On

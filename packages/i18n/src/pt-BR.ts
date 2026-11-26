@@ -1316,6 +1316,8 @@ const sentences = {
     "Outro programa, como um antivírus, estava usando os arquivos dele. O J3 Bots continua tentando sozinho.",
   "engine.installFailed.body.permission":
     "O J3 Bots não teve permissão para salvar os arquivos do motor. Ele continua tentando; se não der certo, reinicie o computador.",
+  "engine.installFailed.body.outsideHome":
+    "Um atalho na pasta do J3 Bots aponta para outro lugar, então o J3 Bots não salva o motor lá. Ele continua tentando; se continuar, peça ajuda.",
   "engine.installFailed.body.unsupported":
     "O motor não tem versão para este tipo de computador, então o J3 Bots não roda aqui.",
   "engine.credentialRefused.title": "O motor recusou o J3 Bots",
