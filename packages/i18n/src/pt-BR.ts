@@ -326,6 +326,7 @@ const sentences = {
   "secrets.bots": "Bots que podem usar",
   "secrets.everyBot": "Todos os bots",
   "secrets.noBot": "Nenhum bot ainda",
+  "secrets.noBotsYet": "Ainda não há bots, então nenhum bot pode usá-lo.",
   "secrets.reference": "Os bots usam como {reference}",
   "secrets.lastUsed": "Usado por {name} {when}",
   "secrets.lastUsedBy": "Usado {when}",
@@ -966,6 +967,8 @@ const sentences = {
   "empty.quiet.waitingForResetAt": "{name} dá oi quando o limite de uso renovar {when}.",
   "empty.quiet.room":
     "Nenhuma mensagem ainda. Todos aqui leem o que você escreve: sem @, responde quem tiver algo a acrescentar; um @ fala com os bots que você citar.",
+  "empty.quiet.connectInApp":
+    "Para conectar um, entre em Configurações → Provedores no J3 Bots, no computador onde ele roda.",
   "empty.quiet.connectHint":
     "Para conectar um, rode isto na máquina onde o J3 Bots está instalado.",
 
@@ -1457,6 +1460,8 @@ const sentences = {
   "settings.pair.scanOrEnter":
     "Escaneie o código QR com a câmera do celular ou digite o código no outro dispositivo:",
   "settings.pair.qr": "Código QR que pareia um dispositivo com o J3 Bots em {address}",
+  "settings.pair.gate":
+    "Se uma página de login protege o J3 Bots, entre nela no celular antes de escanear, ou digite o código.",
   "settings.pair.address": "Endereço no código QR",
   "settings.pair.expires": "Vale uma vez, até {time}",
   "settings.pair.failed": "Nenhum código foi gerado. Tente de novo.",

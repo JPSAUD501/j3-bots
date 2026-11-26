@@ -3576,7 +3576,7 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
       }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
       // The pairing ends, and the browser closes before its text is erased.
       if (Option.isNone(credential)) return assert.fail("The pairing was not saved");
-      yield* device.credentials().clear(credential.value, true).pipe(Effect.orDie);
+      yield* device.credentials().clear(credential.value, "refused").pipe(Effect.orDie);
 
       yield* Effect.gen(function* () {
         assert.strictEqual((yield* Drafts).state.get().size, 0);
@@ -4087,6 +4087,32 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         const listed = yield* (yield* Server.Devices).list(credential.value.deviceId);
         assert.isTrue(listed.some((listedDevice) => listedDevice.id === credential.value.deviceId));
       }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+    }),
+  );
+
+  it.effect("finds the refusal another tab recorded while this one was not connected", () =>
+    Effect.gen(function* () {
+      const { device, credential } = yield* pairedDevice("Refused elsewhere");
+      if (Option.isNone(credential)) return assert.fail("The pairing was not saved");
+      const heard = yield* Latch.make(false);
+
+      // The tab that signs out hears other tabs late, and is not connected.
+      yield* Effect.gen(function* () {
+        const leaving = yield* Connection;
+        yield* waitFor(leaving.state, isConnected);
+        yield* goOffline;
+        // Another tab hears the server refuse the pairing, and records it.
+        yield* device.credentials().clear(credential.value, "refused").pipe(Effect.orDie);
+        assert.strictEqual(leaving.pairing.get(), credential.value.deviceId);
+
+        assert.deepStrictEqual(yield* (yield* SignOut).run, { _tag: "signed-out" });
+      }).pipe(
+        Effect.scoped,
+        Effect.ensuring(heard.open),
+        Effect.provide(
+          client(credential, { ...device, credentials: () => device.credentials(heard) }),
+        ),
+      );
     }),
   );
 

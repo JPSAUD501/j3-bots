@@ -212,6 +212,11 @@ export interface Desktop {
    * sign-in the app caught; answers a function that stops it.
    */
   readonly onSignInReturn: (listener: (url: string) => void) => () => void;
+  /**
+   * Puts a secret's value on the clipboard, which the app takes off after a
+   * while if the clipboard still holds it: whether it got there.
+   */
+  readonly copySecret: (value: Redacted.Redacted<string>) => Promise<boolean>;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -401,6 +406,10 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
         if (typeof stop === "function") stop();
       };
     },
+    copySecret: (value) =>
+      ask(() => bridge.copySecret({ text: Redacted.value(value) }), decodeExpected).then(
+        (copied) => copied === true,
+      ),
     setPhoneAccess: (on, stopWork) =>
       ask(() => bridge.setPhoneAccess({ on, stopWork }), decodePhoneAccessChange),
     localPairingLink: (unlock) => ask(() => bridge.localPairingLink({ unlock }), decodePairingLink),

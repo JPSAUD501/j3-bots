@@ -89,6 +89,7 @@ import {
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
 import type { AppLink } from "@j3-bots/desktop-bridge";
+import * as Redacted from "effect/Redacted";
 import { memoryFileName, updateResultLine } from "@j3-bots/client-runtime/wording";
 import { notificationText } from "@j3-bots/i18n";
 import { useI18n } from "../app/context";
@@ -107,6 +108,7 @@ import {
 } from "../components/LocalMode";
 import { alertDialog, dialogBackdrop, dialogTitle } from "../components/ui/dialog";
 import { Onboarding } from "../onboarding/Onboarding";
+import { writeClipboard } from "../lib/clipboard";
 import { cn } from "../lib/cn";
 import { ConnectorsDialog } from "../components/connectors/ConnectorsDialog";
 import type { ConnectorsIntents } from "../components/connectors/screen";
@@ -187,6 +189,15 @@ type RoomFormTarget =
  * have named one.
  */
 const server = desktop === null ? new URL(window.location.origin) : desktop.server;
+
+/**
+ * A secret's value copied: by the desktop app, which takes it off the
+ * clipboard after a while if it is still there, or by the page, which cannot
+ * read the clipboard back to tell.
+ */
+const copySecret =
+  desktop?.copySecret ??
+  ((value: Redacted.Redacted<string>) => writeClipboard(Redacted.value(value)));
 
 /**
  * In the desktop app, the server elsewhere it talks to, a way to leave it for
@@ -1662,7 +1673,7 @@ function LiveShell({
     refreshSettings: j3.refreshSettings,
     signOutBrowser: () => j3.signOutBrowser().then((result) => result._tag === "done"),
     providerActions: providerActionsOf(j3),
-    secrets: j3.secrets,
+    secrets: { ...j3.secrets, copy: copySecret },
     refreshDevices: j3.refreshDevices,
     loadMoreTurns: recentTurns.loadMore,
     retryTurns: recentTurns.retry,

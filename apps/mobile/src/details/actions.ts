@@ -26,8 +26,9 @@ export function useBotActions() {
   const say = useSay();
   const leaveDeleted = useLeaveDeleted();
   return {
-    /** Stops the bot's work under way at once. */
-    stop: (bot: Bot) => void client.stopBot(bot.id),
+    /** Stops the bot's work under way at once: whether the server took it. */
+    stop: (bot: Bot): Promise<boolean> =>
+      client.stopBot(bot.id).then((result) => result._tag === "done"),
     freshStart: (bot: Bot) =>
       void client
         .freshStart(bot.id)
@@ -58,10 +59,11 @@ export function useRoomActions() {
   const askForMembers = (room: Room) =>
     navigation.navigate("roomForm", { form: { _tag: "unarchive", roomId: room.id } });
   return {
-    /** Stops the work addressed to the room, once the operator confirmed it. */
-    stop: (room: Room) =>
-      void client.stopRoom(room.id).then((result) => {
+    /** Stops the work addressed to the room, once the operator confirmed it: whether the server took it. */
+    stop: (room: Room): Promise<boolean> =>
+      client.stopRoom(room.id).then((result) => {
         if (roomStopFailed(result)) say(t("room.stopFailed", { name: room.name }));
+        return result._tag === "done";
       }),
     /** Resolves once the server answered, whatever it said. */
     archive: (room: Room): Promise<void> =>

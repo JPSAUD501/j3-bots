@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { type MentionLabel, retryAction } from "@j3-bots/client-runtime";
+import { type MentionLabel, retryAction, runByDesktopApp } from "@j3-bots/client-runtime";
 import {
   addressed,
   arrivalCounts,
@@ -26,6 +26,7 @@ import {
   useConversationEnd,
   useDraft,
   useEngineStatus,
+  useServerUpdate,
   useJ3Client,
   useSelected,
 } from "@j3-bots/client-runtime/react";
@@ -572,12 +573,14 @@ export function Gone({ onBack }: { readonly onBack: () => void }) {
 
 /**
  * A bot's conversation before anything is said in it. A first hello waiting
- * for a provider says so, with the command that connects one when there is.
+ * for a provider says so, with the command that connects one when there is,
+ * or, on a server the desktop app runs, where in the app it connects.
  */
 function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const status = useEngineStatus();
+  const inApp = runByDesktopApp(useServerUpdate());
   const name = bot.profile.name;
   const held = openingHeld(bot, status._tag === "ready" ? status.value : null);
   return (
@@ -595,9 +598,9 @@ function Quiet({ bot, bottom }: { readonly bot: Bot; readonly bottom: number }) 
       {held?._tag === "connect" && (
         <View className="w-full max-w-sm gap-2">
           <Text className="text-center text-sm text-muted-foreground">
-            {t("empty.quiet.connectHint")}
+            {t(inApp ? "empty.quiet.connectInApp" : "empty.quiet.connectHint")}
           </Text>
-          <CommandLine command={held.command} />
+          {!inApp && <CommandLine command={held.command} />}
         </View>
       )}
     </View>

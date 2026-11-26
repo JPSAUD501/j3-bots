@@ -56,9 +56,14 @@ export const layer = Layer.effect(
     const drafts = yield* Drafts;
     const conversations = yield* Conversations;
 
-    /** Whether the server said that `pairing` ended. */
+    /**
+     * Whether the server said that `pairing` ended. Not connected, nothing is
+     * asked, but another window may have heard the server refuse it while
+     * this one reconnected, and left that word in storage.
+     */
     const revoke = Effect.fn("SignOut.revoke")(function* (pairing: DeviceId) {
-      if (connection.state.get()._tag !== "connected") return false;
+      if (connection.state.get()._tag !== "connected")
+        return yield* connection.endedOnServer(pairing);
       const result = yield* devices.revoke(pairing);
       if (result._tag !== "failed") return result._tag === "done";
       switch (result.failure._tag) {

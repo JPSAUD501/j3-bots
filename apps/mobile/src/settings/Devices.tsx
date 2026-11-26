@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { PairingOffer } from "@j3-bots/client-runtime";
+import { type PairingOffer, qrOrigin } from "@j3-bots/client-runtime";
 import { clockTime } from "@j3-bots/client-runtime/presentation";
 import { useDevices, useJ3Client } from "@j3-bots/client-runtime/react";
 import { activityTime } from "@j3-bots/client-runtime/wording";
@@ -39,6 +39,10 @@ export function DevicesSection(props: { readonly connected: boolean }) {
   const client = useJ3Client();
   const devices = useDevices();
   const [pairing, setPairing] = useState<Pairing>({ _tag: "idle" });
+  // The address the operator picked for the QR code. Kept here, since the code
+  // shown goes while a new one is fetched, and the pick holds while it is one
+  // of the new code's addresses.
+  const [picked, setPicked] = useState<ServerOrigin | null>(null);
   // Revocations under way or not confirmed. One the server confirms leaves the list with its
   // device; for the others the list is read again, and shows whether the device is still there.
   const [revoking, setRevoking] = useState<ReadonlyMap<DeviceId, "pending" | "failed">>(new Map());
@@ -85,7 +89,9 @@ export function DevicesSection(props: { readonly connected: boolean }) {
           onPress={startPairing}
         />
         {!props.connected && <Quiet>{t("settings.pair.offline")}</Quiet>}
-        {pairing._tag === "started" && <PairingCodeShown offer={pairing} />}
+        {pairing._tag === "started" && (
+          <PairingCodeShown offer={pairing} picked={picked} onPick={setPicked} />
+        )}
         <Problem>{pairing._tag === "failed" ? t("settings.pair.failed") : null}</Problem>
       </View>
     </Section>
@@ -161,15 +167,22 @@ function DeviceRow(props: {
 /**
  * The code to enter on the other device and, when the server can be reached
  * from another device, a QR code of the pairing link for its camera. The link
- * carries the first origin the offer lists unless the operator picks another.
+ * carries `picked` while the offer lists it, else the first origin the offer
+ * lists. Under the code, what a sign-in gate in front of the server would do
+ * to the QR code.
  */
-function PairingCodeShown({ offer }: { readonly offer: PairingOffer }) {
+function PairingCodeShown({
+  offer,
+  picked,
+  onPick,
+}: {
+  readonly offer: PairingOffer;
+  readonly picked: ServerOrigin | null;
+  readonly onPick: (origin: ServerOrigin) => void;
+}) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
-  const [picked, setPicked] = useState<ServerOrigin | null>(null);
-  // A new code may come with other addresses: the pick holds while it is one of them.
-  const server =
-    picked !== null && offer.origins.includes(picked) ? picked : (offer.origins[0] ?? null);
+  const server = qrOrigin(offer, picked);
   return (
     <View accessibilityLiveRegion="polite" className="gap-3">
       <Quiet>
@@ -188,6 +201,9 @@ function PairingCodeShown({ offer }: { readonly offer: PairingOffer }) {
         <Text className="text-xs text-muted-foreground">
           {t("settings.pair.expires", { time: clockTime(offer.expiresAt, ctx) })}
         </Text>
+        {server !== null && (
+          <Text className="text-xs text-muted-foreground">{t("settings.pair.gate")}</Text>
+        )}
       </View>
       {server !== null && offer.origins.length > 1 && (
         <View accessibilityRole="radiogroup" className="gap-2">
@@ -198,7 +214,7 @@ function PairingCodeShown({ offer }: { readonly offer: PairingOffer }) {
               kind="one"
               label={origin}
               selected={origin === server}
-              onPress={() => setPicked(origin)}
+              onPress={() => onPick(origin)}
             />
           ))}
         </View>

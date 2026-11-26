@@ -203,7 +203,7 @@ const makeCredentials = () => {
             stored = Option.some(credential);
             refusedPairing = Option.none();
           }).pipe(Effect.andThen(changed(window))),
-        clear: (credential, refusedByServer) =>
+        clear: (credential, ended) =>
           Effect.suspend(() => {
             const held = Option.exists(
               stored,
@@ -213,7 +213,7 @@ const makeCredentials = () => {
             );
             if (!held) return Effect.succeed(stored);
             stored = Option.none();
-            refusedPairing = refusedByServer ? Option.some(credential.deviceId) : Option.none();
+            refusedPairing = ended === "refused" ? Option.some(credential.deviceId) : Option.none();
             return changed(window).pipe(Effect.as(stored));
           }),
         refusedPairing: Effect.sync(() => refusedPairing),

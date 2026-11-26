@@ -200,7 +200,7 @@ const FIRST_RUN: EarlierTurn = {
     ...base,
     at: todayAt(9, 30),
     kind: "system",
-    event: { name: "first-run", askName: false },
+    event: { name: "first-run", askName: false, fromTemplate: false },
   },
   calls: [{ name: "say", input: { text: HELLO, done: true }, output: '{"status":"recorded"}' }],
 };
@@ -394,7 +394,7 @@ const opening = (askName: boolean): Wake => ({
   ...base,
   at: todayAt(9, 30),
   kind: "system",
-  event: { name: "first-run", askName },
+  event: { name: "first-run", askName, fromTemplate: false },
 });
 
 /** What the judge is told an opening answers: nothing, since its user has not written. */

@@ -17,7 +17,7 @@ import { useRoomPlacing } from "../screens/placing.ts";
 import { useRoomActions } from "./actions.ts";
 import { HiddenNotice } from "./HiddenNotice.tsx";
 import { Apart, Profile, ProfileLine } from "./Profile.tsx";
-import { StopRow } from "./StopRow.tsx";
+import { StopRow, useFocusAfterStop } from "./StopRow.tsx";
 
 /**
  * A room's details: who is in it, how long bots may talk among
@@ -34,6 +34,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
   const placing = useRoomPlacing();
   const confirm = useConfirm();
   const stopping = roomStop(room);
+  const stopFocus = useFocusAfterStop(stopping !== "hidden");
   const { name } = room;
   const archived = room.status === "archived";
   const members = room.members.flatMap((id) => {
@@ -53,6 +54,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
           />
         }
         name={name}
+        headingRef={stopFocus.heading}
         badge={archived ? t("room.archivedBadge") : null}
         lines={
           <ProfileLine>
@@ -83,7 +85,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
                     body: t("room.stop.body", { name }),
                     cancel: t("room.stop.cancel"),
                     confirm: t("room.stop"),
-                    onConfirm: () => actions.stop(room),
+                    onConfirm: () => stopFocus.stopped(actions.stop(room)),
                   })
           }
         />

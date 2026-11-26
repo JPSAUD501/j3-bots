@@ -1093,6 +1093,7 @@ const quietIntents: RosterIntents = {
   updateSection: nothing,
   deleteSection: nothing,
   openDetails: nothing,
+  shareTemplate: nothing,
   deleteBot: nothing,
 };
 
@@ -3350,17 +3351,40 @@ function EmptyStatesSection() {
           <NoSelection nextShortcut={shortcuts.nextBot.label} />
         </Frame>
         <Frame label="A quiet conversation" width={340} height={360}>
-          <QuietConversation bot={team.bots.moss} engine={team.engine} />
+          <QuietConversation
+            bot={team.bots.moss}
+            engine={team.engine}
+            connect={{ _tag: "server" }}
+          />
         </Frame>
         <Frame label="A new bot, about to speak first" width={340} height={360}>
-          <QuietConversation bot={speakingFirst} engine={team.engine} />
+          <QuietConversation
+            bot={speakingFirst}
+            engine={team.engine}
+            connect={{ _tag: "server" }}
+          />
         </Frame>
         <Frame
           label="A new bot whose provider is not connected: its hello waits"
           width={340}
           height={420}
         >
-          <QuietConversation bot={waitingFirst} engine={engines.connect} />
+          <QuietConversation
+            bot={waitingFirst}
+            engine={engines.connect}
+            connect={{ _tag: "server" }}
+          />
+        </Frame>
+        <Frame
+          label="Its hello waits, on a server the desktop app runs, seen from another device"
+          width={340}
+          height={420}
+        >
+          <QuietConversation
+            bot={waitingFirst}
+            engine={engines.connect}
+            connect={{ _tag: "desktop-app" }}
+          />
         </Frame>
         <Frame label="A quiet room" width={340} height={360}>
           <QuietRoom room={team.room} />

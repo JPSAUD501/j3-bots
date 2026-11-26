@@ -690,6 +690,16 @@ export const SignInExpectation = Schema.Struct({
 });
 export type SignInExpectation = typeof SignInExpectation.Type;
 
+/**
+ * A value of a secret the operator copies. The app puts it on the clipboard
+ * and takes it off after a while, if the clipboard still holds it then:
+ * whatever was copied since stays.
+ */
+export const SecretCopy = Schema.Struct({
+  text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(10_000)),
+});
+export type SecretCopy = typeof SecretCopy.Type;
+
 /** Stops the listener on `port`, and no later one the page asked for. */
 export const SignInRelayStop = Schema.Struct({ port: LoopbackPort });
 export type SignInRelayStop = typeof SignInRelayStop.Type;
@@ -754,5 +764,6 @@ export const HostedBridge = Schema.Struct({
   expectSignIn: Callable,
   stopCatchingSignIn: Callable,
   onSignInReturn: Callable,
+  copySecret: Callable,
 });
 export type HostedBridge = typeof HostedBridge.Type;

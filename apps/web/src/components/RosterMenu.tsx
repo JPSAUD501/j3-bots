@@ -27,6 +27,7 @@ import {
   PencilIcon,
   PinIcon,
   PinOffIcon,
+  Share2Icon,
   StarIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -65,6 +66,8 @@ export interface RosterIntents {
   readonly openDetails: (key: RosterItemKey) => void;
   /** Absent where there is no form to edit a bot. */
   readonly editProfile?: (botId: BotId) => void;
+  /** Shows the bot as a template, to save or share. */
+  readonly shareTemplate: (botId: BotId) => void;
   readonly deleteBot: (botId: BotId) => void;
 }
 
@@ -216,6 +219,9 @@ function BotRows({
             {t("details.editProfile", { name })}
           </MenuItem>
         )}
+        <MenuItem icon={<Share2Icon />} onClick={() => intents.shareTemplate(bot.id)}>
+          {t("details.shareTemplate")}
+        </MenuItem>
         <MenuSeparator />
         <MenuItem
           icon={<Trash2Icon />}

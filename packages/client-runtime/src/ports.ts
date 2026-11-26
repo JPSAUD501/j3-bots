@@ -42,6 +42,9 @@ export class CredentialStorageError extends Schema.TaggedError<CredentialStorage
   }
 }
 
+/** Where a pairing whose credential is deleted ended: refused by the server, or only on this device. */
+export type CredentialEnded = "refused" | "here";
+
 /**
  * The device credential in the platform's secure storage: the keychain or
  * keystore on mobile, IndexedDB holding the token encrypted with the
@@ -58,14 +61,15 @@ export class CredentialStore extends Context.Service<
      * another window made since. The comparison and the deletion are one
      * transaction. Succeeds with the credential storage holds afterwards.
      *
-     * Given `refusedByServer`, the server refused the credential, and the
-     * same transaction leaves that word in its place, so a window that finds
-     * the credential gone can tell that the pairing ended on the server and
-     * not only here: `refusedPairing` reads it.
+     * `ended` says where the pairing ended. `refused`: the server refused the
+     * credential, and the same transaction leaves that word in its place, so
+     * a window that finds the credential gone can tell that the pairing ended
+     * on the server and not only here: `refusedPairing` reads it. `here`: it
+     * is only signed out on this device, and nothing is left in its place.
      */
     readonly clear: (
       credential: DeviceCredential,
-      refusedByServer: boolean,
+      ended: CredentialEnded,
     ) => Effect.Effect<Option.Option<DeviceCredential>, CredentialStorageError>;
     /**
      * The pairing whose credential was deleted because the server refused

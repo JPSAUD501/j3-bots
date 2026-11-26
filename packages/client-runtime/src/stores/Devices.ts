@@ -43,6 +43,14 @@ export interface PairingOffer {
   readonly origins: ReadonlyArray<ServerOrigin>;
 }
 
+/**
+ * The origin a pairing QR code of `offer` carries: `picked`, the one the
+ * operator chose for an earlier code, while `offer` lists it, else the first
+ * `offer` lists. None when it lists none.
+ */
+export const qrOrigin = (offer: PairingOffer, picked: ServerOrigin | null): ServerOrigin | null =>
+  picked !== null && offer.origins.includes(picked) ? picked : (offer.origins[0] ?? null);
+
 const decodeOrigin = Schema.decodeUnknownOption(ServerOrigin);
 
 /**

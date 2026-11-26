@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  type CredentialEnded,
   CredentialStorageError,
   CredentialStore,
   type DeviceCredential,
@@ -104,7 +105,7 @@ export const makeCredentialStore = (options: {
     // stored a pairing since, it stays. A pairing is told by its device id,
     // read in the clear, so signing out needs nothing opened.
     clear: Effect.fn("CredentialStore.clear")(
-      (credential: DeviceCredential, refusedByServer: boolean) =>
+      (credential: DeviceCredential, ended: CredentialEnded) =>
         stored("clear").pipe(
           Effect.flatMap((found) =>
             typeof found === "string" &&
@@ -113,7 +114,7 @@ export const makeCredentialStore = (options: {
                   try: () =>
                     cell.replace(
                       found,
-                      refusedByServer ? encodeRefused({ refused: credential.deviceId }) : null,
+                      ended === "refused" ? encodeRefused({ refused: credential.deviceId }) : null,
                     ),
                   catch: () => new CredentialStorageError({ operation: "clear" }),
                 })

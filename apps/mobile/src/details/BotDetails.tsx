@@ -60,7 +60,7 @@ import { HiddenNotice } from "./HiddenNotice.tsx";
 import { useBotActions } from "./actions.ts";
 import { useOpenConnectors } from "../connectors/intents.ts";
 import { ConnectorTile, StatusWord } from "../connectors/parts.tsx";
-import { StopRow } from "./StopRow.tsx";
+import { StopRow, useFocusAfterStop } from "./StopRow.tsx";
 
 /** A read's list once loaded, or null while it loads; a bot that is gone has none. */
 const loadedList = <A,>(loaded: Loaded<ReadonlyArray<A>> | null): ReadonlyArray<A> | null =>
@@ -98,6 +98,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
   const browserNeedsSetup =
     engine._tag === "ready" && engine.value.browser?._tag === "setup-required";
   const skeleton = (count: number) => <SkeletonRows count={count} />;
+  const stopFocus = useFocusAfterStop(canStop(bot));
   return (
     <ScrollView
       className="flex-1 bg-background"
@@ -106,6 +107,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
       <Profile
         picture={<LiveBotAvatar bot={bot} size={96} markPrimary />}
         name={name}
+        headingRef={stopFocus.heading}
         badge={bot.primary ? t("details.primary") : null}
         lines={
           <>
@@ -126,7 +128,9 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
         />
       </Profile>
 
-      {canStop(bot) && <StopRow label={t("details.stop")} onPress={() => actions.stop(bot)} />}
+      {canStop(bot) && (
+        <StopRow label={t("details.stop")} onPress={() => stopFocus.stopped(actions.stop(bot))} />
+      )}
 
       {bot.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(bot)} />}
 

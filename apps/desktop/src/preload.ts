@@ -104,6 +104,7 @@ const bridge: DesktopBridge = {
       ipcRenderer.removeListener(IPC_CHANNELS.signInReturned, forward);
     };
   },
+  copySecret: (request) => ipcRenderer.invoke(IPC_CHANNELS.copySecret, request),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

@@ -55,6 +55,8 @@ export function ConversationHeader({
   const landing = useLandingSpot(item._tag === "bot" ? item.bot.id : null);
   useTurnAnnouncement(item._tag === "bot" ? item.bot : null, folds, offline, ctx, announce);
 
+  // The block with the name keeps 4 px above and below its lines, so a room's
+  // second line clears the border at the largest font sizes, where the header grows.
   return (
     <View className="min-h-12 flex-row items-center gap-1 border-b border-border px-2">
       {onBack !== null && (
@@ -74,7 +76,7 @@ export function ConversationHeader({
         onPress={onOpenDetails}
         onPressIn={() => setPressed(true)}
         onPressOut={() => setPressed(false)}
-        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-md px-1.5 active:bg-muted"
+        className="min-h-11 min-w-0 flex-1 flex-row items-center gap-2 rounded-md px-1.5 py-1 active:bg-muted"
       >
         {item._tag === "bot" ? (
           <View onLayout={landing.onLayout} style={{ opacity: landing.hidden ? 0 : 1 }}>

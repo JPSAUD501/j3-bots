@@ -65,7 +65,7 @@ import { ShellSourceProvider, type ShellSource } from "../shell/source";
 import { ordered, previewOf, type DraftEntry } from "./entries";
 import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleBrowser } from "./sampleBrowser";
-import { sampleSecrets } from "./sampleSecrets";
+import { copySample, sampleSecrets } from "./sampleSecrets";
 import { galleryVariants } from "./variants";
 import { sampleConnectors, sampleConnectorsIntents, samplePromptIntents } from "./sampleConnectors";
 import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
@@ -825,7 +825,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
     refreshSettings: nothing,
     signOutBrowser: () => Promise.resolve(true),
     providerActions: sampleProviderActions,
-    secrets,
+    secrets: { ...secrets, copy: copySample },
     refreshDevices: nothing,
     loadMoreTurns: nothing,
     retryTurns: nothing,

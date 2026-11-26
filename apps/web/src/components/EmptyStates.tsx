@@ -20,6 +20,7 @@ import { useConnectionLineShown } from "./ConnectionBanner";
 import { Button } from "./ui/button";
 import { Kbd } from "./ui/kbd";
 import { OwnHarnessLine, type ProviderActions, ProviderFix } from "./ProviderFix";
+import { engineFindings, type LocalProviderSetup, LocalSignIn } from "./ProviderSetup";
 import { ProviderUpdate } from "./ProviderUpdate";
 
 /** Three idle bots: the picture for screens where the team is still to come. */
@@ -193,10 +194,29 @@ export function NoSelection({ nextShortcut }: { nextShortcut: string }) {
 }
 
 /**
- * A conversation with nothing in it yet. A new bot speaks first, so this is
- * usually brief; while its provider is not connected, it says what connects it.
+ * Where a provider of the server this client talks to connects: from here,
+ * when the server runs on this computer; in the desktop app that runs it,
+ * from another device; otherwise with the command, on the server's machine.
  */
-export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineStatus | null }) {
+export type ConnectPlace =
+  | { readonly _tag: "here"; readonly setup: LocalProviderSetup }
+  | { readonly _tag: "desktop-app" }
+  | { readonly _tag: "server" };
+
+/**
+ * A conversation with nothing in it yet. A new bot speaks first, so this is
+ * usually brief; while its provider is not connected, it says what connects
+ * it, where it connects (`connect`).
+ */
+export function QuietConversation({
+  bot,
+  engine,
+  connect,
+}: {
+  bot: Bot;
+  engine: EngineStatus | null;
+  connect: ConnectPlace;
+}) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const name = bot.profile.name;
@@ -212,13 +232,33 @@ export function QuietConversation({ bot, engine }: { bot: Bot; engine: EngineSta
       />
       {held?._tag === "connect" && (
         <div className="flex w-full max-w-sm flex-col gap-2 text-start">
-          <p className="text-center text-sm text-muted-foreground">
-            {t("empty.quiet.connectHint")}
-          </p>
-          <CommandLine command={held.command} copyLabel={t("firstRun.connect.copy")} large />
+          {connect._tag === "desktop-app" ? (
+            <p className="text-center text-sm text-pretty text-muted-foreground">
+              {t("empty.quiet.connectInApp")}
+            </p>
+          ) : connect._tag === "here" ? (
+            <LocalSignIn
+              setup={connect.setup}
+              fallback={<ConnectCommand command={held.command} />}
+              findings={engineFindings(engine)}
+            />
+          ) : (
+            <ConnectCommand command={held.command} />
+          )}
         </div>
       )}
     </Centered>
+  );
+}
+
+/** The command that connects a provider, to run where the server is. */
+function ConnectCommand({ command }: { command: string }) {
+  const { t } = useI18n();
+  return (
+    <>
+      <p className="text-center text-sm text-muted-foreground">{t("empty.quiet.connectHint")}</p>
+      <CommandLine command={command} copyLabel={t("firstRun.connect.copy")} large />
+    </>
   );
 }
 

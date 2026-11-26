@@ -24,7 +24,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { type ReactNode, useState } from "react";
 import { View } from "react-native";
-import { Problem, SkeletonRows, SwitchRow } from "../components/form.tsx";
+import { Problem, Quiet, SkeletonRows, SwitchRow } from "../components/form.tsx";
 import { QrScanner } from "../components/QrScanner.tsx";
 import { useI18n } from "../i18n.ts";
 import { useBotList } from "../presentation.tsx";
@@ -275,7 +275,8 @@ export function lastUsedText(secret: Secret, ctx: PresentationContext): string {
 
 /**
  * Which bots may use a secret: Every bot, or, with it off, each bot by name.
- * Turning Every bot off keeps none but the bots it names.
+ * Turning Every bot off keeps none but the bots it names; with no bot to
+ * name, a line says none can use it.
  */
 export function AccessChoice({
   access,
@@ -302,6 +303,7 @@ export function AccessChoice({
         onChange={(every) => onChange(every ? { _tag: "every-bot" } : { _tag: "bots", botIds: [] })}
         readOnly={readOnly}
       />
+      {access._tag === "bots" && bots.length === 0 && <Quiet>{t("secrets.noBotsYet")}</Quiet>}
       {access._tag === "bots" &&
         bots.map((bot) => (
           <SwitchRow

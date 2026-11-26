@@ -22,6 +22,7 @@ import {
   PhoneAccessRequest,
   SealRequest,
   type SealResult,
+  SecretCopy,
 } from "@j3-bots/desktop-bridge";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -35,6 +36,7 @@ import * as Mime from "effect/http/Mime";
 import {
   app,
   BrowserWindow,
+  clipboard,
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -47,6 +49,7 @@ import {
   shell,
   type WebContents,
 } from "electron";
+import { secretClipboard } from "@j3-bots/client-runtime/presentation";
 import { desktopIcon, renderAppIcon } from "@j3-bots/design-tokens/raster";
 import * as Appearance from "./appearance.ts";
 import * as AppLinks from "./appLinks.ts";
@@ -109,6 +112,7 @@ const encodeState = Schema.encodeSync(DesktopState);
 const encodeNetwork = Schema.encodeSync(NetworkState);
 const decodeConnectRequest = Schema.decodeUnknownOption(ConnectRequest);
 const decodeSealRequest = Schema.decodeUnknownOption(SealRequest);
+const decodeSecretCopy = Schema.decodeUnknownOption(SecretCopy);
 const decodeOpenRequest = Schema.decodeUnknownOption(OpenRequest);
 const decodeLocalDeviceRequest = Schema.decodeUnknownOption(LocalDeviceRequest);
 const decodePhoneAccessRequest = Schema.decodeUnknownOption(PhoneAccessRequest);
@@ -323,6 +327,14 @@ const program = Effect.gen(function* () {
 
   const tokens = makeTokenSeal();
 
+  // The main process copies a secret's value, not the page: it alone can read
+  // the clipboard back, to take the value off only if it is still there.
+  const secretCopies = secretClipboard({
+    write: (text) => clipboard.writeText(text).then(() => true),
+    read: () => clipboard.readText(),
+    clear: () => Promise.resolve(clipboard.clear()),
+  });
+
   const sealToken = Effect.fn("desktop.sealToken")(function* (
     event: IpcMainInvokeEvent,
     request: unknown,
@@ -432,6 +444,11 @@ const program = Effect.gen(function* () {
       ipcMain.handle(IPC_CHANNELS.localPairingLink, (event, request: unknown) =>
         runPromise(localPairingLink(event, request)),
       );
+      ipcMain.handle(IPC_CHANNELS.copySecret, (event, request: unknown) => {
+        const decoded = decodeSecretCopy(request);
+        if (!fromApp(event) || Option.isNone(decoded)) return false;
+        return secretCopies.copy(decoded.value.text);
+      });
     }),
     () =>
       Effect.sync(() => {
@@ -450,6 +467,7 @@ const program = Effect.gen(function* () {
         ipcMain.removeHandler(IPC_CHANNELS.setPhoneAccess);
         ipcMain.removeHandler(IPC_CHANNELS.phoneAccess);
         ipcMain.removeHandler(IPC_CHANNELS.localPairingLink);
+        ipcMain.removeHandler(IPC_CHANNELS.copySecret);
       }),
   );
 
