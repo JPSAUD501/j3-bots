@@ -506,6 +506,12 @@ export const layer = Layer.effect(
       if (Option.isNone(top) || top.value.type !== "Directory") {
         return yield* new NotASkill({ reason: `${relative} is not a folder of your workspace` });
       }
+      // A link anywhere on the way, not only the folder itself, would lead the walk out of the
+      // workspace: the folder's real path must be the path as written.
+      const realStart = yield* fs.realPath(start).pipe(Effect.option);
+      if (Option.isNone(realStart) || realStart.value !== start) {
+        return yield* new NotASkill({ reason: `${relative} goes through a link` });
+      }
       yield* walk(start, "");
       return files;
     });

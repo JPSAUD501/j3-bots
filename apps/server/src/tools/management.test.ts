@@ -319,6 +319,31 @@ it.effect(
         refusalOf(yield* call(ada, "remove_skill", { name: "j3-routines", scope: "every-bot" })),
         MANAGEMENT_REFUSED.skillShipped,
       );
+
+      // A folder of the bot's workspace is saved with what it holds; one reached through a link,
+      // here into the primary bot's workspace, is not.
+      const path = yield* Path.Path;
+      const layout = yield* Layout;
+      const own = path.join(layout.workspace(ben.bot.id), "files", "invoices");
+      yield* fs.makeDirectory(path.join(own, "scripts"), { recursive: true });
+      yield* fs.writeFileString(path.join(own, "SKILL.md"), skillText("invoices"));
+      yield* fs.writeFileString(path.join(own, "scripts", "total.sh"), "echo total\n");
+      resultOf(yield* call(ben, "save_skill", { name: "invoices", folder: "files/invoices" }));
+      assert.strictEqual(
+        yield* fs.readFileString(
+          path.join(layout.workspace(ben.bot.id), "skills", "invoices", "scripts", "total.sh"),
+        ),
+        "echo total\n",
+      );
+      const elsewhere = path.join(layout.workspace(ada.bot.id), "files", "notes");
+      yield* fs.makeDirectory(path.join(elsewhere, "leak"), { recursive: true });
+      yield* fs.writeFileString(path.join(elsewhere, "leak", "SKILL.md"), skillText("leak"));
+      yield* fs.symlink(elsewhere, path.join(layout.workspace(ben.bot.id), "notes"));
+      assert.strictEqual(
+        refusalOf(yield* call(ben, "save_skill", { name: "leak", folder: "notes/leak" })),
+        MANAGEMENT_REFUSED.notASkill("notes/leak goes through a link"),
+      );
+      assert.isFalse(yield* fs.exists(yield* skillFile(ben.bot.id, "leak")));
     }).pipe(Effect.scoped, Effect.provide(domain)),
   SLOW,
 );
