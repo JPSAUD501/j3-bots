@@ -5,6 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import { system32 } from "@j3-bots/processes";
 import * as adminChannel from "./adminChannel.ts";
 import { LaunchFailed, type RunningServer, type ServerExit } from "./supervisor.ts";
 
@@ -93,10 +94,12 @@ const killTree = (pid: number, platform: NodeJS.Platform) =>
       resume(Effect.void);
       return;
     }
-    const taskkill = NodeChildProcess.spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
+    // By its full path: a `taskkill` earlier on the search path would be run instead.
+    const taskkill = NodeChildProcess.spawn(
+      system32(process.env, "taskkill.exe"),
+      ["/PID", String(pid), "/T", "/F"],
+      { stdio: "ignore", windowsHide: true },
+    );
     taskkill.once("error", () => resume(Effect.void));
     taskkill.once("exit", () => resume(Effect.void));
   });

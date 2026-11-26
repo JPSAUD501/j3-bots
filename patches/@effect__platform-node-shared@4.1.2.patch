@@ -1,0 +1,33 @@
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+index 08d50b16dfe564551f1bffc7cae2d3b53805e172..257a27f74d7530e435d63d68cd526058640d1fcb 100644
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -86,7 +86,10 @@ const taskkill = (childProcess, onExit = () => {}) => {
+     onExit(null);
+     return;
+   }
+-  NodeChildProcess.execFile("taskkill", ["/pid", String(childProcess.pid), "/T", "/F"], {
++  // By its full path in System32: a `taskkill` earlier on the search path, or
++  // in the working directory, would be run instead.
++  const program = `${globalThis.process.env["SystemRoot"] ?? "C:\\Windows"}\\System32\\taskkill.exe`;
++  NodeChildProcess.execFile(program, ["/pid", String(childProcess.pid), "/T", "/F"], {
+     windowsHide: true
+   }, onExit);
+ };
+diff --git a/src/NodeChildProcessSpawner.ts b/src/NodeChildProcessSpawner.ts
+index a3ead25b72db5b07e95cabe056c644b242be3393..c8f837d8a7691b60ab9564054423c15b52846064 100644
+--- a/src/NodeChildProcessSpawner.ts
++++ b/src/NodeChildProcessSpawner.ts
+@@ -157,8 +157,11 @@ const taskkill = (
+     onExit(null)
+     return
+   }
++  // By its full path in System32: a `taskkill` earlier on the search path, or
++  // in the working directory, would be run instead.
++  const program = `${globalThis.process.env["SystemRoot"] ?? "C:\\Windows"}\\System32\\taskkill.exe`
+   NodeChildProcess.execFile(
+-    "taskkill",
++    program,
+     ["/pid", String(childProcess.pid!), "/T", "/F"],
+     { windowsHide: true },
+     onExit

@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { POWERSHELL, powerShellLiteral, system32 } from "@j3-bots/processes";
 import type { AdminChannel } from "./adminChannel.ts";
 import * as Probe from "./probe.ts";
 import { STOP_DEADLINE, type RunningServer, type ServerExit } from "./supervisor.ts";
@@ -177,7 +178,7 @@ export const takeOverOnSocket = Effect.fn("Orphans.takeOverOnSocket")(function* 
  */
 const powerShell = (script: string, deadline: Duration.Duration) =>
   Probe.outputOf(
-    "powershell.exe",
+    system32(process.env, POWERSHELL),
     ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
     { deadline },
   );
@@ -264,7 +265,7 @@ export const stopRecorded = Effect.fn("Orphans.stopRecorded")(function* (file: s
       "  $ticks = $process.StartTime.ToUniversalTime().Ticks",
       "} catch { exit 0 }",
       `if ($ticks -ne ${started}) { exit 0 }`,
-      `& taskkill.exe /PID ${pid} /T /F | Out-Null`,
+      `& ${powerShellLiteral(system32(process.env, "taskkill.exe"))} /PID ${pid} /T /F | Out-Null`,
       "[Console]::Out.Write('ended')",
       "$null = $process.WaitForExit(10000)",
     ].join("\n"),
