@@ -36,6 +36,7 @@ const idle: AvatarFace = {
   tilt: 0,
   breath: 0,
   squash: 0,
+  swell: 0,
   signal: null,
   ring: 0,
   ping: 0,

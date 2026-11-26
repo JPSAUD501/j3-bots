@@ -253,7 +253,7 @@ export const plainTraits: AvatarTraits = {
 };
 
 /** The next number of the seeded sequence and the state after it (mulberry32). */
-function draw(state: number): readonly [number, number] {
+export function draw(state: number): readonly [number, number] {
   "worklet";
   const next = (state + 0x6d2b79f5) | 0;
   let t = Math.imul(next ^ (next >>> 15), 1 | next);
@@ -389,6 +389,8 @@ interface Beat {
   readonly flick?: number;
   /** Where the eye looks, in place of the state's look and of the pointer. */
   readonly look?: readonly [number, number];
+  /** The whole body larger by this share. */
+  readonly swell?: number;
 }
 
 /**
@@ -451,6 +453,29 @@ const ACTS = {
   tip: [{ until: 0.28, lean: -3.5 }],
   duck: [{ until: 0.16, duck: 3.2 }],
   slump: [{ until: 0.4, duck: 4.5 }],
+  // Its little ones (`littleOnes.ts`): it braces and wobbles before they come out, springs up off
+  // each one, stretches up to meet one that comes home, and takes it in.
+  brace: [
+    { until: 0.17, duck: 12, look: [0, 0.95], lid: 0.42 },
+    { until: 0.255, duck: 8, lean: 12, look: [0, 0.95], lid: 0.42 },
+    { until: 0.34, duck: 12, lean: -11, look: [0, 0.95], lid: 0.42 },
+    { until: 0.42, duck: 9, lean: 7, look: [0, 0.95], lid: 0.42 },
+    { until: 0.9, duck: 11, look: [0, 0.95], lid: 0.42 },
+  ],
+  pop: [
+    { until: 0.16, launch: 2.6, look: [0, 0.95], wide: 0.8, flick: 5, lid: 0.2 },
+    { until: 0.36, duck: 9, look: [0, 0.95], lid: 0.42 },
+  ],
+  reach: [{ until: 0.8, tall: 0.07, look: [0, 0.95], lid: 0, wide: 0.5, perk: 2 }],
+  gulp: [
+    { until: 0.07, tall: 0.09, lid: 0.6 },
+    { until: 0.2, duck: 8, lid: 0.6, swell: 0.1 },
+    { until: 0.8, smile: 1, lid: 0, look: [0.3, -0.2] },
+  ],
+  sulk: [
+    { until: 0.12, duck: 4.5, lid: 0.6, swell: 0.04 },
+    { until: 0.65, lid: 0.55, look: [0.2, 0.75] },
+  ],
   // Idle life.
   around: [
     { until: 0.55, look: [-0.85, -0.05] },
@@ -532,6 +557,8 @@ export interface AvatarSim {
   readonly air: boolean;
   /** Held down by a press. */
   readonly pressed: boolean;
+  /** How much larger the whole body is drawn, as a share: it swells as it takes a little one in. */
+  readonly swell: SpringState;
   /** The body's lean, and the antenna tip's lag behind the body. */
   readonly tilt: SpringState;
   readonly lagX: SpringState;
@@ -650,6 +677,7 @@ function compose(
     readonly bob: number;
     readonly tilt: number;
     readonly breath: number;
+    readonly swell: number;
   },
   lag: { readonly x: number; readonly y: number },
   blink: number,
@@ -683,6 +711,7 @@ function compose(
     tilt: body.tilt,
     breath: body.breath,
     squash: eased.squash + eased.deform,
+    swell: body.swell,
     signal: p.signal,
     ...signals,
     asleep: state === "offline",
@@ -707,7 +736,7 @@ export function stillFace(
     state,
     settled(state, traits, m.mouth),
     m,
-    { hop: 0, bob: 0, tilt: POSES[state].tilt, breath: 0 },
+    { hop: 0, bob: 0, tilt: POSES[state].tilt, breath: 0, swell: 0 },
     { x: 0, y: 0 },
     0,
     { scale: 1, glow: 0 },
@@ -742,6 +771,7 @@ export function createAvatar(seed: number, state: AvatarState): AvatarSim {
     hop: REST,
     air: false,
     pressed: false,
+    swell: REST,
     tilt: { x: POSES[state].tilt, v: 0 },
     lagX: REST,
     lagY: REST,
@@ -784,6 +814,16 @@ export type AvatarPoke =
   | "morph"
   /** Good news: it was made, or what it waited for came. */
   | "cheer"
+  /** It is about to split into its little ones: it squashes down and wobbles. */
+  | "brace"
+  /** One of its little ones comes out: it springs up off it. */
+  | "pop"
+  /** One of its little ones is on its way home: it stretches up to meet it. */
+  | "reach"
+  /** One comes home having done its part: it gulps, swells and its light glows. */
+  | "gulp"
+  /** One comes home having failed: it takes it in, and looks down. */
+  | "sulk"
   /** It comes in from above, into its place: an entrance. */
   | "arrive"
   /** The same from just above, as into a row of a list. */
@@ -835,6 +875,18 @@ export function pokeAvatar(sim: AvatarSim, poke: AvatarPoke): AvatarSim {
       return { ...begin(sim, "morph"), blinkAt: sim.time };
     case "cheer":
       return begin(sim, "cheer");
+    case "brace":
+      return begin(sim, "brace");
+    case "pop":
+      // Its antenna whips to one side, then the other.
+      return begin({ ...sim, random }, "pop", chance < 0.5 ? -1 : 1);
+    case "reach":
+      return begin(sim, "reach");
+    case "gulp":
+      // Its eye shuts as it swallows, and its light glows once.
+      return { ...begin(sim, "gulp"), blinkAt: sim.time, litAt: sim.time + 0.05 };
+    case "sulk":
+      return { ...begin(sim, "sulk"), blinkAt: sim.time };
     case "arrive":
     case "drop":
       return {
@@ -1106,6 +1158,7 @@ export function stepAvatar(sim: AvatarSim, dt: number, near: AvatarNear | null):
   const lagX = springStep(sim.lagX, trailX, pop, popDamping, dt);
   const lagY = springStep(sim.lagY, trailY, pop, popDamping, dt);
   const lit = springStep(sim.lit, entering ? 0 : 1, pop, popDamping, dt);
+  const swell = springStep(sim.swell, beat?.swell ?? 0, pop, popDamping, dt);
 
   const target = settled(state, sim.traits, m.mouth);
   const k = 1 - Math.exp(-dt * 13);
@@ -1152,6 +1205,7 @@ export function stepAvatar(sim: AvatarSim, dt: number, near: AvatarNear | null):
     eased,
     hop,
     air,
+    swell,
     tilt,
     lagX,
     lagY,
@@ -1185,6 +1239,7 @@ export function avatarBusy(sim: AvatarSim): boolean {
     sim.pressed ||
     sim.act !== null ||
     sim.time - sim.litAt < 1 ||
+    Math.abs(sim.swell.x) > 0.002 ||
     Math.abs(sim.hop.x) > 0.05 ||
     Math.abs(sim.hop.v) > 2
   );
@@ -1211,6 +1266,7 @@ export function avatarFace(sim: AvatarSim): AvatarFace {
       bob: m.bob,
       tilt: sim.tilt.x,
       breath: rests(state) ? 0 : Math.sin(breath) * 0.014 + Math.sin(breath * 2 + ph) * 0.003,
+      swell: sim.swell.x,
     },
     { x: sim.lagX.x, y: sim.lagY.x },
     blink,

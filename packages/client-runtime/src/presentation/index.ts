@@ -50,6 +50,37 @@ export {
   stillFace,
 } from "./avatar.ts";
 export {
+  createLitter,
+  type LitterPlace,
+  litterPokes,
+  type LitterSim,
+  litterStrands,
+  litterTravels,
+  littleFace,
+  type LittleSim,
+  littleSpot,
+  type LittleSpot,
+  perkLittle,
+  settleLitter,
+  type ShownLittleOnes,
+  shownLittleOnes,
+  stepLitter,
+  stillLittle,
+  syncLitter,
+} from "./littleOnes.ts";
+export {
+  liveLine,
+  PLAN_LINES,
+  type PlanLine,
+  planLines,
+  planProgress,
+  type PlanProgress,
+  type PlanStepState,
+  planWindow,
+  type PlanWindow,
+  shownPlan,
+} from "./plan.ts";
+export {
   type BotEdits,
   botPatch,
   editsAfterFailedBotSave,

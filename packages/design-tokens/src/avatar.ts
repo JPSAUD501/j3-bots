@@ -96,6 +96,8 @@ export interface AvatarFace {
   readonly breath: number;
   /** A squash, as a share of the body's height; negative stretches it, as a fall does. */
   readonly squash: number;
+  /** A swell: the whole body larger by this share, about its feet, as when it takes a little one back in. */
+  readonly swell: number;
   readonly signal: AvatarSignal | null;
   /** The working ring's turn, in degrees. */
   readonly ring: number;
@@ -234,15 +236,30 @@ function clamp01(n: number): number {
 }
 
 /**
- * The geometry of `face` on `shape`, for an avatar `px` px wide. Pure, and a
- * worklet, so the mobile app runs it on the UI thread.
+ * How a little one, a bot's small copy of itself, differs from the bot it came
+ * out of: a larger eye set lower on the body, as a young face has, a larger
+ * glint in it, and at the antenna's place a sprout with a round tip. Its body
+ * is the bot's own silhouette, drawn lighter with a rim of the bot's color
+ * (`littleOutline` wider than the body's own outline).
+ */
+export const littleFace = { eye: 1.16, eyeDrop: 3, glint: 0.34, light: 5.6, outline: 5 } as const;
+
+/**
+ * The geometry of `face` on `shape`, for an avatar `px` px wide; `little` for
+ * one of a bot's little ones (`littleFace`). Pure, and a worklet, so the
+ * mobile app runs it on the UI thread.
  *
  * Every length is rounded to a quarter of a pixel at `px`, and every turn or
  * scale to what moves a point at the body's edge that far: finer than anyone
  * sees, and coarse enough that a part at rest, or moving less than that,
  * keeps the same numbers frame after frame, so a renderer can leave it alone.
  */
-export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: number): AvatarFrame {
+export function avatarFrame(
+  shapeName: AvatarShapeName,
+  face: AvatarFace,
+  px: number,
+  little = false,
+): AvatarFrame {
   "worklet";
   const shape = avatarShapes[shapeName];
   const small = px <= AVATAR_SMALL;
@@ -254,8 +271,10 @@ export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: nu
 
   // The body: a squash or a stretch about its feet, a lean, and its rise off the ground.
   // What it loses in height it gains in width, and the other way when it stretches.
-  const sy = 1 + face.breath - face.squash;
-  const sx = 1 - face.breath * 0.6 + face.squash * 0.5 + Math.max(0, face.squash - 0.07) * 0.35;
+  const swell = 1 + face.swell;
+  const sy = (1 + face.breath - face.squash) * swell;
+  const sx =
+    (1 - face.breath * 0.6 + face.squash * 0.5 + Math.max(0, face.squash - 0.07) * 0.35) * swell;
   const t = (face.tilt * Math.PI) / 180;
   const a = turnOf(Math.cos(t) * sx);
   const b = turnOf(Math.sin(t) * sx);
@@ -272,8 +291,8 @@ export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: nu
   ];
 
   // The eye: lids from the blink, a shut eye, or the pose, whichever closes it most.
-  const scale = shape.eyeScale * (small ? 1.24 : 1);
-  const eyeY = length(shape.eye.y + face.eyeLift);
+  const scale = shape.eyeScale * (small ? 1.24 : 1) * (little ? littleFace.eye : 1);
+  const eyeY = length(shape.eye.y + face.eyeLift + (little ? littleFace.eyeDrop : 0));
   const eye: AvatarMatrix = [scale, 0, 0, scale, shape.eye.x, eyeY];
   const shutLids = Math.min(1, face.shut * 2);
   const top = length(-R + Math.max(face.lidTop, face.blink, shutLids) * R);
@@ -294,7 +313,7 @@ export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: nu
   const tipX = length(root.x + Math.sin(angle) * face.antennaLength + face.lagX);
   const tipY = length(root.y - Math.cos(angle) * face.antennaLength + face.lagY);
   const signalScale = small ? 1.25 : 1;
-  const lightR = length((small ? 6.4 : 4.8) * face.lightScale);
+  const lightR = length((little ? littleFace.light : small ? 6.4 : 4.8) * face.lightScale);
   const ring = turnOf((face.ring * Math.PI) / 180);
 
   return {
@@ -302,9 +321,15 @@ export function avatarFrame(shapeName: AvatarShapeName, face: AvatarFace, px: nu
     eye,
     open: face.shut < 0.5,
     pupil: { x: px0, y: py0, r: pupil },
-    glint: small
-      ? null
-      : { x: length(px0 + pupil * 0.36), y: length(py0 - pupil * 0.38), r: length(pupil * 0.27) },
+    // A little one keeps its glint at any size: it is most of what makes its eye a young one.
+    glint:
+      small && !little
+        ? null
+        : {
+            x: length(px0 + pupil * 0.36),
+            y: length(py0 - pupil * 0.38),
+            r: length(pupil * (little ? littleFace.glint : 0.27)),
+          },
     cheek: overlap(lid, length(R * 2 + 3 + (R + 2.4 - (R * 2 + 3)) * face.cheek), R + 1),
     upperLid: segment(lid, top, true),
     lowerLid: segment(lid, bottom, false),

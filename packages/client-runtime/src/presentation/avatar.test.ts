@@ -364,6 +364,52 @@ describe("a press and a tap", () => {
   });
 });
 
+describe("a bot and its little ones", () => {
+  const working = () => run(createAvatar(seed, "working"), 0.5);
+
+  it("squashes down while it braces, and is let up once the last one is out", () => {
+    const braced = run(pokeAvatar(working(), "brace"), 0.4);
+    expect(braced.hop.x).toBeGreaterThan(5);
+    expect(avatarFace(braced).squash).toBeGreaterThan(0.1);
+    const popped = run(pokeAvatar(braced, "pop"), 2.5);
+    expect(Math.abs(popped.hop.x)).toBeLessThan(0.2);
+  });
+
+  it("springs up off each one that comes out, and four in a row rise no higher than a hop", () => {
+    const { top: once } = highest(pokeAvatar(working(), "hop"), 1);
+    const { top } = highest(pokeAvatar(working(), "brace"), 1.4, (now, frame) =>
+      frame >= 28 && frame < 68 && (frame - 28) % 10 === 0 ? pokeAvatar(now, "pop") : now,
+    );
+    expect(top).toBeGreaterThan(1);
+    expect(top).toBeLessThan(once);
+  });
+
+  it("swells as it gulps one back in, and comes back to its size", () => {
+    let sim = pokeAvatar(working(), "gulp");
+    let most = 0;
+    for (let frame = 0; frame < 30; frame++) {
+      sim = stepAvatar(sim, 1 / 60, null);
+      most = Math.max(most, avatarFace(sim).swell);
+    }
+    expect(most).toBeGreaterThan(0.04);
+    expect(Math.abs(avatarFace(run(sim, 2)).swell)).toBeLessThan(0.005);
+  });
+
+  it("glows as it gulps one that did its part, and not one that failed", () => {
+    const glow = (poke: "gulp" | "sulk") => {
+      let sim = pokeAvatar(working(), poke);
+      let most = 0;
+      for (let frame = 0; frame < 30; frame++) {
+        sim = stepAvatar(sim, 1 / 60, null);
+        most = Math.max(most, avatarFace(sim).glow);
+      }
+      return most;
+    };
+    expect(glow("gulp")).toBeGreaterThan(0.5);
+    expect(glow("sulk")).toBe(0);
+  });
+});
+
 describe("an entrance", () => {
   const entering = () => pokeAvatar(createAvatar(seed, "idle"), "arrive");
 

@@ -51,6 +51,45 @@ export const botBubble = (color: BotColor): Themed => ({
 });
 
 /**
+ * How much of a bot's color one of its little ones keeps in its body: the
+ * rest is white, so it is the bot's color made lighter in both themes. Its
+ * rim stays the bot's own color, which is what keeps its silhouette 3:1
+ * against every canvas.
+ */
+export const littleTint = { light: 0.46, dark: 0.58 } as const satisfies Record<
+  keyof Themed,
+  number
+>;
+
+/** A little one's body: its bot's color, lighter. Derived from `botPalette`. */
+export const botLittle = (color: BotColor): Themed => ({
+  light: mixOklab(botPalette[color].light, "#ffffff", littleTint.light),
+  dark: mixOklab(botPalette[color].dark, "#ffffff", littleTint.dark),
+});
+
+/**
+ * A little one that could not finish: its body and its rim without color,
+ * whichever bot it came out of. The rim keeps 3:1 against every canvas.
+ */
+export const littleFailed = {
+  body: themed("#c3c3ca", "#4a4a52"),
+  rim: themed("#84848e", "#7a7a84"),
+} as const;
+
+/**
+ * A little one's body and rim in `theme` as `#rrggbb`, for a renderer that
+ * takes no CSS color.
+ */
+export const littleColors = (
+  color: BotColor,
+  theme: keyof Themed,
+  failed: boolean,
+): { readonly body: string; readonly rim: string } =>
+  failed
+    ? { body: littleFailed.body[theme], rim: littleFailed.rim[theme] }
+    : { body: hexColor(botLittle(color)[theme]), rim: hexColor(botPalette[color][theme]) };
+
+/**
  * The eye, the same in both themes: a white lens and a near-black pupil,
  * which keep 18:1 between them on any body. The glint is the eye's white.
  */

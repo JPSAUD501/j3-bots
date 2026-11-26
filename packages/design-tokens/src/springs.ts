@@ -187,6 +187,51 @@ export const lift = {
 } as const;
 
 /**
+ * The litter: a bot's little ones, the small copies of itself it splits into
+ * when its work runs in parallel (`presentation/littleOnes.ts` in the client
+ * runtime). The bot pops them out from under itself; each falls as a thrown
+ * thing does, lands by its line and works there; one that ended jumps back up
+ * into the bot. Times are in seconds, distances and speeds in px, as the
+ * model takes them: every surface draws the same family from these.
+ */
+export const litter = {
+  /** How many little ones a turn shows; the rest are counted, "+2 more". */
+  most: 4,
+  /** A little one's size, as a share of the bot's beside the turn. */
+  share: 0.75,
+  /** What a little one in the air falls at, per second squared. */
+  gravity: 760,
+  /** How fast the bot throws one down as it pops out, per second. */
+  thrown: 95,
+  /** It starts at this share of its size, inside the bot, and grows on `pop` as it comes out. */
+  bud: 0.3,
+  /** The bot braces and wobbles this long before the first of several comes out; before one alone, `leadOne`. */
+  lead: 0.46,
+  leadOne: 0.16,
+  /** They come out this far apart. */
+  gap: 0.17,
+  /** A strand of the bot's color holds one to the bot until it is this far from it. */
+  strand: 27,
+  /** One that ended ducks this long before it jumps home; one that failed stands grey for `failed`, then ducks for `failedDuck`. */
+  duck: 0.1,
+  failed: 0.95,
+  failedDuck: 0.22,
+  /** How fast it still rises as it reaches the bot, per second: it bumps the bot. One that failed only just makes it. */
+  arrive: 150,
+  arriveFailed: 20,
+  /** On its way home it shrinks to this share over the last `shrink` seconds, held to the bot by a strand from `reach` px away. */
+  home: 0.4,
+  shrink: 0.11,
+  reach: 17,
+  /** Its brothers look up after it for this long. */
+  watch: 0.7,
+  /** Its line of words comes in on `soft` once it lands, and leaves on the `out` ease in this many ms as it goes. */
+  wordsOut: 160,
+  /** Space under the last line, in px, before what follows the family. */
+  foot: 6,
+} as const;
+
+/**
  * The stage: the first run and a bot's entrance into the roster, drawn the
  * same way by every surface. A dark floor, a spotlight per bot, and bots that
  * come down into the light and land with weight. Times are in ms, distances
