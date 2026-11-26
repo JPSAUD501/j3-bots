@@ -29,6 +29,7 @@ import * as DateTime from "effect/DateTime";
 import * as Redacted from "effect/Redacted";
 import { useState, useSyncExternalStore } from "react";
 import type { SecretsAccess } from "../components/secrets/parts";
+import { writeClipboard } from "../lib/clipboard";
 
 /** The sample's old vault password, in the gallery's notes. */
 export const SAMPLE_OLD_VAULT_PASSWORD = "correct horse";
@@ -249,9 +250,13 @@ export function sampleSecrets({ state, secrets = [], onSaved, now }: Options): S
   };
 }
 
+/** Copies a sample value as a browser does: it stays on the clipboard. */
+export const copySample = (value: Redacted.Redacted<string>): Promise<boolean> =>
+  writeClipboard(Redacted.value(value));
+
 /** Sample secrets for one gallery frame, as they change. */
 export function useSampleSecrets(options: Options): SecretsAccess {
   const [secrets] = useState(() => sampleSecrets(options));
   const view = useSyncExternalStore(secrets.view.subscribe, secrets.view.get);
-  return { view, intents: secrets };
+  return { view, intents: { ...secrets, copy: copySample } };
 }

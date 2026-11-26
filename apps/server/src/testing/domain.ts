@@ -6,6 +6,7 @@ import * as TestEngine from "@j3-bots/engine-t3/testing";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { SkillFetchFailed, SkillRepositories } from "../skills/SkillRepositories.ts";
 import * as TestGitHost from "./gitHost.ts";
@@ -200,6 +201,14 @@ export const machine = machineWith(TestPush.layer);
  * engine and the in-memory push service.
  */
 export const layer = Domain.layer.pipe(Layer.provideMerge(machine));
+
+/**
+ * The whole domain over the file system `wrap` makes of the machine's, as
+ * one whose disk fails a given write. The machine, and a test, keep the
+ * machine's own.
+ */
+export const layerOverFileSystem = (wrap: (fs: FileSystem.FileSystem) => FileSystem.FileSystem) =>
+  Domain.layer.pipe(Layer.updateService(FileSystem.FileSystem, wrap), Layer.provideMerge(machine));
 
 /**
  * The whole domain, with `entries` as the MCP Registry's: a search finds

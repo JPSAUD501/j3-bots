@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ReactNode } from "react";
+import type { ComponentRef, ReactNode, Ref } from "react";
 import { View } from "react-native";
 import { displaySpacing, Text } from "../text.tsx";
 
@@ -9,35 +9,45 @@ import { displaySpacing, Text } from "../text.tsx";
  * on it. The lines are `ProfileLine`s, set where they stand, so two lines
  * that read the same never clash.
  */
-export function Profile(props: {
+export function Profile({
+  picture,
+  name,
+  badge,
+  lines,
+  children,
+  headingRef,
+}: {
   readonly picture: ReactNode;
   readonly name: string;
   readonly badge: string | null;
   readonly lines: ReactNode;
   readonly children?: ReactNode;
+  /** The name, a heading, for a screen reader to be moved to. */
+  readonly headingRef?: Ref<ComponentRef<typeof Text>>;
 }) {
   return (
     <View className="items-center px-6 pt-6 pb-2">
-      {props.picture}
+      {picture}
       <View className="mt-3 max-w-full flex-row items-center gap-2">
         <Text
+          ref={headingRef}
           accessibilityRole="header"
           face="display"
           numberOfLines={1}
           className="shrink text-2xl text-foreground"
           style={{ letterSpacing: displaySpacing(24) }}
         >
-          {props.name}
+          {name}
         </Text>
-        {props.badge !== null && (
+        {badge !== null && (
           <Text className="rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
-            {props.badge}
+            {badge}
           </Text>
         )}
       </View>
-      {props.lines}
-      {props.children !== undefined && (
-        <View className="mt-4 flex-row flex-wrap justify-center gap-2">{props.children}</View>
+      {lines}
+      {children !== undefined && (
+        <View className="mt-4 flex-row flex-wrap justify-center gap-2">{children}</View>
       )}
     </View>
   );

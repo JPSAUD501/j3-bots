@@ -31,7 +31,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from "react";
-import type { PairingOffer, SettingsSaves } from "@j3-bots/client-runtime";
+import { type PairingOffer, qrOrigin, type SettingsSaves } from "@j3-bots/client-runtime";
 import {
   clockTime,
   connectCommand,
@@ -992,6 +992,10 @@ function DevicesSection({
   const { t } = ctx.i18n;
   const offlineId = useId();
   const [pairing, setPairing] = useState<Pairing>({ _tag: "idle" });
+  // The address the operator picked for the QR code. Kept here, since the code
+  // shown goes while a new one is fetched, and the pick holds while it is one
+  // of the new code's addresses.
+  const [picked, setPicked] = useState<ServerOrigin | null>(null);
   // Revocations under way or not confirmed. One the server confirms leaves the list with its
   // device; for the others the list is read again, and shows whether the device is still there.
   const [revoking, setRevoking] = useState<ReadonlyMap<DeviceId, "pending" | "failed">>(new Map());
@@ -1087,7 +1091,9 @@ function DevicesSection({
           </p>
         )}
         <div role="status" className="text-sm">
-          {pairing._tag === "started" && <PairingCodeShown offer={pairing} />}
+          {pairing._tag === "started" && (
+            <PairingCodeShown offer={pairing} picked={picked} onPick={setPicked} />
+          )}
           {pairing._tag === "failed" && (
             <p className="text-xs text-blocked">{t("settings.pair.failed")}</p>
           )}
@@ -1100,17 +1106,23 @@ function DevicesSection({
 /**
  * The code to enter on the other device and, when the server can be reached
  * from another device, a QR code of the pairing link for a phone's camera. The
- * link carries the first origin the offer lists unless the operator picks
- * another of them.
+ * link carries `picked` while the offer lists it, else the first origin the
+ * offer lists. Under the QR code, what a sign-in gate in front of the server
+ * would do to it.
  */
-function PairingCodeShown({ offer }: { offer: PairingOffer }) {
+function PairingCodeShown({
+  offer,
+  picked,
+  onPick,
+}: {
+  offer: PairingOffer;
+  picked: ServerOrigin | null;
+  onPick: (origin: ServerOrigin) => void;
+}) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const addressId = useId();
-  const [picked, setPicked] = useState<ServerOrigin | null>(null);
-  // A new code may come with other addresses: the pick holds while it is one of them.
-  const server =
-    picked !== null && offer.origins.includes(picked) ? picked : (offer.origins[0] ?? null);
+  const server = qrOrigin(offer, picked);
   return (
     <div className="flex flex-col gap-2">
       <p className="text-xs text-muted-foreground">
@@ -1128,6 +1140,11 @@ function PairingCodeShown({ offer }: { offer: PairingOffer }) {
           <p className="text-2xs text-muted-foreground">
             {t("settings.pair.expires", { time: clockTime(offer.expiresAt, ctx) })}
           </p>
+          {server !== null && (
+            <p className="max-w-xs text-2xs text-pretty text-muted-foreground">
+              {t("settings.pair.gate")}
+            </p>
+          )}
           {server !== null && offer.origins.length > 1 && (
             <div className="flex flex-col gap-1 pt-2">
               <label htmlFor={addressId} className="text-xs">
@@ -1140,7 +1157,7 @@ function PairingCodeShown({ offer }: { offer: PairingOffer }) {
                   const chosen = offer.origins.find(
                     (origin) => origin === event.currentTarget.value,
                   );
-                  if (chosen !== undefined) setPicked(chosen);
+                  if (chosen !== undefined) onPick(chosen);
                 }}
                 className={lineField}
               >

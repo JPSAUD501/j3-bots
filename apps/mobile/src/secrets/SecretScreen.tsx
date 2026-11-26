@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { SecretsFailure, SecretsHandle, SecretsResult } from "@j3-bots/client-runtime";
-import { clockTime } from "@j3-bots/client-runtime/presentation";
+import { clockTime, secretClipboard } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { activityTime } from "@j3-bots/client-runtime/wording";
 import {
@@ -15,7 +15,7 @@ import * as DateTime from "effect/DateTime";
 import * as Redacted from "effect/Redacted";
 import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AppState, ScrollView, View } from "react-native";
+import { AppState, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DeleteButton, Problem, Quiet, Section } from "../components/form.tsx";
 import { useI18n } from "../i18n.ts";
@@ -34,6 +34,35 @@ import {
 import { shownValues } from "./shown.ts";
 
 type Props = NativeStackScreenProps<Screens, "secret">;
+
+/** Puts a secret's value on the clipboard, marked sensitive: Android shows no preview of it. */
+const write = (text: string) => Clipboard.setStringAsync(text, { android: { isSensitive: true } });
+
+/**
+ * Copies a value from a secret's page: whether it got there. On Android it is
+ * taken off the clipboard after a while, if the clipboard still holds it.
+ * iOS asks the operator before an app reads what another one copied, so the
+ * app could not check without asking: there it stays.
+ */
+const copySecret: (text: string) => Promise<boolean> =
+  Platform.OS === "android"
+    ? secretClipboard(
+        {
+          write,
+          read: () => Clipboard.getStringAsync(),
+          clear: () => Clipboard.setStringAsync("").then(() => undefined),
+        },
+        {
+          active: () => AppState.currentState === "active",
+          onActive: (listener) => {
+            const subscription = AppState.addEventListener("change", (state) => {
+              if (state === "active") listener();
+            });
+            return () => subscription.remove();
+          },
+        },
+      ).copy
+    : write;
 
 const fieldLabel = {
   value: "secrets.field.value",
@@ -267,11 +296,7 @@ function ShownValue({
             variant="quiet"
             label={copied ? t("secrets.copied") : t("secrets.copy")}
             accessibilityLabel={`${t("secrets.copy")}: ${label}`}
-            onPress={() =>
-              void Clipboard.setStringAsync(Redacted.value(value), {
-                android: { isSensitive: true },
-              }).then(() => setCopied(true))
-            }
+            onPress={() => void copySecret(Redacted.value(value)).then(setCopied)}
           />
         )}
         <Button

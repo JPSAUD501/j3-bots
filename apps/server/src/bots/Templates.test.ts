@@ -13,8 +13,10 @@ import {
 } from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { Layout } from "../Layout.ts";
@@ -289,4 +291,48 @@ it.effect("creates nothing when a routine's schedule is refused", () =>
     assert.strictEqual((yield* store.list).length, known);
     assert.deepStrictEqual(yield* fs.readDirectory(bots), before);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** A file system whose disk fails to put the `name` skill's file in place. */
+const failingSkill = (name: string) => (fs: FileSystem.FileSystem) =>
+  FileSystem.FileSystem.of({
+    ...fs,
+    rename: (from, to) =>
+      to.endsWith(`/skills/${name}/SKILL.md`)
+        ? Effect.fail(
+            PlatformError.systemError({
+              _tag: "Unknown",
+              module: "FileSystem",
+              method: "rename",
+              description: "No space left on the device",
+              pathOrDescriptor: to,
+            }),
+          )
+        : fs.rename(from, to),
+  });
+
+it.effect("leaves no bot and no workspace when a skill fails after another was written", () =>
+  Effect.gen(function* () {
+    const store = yield* BotStore;
+    const layout = yield* Layout;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bots = path.dirname(layout.workspace(BotId.make("any")));
+    yield* fs.makeDirectory(bots, { recursive: true });
+    const before = yield* fs.readDirectory(bots);
+    const known = (yield* store.list).length;
+
+    const created = yield* createFrom({
+      template: template({
+        skills: [
+          { name: "triage", text: TRIAGE },
+          { name: "digest", text: TRIAGE.replace("triage", "digest") },
+        ],
+      }),
+    }).pipe(Effect.exit);
+
+    assert.isTrue(Exit.isFailure(created));
+    assert.strictEqual((yield* store.list).length, known);
+    assert.deepStrictEqual(yield* fs.readDirectory(bots), before);
+  }).pipe(Effect.provide(TestDomain.layerOverFileSystem(failingSkill("digest")))),
 );

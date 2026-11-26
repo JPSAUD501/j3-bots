@@ -113,6 +113,12 @@ export {
 export { type FileIcon, fileIcon, fileKind, showsImage } from "./files.ts";
 export { webAddress } from "./links.ts";
 export {
+  type DeviceClipboard,
+  type Foreground,
+  SECRET_COPIED_FOR,
+  secretClipboard,
+} from "./secretClipboard.ts";
+export {
   addressed,
   draggedText,
   type DraggedText,

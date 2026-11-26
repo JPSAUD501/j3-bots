@@ -4,7 +4,7 @@ import { at, message } from "@j3-bots/client-runtime/testing";
 import { buildTimeline } from "@j3-bots/client-runtime/presentation";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { sampleSecrets } from "../gallery/sampleSecrets";
+import { copySample, sampleSecrets } from "../gallery/sampleSecrets";
 import { Timeline, type TimelineIntents } from "./Timeline";
 import { ownFrameHeight } from "./VisualCard";
 
@@ -60,7 +60,7 @@ const shown = (page: string) =>
       workSteps={() => null}
       submitting={() => false}
       intents={intents}
-      secrets={{ view: secrets.view.get(), intents: secrets }}
+      secrets={{ view: secrets.view.get(), intents: { ...secrets, copy: copySample } }}
       onOpenPair={() => {}}
       onOpenRoom={() => {}}
     />,

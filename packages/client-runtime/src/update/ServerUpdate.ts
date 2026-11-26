@@ -81,6 +81,22 @@ export type ServerUpdateView =
       readonly last: ReceivedUpdateStatus;
     };
 
+/**
+ * Whether the server says, in what it said last, that the desktop app runs it
+ * (`desktop-managed`). A client elsewhere, as a phone, then reaches the app's
+ * own server, on a computer with no `j3-bots` command: what is set up there
+ * is set up in the app.
+ */
+export const runByDesktopApp = (view: ServerUpdateView): boolean => {
+  const last =
+    view._tag === "status"
+      ? view.status
+      : view._tag === "unread" || view._tag === "unsupported"
+        ? null
+        : view.last;
+  return last?.canUpdate._tag === "unable" && last.canUpdate.reason === "desktop-managed";
+};
+
 /** The last update's result, as the server reports it. */
 export type UpdateResult = NonNullable<ReceivedUpdateStatus["lastResult"]>;
 

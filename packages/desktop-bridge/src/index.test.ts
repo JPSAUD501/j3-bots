@@ -233,6 +233,7 @@ describe("the desktop bridge", () => {
       expectSignIn: call,
       stopCatchingSignIn: call,
       onSignInReturn: call,
+      copySecret: call,
     };
     const state = { ...LOCAL_OFF, server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));

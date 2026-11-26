@@ -200,7 +200,11 @@ const botWake = (
 const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<SystemEvent> => {
   switch (payload._tag) {
     case "first-run":
-      return Effect.succeed({ name: "first-run", askName });
+      return Effect.succeed({
+        name: "first-run",
+        askName,
+        fromTemplate: payload.fromTemplate === true,
+      });
     case "undelivered":
       return Effect.succeed({ name: "undelivered" });
     case "browser-help":
@@ -1494,7 +1498,7 @@ export const layer = Layer.effect(
       for (const one of unseen) {
         if (
           one.item === null ||
-          fitsEngine(system({ name: "first-run", askName: false }, [one.item]))
+          fitsEngine(system({ name: "first-run", askName: false, fromTemplate: false }, [one.item]))
         ) {
           carried.push(one);
         } else dropped.push(one.source);

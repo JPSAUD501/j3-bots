@@ -30,6 +30,7 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 import {
+  type CredentialEnded,
   type CredentialStorageError,
   CredentialStore,
   type DeviceCredential,
@@ -395,9 +396,9 @@ export const layer = Layer.effect(
     const end = (
       ended: DeviceCredential,
       reason: Exclude<UnpairedReason, "new">,
-      refusedByServer: boolean,
+      endedWhere: CredentialEnded,
     ) =>
-      store.clear(ended, refusedByServer).pipe(
+      store.clear(ended, endedWhere).pipe(
         Effect.flatMap((left) => {
           const newer = Option.filter(left, (found) => !sameCredential(found, ended));
           return follow(() =>
@@ -581,7 +582,7 @@ export const layer = Layer.effect(
             // The server refused this credential. The refusal may come late,
             // after another window paired anew: that pairing stays.
             refused.add(current.credential.deviceId);
-            yield* end(current.credential, "signed-out", true).pipe(
+            yield* end(current.credential, "signed-out", "refused").pipe(
               Effect.catchTag("CredentialStorageError", (error) =>
                 Effect.logWarning("The revoked credential stays in storage", error).pipe(
                   Effect.andThen(follow(() => ({ _tag: "none", reason: "signed-out" }))),
@@ -675,7 +676,7 @@ export const layer = Layer.effect(
         // here, or the credential that ended may still be there.
         const stored = yield* store.load;
         if (Option.isSome(stored) && stored.value.deviceId === pairing) {
-          return yield* end(stored.value, reason, false);
+          return yield* end(stored.value, reason, "here");
         }
         return yield* follow(() =>
           Option.match(stored, {
@@ -686,7 +687,7 @@ export const layer = Layer.effect(
       }
       // This window already follows a pairing made since: it stays.
       if (current.credential.deviceId !== pairing) return "paired-anew";
-      return yield* end(current.credential, reason, false);
+      return yield* end(current.credential, reason, "here");
     });
 
     const awaitSession = (after: number) =>

@@ -108,6 +108,8 @@ export const IPC_CHANNELS = {
   stopCatchingSignIn: "j3bots:stop-catching-sign-in",
   /** From the main process, as the browser comes back from a sign-in: `SignInReturn`. */
   signInReturned: "j3bots:sign-in-returned",
+  /** `SecretCopy`, answered with whether it reached the clipboard. */
+  copySecret: "j3bots:copy-secret",
 } as const;
 
 /** What the preload script puts on `window[BRIDGE_KEY]`. Its answers are decoded by the page. */
@@ -189,4 +191,6 @@ export interface DesktopBridge {
   readonly stopCatchingSignIn: (request: unknown) => void;
   /** Calls `listener` with each return from a sign-in (a `SignInReturn`); answers a function that stops it. */
   readonly onSignInReturn: (listener: (signInReturn: unknown) => void) => () => void;
+  /** Puts a secret's value on the clipboard, for a while (a `SecretCopy`). */
+  readonly copySecret: (request: unknown) => Promise<unknown>;
 }

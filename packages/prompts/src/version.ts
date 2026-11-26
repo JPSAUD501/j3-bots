@@ -142,11 +142,13 @@ const SAMPLE_WAKES: ReadonlyArray<Wake> = [
     triggerData: "text",
     dueAt: at,
   },
-  ...[false, true].map((askName): Wake => ({
-    ...base,
-    kind: "system",
-    event: { name: "first-run", askName },
-  })),
+  ...[false, true].flatMap((askName) =>
+    [false, true].map((fromTemplate): Wake => ({
+      ...base,
+      kind: "system",
+      event: { name: "first-run", askName, fromTemplate },
+    })),
+  ),
   {
     ...base,
     kind: "system",

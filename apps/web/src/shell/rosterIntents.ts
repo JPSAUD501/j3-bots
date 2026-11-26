@@ -37,6 +37,7 @@ export const rosterIntents = (
     navigation.select(key);
     navigation.setDetailsOpen(true);
   },
+  shareTemplate: intents.shareBotTemplate,
   deleteBot: intents.deleteBot,
   ...(intents.editProfile === undefined ? {} : { editProfile: intents.editProfile }),
 });

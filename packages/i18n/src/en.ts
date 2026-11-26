@@ -328,6 +328,7 @@ export const en = {
   "secrets.bots": "Bots that may use it",
   "secrets.everyBot": "Every bot",
   "secrets.noBot": "No bot yet",
+  "secrets.noBotsYet": "There are no bots yet, so no bot can use it.",
   "secrets.reference": "Bots use it as {reference}",
   "secrets.lastUsed": "Used by {name} {when}",
   "secrets.lastUsedBy": "Used {when}",
@@ -958,6 +959,8 @@ export const en = {
   "empty.quiet.waitingForResetAt": "{name} says hello when the usage limit resets {when}.",
   "empty.quiet.room":
     "No messages yet. Everyone here reads what you write: with no @, whoever has something to add answers; an @ speaks to the bots you name.",
+  "empty.quiet.connectInApp":
+    "To connect one, sign in from Settings → Providers in J3 Bots, on the computer it runs on.",
   "empty.quiet.connectHint": "To connect one, run this on the machine where J3 Bots is installed.",
 
   "message.sending": "Sending…",
@@ -1435,6 +1438,8 @@ export const en = {
   "settings.pair.scanOrEnter":
     "Scan the QR code with a phone’s camera, or enter the code on the other device:",
   "settings.pair.qr": "QR code that pairs a device with J3 Bots at {address}",
+  "settings.pair.gate":
+    "If a sign-in page guards J3 Bots, sign in on the phone before you scan, or type the code.",
   "settings.pair.address": "Address in the QR code",
   "settings.pair.expires": "Works once, until {time}",
   "settings.pair.failed": "No code was made. Try again.",

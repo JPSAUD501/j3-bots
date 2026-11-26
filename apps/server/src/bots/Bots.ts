@@ -529,6 +529,8 @@ export const layer = Layer.effect(
       readonly furnish: (botId: BotId) => Effect.Effect<void, CommandError>;
       /** The bot whose `create_bot` makes it, in that turn, or null for the operator's. */
       readonly madeBy: MadeBy<E> | null;
+      /** It is made from a template, which its first wake tells it. */
+      readonly fromTemplate: boolean;
     }): Effect.Effect<Bot, CommandError | E> =>
       Effect.gen(function* () {
         // The bot being saved, once it has an id: a creation that fails leaves
@@ -580,10 +582,11 @@ export const layer = Layer.effect(
                   botId: id,
                   kind: "system",
                   audience: conversation,
-                  payload:
-                    input.madeBy === null
-                      ? { _tag: "first-run" }
-                      : { _tag: "first-run", madeIn: input.madeBy.turn },
+                  payload: {
+                    _tag: "first-run",
+                    ...(input.madeBy === null ? {} : { madeIn: input.madeBy.turn }),
+                    ...(input.fromTemplate ? { fromTemplate: true } : {}),
+                  },
                   sourceEntryId: null,
                   hops: 0,
                   retryOf: null,
@@ -656,6 +659,7 @@ export const layer = Layer.effect(
           draft.permissionMode === undefined ? "server" : "operator",
         furnish: () => Effect.void,
         madeBy: input.madeBy ?? null,
+        fromTemplate: false,
       });
 
     /** A template's trigger as the operator's routine runs it: a schedule in their time zone. */
@@ -728,6 +732,7 @@ export const layer = Layer.effect(
         permissionModeChooser: () => "operator",
         furnish: furnishFrom(template),
         madeBy: null,
+        fromTemplate: true,
       });
     };
 

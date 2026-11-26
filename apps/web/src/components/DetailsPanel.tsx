@@ -33,15 +33,7 @@ import {
   WebhookIcon,
   XIcon,
 } from "lucide-react";
-import {
-  useCallback,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactElement,
-  type ReactNode,
-  type RefObject,
-} from "react";
+import { useState, type ReactElement, type ReactNode, type RefObject } from "react";
 import {
   canStop,
   connectorsOf,
@@ -51,6 +43,7 @@ import {
 import { useBots, useI18n, usePresentation } from "../app/context";
 import { cn } from "../lib/cn";
 import { ConnectorTile, StatusWord } from "./connectors/parts";
+import { useFocusAfterStop } from "./focusAfterStop";
 import {
   activityTime,
   fileSize,
@@ -190,30 +183,13 @@ function Apart({ children }: { children: ReactNode }) {
 }
 
 /**
- * Gives the pane's heading the focus once the Stop that held it goes, as it
- * does when the work it ends is over. Answers the ref for the Stop.
+ * The row that stops the work under way: an icon, what it does, and what it
+ * shows at its end. While it stops, it is marked disabled and takes no hover.
  */
-function useFocusAfterStop(heading: RefObject<HTMLHeadingElement | null> | undefined) {
-  const left = useRef(false);
-  const stopRef = useCallback((element: HTMLButtonElement | null) => {
-    if (element === null) return;
-    // React runs this before it takes the button out of the page, while focus is still on it.
-    return () => {
-      if (element === document.activeElement) left.current = true;
-    };
-  }, []);
-  useLayoutEffect(() => {
-    if (!left.current) return;
-    left.current = false;
-    const active = document.activeElement;
-    if (active !== null && active !== document.body) return;
-    heading?.current?.focus();
-  });
-  return stopRef;
-}
-
-/** The row that stops the work under way: an icon, what it does, and what it shows at its end. */
-const stopRow = cn(rowButton, "items-center aria-disabled:text-muted-foreground");
+const stopRow = cn(
+  rowButton,
+  "items-center aria-disabled:text-muted-foreground aria-disabled:hover:bg-transparent",
+);
 
 function StopRowContent({ label, end }: { label: string; end?: ReactNode }) {
   return (
@@ -347,7 +323,11 @@ export function BotDetails({
           >
             <StopRowContent
               label={t("details.stop")}
-              end={<Kbd className="pointer-coarse:hidden">{stopShortcut.label}</Kbd>}
+              end={
+                <Kbd aria-hidden className="pointer-coarse:hidden">
+                  {stopShortcut.label}
+                </Kbd>
+              }
             />
           </button>
         </StopPlace>

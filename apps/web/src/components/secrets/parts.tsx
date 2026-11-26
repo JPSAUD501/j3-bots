@@ -2,6 +2,7 @@
 import type { SecretsFailure, SecretsHandle, SecretsView } from "@j3-bots/client-runtime";
 import { secretsFailureText } from "@j3-bots/client-runtime/wording";
 import type { Bot, SecretAccess } from "@j3-bots/contracts";
+import type * as Redacted from "effect/Redacted";
 import { type ReactNode, useId } from "react";
 import { useBots, useI18n } from "../../app/context";
 import { cn } from "../../lib/cn";
@@ -9,8 +10,16 @@ import { Checkbox } from "../ui/checkbox";
 import { lineField } from "../ui/field";
 import { Switch } from "../ui/switch";
 
-/** What the app asks of the secrets: every request of `SecretsHandle`, each answered as a promise. */
-export type SecretsIntents = Omit<SecretsHandle, "view">;
+/**
+ * What the app asks of the secrets: every request of `SecretsHandle`, each
+ * answered as a promise, and `copy`, which puts a value on the clipboard:
+ * whether it got there. The desktop app takes it off again after a while, if
+ * the clipboard still holds it; a browser cannot read the clipboard back to
+ * tell, so there it stays until something else is copied.
+ */
+export type SecretsIntents = Omit<SecretsHandle, "view"> & {
+  readonly copy: (value: Redacted.Redacted<string>) => Promise<boolean>;
+};
 
 /** The secrets as a screen shows them, and what it can ask of them. */
 export interface SecretsAccess {
@@ -127,7 +136,8 @@ export function SwitchLine({
 /**
  * Which bots may use a secret: every bot, which takes bots made later too,
  * or each bot by name. Turning "Every bot" off leaves every bot ticked, for
- * the operator to take some out.
+ * the operator to take some out; with no bot to tick, a line says none can
+ * use it.
  */
 export function AccessPicker({
   bots,
@@ -153,7 +163,10 @@ export function AccessPicker({
           )
         }
       />
-      {access._tag === "bots" && (
+      {access._tag === "bots" && bots.length === 0 && (
+        <p className="text-xs text-muted-foreground">{t("secrets.noBotsYet")}</p>
+      )}
+      {access._tag === "bots" && bots.length > 0 && (
         <ul className="flex flex-col">
           {bots.map((bot) => (
             <li key={bot.id}>

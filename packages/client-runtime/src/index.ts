@@ -63,6 +63,7 @@ export { type SignOutResult } from "./intents/SignOut.ts";
 export {
   alwaysForeground,
   ClientStorage,
+  type CredentialEnded,
   CredentialStorageError,
   CredentialStore,
   type DeviceCredential,
@@ -111,7 +112,7 @@ export {
   type BotTemplateResult,
   type TemplateDraft,
 } from "./stores/Details.ts";
-export { Devices, type PairingOffer, type RevokeResult } from "./stores/Devices.ts";
+export { Devices, type PairingOffer, qrOrigin, type RevokeResult } from "./stores/Devices.ts";
 export {
   type Addressing,
   type Draft,
@@ -169,6 +170,7 @@ export {
   behind,
   isRunning,
   type RequestResult,
+  runByDesktopApp,
   ServerUpdate,
   type ServerUpdateView,
   type StartResult,

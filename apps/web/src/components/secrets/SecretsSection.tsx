@@ -385,16 +385,13 @@ function ShownValue({
           <Button
             size="sm"
             variant="ghost-muted"
-            onClick={() => {
-              const select = () => {
+            onClick={() =>
+              void secrets.intents.copy(value).then((done) => {
+                if (done) return setCopied("copied");
                 if (shownRef.current) window.getSelection()?.selectAllChildren(shownRef.current);
                 setCopied("selected");
-              };
-              if (!("clipboard" in navigator)) return select();
-              navigator.clipboard
-                .writeText(Redacted.value(value))
-                .then(() => setCopied("copied"), select);
-            }}
+              })
+            }
           >
             {copied === "copied" ? t("secrets.copied") : t("secrets.copy")}
           </Button>

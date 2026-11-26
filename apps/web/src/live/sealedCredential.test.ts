@@ -260,10 +260,10 @@ describe("the desktop app's credential", () => {
     const store = storeFor(serverA, makeSystem().sealer, cell);
     await Effect.runPromise(store.save(first));
     // Another window paired the device again since this one read `second`.
-    expect(plain(await Effect.runPromise(store.clear(second, false)))).toEqual(
+    expect(plain(await Effect.runPromise(store.clear(second, "here")))).toEqual(
       plain(Option.some(first)),
     );
-    expect(await Effect.runPromise(store.clear(first, false))).toEqual(Option.none());
+    expect(await Effect.runPromise(store.clear(first, "here"))).toEqual(Option.none());
     expect(await Effect.runPromise(store.load)).toEqual(Option.none());
   });
 
@@ -272,7 +272,7 @@ describe("the desktop app's credential", () => {
     const { system, sealer } = makeSystem();
     await Effect.runPromise(storeFor(serverA, sealer, cell).save(first));
     system.locked = true;
-    expect(await Effect.runPromise(storeFor(serverA, sealer, cell).clear(first, false))).toEqual(
+    expect(await Effect.runPromise(storeFor(serverA, sealer, cell).clear(first, "here"))).toEqual(
       Option.none(),
     );
     expect(stored()).toBeUndefined();
@@ -283,7 +283,7 @@ describe("the desktop app's credential", () => {
     const { sealer } = makeSystem();
     const store = storeFor(serverA, sealer, cell);
     await Effect.runPromise(store.save(first));
-    expect(await Effect.runPromise(store.clear(first, true))).toEqual(Option.none());
+    expect(await Effect.runPromise(store.clear(first, "refused"))).toEqual(Option.none());
     expect(await Effect.runPromise(store.refusedPairing)).toEqual(Option.some(first.deviceId));
     // No write guarded by the pairing that ended takes it for a credential.
     expect(sealedCredential(serverA, sealer).pairingOf(stored())).toEqual(Option.none());

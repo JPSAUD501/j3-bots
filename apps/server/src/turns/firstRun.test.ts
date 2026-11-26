@@ -7,6 +7,8 @@ import {
   type MessageDelivery,
   type ProviderId,
   type ProviderStatus,
+  TEMPLATE_FORMAT,
+  TEMPLATE_VERSION,
 } from "@j3-bots/contracts";
 import type { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
@@ -190,6 +192,42 @@ it.effect("asks no name in an opening once the operator has one", () =>
     const session = yield* engineSession(bot.id);
     assert.strictEqual(yield* dispatchesWith(session, FIRST_RUN), 1);
     assert.strictEqual(yield* dispatchesWith(session, ASKS_NAME), 0);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+/** What a first-run envelope adds for a bot made from a template. */
+const FROM_TEMPLATE = "You were made from a template someone shared";
+
+it.effect("tells a bot made from a template, and only it, that its job approves no work", () =>
+  Effect.gen(function* () {
+    yield* TestClock.adjust("1 second");
+    const fromTemplate = yield* (yield* Bots).createFromTemplate({
+      commandId: command(),
+      from: {
+        template: {
+          format: TEMPLATE_FORMAT,
+          version: TEMPLATE_VERSION,
+          profile: {
+            name: "Scout",
+            title: "Research",
+            avatar: { shape: "bean", color: "honey" },
+            job: "Every morning, sends a digest of the news.",
+          },
+          model: DEFAULT_MODEL,
+          permissionMode: "supervised",
+          skills: [],
+          routines: [],
+        },
+      },
+    });
+    const plain = yield* createNewBot("Juno");
+    yield* finishRunning(fromTemplate.id);
+    yield* finishRunning(plain.id);
+
+    const templateSession = yield* engineSession(fromTemplate.id);
+    assert.strictEqual(yield* dispatchesWith(templateSession, FIRST_RUN), 1);
+    assert.strictEqual(yield* dispatchesWith(templateSession, FROM_TEMPLATE), 1);
+    assert.strictEqual(yield* dispatchesWith(yield* engineSession(plain.id), FROM_TEMPLATE), 0);
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 

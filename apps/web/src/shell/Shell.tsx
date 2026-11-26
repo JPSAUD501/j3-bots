@@ -8,6 +8,7 @@ import type {
   RosterItem,
   RosterItemKey,
 } from "@j3-bots/contracts";
+import { runByDesktopApp } from "@j3-bots/client-runtime";
 import {
   useEffect,
   useEffectEvent,
@@ -553,7 +554,17 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
         {view.phase === "not-found" ? (
           <ConversationGone onBack={() => navigation.select(null)} />
         ) : view.phase === "ready" && view.items.length === 0 && item._tag === "bot" ? (
-          <QuietConversation bot={item.bot} engine={data.engine} />
+          <QuietConversation
+            bot={item.bot}
+            engine={data.engine}
+            connect={
+              intents.providerSetup !== undefined
+                ? { _tag: "here", setup: { ...intents.providerSetup, signIns: data.signIns } }
+                : intents.serverUpdate !== undefined && runByDesktopApp(intents.serverUpdate.view)
+                  ? { _tag: "desktop-app" }
+                  : { _tag: "server" }
+            }
+          />
         ) : view.phase === "ready" &&
           view.items.length === 0 &&
           item._tag === "room" &&

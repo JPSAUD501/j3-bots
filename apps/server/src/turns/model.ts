@@ -154,8 +154,13 @@ export const WakePayload = Schema.Union([
    * The bot was just created: its first turn opens its conversation. A bot
    * another bot's `create_bot` made waits for the turn that made it
    * (`madeIn`) to end, which may place it in a room instead (`start_room`).
+   * `fromTemplate`: it was made from a template, whose author, not the
+   * operator, wrote its job, skills and routines.
    */
-  Schema.TaggedStruct("first-run", { madeIn: Schema.optionalKey(MadeIn) }),
+  Schema.TaggedStruct("first-run", {
+    madeIn: Schema.optionalKey(MadeIn),
+    fromTemplate: Schema.optionalKey(Schema.Literal(true)),
+  }),
   /** A run of a routine; for a webhook, the run holds the request's body. */
   Schema.TaggedStruct("routine", { routineId: RoutineId, runId: RoutineRunId }),
   /** A teammate's urgent message, read from the handoff card it put in this bot's conversation. */
