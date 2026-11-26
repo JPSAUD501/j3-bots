@@ -1363,38 +1363,48 @@ export interface RequestState {
   readonly request: EngineRequest;
   /** The `j3` tool call it holds back (`OpenRequest.heldCall`). */
   readonly heldCall: ToolCallId | null;
-  /** `undefined` while it is open. */
-  readonly resolution: RequestResolution | undefined;
+  /**
+   * How it closed, and when, as the engine recorded it; `undefined` while it
+   * is open.
+   */
+  readonly closed: RequestClose | undefined;
 }
 
-const runtimeResolution = (
+/** How a request closed, and when the engine recorded it. */
+interface RequestClose {
+  readonly resolution: RequestResolution;
+  readonly at: DateTime.Utc;
+}
+
+/** When the engine recorded an item's end: its completion, else its last change. */
+const endOf = (item: Item) => item.completedAt ?? item.updatedAt;
+
+const runtimeClose = (
   request: RuntimeRequest | undefined,
   item: Item,
-): RequestResolution | undefined => {
+): RequestClose | undefined => {
   const status = request?.status ?? (LIVE_ITEM.has(item.status) ? "pending" : "expired");
-  switch (status) {
-    case "pending":
-      return undefined;
-    case "resolved":
-      return "answered";
-    default:
-      return "expired";
-  }
+  if (status === "pending") return undefined;
+  return {
+    resolution: status === "resolved" ? "answered" : "expired",
+    at: request?.resolvedAt ?? endOf(item),
+  };
 };
 
-const secretResolution = (
-  item: Extract<Item, { type: "secret_request" }>,
-): RequestResolution | undefined => {
-  switch (item.secretStatus) {
-    case "pending":
-      return undefined;
-    case "saved":
-      return "provided";
-    case "declined":
-      return "declined";
-    case "cancelled":
-      return "expired";
-  }
+const secretClose = (item: Extract<Item, { type: "secret_request" }>): RequestClose | undefined => {
+  const resolution = ((): RequestResolution | undefined => {
+    switch (item.secretStatus) {
+      case "pending":
+        return undefined;
+      case "saved":
+        return "provided";
+      case "declined":
+        return "declined";
+      case "cancelled":
+        return "expired";
+    }
+  })();
+  return resolution === undefined ? undefined : { resolution, at: endOf(item) };
 };
 
 const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
@@ -1416,7 +1426,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         openedAt,
         request: approvalOf(item, request, mirror.items.values(), mirror.fetched),
         heldCall: held === undefined ? null : ToolCallId.make(localIdFor(held.itemId)),
-        resolution: runtimeResolution(request, item),
+        closed: runtimeClose(request, item),
       };
     }
     case "user_input_request": {
@@ -1429,7 +1439,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
         openedAt,
         request,
         heldCall: null,
-        resolution: runtimeResolution(mirror.requests.get(item.requestId), item),
+        closed: runtimeClose(mirror.requests.get(item.requestId), item),
       };
     }
     case "secret_request":
@@ -1446,7 +1456,7 @@ const requestOf = (mirror: Mirror, item: Item): RequestState | undefined => {
           placeholder: item.placeholder === undefined ? null : label(item.placeholder, "Secret"),
         },
         heldCall: null,
-        resolution: secretResolution(item),
+        closed: secretClose(item),
       };
     default:
       return undefined;
@@ -1458,6 +1468,10 @@ const requestsOf = (mirror: Mirror, run: Run) =>
     const state = requestOf(mirror, item);
     return state === undefined ? [] : [state];
   });
+
+/** How the request closed; one still open when its turn ended expired with the turn. */
+const closeOf = (state: RequestState, run: Run, ended: boolean): RequestClose | undefined =>
+  state.closed ?? (ended ? { resolution: "expired", at: finishedAtOf(run) } : undefined);
 
 /**
  * The file changes approvals still open hold back without their diff, by item
@@ -1867,7 +1881,7 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
       }
       const ended = isEnded(run);
       for (const state of requestsOf(mirror, run)) {
-        if (state.resolution !== undefined) continue;
+        if (state.closed !== undefined) continue;
         const seen = view.requests.get(state.requestId);
         const shown = shownOf(state);
         if (seen === undefined) {
@@ -1927,10 +1941,16 @@ export const diff = (mirror: Mirror, view: View, now: DateTime.Utc): ReadonlyArr
         }
       }
       for (const state of requestsOf(mirror, run)) {
-        const resolution = state.resolution ?? (ended ? ("expired" as const) : undefined);
-        if (resolution !== undefined && view.requests.get(state.requestId)?._tag === "open") {
+        const closed = closeOf(state, run, ended);
+        if (closed !== undefined && view.requests.get(state.requestId)?._tag === "open") {
           view.requests.set(state.requestId, { _tag: "closed" });
-          events.push({ _tag: "request-closed", requestId: state.requestId, turnId, resolution });
+          events.push({
+            _tag: "request-closed",
+            requestId: state.requestId,
+            turnId,
+            resolution: closed.resolution,
+            closedAt: closed.at,
+          });
         }
       }
       if (ended) {
@@ -1997,6 +2017,7 @@ export const replacement = (
     requestId: RequestId;
     turnId: TurnId;
     resolution: RequestResolution;
+    closedAt: DateTime.Utc;
   }> = [];
   const steerSettlements: Array<SteerSettlement> = [];
 
@@ -2045,9 +2066,16 @@ export const replacement = (
       }
     }
     for (const state of requestsOf(mirror, run)) {
-      const resolution = state.resolution ?? (ended ? ("expired" as const) : undefined);
-      if (resolution === undefined) openRequests.push(openRequestOf(state));
-      else if (history) closedRequests.push({ requestId: state.requestId, turnId, resolution });
+      const closed = closeOf(state, run, ended);
+      if (closed === undefined) openRequests.push(openRequestOf(state));
+      else if (history) {
+        closedRequests.push({
+          requestId: state.requestId,
+          turnId,
+          resolution: closed.resolution,
+          closedAt: closed.at,
+        });
+      }
     }
     if (history) {
       for (const item of itemsOf(mirror, run)) {

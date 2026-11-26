@@ -1642,7 +1642,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   ) {
     if ((yield* sendByReceipt(input)) === "applied") return;
     const now = findRequest(yield* afterSending(projection(sessionId)), requestId);
-    return yield* Option.isSome(now) && now.value.resolution === undefined
+    return yield* Option.isSome(now) && now.value.closed === undefined
       ? new AnswerRejected({ key, requestId })
       : new RequestClosed({ requestId });
   });
@@ -1726,7 +1726,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       Effect.gen(function* () {
         const found = yield* knownRequest(input.sessionId, input.requestId);
         // Answered once by nature: an answered request, or one that is no secret, is closed to it.
-        if (found.answerTo._tag !== "secret" || found.resolution !== undefined) {
+        if (found.answerTo._tag !== "secret" || found.closed !== undefined) {
           return yield* new RequestClosed({ requestId: input.requestId });
         }
         yield* rpc["secrets.answerRequest"]({

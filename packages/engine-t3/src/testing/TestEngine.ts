@@ -542,6 +542,7 @@ interface TurnRecord {
     readonly requestId: RequestId;
     readonly turnId: TurnId;
     readonly resolution: RequestResolution;
+    readonly closedAt: DateTime.Utc;
   }>;
   /** It left background work running, which a Stop ends. */
   background: boolean;
@@ -883,15 +884,19 @@ const make = Effect.gen(function* () {
     at: DateTime.Utc,
   ) => {
     session.requests.delete(open.requestId);
-    session.turns
-      .get(open.turnId)
-      ?.closedRequests.push({ requestId: open.requestId, turnId: open.turnId, resolution });
+    session.turns.get(open.turnId)?.closedRequests.push({
+      requestId: open.requestId,
+      turnId: open.turnId,
+      resolution,
+      closedAt: at,
+    });
     emit(session, at, (stamp) => ({
       _tag: "request-closed",
       ...stamp,
       requestId: open.requestId,
       turnId: open.turnId,
       resolution,
+      closedAt: at,
     }));
   };
 

@@ -651,6 +651,18 @@ describe("an approval's card while it waits", () => {
     );
   });
 
+  it("says the approval closed when the engine recorded its answer, however late it is seen", () => {
+    const { mirror, view, asks } = setUp();
+    diff(mirror, view, at);
+    const answered = DateTime.makeUnsafe("2026-11-20T12:00:03Z");
+    mirror.requests.set(asks.id, { ...asks, status: "resolved", resolvedAt: answered });
+    const [closed] = diff(mirror, view, DateTime.makeUnsafe("2026-11-20T14:00:00Z"));
+    assert.deepStrictEqual(
+      closed?._tag === "request-closed" && [closed.resolution, closed.closedAt],
+      ["answered", answered],
+    );
+  });
+
   it("never changes once the approval has closed, and lets go of what was fetched for it", () => {
     const { mirror, view, asks, whole } = setUp();
     assert.isTrue(keepFetched(mirror, whole));

@@ -156,14 +156,16 @@ export const sessionRecords = (
 
   /**
    * The card shows how its request closed: the operator's answer when it was
-   * theirs from J3 Bots, expired otherwise. An answer counts as activity in
-   * the turn it holds.
+   * theirs from J3 Bots, expired otherwise. `at` is when it closed, as the
+   * engine recorded it, so a close told again after a reconnect or a restart
+   * keeps its time. An answer counts as activity in the turn it holds.
    */
   const closeCard = Effect.fn("sessionRecords.closeCard")(function* (
     request: typeof OpenRequest.Type,
     resolution: RequestResolution,
+    at: DateTime.Utc,
   ) {
-    const closedAt = timeText(yield* DateTime.now);
+    const closedAt = timeText(at);
     yield* sql`
       UPDATE engine_requests SET closed_at = ${closedAt}
       WHERE entry_id = ${request.entry_id}
@@ -276,7 +278,8 @@ export const sessionRecords = (
  * more: its Stop targets settle, a dispatch the engine had whose turn
  * never started fails as `unresolved` with its wakes failed and retryable, a
  * delivered one finishes interrupted with its turn, every open turn and its
- * work fold end interrupted, and its open requests close. A dispatch not yet
+ * work fold end interrupted where the turn was last seen working, and its
+ * open requests close. A dispatch not yet
  * answered is the sender's, which settles it in the session's gate: it is due
  * at once, whatever its backoff, and the workers are nudged once the loss
  * commits. A live main session's loss shows in the bot's conversation, with a
@@ -285,8 +288,11 @@ export const sessionRecords = (
  * loss is not told. Runs in the caller's transaction.
  *
  * A session J3 Bots retired and the engine then archived (`sessionArchived`)
- * is settled the same way, untold: the server follows its events no more, so
- * nothing would ever end what is still open there.
+ * is settled the same way, with no `session-lost` notice: the server follows
+ * its events no more, so nothing would ever end what is still open there. A
+ * turn still open there would end its work fold as stopped, like any turn
+ * that did not finish; none is in practice, since a session is retired with
+ * a turn running only once it was lost, and so already settled.
  */
 export const sessionLoss = (
   sql: SqlClient.SqlClient,
@@ -327,9 +333,9 @@ export const sessionLoss = (
 
   const openTurns = SqlSchema.findAll({
     Request: Schema.String,
-    Result: FoldTurn,
+    Result: Schema.Struct({ ...FoldTurn.fields, last_activity_at: Time }),
     execute: (sessionId) => sql`
-      SELECT engine_turn_id, started_at, work_fold_entry_id FROM turns
+      SELECT engine_turn_id, started_at, work_fold_entry_id, last_activity_at FROM turns
       WHERE session_id = ${sessionId} AND finished_at IS NULL
     `,
   });
@@ -344,8 +350,9 @@ export const sessionLoss = (
   });
 
   /**
-   * Everything open in a session nothing runs in any more, settled at `now`.
-   * Returns the dispatches whose turn it interrupted.
+   * Everything open in a session nothing runs in any more, settled at `now`,
+   * and its turns where they were last seen working. Returns the dispatches
+   * whose turn it interrupted.
    */
   const settleOpen = Effect.fnUntraced(function* (sessionId: SessionRowId, now: DateTime.Utc) {
     const at = timeText(now);
@@ -373,12 +380,17 @@ export const sessionLoss = (
       }
     }
     const session = yield* sessionOf(sessionId);
+    // Each ends where it was last seen working: the session may have been
+    // gone long before the loss was known, as across an outage, and that time
+    // is no work of the turn's.
     for (const turn of yield* openTurns(sessionId)) {
-      yield* endTurn(session, turn, interrupted, now, false);
+      yield* endTurn(session, turn, interrupted, turn.last_activity_at, false);
     }
     yield* followBackground(sessionId, true);
     yield* sql`UPDATE engine_tool_calls SET open = 0 WHERE session_id = ${sessionId}`;
-    for (const request of yield* openRequests(sessionId)) yield* closeCard(request, "expired");
+    for (const request of yield* openRequests(sessionId)) {
+      yield* closeCard(request, "expired", now);
+    }
     yield* sql`
       UPDATE dispatches SET next_attempt_at = NULL
       WHERE session_id = ${sessionId} AND status = 'intended'

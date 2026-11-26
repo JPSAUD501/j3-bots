@@ -985,3 +985,41 @@ it.effect(
       yield* until(Effect.map(control.openStreams(session), (open) => open === 0));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect("ends a turn its lost session cut short where it was last seen working", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const bot = yield* createBot("Ana");
+    const session = yield* engineSession(bot.id);
+    yield* sendToBot(bot.id, "Run the tests.");
+    const turnId = yield* nextTurn(bot.id);
+    yield* TestClock.adjust("30 seconds");
+    const lastSeen = yield* DateTime.now;
+    yield* control.step({
+      sessionId: session,
+      turnId,
+      step: {
+        id: WorkStepId.make("step-1"),
+        kind: "command",
+        tool: null,
+        label: "pnpm test",
+        status: "running",
+        startedAt: lastSeen,
+        finishedAt: null,
+      },
+    });
+    yield* awaitEntry(bot.id, "work-fold");
+
+    // The session is found gone long after, as at the end of an outage.
+    yield* TestClock.adjust("15 minutes");
+    yield* control.loseSession(session);
+    const ended = yield* eventually(
+      awaitEntry(bot.id, "work-fold").pipe(
+        Effect.map((fold) =>
+          fold.status._tag === "finished" ? Option.some(fold.status) : Option.none(),
+        ),
+      ),
+    );
+    assert.deepStrictEqual([ended.ending, ended.finishedAt], ["interrupted", lastSeen]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);

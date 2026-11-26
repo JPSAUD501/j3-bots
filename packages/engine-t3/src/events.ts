@@ -319,7 +319,13 @@ export const SessionEvent = Schema.Union([
     endedTurns: Schema.Array(EndedTurn),
     hostSpeech: Schema.Array(HostSpeech),
     closedRequests: Schema.Array(
-      Schema.Struct({ requestId: RequestId, turnId: TurnId, resolution: RequestResolution }),
+      Schema.Struct({
+        requestId: RequestId,
+        turnId: TurnId,
+        resolution: RequestResolution,
+        /** As `request-closed`'s. */
+        closedAt: Schema.DateTimeUtc,
+      }),
     ),
     steers: Schema.Array(SteerSettlement),
     queueHeld: Schema.Boolean,
@@ -442,6 +448,12 @@ export const SessionEvent = Schema.Union([
     requestId: RequestId,
     turnId: TurnId,
     resolution: RequestResolution,
+    /**
+     * When the engine recorded the close, which a replayed event keeps; `at`
+     * is when the event was sent. For a request still open when its turn
+     * ended, the turn's end.
+     */
+    closedAt: Schema.DateTimeUtc,
   }),
   Schema.TaggedStruct("turn-finished", {
     ...at,
