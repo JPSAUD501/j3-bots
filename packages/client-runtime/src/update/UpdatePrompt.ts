@@ -215,7 +215,9 @@ export const makeUpdatePrompt = (deps: UpdatePromptDeps): UpdatePrompt => {
     stopWork: () => dispatch({ _tag: "stop-work" }),
     retry: () => {
       const now = offers();
-      if (now.server._tag !== "unknown") return dispatch({ _tag: "retry", ...now });
+      if (state.get().run._tag !== "server-failed" || now.server._tag !== "unknown") {
+        return dispatch({ _tag: "retry", ...now });
+      }
       // Whether the server reached the version, or still offers it, is read first.
       retryPending = true;
       server.refresh();

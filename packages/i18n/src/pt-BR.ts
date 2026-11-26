@@ -1678,6 +1678,8 @@ const sentences = {
     "{count} bot neste computador tem trabalho em andamento. O reinício do app para esse trabalho.",
   "updatePrompt.work.app.other":
     "{count} bots neste computador têm trabalho em andamento. O reinício do app para esse trabalho.",
+  "updatePrompt.work.appUnknown":
+    "Os bots neste computador podem ter trabalho em andamento. O reinício do app para esse trabalho.",
   "updatePrompt.work.hint": "Atualize depois, quando eles terminarem, ou pare o trabalho agora.",
   "updatePrompt.work.stop": "Parar e atualizar",
   "updatePrompt.serverFailed.title": "O servidor não se atualizou",

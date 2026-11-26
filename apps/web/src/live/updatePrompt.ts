@@ -77,7 +77,8 @@ const clientSideOf = (
   return {
     follow: installs ? "install" : "none",
     app: appRelease(status),
-    workItStops: desktop.mode === "local" && roster !== null ? atWork(roster) : 0,
+    // Not read yet, the roster cannot say none are at work.
+    workItStops: desktop.mode !== "local" ? 0 : roster === null ? null : atWork(roster),
   };
 };
 

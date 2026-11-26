@@ -147,6 +147,19 @@ describe("the update prompt's runner", () => {
     assert.deepStrictEqual(asked, ["server 0.9.0", "client install"]);
   });
 
+  it("tries the app's part again at once, whatever the server answers meanwhile", async () => {
+    const { prompt, view, asked, refreshed, settleClient } = harness();
+    prompt.updateNow();
+    await tick();
+    view.set({ _tag: "status", status: updated });
+    settleClient("failed");
+    await tick();
+    view.set({ _tag: "unreachable", last: updated });
+    prompt.retry();
+    assert.strictEqual(refreshed(), 0);
+    assert.deepStrictEqual(asked, ["server 0.9.0", "client install", "client install"]);
+  });
+
   it("leaves the client alone when the server goes silent for good", async () => {
     const { prompt, view, asked } = harness();
     prompt.updateNow();

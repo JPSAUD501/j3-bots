@@ -9,6 +9,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -50,8 +51,13 @@ const status = (
     ...more,
   });
 
-/** What one request to a route gets: an answer, or no answer at all, as from a server restarting. */
-type Reply = { readonly status: number; readonly body?: unknown } | "no-answer";
+/**
+ * What one request to a route gets: an answer, `after` a while when given,
+ * or no answer at all, as from a server restarting.
+ */
+type Reply =
+  | { readonly status: number; readonly body?: unknown; readonly after?: Duration.Duration }
+  | "no-answer";
 
 /**
  * A server whose update routes give their replies in turn, the last one
@@ -73,7 +79,7 @@ const fakeServer = (routes: Readonly<Record<string, ReadonlyArray<Reply>>>) => {
         }),
       );
     }
-    return Effect.succeed(
+    const response = Effect.succeed(
       HttpClientResponse.fromWeb(
         request,
         reply.body === undefined
@@ -81,6 +87,7 @@ const fakeServer = (routes: Readonly<Record<string, ReadonlyArray<Reply>>>) => {
           : Response.json(reply.body, { status: reply.status }),
       ),
     );
+    return reply.after === undefined ? response : Effect.delay(response, reply.after);
   });
   return { http, authorizations };
 };
@@ -102,6 +109,28 @@ const setUp = (routes: Readonly<Record<string, ReadonlyArray<Reply>>>) =>
   });
 
 describe("updating the server from a client", () => {
+  it.effect("drops a read sent before the start, which answers for the server as it was", () =>
+    Effect.gen(function* () {
+      const running = status({ _tag: "downloading", receivedBytes: 0, totalBytes: 100 });
+      const { update } = yield* setUp({
+        [UPDATE_HTTP_PATHS.start]: [{ status: 202, body: running }],
+        [UPDATE_HTTP_PATHS.status]: [
+          { status: 200, body: status({ _tag: "idle" }), after: Duration.seconds(5) },
+          { status: 200, body: running },
+        ],
+      });
+      const early = yield* Effect.forkChild(update.refresh, { startImmediately: true });
+      assert.deepStrictEqual(yield* update.start("0.3.2", false), { _tag: "started" });
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* Fiber.join(early);
+      const view = update.view.get();
+      assert.strictEqual(
+        view._tag === "status" ? view.status.state._tag : view._tag,
+        "downloading",
+      );
+    }),
+  );
+
   it.effect("follows an update through the server's restart to its result, then reconnects", () =>
     Effect.gen(function* () {
       const { update, authorizations, reconnects } = yield* setUp({

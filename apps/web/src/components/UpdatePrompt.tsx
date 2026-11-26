@@ -320,14 +320,20 @@ function WorkRunning({
 }: {
   view: UpdatePromptView;
   side: "server" | "client";
-  count: number;
+  /** Null when this client cannot tell yet. */
+  count: number | null;
 }) {
   const { t, plural } = useI18n();
   return (
     <>
       <Title>{t("updatePrompt.work.title")}</Title>
       <Description className="text-muted-foreground">
-        {plural(side === "server" ? "updatePrompt.work.server" : "updatePrompt.work.app", count)}{" "}
+        {count === null
+          ? t("updatePrompt.work.appUnknown")
+          : plural(
+              side === "server" ? "updatePrompt.work.server" : "updatePrompt.work.app",
+              count,
+            )}{" "}
         {t("updatePrompt.work.hint")}
       </Description>
       <Actions>

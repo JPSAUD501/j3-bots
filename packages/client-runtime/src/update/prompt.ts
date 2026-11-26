@@ -66,8 +66,9 @@ export interface ClientSide {
   /**
    * How many bots have work running that this client's own restart stops:
    * those of the server it runs, in the desktop app's local mode; 0 elsewhere.
+   * Null while it is not known yet, which asks as work that may be running.
    */
-  readonly workItStops: number;
+  readonly workItStops: number | null;
 }
 
 /** What "Update now" set out to do, kept for the steps after the first. */
@@ -119,7 +120,8 @@ export type Run =
   | {
       readonly _tag: "work-running";
       readonly side: "server" | "client";
-      readonly runningBots: number;
+      /** How many bots; null when this client cannot tell yet. */
+      readonly runningBots: number | null;
       readonly plan: Plan;
     }
   | { readonly _tag: "server"; readonly plan: Plan; readonly hidden: boolean }
@@ -218,11 +220,16 @@ const IDLE: Run = { _tag: "idle" };
 const stay = (prompt: Prompt): Step => ({ next: prompt, action: null });
 
 /** This client's part, once the server's is over or not needed. */
-const clientPart = (prompt: Prompt, plan: Plan, stopWork: boolean, workItStops: number): Step => {
+const clientPart = (
+  prompt: Prompt,
+  plan: Plan,
+  stopWork: boolean,
+  workItStops: number | null,
+): Step => {
   if (plan.client === null) {
     return stay({ ...prompt, run: plan.server === null ? IDLE : { _tag: "done", plan } });
   }
-  if (plan.client === "install" && workItStops > 0 && !stopWork) {
+  if (plan.client === "install" && (workItStops === null || workItStops > 0) && !stopWork) {
     return stay({
       ...prompt,
       run: { _tag: "work-running", side: "client", runningBots: workItStops, plan },

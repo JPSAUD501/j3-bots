@@ -257,7 +257,14 @@ function Body({ blocked, run }: { readonly blocked: boolean; readonly run: Updat
         <>
           <Title>{t("updatePrompt.work.title")}</Title>
           <Sentence>
-            {`${plural(run.side === "server" ? "updatePrompt.work.server" : "updatePrompt.work.app", run.runningBots)} ${t("updatePrompt.work.hint")}`}
+            {`${
+              run.runningBots === null
+                ? t("updatePrompt.work.appUnknown")
+                : plural(
+                    run.side === "server" ? "updatePrompt.work.server" : "updatePrompt.work.app",
+                    run.runningBots,
+                  )
+            } ${t("updatePrompt.work.hint")}`}
           </Sentence>
           <Actions>
             <Button label={t("updatePrompt.later")} onPress={prompt.later} />

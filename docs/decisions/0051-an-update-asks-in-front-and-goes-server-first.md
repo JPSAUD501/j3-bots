@@ -48,7 +48,7 @@ The release notes template states the order. The mismatch screen stays for the c
 - **The client waits on the server's slowest step.** The sequence takes as long as the server's download, health check and restart, up to the ten minutes after which it says the update has not finished.
 - **Highlights are in English**, as the release notes are written, in both languages' dialogs.
 - **A desktop app's own version shows no highlights.** electron-updater's feed is not read for notes. The dialog links to the release page instead.
-- **The count of bots at work in local mode is the app's own.** It counts the roster's bots with a turn under way, not the server's `runningWork`, so a background job with no turn shown can be stopped without being counted.
+- **The count of bots at work in local mode is the app's own.** It counts the roster's bots with a turn under way, not the server's `runningWork`, so a background job with no turn shown can be stopped without being counted. Before the roster is read, the dialog asks as for work that may be running.
 
 ## What was rejected
 

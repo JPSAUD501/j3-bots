@@ -207,6 +207,15 @@ describe("the update prompt's sequence", () => {
     });
   });
 
+  it("asks before an app restart while it cannot tell whether bots on this computer are at work", () => {
+    const unread: ClientSide = { follow: "install", app: app("0.9.0"), workItStops: null };
+    const { prompt, actions } = run(start, [
+      { _tag: "update-now", server: CURRENT, client: unread, now: NOW },
+    ]);
+    assert.deepStrictEqual(actions, [null]);
+    assert.strictEqual(prompt.run._tag === "work-running" && prompt.run.runningBots, null);
+  });
+
   it("ends done when the server updated and the client has nothing newer to install", () => {
     const { prompt } = run(start, [
       { _tag: "update-now", server: offer("0.9.0"), client: desktop, now: NOW },

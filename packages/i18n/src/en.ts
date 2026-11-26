@@ -1653,6 +1653,8 @@ export const en = {
     "{count} bot on this computer has work running. The app’s restart stops it.",
   "updatePrompt.work.app.other":
     "{count} bots on this computer have work running. The app’s restart stops it.",
+  "updatePrompt.work.appUnknown":
+    "Bots on this computer may have work running. The app’s restart stops it.",
   "updatePrompt.work.hint": "Update later, once they’re done, or stop their work now.",
   "updatePrompt.work.stop": "Stop and update",
   "updatePrompt.serverFailed.title": "The server didn’t update",

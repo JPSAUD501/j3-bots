@@ -313,10 +313,11 @@ export interface AppUpdate {
    */
   readonly check: (opening?: boolean) => Promise<void>;
   /**
-   * While the update prompt updates the server first (`true`), the checks
-   * the app makes as it opens or comes back wait, so "Update automatically"
-   * never installs this app ahead of its server; the prompt installs it
-   * after. The operator's own check still runs.
+   * While the update prompt updates the server first (`true`), nothing
+   * installs this app by itself: the checks it makes as it opens or comes
+   * back wait, a check already under way only offers what it finds, and an
+   * install waiting for Android's permission waits on. The prompt installs
+   * it after the server. The operator's own check still runs.
    */
   readonly waitForServer: (waiting: boolean) => void;
   readonly setChannel: (channel: UpdateChannel) => void;
@@ -399,7 +400,9 @@ export const makeAppUpdate = (installer: AppInstaller, feed: ReleaseFeed): AppUp
       return;
     }
     state.set(next);
-    if (offeredRelease !== null && automatic.get()) void takeOffered(offeredRelease);
+    if (offeredRelease !== null && automatic.get() && !serverFirst) {
+      void takeOffered(offeredRelease);
+    }
   };
 
   const fileOf = (release: AppRelease) => new File(folder, apkName(release.version));
@@ -576,13 +579,13 @@ export const makeAppUpdate = (installer: AppInstaller, feed: ReleaseFeed): AppUp
       automatic.set(on);
       // Turned on with a release on offer: it is taken now, as an opening would.
       const current = state.get();
-      if (on && current._tag === "available") void takeOffered(current.release);
+      if (on && !serverFirst && current._tag === "available") void takeOffered(current.release);
     },
     update,
     allowInstalls: () => installer.openInstallSettings(),
     resume: () => {
       const current = state.get();
-      if (current._tag !== "permission" || !installer.canRequestInstalls()) return;
+      if (serverFirst || current._tag !== "permission" || !installer.canRequestInstalls()) return;
       void goOn(current.release);
     },
     openPlay: () => void Linking.openURL(playPage(installed.packageName)),
