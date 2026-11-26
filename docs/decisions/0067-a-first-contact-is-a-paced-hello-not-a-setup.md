@@ -16,7 +16,7 @@ Two things shape the fix. A message from a person in a chat arrives as a few sho
 - The setup is removed. Where the work is kept, which accounts, folders or connections to use, and how the operator likes replies are asked only when a task needs the answer and memory does not hold it.
 - A bot made for a room, whose hello `start_room` cancels, meets the operator in the room: until it first speaks, its room envelope's closing line asks it to open with who it is and to ask them nothing to get to know them.
 - The server paces a first contact's messages. A `say` that follows another in the same turn waits, before it is posted, for as long as typing it would take (0.5 s plus 14 ms a character, between 0.9 and 2.6 s), less the time since the one before. A bot's `say`s are posted one at a time; the prompt's rule of one `say` after the other is what keeps a hello in order. While a message waits, the bot's `thinking` or `working` state carries `typing: true`, an additive field that decodes as false from an older server, and clients show "Typing". A Stop since the message before drops the next one.
-- A turn is a first contact when it delivers the bot's `first-run` wake, or when the bot was made for a room and had not spoken when the turn started, read from its conversation and from the `say`s its sessions posted, which outlive the rooms it spoke in. Other turns are not paced.
+- A turn is a first contact when it delivers the bot's `first-run` wake, or when the bot was made for a room and had not spoken when the turn started, read from the time of its first message, kept on the bot so that it outlives the room it spoke in. Other turns are not paced.
 
 ## Costs
 

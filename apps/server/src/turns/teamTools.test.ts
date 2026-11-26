@@ -19,6 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { Bots } from "../bots/Bots.ts";
 import { BotStore } from "../bots/BotStore.ts";
+import { Entries } from "../entries/Entries.ts";
 import { Rooms } from "../rooms/Rooms.ts";
 import * as TestDomain from "../testing/domain.ts";
 import {
@@ -532,6 +533,23 @@ it.effect(
       const isNewcomer = newcomer(yield* SqlClient.SqlClient);
       assert.isFalse(yield* isNewcomer(pip.bot.id));
       assert.isTrue(yield* isNewcomer(mole.bot.id));
+      // Any message of Mole's in the room counts, as its engine's own text
+      // does, and the room's deletion takes none of it back.
+      yield* (yield* Entries).append({
+        target: { _tag: "room", roomId },
+        entry: {
+          _tag: "message",
+          author: { _tag: "bot", botId: mole.bot.id },
+          text: "Billing is clear.",
+          attachments: [],
+          mentions: { _tag: "bots", ids: [] },
+          delivery: { _tag: "delivered" },
+          commandId: null,
+        },
+      });
+      yield* (yield* Rooms).remove({ commandId: command(), roomId });
+      assert.isFalse(yield* isNewcomer(pip.bot.id));
+      assert.isFalse(yield* isNewcomer(mole.bot.id));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 

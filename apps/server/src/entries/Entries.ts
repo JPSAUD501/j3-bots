@@ -347,6 +347,14 @@ export const layer = Layer.effect(
             ${input.commandId ?? null}, ${yield* bodyOf(entry)}, ${at}, ${at}
           )
         `;
+        // A bot's first message, wherever it is: the operator has met it
+        // (`docs/architecture/server.md`, First contact).
+        if (author._tag === "bot" && entry._tag === "message") {
+          yield* sql`
+            UPDATE bots SET first_spoke_at = ${at}
+            WHERE id = ${author.botId} AND first_spoke_at IS NULL
+          `;
+        }
         yield* changes.record(scopeOf(input.target), id);
         yield* notify(input.target, entry);
         return entry;

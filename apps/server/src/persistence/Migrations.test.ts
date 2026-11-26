@@ -1405,3 +1405,53 @@ it.effect("sends a browser help push written before with the fixed sentence, not
     }).pipe(Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect(
+  "dates a bot's first message from the earliest one kept, and leaves a silent bot new",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+      const first = "2026-11-20T09:30:00.000Z";
+      const later = "2026-11-20T10:00:00.000Z";
+
+      // Ana asked a question, then said something twice; Bo never spoke.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA foreign_keys = ON`;
+        yield* migrate(migrationsThrough(50));
+        for (const id of ["ana", "bo"]) {
+          yield* sql`
+          INSERT INTO bots (
+            id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+            permission_mode, workspace_path, created_at, updated_at
+          ) VALUES (
+            ${id}, ${id}, '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', ${`/bots/${id}`},
+            ${now}, ${now}
+          )
+        `;
+          yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES (${id}, ${now})`;
+        }
+        yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+          created_at, updated_at
+        ) VALUES
+          ('asked', 'ana', 0, 'question', 'bot', 'ana', '{}', ${now}, ${now}),
+          ('second', 'ana', 2, 'message', 'bot', 'ana', '{}', ${later}, ${later}),
+          ('first', 'ana', 1, 'message', 'bot', 'ana', '{}', ${first}, ${first})
+      `;
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(yield* sql`SELECT id, first_spoke_at FROM bots ORDER BY id`, [
+          { id: "ana", first_spoke_at: first },
+          { id: "bo", first_spoke_at: null },
+        ]);
+      }).pipe(
+        Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);

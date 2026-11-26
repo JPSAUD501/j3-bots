@@ -48,36 +48,26 @@ const Found = Schema.Struct({ found: Schema.BooleanFromBit });
 
 /**
  * Whether the bot is new to the operator, as a member of a room it was made
- * for: its conversation says so (`made-for-room`), and it has said nothing
- * yet, or nothing before `before`, a time its turn started at. What it said
- * in a room is read from the `say`s its own sessions posted, which outlive a
- * change of the room's members and the room itself. The entries are read
- * through the conversation's index and the calls through their session's;
- * the bot's few sessions are scanned.
+ * for: its conversation says so (`made-for-room`), and it had posted no
+ * message yet, anywhere, or none before `before`, a time its turn started
+ * at. The bot's first message is kept on the bot (`first_spoke_at`), so it
+ * outlives the room it was in.
  */
 const newcomerSql = (
   sql: SqlClient.SqlClient,
   botId: string,
   before: Statement.Fragment | null,
-) => {
-  const earlierEntry = before === null ? sql`1` : sql`e.created_at < ${before}`;
-  const earlierCall = before === null ? sql`1` : sql`c.created_at < ${before}`;
-  return sql`
-    EXISTS (
-      SELECT 1 FROM entries
-      WHERE conversation_bot_id = ${botId} AND kind = 'notice'
-        AND json_extract(body_json, '$.notice._tag') = 'made-for-room'
-    ) AND NOT EXISTS (
-      SELECT 1 FROM entries e
-      WHERE e.conversation_bot_id = ${botId} AND e.author_bot_id = ${botId}
-        AND e.kind = 'message' AND ${earlierEntry}
-    ) AND NOT EXISTS (
-      SELECT 1 FROM sessions s JOIN tool_calls c ON c.session_id = s.id
-      WHERE s.bot_id = ${botId} AND c.tool = 'say' AND c.result_json IS NOT NULL
-        AND ${earlierCall}
-    )
-  `;
-};
+) => sql`
+  EXISTS (
+    SELECT 1 FROM entries
+    WHERE conversation_bot_id = ${botId} AND kind = 'notice'
+      AND json_extract(body_json, '$.notice._tag') = 'made-for-room'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM bots
+    WHERE id = ${botId} AND first_spoke_at IS NOT NULL
+      AND ${before === null ? sql`1` : sql`first_spoke_at < ${before}`}
+  )
+`;
 
 /** Whether the bot is a newcomer to the operator in its rooms (`RoomWake.newcomer`). */
 export const newcomer = (sql: SqlClient.SqlClient) => {
