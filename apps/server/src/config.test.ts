@@ -210,6 +210,41 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("checks a home another process made while the server was creating it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* freshHome;
+      const home = path.join(parent, "j3");
+      const outside = yield* Effect.context<FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner>();
+      // Once the server has found the home missing, another process makes it, open to others.
+      const racing = Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.FileSystem.of({
+          ...fs,
+          makeDirectory: (target, options) =>
+            fs.makeDirectory(target, options).pipe(
+              Effect.andThen(
+                path.resolve(target) === parent
+                  ? fs.makeDirectory(home).pipe(
+                      Effect.andThen(openToOthers(home)),
+                      Effect.provide(outside),
+                      Effect.orDie,
+                    )
+                  : Effect.void,
+              ),
+            ),
+        }),
+      );
+      const exit = yield* withEnvironment(initialize, { J3_HOME: home }).pipe(
+        Effect.provide(racing),
+        Effect.exit,
+      );
+      assert.deepInclude(failure(exit), { _tag: "HomeNotPrivate", reason: "open-to-others" });
+      assert.isFalse(yield* fs.exists(path.join(home, "config.json")));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("writes nothing in a home it refuses", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

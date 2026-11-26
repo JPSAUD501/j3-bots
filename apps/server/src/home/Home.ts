@@ -42,6 +42,7 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
     "open-to-others",
     "closed-to-owner",
     "unverifiable",
+    "unreadable",
   ]),
   /**
    * On Windows, the `icacls` command, for PowerShell, that makes the home
@@ -49,7 +50,10 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
    * open a folder there.
    */
   windowsRepair: Schema.optionalKey(Schema.String),
-  /** For `unverifiable`, what Windows said instead of who may open the home. */
+  /**
+   * For `unverifiable`, what Windows said instead of who may open the home;
+   * for `unreadable`, what the system said instead of what the home is.
+   */
   detail: Schema.optionalKey(Schema.String),
 }) {
   override get message(): string {
@@ -64,11 +68,16 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
         return `This user's own permissions on ${this.home} do not let it read, write and open the files there. ${this.fix}`;
       case "unverifiable":
         return `Windows did not say who may open ${this.home} (${this.detail ?? "no answer"}), so the server cannot tell that it is private. ${this.fix}`;
+      case "unreadable":
+        return `The system did not let this user look at ${this.home} (${this.detail ?? "no answer"}), so the server cannot tell that it is private. ${this.fix}`;
     }
   }
 
   /** The command that repairs it, for the operator to run on this system. */
   get fix(): string {
+    if (this.reason === "unreadable") {
+      return `Check that this user can open ${this.home} and every folder it is in.`;
+    }
     if (process.platform === "win32") {
       const repair = this.windowsRepair ?? `icacls ${powerShellWord(this.home)} /inheritance:r`;
       const takeOwnership = `takeown /F ${powerShellWord(this.home)} /R`;
@@ -100,12 +109,24 @@ export class HomeNotPrivate extends Schema.TaggedError<HomeNotPrivate>()("HomeNo
 /**
  * Whether `home` is a folder owned by this user, which this user may read,
  * write and search and no group and no other user can open. A home that does
- * not exist yet passes: the server creates it private. On Windows, who may
- * open it is its access list, which `windowsAcl.ts` reads and judges.
+ * not exist yet passes: the server creates it private. One the system would
+ * not show is refused (`unreadable`), never taken for missing. On Windows,
+ * who may open it is its access list, which `windowsAcl.ts` reads and judges.
  */
 export const checkPrivate = Effect.fn("Home.checkPrivate")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
-  const info = yield* fs.stat(home).pipe(Effect.option);
+  const info = yield* fs.stat(home).pipe(
+    Effect.asSome,
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+    Effect.mapError(
+      (error) =>
+        new HomeNotPrivate({
+          home,
+          reason: "unreadable",
+          detail: Predicate.isError(error.cause) ? error.cause.message : error.message,
+        }),
+    ),
+  );
   if (Option.isNone(info)) return;
   yield* checkPrivateInfo(home, info.value);
 });
@@ -181,23 +202,32 @@ const checkPrivateOnWindows = Effect.fnUntraced(function* (home: string) {
 });
 
 /**
- * Creates `home`, and the folders it is in, if missing: on Windows private
- * from its first moment (`createPrivateFolder`), elsewhere mode 0700.
+ * Creates `home`, and the folders it is in, if missing, private from its
+ * first moment: on Windows with its access list in place
+ * (`createPrivateFolder`), elsewhere mode 0700. Then checks it, as
+ * `checkPrivate` checks an existing home: one another process made since the
+ * server last looked is left as that process made it, and refused unless
+ * private.
  */
 const createHome = Effect.fnUntraced(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  if (process.platform !== "win32") {
-    return yield* fs.makeDirectory(home, { recursive: true, mode: 0o700 });
-  }
-  if (yield* fs.exists(home)) return;
   yield* fs.makeDirectory(path.dirname(home), { recursive: true });
-  yield* createPrivateFolder(home).pipe(
-    Effect.mapError(
-      (error) => new HomeNotPrivate({ home, reason: "unverifiable", detail: error.detail }),
-    ),
-  );
-  // Another process may have made it first, as it pleased.
+  if (process.platform === "win32") {
+    // A folder already there is left as it is.
+    yield* createPrivateFolder(home).pipe(
+      Effect.mapError(
+        (error) => new HomeNotPrivate({ home, reason: "unverifiable", detail: error.detail }),
+      ),
+    );
+  } else {
+    const created = yield* fs.makeDirectory(home, { mode: 0o700 }).pipe(
+      Effect.as(true),
+      Effect.catchReason("PlatformError", "AlreadyExists", () => Effect.succeed(false)),
+    );
+    // The mode it was made with is masked by the process's umask.
+    if (created) yield* fs.chmod(home, 0o700);
+  }
   yield* checkPrivate(home);
 });
 

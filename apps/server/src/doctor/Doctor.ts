@@ -89,6 +89,8 @@ const HOME_SUMMARIES: Record<Home.HomeNotPrivate["reason"], (home: string) => st
     `This user's own permissions on ${home} do not let it read, write and open the files there. The server refuses to start until they do.`,
   unverifiable: (home) =>
     `Windows did not say who may open ${home}. The server refuses to start until it can check that only this user can.`,
+  unreadable: (home) =>
+    `The system did not let this user look at ${home}. The server refuses to start until it can check that only this user can open it.`,
 };
 
 const homeCheck = Effect.fn("doctor.home")(function* (home: string) {
