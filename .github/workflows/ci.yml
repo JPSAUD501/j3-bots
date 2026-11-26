@@ -242,6 +242,23 @@ jobs:
         with:
           persist-credentials: false
 
+      # Every server test builds a home in the temporary folder, with a
+      # database that syncs each commit to disk. The runner's %TEMP% is on its
+      # system drive, whose disk is many times slower than the workspace's
+      # and at times stalls for a minute, timing out tests across files. So
+      # the job's temporary folder is on the workspace's drive, private to
+      # this user as a profile's %TEMP% is: only the user, SYSTEM and the
+      # Administrators may open it, which a home made inside it inherits.
+      - name: Keep temporary files on the workspace's drive
+        run: |
+          $temp = Join-Path $env:RUNNER_TEMP "tmp"
+          New-Item -ItemType Directory -Path $temp | Out-Null
+          $user = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          icacls $temp /inheritance:r /grant:r "*${user}:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -Path $env:GITHUB_ENV -Value "TEMP=$temp"
+          Add-Content -Path $env:GITHUB_ENV -Value "TMP=$temp"
+
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
         with:
