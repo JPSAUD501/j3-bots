@@ -14,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { ConnectorReach } from "../connectors/Connectors.ts";
+import { ConnectorReach, MAX_SESSIONS } from "../connectors/Connectors.ts";
 import { ConnectorStore } from "../connectors/ConnectorStore.ts";
 import {
   CLIENT_METADATA_PATH,
@@ -546,6 +546,7 @@ export const addOAuthConnector = Effect.gen(function* () {
     command: null,
     env: [],
     formSecrets: [],
+    formValues: [],
   });
   yield* store.insert({
     id: NOTION,
@@ -579,4 +580,5 @@ export const unresolvable = Layer.succeed(ConnectorReach, {
     },
   },
   loopback: "refuse",
+  sessions: MAX_SESSIONS,
 });

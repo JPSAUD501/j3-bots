@@ -101,7 +101,9 @@ export interface SecretHeader {
  * operator gave. `hidden` are secrets the request carries only inside
  * another value, as the key a `Bearer {key}` header or a path was made from,
  * each as it may appear: never sent as they are, only taken out of what the
- * server answers.
+ * server answers. Each is known to be a secret, so one too short to look for
+ * inside other text is still taken out where it stands as a word of its own
+ * (`scrubberOf`).
  */
 export interface CallCredentials {
   readonly bearer: Option.Option<Redacted.Redacted<string>>;
@@ -525,8 +527,14 @@ export const request = <A>(
 /** Beyond any deadline here, so the SDK's own timer never fires first. */
 export const sdkTimeout = (deadline: Duration.Duration) => Duration.toMillis(deadline) + 60_000;
 
-/** Values shorter than this are not searched for: they would match ordinary text. */
-const MIN_SCRUBBED = 8;
+/** A value shorter than this is not looked for inside other text: it would match ordinary text. */
+const MIN_FOUND_INSIDE = 8;
+
+/**
+ * A secret shorter than this is not looked for at all: even as a word of its
+ * own it would match ordinary text, such as a number.
+ */
+const MIN_FOUND_AS_WORD = 4;
 
 /**
  * Values of the connector's address that may be a secret: the whole of its
@@ -542,32 +550,68 @@ const addressValues = (url: URL): ReadonlyArray<string> => [
   ...url.searchParams.values(),
 ];
 
-/** The values of the credentials requests were sent with, and those they were made from. */
+/** The values the credentials requests were sent with carry as they are. */
 const sentValues = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string> =>
   sent.flatMap((credentials) =>
-    [
-      ...Option.toArray(credentials.bearer),
-      ...credentials.headers.map((h) => h.value),
-      ...credentials.hidden,
-    ].map(Redacted.value),
+    [...Option.toArray(credentials.bearer), ...credentials.headers.map((h) => h.value)].map(
+      Redacted.value,
+    ),
+  );
+
+/** The secrets those values were made from. */
+const sentSecrets = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string> =>
+  sent.flatMap((credentials) => credentials.hidden.map(Redacted.value));
+
+const REGEXP_SYNTAX = /[.*+?^${}()|[\]\\]/g;
+
+/** Where `value` stands as a word of its own: no letter, digit or `_` right before or after it. */
+const asWord = (value: string) =>
+  new RegExp(
+    `(?<![\\p{L}\\p{N}_])${value.replace(REGEXP_SYNTAX, "\\$&")}(?![\\p{L}\\p{N}_])`,
+    "gu",
   );
 
 /**
  * Replaces, in a server's text, every exact one of `values`, should the
- * server echo one: the credentials a request was sent with and those they
- * were made from, the address' path and query, a command's environment.
- * Each is also found as a JSON string holds it, since a structured answer is
- * read as JSON. Best effort: a value shorter than {@link MIN_SCRUBBED}, or
- * one the server changed otherwise (encoded, split, cased), is not found.
+ * server echo one: the credentials a request was sent with, the address'
+ * path and query, a command's environment. `secrets` are those known to be
+ * secrets, as the operator's secrets a connector's settings name and a
+ * gallery form's secret values: taken out as `values` are, and one of
+ * {@link MIN_FOUND_AS_WORD} to {@link MIN_FOUND_INSIDE} characters, as a PIN,
+ * wherever it stands as a word of its own. Each is also found as a JSON
+ * string holds it, since a structured answer is read as JSON. Best effort:
+ * a shorter value, a short one inside other text, or one the server changed
+ * otherwise (encoded, split, cased), is not found.
  */
-export const scrubberOf = (values: ReadonlyArray<string>): ((text: string) => string) => {
-  const secrets = [
-    ...new Set(values.flatMap((value) => [value, JSON.stringify(value).slice(1, -1)])),
+export const scrubberOf = (
+  values: ReadonlyArray<string>,
+  secrets: ReadonlyArray<string> = [],
+): ((text: string) => string) => {
+  const variants = (value: string) => [value, JSON.stringify(value).slice(1, -1)];
+  const inside = new Set(
+    [...values, ...secrets].flatMap(variants).filter((value) => value.length >= MIN_FOUND_INSIDE),
+  );
+  const words = new Set(
+    secrets
+      .flatMap(variants)
+      .filter((value) => value.length >= MIN_FOUND_AS_WORD && value.length < MIN_FOUND_INSIDE),
+  );
+  const finders = [
+    ...[...inside].map((value) => ({
+      length: value.length,
+      replace: (text: string) => text.replaceAll(value, "[redacted]"),
+    })),
+    ...[...words].map((value) => {
+      const pattern = asWord(value);
+      return {
+        length: value.length,
+        replace: (text: string) => text.replace(pattern, "[redacted]"),
+      };
+    }),
   ]
-    .filter((value) => value.length >= MIN_SCRUBBED)
     // The longest first, so a value that holds another is taken whole.
     .toSorted((a, b) => b.length - a.length);
-  return (text) => secrets.reduce((out, secret) => out.replaceAll(secret, "[redacted]"), text);
+  return (text) => finders.reduce((out, finder) => finder.replace(out), text);
 };
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json));
@@ -767,7 +811,10 @@ export const openSession = (
 
     const address = addressValues(options.url);
     return sessionOf(client, transport, limits, context, (sent) =>
-      scrubberOf([...sentValues([...sent, ...recent]), ...address]),
+      scrubberOf(
+        [...sentValues([...sent, ...recent]), ...address],
+        sentSecrets([...sent, ...recent]),
+      ),
     );
   });
 

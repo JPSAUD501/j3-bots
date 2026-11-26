@@ -697,6 +697,92 @@ describe("references to secrets in a connector's settings", () => {
   );
 
   it.live(
+    "lets a bot change only which secrets a command names, never where it sends them",
+    () =>
+      Effect.gen(function* () {
+        const { ana, secrets, connectors } = yield* withSecret((a) => onlyBots(a));
+        const OTHER = SecretName.make("tracker-backup");
+        yield* secrets.add({
+          id: SecretId.make("sec_0000000000000002"),
+          name: OTHER,
+          draft: { _tag: "value", value: Redacted.make(NEW_VALUE) },
+          access: onlyBots(ana),
+        });
+        const variable = (name: string, value: string) => ({
+          name: EnvName.make(name),
+          value: Redacted.make(value),
+        });
+        const line = (args: ReadonlyArray<string>, key: string, base: string) => ({
+          command: process.execPath,
+          args: [STDIO_SERVER, ...args].map((arg) => Redacted.make(arg)),
+          env: [variable("FIXTURE_SECRET", key), variable("FIXTURE_BASE", base)],
+        });
+        const key = (name: SecretName) => `token=\${secret:${name}}`;
+        yield* connectors.add({
+          id: ID,
+          source: {
+            _tag: "command",
+            name: "Notes",
+            ...line([], key(TOKEN), "https://api.example"),
+          },
+          grant: grantTo(ana),
+          by: operator,
+        });
+        const asAna = { _tag: "bot", botId: ana } as const;
+        const value = (name: string, text: string) => ({
+          key: FieldKey.make(name),
+          value: Redacted.make(text),
+        });
+        const refused = (change: Effect.Effect<Connector, ConnectorCommandError>) =>
+          Effect.map(Effect.flip(change), refusalOf);
+        const sealed = Effect.map(
+          secrets.connectorSecrets.get(connectorSecretIdOf(ID)),
+          Option.getOrThrow,
+        );
+
+        // Another address for the plain variable, another argument, or another text around the
+        // reference: each sends the secret elsewhere.
+        for (const change of [
+          { values: [value("FIXTURE_BASE", "https://bot.example")] },
+          { values: [value("FIXTURE_SECRET", `${key(TOKEN)}&to=bot.example`)] },
+          { command: line(["--to", "bot.example"], key(TOKEN), "https://api.example") },
+          { command: { ...line([], key(TOKEN), "https://api.example"), env: [] } },
+        ]) {
+          assert.deepStrictEqual(
+            yield* refused(connectors.update({ connectorId: ID, ...change, by: asAna })),
+            [TOKEN, "destination"],
+          );
+        }
+        assert.deepStrictEqual(
+          (yield* sealed).env.map((each) => Redacted.value(each.value)),
+          [key(TOKEN), "https://api.example"],
+        );
+
+        // Naming another secret it may use, in the same place, is the bot's to do.
+        yield* connectors.update({
+          connectorId: ID,
+          values: [value("FIXTURE_SECRET", key(OTHER))],
+          by: asAna,
+        });
+        assert.strictEqual(
+          Redacted.value((yield* sealed).env[0]?.value ?? Redacted.make("")),
+          key(OTHER),
+        );
+        // The operator changes where it goes.
+        yield* connectors.update({
+          connectorId: ID,
+          values: [value("FIXTURE_BASE", "https://eu.api.example")],
+          by: operator,
+        });
+        assert.strictEqual(
+          Redacted.value((yield* sealed).env[1]?.value ?? Redacted.make("")),
+          "https://eu.api.example",
+        );
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
     "keeps the command as it was when the values given with a new one are refused",
     () =>
       Effect.gen(function* () {

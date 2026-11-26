@@ -2029,6 +2029,8 @@ const sentences = {
   "connect.failed.secretNotShared":
     "Nem todo bot que você escolheu pode usar o segredo {secret}. Compartilhe-o com eles em Segredos, ou escolha menos bots.",
   "connect.failed.secretNotYours": "O bot que faz essa mudança não pode usar o segredo {secret}.",
+  "connect.failed.secretDestination":
+    "Este servidor envia o segredo {secret}, então só você pode mudar para onde ele o envia: o comando, os argumentos e as outras variáveis.",
   "connect.failed.secretInAddress":
     "Um segredo vai num cabeçalho ou numa variável, não no endereço, onde o J3 Bots não o preenche.",
   "connect.openSecrets": "Abrir Segredos",

@@ -34,6 +34,12 @@ export interface Seen {
   readonly failing: Option.Option<Failing>;
   /** Its server refused the credentials it was sent, and nothing has worked since. */
   readonly refused: boolean;
+  /**
+   * How many times what signs its requests changed since this server started:
+   * its sessions closed for it. An outcome says something of the connector
+   * only while what signed its request still signs them.
+   */
+  readonly signing: number;
 }
 
 interface Served {
@@ -47,6 +53,7 @@ export const NOTHING_SEEN: Seen = {
   served: Option.none(),
   failing: Option.none(),
   refused: false,
+  signing: 0,
 };
 
 /**

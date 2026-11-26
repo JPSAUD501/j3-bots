@@ -21,7 +21,11 @@ interface FakeTool {
   readonly _meta?: Readonly<Record<string, unknown>>;
 }
 
-/** What a call answers: a result, a raw body, or nothing at all (it is held until the client closes it). */
+/**
+ * What a call answers: a result, a raw body, nothing at all (it is held until
+ * the client closes it), or the refusal of its credentials once `after` is
+ * done, as a service that ended a key while the call was on its way.
+ */
 type FakeAnswer =
   | {
       readonly _tag: "result";
@@ -30,7 +34,8 @@ type FakeAnswer =
       readonly structuredContent?: Readonly<Record<string, unknown>>;
     }
   | { readonly _tag: "raw"; readonly body: string }
-  | { readonly _tag: "hang" };
+  | { readonly _tag: "hang" }
+  | { readonly _tag: "refuse"; readonly after: Promise<void> };
 
 interface FakeRequest {
   readonly method: string;
@@ -146,17 +151,19 @@ export const fakeMcpServer = (options: FakeOptions) =>
               rpc: rpc?.method ?? null,
               headers: request.headers,
             });
-            if (
-              options.authorize !== undefined &&
-              !options.authorize(request.headers.authorization)
-            ) {
+            const refuse401 = () => {
               const refusal = options.refusal ?? {
                 status: 401,
                 challenge: 'Bearer error="invalid_token"',
               };
               response.writeHead(refusal.status, { "www-authenticate": refusal.challenge });
               response.end();
-              return;
+            };
+            if (
+              options.authorize !== undefined &&
+              !options.authorize(request.headers.authorization)
+            ) {
+              return refuse401();
             }
             if (request.method === "GET") {
               response.writeHead(200, {
@@ -213,6 +220,7 @@ export const fakeMcpServer = (options: FakeOptions) =>
                   request.headers,
                 );
                 if (answer._tag === "hang") return hold(response);
+                if (answer._tag === "refuse") return void answer.after.then(refuse401);
                 if (answer._tag === "raw") {
                   response.writeHead(200, { "content-type": "application/json" });
                   response.end(answer.body);

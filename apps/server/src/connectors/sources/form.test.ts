@@ -220,7 +220,7 @@ describe("giving a connected remote's header fields again", () => {
     ],
   });
   const refilled = (entries: Record<string, string>) => {
-    const headers = refill(form, values(entries));
+    const headers = refill(form, values(entries), new Map());
     return Result.isFailure(headers)
       ? headers.failure
       : headers.success.map((header) => [header.name, Redacted.value(header.value)]);
@@ -238,6 +238,35 @@ describe("giving a connected remote's header fields again", () => {
     ]);
     assert.deepStrictEqual(refilled({ "header:Authorization:token": "" }), [
       { _tag: "missing", key: "header:Authorization:token" },
+    ]);
+  });
+
+  it("renders a header of several fields from the one given and the others as kept", () => {
+    const split = formOf({
+      type: "streamable-http",
+      url: "https://split.example.com/mcp",
+      headers: [
+        {
+          name: "X-Api-Key",
+          value: "{account}:{key}",
+          isRequired: true,
+          variables: { account: { isRequired: true }, key: { isRequired: true, isSecret: true } },
+        },
+      ],
+    });
+    const kept = values({ "header:X-Api-Key:account": "acme", "header:X-Api-Key:key": "old" });
+    const refilledWith = (entries: Record<string, string>) => {
+      const headers = refill(split, values(entries), kept);
+      return Result.isFailure(headers)
+        ? headers.failure
+        : headers.success.map((header) => [header.name, Redacted.value(header.value)]);
+    };
+    assert.deepStrictEqual(refilledWith({ "header:X-Api-Key:key": "n3w" }), [
+      ["X-Api-Key", "acme:n3w"],
+    ]);
+    // A field given empty is cleared, not taken from what was kept.
+    assert.deepStrictEqual(refilledWith({ "header:X-Api-Key:account": "" }), [
+      { _tag: "missing", key: "header:X-Api-Key:account" },
     ]);
   });
 });

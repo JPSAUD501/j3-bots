@@ -86,6 +86,12 @@ export const ConnectorSecret = Schema.Struct({
    * the connector's server says, and kept out of a sign-in's address.
    */
   formSecrets: Schema.Array(NamedSecret),
+  /**
+   * The value of each other field of a gallery entry's headers, by key:
+   * not a secret, kept beside them so a header made of several fields is
+   * rendered again whole when one of them is given anew.
+   */
+  formValues: Schema.Array(NamedSecret),
 });
 export type ConnectorSecret = typeof ConnectorSecret.Type;
 

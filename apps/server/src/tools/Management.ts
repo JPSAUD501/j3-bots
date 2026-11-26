@@ -256,7 +256,9 @@ export const layer = Layer.effect(
           case "not-yours":
             return refuse(MANAGEMENT_REFUSED.secretNotYours(error.secret));
           case "in-address":
-            return refuse(MANAGEMENT_REFUSED.secretInAddress);
+            return refuse(MANAGEMENT_REFUSED.secretInAddress(error.secret));
+          case "destination":
+            return refuse(MANAGEMENT_REFUSED.secretDestination(error.secret));
         }
       }
       return refuse(`${error.message} Nothing changed.`);

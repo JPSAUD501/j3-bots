@@ -58,8 +58,9 @@ export interface CommandSessionOptions extends ClientSetup {
   /** The variables the operator gave it, with their values from the secrets. */
   readonly variables: ReadonlyArray<CommandVariable>;
   /**
-   * Values of the operator's secrets its arguments carry: its answers are
-   * scrubbed of them, as of its variables' values.
+   * Values of the operator's secrets its arguments and variables carry: its
+   * answers are scrubbed of them, as of its variables' values, and of a short
+   * one where it stands as a word of its own (`scrubberOf`).
    */
   readonly hidden: ReadonlyArray<Redacted.Redacted<string>>;
   /** The server's own environment, of which only a few variables reach the process. */
@@ -126,9 +127,8 @@ export const openCommandSession = (
       return yield* new CommandFailed({ reason: "exited" });
     }
     const scrub = scrubberOf(
-      [...options.variables.map((variable) => variable.value), ...options.hidden].map(
-        Redacted.value,
-      ),
+      options.variables.map((variable) => Redacted.value(variable.value)),
+      options.hidden.map(Redacted.value),
     );
     const context = yield* Effect.context<never>();
     const fork = (effect: Effect.Effect<void>) => void Effect.runForkWith(context)(effect);

@@ -405,4 +405,17 @@ describe("scrubberOf", () => {
     assert.strictEqual(scrub(`token ${secret}`), "token [redacted]");
     assert.strictEqual(scrub(JSON.stringify({ token: secret })), '{"token":"[redacted]"}');
   });
+
+  it("takes a short secret out only where it stands as a word of its own", () => {
+    const scrub = scrubberOf([], ["4096"]);
+    assert.strictEqual(scrub("PIN 4096, set."), "PIN [redacted], set.");
+    assert.strictEqual(scrub('{"pin":"4096"}'), '{"pin":"[redacted]"}');
+    // Inside a longer number or word it is ordinary text.
+    assert.strictEqual(scrub("order 140960 and v4096b"), "order 140960 and v4096b");
+  });
+
+  it("leaves ordinary text alone: a short value not known to be a secret, and one too short to look for", () => {
+    const scrub = scrubberOf(["info"], ["abc"]);
+    assert.strictEqual(scrub("info: abc"), "info: abc");
+  });
 });

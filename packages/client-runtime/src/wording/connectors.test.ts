@@ -80,7 +80,7 @@ describe("connectFailureText", () => {
 
   it.each(languages)("names the secret a change was refused over, and why (%s)", (lang) => {
     const { i18n } = context("2026-11-20T15:00:00Z", lang);
-    const problems = ["missing", "no-value", "not-shared", "not-yours"] as const;
+    const problems = ["missing", "no-value", "not-shared", "not-yours", "destination"] as const;
     const texts = problems.map((problem) =>
       connectFailureText(
         { _tag: "secret-refused", error: new SecretRefused({ secret, problem }) },

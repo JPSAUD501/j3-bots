@@ -1125,8 +1125,10 @@ export const MANAGEMENT_REFUSED = {
     `Not every bot this server would go to may use the secret ${name}. Ask your user to share it with them in Secrets, or give the server only to bots that may. Nothing changed.`,
   secretNotYours: (name: string) =>
     `You may not use the secret ${name} yourself, so you can't write it into a server's settings. Nothing changed.`,
-  secretInAddress:
-    "A secret's reference goes in a header, an argument or a variable, not in the address, where J3 Bots does not resolve it. If the service takes its key only in the address, your user adds the server from Settings → MCP and skills. Nothing changed.",
+  secretInAddress: (name: string) =>
+    `The secret ${name} is referenced in the address, where J3 Bots does not resolve it: a reference goes in a header, an argument or a variable. If the service takes its key only in the address, your user adds the server from Settings → MCP and skills. Nothing changed.`,
+  secretDestination: (name: string) =>
+    `This server sends the secret ${name}, so only your user can change where it sends it: its command, arguments and other variables, in Settings → MCP and skills. You may change which secrets it names. Or remove it and add a new one, asking your user for the secret again with \`ask_for_secret\`. Nothing changed.`,
   privateNetwork:
     "That address is in your user's own network, which only they can allow: they add it from Settings → MCP and skills. Nothing changed.",
   ownApp:

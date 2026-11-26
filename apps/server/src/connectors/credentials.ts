@@ -134,15 +134,15 @@ export const commandOf = (
 
 /**
  * Signs the connector's requests from its secret and, for an OAuth connector,
- * its sign-in. `current` is asked first, right before each request goes out:
- * the connector as stored now, or none once the session's holder may no
- * longer use it, which withdraws the request unsigned. Its references
- * resolve for the bots it goes to now, not those of when the session opened.
+ * its sign-in. `current` is asked right before each request goes out, and
+ * again when its server refuses one: the connector as stored now, or none
+ * once the session's holder may no longer use it, which withdraws the
+ * request unsigned. Its references resolve for the bots it goes to now, not
+ * those of when the session opened.
  */
 export const credentialsOf = (
   secrets: typeof Secrets.Service,
   signIns: typeof ConnectorSignIns.Service,
-  connector: StoredConnector,
   current: Effect.Effect<Option.Option<StoredConnector>>,
 ): ConnectorCredentials => ({
   current: Effect.gen(function* () {
@@ -157,8 +157,10 @@ export const credentialsOf = (
         : Option.none();
     return { bearer, headers, hidden } satisfies CallCredentials;
   }),
-  rejected: (wwwAuthenticate, sent) =>
-    connector.signIn === "oauth"
-      ? signIns.rejected(connector.id, wwwAuthenticate, sent)
-      : Effect.fail(new NeedsSignIn()),
+  rejected: Effect.fn("ConnectorCredentials.rejected")(function* (wwwAuthenticate, sent) {
+    const now = yield* current;
+    if (Option.isNone(now)) return yield* new Withdrawn();
+    if (now.value.signIn !== "oauth") return yield* new NeedsSignIn();
+    return yield* signIns.rejected(now.value.id, wwwAuthenticate, sent);
+  }),
 });

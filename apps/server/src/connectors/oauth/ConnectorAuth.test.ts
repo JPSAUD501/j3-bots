@@ -85,6 +85,7 @@ const run = <A, E>(
       command: null,
       env: [],
       formSecrets: [],
+      formValues: [],
     });
     return yield* use;
   }).pipe(
