@@ -1662,6 +1662,7 @@ const scoutWorking = (doing: string, littleOnes = 0): Bot => ({
     stalled: false,
     quietSince: null,
     typing: false,
+    retrying: false,
     activity: doing,
     tool: null,
     littleOnes,
