@@ -12,6 +12,8 @@ import type {
   RoomId,
   RosterItemKey,
   RoutineId,
+  SkillName,
+  SkillScope,
 } from "@j3-bots/contracts";
 import { rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { fontFamilies } from "@j3-bots/design-tokens";
@@ -36,6 +38,7 @@ import { AddConnectorScreen } from "./connectors/AddConnectorScreen.tsx";
 import { ConnectorScreen } from "./connectors/ConnectorScreen.tsx";
 import { ConnectorsScreen } from "./connectors/ConnectorsScreen.tsx";
 import { ListingScreen } from "./connectors/ListingScreen.tsx";
+import { NewSkillScreen, SkillScreen } from "./connectors/Skills.tsx";
 import { useI18n } from "./i18n.ts";
 import { useSideBySide } from "./layout.ts";
 import { PresentationProvider } from "./presentation.tsx";
@@ -76,6 +79,7 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * The connectors' screens open from Settings, a bot's details and a card:
  * their list and the gallery, a gallery entry, one connector, and adding one
  * of the operator's own. `forBot` is the bot a new connector is for at first.
+ * The skills open from the same list: one skill, and adding one.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
@@ -122,6 +126,10 @@ export type Screens = {
     readonly added: boolean;
   };
   addConnector: { readonly forBot: BotId | null };
+  /** One skill, by whose it is and its name. */
+  skill: { readonly scope: SkillScope; readonly name: SkillName };
+  /** `forBot` is the bot a new skill is for at first. */
+  newSkill: { readonly forBot: BotId | null };
 };
 
 /**
@@ -303,6 +311,8 @@ export function Main() {
                 <Stack.Screen name="connectorListing" component={ListingScreen} />
                 <Stack.Screen name="connector" component={ConnectorScreen} />
                 <Stack.Screen name="addConnector" options={sheet} component={AddConnectorScreen} />
+                <Stack.Screen name="skill" component={SkillScreen} />
+                <Stack.Screen name="newSkill" options={sheet} component={NewSkillScreen} />
               </Stack.Navigator>
             </NavigationContainer>
           </FileOpenerProvider>

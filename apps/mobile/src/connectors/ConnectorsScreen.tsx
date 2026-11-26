@@ -1,31 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConnectorSearch } from "@j3-bots/client-runtime";
 import { addedFrom, listingKey, listingPlace } from "@j3-bots/client-runtime/presentation";
-import {
-  type Answer,
-  useAnswer,
-  useConnection,
-  useConnectors,
-} from "@j3-bots/client-runtime/react";
-import { grantText } from "@j3-bots/client-runtime/wording";
+import { useAnswer, useConnection, useConnectors } from "@j3-bots/client-runtime/react";
+import { grantText, lastChangeText } from "@j3-bots/client-runtime/wording";
 import type { Connector, ConnectorListing } from "@j3-bots/contracts";
 import type { KeyWith } from "@j3-bots/i18n";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Plus, Search, X } from "lucide-react-native";
-import { type ReactNode, useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Quiet, Section, SkeletonRows, SwitchRow } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
-import { useBotList } from "../presentation.tsx";
+import { useBotList, usePresentation } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { Text, TextInput } from "../text.tsx";
 import { useColor } from "../theme.ts";
-import { Button } from "../ui.tsx";
 import { useConnectorsIntents, useOpenConnectors } from "./intents.ts";
-import { ConnectorTile, OpenRow, StatusWord } from "./parts.tsx";
+import { ConnectorTile, Loaded, OpenRow, StatusWord } from "./parts.tsx";
+import { SkillsSection } from "./Skills.tsx";
 
 type Props = NativeStackScreenProps<Screens, "connectors">;
 
@@ -46,7 +41,8 @@ const kindNote: Partial<Record<ConnectorListing["connect"], KeyWith>> = {
  * features; last, adding one of their own. Each opens its page over this one.
  */
 export function ConnectorsScreen({ navigation, route }: Props) {
-  const i18n = useI18n();
+  const ctx = usePresentation();
+  const { i18n } = ctx;
   const { t } = i18n;
   const insets = useSafeAreaInsets();
   const intents = useConnectorsIntents();
@@ -162,6 +158,7 @@ export function ConnectorsScreen({ navigation, route }: Props) {
                     key={connector.id}
                     connector={connector}
                     bots={grantText(connector.grant, bots, i18n)}
+                    changed={lastChangeText(connector.lastChange, bots, ctx)}
                     onPress={() =>
                       open({
                         at: {
@@ -187,6 +184,11 @@ export function ConnectorsScreen({ navigation, route }: Props) {
               </Loaded>
             )}
           </Section>
+          <SkillsSection
+            bots={bots}
+            onOpen={(skill) => navigation.push("skill", { scope: skill.scope, name: skill.name })}
+            onAdd={() => navigation.push("newSkill", { forBot })}
+          />
         </>
       )}
 
@@ -211,14 +213,16 @@ export function ConnectorsScreen({ navigation, route }: Props) {
   );
 }
 
-/** One of the operator's connectors: its status, and which bots may use it. */
+/** One of the operator's connectors: its status, which bots may use it, and who changed it last. */
 function YourRow({
   connector,
   bots,
+  changed,
   onPress,
 }: {
   readonly connector: Connector;
   readonly bots: string;
+  readonly changed: string | null;
   readonly onPress: () => void;
 }) {
   return (
@@ -229,6 +233,7 @@ function YourRow({
           {connector.name}
         </Text>
         <StatusWord connector={connector} />
+        {changed !== null && <Text className="text-xs text-muted-foreground">{changed}</Text>}
       </View>
       <Text className="text-xs text-muted-foreground">{bots}</Text>
     </OpenRow>
@@ -270,26 +275,6 @@ function SearchField({
           <Icon icon={X} color="accent-muted-foreground" />
         </PressScale>
       )}
-    </View>
-  );
-}
-
-/** What a read that answered holds, or that it did not answer, with a way to read it again. */
-export function Loaded<A>({
-  answer,
-  onRetry,
-  children,
-}: {
-  readonly answer: Exclude<Answer<A>, { readonly _tag: "loading" }>;
-  readonly onRetry: () => void;
-  readonly children: (value: A) => ReactNode;
-}) {
-  const { t } = useI18n();
-  if (answer._tag === "ready") return children(answer.value);
-  return (
-    <View className="items-start gap-2">
-      <Quiet>{t("connectors.loadFailed")}</Quiet>
-      <Button variant="secondary" label={t("connectors.retry")} onPress={onRetry} />
     </View>
   );
 }

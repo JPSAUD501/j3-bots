@@ -27,12 +27,12 @@ import type { Screens } from "../navigation.tsx";
 import { useBotList } from "../presentation.tsx";
 import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
-import { Loaded } from "./ConnectorsScreen.tsx";
 import { type ConnectorsIntents, useConnectorsIntents } from "./intents.ts";
 import {
   BotsPicker,
   ConnectorHeading,
   ListingFields,
+  Loaded,
   PageSection,
   SecretLine,
   ToolList,
