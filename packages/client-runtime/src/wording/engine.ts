@@ -113,7 +113,7 @@ export function providerLine(
 /**
  * A provider's harness version, and the update the operator last asked for,
  * in words; null when the server reports neither, as for a harness it did
- * not find and was not asked to update, or a server older than 0.7.1.
+ * not find and was not asked to update, or a server older than 0.8.0.
  * - `text`: the update while it runs or once it did not succeed; else a
  *   newer version when one is out; else that the update finished; else the
  *   version.

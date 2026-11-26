@@ -41,7 +41,7 @@ export const Resource = Schema.Literals([
   "connector",
   "connector-listing",
   "sign-in",
-  /** A provider, which only `engine.recheckProvider`, new in 0.7.1, names: an older client never asks it. */
+  /** A provider, which only `engine.recheckProvider`, new in 0.8.0, names: an older client never asks it. */
   "provider",
 ]);
 export type Resource = typeof Resource.Type;
@@ -128,7 +128,7 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
     "sign-in-refused",
     /**
      * The engine cannot update this provider's harness itself, or knows no
-     * newer version of it. Only `engine.updateProvider`, new in 0.7.1,
+     * newer version of it. Only `engine.updateProvider`, new in 0.8.0,
      * answers it.
      */
     "provider-not-updatable",
