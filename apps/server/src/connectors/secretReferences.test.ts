@@ -12,7 +12,9 @@ import {
   type ConnectorGrant,
   ConnectorId,
   EnvName,
+  FieldKey,
   HeaderName,
+  RegistryName,
   type SecretAccess,
   SecretId,
   SecretName,
@@ -24,6 +26,7 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as References from "effect/References";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { Bots } from "../bots/Bots.ts";
 import { Secrets } from "../secrets/Secrets.ts";
@@ -31,6 +34,7 @@ import { reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { CommandReach, Connectors } from "./Connectors.ts";
 import { connectorSecretIdOf } from "./credentials.ts";
+import { connectForm } from "./sources/form.ts";
 
 const ID = ConnectorId.make("conn_secretrefs0000001");
 const TOKEN_ID = SecretId.make("sec_0000000000000001");
@@ -63,6 +67,28 @@ const domain = TestDomain.layer.pipe(
     ),
   ),
 );
+
+// A registry entry whose one header is made of two fields side by side.
+const SPLIT = RegistryName.make("io.example/split");
+const splitForm = connectForm({
+  type: "streamable-http",
+  url: "https://mcp.split.example/mcp",
+  headers: [
+    {
+      name: "X-Api-Key",
+      value: "{prefix}{rest}",
+      isRequired: true,
+      variables: {
+        prefix: { isRequired: true, isSecret: true },
+        rest: { isRequired: true, isSecret: true },
+      },
+    },
+  ],
+});
+if (Result.isFailure(splitForm)) throw new Error(`refused: ${splitForm.failure}`);
+const withSplit = TestDomain.layerWithRegistry([
+  { name: SPLIT, title: "Split", description: null, form: splitForm.success, owner: null },
+]).pipe(Layer.provide(reachFakes));
 
 /** Each test talks to a server over a socket, or to a real process. */
 const SLOW = 30_000;
@@ -447,6 +473,147 @@ describe("references to secrets in a connector's settings", () => {
         yield* eventually(whoami(ana).pipe(Effect.map((now) => now !== undefined && now !== pid)));
         assert.include((yield* call(ana, "echo", { name: "FIXTURE_SECRET" })).text, "[redacted]");
         assert.notInclude(JSON.stringify(logged), NEW_VALUE);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
+    "resolves a bot's session for the bots the connector goes to now, not when the session opened",
+    () =>
+      Effect.gen(function* () {
+        const { ana, bea, secrets, connectors } = yield* withSecret((a, b) => onlyBots(a, b));
+        const fake = yield* echoingFake;
+        yield* tracker(grantTo(ana, bea));
+        yield* pointAt(fake);
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+        yield* connectors.call({ botId: ana, name: "tracker__search", arguments: {} });
+
+        // The operator keeps the server and the secret for Ana alone, in that order.
+        yield* connectors.setBots({
+          commandId: CommandId.make("ana-only"),
+          connectorId: ID,
+          grant: grantTo(ana),
+          by: operator,
+        });
+        yield* secrets.setAccess(TOKEN_ID, onlyBots(ana));
+        const answer = yield* connectors.call({
+          botId: ana,
+          name: "tracker__search",
+          arguments: {},
+        });
+        assert.isFalse(answer.isError);
+        assert.strictEqual(authorizations(fake).at(-1), `Bearer ${VALUE}`);
+        yield* awaitConnector(listed);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
+    "takes a refused key's new value from the secret it names, with nobody editing the connector",
+    () =>
+      Effect.gen(function* () {
+        const { ana, secrets, connectors } = yield* withSecret((a) => onlyBots(a));
+        let accepted = VALUE;
+        const fake = yield* fakeMcpServer({
+          tools: [{ name: "search", description: "Searches issues" }],
+          call: () => ({ _tag: "result", text: "found" }),
+          authorize: (authorization) => authorization === `Bearer ${accepted}`,
+        });
+        yield* tracker(grantTo(ana));
+        yield* pointAt(fake);
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+
+        // The service ends the key: the connector needs it again.
+        accepted = NEW_VALUE;
+        yield* connectors.call({ botId: ana, name: "tracker__search", arguments: {} });
+        yield* awaitConnector((connector) => connector.status._tag === "needs-sign-in");
+
+        // The operator saves the new key in the secret, and the connector takes it.
+        yield* secrets.update({ id: TOKEN_ID, changes: { value: Redacted.make(NEW_VALUE) } });
+        yield* awaitConnector(listed);
+        assert.deepStrictEqual(
+          (yield* connectors.toolsFor(ana)).map((tool) => tool.name),
+          ["tracker__search"],
+        );
+        assert.isFalse(
+          (yield* connectors.call({ botId: ana, name: "tracker__search", arguments: {} })).isError,
+        );
+        assert.strictEqual(authorizations(fake).at(-1), `Bearer ${NEW_VALUE}`);
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.effect("counts a reference a bot's values make once rendered as the bot's", () =>
+    Effect.gen(function* () {
+      const { ana, bea, secrets, connectors } = yield* withSecret((_a, b) => onlyBots(b));
+      const field = (name: string, text: string) => ({
+        key: FieldKey.make(`header:X-Api-Key:${name}`),
+        value: Redacted.make(text),
+      });
+      yield* connectors.add({
+        id: ID,
+        source: {
+          _tag: "listing",
+          ref: { _tag: "registry", name: SPLIT },
+          language: "en",
+          values: [field("prefix", "plain"), field("rest", "key")],
+          oauthClient: null,
+        },
+        grant: grantTo(bea),
+        by: operator,
+      });
+      // Ana writes half a reference into each field of Bea's server: together, Bea's secret.
+      const refused = yield* Effect.flip(
+        connectors.update({
+          connectorId: ID,
+          values: [field("prefix", "${secret:"), field("rest", `${TOKEN}}`)],
+          by: { _tag: "bot", botId: ana },
+        }),
+      );
+      assert.deepStrictEqual(refusalOf(refused), [TOKEN, "not-yours"]);
+      const sealed = Option.getOrThrow(
+        yield* secrets.connectorSecrets.get(connectorSecretIdOf(ID)),
+      );
+      assert.deepStrictEqual(
+        sealed.headers.map((header) => Redacted.value(header.value)),
+        ["plainkey"],
+      );
+    }).pipe(Effect.provide(withSplit)),
+  );
+
+  it.live(
+    "keeps the command as it was when the values given with a new one are refused",
+    () =>
+      Effect.gen(function* () {
+        const { ana, secrets, connectors } = yield* withSecret((a) => onlyBots(a));
+        const line = (args: ReadonlyArray<string>) => ({
+          command: process.execPath,
+          args: [STDIO_SERVER, ...args].map((arg) => Redacted.make(arg)),
+          env: [{ name: EnvName.make("FIXTURE_SECRET"), value: Redacted.make("plain-value") }],
+        });
+        yield* connectors.add({
+          id: ID,
+          source: { _tag: "command", name: "Notes", ...line([]) },
+          grant: grantTo(ana),
+          by: operator,
+        });
+        const refused = yield* Effect.flip(
+          connectors.update({
+            connectorId: ID,
+            command: line(["--tool", "extra"]),
+            values: [
+              { key: FieldKey.make("FIXTURE_SECRET"), value: Redacted.make("${secret:nowhere}") },
+            ],
+            by: operator,
+          }),
+        );
+        assert.deepStrictEqual(refusalOf(refused), ["nowhere", "missing"]);
+        const sealed = Option.getOrThrow(
+          yield* secrets.connectorSecrets.get(connectorSecretIdOf(ID)),
+        );
+        assert.deepStrictEqual(sealed.command?.args.map(Redacted.value), [STDIO_SERVER]);
       }).pipe(Effect.scoped, Effect.provide(domain)),
     SLOW,
   );

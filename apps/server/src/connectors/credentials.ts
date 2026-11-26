@@ -134,23 +134,26 @@ export const commandOf = (
 
 /**
  * Signs the connector's requests from its secret and, for an OAuth connector,
- * its sign-in. `allowed` is asked first, right before each request goes out:
- * a request it refuses is withdrawn unsigned.
+ * its sign-in. `current` is asked first, right before each request goes out:
+ * the connector as stored now, or none once the session's holder may no
+ * longer use it, which withdraws the request unsigned. Its references
+ * resolve for the bots it goes to now, not those of when the session opened.
  */
 export const credentialsOf = (
   secrets: typeof Secrets.Service,
   signIns: typeof ConnectorSignIns.Service,
   connector: StoredConnector,
-  allowed: Effect.Effect<boolean>,
+  current: Effect.Effect<Option.Option<StoredConnector>>,
 ): ConnectorCredentials => ({
   current: Effect.gen(function* () {
-    if (!(yield* allowed)) return yield* new Withdrawn();
-    const resolved = yield* resolvedOf(secrets, connector);
+    const now = yield* current;
+    if (Option.isNone(now)) return yield* new Withdrawn();
+    const resolved = yield* resolvedOf(secrets, now.value);
     const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
     const hidden = Option.match(resolved, { onNone: () => [], onSome: hiddenOfResolved });
     const bearer =
-      connector.signIn === "oauth"
-        ? Option.some(yield* signIns.accessToken(connector.id))
+      now.value.signIn === "oauth"
+        ? Option.some(yield* signIns.accessToken(now.value.id))
         : Option.none();
     return { bearer, headers, hidden } satisfies CallCredentials;
   }),

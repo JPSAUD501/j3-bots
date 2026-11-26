@@ -107,7 +107,7 @@ import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { keyedLock } from "../turns/keyedLock.ts";
 import type { ConnectorSecret, NamedSecret } from "../secrets/ConnectorSecret.ts";
-import type { SecretReference } from "../secrets/references.ts";
+import { referenceText, type SecretReference } from "../secrets/references.ts";
 import { Secrets, type SecretUnavailable } from "../secrets/Secrets.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
@@ -123,7 +123,6 @@ import {
   digestOf,
   needOf,
   referenceInAddress,
-  referencesInValues,
   referencesOf,
   usersOf,
   withValues,
@@ -804,16 +803,18 @@ export const layer = Layer.effect(
       }
     });
 
-    /** Whether `holder` may still use the connector: the server's own session always, a bot's while it is granted. */
-    const allowed = (id: ConnectorId, holder: Holder): Effect.Effect<boolean> =>
-      holder === "catalog"
-        ? Effect.succeed(true)
-        : Effect.map(store.get(id), (connector) =>
-            Option.exists(
-              connector,
-              (c) => c.grant._tag === "all-bots" || c.grant.ids.includes(holder),
-            ),
-          );
+    /** The connector as stored now, while `holder` may still use it: the server's own session always, a bot's while it is granted. */
+    const heldBy = (
+      id: ConnectorId,
+      holder: Holder,
+    ): Effect.Effect<Option.Option<StoredConnector>> =>
+      Effect.map(
+        store.get(id),
+        Option.filter(
+          (c) =>
+            holder === "catalog" || c.grant._tag === "all-bots" || c.grant.ids.includes(holder),
+        ),
+      );
 
     const sessions = yield* RcMap.make({
       lookup: Effect.fn("Connectors.openSession")(function* (key: string) {
@@ -837,7 +838,7 @@ export const layer = Layer.effect(
             secrets,
             signIns,
             connector.value,
-            allowed(id.value, holder.value),
+            heldBy(id.value, holder.value),
           ),
           limits: reach.limits,
           client: CLIENT,
@@ -1024,7 +1025,10 @@ export const layer = Layer.effect(
           if (!needChanged && !valuesChanged) return;
           if (Option.isNone(connector)) return;
           yield* closeSessions(id);
-          if (needChanged) {
+          // A server that refused the old values is tried with the new, as when they are given again.
+          const wasRefused = valuesChanged && (yield* seenOf(id)).refused;
+          if (wasRefused) yield* updateSeen(id, (seen) => ({ ...seen, refused: false }));
+          if (needChanged || wasRefused) {
             yield* touch(id);
             yield* toolsTouched(yield* botsOf(connector.value));
           }
@@ -2130,10 +2134,16 @@ export const layer = Layer.effect(
       yield* perConnector.run(input.connectorId)(
         Effect.gen(function* () {
           if (input.command !== undefined) {
-            yield* replaceCommand(yield* require(input.connectorId), input.command, input.by, now);
+            // Values given with a new command line are its variables': one write, checked whole,
+            // so a refusal leaves the old command as it was.
+            const command =
+              input.values === undefined
+                ? input.command
+                : yield* withVariables(input.command, input.values);
+            yield* replaceCommand(yield* require(input.connectorId), command, input.by, now);
           }
           const connector = yield* require(input.connectorId);
-          if (input.values !== undefined) {
+          if (input.values !== undefined && input.command === undefined) {
             yield* replaceValues(connector, input.values, input.by, now);
           }
           yield* store.update(
@@ -2150,6 +2160,25 @@ export const layer = Layer.effect(
       yield* touch(input.connectorId);
       return yield* render(yield* require(input.connectorId));
     });
+
+    /** `command` with each of `values` as the value of its variable of that name, which it must have. */
+    const withVariables = (
+      command: CommandLine,
+      values: ReadonlyArray<ConnectorFieldValue>,
+    ): Effect.Effect<CommandLine, Invalid> => {
+      const given = valuesOf(values);
+      const names = new Set<string>(command.env.map((variable) => variable.name));
+      if ([...given.keys()].some((key) => !names.has(key))) {
+        return Effect.fail(new Invalid({ reason: "connector-fields" }));
+      }
+      return Effect.succeed({
+        ...command,
+        env: command.env.map((variable) => ({
+          name: variable.name,
+          value: given.get(variable.name) ?? variable.value,
+        })),
+      });
+    };
 
     /**
      * A remote connector's secret with `values` given again: the
@@ -2229,11 +2258,14 @@ export const layer = Layer.effect(
             })),
           }
         : yield* withRemoteValues(connector, secret.value, values);
+      // The writer's are every reference the settings make now that they did not before: a gallery
+      // entry's header is rendered from its fields, and two fields side by side can make one.
+      const before = new Set(referencesOf(secret.value).map(referenceText));
       yield* checkSecrets({
         secret: next,
         grant: connector.grant,
         by,
-        written: referencesInValues(values.map((value) => value.value)),
+        written: referencesOf(next).filter((reference) => !before.has(referenceText(reference))),
       });
       // From the write on, nothing interrupts it: the process the old values started stops with it.
       yield* Effect.uninterruptible(

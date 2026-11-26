@@ -46,7 +46,7 @@ const distinct = (references: ReadonlyArray<SecretReference>): ReadonlyArray<Sec
 };
 
 /** The references in `values`, each once. */
-export const referencesInValues = (
+const referencesInValues = (
   values: ReadonlyArray<Redacted.Redacted<string>>,
 ): ReadonlyArray<SecretReference> =>
   distinct(values.flatMap((value) => referencesIn(Redacted.value(value))));

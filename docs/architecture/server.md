@@ -805,12 +805,12 @@ New in 0.9.0 ([decision 0049](../decisions/0049-the-bots-manage-mcp-servers-and-
 | `missing` | No secret has that name. |
 | `no-value` | The secret exists but lacks the value the reference takes, such as a single value's `.username`. |
 | `not-shared` | A bot the connector would go to may not use the secret. |
-| `not-yours` | A bot wrote the reference, and that bot may not use the secret. |
+| `not-yours` | A bot's change makes the reference, as its values render into the settings, and that bot may not use the secret. |
 | `in-address` | A reference in the address, raw or percent-encoded, where none is resolved. |
 
 The bots' tools answer each in fixed words (`MANAGEMENT_REFUSED`); the clients say it beside the field or the bots picker. Granting the secret later, or narrowing the connector's bots, makes it usable without adding it again.
 
-**Never a literal.** The references resolve when the server makes a request or starts the process, never before, and a value is not kept anywhere else. A secret that goes missing, loses its value or stops covering the connector's bots after the connector was added makes it `needs-secret`, naming it: its sessions close, its process stops, bots get none of its tools, and a call answers why. Nothing is sent, so no `${secret:…}` text reaches a server. Each change of the secrets' revision checks every connector again, with a SHA-256 of what its references resolved to: a new value closes the connector's sessions and stops its process, so the next request or start uses it.
+**Never a literal.** The references resolve when the server makes a request or starts the process, never before, and a value is not kept anywhere else. A secret that goes missing, loses its value or stops covering the connector's bots after the connector was added makes it `needs-secret`, naming it: its sessions close, its process stops, bots get none of its tools, and a call answers why. Nothing is sent, so no `${secret:…}` text reaches a server. Each change of the secrets' revision checks every connector again, with a SHA-256 of what its references resolved to: a new value closes the connector's sessions and stops its process, so the next request or start uses it, and forgets a refusal of the old value, as giving the connector its values again does. A session resolves for the bots the connector goes to at each request, not those of when it opened. Values given with a new command line are its variables', checked and written with it in one step.
 
 **Values stay on the server.** None reaches a client, a log, an error or a bot's context. A server's answer is scrubbed of each value its settings resolved to, an argument's as a variable's, before a bot or the log sees it; the status and the refusals name only the secret.
 
