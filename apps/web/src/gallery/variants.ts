@@ -672,7 +672,7 @@ export function galleryVariants(now: DateTime.Utc) {
     connectorAsk("cq-own-app", ownApp, { _tag: "pending" }),
     connectorAsk("cq-added", network, {
       _tag: "added",
-      connectorId: ConnectorId.make("conn_home"),
+      connectorId: ConnectorId.make("conn_samplehomelights0"),
     }),
     connectorAsk("cq-declined", ownApp, { _tag: "declined" }),
     connectorAsk("cq-failed", ownApp, { _tag: "failed" }),

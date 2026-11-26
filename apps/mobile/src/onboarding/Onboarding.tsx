@@ -67,8 +67,6 @@ import Animated, {
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
-  withRepeat,
-  withDelay,
   withSpring,
   withTiming,
 } from "react-native-reanimated";

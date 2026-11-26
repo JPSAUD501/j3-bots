@@ -16,6 +16,7 @@ import {
   aiAction,
   type AiFacts,
   aiOutage,
+  connectStepSaysProgress,
   openAiAccount,
   queuedSignIn,
   signInStepAt,
@@ -314,5 +315,15 @@ describe("what keeps J3 Bots from running any account", () => {
       _tag: "unavailable",
       reason: "down",
     });
+  });
+});
+
+describe("the first run's quiet line, on the connect step", () => {
+  it("stays while the step only asks which AI, and goes once the step says how far things are itself", () => {
+    const starting: EngineStatus = { ...engineWith(), state: { _tag: "starting" } };
+    expect(connectStepSaysProgress(starting, null)).toBe(false);
+    expect(connectStepSaysProgress(starting, "claude-code")).toBe(true);
+    const out: EngineStatus = { ...engineWith(), state: { _tag: "unavailable", reason: "down" } };
+    expect(connectStepSaysProgress(out, null)).toBe(true);
   });
 });
