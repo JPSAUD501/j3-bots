@@ -146,6 +146,8 @@ export const makeUpdatePrompt = (deps: UpdatePromptDeps): UpdatePrompt => {
     const result = server.ended.get();
     if (result !== null && state.get().run._tag === "server") {
       dispatch({ _tag: "server-ended", result });
+      // The prompt says how it ended, or goes on to the client: nothing else repeats it.
+      server.dismissEnded();
     }
   });
   server.view.subscribe(() => {

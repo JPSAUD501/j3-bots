@@ -152,7 +152,15 @@ An update records in `~/.j3-bots/state/runtime.json` the release that runs: befo
 
 ### From a client
 
-A client can update the server too: it offers the release the server found ([Server: release feed](../architecture/server.md#release-feed)), and the update is this same `j3-bots update`, run for you ([Server: updating from a client](../architecture/server.md#updating-from-a-client)). It asks before it stops bots' work, as the command does. The client follows it through the restart, and every client then shows how it ended: the new release runs, or it rolled back and why, or the rollback itself failed and `j3-bots update --rollback` finishes it.
+A client can update the server too. When the server finds a newer release ([Server: release feed](../architecture/server.md#release-feed)), every paired client opens the update prompt in front of the app, with the version, the release's highlights and "Update now" ([Clients: the update prompt](../architecture/clients.md#the-update-prompt)). "Later" puts it away for a day, and a line in the roster's footer, or over the roster on the phone, brings it back.
+
+"Update now" updates the server first and the client after it ([decision 0051](../decisions/0051-an-update-asks-in-front-and-goes-server-first.md)):
+
+1. The server's update is this same `j3-bots update`, run for you ([Server: updating from a client](../architecture/server.md#updating-from-a-client)). It asks before it stops bots' work, as the command does.
+2. The client follows it through the restart and waits until the server answers on the new release.
+3. Only then does the client update itself. The desktop app downloads, verifies and restarts, the Android app installs, and a browser reloads.
+
+If the server's update does not end on the new release, nothing else happens. The prompt says why and offers "Try again": it rolled back, and why, or the rollback itself failed and `j3-bots update --rollback` finishes it. Every other client shows how it ended too.
 
 It needs what the command needs, and two things more, since the update stops the service it was asked through and so runs beside it, as a unit of your systemd user manager:
 

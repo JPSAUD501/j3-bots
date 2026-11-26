@@ -1638,11 +1638,8 @@ const sentences = {
     "Algo neste celular, como a política de um perfil de trabalho, não deixa instalar apps.",
   "phoneUpdate.failure.installFailed":
     "O Android não conseguiu instalar a atualização. Nada mudou.",
-  "updateNotice.server": "O J3 Bots {version} está pronto para o servidor.",
-  "updateNotice.app": "O J3 Bots {version} está pronto para este app.",
-  "updateNotice.both": "O J3 Bots {version} está pronto para o servidor e este app.",
-  "updateNotice.open": "Abre as atualizações nas Configurações.",
-  "updateNotice.hide": "Ocultar até a próxima versão",
+  "updateNotice.open": "Abre a atualização.",
+  "updateNotice.openSettings": "Abre as atualizações nas Configurações.",
   "updateNotice.ok": "OK",
   "updatePrompt.title": "O J3 Bots {version} chegou",
   "updatePrompt.titleApp": "O J3 Bots {version} está pronto para este app",

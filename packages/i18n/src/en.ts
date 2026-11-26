@@ -1615,11 +1615,8 @@ export const en = {
   "phoneUpdate.failure.blocked":
     "Something on this phone, such as a work profile’s policy, doesn’t let apps install.",
   "phoneUpdate.failure.installFailed": "Android couldn’t install the update. Nothing changed.",
-  "updateNotice.server": "J3 Bots {version} is ready for the server.",
-  "updateNotice.app": "J3 Bots {version} is ready for this app.",
-  "updateNotice.both": "J3 Bots {version} is ready for the server and this app.",
-  "updateNotice.open": "Opens the updates in Settings.",
-  "updateNotice.hide": "Hide until the next release",
+  "updateNotice.open": "Opens the update.",
+  "updateNotice.openSettings": "Opens the updates in Settings.",
   "updateNotice.ok": "OK",
   "updatePrompt.title": "J3 Bots {version} is here",
   "updatePrompt.titleApp": "J3 Bots {version} is ready for this app",

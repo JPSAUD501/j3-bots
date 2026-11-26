@@ -37,7 +37,7 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0029](0029-the-vault-key-comes-from-a-master-password-held-in-memory.md) | The vault's key comes from a master password, held in memory | Proposed |
 | [0030](0030-a-visual-is-part-of-say.md) | A visual is part of `say`, drawn by J3 Bots' clients in a sandbox | Proposed |
 | [0031](0031-a-release-is-signed-and-a-nightly-is-a-pre-release-of-the-next-patch.md) | A release is signed, and a nightly is a pre-release of the next patch | Accepted |
-| [0032](0032-updates-are-served-outside-the-protocol.md) | Updates are served outside the protocol, and offer only a signed, newer release | Proposed |
+| [0032](0032-updates-are-served-outside-the-protocol.md) | Updates are served outside the protocol, and offer only a signed, newer release | Proposed; fields added as [0051](0051-an-update-asks-in-front-and-goes-server-first.md) says |
 | [0033](0033-a-client-update-runs-in-a-transient-unit.md) | A client's update runs in a transient unit, and the home records how it ended | Proposed |
 | [0034](0034-the-desktop-app-installs-only-a-signed-download.md) | The desktop app installs only a download its release signed | Proposed |
 | [0035](0035-the-android-app-installs-its-update-through-a-session.md) | The Android app installs its own update through an installer session, after checking it | Proposed |
@@ -46,10 +46,11 @@ A record exists for a decision that would be expensive to reverse. Each one stat
 | [0038](0038-a-teammate-conversation-is-a-view-of-teammate-messages.md) | A teammate conversation is a view of the teammate messages that already exist | Accepted |
 | [0039](0039-a-room-has-no-host.md) | A room has no host, and a message for nobody wakes everyone | Accepted; its loop guard superseded by [0042](0042-a-room-counts-rounds.md) |
 | [0040](0040-the-members-of-a-room-run-in-parallel.md) | The members of a room run in parallel | Accepted |
-| [0041](0041-the-apps-update-themselves-when-they-start.md) | The apps update themselves when they start | Accepted |
+| [0041](0041-the-apps-update-themselves-when-they-start.md) | The apps update themselves when they start | Accepted; a version found while the app runs follows [0051](0051-an-update-asks-in-front-and-goes-server-first.md) |
 | [0042](0042-a-room-counts-rounds.md) | A room counts rounds, not messages | Accepted |
 | [0043](0043-a-bot-reads-its-rooms-from-anywhere-and-posts-there-only-on-what-it-has-seen.md) | A bot reads its rooms from anywhere, and posts there only on what it has seen | Accepted |
 | [0044](0044-j3-bots-installs-and-updates-the-harnesses.md) | J3 Bots installs and updates the harnesses | Accepted |
 | [0045](0045-j3-bots-keeps-its-own-copies-of-the-harnesses.md) | J3 Bots keeps its own copies of the harnesses, checked against the makers' checksums | Accepted |
+| [0051](0051-an-update-asks-in-front-and-goes-server-first.md) | An update asks in front of the app, and goes server first, then the client | Accepted |
 
 When a decision is replaced, its record is rewritten to say what now holds and why the earlier choice was dropped.

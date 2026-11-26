@@ -43,6 +43,7 @@ Decisions marked **Proposed** are recommendations waiting for the project owner'
 - [A bot's browser, the vault and connectors](operations/browser-vault-and-connectors.md): turning on a bot's browser, watching it and taking it over, the vault's master password and saved logins, connecting a service, and what backups and updates do with each.
 - [A Google connector with your own app](operations/connector-google.md) and [a Slack one](operations/connector-slack.md) (drafts): registering the app, the addresses sign-ins return to, and giving J3 Bots its client.
 - [Releasing](operations/releasing.md): cutting a release of the desktop app and the server, what the release workflow may do, signing, and trying an update or an install locally.
+- [The release notes template](releases/TEMPLATE.md): the sections every release's notes have, the order of updating, and the highlights the update prompt shows.
 - [Release notes for 0.1.0](releases/v0.1.0.md): the first release, what it contains, how to install it and what does not work yet.
 - [Release notes for 0.3.0](releases/v0.3.0.md), a draft until it is released: the bots on your own computer, what changes on updating and what does not work yet.
 - [Release notes for 0.3.1](releases/v0.3.1.md), a draft until it is released: signed releases, updates from the apps and the nightly channel, what changes on updating and what is not verified yet.

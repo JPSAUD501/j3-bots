@@ -26,6 +26,7 @@ import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
 import { type AppUpdateState, appUpdate, updateInHand } from "./appUpdate.ts";
 import { type PhoneUpdateAction, phoneBehindLine, phoneUpdateLine } from "./phoneWording.ts";
+import { updatePromptOf } from "./updatePrompt.ts";
 
 // How updates read on the phone: the server's, which the phone can start, and
 // the app's own. Settings shows both with their channels; the screen for a
@@ -216,10 +217,13 @@ export function ServerUpdatePanel(props: { readonly place: "settings" | "behind"
         <View className="flex-row flex-wrap items-start gap-2">
           <Button
             variant="primary"
-            label={t("serverUpdate.update")}
+            label={controls ? t("updatePrompt.update") : t("serverUpdate.update")}
             held={pending}
             onPress={() => {
-              if (shown.offer !== null) void start(shown.offer.version, false);
+              // In Settings, the prompt updates the server and then this app;
+              // on the screen for a server this app cannot talk to, the server alone.
+              if (controls) updatePromptOf(client).reopen();
+              else if (shown.offer !== null) void start(shown.offer.version, false);
             }}
           />
           <Button

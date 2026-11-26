@@ -123,8 +123,8 @@ export function phoneUpdateLine(state: AppUpdateState, i18n: I18n): PhoneUpdateL
  * started it with no tap: how far it has come, and how it ended when it did
  * not go through, or what it waits for. Null when the notice has nothing of
  * it to say: no update under way, or a check that found nothing it could
- * take, which Settings says. `release`: the version a line the operator can
- * hide is about.
+ * take, which Settings says. `release`: the version a line that waits for
+ * the operator, or did not go through, is about; null while it is under way.
  */
 export function phoneNoticeLine(
   state: AppUpdateState,
