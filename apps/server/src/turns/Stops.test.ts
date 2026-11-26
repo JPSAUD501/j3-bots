@@ -525,6 +525,7 @@ it.effect(
       yield* (yield* Stops).stopBot({ commandId: command(), botId: bot.id });
       yield* recoverTimes(MAX_INDETERMINATE_ANSWERS - 1);
       yield* deliveryIs(stopped, "cancelled");
+      yield* stopSettled;
 
       // The next message's send is undecided too, and is no Stop's.
       yield* control.deferNextDispatch;
