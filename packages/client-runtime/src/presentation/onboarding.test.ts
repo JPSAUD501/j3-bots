@@ -10,13 +10,21 @@ import { describe, expect, it } from "vite-plus/test";
 import { at, bot } from "../../test/fixtures.ts";
 import { hasDefaultModel, openingHeld } from "./engine.ts";
 import {
+  acrossStage,
   defaultBotName,
-  makingProgress,
   nextStep,
+  type OnboardingStep,
+  preparation,
+  preparedShare,
   previousStep,
   resumedStep,
   showsConnect,
+  stageCast,
+  stageLight,
   stageScene,
+  stepProgress,
+  workExamples,
+  workTurn,
 } from "./onboarding.ts";
 
 const engine = (status: ProviderStatus["status"]): EngineStatus => ({
@@ -43,7 +51,19 @@ describe("the first run's steps", () => {
   it("goes from the look straight to the arrival when a provider can run the bot", () => {
     const steps = flow(showsConnect(ready, false));
     expect(nextStep("look", steps)).toBe("arrival");
-    expect(makingProgress("look", steps)).toEqual({ index: 1, count: 2 });
+    expect(stepProgress("look", steps)).toEqual({ index: 4, count: 5 });
+  });
+
+  it("says what J3 Bots is before it asks anything", () => {
+    const steps = flow(false);
+    const walked: Array<OnboardingStep> = [];
+    for (let at: OnboardingStep | null = "welcome"; at !== null; at = nextStep(at, steps)) {
+      walked.push(at);
+    }
+    expect(walked).toEqual(["welcome", "work", "mind", "name", "look", "arrival"]);
+    // Back from the first thing asked returns into the story, and the story has a way back too.
+    expect(previousStep("name", steps)).toBe("mind");
+    expect(previousStep("work", steps)).toBe("welcome");
   });
 
   it("asks to connect a provider before the arrival while none can run the bot", () => {
@@ -58,7 +78,7 @@ describe("the first run's steps", () => {
     const steps = flow(showsConnect(ready, true));
     expect(nextStep("connect", steps)).toBe("arrival");
     expect(nextStep("look", steps)).toBe("connect");
-    expect(makingProgress("look", steps)).toEqual({ index: 1, count: 3 });
+    expect(stepProgress("look", steps)).toEqual({ index: 4, count: 6 });
   });
 
   it("asks to connect while the engine is not running", () => {
@@ -69,19 +89,142 @@ describe("the first run's steps", () => {
   it("has no way back from the welcome or from an arrival under way", () => {
     expect(previousStep("welcome", flow(false))).toBeNull();
     expect(previousStep("arrival", flow(true))).toBeNull();
-    expect(previousStep("name", flow(false))).toBe("welcome");
+  });
+
+  it("gives the arrival no dot: it is not a step the operator takes", () => {
+    expect(stepProgress("arrival", flow(true))).toBeNull();
   });
 });
 
 describe("a first run picked up again", () => {
   it("starts from the step it was left at, while the flow still has it", () => {
     expect(resumedStep("name", { connect: false })).toBe("name");
+    expect(resumedStep("work", { connect: false })).toBe("work");
     expect(resumedStep("connect", { connect: true })).toBe("connect");
   });
 
   it("goes back to the look from a step the flow no longer has, and from the arrival", () => {
     expect(resumedStep("connect", { connect: false })).toBe("look");
     expect(resumedStep("arrival", { connect: true })).toBe("look");
+  });
+});
+
+describe("the cast's turns in the light", () => {
+  it("gives each bot across the stage one example, and the last to everyone", () => {
+    const turns = workExamples.map((_, turn) => workTurn(turn));
+    expect(turns.map((turn) => turn.example)).toEqual(workExamples);
+    expect(turns.slice(0, -1).map((turn) => turn.featured)).toEqual(acrossStage);
+    expect(turns.at(-1)?.featured).toBe("all");
+    // From one side to the other, so the light travels instead of jumping about.
+    const places = acrossStage.map((place) => stageCast[place]?.x ?? Number.NaN);
+    expect(places).toEqual([...places].sort((a, b) => a - b));
+  });
+
+  it("goes round again after the last", () => {
+    expect(workTurn(workExamples.length)).toEqual(workTurn(0));
+  });
+});
+
+describe("how each bot on the stage is lit", () => {
+  const lights = (step: OnboardingStep, featured: number | "all" = "all") =>
+    stageCast.map((_, place) => stageLight(stageScene(step, false), place, featured));
+
+  it("lights everyone on the welcome, the lead most", () => {
+    expect(lights("welcome")).toEqual(["key", "fill", "fill", "fill", "fill"]);
+  });
+
+  it("lights only the bot whose turn it is, and everyone on the turn they share", () => {
+    expect(lights("work", 3)).toEqual(["spill", "spill", "spill", "key", "spill"]);
+    expect(lights("work", "all")).toEqual(["key", "key", "key", "key", "key"]);
+  });
+
+  it("puts the whole cast under one light while it thinks", () => {
+    expect(new Set(lights("mind"))).toEqual(new Set(["shared"]));
+  });
+
+  it("leaves only the bot being made lit while it is made", () => {
+    expect(lights("name")).toEqual(["key", "spill", "spill", "spill", "spill"]);
+  });
+});
+
+describe("what the server is getting ready", () => {
+  const copy = {
+    source: "none",
+    version: null,
+    latest: "2.1.330",
+    installable: true,
+    task: null,
+    last: null,
+  } as const;
+  /** The engine ready, with each provider's harness copy as given. */
+  const withCopies = (
+    ...copies: ReadonlyArray<NonNullable<ProviderStatus["copy"]>>
+  ): EngineStatus => {
+    const [claude] = ready.providers;
+    if (claude === undefined) return ready;
+    return {
+      ...ready,
+      providers: copies.map((each, index) => ({
+        ...claude,
+        id: ProviderId.make(`provider-${index}`),
+        copy: each,
+      })),
+    };
+  };
+
+  it("says nothing before the server reports, unless the device knows it is starting", () => {
+    expect(preparation(null, false)).toEqual({ _tag: "idle" });
+    expect(preparation(null, true)).toEqual({ _tag: "preparing", fraction: null });
+  });
+
+  it("follows the engine's download, and shows no share while its size is unknown", () => {
+    const downloading = (totalBytes: number | null): EngineStatus => ({
+      ...ready,
+      state: { _tag: "starting", install: { receivedBytes: 45, totalBytes } },
+    });
+    expect(preparedShare(preparation(downloading(180), false))).toBe(0.25);
+    expect(preparedShare(preparation(downloading(null), false))).toBeNull();
+    expect(preparation({ ...ready, state: { _tag: "starting" } }, false)._tag).toBe("preparing");
+  });
+
+  it("puts the harnesses on their way together into one share", () => {
+    const engine = withCopies(
+      { ...copy, task: { _tag: "downloading", receivedBytes: 50, totalBytes: 100 } },
+      { ...copy, task: { _tag: "verifying" } },
+    );
+    expect(preparedShare(preparation(engine, false))).toBe(0.75);
+  });
+
+  it("never shows the whole while something is still under way", () => {
+    const engine = withCopies({ ...copy, task: { _tag: "verifying" } });
+    expect(preparation(engine, false)._tag).toBe("preparing");
+    expect(preparedShare(preparation(engine, false))).toBe(0.99);
+  });
+
+  it("is ready once the engine runs and nothing it installs is missing", () => {
+    expect(preparation(ready, false)).toEqual({ _tag: "ready" });
+    const own = withCopies({ ...copy, source: "j3", version: "2.1.330" });
+    expect(preparation(own, false)).toEqual({ _tag: "ready" });
+  });
+
+  it("does not wait for an update that waits for the bots, nor call it getting ready", () => {
+    const waiting = withCopies({
+      ...copy,
+      source: "j3",
+      version: "2.1.300",
+      task: { _tag: "waiting" },
+    });
+    expect(preparation(waiting, false)).toEqual({ _tag: "ready" });
+  });
+
+  it("claims neither while a harness is missing with no install under way, or the engine is out", () => {
+    // As an install that failed: the connect step says so; this line must not say "ready".
+    expect(preparation(withCopies(copy), false)).toEqual({ _tag: "idle" });
+    const out: EngineStatus = {
+      ...ready,
+      state: { _tag: "unavailable", reason: "install-failed" },
+    };
+    expect(preparation(out, false)).toEqual({ _tag: "idle" });
   });
 });
 
