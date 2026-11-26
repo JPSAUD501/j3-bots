@@ -371,6 +371,7 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
             [
               `echo $$ > '${pid}'`,
               `printf 'revoked\\n' > "$CODEX_HOME/auth.json"`,
+              `mkdir "$CODEX_HOME/log" && printf 'waiting\\n' > "$CODEX_HOME/log/codex-login.log"`,
               `"$BROWSER" "https://auth.openai.com/oauth/authorize"`,
               "exec sleep 60",
             ].join("\n"),
@@ -382,8 +383,12 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
           yield* Deferred.await(waiting);
           yield* Fiber.interrupt(fiber);
           assert.strictEqual(yield* fs.readFileString(credential), "stored\n");
-          // The new folder is gone with the sign-in that used it.
-          assert.deepStrictEqual(yield* fs.readDirectory(home), ["auth.json"]);
+          // The new folder is gone with the sign-in that used it, and what Codex logged of it stays.
+          assert.deepStrictEqual((yield* fs.readDirectory(home)).toSorted(), ["auth.json", "log"]);
+          assert.strictEqual(
+            yield* fs.readFileString(path.join(home, "log", "codex-login.log")),
+            "waiting\n",
+          );
           const signedIn = Number((yield* fs.readFileString(pid)).trim());
           const alive = () => {
             try {
@@ -506,10 +511,17 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
           const home = path.join(root, "codex");
           yield* fs.makeDirectory(home, { mode: 0o700 });
           yield* fs.writeFileString(path.join(home, "auth.json"), "stored\n");
+          // An earlier sign-in's log, which Codex appends to.
+          yield* fs.makeDirectory(path.join(home, "log"));
+          yield* fs.writeFileString(path.join(home, "log", "codex-login.log"), "earlier\n");
           const keyring = yield* harness(
             root,
             "stand-in",
-            `"$BROWSER" "https://auth.openai.com/oauth/authorize"\nexit 0`,
+            [
+              `mkdir "$CODEX_HOME/log" && printf 'keyring\\n' > "$CODEX_HOME/log/codex-login.log"`,
+              `"$BROWSER" "https://auth.openai.com/oauth/authorize"`,
+              "exit 0",
+            ].join("\n"),
           );
           const { result } = yield* runApp("codex", keyring, home);
           assert.deepStrictEqual(
@@ -517,6 +529,11 @@ describe.skipIf(process.platform === "win32")("with sh stand-ins", () => {
             "no-credential",
           );
           assert.strictEqual(yield* fs.readFileString(path.join(home, "auth.json")), "stored\n");
+          // What Codex logged of the failed sign-in is what an operator reads next.
+          assert.strictEqual(
+            yield* fs.readFileString(path.join(home, "log", "codex-login.log")),
+            "earlier\nkeyring\n",
+          );
         }).pipe(Effect.scoped),
       );
     },

@@ -306,13 +306,39 @@ const environment = Config.all({
   webClient: Config.option(OVERRIDES.J3_WEB_CLIENT),
 });
 
-/** The nearest folder at or above `start` that holds a `.git` entry, if any. */
-const enclosingCheckout = Effect.fn("enclosingCheckout")(function* (start: string) {
+/**
+ * Whether `entry`, a `.git` in some folder, makes that folder a Git checkout
+ * as git itself decides it (`is_git_directory` and `read_gitfile` in git's
+ * `setup.c`): a folder holding `HEAD`, `objects` and `refs`, or a file that
+ * points at one (`gitdir: …`), as a linked worktree or a submodule has. An
+ * empty `.git` folder, which a sandbox can leave in `/tmp`, is none.
+ */
+const isGitEntry = Effect.fn("isGitEntry")(function* (entry: string) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const info = yield* fs.stat(entry).pipe(Effect.option);
+  if (Option.isNone(info)) return false;
+  if (info.value.type === "File") {
+    const text = yield* fs.readFileString(entry).pipe(Effect.orElseSucceed(() => ""));
+    return text.startsWith("gitdir:");
+  }
+  if (info.value.type !== "Directory") return false;
+  const kinds = yield* Effect.forEach(["HEAD", "objects", "refs"], (name) =>
+    fs.stat(path.join(entry, name)).pipe(
+      Effect.map((each) => each.type),
+      Effect.option,
+    ),
+  );
+  const [head, objects, refs] = kinds.map(Option.getOrUndefined);
+  return head === "File" && objects === "Directory" && refs === "Directory";
+});
+
+/** The nearest folder at or above `start` that is a Git checkout (`isGitEntry`), if any. */
+const enclosingCheckout = Effect.fn("enclosingCheckout")(function* (start: string) {
   const path = yield* Path.Path;
   let folder = start;
   while (true) {
-    if (yield* fs.exists(path.join(folder, ".git"))) return Option.some(folder);
+    if (yield* isGitEntry(path.join(folder, ".git"))) return Option.some(folder);
     const parent = path.dirname(folder);
     if (parent === folder) return Option.none();
     folder = parent;

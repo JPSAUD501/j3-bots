@@ -1044,7 +1044,7 @@ The server reads its settings from `<J3_HOME>/config.json`. On first start, once
 
 | File | Variable | Default | |
 | --- | --- | --- | --- |
-| | `J3_HOME` | `~/.j3-bots` | Created readable by the operator only. The server does not start while it is owned by another user or open to a group or to other users. Refused inside a Git checkout, including a folder that does not exist yet whose parent is one |
+| | `J3_HOME` | `~/.j3-bots` | Created readable by the operator only. The server does not start while it is owned by another user or open to a group or to other users. Refused inside a Git checkout, as git decides it (an empty `.git` folder is none), including a folder that does not exist yet whose parent is one |
 | `host` | `J3_HOST` | `lan` | `lan` listens on every IPv4 interface and serves private addresses only, with or without TLS. Start refuses it while any of the machine's addresses is public, and each connection to an address that is not loopback or private is closed unread. Any other value is one address, which must exist when the server starts. Without TLS it must be an IP literal in loopback or a private range: the private IPv4 ranges, IPv4 link-local, carrier-grade NAT (100.64.0.0/10, where Tailscale puts its addresses), and IPv6 unique-local and link-local. `0.0.0.0`, `::` and host names, `localhost` included, are refused |
 | `port` | `J3_PORT` | `3737` | `0` lets the system choose; `j3-bots pair` prints the port the server got |
 | `tls` | `J3_TLS_CERT`, `J3_TLS_KEY` | none | A certificate and key (`{ "cert", "key" }` in the file), which serve HTTPS. With them, `host` may be any address, public ones included; `lan` still serves private addresses only. The two variables are set together and replace the file's pair |
@@ -1074,7 +1074,7 @@ The admin channel is how `j3-bots` commands on the host reach the running server
 
 | Route | What it does |
 | --- | --- |
-| `GET /status` | The server's version, its process id (which tells the server that started from another process on the same socket), when it started, where it listens (scheme, address, port and, with TLS, the certificate's concrete names), its tool and engine ports, the engine's state, how many devices are paired, whether it serves the web client, and its `publicOrigin` |
+| `GET /status` | The server's version, its process id (which tells the server that started from another process on the same socket), when it started, where it listens (scheme, address, port and, with TLS, the certificate's concrete names), its tool and engine ports, the engine's state, how many devices are paired, whether it serves the web client, its `publicOrigin`, and the names its client listener refused over plain HTTP since it started, the first 16 (`refusedNames`, which `doctor` warns of under Refused names) |
 | `POST /pairing` | A pairing code, or, while pairing is locked after failed attempts, until when |
 | `POST /pairing/unlock` | Lifts that lock, for `pair --unlock`, then answers as `/pairing` |
 | `POST /running-work` | How many bots have work running, which a stop would end, read with every new first send held. When none runs, they stay held until the server stops, or for two minutes if it is not stopped, so `j3-bots update` stops the service with no work begun since it counted. A stop does not wait for the hold to end |

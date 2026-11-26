@@ -279,6 +279,27 @@ const runningPortsCheck = (status: AdminStatus) => {
   );
 };
 
+/**
+ * The names the running server refused over plain HTTP (`RefusedNames`), when
+ * there are any: most often a proxy or tunnel in front of it that passes on a
+ * name `publicOrigin` does not give, so every page through it is a 403.
+ */
+const refusedNamesCheck = (status: AdminStatus, configFile: string) => {
+  const names = status.refusedNames ?? [];
+  if (names.length === 0) return Option.none();
+  const listed = names.join(", ");
+  return Option.some(
+    check(
+      "Refused names",
+      "warning",
+      names.length === 1
+        ? `Since it started, the server refused plain-HTTP requests for ${listed}, a name it does not answer.`
+        : `Since it started, the server refused plain-HTTP requests for ${listed}, names it does not answer.`,
+      `If a proxy or tunnel serves J3 Bots at one of these names, set "publicOrigin" in ${configFile} to its https address and restart the server. Otherwise open J3 Bots at localhost or at the address \`j3-bots pair\` prints.`,
+    ),
+  );
+};
+
 /** With no server running, whether each port could be listened on now. */
 const freePortsCheck = Effect.fn("doctor.ports")(function* (
   config: ServerConfig.ServerConfigShape,
@@ -955,9 +976,12 @@ export const diagnose = Effect.gen(function* () {
   const status = live._tag === "described" ? Option.some(live.status) : Option.none();
   checks.push(serverCheck(live, rollback));
   switch (live._tag) {
-    case "described":
+    case "described": {
       checks.push(runningPortsCheck(live.status));
+      const refused = refusedNamesCheck(live.status, config.configFile);
+      if (Option.isSome(refused)) checks.push(refused.value);
       break;
+    }
     case "garbled":
       checks.push(
         check("Ports", "skipped", "A server holds the admin socket, so its ports are not checked."),

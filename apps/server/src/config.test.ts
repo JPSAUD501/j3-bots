@@ -310,7 +310,10 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const checkout = yield* freshHome;
-      yield* fs.makeDirectory(path.join(checkout, ".git"));
+      // What `git init` leaves: the three entries git looks for.
+      yield* fs.makeDirectory(path.join(checkout, ".git", "objects"), { recursive: true });
+      yield* fs.makeDirectory(path.join(checkout, ".git", "refs"));
+      yield* fs.writeFileString(path.join(checkout, ".git", "HEAD"), "ref: refs/heads/main\n");
 
       const env = { J3_HOME: path.join(checkout, "state", "j3") };
       for (const step of [load, initialize]) {
@@ -333,6 +336,32 @@ it.layer(NodeServices.layer)("server configuration", (it) => {
         }
       }
       assert.deepStrictEqual(yield* fs.readDirectory(path.join(checkout, "state")), []);
+
+      // A linked worktree's or a submodule's `.git` is a file that points at the repository.
+      const worktree = yield* freshHome;
+      yield* fs.writeFileString(path.join(worktree, ".git"), `gitdir: ${checkout}/.git\n`);
+      const inWorktree = yield* withEnvironment(load, { J3_HOME: path.join(worktree, "j3") }).pipe(
+        Effect.exit,
+      );
+      assert.deepInclude(failure(inWorktree), { reason: "home-in-git-checkout" });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("takes a home under a `.git` that git would not call a repository", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // What a sandbox can leave in /tmp: an empty `.git` folder, and one holding only `HEAD`.
+      for (const leftover of [[], ["HEAD"]]) {
+        const above = yield* freshHome;
+        yield* fs.makeDirectory(path.join(above, ".git"));
+        for (const name of leftover) {
+          yield* fs.writeFileString(path.join(above, ".git", name), "ref: refs/heads/main\n");
+        }
+        const home = path.join(above, "j3");
+        yield* withEnvironment(initialize, { J3_HOME: home });
+        assert.strictEqual((yield* withEnvironment(load, { J3_HOME: home })).home, home);
+      }
     }).pipe(Effect.scoped),
   );
 

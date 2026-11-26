@@ -88,6 +88,13 @@ export const AdminStatus = Schema.Struct({
    * status of a server from before it.
    */
   origins: Schema.optionalKey(Schema.Array(ServerOrigin)),
+  /**
+   * The names the client listener refused over plain HTTP since it started,
+   * the first few (`RefusedNames`): a proxy or tunnel that serves the server
+   * under one of them needs `publicOrigin`. Optional so that a command reads
+   * the status of a server from before it.
+   */
+  refusedNames: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type AdminStatus = typeof AdminStatus.Type;
 

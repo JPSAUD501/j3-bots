@@ -13,6 +13,7 @@ import * as Http from "../http.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as TestUpdates from "../testing/update.ts";
+import * as RefusedNames from "../web/RefusedNames.ts";
 import * as WebClient from "../web/WebClient.ts";
 import type { UpdateUnitPlan } from "./launch.ts";
 import * as UpdateRuns from "./UpdateRuns.ts";
@@ -57,7 +58,7 @@ const pairedToken = Effect.gen(function* () {
 
 it.layer(
   Http.serve(NodeHttpServer.layerTest, { logAddress: false }).pipe(
-    Layer.provide(WebClient.statusLayer),
+    Layer.provide([WebClient.statusLayer, RefusedNames.layer]),
     Layer.provide(updates),
     Layer.provideMerge(TestDomain.layer),
   ),

@@ -37,6 +37,7 @@ import { CONNECTOR_CALL_DEADLINE } from "./tools/protocol.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 import * as UpdateLauncher from "./update/UpdateLauncher.ts";
 import * as UpdateRuns from "./update/UpdateRuns.ts";
+import * as RefusedNames from "./web/RefusedNames.ts";
 import * as WebClient from "./web/WebClient.ts";
 
 const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo("Shutting down")));
@@ -114,8 +115,9 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
         Layer.provide(Layer.merge(Systemd.layer, Host.layer)),
       ),
     ),
-    // One decision for the client routes and the admin socket's report.
-    Layer.provide(WebClient.statusLayer),
+    // One decision for the client routes and the admin socket's report, and
+    // one record of the names the client listener refused, which it reports too.
+    Layer.provide(Layer.merge(WebClient.statusLayer, RefusedNames.layer)),
     Layer.provide(Domain.layer),
     Layer.provide(
       Layer.mergeAll(

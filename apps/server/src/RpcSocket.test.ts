@@ -29,6 +29,7 @@ import * as RpcSocket from "./RpcSocket.ts";
 import * as Ports from "./system/Ports.ts";
 import * as TestDomain from "./testing/domain.ts";
 import * as TestUpdates from "./testing/update.ts";
+import * as RefusedNames from "./web/RefusedNames.ts";
 
 const SocketRpcs = RpcGroup.make(
   Rpc.make("whoami", { success: DeviceId }),
@@ -101,7 +102,10 @@ const server = Layer.unwrap(
       Layer.succeed(Ticks, queue),
     );
   }),
-).pipe(Layer.provide(TestUpdates.layer), Layer.provideMerge(TestDomain.layer));
+).pipe(
+  Layer.provide([TestUpdates.layer, RefusedNames.layer]),
+  Layer.provideMerge(TestDomain.layer),
+);
 
 it.layer(server, { excludeTestServices: true })("RPC socket", (it) => {
   it.effect("refuses an upgrade without a valid credential", () =>

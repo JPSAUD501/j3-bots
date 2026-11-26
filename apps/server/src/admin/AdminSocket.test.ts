@@ -27,6 +27,7 @@ import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as TestUpdates from "../testing/update.ts";
 import * as WebClient from "../web/WebClient.ts";
+import * as RefusedNames from "../web/RefusedNames.ts";
 import * as AdminClient from "./AdminClient.ts";
 import * as AdminSocket from "./AdminSocket.ts";
 import { ADMIN_PATHS, type PairingOffer } from "./protocol.ts";
@@ -125,7 +126,9 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin so
         const refusal = Exit.isFailure(second) ? Exit.findErrorOption(second) : Option.none();
         assert.deepInclude(Option.getOrUndefined(refusal), { _tag: "ServerAlreadyRunning", home });
       }).pipe(
-        Effect.provide(adminServer.pipe(Layer.provide(WebClient.statusLayer))),
+        Effect.provide(
+          adminServer.pipe(Layer.provide([WebClient.statusLayer, RefusedNames.layer])),
+        ),
         Effect.scoped,
       );
 
@@ -152,7 +155,9 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin so
         const paired = yield* devices.pair({ code: grant.code, name: "Phone" }).pipe(Effect.exit);
         assert.isTrue(Exit.isSuccess(paired));
       }).pipe(
-        Effect.provide(adminServer.pipe(Layer.provide(WebClient.statusLayer))),
+        Effect.provide(
+          adminServer.pipe(Layer.provide([WebClient.statusLayer, RefusedNames.layer])),
+        ),
         Effect.scoped,
       );
     }),
@@ -184,7 +189,7 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))("admin so
           ),
           Effect.scoped,
         );
-      }).pipe(Effect.provide(WebClient.statusLayer));
+      }).pipe(Effect.provide(Layer.merge(WebClient.statusLayer, RefusedNames.layer)));
     }),
   );
 });
@@ -260,7 +265,7 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))(
               Layer.mergeAll(
                 adminServer,
                 Http.serve(NodeHttpServer.layerTest, { logAddress: false }),
-              ).pipe(Layer.provide(Layer.merge(WebClient.statusLayer, TestUpdates.layer))),
+              ).pipe(Layer.provide([WebClient.statusLayer, RefusedNames.layer, TestUpdates.layer])),
             ),
             Effect.scoped,
           );
@@ -279,7 +284,7 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))(
         }).pipe(
           Effect.provide(
             AdminSocket.layer.pipe(
-              Layer.provide([Home.layer, WebClient.statusLayer]),
+              Layer.provide([Home.layer, WebClient.statusLayer, RefusedNames.layer]),
               Layer.provideMerge(ServerStop.layer),
             ),
           ),
@@ -335,7 +340,9 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))(
             );
             assert.strictEqual(output.trim(), "EACCES", errors);
           }).pipe(
-            Effect.provide(adminServer.pipe(Layer.provide(WebClient.statusLayer))),
+            Effect.provide(
+              adminServer.pipe(Layer.provide([WebClient.statusLayer, RefusedNames.layer])),
+            ),
             Effect.scoped,
           );
         }).pipe(Effect.provide(NodeServices.layer)),

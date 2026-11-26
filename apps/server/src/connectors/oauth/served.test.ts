@@ -25,6 +25,7 @@ import * as TestDomain from "../../testing/domain.ts";
 import * as TestUpdates from "../../testing/update.ts";
 import { addOAuthConnector, NOTION, TestOAuth, unresolvable } from "../../testing/oauth.ts";
 import { Secrets } from "../../secrets/Secrets.ts";
+import * as RefusedNames from "../../web/RefusedNames.ts";
 import * as WebClient from "../../web/WebClient.ts";
 
 /** Every line the server logs while these tests run, at any level, as JSON. */
@@ -42,7 +43,7 @@ const recordLogs = Layer.merge(
 it.layer(
   Http.serve(Listener.layer, { logAddress: false }).pipe(
     Layer.provide(recordLogs),
-    Layer.provide(WebClient.statusLayer),
+    Layer.provide([WebClient.statusLayer, RefusedNames.layer]),
     Layer.provide(TestUpdates.layer),
     Layer.provideMerge(TestDomain.servedLayer.pipe(Layer.provide(unresolvable))),
   ),

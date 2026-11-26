@@ -19,6 +19,7 @@ import { prepareHome, signIn } from "../providers/signIn.ts";
 import * as Unit from "../service/unit.ts";
 import { Host } from "../system/Host.ts";
 import { refuse, userFacing } from "./errors.ts";
+import { endedOnHangup } from "./hangup.ts";
 
 /**
  * The configuration of the server the provider commands act on: the
@@ -30,8 +31,15 @@ const servedConfiguration = Effect.gen(function* () {
   return { unitText, layer: yield* userFacing(Unit.describedConfiguration(unitText)) };
 });
 
-const NOT_RUNNING =
-  "The server is not running, and it is the running server that hands the connection to the engine. Start it with `systemctl --user start j3-bots` (or `j3-bots serve`), then run this again.";
+/**
+ * The server for `home` is not running: the installed service's, which the
+ * command acts on whatever this shell's `J3_HOME` says, or the one `j3-bots
+ * serve` runs from this shell.
+ */
+const notRunning = (home: string, service: boolean) =>
+  service
+    ? `The server for ${home}, the installed service's data directory, is not running, and it is the running server that hands the connection to the engine. Start it with \`systemctl --user start j3-bots\`, then run this again. While the service is installed, this command acts on its server, not on one \`j3-bots serve\` runs on another data directory.`
+    : `The server for ${home}, the data directory \`j3-bots serve\` uses from this shell, is not running, and it is the running server that hands the connection to the engine. Start it with \`j3-bots serve\`, then run this again.`;
 
 /** What a refused connection leaves in force. */
 const refused = (active: string | null) =>
@@ -121,11 +129,13 @@ const connect = Command.make("connect", { baseUrl: baseUrlFlag, yes: yesFlag }).
     Effect.gen(function* () {
       const url = yield* readBaseUrl(baseUrl);
       const served = yield* servedConfiguration;
+      const home = yield* userFacing(ServerConfig.resolveHome.pipe(Effect.provide(served.layer)));
       const socket = yield* userFacing(
         ServerConfig.resolveAdminSocket.pipe(Effect.provide(served.layer)),
       );
+      const stopped = notRunning(home, Option.isSome(served.unitText));
       const admin = yield* AdminClient;
-      if (Option.isNone(yield* userFacing(admin.status(socket)))) return yield* refuse(NOT_RUNNING);
+      if (Option.isNone(yield* userFacing(admin.status(socket)))) return yield* refuse(stopped);
       const key = yield* readKey.pipe(
         Effect.mapError(() => refuse("No key was read, so nothing changed.")),
       );
@@ -135,7 +145,7 @@ const connect = Command.make("connect", { baseUrl: baseUrlFlag, yes: yesFlag }).
       const send = (stopWork: boolean) =>
         userFacing(admin.connectProviders(socket, { baseUrl: url, key, stopWork })).pipe(
           Effect.flatMap((answer) =>
-            Option.isNone(answer) ? refuse(NOT_RUNNING) : Effect.succeed(answer.value),
+            Option.isNone(answer) ? refuse(stopped) : Effect.succeed(answer.value),
           ),
         );
       let outcome = yield* send(yes);
@@ -237,6 +247,7 @@ const login = Command.make("login", {
         );
       }
       yield* Console.log(`Signing ${name} in for J3 Bots in ${home}, inside ${whose}.`);
+      const service = Option.isSome(served.unitText);
       yield* userFacing(
         signIn({
           harness,
@@ -250,11 +261,26 @@ const login = Command.make("login", {
           platform: (yield* Host).platform,
           io: { _tag: "terminal" },
         }),
+      ).pipe(
+        // Ctrl+C, or the terminal hanging up: the harness has stopped, and
+        // its sign-in folder is gone.
+        Effect.onInterrupt(() =>
+          Console.error(
+            facts.revokesStoredSignIn
+              ? `${name}'s sign-in was cancelled. The sign-in in ${home} is as it was.`
+              : `${name}'s sign-in was cancelled.`,
+          ),
+        ),
+        endedOnHangup,
       );
       return yield* Console.log(
         [
           `${name}'s sign-in finished, in J3 Bots' home for it.`,
-          `\`j3-bots doctor\` shows what the engine reports for ${name}. While it still shows ${name} signed out, the engine has not checked it again: \`systemctl --user restart j3-bots\` makes it check now, and stops the work bots have running.`,
+          `\`j3-bots doctor\` shows what the engine reports for ${name}. While it still shows ${name} signed out, the engine has not checked it again: ${
+            service
+              ? "`systemctl --user restart j3-bots`"
+              : "stopping `j3-bots serve` and starting it again"
+          } makes it check now, and stops the work bots have running.`,
         ].join("\n"),
       );
     }),

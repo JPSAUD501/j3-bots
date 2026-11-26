@@ -24,6 +24,7 @@ import { Devices } from "./devices/Devices.ts";
 import * as Http from "./http.ts";
 import * as TestDomain from "./testing/domain.ts";
 import * as TestUpdates from "./testing/update.ts";
+import * as RefusedNames from "./web/RefusedNames.ts";
 import * as WebClient from "./web/WebClient.ts";
 
 /**
@@ -147,6 +148,7 @@ const served = (configure: (config: ServerConfigShape) => ServerConfigShape) =>
       ),
     ),
     Layer.provide(WebClient.statusLayer),
+    Layer.provideMerge(RefusedNames.layer),
     Layer.provide(TestUpdates.layer),
     Layer.provideMerge(TestDomain.layer),
   );
@@ -302,6 +304,12 @@ it.layer(served((config) => config))("http", (it) => {
       const lines = logLinesWith("machine.local");
       assert.lengthOf(lines, 1);
       assert.include(lines[0], "publicOrigin is not set");
+      // Kept once, for the doctor to name.
+      const kept = yield* RefusedNames.RefusedNames.use((refused) => refused.names);
+      assert.deepStrictEqual(
+        kept.filter((name) => name === "machine.local"),
+        ["machine.local"],
+      );
     }),
   );
 
@@ -314,6 +322,8 @@ it.layer(served((config) => config))("http", (it) => {
       const lines = logLinesWith("flood-");
       assert.isAbove(lines.length, 0);
       assert.isBelow(lines.length, 40);
+      const kept = yield* RefusedNames.RefusedNames.use((refused) => refused.names);
+      assert.lengthOf(kept, RefusedNames.KEPT_REFUSED_NAMES);
     }),
   );
 

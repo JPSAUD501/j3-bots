@@ -20,6 +20,7 @@ import * as Http from "../http.ts";
 import * as Listener from "../listener.ts";
 import * as TestDomain from "../testing/domain.ts";
 import * as TestUpdates from "../testing/update.ts";
+import * as RefusedNames from "../web/RefusedNames.ts";
 import * as WebClient from "../web/WebClient.ts";
 
 /** Every line the server logs while these tests run, at any level, as JSON. */
@@ -53,7 +54,7 @@ const VALUES = [OLD_PASSWORD, USERNAME, PASSWORD, NEXT_PASSWORD, TOTP, TOKEN, "n
 it.layer(
   Http.serve(Listener.layer, { logAddress: false }).pipe(
     Layer.provide(recordLogs),
-    Layer.provide(WebClient.statusLayer),
+    Layer.provide([WebClient.statusLayer, RefusedNames.layer]),
     Layer.provide(TestUpdates.layer),
     Layer.provideMerge(TestDomain.servedLayer),
   ),

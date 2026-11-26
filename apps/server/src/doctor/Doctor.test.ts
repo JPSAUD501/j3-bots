@@ -47,7 +47,12 @@ const provider = (
 
 /** What the running server says of itself, decoded as the CLI decodes it. */
 const running = (
-  overrides: { engine?: object; pairedDevices?: number; webClient?: AdminStatus["webClient"] } = {},
+  overrides: {
+    engine?: object;
+    pairedDevices?: number;
+    webClient?: AdminStatus["webClient"];
+    refusedNames?: ReadonlyArray<string>;
+  } = {},
 ) =>
   Schema.decodeUnknownSync(Schema.toCodecJson(AdminStatus))({
     version: "0.0.0",
@@ -704,6 +709,22 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assertFlagged(named(stopped.checks, "Server"), "warning");
       const broken = yield* diagnoseIn({ server: "broken" });
       assertFlagged(named(broken.checks, "Server"), "problem");
+    }),
+  );
+
+  it.effect("warns of the names the running server refused, with what makes it answer them", () =>
+    Effect.gen(function* () {
+      const { checks } = yield* diagnoseIn({
+        server: Option.some(running({ refusedNames: ["bots.example.test"] })),
+      });
+      const refused = named(checks, "Refused names");
+      assertFlagged(refused, "warning", "bots.example.test");
+      assert.include(
+        Option.getOrElse(refused.fix, () => ""),
+        "publicOrigin",
+      );
+      const quiet = yield* diagnoseIn();
+      assert.isUndefined(quiet.checks.find((check) => check.name === "Refused names"));
     }),
   );
 

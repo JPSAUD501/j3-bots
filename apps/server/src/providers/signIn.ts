@@ -237,6 +237,25 @@ const SIGN_IN_LIMITS: SignInLimits = {
   stopWithin: Duration.seconds(3),
 };
 
+/**
+ * Adds what a harness logged of a sign-in it ran in a folder of its own to
+ * `kept`, its log in the J3-owned home, private as the harness makes it. A
+ * log that cannot be kept is not worth failing the sign-in for: it is
+ * dropped, with a warning.
+ */
+const keepSignInLog = Effect.fn("provider.keepSignInLog")(function* (logged: string, kept: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = yield* fs.readFile(logged).pipe(Effect.option);
+  if (Option.isNone(text) || text.value.length === 0) return;
+  yield* fs.makeDirectory(path.dirname(kept), { recursive: true, mode: 0o700 }).pipe(
+    Effect.andThen(fs.writeFile(kept, text.value, { flag: "a", mode: 0o600 })),
+    Effect.catch((error) =>
+      Effect.logWarning(`The harness's log of the sign-in was not kept in ${kept}`, error),
+    ),
+  );
+});
+
 /** How long a printed page waits for the same harness to hand one to `BROWSER`, which is preferred. */
 const PRINTED_PAGE_GRACE = Duration.seconds(2);
 /** How often the page handed to `BROWSER` is looked for. */
@@ -308,7 +327,9 @@ interface Run {
  * file system, and its credential file is renamed into the home only once
  * the sign-in succeeded: one stored there, such as a copy of the operator's
  * own, is neither revoked nor changed by a sign-in that fails or is
- * cancelled. The folder is removed however the sign-in ends.
+ * cancelled. The folder is removed however the sign-in ends, short of this
+ * process being killed outright, and what the harness logged of its sign-in
+ * there (`signInLog`) is first added to the log in the home.
  *
  * In a terminal, the harness has it. With none (`io` is `app`), what the
  * harness prints is read for the page it waits on, kept in memory only, and
@@ -331,6 +352,13 @@ export const signIn = Effect.fn("provider.signIn")(function* (run: Run) {
         .makeTempDirectoryScoped({ directory: home, prefix: ".sign-in-" })
         .pipe(Effect.mapError(unexpected))
     : home;
+  const { signInLog } = facts;
+  if (folder !== home && signInLog !== undefined) {
+    // Runs before the folder is removed: finalizers run last-added first.
+    yield* Effect.addFinalizer(() =>
+      keepSignInLog(path.join(folder, signInLog), path.join(home, signInLog)),
+    );
+  }
   const terminal = run.io._tag === "terminal";
   const limits = run.limits ?? SIGN_IN_LIMITS;
   // Where `BROWSER` hands the page, with no terminal, where a harness is known

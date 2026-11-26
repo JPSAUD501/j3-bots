@@ -29,6 +29,7 @@ import * as Ports from "../system/Ports.ts";
 import { ServerStop } from "../ServerStop.ts";
 import { RunningWork } from "../turns/RunningWork.ts";
 import { SendPause } from "../turns/SendPause.ts";
+import { RefusedNames } from "../web/RefusedNames.ts";
 import { WebClientStatus } from "../web/WebClient.ts";
 import * as Pipe from "./pipe.ts";
 import { hasAdminSocket } from "./socket.ts";
@@ -81,6 +82,7 @@ const routes = Layer.mergeAll(
       const { toolPort, enginePort, publicOrigin } = yield* ServerConfig;
       const listener = yield* Deferred.await(yield* Listener);
       const webClient = yield* WebClientStatus;
+      const refused = yield* RefusedNames;
       const network = yield* Network;
       return HttpRouter.add(
         "GET",
@@ -106,6 +108,7 @@ const routes = Layer.mergeAll(
               onSome: (origin) => ({ publicOrigin: origin }),
             }),
             origins,
+            refusedNames: yield* refused.names,
           };
           return yield* HttpServerResponse.schemaJson(AdminStatus)(status).pipe(Effect.orDie);
         }),
