@@ -17,8 +17,8 @@ type FormState =
   | { readonly _tag: "failed" };
 
 /**
- * A name, a look, and whether the bot becomes the primary one; the bot asks
- * the rest itself. The look starts as the one the server would give it, which
+ * A name, a look, whether the bot becomes the primary one, and whether it
+ * starts among the hidden conversations; the bot asks the rest itself. The look starts as the one the server would give it, which
  * sits apart from the bots there are. `onCreated` gets the new bot once it exists.
  */
 export function NewBotForm(props: {
@@ -32,6 +32,7 @@ export function NewBotForm(props: {
   const client = useJ3Client();
   const [name, setName] = useState("");
   const [primary, setPrimary] = useState(false);
+  const [hidden, setHidden] = useState(false);
   const bots = useBots();
   const [picked, setPicked] = useState<AvatarChoice | null>(null);
   const [state, setState] = useState<FormState>({ _tag: "editing" });
@@ -71,6 +72,13 @@ export function NewBotForm(props: {
         readOnly={state._tag === "creating"}
         onChange={setPrimary}
       />
+      <SwitchRow
+        label={t("visibility.hide")}
+        hint={t("visibility.hide.hint")}
+        value={hidden}
+        readOnly={state._tag === "creating"}
+        onChange={setHidden}
+      />
       <Problem>{state._tag === "failed" ? t("firstRun.create.failed") : null}</Problem>
       <View className="flex-row flex-wrap justify-end gap-2">
         {props.cancel}
@@ -81,7 +89,8 @@ export function NewBotForm(props: {
           onPress={() => {
             if (!ready) return;
             setState({ _tag: "creating", avatar });
-            void client.createBot({ name: trimmed, primary, avatar }).then((result) => {
+            const draft = { name: trimmed, primary, avatar, ...(hidden ? { hidden } : {}) };
+            void client.createBot(draft).then((result) => {
               // A created bot opens, which takes the form off the screen: until then it stays
               // creating, so Create cannot make a second bot.
               if (result._tag === "done") {

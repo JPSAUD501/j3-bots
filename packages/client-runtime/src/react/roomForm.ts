@@ -12,6 +12,7 @@ import {
   roomFormStart,
   type RoomFormValues,
   sameRoomForm,
+  startAfterChange,
   withMember,
   withoutDeleted,
 } from "../presentation/roomForm.ts";
@@ -70,7 +71,7 @@ export interface RoomForm {
 }
 
 /**
- * A room's name and its bots, as a form holds them. What is
+ * A room's name, its bots and whether it is hidden, as a form holds them. What is
  * missing shows once the operator tries to send; a refusal keeps what was
  * typed. What the operator left alone follows the room as the server has it,
  * and a submission sends only what the form changes. A bot picked and deleted
@@ -154,6 +155,7 @@ export function useRoomForm(options: {
 
   const change = (next: RoomFormValues) => {
     if (busy) return;
+    setStart(startAfterChange(start, values, next, room));
     setValues(next);
     setFailure(null);
   };

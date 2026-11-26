@@ -26,6 +26,7 @@ const room = (answering: ReadonlyArray<BotId>): Room => ({
   status: "active",
   members: [hal, bo, cy, di, gone],
   pinned: false,
+  hidden: false,
   createdAt: at("2026-11-01T00:00:00Z"),
   work: answering.length === 0 ? "none" : "running",
   answering,

@@ -9,10 +9,11 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { lineField } from "./ui/field";
 
-/** What the form creates: a name, whether the bot becomes the primary one, and its look. */
+/** What the form creates: a name, whether the bot becomes the primary one or is hidden, and its look. */
 export interface NewBot {
   readonly name: string;
   readonly primary: boolean;
+  readonly hidden: boolean;
   readonly avatar: AvatarChoice;
 }
 
@@ -34,10 +35,11 @@ type FormState =
   | { readonly _tag: "failed" };
 
 /**
- * A name, a look, and whether the bot becomes the primary one; the bot asks
- * the rest itself. The look starts as the one the server would give it, which
- * sits apart from the bots there are. Create stays focusable while it cannot act, and pressing it then
- * does nothing, as in pairing and the composer.
+ * A name, a look, whether the bot becomes the primary one and whether it is
+ * hidden; the bot asks the rest itself. The look starts as the one the server
+ * would give it, which sits apart from the bots there are. Create stays
+ * focusable while it cannot act, and pressing it then does nothing, as in
+ * pairing and the composer.
  */
 export function NewBotForm({
   bots,
@@ -48,8 +50,10 @@ export function NewBotForm({
 }: NewBotFormProps) {
   const { t } = useI18n();
   const nameId = useId();
+  const hideHintId = useId();
   const [name, setName] = useState("");
   const [primary, setPrimary] = useState(false);
+  const [hidden, setHidden] = useState(false);
   const [picked, setPicked] = useState<AvatarChoice | null>(null);
   const [state, setState] = useState<FormState>({ _tag: "editing" });
   // While the bot is created it joins the list, so the look it was created with stays on show.
@@ -76,7 +80,9 @@ export function NewBotForm({
         setState({ _tag: "creating", avatar });
         // A created bot opens, which takes the form off the screen: until then it stays
         // creating, so Create cannot make a second bot.
-        onCreate({ name: trimmed, primary, avatar }).catch(() => setState({ _tag: "failed" }));
+        onCreate({ name: trimmed, primary, hidden, avatar }).catch(() =>
+          setState({ _tag: "failed" }),
+        );
       }}
     >
       <label htmlFor={nameId} className="sr-only">
@@ -102,6 +108,22 @@ export function NewBotForm({
           <Checkbox checked={primary} onCheckedChange={setPrimary} />
         </span>
         <span>{t("firstRun.create.primary")}</span>
+      </label>
+      <label className="flex items-start gap-2 text-xs text-muted-foreground">
+        <span className="mt-px">
+          <Checkbox
+            checked={hidden}
+            readOnly={state._tag === "creating"}
+            onCheckedChange={setHidden}
+            aria-describedby={hideHintId}
+          />
+        </span>
+        <span className="flex flex-col gap-0.5">
+          <span>{t("visibility.hide")}</span>
+          <span id={hideHintId} className="text-2xs">
+            {t("visibility.hide.hint")}
+          </span>
+        </span>
       </label>
       <p role="alert" className="text-xs text-blocked empty:hidden">
         {state._tag === "failed" ? t("firstRun.create.failed") : null}

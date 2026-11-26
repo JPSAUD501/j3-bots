@@ -233,6 +233,14 @@ const MessageBotInput = toolInput({
   ),
 });
 
+/** Whether what a bot makes starts hidden, for `create_bot` and `start_room`. */
+const StartsHidden = Schema.optionalKey(
+  described(
+    Schema.Boolean,
+    "true keeps it out of your user's list, among their hidden conversations, where it still works and still notifies them. Leave it out to show it.",
+  ),
+);
+
 const StartRoomInput = toolInput({
   name: described(RoomName, "The room's name, as your user will see it in their list."),
   members: described(
@@ -249,6 +257,7 @@ const StartRoomInput = toolInput({
       "The members the kickoff wakes; the others read it in their next turn. Leave it out to wake every member.",
     ),
   ),
+  hidden: StartsHidden,
 });
 
 /** How many messages `read_room` shows when the bot names no `count`, and the most it may. */
@@ -378,6 +387,18 @@ const CreateBotInput = toolInput({
   title: Schema.optionalKey(described(Profile.fields.title, "A short role, such as Research.")),
   job: Schema.optionalKey(
     described(Profile.fields.job, "What the bot is for and where its limits are."),
+  ),
+  hidden: StartsHidden,
+});
+
+const SetVisibilityInput = toolInput({
+  id: described(
+    Id,
+    "The id of a bot or a room, from `list_teammates` or as `create_bot` or `start_room` returned it.",
+  ),
+  hidden: described(
+    Schema.Boolean,
+    "true hides it from your user's list; false shows it there again.",
   ),
 });
 
@@ -781,7 +802,7 @@ export const tools = {
   list_teammates: define(
     "list_teammates",
     [
-      "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members.",
+      "List your user's other bots, with id, name, title and job, and the rooms you are in, with id, name and members, each saying whether it is hidden from your user's list. As the primary bot, also the rooms you are not in, as `otherRooms`, which you can show or hide but not read or post in.",
       "Use a bot's id with `message_bot` and `start_room`, and a room's id with `message_bot` to post there and `read_room` to read it, from any turn.",
     ],
     NoInput,
@@ -803,6 +824,7 @@ export const tools = {
       "You join as its first member. Your `kickoff` is the room's first message: what the room is for and what your user needs, who owns which part, the rules (each speaks only for themselves, short messages, nobody sends anything on your user's behalf), and what each member should answer first.",
       "The kickoff wakes the members in `mention`, every other member by default, and each answers in the room what it asks of them; none waits for you or your user to speak first. A bot you created in this turn opens in the room instead of greeting your user in its own conversation.",
       "A room holds two to six bots, you included. Your user's limit on how many rounds bots may answer each other in a room since they last wrote holds here too, and starts with your kickoff.",
+      "Start it `hidden` only when it is for you and the teammates to coordinate and your user did not ask to see it; a room your user asked for stays visible.",
       "Returns the room's id. Then tell your user, in a `say`, what you set up and who owns what.",
       BOT_ONLY,
     ],
@@ -816,9 +838,21 @@ export const tools = {
       "Name it as `name` says, and any bot whose name you suggest to your user. Names you choose for bots you create together must be as distinct as two colleagues' are: never two that rhyme or differ by one letter. Names your user gave stay exactly as given, whatever they are.",
       "No tool deletes a bot; your user can delete one in the app.",
       "A bot you create greets your user in its own conversation once your turn ends, unless `start_room` puts it in a room in this same turn: then it opens there.",
+      "Create it `hidden` only when it is a helper your user did not ask to see, such as a worker you will direct yourself; a bot they asked for by name or role, or will talk to themselves, stays visible.",
       "Returns the new bot's id.",
     ],
     CreateBotInput,
+  ),
+  set_visibility: define(
+    "set_visibility",
+    [
+      "Show or hide a bot or a room in your user's list. Hidden, it moves to their hidden conversations, where they can still open it: it keeps working, and still notifies them.",
+      "You can change the bots and rooms you made, and, as the primary bot, any but yourself. Never one your user made, showed or hid: their choice stands, so tell them if you think it should change.",
+      "Hide only a helper or a room your user did not ask to see and does not talk to, such as a worker you direct or a room where only bots coordinate. Anything they asked for, by name or role, or talk to themselves stays visible, also when you tidy up later.",
+      "When you hide or show something your user has seen, tell them in your `say`.",
+      "Returns whether it is hidden now.",
+    ],
+    SetVisibilityInput,
   ),
   update_bot: define(
     "update_bot",

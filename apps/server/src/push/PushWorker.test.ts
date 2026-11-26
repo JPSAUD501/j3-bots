@@ -22,6 +22,7 @@ import { Devices } from "../devices/Devices.ts";
 import * as Domain from "../domain.ts";
 import { Entries } from "../entries/Entries.ts";
 import { Presence } from "../presence/Presence.ts";
+import { Rooms } from "../rooms/Rooms.ts";
 import { SettingsService } from "../settings/SettingsService.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { TestPushService } from "../testing/push.ts";
@@ -135,6 +136,45 @@ it.effect(
         [[phone, entryId, "Scout"]],
       );
     }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
+);
+
+it.effect("pushes what a hidden bot and a hidden room say: hidden from the list, not muted", () =>
+  Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const bots = yield* Bots;
+      const scout = yield* bots.create({
+        commandId: CommandId.make("create-scout"),
+        draft: { name: "Scout", hidden: true },
+      });
+      const wren = yield* createBot("Wren");
+      const room = yield* (yield* Rooms).create({
+        commandId: CommandId.make("create-crew"),
+        name: "Crew",
+        members: [scout.id, wren.id],
+        hidden: true,
+      });
+      yield* pushDevice("Phone");
+      yield* says(scout.id, "The build is green");
+      yield* (yield* Entries).append({
+        target: { _tag: "room", roomId: room.id },
+        entry: {
+          _tag: "message",
+          author: { _tag: "bot", botId: wren.id },
+          text: "Shipped",
+          attachments: [],
+          mentions: { _tag: "bots", ids: [] },
+          delivery: { _tag: "delivered" },
+          commandId: null,
+        },
+      });
+      yield* deliverPending;
+    }).pipe(Effect.provide(Domain.layer));
+
+    assert.deepStrictEqual((yield* sends).map((message) => message.title).toSorted(), [
+      "Crew",
+      "Scout",
+    ]);
+  }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );
 
 it.effect(

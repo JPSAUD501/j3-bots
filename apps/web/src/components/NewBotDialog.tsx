@@ -17,7 +17,7 @@ interface NewBotDialogProps {
   readonly onUnsavedChange: (unsaved: boolean) => void;
 }
 
-/** A name, a look, and whether the bot becomes the primary one. The bot asks the rest itself. */
+/** A name, a look, and whether the bot is primary or hidden. The bot asks the rest itself. */
 export function NewBotDialog({
   bots,
   open,

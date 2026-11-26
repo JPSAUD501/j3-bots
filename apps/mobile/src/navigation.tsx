@@ -70,9 +70,9 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * One route per screen. On a phone they stack: the roster, a bot's or room's
  * conversation, its details, a teammate conversation, and over those the
  * forms, a memory file and a routine's runs;
- * Settings and the hidden bots open from the roster. From the tablet width up the roster's route
- * shows the conversation `item` names beside the roster, and the
- * conversation's route is not used. Each route after the roster names the
+ * Settings and the hidden conversations open from the roster. From the
+ * tablet width up the roster's route shows the conversation `item` names
+ * beside the roster, and the conversation's route is not used. Each route after the roster names the
  * bot or room by its roster key, so it shows the roster's current name.
  * `share` picks where something another app shared goes, over the rest.
  * `shareTemplate` shows a bot as a template before it is shared, and

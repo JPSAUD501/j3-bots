@@ -12,6 +12,8 @@ export interface RoomFormValues {
   readonly name: string;
   /** In the order picked, the order the room lists them in. */
   readonly members: ReadonlyArray<BotId>;
+  /** Among the hidden conversations rather than in the roster's list. */
+  readonly hidden: boolean;
 }
 
 export type RoomFormProblem = "name" | "members";
@@ -39,6 +41,7 @@ export const roomFormTarget = (mode: RoomFormMode): string =>
 export const blankRoomForm: RoomFormValues = {
   name: "",
   members: [],
+  hidden: false,
 };
 
 const sameOrder = (a: ReadonlyArray<BotId>, b: ReadonlyArray<BotId>) =>
@@ -48,6 +51,7 @@ const sameOrder = (a: ReadonlyArray<BotId>, b: ReadonlyArray<BotId>) =>
 export const roomFormOf = (room: Room): RoomFormValues => ({
   name: room.name,
   members: room.members,
+  hidden: room.hidden,
 });
 
 /**
@@ -74,7 +78,11 @@ export function withoutDeleted(
  * server changed it and the operator did not: a name that reads the same as
  * before, only with other spaces around it, stays as typed until the server
  * changes it. The form then compares with the room as it is, so it sends
- * only what differs from it.
+ * only what differs from it, but for whether it is hidden: once the operator
+ * moved that switch, it is compared with the room as it was then
+ * (`startAfterChange`), so their choice
+ * is sent and recorded as theirs even when a bot set the same meanwhile
+ * (decision 0050).
  */
 export function followRoom(
   start: RoomFormValues,
@@ -84,14 +92,31 @@ export function followRoom(
   const live = roomFormOf(room);
   const follows = (field: RoomField) =>
     !sameField(field, start, live) && sameField(field, start, values);
+  const hiddenChosen = !sameField("hidden", start, values);
   return {
-    start: live,
+    start: hiddenChosen ? { ...live, hidden: start.hidden } : live,
     values: {
       name: follows("name") ? live.name : values.name,
       members: follows("members") ? live.members : values.members,
+      hidden: follows("hidden") ? live.hidden : values.hidden,
     },
   };
 }
+
+/**
+ * What the form compares with once the operator changes `values` to `next`.
+ * Moving the hidden switch measures it against `room` as the server has it
+ * then, as a bot's form does (`withHiddenEdit`): moving it back to that sends
+ * nothing, and anything else is sent, also when a bot sets the same meanwhile
+ * (`followRoom`).
+ */
+export const startAfterChange = (
+  start: RoomFormValues,
+  values: RoomFormValues,
+  next: RoomFormValues,
+  room: Room | null,
+): RoomFormValues =>
+  room === null || next.hidden === values.hidden ? start : { ...start, hidden: room.hidden };
 
 /** `values` with `botId` in or out of the room. A seventh bot is not taken. */
 export function withMember(values: RoomFormValues, botId: BotId, member: boolean): RoomFormValues {
@@ -116,14 +141,21 @@ type Checked<A> =
   | { readonly _tag: "ready"; readonly value: A }
   | { readonly _tag: "invalid"; readonly problems: ReadonlySet<RoomFormProblem> };
 
-/** The new room the form describes. */
+/** The new room the form describes; a visible one says nothing of it, as the server's default. */
 export function roomDraft(values: RoomFormValues): Checked<RoomDraft> {
   const problems = roomFormProblems(values);
   if (problems.size > 0) return { _tag: "invalid", problems };
-  return { _tag: "ready", value: { name: values.name.trim(), members: values.members } };
+  return {
+    _tag: "ready",
+    value: {
+      name: values.name.trim(),
+      members: values.members,
+      ...(values.hidden ? { hidden: true } : {}),
+    },
+  };
 }
 
-type RoomField = "name" | "members";
+type RoomField = "name" | "members" | "hidden";
 
 /**
  * Whether `a` and `b` say the same of `field`, as the server reads it: the
@@ -135,13 +167,15 @@ function sameField(field: RoomField, a: RoomFormValues, b: RoomFormValues): bool
       return a.name.trim() === b.name.trim();
     case "members":
       return sameOrder(a.members, b.members);
+    case "hidden":
+      return a.hidden === b.hidden;
   }
 }
 
 /** The fields where `values` say something else than `from`, as the server reads them. */
 function changedFields(from: RoomFormValues, values: RoomFormValues): ReadonlySet<RoomField> {
   const changed = new Set<RoomField>();
-  for (const field of ["name", "members"] as const) {
+  for (const field of ["name", "members", "hidden"] as const) {
     if (!sameField(field, from, values)) changed.add(field);
   }
   return changed;
@@ -169,6 +203,7 @@ export function roomChanges(room: RoomFormValues, values: RoomFormValues): Check
     value: {
       ...(changed.has("name") ? { name: values.name.trim() } : {}),
       ...(changed.has("members") ? { members: values.members } : {}),
+      ...(changed.has("hidden") ? { hidden: values.hidden } : {}),
     },
   };
 }

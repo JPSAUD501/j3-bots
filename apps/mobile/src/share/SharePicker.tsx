@@ -3,7 +3,7 @@ import { rosterRows } from "@j3-bots/client-runtime";
 import { rosterKeyOf, rosterKeyText, rosterTarget } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText } from "@j3-bots/client-runtime/wording";
-import type { RosterItemKey } from "@j3-bots/contracts";
+import type { RosterItem, RosterItemKey } from "@j3-bots/contracts";
 import type { NavigationContainerRefWithCurrent } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { useEffect } from "react";
@@ -11,11 +11,13 @@ import { FlatList, View } from "react-native";
 import { Text } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { RosterRow } from "../components/RosterRow.tsx";
+import { GroupHeader } from "../components/SectionHeader.tsx";
 import { useI18n } from "../i18n.ts";
 import { useTextLines } from "../lines.tsx";
 import { useSideBySide } from "../layout.ts";
 import type { Screens } from "../navigation.tsx";
 import { rosterSizes } from "../screens/rosterEntries.ts";
+import { hiddenItems } from "../screens/rosterItem.ts";
 import { useSay } from "../toast.tsx";
 import { Body, Centered, Title } from "../ui.tsx";
 import { type Put, useWaitingShare, type WaitingShare } from "./incoming.ts";
@@ -39,9 +41,23 @@ function Summary({ waiting }: { readonly waiting: Extract<WaitingShare, { _tag: 
   );
 }
 
+/** A row of the picker, or the header over the hidden ones. */
+type ShareEntry = { readonly kind: "row"; readonly item: RosterItem } | { readonly kind: "hidden" };
+
+/** The roster's rows in its order, then the hidden bots and rooms by name under their header. */
+const shareEntries = (items: ReadonlyArray<RosterItem>): ReadonlyArray<ShareEntry> => {
+  const row = (item: RosterItem): ShareEntry => ({ kind: "row", item });
+  const header: ShareEntry = { kind: "hidden" };
+  const hidden = hiddenItems(items);
+  return [
+    ...rosterRows(items).map(row),
+    ...(hidden.length === 0 ? [] : [header, ...hidden.map(row)]),
+  ];
+};
+
 /**
  * Where a share from another app goes: every bot and room, in the roster's
- * order. Picking one opens its conversation with the share in its draft,
+ * order, then the hidden ones under "Hidden conversations". Picking one opens its conversation with the share in its draft,
  * where it waits for Send. Leaving without a pick lets the share go.
  */
 export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "share">) {
@@ -101,21 +117,27 @@ export function ShareScreen({ navigation }: NativeStackScreenProps<Screens, "sha
         <FlatList
           className="flex-1"
           contentContainerStyle={{ paddingBottom: insets.bottom }}
-          data={rosterRows(roster.value)}
-          keyExtractor={(item) => rosterKeyText(rosterKeyOf(item))}
+          data={shareEntries(roster.value)}
+          keyExtractor={(entry) =>
+            entry.kind === "hidden" ? "hidden" : rosterKeyText(rosterKeyOf(entry.item))
+          }
           ListEmptyComponent={
             <View className="items-center px-6 py-12">
               <Body>{t("roster.empty")}</Body>
             </View>
           }
-          renderItem={({ item }) => (
-            <RosterRow
-              item={item}
-              height={rosterSizes(lines).row}
-              selected={false}
-              onOpen={() => pick(rosterKeyOf(item))}
-            />
-          )}
+          renderItem={({ item: entry }) =>
+            entry.kind === "hidden" ? (
+              <GroupHeader label={t("roster.hidden")} height={rosterSizes(lines).section} />
+            ) : (
+              <RosterRow
+                item={entry.item}
+                height={rosterSizes(lines).row}
+                selected={false}
+                onOpen={() => pick(rosterKeyOf(entry.item))}
+              />
+            )
+          }
         />
       )}
     </View>

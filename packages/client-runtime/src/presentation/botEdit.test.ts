@@ -7,6 +7,7 @@ import {
   editsAfterFailedBotSave,
   modelChoices,
   noBotEdits,
+  withHiddenEdit,
   withProfileEdit,
 } from "./botEdit.ts";
 
@@ -38,11 +39,26 @@ describe("botPatch", () => {
         avatar: { shape: "dome", color: "cobalt" },
         model: { ...claude },
         permissionMode: "supervised",
+        hidden: null,
       }),
     ).toEqual({ _tag: "unchanged" });
     expect(botPatch(scout, { ...noBotEdits, name: "  ", title: "Research" })).toEqual({
       _tag: "invalid",
       fields: new Set(["name"]),
+    });
+  });
+
+  it("sends whether the bot is hidden whenever the operator moved the switch", () => {
+    const hide = withHiddenEdit(noBotEdits, true, scout.hidden);
+    expect(botPatch(scout, hide)).toEqual({ _tag: "changes", changes: { hidden: true } });
+    // A bot hid it meanwhile: the operator's choice is still sent, so it is recorded as theirs.
+    expect(botPatch({ ...scout, hidden: true }, hide)).toEqual({
+      _tag: "changes",
+      changes: { hidden: true },
+    });
+    // Moved back to what the bot is: nothing to send.
+    expect(botPatch(scout, withHiddenEdit(hide, false, scout.hidden))).toEqual({
+      _tag: "unchanged",
     });
   });
 

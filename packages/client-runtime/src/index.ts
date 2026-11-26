@@ -129,6 +129,7 @@ export {
 export type { Loaded } from "./stores/reads.ts";
 export {
   type BotPlacement,
+  isHidden,
   needsOperator,
   Roster,
   rosterRows,

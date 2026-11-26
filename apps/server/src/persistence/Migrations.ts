@@ -43,6 +43,7 @@ import Migration0035 from "./migrations/0035_room_views.ts";
 import Migration0036 from "./migrations/0036_harness_updates.ts";
 import Migration0037 from "./migrations/0037_secret_asks.ts";
 import Migration0040 from "./migrations/0040_bots_manage_mcp_and_skills.ts";
+import Migration0041 from "./migrations/0041_visibility.ts";
 
 /**
  * Migrations go forward only. Add one by appending an entry with the next id;
@@ -87,6 +88,7 @@ const migrations = SqliteMigrator.fromRecord({
   "36_harness_updates": Migration0036,
   "37_secret_asks": Migration0037,
   "40_bots_manage_mcp_and_skills": Migration0040,
+  "41_visibility": Migration0041,
 });
 
 const Recorded = Schema.Struct({ migration_id: Schema.Int, name: Schema.String });

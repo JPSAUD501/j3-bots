@@ -26,6 +26,12 @@ import { Flag, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { roomRefusals } from "../turns/modeRefusals.ts";
 import { RoomStates } from "../turns/RoomStates.ts";
+import {
+  type Shown,
+  visibilityCommand,
+  VisibilityRefused,
+  visibilityRefusal,
+} from "../roster/visibility.ts";
 import { RoomWork } from "./RoomWork.ts";
 
 const RoomRow = Schema.Struct({
@@ -33,6 +39,7 @@ const RoomRow = Schema.Struct({
   name: Schema.String,
   status: Schema.Literals(["active", "archived"]),
   pinned: Flag,
+  hidden: Flag,
   archived_at: Schema.NullOr(Time),
   created_at: Time,
 });
@@ -46,13 +53,15 @@ export interface RoomChanges {
   readonly name?: string;
   readonly members?: ReadonlyArray<BotId>;
   readonly pinned?: boolean;
+  /** Recorded as the operator's choice, which no bot changes afterwards (decision 0050). */
+  readonly hidden?: boolean;
   readonly archived?: boolean;
 }
 
 /**
  * Rooms: their members and status. An active room has two to six members,
- * all equal; an archived room takes no changes but `pinned` and unarchiving
- * (`docs/architecture/server.md`, Rooms).
+ * all equal; an archived room takes no changes but `pinned`, `hidden` and
+ * unarchiving (`docs/architecture/server.md`, Rooms).
  */
 export class Rooms extends Context.Service<
   Rooms,
@@ -62,24 +71,40 @@ export class Rooms extends Context.Service<
     readonly list: Effect.Effect<ReadonlyArray<Room>>;
     /** The rooms `botId` is a member of. */
     readonly ofBot: (botId: BotId) => Effect.Effect<ReadonlyArray<Room>>;
+    /** The operator's room, whose visibility is their choice. */
     readonly create: (input: {
       readonly commandId: CommandId;
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
+      readonly hidden?: boolean;
     }) => Effect.Effect<Room, CommandError>;
     /**
      * Creates a room as `create` does, in the caller's transaction and under no receipt: for a bot's
-     * `start_room`, which its turn tool's pin applies once.
+     * `start_room`, which its turn tool's pin applies once. Its visibility is
+     * the choice of `madeBy`, the bot that starts it.
      */
     readonly open: (input: {
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
+      readonly hidden: boolean;
+      readonly madeBy: BotId;
     }) => Effect.Effect<Room, Invalid>;
     readonly update: (input: {
       readonly commandId: CommandId;
       readonly roomId: RoomId;
       readonly changes: RoomChanges;
     }) => Effect.Effect<Room, CommandError>;
+    /**
+     * A bot's `set_visibility` for a room, as `Bots.showOrHide` is for a bot:
+     * decided by `visibilityRefusal` in the transaction that saves it.
+     * Archived rooms included.
+     */
+    readonly showOrHide: (input: {
+      readonly commandId: CommandId;
+      readonly caller: BotId;
+      readonly roomId: RoomId;
+      readonly hidden: boolean;
+    }) => Effect.Effect<Shown, CommandError | VisibilityRefused>;
     readonly remove: (input: {
       readonly commandId: CommandId;
       readonly roomId: RoomId;
@@ -115,7 +140,7 @@ export const layer = Layer.effect(
     const refusals = roomRefusals(sql, yield* Entries);
 
     const SELECT = sql.literal(`
-      SELECT id, name, status, pinned, archived_at, created_at
+      SELECT id, name, status, pinned, hidden, archived_at, created_at
       FROM rooms
     `);
     const roomRows = SqlSchema.findAll({
@@ -149,6 +174,7 @@ export const layer = Layer.effect(
           id: row.id,
           name: row.name,
           pinned: row.pinned,
+          hidden: row.hidden,
           createdAt: row.created_at,
           status: row.status,
           members: members.filter((member) => member.room_id === row.id).map((m) => m.bot_id),
@@ -223,16 +249,23 @@ export const layer = Layer.effect(
       yield* work.end(roomId);
     });
 
-    const open = Effect.fn("Rooms.open")(function* (input: {
+    /** A new room, made by the operator when `madeBy` is null, whose choice its visibility then is. */
+    const insert = Effect.fn("Rooms.insert")(function* (input: {
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
+      readonly hidden: boolean;
+      readonly madeBy: BotId | null;
     }) {
       yield* checkMembers(input.members);
       const id = RoomId.make(yield* ids.make("room"));
       const at = timeText(yield* DateTime.now);
       yield* sql`
-        INSERT INTO rooms (id, name, created_at, updated_at)
-        VALUES (${id}, ${input.name}, ${at}, ${at})
+        INSERT INTO rooms (
+          id, name, hidden, made_by_bot_id, visibility_by_operator, created_at, updated_at
+        ) VALUES (
+          ${id}, ${input.name}, ${input.hidden ? 1 : 0}, ${input.madeBy},
+          ${input.madeBy === null ? 1 : 0}, ${at}, ${at}
+        )
       `.pipe(Effect.orDie);
       yield* writeMembers(id, input.members);
       yield* refusals.joined(id, input.members);
@@ -244,13 +277,19 @@ export const layer = Layer.effect(
       readonly commandId: CommandId;
       readonly name: string;
       readonly members: ReadonlyArray<BotId>;
+      readonly hidden?: boolean;
     }) {
       return yield* receipts.once({
         commandId: input.commandId,
         method: "room.create",
         payload: input,
         result: Room,
-        apply: open(input),
+        apply: insert({
+          name: input.name,
+          members: input.members,
+          hidden: input.hidden === true,
+          madeBy: null,
+        }),
       });
     });
 
@@ -283,6 +322,9 @@ export const layer = Layer.effect(
             UPDATE rooms SET ${sql.update({
               name: change.name ?? room.name,
               pinned: (change.pinned ?? room.pinned) ? 1 : 0,
+              ...(change.hidden === undefined
+                ? {}
+                : { hidden: change.hidden ? 1 : 0, visibility_by_operator: 1 }),
               updated_at: at,
               ...(active ? { status: "active", archived_at: null } : {}),
             })}
@@ -307,6 +349,63 @@ export const layer = Layer.effect(
           }
           yield* changes.touch({ _tag: "room", roomId: room.id });
           return yield* require(room.id).pipe(Effect.orDie);
+        }),
+      });
+    });
+
+    const VisibilityRow = Schema.Struct({
+      name: Schema.String,
+      hidden: Flag,
+      made_by_bot_id: Schema.NullOr(BotId),
+      visibility_by_operator: Flag,
+    });
+    const visibilityOf = SqlSchema.findOneOption({
+      Request: RoomId,
+      Result: VisibilityRow,
+      execute: (id) => sql`
+        SELECT name, hidden, made_by_bot_id, visibility_by_operator FROM rooms WHERE id = ${id}
+      `,
+    });
+    const CallerRow = Schema.Struct({ is_primary: Flag });
+    const callerOf = SqlSchema.findOneOption({
+      Request: BotId,
+      Result: CallerRow,
+      execute: (id) => sql`SELECT is_primary FROM bots WHERE id = ${id}`,
+    });
+
+    const showOrHide = Effect.fn("Rooms.showOrHide")(function* (input: {
+      readonly commandId: CommandId;
+      readonly caller: BotId;
+      readonly roomId: RoomId;
+      readonly hidden: boolean;
+    }) {
+      return yield* receipts.once({
+        commandId: input.commandId,
+        ...visibilityCommand({ caller: input.caller, id: input.roomId, hidden: input.hidden }),
+        apply: Effect.gen(function* () {
+          const room = yield* visibilityOf(input.roomId).pipe(Effect.orDie);
+          if (Option.isNone(room)) return yield* new NotFound({ resource: "room" });
+          const caller = yield* callerOf(input.caller).pipe(Effect.orDie);
+          if (Option.isNone(caller)) return yield* new NotFound({ resource: "bot" });
+          const refusal = visibilityRefusal(
+            { id: input.caller, primary: caller.value.is_primary },
+            {
+              name: room.value.name,
+              primary: false,
+              madeBy: room.value.made_by_bot_id,
+              byOperator: room.value.visibility_by_operator,
+            },
+          );
+          if (refusal !== undefined) return yield* refusal;
+          if (room.value.hidden !== input.hidden) {
+            const at = timeText(yield* DateTime.now);
+            yield* sql`
+              UPDATE rooms SET hidden = ${input.hidden ? 1 : 0}, updated_at = ${at}
+              WHERE id = ${input.roomId}
+            `.pipe(Effect.orDie);
+            yield* changes.touch({ _tag: "room", roomId: input.roomId });
+          }
+          return { id: input.roomId, hidden: input.hidden };
         }),
       });
     });
@@ -376,8 +475,9 @@ export const layer = Layer.effect(
       list: select({ id: null, botId: null }),
       ofBot,
       create,
-      open,
+      open: insert,
       update,
+      showOrHide,
       remove,
       stop,
       releaseBot,

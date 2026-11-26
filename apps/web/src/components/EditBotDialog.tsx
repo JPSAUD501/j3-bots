@@ -10,6 +10,7 @@ import { useI18n } from "../app/context";
 import { cn } from "../lib/cn";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
 import { AvatarPicker } from "./avatar/AvatarPicker";
+import { HideSwitch } from "./Visibility";
 import { PermissionModeChoices } from "./PermissionModeChoices";
 import { Button } from "./ui/button";
 import { dialogBackdrop, screenDialog } from "./ui/dialog";
@@ -38,8 +39,8 @@ const keyOf = (choice: Bot["model"]) => JSON.stringify([choice.providerId, choic
 
 /**
  * Everything the operator changes about a bot itself: its name, title, look
- * and job, the model it runs on and how much it may do without asking. Save sends
- * only what changed. While a save is under way the form shows what it sends
+ * and job, the model it runs on, how much it may do without asking, and
+ * whether it is hidden. Save sends only what changed. While a save is under way the form shows what it sends
  * and takes no edit; a save that fails leaves the edits in place and says
  * why, beside the field when one field is the reason.
  */
@@ -244,6 +245,12 @@ export function EditBotForm({
               ` ${t("editBot.providerChangeStops", { name: bot.profile.name })}`}
           </p>
         )}
+
+        <HideSwitch
+          checked={form.hidden}
+          readOnly={saving}
+          onChange={(hidden) => form.edit({ hidden })}
+        />
       </div>
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-border px-4 py-3">

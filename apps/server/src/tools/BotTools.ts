@@ -4,6 +4,8 @@ import {
   CommandId,
   type FillOutcome,
   Profile,
+  type Room,
+  RoomId,
   Routine,
   type Secret,
   secretReference,
@@ -289,21 +291,34 @@ export const layer = Layer.effect(
       ),
       list_teammates: handler(tools.list_teammates.input, (_input, { caller }) =>
         Effect.gen(function* () {
-          const teammates = (yield* store.list)
+          const all = yield* store.list;
+          const teammates = all
             .filter(({ bot }) => bot.id !== caller.botId)
             .map(({ bot }) => ({
               id: bot.id,
               name: bot.profile.name,
               title: bot.profile.title,
               job: bot.profile.job,
+              hidden: bot.hidden,
             }));
-          const joined = (yield* rooms.ofBot(caller.botId)).map((room) => ({
+          const listed = (room: Room) => ({
             id: room.id,
             name: room.name,
             members: [...room.members],
             archived: room.status === "archived",
-          }));
-          return { teammates, rooms: joined } satisfies Schema.Json;
+            hidden: room.hidden,
+          });
+          const primary = all.some(({ bot }) => bot.id === caller.botId && bot.primary);
+          // The primary bot may show or hide any room, so it is told of those
+          // it is not in too: their names and members, never what they say.
+          const everyRoom = primary ? yield* rooms.list : yield* rooms.ofBot(caller.botId);
+          const isMember = (room: Room) => room.members.includes(caller.botId);
+          const others = everyRoom.filter((room) => !isMember(room)).map(listed);
+          return {
+            teammates,
+            rooms: everyRoom.filter(isMember).map(listed),
+            ...(primary ? { otherRooms: others } : {}),
+          } satisfies Schema.Json;
         }),
       ),
       start_room: handler(tools.start_room.input, (input, call) =>
@@ -388,6 +403,39 @@ export const layer = Layer.effect(
       ),
       remove_skill: handler(tools.remove_skill.input, (input, call) =>
         changing("remove_skill", call, management.removeSkill(callerOf(call), input)),
+      ),
+      // A bot or a room, by its id: bots are looked up first, as ids of both
+      // kinds are never the same (`Ids`). Both store one receipt
+      // (`visibilityCommand`), so a retry finds its result either way.
+      set_visibility: handler(tools.set_visibility.input, (input, call) =>
+        Effect.gen(function* () {
+          const commandId = commandIdOf(call.requestId);
+          const botId = BotId.make(input.id);
+          if (Option.isSome(yield* store.find(botId))) {
+            const shown = yield* bots
+              .showOrHide({ commandId, caller: call.caller.botId, botId, hidden: input.hidden })
+              .pipe(refuseFailure);
+            return { ...shown } satisfies Schema.Json;
+          }
+          const shown = yield* rooms
+            .showOrHide({
+              commandId,
+              caller: call.caller.botId,
+              roomId: RoomId.make(input.id),
+              hidden: input.hidden,
+            })
+            .pipe(
+              Effect.catchTag(
+                "NotFound",
+                () =>
+                  new Refused({
+                    reason: `Nothing changed: no bot or room has the id ${input.id}. \`list_teammates\` shows them now.`,
+                  }),
+              ),
+              refuseFailure,
+            );
+          return { ...shown } satisfies Schema.Json;
+        }),
       ),
       update_profile: handler(tools.update_profile.input, (input, call) =>
         Effect.gen(function* () {

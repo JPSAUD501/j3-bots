@@ -226,6 +226,7 @@ export function sampleTeam(now: DateTime.Utc) {
     // More than the header draws, so it counts the rest.
     members: [ids.juniper, ids.wren, ids.scout, ids.atlas, ids.otto],
     pinned: false,
+    hidden: false,
     createdAt: ago(60 * 24 * 7),
     // Juniper and Scout are answering in it, in member order.
     work: "running",

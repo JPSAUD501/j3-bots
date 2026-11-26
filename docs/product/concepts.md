@@ -32,7 +32,7 @@ These are the words J3 Bots uses in its interface, its prompts, its code and its
 
 **Pinned.** A bot or room the operator keeps at the top of the roster.
 
-**Hidden.** A bot kept out of the roster. It keeps running, and search and the list of hidden bots still reach it.
+**Hidden.** A bot or room kept out of the roster, among the hidden conversations. It keeps running and notifying, and search, the hidden conversations and everything that refers to it still reach it. The operator hides or shows anything; a bot may hide what it made, and the primary bot anything but itself, unless the operator chose otherwise: the operator's choice stands.
 
 **Section.** A named group of bots in the roster, which the operator creates, names, orders and folds away. A bot is in at most one section. Deleting a section never deletes its bots: they go back to the roster's main list.
 

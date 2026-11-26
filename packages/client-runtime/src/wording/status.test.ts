@@ -22,6 +22,7 @@ const room = (lastEntry: EntryPreview | null): RosterItem => ({
     status: "active",
     members: [bot("Scout").id, bot("Wren").id],
     pinned: false,
+    hidden: false,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
     answering: [],

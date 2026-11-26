@@ -15,7 +15,7 @@ const row = (b: Bot, minutesAgo: number, unread = false): RosterItem => ({
   unread,
 });
 
-const room = (name: string, unread: boolean): RosterItem => ({
+const room = (name: string, unread: boolean, hidden = false): RosterItem => ({
   _tag: "room",
   room: {
     id: RoomId.make(name.toLowerCase()),
@@ -23,6 +23,7 @@ const room = (name: string, unread: boolean): RosterItem => ({
     status: "active",
     members: [bot("Scout").id, bot("Wren").id],
     pinned: false,
+    hidden,
     createdAt: at("2026-11-01T00:00:00Z"),
     work: "none",
     answering: [],
@@ -36,7 +37,7 @@ const asking = (name: string, extra: Partial<Bot> = {}) =>
   bot(name, { _tag: "waiting", entryId: EntryId.make(`card-${name}`), since: null }, extra);
 
 describe("the tray", () => {
-  it("lists the bots and rooms that need the operator, in roster order", () => {
+  it("lists the visible bots and rooms that need the operator, in roster order", () => {
     const report = trayReport(
       [
         row(bot("Idle"), 0),
@@ -44,8 +45,9 @@ describe("the tray", () => {
         row(asking("Asker"), 30),
         room("Launch", true),
         row(bot("Pinned", { _tag: "idle" }, { pinned: true }), 50, true),
-        // Hidden from the roster, so from the tray too, though it asks.
+        // Hidden from the roster, so from the tray too, though they need the operator.
         row(asking("Hidden", { hidden: true }), 1),
+        room("Backstage", true, true),
       ],
       pairing,
     );

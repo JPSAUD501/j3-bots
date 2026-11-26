@@ -7,6 +7,8 @@ import {
   pairBotIds,
   PairSeq,
   ProviderId,
+  RoomId,
+  type RosterItem,
   SectionId,
   type TeammatePair,
 } from "@j3-bots/contracts";
@@ -43,6 +45,24 @@ const bot = (name: string): BotItem => ({
   lastEntry: null,
   lastActivityAt: null,
   unread: false,
+});
+
+const room = (name: string): RosterItem => ({
+  _tag: "room",
+  room: {
+    id: RoomId.make(name),
+    name,
+    status: "active",
+    members: [BotId.make("Ada"), BotId.make("Bo")],
+    pinned: false,
+    hidden: true,
+    createdAt: DateTime.makeUnsafe(0),
+    work: "none",
+    answering: [],
+  },
+  lastEntry: null,
+  lastActivityAt: null,
+  unread: true,
 });
 
 const pair = (from: string, to: string): TeammatePair => ({
@@ -110,6 +130,17 @@ describe("rosterEntries", () => {
     expect(entries.map((entry) => entry.key)).toEqual(["pinned", "bot:Bo", "bot:Cy", "hidden"]);
     const unhidden = rosterEntries(arranged({ main: [bot("Bo")] }), [], 412, new Set(), sizes);
     expect(unhidden.map((entry) => entry.key)).toEqual(["pinned", "bot:Bo"]);
+  });
+
+  it("lists the way to the hidden conversations for a hidden room alone, with the room in it", () => {
+    const entries = rosterEntries(
+      arranged({ hidden: [room("Launch")] }),
+      [],
+      412,
+      new Set(),
+      sizes,
+    );
+    expect(entries.at(-1)).toMatchObject({ kind: "hidden", items: [room("Launch")] });
   });
 
   it("lists each section after the main rows: its bots, the empty line, or only its header when folded, which still says something is unread", () => {

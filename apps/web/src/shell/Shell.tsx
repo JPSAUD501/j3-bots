@@ -713,6 +713,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             headingId={detailsHeadingId}
             intents={{
               stop: () => intents.stopBot(bot.id),
+              show: () => intents.placeBot(bot.id, { hidden: false }),
               setRoutineEnabled: intents.setRoutineEnabled,
               openRoutine: intents.openRoutine,
               openAttachment: intents.openAttachment,
@@ -742,6 +743,7 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
             intents={{
               editRoom: () => intents.editRoom(room.id),
               stop: () => intents.stopRoom(room.id),
+              show: () => intents.placeRoom(room.id, { hidden: false }),
               archiveRoom: () => intents.archiveRoom(room.id),
               unarchiveRoom: () => intents.unarchiveRoom(room.id),
               deleteRoom: () => intents.deleteRoom(room.id),

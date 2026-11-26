@@ -12,6 +12,7 @@ import {
   roomFormTarget,
   type RoomFormValues,
   sameRoomForm,
+  startAfterChange,
   withMember,
   withoutDeleted,
 } from "./roomForm.ts";
@@ -37,6 +38,7 @@ const room: Room = {
   status: "active",
   members: [hal, ana],
   pinned: false,
+  hidden: false,
   createdAt: at("2026-11-01T00:00:00Z"),
   work: "none",
   answering: [],
@@ -63,6 +65,11 @@ describe("roomDraft", () => {
       value: { name: "Launch", members: [ana, hal] },
     });
   });
+
+  it("asks for a hidden room only when the operator chose one", () => {
+    const hidden = roomDraft(form({ members: [ana, hal], hidden: true }));
+    expect(hidden._tag === "ready" && hidden.value.hidden).toBe(true);
+  });
 });
 
 describe("roomChanges", () => {
@@ -74,6 +81,14 @@ describe("roomChanges", () => {
       _tag: "ready",
       value: { members: [ana, bo] },
     });
+  });
+
+  it("sends whether the room is hidden only when the operator changed it", () => {
+    expect(roomChanges(opened, { ...opened, hidden: true })).toEqual({
+      _tag: "ready",
+      value: { hidden: true },
+    });
+    expect(sameRoomForm(opened, { ...opened, hidden: true })).toBe(false);
   });
 
   it("finds nothing to send for an edit the operator undid", () => {
@@ -116,7 +131,35 @@ describe("followRoom", () => {
     const values = { ...opened, name: "Liftoff" };
     const elsewhere: Room = { ...room, name: "Launch v2", members: [hal, ana, bo] };
     const followed = followRoom(opened, values, elsewhere);
-    expect(followed.values).toEqual({ name: "Liftoff", members: [hal, ana, bo] });
+    expect(followed.values).toEqual({ name: "Liftoff", members: [hal, ana, bo], hidden: false });
+    expect(roomChanges(followed.start, followed.values)).toEqual({
+      _tag: "ready",
+      value: { name: "Liftoff" },
+    });
+  });
+
+  it("sends the operator's hidden switch even when a bot set the room the same meanwhile", () => {
+    const opened = roomFormOf(room);
+    const on = { ...opened, hidden: true };
+    const hiddenRoom: Room = { ...room, hidden: true };
+    const followed = followRoom(startAfterChange(opened, opened, on, room), on, hiddenRoom);
+    expect(roomChanges(followed.start, followed.values)).toEqual({
+      _tag: "ready",
+      value: { hidden: true },
+    });
+    // Moved back off with the room hidden now: that is a choice to show it.
+    const off = { ...on, hidden: false };
+    const start = startAfterChange(followed.start, on, off, hiddenRoom);
+    expect(roomChanges(start, off)).toEqual({ _tag: "ready", value: { hidden: false } });
+    // Moved back to what the room is: nothing to send.
+    expect(sameRoomForm(startAfterChange(opened, on, opened, room), opened)).toBe(true);
+  });
+
+  it("follows the room shown again elsewhere, so Save does not hide it back", () => {
+    const hiddenRoom: Room = { ...room, hidden: true };
+    const opened = roomFormOf(hiddenRoom);
+    const values = { ...opened, name: "Liftoff" };
+    const followed = followRoom(opened, values, room);
     expect(roomChanges(followed.start, followed.values)).toEqual({
       _tag: "ready",
       value: { name: "Liftoff" },

@@ -21,6 +21,7 @@ import { CopyIcon, CpuIcon, DownloadIcon, ShieldAlertIcon, XIcon } from "lucide-
 import { type ReactNode, useId, useState } from "react";
 import { useI18n } from "../app/context";
 import { useHeldWhileClosing } from "../lib/useHeldWhileClosing";
+import { HideSwitch } from "./Visibility";
 import { PermissionModeChoices } from "./PermissionModeChoices";
 import { TemplatePreview } from "./TemplatePreview";
 import { Button } from "./ui/button";
@@ -231,8 +232,9 @@ interface TemplateFormProps {
 /**
  * Creating a bot from a template, which is untrusted: the operator sees all
  * of it, the model it runs on here and the permission mode it starts with,
- * capped by the default unless they choose more, and nothing is created
- * until they press Create. The sheet's content, whatever frames it.
+ * capped by the default unless they choose more, and whether it starts
+ * hidden; nothing is created until they press Create. The sheet's content,
+ * whatever frames it.
  */
 export function TemplateForm({
   template,
@@ -247,13 +249,16 @@ export function TemplateForm({
   const modeId = useId();
   const start = templateStart(template, engine);
   const [picked, setPicked] = useState<PermissionMode | null>(null);
+  const [hidden, setHidden] = useState(false);
   const [state, setState] = useState<"editing" | "creating" | Exclude<TemplateCreated, "done">>(
     "editing",
   );
   const mode = picked ?? start.permissionMode;
   const { name } = template.profile;
   const creating = state === "creating";
-  const submission = templateSubmission(template, start, picked);
+  const picks = templateSubmission(template, start, picked);
+  // A visible bot says nothing of it, as the server's default.
+  const submission = picks === null ? null : { ...picks, ...(hidden ? { hidden: true } : {}) };
   const ready = submission !== null && connected && !creating;
   return (
     <form
@@ -314,6 +319,9 @@ export function TemplateForm({
               readOnly={creating}
               labelledBy={modeId}
             />
+          </section>
+          <section className="border-t border-border pt-4">
+            <HideSwitch checked={hidden} readOnly={creating} onChange={setHidden} />
           </section>
         </TemplatePreview>
       </div>

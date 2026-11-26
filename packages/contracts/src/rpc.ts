@@ -359,6 +359,8 @@ export const BotRpcs = RpcGroup.make(
       model: Schema.optionalKey(ModelChoice),
       permissionMode: Schema.optionalKey(PermissionMode),
       primary: Schema.optionalKey(Schema.Boolean),
+      /** Creates it hidden (`Bot.hidden`); visible when left out. */
+      hidden: Schema.optionalKey(Schema.Boolean),
     },
     success: Bot,
     error: CommandError,
@@ -386,6 +388,7 @@ export const BotRpcs = RpcGroup.make(
        */
       primary: Schema.optionalKey(Schema.Boolean),
       pinned: Schema.optionalKey(Schema.Boolean),
+      /** The operator's choice, which no bot can change afterwards (decision 0050). */
       hidden: Schema.optionalKey(Schema.Boolean),
       /** Lets the bot use the browser (`Bot.browser`), or stops it. */
       browser: Schema.optionalKey(Schema.Boolean),
@@ -450,6 +453,8 @@ export const BotRpcs = RpcGroup.make(
       template: BotTemplate,
       model: Schema.optionalKey(ModelChoice),
       permissionMode: Schema.optionalKey(PermissionMode),
+      /** Creates it hidden (`Bot.hidden`); visible when left out. */
+      hidden: Schema.optionalKey(Schema.Boolean),
     },
     success: Bot,
     error: CommandError,
@@ -500,6 +505,8 @@ export const RoomRpcs = RpcGroup.make(
       ...command,
       name: RoomName,
       members: RoomMembers,
+      /** Creates it hidden (`Room.hidden`); visible when left out. */
+      hidden: Schema.optionalKey(Schema.Boolean),
     },
     success: Room,
     error: CommandError,
@@ -507,9 +514,11 @@ export const RoomRpcs = RpcGroup.make(
   /**
    * `archived: true` archives the room: its pending wakes are cancelled, its
    * running work is stopped as `bot.stop` stops it, and its open `ask` cards
-   * expire. An archived room takes only `pinned` and `archived: false`, and
-   * fails with `Conflict("room-archived")` for anything else; unarchiving
-   * needs two to six members, which the same update may give.
+   * expire. An archived room takes only `pinned`, `hidden` and
+   * `archived: false`, and fails with `Conflict("room-archived")` for
+   * anything else; unarchiving needs two to six members, which the same
+   * update may give. `hidden` is the operator's choice, which no bot can
+   * change afterwards (decision 0050).
    */
   Rpc.make("room.update", {
     payload: {
@@ -518,6 +527,7 @@ export const RoomRpcs = RpcGroup.make(
       name: Schema.optionalKey(RoomName),
       members: Schema.optionalKey(RoomMembers),
       pinned: Schema.optionalKey(Schema.Boolean),
+      hidden: Schema.optionalKey(Schema.Boolean),
       archived: Schema.optionalKey(Schema.Boolean),
     },
     success: Room,

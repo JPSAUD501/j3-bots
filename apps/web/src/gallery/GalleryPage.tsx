@@ -74,6 +74,7 @@ import * as DateTime from "effect/DateTime";
 import { PlusIcon, SettingsIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
+  isHidden,
   turnsNotRead,
   type DraftFile,
   type DraftMention,
@@ -145,7 +146,7 @@ import { VisualTheme } from "../components/VisualCard";
 import { QuestionCard } from "../components/QuestionCard";
 import { RoomForm, type RoomFormProps } from "../components/RoomDialog";
 import { Roster } from "../components/Roster";
-import { HiddenBots, SectionBlock, useFoldedSections } from "../components/RosterGroups";
+import { HiddenConversations, SectionBlock, useFoldedSections } from "../components/RosterGroups";
 import type { RosterIntents, RosterMenuContext } from "../components/RosterMenu";
 import { RosterRow } from "../components/RosterRow";
 import { PrimaryBadge } from "../components/avatar/PrimaryBadge";
@@ -887,7 +888,7 @@ const quietPairIntents = { talkTo: nothing, startRoom: nothing };
 
 const quietIntents: RosterIntents = {
   placeBot: nothing,
-  pinRoom: nothing,
+  placeRoom: nothing,
   markRead: nothing,
   markUnread: nothing,
   createSection: () => Promise.resolve(null),
@@ -906,15 +907,20 @@ const quietMenu: RosterMenuContext = {
 };
 
 const homeSection = team.sections[0];
-const hiddenBots = team.roster.flatMap((item) =>
-  item._tag === "bot" && item.bot.hidden ? [item] : [],
+// The sample's hidden bot, and its room as it would be hidden.
+const hiddenConversations = team.roster.flatMap((item) =>
+  isHidden(item)
+    ? [item]
+    : item._tag === "room"
+      ? [{ ...item, room: { ...item.room, hidden: true } }]
+      : [],
 );
 
 function RosterOrganizeSection() {
   return (
     <Section title="Organizing the roster">
       <Frame
-        label="The pinned bots as large avatars, the primary one marked; rooms and the bots in no section; a section with bots, one with none yet; the row to the hidden bots. Right-click a row or tile, or its “…”, for its menu"
+        label="The pinned bots as large avatars, the primary one marked; rooms and the bots in no section; a section with bots, one with none yet; the row to the hidden conversations. Right-click a row or tile, or its “…”, for its menu"
         width={340}
         height={980}
       >
@@ -941,14 +947,18 @@ function RosterOrganizeSection() {
           </div>
         </Labeled>
       )}
-      <Frame label="The hidden conversations, each with Unhide" width={340} height={220}>
+      <Frame
+        label="The hidden conversations, a bot and a room, each with Show"
+        width={340}
+        height={220}
+      >
         <div className="h-full bg-sidebar p-2">
-          <HiddenBots
-            items={hiddenBots}
+          <HiddenConversations
+            items={hiddenConversations}
             selected={null}
             rowLink={() => rowButton(nothing)}
             onBack={nothing}
-            onUnhide={nothing}
+            onShow={nothing}
           />
         </div>
       </Frame>
@@ -1574,6 +1584,7 @@ const detailsIntents = {
   openMemoryFile: nothing,
   editProfile: nothing,
   stop: nothing,
+  show: nothing,
   freshStart: nothing,
   deleteBot: nothing,
   shareTemplate: nothing,
@@ -1585,6 +1596,7 @@ const detailsIntents = {
 const roomIntents = {
   editRoom: nothing,
   stop: nothing,
+  show: nothing,
   archiveRoom: () => Promise.resolve(),
   unarchiveRoom: () => Promise.resolve(),
   deleteRoom: nothing,
@@ -1595,6 +1607,7 @@ const archivedRoom: Room = {
   id: team.room.id,
   name: team.room.name,
   pinned: false,
+  hidden: false,
   createdAt: team.room.createdAt,
   status: "archived",
   members: [team.bots.scout.id],
@@ -1684,8 +1697,9 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
+          {/* Hidden, with nothing to stop: the line under its profile. */}
           <BotDetails
-            bot={moss}
+            bot={{ ...moss, hidden: true }}
             routines={[]}
             memory={[]}
             files={[]}
@@ -1730,7 +1744,12 @@ function DetailsSection() {
           <RoomDetails room={team.room} intents={roomIntents} onClose={nothing} />
         </Pane>
         <Pane>
-          <RoomDetails room={stoppingRoom} intents={roomIntents} onClose={nothing} />
+          {/* Hidden while its work stops: the line after the Stop. */}
+          <RoomDetails
+            room={{ ...stoppingRoom, hidden: true }}
+            intents={roomIntents}
+            onClose={nothing}
+          />
         </Pane>
         <Pane>
           <RoomDetails room={archivedRoom} intents={roomIntents} onClose={nothing} />
@@ -2209,6 +2228,7 @@ function RoomsSection() {
           initial={{
             name: "Launch week",
             members: [scout.id, wren.id],
+            hidden: false,
           }}
           initialFailure={{ _tag: "refused", error: new Invalid({ reason: "room-members" }) }}
         />
@@ -2223,6 +2243,7 @@ function RoomsSection() {
           initial={{
             name: team.room.name,
             members: [juniper.id, scout.id],
+            hidden: team.room.hidden,
           }}
           initialFailure={{ _tag: "refused", error: new Conflict({ reason: "room-archived" }) }}
         />

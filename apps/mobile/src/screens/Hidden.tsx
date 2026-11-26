@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotItem } from "@j3-bots/client-runtime/presentation";
+import { rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
+import type { RosterItem } from "@j3-bots/contracts";
 import { motion, reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { EyeOff } from "lucide-react-native";
@@ -13,15 +14,18 @@ import Animated, {
   LinearTransition,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { RoomAvatar, roomAvatarMembers } from "../components/avatar/BotAvatar.tsx";
 import { LiveBotAvatar } from "../components/avatar/mood.tsx";
 import { Connecting } from "../components/ConnectionLine.tsx";
 import { StateMark } from "../components/States.tsx";
 import { useI18n } from "../i18n.ts";
 import { type Screens, useOpenConversation } from "../navigation.tsx";
+import { useBots } from "../presentation.tsx";
 import { PressScale } from "../press.tsx";
 import { Text } from "../text.tsx";
 import { Body, Button } from "../ui.tsx";
-import { useBotPlacing } from "./placing.ts";
+import { useBotPlacing, useRoomPlacing } from "./placing.ts";
+import { hiddenItems, itemName } from "./rosterItem.ts";
 
 const slide = reanimatedSpring(springs.slide);
 const closing = LinearTransition.springify()
@@ -30,11 +34,11 @@ const closing = LinearTransition.springify()
   .damping(slide.damping);
 
 /**
- * The bots the operator hid, by name, each with Unhide; one with something
- * unread carries a dot. A row opens the bot's conversation, which stays as it
- * was while the bot is hidden. A bot unhidden fades away as the rest close
- * up, and returns to the roster where it belongs; with none left the screen
- * says that hiding keeps a bot working.
+ * The bots and rooms the operator hid, by name, each with Show; one with
+ * something unread carries a dot. A row opens the conversation or the room,
+ * which stays as it was while hidden. One shown again fades away as the rest
+ * close up, and returns to the roster where it belongs; with none left the
+ * screen says that hiding keeps a conversation working.
  */
 export function HiddenScreen({ navigation }: NativeStackScreenProps<Screens, "hidden">) {
   const { t } = useI18n();
@@ -45,9 +49,7 @@ export function HiddenScreen({ navigation }: NativeStackScreenProps<Screens, "hi
     navigation.setOptions({ title });
   }, [navigation, title]);
   if (roster._tag === "loading") return <Connecting />;
-  const hidden = roster.value
-    .filter((item): item is BotItem => item._tag === "bot" && item.bot.hidden)
-    .toSorted((a, b) => a.bot.profile.name.localeCompare(b.bot.profile.name));
+  const hidden = hiddenItems(roster.value);
   return (
     <ScrollView
       className="flex-1 bg-background"
@@ -66,11 +68,11 @@ export function HiddenScreen({ navigation }: NativeStackScreenProps<Screens, "hi
         ) : (
           hidden.map((item) => (
             <Animated.View
-              key={item.bot.id}
+              key={rosterKeyText(rosterKeyOf(item))}
               exiting={FadeOut.duration(motion.state)}
               layout={closing}
             >
-              <HiddenBot item={item} />
+              <HiddenItem item={item} />
             </Animated.View>
           ))
         )}
@@ -79,14 +81,17 @@ export function HiddenScreen({ navigation }: NativeStackScreenProps<Screens, "hi
   );
 }
 
-/** A hidden bot: its avatar and name, a dot while something of it is unread, and Unhide. */
-function HiddenBot({ item }: { readonly item: BotItem }) {
+/** A hidden bot or room: its avatar and name, a dot while something of it is unread, and Show. */
+function HiddenItem({ item }: { readonly item: RosterItem }) {
   const { t } = useI18n();
-  const placing = useBotPlacing();
+  const botPlacing = useBotPlacing();
+  const roomPlacing = useRoomPlacing();
   const openConversation = useOpenConversation();
-  const { bot } = item;
-  const name = bot.profile.name;
+  const bots = useBots();
+  const name = itemName(item);
+  const primary = item._tag === "bot" && item.bot.primary;
   const [pressed, setPressed] = useState(false);
+  const ground = pressed ? "muted" : "background";
   return (
     <View className="mx-2 flex-row items-center gap-2 pe-2">
       <PressScale
@@ -95,24 +100,28 @@ function HiddenBot({ item }: { readonly item: BotItem }) {
         accessibilityRole="button"
         accessibilityLabel={[
           name,
-          bot.primary ? t("roster.primary") : null,
+          primary ? t("roster.primary") : null,
           item.unread ? t("roster.unread") : null,
         ]
           .filter((part) => part !== null)
           .join(", ")}
-        onPress={() => openConversation({ _tag: "bot", botId: bot.id })}
+        onPress={() => openConversation(rosterKeyOf(item))}
         onPressIn={() => setPressed(true)}
         onPressOut={() => setPressed(false)}
         className="h-(--layout-row-touch) flex-row items-center gap-3 rounded-lg px-2 active:bg-muted"
       >
-        <LiveBotAvatar
-          bot={bot}
-          unread={item.unread}
-          lastEntry={item.lastEntry}
-          size={40}
-          ground={pressed ? "muted" : "background"}
-          markPrimary
-        />
+        {item._tag === "bot" ? (
+          <LiveBotAvatar
+            bot={item.bot}
+            unread={item.unread}
+            lastEntry={item.lastEntry}
+            size={40}
+            ground={ground}
+            markPrimary
+          />
+        ) : (
+          <RoomAvatar size={40} ground={ground} members={roomAvatarMembers(item.room, bots)} />
+        )}
         <Text numberOfLines={1} className="min-w-0 flex-1 text-base font-medium text-foreground">
           {name}
         </Text>
@@ -122,7 +131,9 @@ function HiddenBot({ item }: { readonly item: BotItem }) {
         variant="secondary"
         label={t("roster.unhide")}
         accessibilityLabel={t("roster.hidden.unhideName", { name })}
-        onPress={() => placing.unhide(bot)}
+        onPress={() =>
+          item._tag === "bot" ? botPlacing.unhide(item.bot) : roomPlacing.unhide(item.room)
+        }
       />
     </View>
   );

@@ -65,7 +65,7 @@ const sentences = {
   "roster.replacePrimary.confirm": "Tornar {name} principal",
   "roster.replacePrimary.cancel": "Manter {previous}",
   "roster.hide": "Ocultar",
-  "roster.unhide": "Reexibir",
+  "roster.unhide": "Mostrar",
   "roster.more": "Mais",
   "roster.openDetails": "Detalhes",
   "roster.changeFailed": "A mudança não foi salva. Tente de novo.",
@@ -85,7 +85,7 @@ const sentences = {
   "roster.menu.back": "Voltar",
   "roster.hidden.count.one": "{count} conversa oculta",
   "roster.hidden.count.other": "{count} conversas ocultas",
-  "roster.hidden.unhideName": "Reexibir {name}",
+  "roster.hidden.unhideName": "Mostrar {name}",
   "roster.section": "Seção {name}",
   "roster.section.count.one": "{count} bot",
   "roster.section.count.other": "{count} bots",
@@ -1222,6 +1222,11 @@ const sentences = {
   "newBot.title": "Novo bot",
   "newBot.body": "Dê um nome a ele. Ele vai perguntar para que você o quer, uma pergunta por vez.",
   "newBot.cancel": "Cancelar",
+
+  "visibility.hide": "Ocultar da lista",
+  "visibility.hide.hint":
+    "Vai para Conversas ocultas, que você abre quando quiser. Continua trabalhando e te notificando.",
+  "visibility.notice": "Esta conversa está oculta da sua lista.",
 
   "roster.newFromTemplate": "Criar a partir de um modelo",
   "details.shareTemplate": "Compartilhar como modelo…",
