@@ -409,7 +409,7 @@ export interface RemoteServerUpdate {
  * null when there is nothing to come back to. `reopen` brings the dialog
  * back in front, as "Update now" in Settings does.
  */
-export interface UpdatePromptIntents {
+interface UpdatePromptIntents {
   readonly entry: UpdatePromptEntry | null;
   readonly reopen: () => void;
 }

@@ -1620,12 +1620,17 @@ export const en = {
   "updateNotice.ok": "OK",
   "updatePrompt.title": "J3 Bots {version} is here",
   "updatePrompt.titleApp": "J3 Bots {version} is ready for this app",
-  "updatePrompt.plan.serverThenApp": "Update now updates the server first. Once it answers on {version}, this app updates and opens again.",
-  "updatePrompt.plan.serverThenPage": "Update now updates the server first. Once it answers on {version}, this page reloads on it.",
-  "updatePrompt.plan.server": "Update now updates the server. Your bots stop for a minute or two, and the server goes back to the version it runs if the new one doesn’t start.",
+  "updatePrompt.plan.serverThenApp":
+    "Update now updates the server first. Once it answers on {version}, this app updates and opens again.",
+  "updatePrompt.plan.serverThenPage":
+    "Update now updates the server first. Once it answers on {version}, this page reloads on it.",
+  "updatePrompt.plan.server":
+    "Update now updates the server. Your bots stop for a minute or two, and the server goes back to the version it runs if the new one doesn’t start.",
   "updatePrompt.plan.app": "This app restarts on the new version.",
-  "updatePrompt.plan.appLocal": "This app restarts on the new version, and your bots on this computer with it.",
-  "updatePrompt.plan.download": "This build doesn’t update itself. Download the new version and install it.",
+  "updatePrompt.plan.appLocal":
+    "This app restarts on the new version, and your bots on this computer with it.",
+  "updatePrompt.plan.download":
+    "This build doesn’t update itself. Download the new version and install it.",
   "updatePrompt.whatsNew": "What’s new",
   "updatePrompt.notes": "Read the release notes",
   "updatePrompt.update": "Update now",
@@ -1644,12 +1649,15 @@ export const en = {
   "updatePrompt.work.title": "Your bots are working",
   "updatePrompt.work.server.one": "{count} bot has work running. Updating the server stops it.",
   "updatePrompt.work.server.other": "{count} bots have work running. Updating the server stops it.",
-  "updatePrompt.work.app.one": "{count} bot on this computer has work running. The app’s restart stops it.",
-  "updatePrompt.work.app.other": "{count} bots on this computer have work running. The app’s restart stops it.",
+  "updatePrompt.work.app.one":
+    "{count} bot on this computer has work running. The app’s restart stops it.",
+  "updatePrompt.work.app.other":
+    "{count} bots on this computer have work running. The app’s restart stops it.",
   "updatePrompt.work.hint": "Update later, once they’re done, or stop their work now.",
   "updatePrompt.work.stop": "Stop and update",
   "updatePrompt.serverFailed.title": "The server didn’t update",
-  "updatePrompt.serverFailed.hint": "Nothing else was changed: this app stays on the version it runs.",
+  "updatePrompt.serverFailed.hint":
+    "Nothing else was changed: this app stays on the version it runs.",
   "updatePrompt.appFailed.title": "The server runs {version}, but this app didn’t update",
   "updatePrompt.appFailed.hint": "Try again, or update it from Settings → About and updates.",
   "updatePrompt.done.title": "Your bots run {version}",

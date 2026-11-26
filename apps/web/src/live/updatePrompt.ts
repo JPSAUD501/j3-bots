@@ -67,7 +67,7 @@ const atWork = (roster: ReadonlyArray<RosterItem>): number =>
  * server; the desktop app installs itself where its build does, and in
  * local mode its restart stops the bots it runs.
  */
-export const clientSideOf = (
+const clientSideOf = (
   status: UpdateStatus | null,
   roster: ReadonlyArray<RosterItem> | null,
 ): ClientSide => {
@@ -90,7 +90,7 @@ const SNOOZE_KEY = "j3:updatePromptSnooze";
 const prompts = new WeakMap<J3Client, UpdatePrompt>();
 
 /** The update prompt's runner for `j3`, made on first use. */
-export const updatePromptOf = (j3: J3Client): UpdatePrompt => {
+const updatePromptOf = (j3: J3Client): UpdatePrompt => {
   const made = prompts.get(j3);
   if (made !== undefined) return made;
   const side: Readable<ClientSide> = {

@@ -237,9 +237,7 @@ export const step = (prompt: Prompt, event: PromptEvent): Step => {
   const { run } = prompt;
   switch (event._tag) {
     case "update-now":
-      return run._tag === "idle" || run._tag === "done"
-        ? begin(prompt, event)
-        : stay(prompt);
+      return run._tag === "idle" || run._tag === "done" ? begin(prompt, event) : stay(prompt);
     case "retry":
       switch (run._tag) {
         case "server-failed":
@@ -303,7 +301,10 @@ export const step = (prompt: Prompt, event: PromptEvent): Step => {
     }
     case "client-current":
       return run._tag === "client"
-        ? stay({ ...prompt, run: run.plan.server === null ? IDLE : { _tag: "done", plan: run.plan } })
+        ? stay({
+            ...prompt,
+            run: run.plan.server === null ? IDLE : { _tag: "done", plan: run.plan },
+          })
         : stay(prompt);
     case "client-failed":
       return run._tag === "client"
@@ -366,7 +367,7 @@ export interface PromptInput {
 }
 
 /** Whether "Later" still keeps the prompt closed for what is on offer. */
-export const snoozed = (snooze: Snooze | null, input: PromptInput): boolean =>
+const snoozed = (snooze: Snooze | null, input: PromptInput): boolean =>
   snooze !== null &&
   input.now < snooze.until &&
   (input.server === null || input.server.version === snooze.server) &&

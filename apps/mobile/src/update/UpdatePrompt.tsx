@@ -48,7 +48,7 @@ const useNow = (until: number | null): number => {
  * whether the dialog is in front. `blocked` when another screen already
  * asks in front, as the one for a server this app cannot talk to.
  */
-export function useUpdatePrompt(blocked: boolean) {
+function useUpdatePrompt(blocked: boolean) {
   const client = useJ3Client();
   const prompt = updatePromptOf(client);
   const state = useReadable(prompt.state);
@@ -122,12 +122,16 @@ export function UpdatePromptModal({ blocked }: { readonly blocked: boolean }) {
   );
 }
 
-/** The title, which a screen reader starts at as the dialog comes in. */
+/** The title, which a screen reader moves to whenever it changes, as each part comes in. */
 function Title({ children }: { readonly children: string }) {
+  return <TitleText key={children}>{children}</TitleText>;
+}
+
+function TitleText({ children }: { readonly children: string }) {
   const title = useRef<ComponentRef<typeof Text>>(null);
   useEffect(() => {
     if (title.current !== null) AccessibilityInfo.sendAccessibilityEvent(title.current, "focus");
-  }, [children]);
+  }, []);
   return (
     <Text
       ref={title}
@@ -224,7 +228,9 @@ function Body({ blocked, run }: { readonly blocked: boolean; readonly run: Updat
             <Step
               label={t("updatePrompt.step.app")}
               state={run._tag === "client" ? "active" : "pending"}
-              line={run._tag === "server" ? t("updatePrompt.step.waiting") : (appLine?.text ?? null)}
+              line={
+                run._tag === "server" ? t("updatePrompt.step.waiting") : (appLine?.text ?? null)
+              }
             />
           )}
           {run._tag === "client" && appLine?.action === "allow" && appUpdate !== null && (

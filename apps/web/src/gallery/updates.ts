@@ -280,7 +280,15 @@ export const promptViews = {
   ),
   updatingServer: promptView(
     { _tag: "server", plan: promptPlan("install"), hidden: false },
-    { serverLine: { text: `Downloading ${NEXT}… 42%`, tone: "working", hint: null, command: null, offer: null } },
+    {
+      serverLine: {
+        text: `Downloading ${NEXT}… 42%`,
+        tone: "working",
+        hint: null,
+        command: null,
+        offer: null,
+      },
+    },
   ),
   updatingApp: promptView(
     { _tag: "client", plan: promptPlan("install"), hidden: false },

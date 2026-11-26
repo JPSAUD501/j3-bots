@@ -77,7 +77,14 @@ const harness = (start: ServerUpdateStart = { _tag: "started" }) => {
     },
     now: () => 1_000,
   });
-  return { prompt, view, ended, asked, kept: () => kept, settleClient: (o: "current" | "failed") => settleClient(o) };
+  return {
+    prompt,
+    view,
+    ended,
+    asked,
+    kept: () => kept,
+    settleClient: (o: "current" | "failed") => settleClient(o),
+  };
 };
 
 /** Lets the callbacks of settled promises run. */
@@ -123,6 +130,10 @@ describe("the update prompt's runner", () => {
   it("keeps Later where the platform stores it", () => {
     const { prompt, kept } = harness();
     prompt.later();
-    assert.deepStrictEqual(kept(), { until: 1_000 + 24 * 60 * 60 * 1000, server: "0.9.0", app: null });
+    assert.deepStrictEqual(kept(), {
+      until: 1_000 + 24 * 60 * 60 * 1000,
+      server: "0.9.0",
+      app: null,
+    });
   });
 });

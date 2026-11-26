@@ -171,9 +171,7 @@ function Offer({ view }: { view: UpdatePromptView }) {
           ? t("updatePrompt.title", { version: view.server.version })
           : t("updatePrompt.titleApp", { version: release.version })}
       </Title>
-      <Description className="text-muted-foreground">
-        {planText(view, t)}
-      </Description>
+      <Description className="text-muted-foreground">{planText(view, t)}</Description>
       <Highlights release={release} />
       <div className="flex flex-col items-end gap-1.5">
         <Actions>
@@ -287,7 +285,9 @@ function Progress({
   return (
     <>
       <Title>
-        {version === null ? t("updatePrompt.entry.running") : t("updatePrompt.updating", { version })}
+        {version === null
+          ? t("updatePrompt.entry.running")
+          : t("updatePrompt.updating", { version })}
       </Title>
       <ol role="status" className="flex flex-col gap-3">
         {plan.server !== null && (
@@ -392,9 +392,7 @@ function Done({ view, plan }: { view: UpdatePromptView; plan: UpdatePlan }) {
     <>
       <Title>{t("updatePrompt.done.title", { version: plan.server?.version ?? "" })}</Title>
       {plan.client !== null && (
-        <Description className="text-muted-foreground">
-          {t("updatePrompt.done.body")}
-        </Description>
+        <Description className="text-muted-foreground">{t("updatePrompt.done.body")}</Description>
       )}
       <Actions>
         <Button variant="primary" onClick={view.hide}>

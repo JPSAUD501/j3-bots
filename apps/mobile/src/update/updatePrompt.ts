@@ -113,7 +113,9 @@ export const updatePromptOf = (client: J3Client): UpdatePrompt => {
     snooze: snoozeStore({
       get: () => Storage.getItemSync(SNOOZE_KEY),
       set: (value) =>
-        value === null ? Storage.removeItemSync(SNOOZE_KEY) : Storage.setItemSync(SNOOZE_KEY, value),
+        value === null
+          ? Storage.removeItemSync(SNOOZE_KEY)
+          : Storage.setItemSync(SNOOZE_KEY, value),
     }),
     now: Date.now,
   });

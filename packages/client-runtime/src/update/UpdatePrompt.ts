@@ -130,7 +130,8 @@ export const makeUpdatePrompt = (deps: UpdatePromptDeps): UpdatePrompt => {
         return;
       case "update-client":
         void client.update(action.how).then(
-          (outcome) => dispatch({ _tag: outcome === "current" ? "client-current" : "client-failed" }),
+          (outcome) =>
+            dispatch({ _tag: outcome === "current" ? "client-current" : "client-failed" }),
           () => dispatch({ _tag: "client-failed" }),
         );
         return;
