@@ -4116,7 +4116,11 @@ it.layer(server, { excludeTestServices: true })("client runtime", (it) => {
         yield* Effect.gen(function* () {
           yield* (yield* Drafts).setText(target, "written in another tab");
           yield* whenStored(device.storage, "drafts", key, holds("written in another tab"));
-        }).pipe(Effect.scoped, Effect.provide(client(credential, device)));
+        }).pipe(
+          Effect.scoped,
+          // A tab this one hears nothing of: its change is found only as this one writes.
+          Effect.provide(client(credential, { ...device, window: device.unannounced })),
+        );
 
         refusing = true;
         yield* drafts.setText(target, "written here since");
