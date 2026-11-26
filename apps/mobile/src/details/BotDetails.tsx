@@ -129,13 +129,7 @@ export function BotDetails({ bot }: { readonly bot: Bot }) {
       </Profile>
 
       {canStop(bot) && (
-        <StopRow
-          label={t("details.stop")}
-          onPress={() => {
-            stopFocus.pressed();
-            actions.stop(bot);
-          }}
-        />
+        <StopRow label={t("details.stop")} onPress={() => stopFocus.stopped(actions.stop(bot))} />
       )}
 
       {bot.hidden && <HiddenNotice name={name} onShow={() => placing.unhide(bot)} />}

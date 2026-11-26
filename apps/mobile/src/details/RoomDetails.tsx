@@ -85,10 +85,7 @@ export function RoomDetails({ room }: { readonly room: Room }) {
                     body: t("room.stop.body", { name }),
                     cancel: t("room.stop.cancel"),
                     confirm: t("room.stop"),
-                    onConfirm: () => {
-                      stopFocus.pressed();
-                      actions.stop(room);
-                    },
+                    onConfirm: () => stopFocus.stopped(actions.stop(room)),
                   })
           }
         />

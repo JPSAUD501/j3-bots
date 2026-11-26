@@ -38,9 +38,10 @@ export function StopRow(props: { readonly label: string; readonly onPress: (() =
 /**
  * Moves a screen reader to the details' heading once the work a Stop pressed
  * here ends and the row goes (`shown` turns false), as the web moves focus:
- * the row it was on is gone. A Stop pressed elsewhere, or work that ends on
- * its own, moves nothing. Give `heading` to the heading, and call `pressed`
- * when the operator stops the work here.
+ * the row it was on is gone. A Stop pressed elsewhere, one the server
+ * refused, or work that ends on its own, moves nothing. Give `heading` to the
+ * heading, and hand `stopped` the answer to each Stop pressed here: whether
+ * the server took it.
  */
 export function useFocusAfterStop(shown: boolean) {
   const heading = useRef<ComponentRef<typeof Text>>(null);
@@ -57,8 +58,11 @@ export function useFocusAfterStop(shown: boolean) {
   }, [shown]);
   return {
     heading,
-    pressed: () => {
+    stopped: (taken: Promise<boolean>) => {
       pressedHere.current = true;
+      void taken.then((took) => {
+        if (!took) pressedHere.current = false;
+      });
     },
   };
 }

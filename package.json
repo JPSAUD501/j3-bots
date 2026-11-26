@@ -17,6 +17,7 @@
   "devDependencies": {
     "@effect/tsgo": "catalog:",
     "@types/node": "catalog:",
+    "happy-dom": "catalog:",
     "knip": "catalog:",
     "vite-plus": "catalog:"
   },
