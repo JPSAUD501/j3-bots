@@ -715,6 +715,8 @@ interface SessionRecord {
   ignoresStops: boolean;
   /** The turn whose stop its provider ignored, as `stop-ignored` told it, until force-stopped. */
   stopIgnored: TurnId | null;
+  /** The turns the engine was asked to stop while its provider ignores stops. */
+  readonly stopAsked: Set<TurnId>;
 }
 
 type AppliedKey =
@@ -1284,10 +1286,18 @@ const make = Effect.gen(function* () {
     if (session.ignoresStops) {
       // The provider never confirms: the running turn, or the work the latest
       // turn left, goes on, and the engine marks the stop unresponsive. With
-      // neither, there is nothing to ignore.
-      const latest = [...session.turns.values()].findLast((turn) => turn.startedAt !== null);
-      const target = running ?? (latest?.background === true ? latest : undefined);
-      if (target !== undefined && session.stopIgnored !== target.turnId) {
+      // neither, there is nothing to ignore. A stop sent again rewrites the
+      // engine's request with no mark, until its own wait runs out again
+      // (**Read** at `59651c1`, `Orchestrator.ts`, `dispatchRunInterrupt`):
+      // the stop is no longer reported ignored. Here the first wait runs out
+      // at once, and a later one never.
+      const target = stopTarget(session);
+      if (target === undefined) return;
+      if (session.stopIgnored === target.turnId) {
+        session.stopIgnored = null;
+        emit(session, at, (stamp) => ({ _tag: "stop-ignored", ...stamp, turnId: null }));
+      } else if (session.stopIgnored === null && !session.stopAsked.has(target.turnId)) {
+        session.stopAsked.add(target.turnId);
         session.stopIgnored = target.turnId;
         emit(session, at, (stamp) => ({ _tag: "stop-ignored", ...stamp, turnId: target.turnId }));
       }
@@ -1299,15 +1309,33 @@ const make = Effect.gen(function* () {
     }
   };
 
-  /** Force stop: the turn whose stop was ignored ends, and so does the work it left. */
+  /**
+   * What the engine's stop and Force stop act on: the running turn, else, while
+   * any turn's work goes on, the latest turn that started, also when the work
+   * is an earlier turn's (**Read** at `59651c1`, `Orchestrator.ts`,
+   * `dispatchRunInterrupt`).
+   */
+  const stopTarget = (session: SessionRecord) => {
+    const running = session.running === null ? undefined : session.turns.get(session.running);
+    if (running !== undefined) return running;
+    const turns = [...session.turns.values()];
+    return turns.some((turn) => turn.background)
+      ? turns.findLast((turn) => turn.startedAt !== null)
+      : undefined;
+  };
+
+  /**
+   * Force stop: the turn it names ends, and so does the work the session's
+   * turns left, whether or not the engine reports its stop ignored at that
+   * moment. A newer turn is not ended (the engine answers `superseded`).
+   */
   const forceStopSession = (session: SessionRecord, turnId: TurnId, at: DateTime.Utc) => {
-    if (session.stopIgnored !== turnId) return;
+    const target = stopTarget(session);
+    if (target?.turnId !== turnId) return;
+    for (const turn of session.turns.values()) turn.background = false;
+    if (session.running === turnId) endTurn(session, target, { _tag: "interrupted" }, at, "stop");
+    if (session.stopIgnored === null) return;
     session.stopIgnored = null;
-    const turn = session.turns.get(turnId);
-    if (turn !== undefined) {
-      turn.background = false;
-      if (session.running === turnId) endTurn(session, turn, { _tag: "interrupted" }, at, "stop");
-    }
     emit(session, at, (stamp) => ({ _tag: "stop-ignored", ...stamp, turnId: null }));
   };
 
@@ -1643,6 +1671,7 @@ const make = Effect.gen(function* () {
             heldStartup: null,
             ignoresStops: false,
             stopIgnored: null,
+            stopAsked: new Set(),
           });
           if (losingOpenSessionReply) {
             losingOpenSessionReply = false;

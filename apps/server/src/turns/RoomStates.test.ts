@@ -276,3 +276,41 @@ it.effect(
       ]);
     }).pipe(Effect.provide(TestDomain.layer)),
 );
+
+it.effect(
+  "offers Force stop in a room whose member's AI ignores its Stop while the work the room's turn left goes on after a private one",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const rooms = yield* Rooms;
+      const [hal, ana] = [yield* member("Hal"), yield* member("Ana")];
+      const members = [hal, ana];
+      const room = yield* roomWith(hal, [ana]);
+      const seen = yield* watchRoom(room.id, (sent) => sent.forceStop);
+      yield* control.ignoreStops(hal.session);
+
+      // Hal's room turn leaves a build running; Hal then works for the
+      // operator alone, and the room's Stop waits for that turn.
+      yield* operatorWrites(room.id, members, "Watch the build.", to(hal));
+      const watching = yield* nextTurn(hal.bot.id);
+      yield* control.startBackgroundWork({ sessionId: hal.session, turnId: watching });
+      yield* finish(hal, watching, members);
+      yield* sendToBot(hal.bot.id, "What is left today?");
+      const privately = yield* nextTurn(hal.bot.id, watching);
+      yield* rooms.stop({ commandId: command(), roomId: room.id });
+      yield* finish(hal, privately, members);
+
+      // The engine's stop reaches Hal's latest turn, the private one, and is ignored.
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* until(Effect.map(Ref.get(seen), (sent) => sent.at(-1) === true));
+
+      yield* rooms.forceStop({ commandId: command(), roomId: room.id });
+      yield* until(control.backgroundWorkRunning(hal.session).pipe(Effect.map((runs) => !runs)));
+      yield* TestClock.adjust(RETRY_TICK);
+      yield* stopSettled;
+      assert.deepStrictEqual(yield* control.forcedStops, [
+        { sessionId: hal.session, turnId: privately },
+      ]);
+      assert.strictEqual((yield* Ref.get(seen)).at(-1), false);
+    }).pipe(Effect.provide(TestDomain.layer)),
+);

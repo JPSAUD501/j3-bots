@@ -39,6 +39,7 @@ import { Observer, type Synchronized } from "./Observer.ts";
 import { behindOpeningSql } from "./openings.ts";
 import { Readiness } from "./Readiness.ts";
 import { DEFECT_RETRY, type Pass, onePassAtATime, passOutcome, reconcile } from "./reconciler.ts";
+import { roomsIgnoredStopSql } from "./RoomStates.ts";
 import { SessionGate } from "./SessionGate.ts";
 import { sessionLoss } from "./sessionRecords.ts";
 import { Signals } from "./Signals.ts";
@@ -514,12 +515,11 @@ export const layer = Layer.effect(
       const ignoredInScope =
         scope._tag === "bot"
           ? sql`1`
-          : sql`EXISTS (
-              SELECT 1 FROM turns fs_turn
-              WHERE fs_turn.session_id = sessions.id
-                AND fs_turn.engine_turn_id = sessions.stop_ignored_turn_id
-                AND fs_turn.audience = 'room' AND fs_turn.audience_room_id = ${scope.roomId}
-            )`;
+          : roomsIgnoredStopSql(sql, {
+              sessionId: sql`sessions.id`,
+              ignoredTurnId: sql`sessions.stop_ignored_turn_id`,
+              roomId: scope.roomId,
+            });
       const forced = yield* sql`
         UPDATE sessions SET force_stop_turn_id = stop_ignored_turn_id
         WHERE bot_id = ${botId} AND lost_at IS NULL AND engine_retired_at IS NULL
@@ -1336,9 +1336,10 @@ export const layer = Layer.effect(
 
     /**
      * Sends a session's Force stop through its gate. Once the engine took it,
-     * the request is done; the session's events then show the turn ending,
-     * and the AI no longer ignoring the stop. A newer turn the engine started
-     * meanwhile is not ended: nothing ignores the stop the operator saw.
+     * the request is done, and the turn's stop no longer ignored: the
+     * session's events then show the turn ending. A newer turn the engine
+     * started meanwhile is not ended: nothing ignores the stop the operator
+     * saw.
      */
     const forceSession = Effect.fn("Stops.forceSession")(function* (session: {
       readonly id: SessionRowId;
@@ -1351,7 +1352,11 @@ export const layer = Layer.effect(
           .pipe(
             Effect.andThen(
               sql`
-                UPDATE sessions SET force_stop_turn_id = NULL
+                UPDATE sessions SET force_stop_turn_id = NULL,
+                  stop_ignored_turn_id = CASE
+                    WHEN stop_ignored_turn_id = force_stop_turn_id THEN NULL
+                    ELSE stop_ignored_turn_id
+                  END
                 WHERE id = ${session.id} AND force_stop_turn_id = ${session.force_stop_turn_id}
               `.pipe(Effect.orDie),
             ),
@@ -1487,9 +1492,13 @@ export const roomWorkLayer = Layer.effect(
         Request: Schema.Void,
         Result: Schema.Struct({ bot_id: BotId }),
         execute: () => sql`
-          SELECT DISTINCT s.bot_id FROM sessions s JOIN turns t
-            ON t.session_id = s.id AND t.engine_turn_id = s.stop_ignored_turn_id
-          WHERE t.audience = 'room' AND t.audience_room_id = ${roomId}
+          SELECT DISTINCT s.bot_id FROM sessions s
+          WHERE s.stop_ignored_turn_id IS NOT NULL
+            AND ${roomsIgnoredStopSql(sql, {
+              sessionId: sql`s.id`,
+              ignoredTurnId: sql`s.stop_ignored_turn_id`,
+              roomId,
+            })}
         `,
       })(undefined);
       for (const { bot_id } of ignoring) yield* stops.force(bot_id, { _tag: "room", roomId });

@@ -28,7 +28,11 @@ import {
 } from "./Translate.ts";
 
 /** These turns run on no provider of J3 Bots's: their model is not what is tested. */
-const noProviders: Providers = { modelOf: () => null, echoesSteers: () => false };
+const noProviders: Providers = {
+  modelOf: () => null,
+  echoesSteers: () => false,
+  redact: (text) => text,
+};
 
 // Items shaped as the engine records them at the pin: the approval carries the
 // provider's prompt and reason under the native id of the command or file

@@ -1205,6 +1205,7 @@ it.effect("offers Force stop once the AI ignores a Stop, and ends its turn with 
   Effect.gen(function* () {
     const control = yield* TestEngineControl;
     const stops = yield* Stops;
+    const sql = yield* SqlClient.SqlClient;
     const bot = yield* createBot("Ana");
     const session = yield* engineSession(bot.id);
     yield* control.ignoreStops(session);
@@ -1216,8 +1217,23 @@ it.effect("offers Force stop once the AI ignores a Stop, and ends its turn with 
     yield* until(offersForceStop(bot.id));
     assert.deepStrictEqual(yield* admittedTurn(bot.id), Option.some(turnId));
 
-    // Force stop ends the turn, and the Stop settles; nothing failed.
+    // Force stop asks the engine to stop again, which clears its mark until
+    // its wait runs out once more; the Force stop is kept through that.
+    const asked = yield* control.holdNextAnswer("stop");
     yield* stops.forceStopBot({ commandId: command(), botId: bot.id });
+    yield* asked.entered;
+    yield* until(
+      sql<{ readonly ignored: number }>`
+        SELECT stop_ignored_turn_id IS NOT NULL AS ignored FROM sessions
+        WHERE engine_session_id = ${session}
+      `.pipe(
+        Effect.orDie,
+        Effect.map(([row]) => row?.ignored === 0),
+      ),
+    );
+    yield* asked.release;
+
+    // It ends the turn, and the Stop settles; nothing failed.
     yield* turnEnded(bot.id);
     yield* stopSettled;
     assert.deepStrictEqual(yield* control.forcedStops, [{ sessionId: session, turnId }]);

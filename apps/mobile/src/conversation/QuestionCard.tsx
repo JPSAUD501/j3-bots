@@ -327,10 +327,14 @@ function OptionText({ option }: { readonly option: QuestionOption }) {
       </View>
       {description !== null && <Text className="text-xs text-muted-foreground">{description}</Text>}
       {option.preview !== undefined && (
-        <ScrollView horizontal className="mt-1.5 max-h-48 rounded-sm bg-muted">
-          <Text className="px-2.5 py-2 font-mono text-xs text-muted-foreground">
-            {option.preview}
-          </Text>
+        // Scrolls both ways within its height, as on the web: inside the
+        // conversation's list, a vertical scroll needs `nestedScrollEnabled`.
+        <ScrollView nestedScrollEnabled className="mt-1.5 max-h-48 rounded-sm bg-muted">
+          <ScrollView horizontal>
+            <Text className="px-2.5 py-2 font-mono text-xs text-muted-foreground">
+              {option.preview}
+            </Text>
+          </ScrollView>
         </ScrollView>
       )}
     </View>

@@ -90,6 +90,35 @@ export class RoomStates extends Context.Service<
   }
 >()("@j3-bots/server/turns/RoomStates") {}
 
+/**
+ * Whether the stop a session ignores is room `roomId`'s to force: the turn it
+ * ignores, `ignoredTurnId`, answers in the room, or the room's own Stop waits
+ * on the session, `sessionId`. An idle session's stop reaches the engine's
+ * latest turn, which can be another audience's while work the room's turn
+ * left goes on (**Read** at `59651c1`, `Orchestrator.ts`,
+ * `dispatchRunInterrupt`). Each is a column or a value.
+ */
+export const roomsIgnoredStopSql = (
+  sql: SqlClient.SqlClient,
+  ids: {
+    readonly sessionId: Statement.Fragment;
+    readonly ignoredTurnId: Statement.Fragment;
+    readonly roomId: RoomId | Statement.Fragment;
+  },
+) => sql`(
+  EXISTS (
+    SELECT 1 FROM turns ri_turn
+    WHERE ri_turn.session_id = ${ids.sessionId} AND ri_turn.engine_turn_id = ${ids.ignoredTurnId}
+      AND ri_turn.audience = 'room' AND ri_turn.audience_room_id = ${ids.roomId}
+  )
+  OR EXISTS (
+    SELECT 1 FROM stops ri_stop JOIN stop_targets ri_target ON ri_target.stop_id = ri_stop.id
+    WHERE ri_stop.scope = 'room' AND ri_stop.room_id = ${ids.roomId}
+      AND ri_stop.engine_turn_id IS NULL
+      AND ri_target.session_id = ${ids.sessionId} AND ri_target.stopped_at IS NULL
+  )
+)`;
+
 export const layer = Layer.effect(
   RoomStates,
   Effect.gen(function* () {
@@ -127,12 +156,15 @@ export const layer = Layer.effect(
         ELSE 'none'
       END AS work,
       EXISTS (
-        SELECT 1 FROM sessions rs_ignoring JOIN turns rs_ignored
-          ON rs_ignored.session_id = rs_ignoring.id
-          AND rs_ignored.engine_turn_id = rs_ignoring.stop_ignored_turn_id
-        WHERE rs_ignored.audience = 'room' AND rs_ignored.audience_room_id = rs_room.id
+        SELECT 1 FROM sessions rs_ignoring
+        WHERE rs_ignoring.stop_ignored_turn_id IS NOT NULL
           AND rs_ignoring.force_stop_turn_id IS NOT rs_ignoring.stop_ignored_turn_id
           AND rs_ignoring.lost_at IS NULL AND rs_ignoring.engine_retired_at IS NULL
+          AND ${roomsIgnoredStopSql(sql, {
+            sessionId: sql`rs_ignoring.id`,
+            ignoredTurnId: sql`rs_ignoring.stop_ignored_turn_id`,
+            roomId: sql`rs_room.id`,
+          })}
       ) AS force_stop
       FROM rooms rs_room
       WHERE rs_room.status = 'active' AND ${rooms}

@@ -642,6 +642,18 @@ const FAILURES: Record<OrchestrationV2ProviderFailureClass, FailureClass> = {
   unknown: "unknown",
 };
 
+/**
+ * J3 Bots' class of a provider failure. A Claude Code turn the API refused for
+ * its sign-in (HTTP 401) is recorded as a `provider_error` with code
+ * `api_error_401` (**Read** at `59651c1`, `ClaudeAdapterV2.ts`, the result's
+ * failure): the operator's next step is to sign in again, as for a
+ * `permission_error`.
+ */
+const failureClassOf = (failure: ErrorItem["failure"]): FailureClass =>
+  failure.class === "provider_error" && failure.code === "api_error_401"
+    ? "permission-error"
+    : FAILURES[failure.class];
+
 const parseInstant = (value: string | null | undefined) =>
   value === null || value === undefined ? null : Option.getOrNull(DateTime.make(value));
 
@@ -671,7 +683,7 @@ const rootFailureOf = (mirror: Mirror, run: Run): ErrorItem | undefined =>
 const failureOf = (mirror: Mirror, run: Run) =>
   rootFailureOf(mirror, run) ?? errorsOf(mirror, run).at(-1);
 
-const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
+const outcomeOf = (mirror: Mirror, run: Run, providers: Providers): TurnOutcome => {
   switch (run.status) {
     case "completed":
       return { _tag: "completed" };
@@ -681,9 +693,9 @@ const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
         ? { _tag: "failed", failure: "unknown", retryAt: null }
         : {
             _tag: "failed",
-            failure: FAILURES[error.failure.class],
+            failure: failureClassOf(error.failure),
             retryAt: parseInstant(error.failure.resetAt),
-            details: failureDetailsOf(error.failure),
+            details: failureDetailsOf(error.failure, providers.redact),
           };
     }
     case "cancelled":
@@ -2139,6 +2151,12 @@ export interface Providers {
    * first record standing.
    */
   readonly echoesSteers: (instanceId: Run["providerInstanceId"]) => boolean;
+  /**
+   * `text` with every secret J3 Bots gives the engine and its providers taken
+   * out: the connection's key and each instance's own variables, which a
+   * provider's error can repeat (`failureDetailsOf`).
+   */
+  readonly redact: (text: string) => string;
 }
 
 /**
@@ -2367,7 +2385,7 @@ export const diff = (
           turnId,
           finishedAt: finishedAtOf(run),
           cause,
-          outcome: outcomeOf(mirror, run),
+          outcome: outcomeOf(mirror, run, providers),
           backgroundWork: hasBackgroundWork(mirror, run),
           continuation,
           contextRecovered: hasRecoveredContext(mirror, run),
@@ -2468,7 +2486,7 @@ export const replacement = (
         cause,
         startedAt: hasStarted(run) ? startedAtOf(run) : null,
         finishedAt: finishedAtOf(run),
-        outcome: outcomeOf(mirror, run),
+        outcome: outcomeOf(mirror, run, providers),
         // As told at its end: the work may have woken the session and left
         // the roster since. Recomputed only for an end no stream told.
         backgroundWork: toldHandoffs.get(turnId) ?? hasBackgroundWork(mirror, run),

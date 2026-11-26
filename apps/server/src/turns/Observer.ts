@@ -954,6 +954,12 @@ export const layer = Layer.effect(
             UPDATE turns SET background_pending = 1
             WHERE session_id = ${session.id} AND engine_turn_id = ${end.turnId}
           `;
+        } else {
+          // Nothing of the turn runs on: a Force stop of it has nothing to end.
+          yield* sql`
+            UPDATE sessions SET force_stop_turn_id = NULL
+            WHERE id = ${session.id} AND force_stop_turn_id = ${end.turnId}
+          `;
         }
         // A room turn's end, also one that told of no work, leaves it
         // unreported until the next report: the engine can count work an end
@@ -1579,8 +1585,13 @@ export const layer = Layer.effect(
 
     /**
      * The turn whose stop the session's AI ignores, for which clients offer
-     * Force stop. A Force stop asked for another turn, or for one the AI no
-     * longer ignores, has nothing left to end: it is dropped (`Stops`).
+     * Force stop. A Force stop asked for another turn has nothing left to
+     * end: it is dropped. One asked for this turn stays when the engine no
+     * longer reports the stop ignored: the Stop that comes with a Force stop
+     * asks the engine again, which clears its mark until its wait runs out
+     * once more (**Read** at `59651c1`, `Orchestrator.ts`,
+     * `dispatchRunInterrupt`). The turn's end drops it (`finishTurn`), and so
+     * does the engine taking it (`Stops`).
      */
     const stopIgnored = Effect.fn("Observer.stopIgnored")(function* (
       session: Watched,
@@ -1589,7 +1600,8 @@ export const layer = Layer.effect(
       yield* sql`
         UPDATE sessions SET stop_ignored_turn_id = ${turnId},
           force_stop_turn_id = CASE
-            WHEN force_stop_turn_id = ${turnId} THEN force_stop_turn_id ELSE NULL
+            WHEN ${turnId} IS NULL OR force_stop_turn_id = ${turnId} THEN force_stop_turn_id
+            ELSE NULL
           END
         WHERE id = ${session.id}
       `;

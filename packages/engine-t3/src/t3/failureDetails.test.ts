@@ -28,24 +28,51 @@ describe("scrubSecrets", () => {
   });
 });
 
+const asGiven = (text: string) => text;
+
 describe("failureDetailsOf", () => {
   it("says the class, the code when there is one, and the message, cut to the limit", () => {
     assert.strictEqual(
-      failureDetailsOf({
-        class: "provider_error",
-        message: "Overloaded",
-        code: "overloaded_error",
-        retryable: true,
-      }),
+      failureDetailsOf(
+        {
+          class: "provider_error",
+          message: "Overloaded",
+          code: "overloaded_error",
+          retryable: true,
+        },
+        asGiven,
+      ),
       "provider_error (overloaded_error): Overloaded",
     );
-    const long = failureDetailsOf({
-      class: "unknown",
-      message: "x ".repeat(MAX_FAILURE_DETAILS),
-      code: null,
-      retryable: null,
-    });
+    const long = failureDetailsOf(
+      {
+        class: "unknown",
+        message: "x ".repeat(MAX_FAILURE_DETAILS),
+        code: null,
+        retryable: null,
+      },
+      asGiven,
+    );
     assert.strictEqual(long.length, MAX_FAILURE_DETAILS);
     assert.isTrue(long.startsWith("unknown: x x"));
+  });
+
+  it("takes out a secret J3 Bots gave, whatever its shape, also where the limit cuts it", () => {
+    // A gateway's key with no shape the scrubber knows, repeated by its error.
+    const key = "gw_live_7Qm2ZxPa9LrT4kVb8NcY1sWd3Hj";
+    const redactKey = (text: string) => text.split(key).join("[redacted]");
+    const lead = "provider_error (api_error_401): ";
+    const fill = "x".repeat(MAX_FAILURE_DETAILS - lead.length - 20);
+    const details = failureDetailsOf(
+      {
+        class: "provider_error",
+        message: `${fill} ${key} ${fill} Incorrect API key provided: ${key}.`,
+        code: "api_error_401",
+        retryable: null,
+      },
+      redactKey,
+    );
+    assert.isFalse(details.includes(key.slice(0, 6)));
+    assert.isTrue(details.includes(" [redacted] x"));
   });
 });

@@ -39,12 +39,16 @@ export const scrubSecrets = (text: string): string =>
 
 /**
  * A provider failure in the engine's words, for "Details" and the server's
- * log: its class, its code when it has one, and its message, scrubbed and cut
- * to `MAX_FAILURE_DETAILS`.
+ * log: its class, its code when it has one, and its message, with every
+ * secret J3 Bots gave taken out (`redact`), scrubbed, and cut to
+ * `MAX_FAILURE_DETAILS`.
  */
-export const failureDetailsOf = (failure: OrchestrationV2ProviderFailure): string => {
+export const failureDetailsOf = (
+  failure: OrchestrationV2ProviderFailure,
+  redact: (text: string) => string,
+): string => {
   const code = failure.code === null ? "" : ` (${failure.code})`;
-  const details = scrubSecrets(`${failure.class}${code}: ${failure.message}`);
+  const details = scrubSecrets(redact(`${failure.class}${code}: ${failure.message}`));
   return details.length > MAX_FAILURE_DETAILS
     ? `${details.slice(0, MAX_FAILURE_DETAILS - 1)}…`
     : details;

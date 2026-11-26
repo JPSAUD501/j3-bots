@@ -39,7 +39,11 @@ import {
 } from "./Translate.ts";
 
 /** These turns run on no provider of J3 Bots's: their model is not what is tested. */
-const noProviders: Providers = { modelOf: () => null, echoesSteers: () => false };
+const noProviders: Providers = {
+  modelOf: () => null,
+  echoesSteers: () => false,
+  redact: (text) => text,
+};
 
 const answers = Schema.decodeUnknownSync(QuestionAnswers);
 
@@ -1768,7 +1772,11 @@ describe("what a running turn takes from outside it", () => {
   // `59651c1`, `Orchestrator.ts` L6442-6470, `ClaudeAdapterV2.ts` L14061,
   // L9366).
   it("tells a steer taken on Claude Code only once Claude echoed it", () => {
-    const claude: Providers = { modelOf: () => null, echoesSteers: () => true };
+    const claude: Providers = {
+      modelOf: () => null,
+      echoesSteers: () => true,
+      redact: (text) => text,
+    };
     const mirror = emptyMirror();
     applyEvent(mirror, run("running", 1));
     const { view } = replacement(mirror, false, at, new Map(), claude);
@@ -1790,7 +1798,11 @@ describe("what a running turn takes from outside it", () => {
   });
 
   it("tells no steer taken on Claude Code from a snapshot that shows it handed over", () => {
-    const claude: Providers = { modelOf: () => null, echoesSteers: () => true };
+    const claude: Providers = {
+      modelOf: () => null,
+      echoesSteers: () => true,
+      redact: (text) => text,
+    };
     // The snapshot falls between the engine's hand-over and Claude's hold.
     const mirror = mirrorOf(
       Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
@@ -1843,6 +1855,7 @@ describe("what a running turn takes from outside it", () => {
           ? { providerId, modelId: ModelId.make(selection.model) }
           : null,
       echoesSteers: () => false,
+      redact: (text) => text,
     };
     const mirror = emptyMirror();
     const { view } = replacement(mirror, false, at, new Map(), providers);
@@ -2121,6 +2134,41 @@ describe("a provider the engine retries", () => {
       failure: "unreachable",
       retryAt: null,
       details: "transport_error (ECONNRESET): connect failed: Authorization: Bearer [redacted]",
+    });
+  });
+
+  it("ends a turn Claude's API refused for its sign-in as signed out, without the key it was given", () => {
+    const key = "gw_live_7Qm2ZxPa9LrT4kVb8NcY1sWd3Hj";
+    const given: Providers = {
+      ...noProviders,
+      redact: (text) => text.split(key).join("[redacted]"),
+    };
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), given);
+    applyEvent(mirror, run("running", 1));
+    diff(mirror, view, at, given);
+    applyEvent(
+      mirror,
+      item({
+        id: "item-401",
+        type: "error",
+        status: "failed",
+        failure: {
+          class: "provider_error",
+          message: `API Error: 401 Incorrect API key provided: ${key}`,
+          code: "api_error_401",
+          retryable: null,
+        },
+      }),
+    );
+    applyEvent(mirror, run("failed", 1));
+    const ended = diff(mirror, view, at, given).find((told) => told._tag === "turn-finished");
+    assert.deepStrictEqual(ended?._tag === "turn-finished" && ended.outcome, {
+      _tag: "failed",
+      failure: "permission-error",
+      retryAt: null,
+      details:
+        "provider_error (api_error_401): API Error: 401 Incorrect API key provided: [redacted]",
     });
   });
 });
