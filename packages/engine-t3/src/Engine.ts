@@ -248,6 +248,17 @@ export interface ToolBridge {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   /**
+   * Variables the bridge is started with, such as the key it signs its
+   * requests with, which are never logged or reported. Claude Code and Codex
+   * get each in the bridge's entry of their configuration, not in their own
+   * environment, so the commands a bot runs do not inherit it. An ACP agent,
+   * which starts the bridge itself, gets them in its environment.
+   */
+  readonly environment: ReadonlyArray<{
+    readonly name: string;
+    readonly value: Redacted.Redacted<string>;
+  }>;
+  /**
    * The bare names of the bridge's tools that run without asking, in every
    * permission mode: J3 Bots' own. Every other tool it lists, a connector's,
    * follows the session's permission mode, as the harness's own tools do.

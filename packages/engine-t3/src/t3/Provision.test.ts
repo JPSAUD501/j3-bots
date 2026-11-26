@@ -56,7 +56,10 @@ const Settings = Schema.fromJsonString(
 
 const ClaudeState = Schema.fromJsonString(
   Schema.Struct({
-    mcpServers: Schema.Record(Schema.String, Schema.Struct({ timeout: Schema.Number })),
+    mcpServers: Schema.Record(
+      Schema.String,
+      Schema.Struct({ timeout: Schema.Number, env: Schema.Record(Schema.String, Schema.String) }),
+    ),
   }),
 );
 
@@ -97,6 +100,7 @@ const setUp = Effect.gen(function* () {
     toolBridge: {
       command: "/usr/bin/node",
       args: ["bridge.js"],
+      environment: [{ name: "J3_BRIDGE_KEY", value: Redacted.make("the-bridge-key") }],
       preApproved: ["say", "ask"],
       callTimeoutSeconds: 720,
     },
@@ -402,10 +406,10 @@ describe("a Codex instance", () => {
 
 describe("the bridge's tools", () => {
   it.effect(
-    "run without asking only by J3 Bots' own names, and a call may take as long as the bridge allows",
+    "run without asking only by J3 Bots' own names, take the bridge's key, and a call may take as long as the bridge allows",
     () =>
       Effect.gen(function* () {
-        const { fs, path, files, input, home, settings } = yield* setUp;
+        const { fs, path, files, input, home, settings, userdata } = yield* setUp;
         const configFile = path.join(input.home, "codex", "config.toml");
         yield* files.folder(path.join(input.home, "codex"));
         // An approval for every tool of the server, as an earlier release wrote it.
@@ -424,12 +428,20 @@ describe("the bridge's tools", () => {
           yield* fs.readFileString(path.join(home, "claude-code", ".claude.json")),
         );
         assert.strictEqual(state.mcpServers.j3?.timeout, 720_000);
+        // The bridge's key is in its entry alone: neither harness runs with it, so the
+        // commands a bot runs do not inherit it.
+        assert.deepStrictEqual(state.mcpServers.j3?.env, { J3_BRIDGE_KEY: "the-bridge-key" });
+        assert.notInclude(
+          yield* fs.readFileString(path.join(userdata, "settings.json")),
+          "the-bridge-key",
+        );
 
         const config = parse(yield* fs.readFileString(configFile));
         assert.deepStrictEqual(config["mcp_servers"], {
           j3: {
             command: "/usr/bin/node",
             args: ["bridge.js"],
+            env: { J3_BRIDGE_KEY: "the-bridge-key" },
             tool_timeout_sec: 720,
             tools: { say: { approval_mode: "approve" }, ask: { approval_mode: "approve" } },
           },
@@ -477,6 +489,7 @@ describe("a Codex instance's config.toml", () => {
         j3: {
           command: "/usr/bin/node",
           args: ["bridge.js"],
+          env: { J3_BRIDGE_KEY: "the-bridge-key" },
           tool_timeout_sec: 720,
           tools: { say: { approval_mode: "approve" }, ask: { approval_mode: "approve" } },
         },

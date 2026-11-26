@@ -18,10 +18,13 @@ import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import {
+  type BridgeSigner,
+  bridgeKeyOf,
+  bridgeSigner,
   CONNECTOR_CALL_DEADLINE,
   type ListedTool,
+  SIGNATURE_HEADER,
   TOOL_CALL_PATH,
   TOOL_CHANGES_PATH,
   TOOL_LIST_PATH,
@@ -78,6 +81,9 @@ const CHANGES_DEADLINE = Duration.minutes(5);
  */
 const UNLISTED = "";
 
+/** An answer that is not signed for the request it answers: no answer of the server's. */
+class UnsignedAnswer extends Schema.TaggedError<UnsignedAnswer>()("UnsignedAnswer", {}) {}
+
 const RpcId = Schema.Union([Schema.String, Schema.Number]);
 type RpcId = typeof RpcId.Type;
 
@@ -126,20 +132,32 @@ const keyOf = (id: RpcId) => `${typeof id}:${id}`;
  * tool endpoint on loopback. It keeps nothing and does nothing of its own
  * (`docs/architecture/server.md`, Bot tools). The list is J3 Bots' own tools
  * and the connector tools the session's bot is offered; when that changes,
- * the bridge tells the harness to list again. A forward keeps one id across
- * its retries, so the server acts on a call once however often it arrives,
- * and a call the harness cancels, or leaves running when it closes the
- * bridge's input, is abandoned at the server.
+ * the bridge tells the harness to list again. Every request is signed with
+ * the key the engine started it with, and an answer is taken only when the
+ * server signed it for that request. A forward keeps one id across its
+ * retries, so the server acts on a call once however often it arrives, and a
+ * call the harness cancels, or leaves running when it closes the bridge's
+ * input, is abandoned at the server.
  */
 export const serve = Effect.fn("Bridge.serve")(function* (options: {
   /** The tool endpoint's origin, such as `http://127.0.0.1:3739`. */
   readonly server: string;
   /** The session that started the bridge; `None` refuses every call. */
   readonly session: Option.Option<SessionId>;
+  /**
+   * The key it signs its requests with, as the engine started it
+   * (`BRIDGE_KEY_VARIABLE`); `None`, or text that is no key, refuses every
+   * call, as the endpoint would.
+   */
+  readonly key: Option.Option<string>;
   readonly version: string;
 }) {
   const stdio = yield* Stdio.Stdio;
   const random = yield* SecureRandom.SecureRandom;
+  const key = Option.isNone(options.key) ? Option.none() : yield* bridgeKeyOf(options.key.value);
+  const signer = Option.isNone(key) ? Option.none() : Option.some(yield* bridgeSigner(key.value));
+  /** The session the bridge speaks for, when it can sign for it: what the server's tools need. */
+  const caller = Option.all({ sessionId: options.session, signer });
   const once = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
   const client = once.pipe(
     HttpClient.retryTransient({
@@ -148,18 +166,35 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
     }),
   );
 
-  const post = <S extends Schema.Constraint, T extends Schema.Decoder<unknown>>(
+  /**
+   * Sends `body`, signed, and takes an answer only when it is signed for this
+   * request: whoever holds the port after the server let it go cannot answer
+   * for it.
+   */
+  const post = <S extends Schema.Codec<unknown, unknown>, T extends Schema.Codec<unknown, unknown>>(
     path: string,
     request: S,
     response: T,
     client: HttpClient.HttpClient,
-  ) =>
-    Effect.fn("Bridge.post")(function* (body: S["Type"]) {
-      const outgoing = yield* HttpClientRequest.post(`${options.server}${path}`).pipe(
-        HttpClientRequest.schemaBodyJson(request)(body),
+  ) => {
+    const encode = Schema.encodeEffect(Schema.fromJsonString(request));
+    const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(response));
+    return Effect.fn("Bridge.post")(function* (signer: BridgeSigner, body: S["Type"]) {
+      const text = yield* encode(body);
+      const tag = yield* signer.signRequest(path, text);
+      const answer = yield* client.execute(
+        HttpClientRequest.post(`${options.server}${path}`).pipe(
+          HttpClientRequest.setHeader(SIGNATURE_HEADER, tag),
+          HttpClientRequest.bodyText(text, "application/json"),
+        ),
       );
-      return yield* HttpClientResponse.schemaBodyJson(response)(yield* client.execute(outgoing));
+      const answered = yield* answer.text;
+      if (!(yield* signer.verifyAnswer(tag, answered, answer.headers[SIGNATURE_HEADER]))) {
+        return yield* new UnsignedAnswer();
+      }
+      return yield* decode(answered);
     });
+  };
   const forward = post(TOOL_CALL_PATH, ToolCallRequest, ToolCallResponse, client);
   const fetchList = post(TOOL_LIST_PATH, ToolListRequest, ToolListResponse, client);
   // Sent once: a wait the server does not answer means it is gone, or does
@@ -176,8 +211,9 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
   const firstListed = yield* Deferred.make<void>();
 
   const listTools = Effect.fn("Bridge.listTools")(function* () {
-    if (Option.isNone(options.session)) return ownTools;
-    const list = yield* fetchList({ sessionId: options.session.value }).pipe(
+    if (Option.isNone(caller)) return ownTools;
+    const { sessionId, signer } = caller.value;
+    const list = yield* fetchList(signer, { sessionId }).pipe(
       Effect.timeout(LIST_DEADLINE),
       Effect.option,
     );
@@ -196,11 +232,14 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
    * stopping, and its harnesses with it, or the session is no bot's. So an
    * idle bridge never sends its session's id to a port the server has let go.
    */
-  const watchChanges = Effect.fn("Bridge.watchChanges")(function* (sessionId: SessionId) {
+  const watchChanges = Effect.fn("Bridge.watchChanges")(function* (
+    sessionId: SessionId,
+    signer: BridgeSigner,
+  ) {
     yield* Deferred.await(firstListed);
     while (true) {
       const since = yield* Ref.get(listed);
-      const change = yield* fetchChange({ sessionId, since }).pipe(
+      const change = yield* fetchChange(signer, { sessionId, since }).pipe(
         Effect.timeout(CHANGES_DEADLINE),
         Effect.option,
       );
@@ -215,15 +254,16 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
   const callTool = Effect.fn("Bridge.callTool")(function* (params: Schema.Json | undefined) {
     const call = decodeOption(ToolCall)(params);
     if (Option.isNone(call)) return textResult("The call names no tool.", true);
-    if (Option.isNone(options.session)) {
+    if (Option.isNone(caller)) {
       return textResult("This bridge was not started by a J3 Bots session.", true);
     }
+    const { sessionId, signer } = caller.value;
     const connector = isConnectorTool(call.value.name) || ASKS_CONNECTOR.has(call.value.name);
     const reachesOut = connector || REACHES_OUT.has(call.value.name);
     const requestId = Base64Url.encode(yield* random.randomBytes(16));
-    const answer = yield* forward({
+    const answer = yield* forward(signer, {
       requestId,
-      sessionId: options.session.value,
+      sessionId,
       tool: call.value.name,
       arguments: call.value.arguments ?? {},
     }).pipe(Effect.timeout(reachesOut ? CONNECTOR_CALL_DEADLINE : FORWARD_DEADLINE), Effect.option);
@@ -301,7 +341,9 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
     Stream.run(stdio.stdout()),
     Effect.forkScoped,
   );
-  if (Option.isSome(options.session)) yield* Effect.forkScoped(watchChanges(options.session.value));
+  if (Option.isSome(caller)) {
+    yield* Effect.forkScoped(watchChanges(caller.value.sessionId, caller.value.signer));
+  }
 
   yield* stdio.stdin.pipe(
     Stream.decodeText,

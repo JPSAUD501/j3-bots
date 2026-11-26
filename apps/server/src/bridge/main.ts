@@ -8,9 +8,12 @@ import { sessionOfToolCaller } from "@j3-bots/engine-t3";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Stdio from "effect/Stdio";
+import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import packageJson from "../../package.json" with { type: "json" };
+import { BRIDGE_KEY_VARIABLE } from "../tools/protocol.ts";
 import { serve } from "./Bridge.ts";
 
 const main = Effect.gen(function* () {
@@ -20,7 +23,12 @@ const main = Effect.gen(function* () {
     return yield* Effect.die("The bridge needs --server <tool endpoint origin>");
   }
   const environment = yield* Effect.sync(() => process.env);
-  yield* serve({ server, session: sessionOfToolCaller(environment), version: packageJson.version });
+  yield* serve({
+    server,
+    session: sessionOfToolCaller(environment),
+    key: Option.fromNullishOr(environment[BRIDGE_KEY_VARIABLE]),
+    version: packageJson.version,
+  });
 });
 
 main.pipe(
@@ -33,7 +41,7 @@ main.pipe(
       // deadline: `fetch` gives up on a response whose headers take five
       // minutes, which a connector's call can.
       NodeHttpClient.layerNodeHttp,
-      SecureRandom.layerWebCrypto,
+      Mac.layerWebCrypto.pipe(Layer.provideMerge(SecureRandom.layerWebCrypto)),
     ),
   ),
   NodeRuntime.runMain,

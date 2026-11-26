@@ -315,12 +315,14 @@ const instanceSpecOf =
       case "acp-command":
         return {
           ...common,
+          // The agent starts the bridge itself, which inherits its environment.
           environment: [
             ...provider.environment,
             {
               name: TOOL_BRIDGE_VARIABLE,
               value: Redacted.make(JSON.stringify([toolBridge.command, ...toolBridge.args])),
             },
+            ...toolBridge.environment,
           ],
           kind: "acp-local",
           command: provider.command,
@@ -2164,6 +2166,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       ...options.providers.flatMap((provider) =>
         provider.environment.map((variable) => Redacted.value(variable.value)),
       ),
+      ...options.toolBridge.environment.map((variable) => Redacted.value(variable.value)),
     ];
   });
   const logProblems = Effect.fn("Engine.logProviderProblems")(function* (
