@@ -2585,6 +2585,15 @@ const noCopy = {
   last: null,
 } as const;
 
+/** The server's own copies as they arrive: Claude Code half downloaded, Codex being checked. */
+const copiesArriving = {
+  "claude-code": {
+    ...noCopy,
+    task: { _tag: "downloading", receivedBytes: 96_000_000, totalBytes: 200_434_347 },
+  },
+  codex: { ...noCopy, task: { _tag: "verifying" } },
+} as const;
+
 const engines = {
   starting: null,
   // As the server sends them: no provider is reported before the engine runs.
@@ -2725,17 +2734,15 @@ const engines = {
     },
     { status: { _tag: "ready" }, copy: { ...noCopy, source: "j3", version: "0.172.0" } },
   ),
-  /** Both harnesses on their way: Claude Code half downloaded, Codex being checked. */
-  harnessesArriving: engineWithCopies(
-    {
-      status: notInstalled,
-      copy: {
-        ...noCopy,
-        task: { _tag: "downloading", receivedBytes: 96_000_000, totalBytes: 200_434_347 },
-      },
-    },
-    { status: notInstalled, copy: { ...noCopy, task: { _tag: "verifying" } } },
-  ),
+  /** The engine running, both harnesses on their way: Claude Code half downloaded, Codex being checked. */
+  harnessesArriving: { ...team.engine, providers: [], harnesses: copiesArriving },
+  /** A new machine as its server starts: the engine and both harnesses downloading at once. */
+  allArriving: {
+    ...team.engine,
+    state: { _tag: "starting", install: { receivedBytes: 42_400_000, totalBytes: 180_200_000 } },
+    providers: [],
+    harnesses: copiesArriving,
+  },
   /** Claude Code's update waits for its bots; Codex's install failed its checksum. */
   copyWaitingAndFailed: engineWithCopies(
     {
@@ -3359,10 +3366,14 @@ function LocalFirstRunSection() {
             starting
           />
         </Frame>
-        <Frame label="Preparing: the engine downloading, with how far" width={390} height={760}>
+        <Frame
+          label="Preparing: the engine and both harnesses downloading as the server starts"
+          width={390}
+          height={760}
+        >
           <FirstRunAt
             step="work"
-            engine={engines.downloading}
+            engine={engines.allArriving}
             providerSetup={localSetup(harnessesFound.both)}
           />
         </Frame>

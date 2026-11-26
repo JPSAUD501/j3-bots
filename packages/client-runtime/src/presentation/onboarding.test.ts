@@ -147,8 +147,8 @@ describe("how each bot on the stage is lit", () => {
   });
 });
 
-describe("what the server is getting ready", () => {
-  const copy = {
+describe("what the first run's line says the server is getting ready", () => {
+  const missing = {
     source: "none",
     version: null,
     latest: "2.1.330",
@@ -156,21 +156,18 @@ describe("what the server is getting ready", () => {
     task: null,
     last: null,
   } as const;
-  /** The engine ready, with each provider's harness copy as given. */
+  const installed = { ...missing, source: "j3", version: "2.1.330" } as const;
+  type Copy = NonNullable<ProviderStatus["copy"]>;
+  /** The server's own copy of each harness, on an engine in `state`. */
   const withCopies = (
-    ...copies: ReadonlyArray<NonNullable<ProviderStatus["copy"]>>
-  ): EngineStatus => {
-    const [claude] = ready.providers;
-    if (claude === undefined) return ready;
-    return {
-      ...ready,
-      providers: copies.map((each, index) => ({
-        ...claude,
-        id: ProviderId.make(`provider-${index}`),
-        copy: each,
-      })),
-    };
-  };
+    claude: Copy,
+    codex: Copy,
+    state: EngineStatus["state"] = { _tag: "ready" },
+  ): EngineStatus => ({ ...ready, state, harnesses: { "claude-code": claude, codex } });
+  const downloading = (receivedBytes: number, totalBytes: number | null): Copy => ({
+    ...missing,
+    task: { _tag: "downloading", receivedBytes, totalBytes },
+  });
 
   it("says nothing before the server reports, unless the device knows it is starting", () => {
     expect(gettingReady(null, false)).toEqual({ _tag: "idle" });
@@ -178,53 +175,85 @@ describe("what the server is getting ready", () => {
   });
 
   it("follows the engine's download, and shows no share while its size is unknown", () => {
-    const downloading = (totalBytes: number | null): EngineStatus => ({
+    const engine = (totalBytes: number | null): EngineStatus => ({
       ...ready,
       state: { _tag: "starting", install: { receivedBytes: 45, totalBytes } },
     });
-    expect(readyingShare(gettingReady(downloading(180), false))).toBe(0.25);
-    expect(readyingShare(gettingReady(downloading(null), false))).toBeNull();
-    expect(gettingReady({ ...ready, state: { _tag: "starting" } }, false)._tag).toBe("preparing");
+    expect(readyingShare(gettingReady(engine(180), false))).toBe(0.25);
+    expect(readyingShare(gettingReady(engine(null), false))).toBeNull();
   });
 
-  it("puts the harnesses on their way together into one share", () => {
-    const engine = withCopies(
-      { ...copy, task: { _tag: "downloading", receivedBytes: 50, totalBytes: 100 } },
-      { ...copy, task: { _tag: "verifying" } },
+  it("counts the harnesses that download while the engine is still starting", () => {
+    // As the server starts on a new machine: all three on their way at once.
+    const boot = withCopies(
+      downloading(25, 100),
+      { ...missing, task: { _tag: "verifying" } },
+      {
+        _tag: "starting",
+        install: { receivedBytes: 50, totalBytes: 100 },
+      },
     );
-    expect(readyingShare(gettingReady(engine, false))).toBe(0.75);
+    expect(readyingShare(gettingReady(boot, false))).toBe(0.58);
+    // The engine is in and starts, a harness still comes: the line goes on, with its share.
+    const after = withCopies(downloading(50, 100), installed, { _tag: "starting" });
+    expect(readyingShare(gettingReady(after, false))).toBe(0.83);
+  });
+
+  it("shows no share while nothing downloads: an engine that only starts, a copy being checked", () => {
+    const starting = withCopies(installed, installed, { _tag: "starting" });
+    expect(gettingReady(starting, false)).toEqual({ _tag: "preparing", fraction: null });
+    const checking = withCopies(installed, { ...missing, task: { _tag: "verifying" } });
+    expect(gettingReady(checking, false)).toEqual({ _tag: "preparing", fraction: null });
   });
 
   it("never shows the whole while something is still under way", () => {
-    const engine = withCopies({ ...copy, task: { _tag: "verifying" } });
+    const engine = withCopies(downloading(100, 100), installed);
     expect(gettingReady(engine, false)._tag).toBe("preparing");
     expect(readyingShare(gettingReady(engine, false))).toBe(0.99);
   });
 
-  it("is ready once the engine runs and nothing it installs is missing", () => {
+  it("is ready once the engine runs and nothing the server installs is missing", () => {
     expect(gettingReady(ready, false)).toEqual({ _tag: "ready" });
-    const own = withCopies({ ...copy, source: "j3", version: "2.1.330" });
+    expect(gettingReady(withCopies(installed, installed), false)).toEqual({ _tag: "ready" });
+    // A harness the operator installed themselves is not the server's to prepare.
+    const own = withCopies(installed, { ...missing, source: "operator", installable: false });
     expect(gettingReady(own, false)).toEqual({ _tag: "ready" });
   });
 
-  it("does not wait for an update that waits for the bots, nor call it getting ready", () => {
-    const waiting = withCopies({
-      ...copy,
-      source: "j3",
-      version: "2.1.300",
-      task: { _tag: "waiting" },
-    });
-    expect(gettingReady(waiting, false)).toEqual({ _tag: "ready" });
+  it("does not call an update of a copy the bots already run getting ready", () => {
+    const updating = withCopies(installed, { ...installed, task: { _tag: "waiting" } });
+    expect(gettingReady(updating, false)).toEqual({ _tag: "ready" });
   });
 
-  it("claims neither while a harness is missing with no install under way, or the engine is out", () => {
-    // As an install that failed: the connect step says so; this line must not say "ready".
-    expect(gettingReady(withCopies(copy), false)).toEqual({ _tag: "idle" });
-    const out: EngineStatus = {
-      ...ready,
-      state: { _tag: "unavailable", reason: "install-failed" },
+  it("claims neither for an install that failed or never started, or an engine that is out", () => {
+    // The connect step says these; this line must not say "ready" over them.
+    const failed: Copy = {
+      ...missing,
+      last: { _tag: "failed", reason: "in-use", at: at("2026-11-20T16:30:00Z") },
     };
-    expect(gettingReady(out, false)).toEqual({ _tag: "idle" });
+    expect(gettingReady(withCopies(installed, failed), false)).toEqual({ _tag: "idle" });
+    expect(gettingReady(withCopies(missing, installed), false)).toEqual({ _tag: "idle" });
+    const out = { _tag: "unavailable", reason: "install-failed" } as const;
+    expect(gettingReady({ ...ready, state: out }, false)).toEqual({ _tag: "idle" });
+    const down = { _tag: "unavailable", reason: "down" } as const;
+    expect(gettingReady({ ...ready, state: down }, false)).toEqual({ _tag: "idle" });
+  });
+
+  it("keeps the share of what still comes when another install failed", () => {
+    const failed: Copy = {
+      ...missing,
+      last: { _tag: "failed", reason: "checksum", at: at("2026-11-20T16:30:00Z") },
+    };
+    // The engine is there and one harness is half way: the failed one is not in the share.
+    expect(readyingShare(gettingReady(withCopies(downloading(50, 100), failed), false))).toBe(0.75);
+  });
+
+  it("does not say ready for a server that names a missing harness only on its provider", () => {
+    // A server older than `EngineStatus.harnesses`.
+    const [claude] = ready.providers;
+    if (claude === undefined) throw new Error("The fixture has a provider.");
+    const older: EngineStatus = { ...ready, providers: [{ ...claude, copy: missing }] };
+    expect(gettingReady(older, false)).toEqual({ _tag: "idle" });
   });
 });
 

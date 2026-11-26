@@ -4,7 +4,7 @@
 
 ## Context
 
-The owner sat a person who is not technical in front of 0.9.0's first run on a Windows computer. Three of the things that went wrong belong to the first run itself, the others to what it installs and how it signs in (decisions 0064 and 0066):
+The owner sat a person who is not technical in front of 0.9.0's first run on a Windows computer. Three of the things that went wrong belong to the first run itself, the others to what it installs ([0064](0064-the-harnesses-install-as-the-server-starts-and-fail-with-the-true-reason.md)) and how it signs in (decision 0066):
 
 - **Nothing said what J3 Bots is.** One sentence under the cast, then "What should we call your first bot?", and a few screens later it was installing Claude Code and Codex. The person did not know what a bot here is, what it would do for them, or why two programs with unfamiliar names were being installed.
 - **The spotlight looked fake.** It was a trapezoid cut with a hard edge and filled with a straight gradient, ending in a line at the floor; the bots outside it were drawn see-through.
@@ -27,7 +27,7 @@ It also waited where it did not need to: the arrival held 1.9 s only because the
 
 Then the name, the look, the connect step when it is needed, and the arrival, as before. Every step before the arrival has a dot in the progress, so the person sees how short it is.
 
-**One quiet line under every step says what the server is still getting ready**, read from the status the clients already have: the engine's first download and the harnesses' copies, with a share when the sizes are known. It holds no step back, keeps its room whether it says anything or not, and says "ready" once, only after it was seen getting ready. A harness missing with nothing under way, or an engine that is out, is neither: the connect step says those.
+**One quiet line under every step says what the server is still getting ready**, read from the status the clients already have: the engine's first download and the harnesses' copies, which start together as the server starts (0064), as one share of all of it while something downloads and the sizes are known. It holds no step back, keeps its room whether it says anything or not, and says "ready" once, only after it was seen getting ready. An install that failed or never started, or an engine that is out, is neither: the connect step says those.
 
 **A light is drawn the way stage light is seen** ([design language](../design/design-language.md#motion)):
 

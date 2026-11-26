@@ -2,7 +2,7 @@
 import { AvatarChoice, type EngineStatus, type Language } from "@j3-bots/contracts";
 import { avatarCast } from "@j3-bots/design-tokens";
 import * as Schema from "effect/Schema";
-import { providerGate } from "./engine.ts";
+import { preparation, type PreparationItem, providerGate } from "./engine.ts";
 
 /**
  * The first run, one thing per screen, from the welcome to the first bot's
@@ -228,58 +228,67 @@ export const resumedStep = (step: OnboardingStep, flow: OnboardingFlow): Onboard
   step !== "arrival" && order(flow).includes(step) ? step : "look";
 
 /**
- * What the server is getting ready before a bot can run on it: the engine it
- * downloads on its first start, and its own copies of the harnesses.
- * - `preparing`: something is on its way. `fraction` is how far, from 0 to 1,
- *   across what is being downloaded now; null while a size is not known, or
- *   the server has not said anything yet;
- * - `ready`: the engine runs and nothing it could install is missing;
+ * What the first run's one line says of what the server installs before a bot
+ * can run on it (`preparation`): the engine it downloads on its first start
+ * and its own copies of the harnesses, which start downloading together as
+ * the server starts.
+ * - `preparing`: something is on its way. `fraction` is how far all of it is,
+ *   from 0 to 1, while something downloads; null while nothing does, as an
+ *   engine that only starts, while a size is not known, or before the server
+ *   has said anything;
+ * - `ready`: the engine runs and nothing the server installs is missing;
  * - `idle`: neither can be said: the server has not reported, its engine is
- *   not running for a reason that does not pass by itself, or a harness is
- *   missing with no install under way, which the connect step says.
+ *   not running for a reason that does not pass by itself, or an install
+ *   failed or was never started, which the connect step says.
  */
 export type GettingReady =
   | { readonly _tag: "idle" }
   | { readonly _tag: "preparing"; readonly fraction: number | null }
   | { readonly _tag: "ready" };
 
-const downloaded = (received: number, total: number | null): number | null =>
-  total === null || total === 0 ? null : Math.min(1, received / total);
+/** How far one thing the server installs is, from 0 to 1; null while it downloads without saying its size. */
+const itemShare = ({ state, receivedBytes, totalBytes }: PreparationItem): number | null =>
+  state !== "downloading"
+    ? 1
+    : totalBytes === null || totalBytes === 0
+      ? null
+      : Math.min(1, receivedBytes / totalBytes);
 
 /**
- * What the server is getting ready now (`GettingReady`), from the status the
- * clients already read. `starting` is what only the device knows: that its
- * server is starting and has not answered yet, as on the computer that runs it.
+ * What the line says now (`GettingReady`), from the status the clients
+ * already read. `starting` is what only the device knows: that its server is
+ * starting and has not answered yet, as on the computer that runs it.
  */
 export const gettingReady = (engine: EngineStatus | null, starting: boolean): GettingReady => {
   if (engine === null) return starting ? { _tag: "preparing", fraction: null } : { _tag: "idle" };
-  if (engine.state._tag === "starting") {
-    const { install } = engine.state;
-    return {
-      _tag: "preparing",
-      fraction:
-        install === undefined ? null : downloaded(install.receivedBytes, install.totalBytes),
-    };
-  }
-  if (engine.state._tag !== "ready") return { _tag: "idle" };
-  // A copy that waits for the bots to finish is an update, which nothing waits for.
-  const parts = engine.providers.flatMap(({ copy }): ReadonlyArray<number | null> => {
-    const task = copy?.task ?? null;
-    if (task === null || task._tag === "waiting") return [];
-    return [task._tag === "verifying" ? 1 : downloaded(task.receivedBytes, task.totalBytes)];
-  });
-  if (parts.length === 0) {
+  const { items } = preparation(engine);
+  const underWay = items.some(
+    ({ state }) => state === "starting" || state === "downloading" || state === "installing",
+  );
+  if (!underWay) {
+    // A server older than `EngineStatus.harnesses` says a missing harness only on its provider.
     const missing = engine.providers.some(
       ({ copy }) => copy !== undefined && copy.source === "none" && copy.installable,
     );
-    return { _tag: missing ? "idle" : "ready" };
+    const ready =
+      engine.state._tag === "ready" && !missing && items.every(({ state }) => state === "ready");
+    return { _tag: ready ? "ready" : "idle" };
   }
+  if (!items.some(({ state }) => state === "downloading")) {
+    return { _tag: "preparing", fraction: null };
+  }
+  // Of what is on its way and what is there already; one that failed or never started is the
+  // connect step's to say, and holds the share of the rest back by nothing.
   let sum = 0;
-  for (const part of parts) {
-    if (part === null) return { _tag: "preparing", fraction: null };
-    sum += part;
+  let counted = 0;
+  for (const item of items) {
+    if (item.state === "waiting" || item.state === "failed") continue;
+    const share = itemShare(item);
+    if (share === null) return { _tag: "preparing", fraction: null };
+    sum += share;
+    counted += 1;
   }
-  return { _tag: "preparing", fraction: sum / parts.length };
+  return { _tag: "preparing", fraction: sum / counted };
 };
 
 /**
