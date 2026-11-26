@@ -193,7 +193,7 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))(
   "the desktop's own device",
   (it) => {
     it.effect(
-      "is paired without a code, replaces the one before it, and only on the admin socket",
+      "is paired without a code, replaces the ones before it, and only on the admin socket",
       () =>
         Effect.gen(function* () {
           const { adminSocket } = yield* ServerConfig;
@@ -227,12 +227,22 @@ it.layer(AdminClient.layer.pipe(Layer.provideMerge(TestDomain.layer)))(
               [second.deviceId],
             );
 
-            // A device it names that is gone already is no reason to refuse.
+            // A phone paired with a code is not this computer's device.
+            yield* devices.unlock;
+            const { code } = yield* devices.startPairing;
+            const phone = yield* devices.pair({ code, name: "Phone" });
+
+            // A device it names that is gone already is no reason to refuse,
+            // and the one after it, which the app did not keep, goes all the same.
             const third = yield* paired(
               admin.localDevice(adminSocket, { name: "This computer", replaces: first.deviceId }),
             );
             assert.strictEqual(yield* ticketStatus(third.token), 200);
-            assert.strictEqual(yield* devices.pairedCount, 2);
+            assert.strictEqual(yield* ticketStatus(second.token), 401);
+            assert.sameMembers(
+              (yield* devices.paired).map((device) => device.id),
+              [phone.deviceId, third.deviceId],
+            );
 
             // A name is held to a pairing device's rules.
             const named = (name: string) =>

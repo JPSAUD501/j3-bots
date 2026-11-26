@@ -18,6 +18,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as SqlClient from "effect/sql/SqlClient";
+import type * as SqlError from "effect/sql/SqlError";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { transactional } from "../persistence/transaction.ts";
 
@@ -59,13 +60,17 @@ export class DeviceAuth extends Context.Service<
      */
     readonly revoke: (deviceId: DeviceId) => Effect.Effect<void, NotFound>;
     /**
-     * Runs `effect` and revokes the device, as `revoke` does, in one
-     * transaction: both happen or neither does. The device's tickets and
-     * sockets go once it has committed. A device that is unknown or already
-     * revoked is left as it is.
+     * Runs `effect`, which signs this computer in again (`Devices.mint`), and
+     * revokes, as `revoke` does, every device signed in on this computer
+     * before it and `replaces`, the one the desktop app kept (signed in
+     * before that was recorded), in one transaction: all happen or none
+     * does. This computer is signed in as one device at a time, whether or
+     * not the app kept its id. The revoked devices' tickets and sockets go
+     * once it has committed. A device that is unknown or already revoked is
+     * left as it is.
      */
-    readonly revokeWith: <A, E, R>(
-      deviceId: DeviceId,
+    readonly replaceLocal: <A, E, R>(
+      replaces: DeviceId | null,
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E, R>;
     /** Completes once the device is revoked: at once if it already is. */
@@ -143,28 +148,68 @@ export const layer = Layer.effect(
       return { ticket, expiresAt: DateTime.makeUnsafe(expiresAt) };
     });
 
-    const revokeWith = <A, E, R>(
-      deviceId: DeviceId,
+    const Revoked = Schema.Struct({ id: DeviceId });
+    /** Revokes one device at `at`: none if it is unknown or already revoked. */
+    const revokeOne = SqlSchema.findAll({
+      Request: Schema.Struct({ at: Schema.String, id: DeviceId }),
+      Result: Revoked,
+      execute: ({ at, id }) => sql`
+        UPDATE devices SET revoked_at = ${at} WHERE id = ${id} AND revoked_at IS NULL
+        RETURNING id
+      `,
+    });
+    /** Revokes at `at` every device signed in on this computer, and `replaces`. */
+    const revokeLocal = SqlSchema.findAll({
+      Request: Schema.Struct({ at: Schema.String, replaces: Schema.NullOr(DeviceId) }),
+      Result: Revoked,
+      execute: ({ at, replaces }) => sql`
+        UPDATE devices SET revoked_at = ${at}
+        WHERE revoked_at IS NULL AND (signed_in_locally = 1 OR id = ${replaces})
+        RETURNING id
+      `,
+    });
+
+    /**
+     * Runs `effect` and revokes the devices `mark` revokes at the time it is
+     * given, in one transaction: both happen or neither does. Their tickets
+     * and sockets go once it has committed.
+     */
+    const revokingWith = <A, E, R>(
+      mark: (
+        at: string,
+      ) => Effect.Effect<
+        ReadonlyArray<typeof Revoked.Type>,
+        SqlError.SqlError | Schema.SchemaError
+      >,
       effect: Effect.Effect<A, E, R>,
     ): Effect.Effect<A, E, R> =>
       Effect.gen(function* () {
         const at = DateTime.formatIso(yield* DateTime.now);
-        // A revoked device is never pushed to again: its registration goes with it.
-        const result = yield* Effect.gen(function* () {
-          yield* sql`UPDATE devices SET revoked_at = ${at} WHERE id = ${deviceId} AND revoked_at IS NULL`;
-          yield* sql`DELETE FROM push_registrations WHERE device_id = ${deviceId}`;
-          return yield* effect;
+        const [revoked, result] = yield* Effect.gen(function* () {
+          const rows = yield* mark(at).pipe(Effect.orDie);
+          // A revoked device is never pushed to again: its registration goes with it.
+          for (const { id } of rows) {
+            yield* sql`DELETE FROM push_registrations WHERE device_id = ${id}`.pipe(Effect.orDie);
+          }
+          return [rows, yield* effect] as const;
         }).pipe(transaction);
-        for (const [value, ticket] of tickets)
-          if (ticket.deviceId === deviceId) tickets.delete(value);
-        const revocation = revocations.get(deviceId);
-        revocations.delete(deviceId);
-        if (revocation !== undefined) yield* Deferred.succeed(revocation.signal, undefined);
+        for (const { id } of revoked) {
+          for (const [value, ticket] of tickets) if (ticket.deviceId === id) tickets.delete(value);
+          const revocation = revocations.get(id);
+          revocations.delete(id);
+          if (revocation !== undefined) yield* Deferred.succeed(revocation.signal, undefined);
+        }
         return result;
-      }).pipe(Effect.withSpan("DeviceAuth.revokeWith"));
+      }).pipe(Effect.withSpan("DeviceAuth.revokingWith"));
+
+    const replaceLocal = <A, E, R>(replaces: DeviceId | null, effect: Effect.Effect<A, E, R>) =>
+      revokingWith((at) => revokeLocal({ at, replaces }), effect);
 
     const revoke = Effect.fn("DeviceAuth.revoke")(function* (deviceId: DeviceId) {
-      const row = yield* revokeWith(deviceId, findById(deviceId).pipe(Effect.orDie));
+      const row = yield* revokingWith(
+        (at) => revokeOne({ at, id: deviceId }),
+        findById(deviceId).pipe(Effect.orDie),
+      );
       if (Option.isNone(row)) return yield* new NotFound({ resource: "device" });
     });
 
@@ -193,6 +238,6 @@ export const layer = Layer.effect(
       );
     });
 
-    return DeviceAuth.of({ authenticate, issueTicket, revoke, revokeWith, revoked });
+    return DeviceAuth.of({ authenticate, issueTicket, revoke, replaceLocal, revoked });
   }),
 ).pipe(Layer.provide([Digest.layerWebCrypto, SecureRandom.layerWebCrypto]));

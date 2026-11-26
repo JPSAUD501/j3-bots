@@ -122,11 +122,9 @@ const routes = Layer.mergeAll(
       );
       if (request._tag === "None") return HttpServerResponse.empty({ status: 400 });
       const { name, replaces } = request.value;
-      const mint = (yield* Devices).mint(name);
       // The answer holds the token, and the request log records only the
       // method, path and status.
-      const paired =
-        replaces === null ? yield* mint : yield* (yield* DeviceAuth).revokeWith(replaces, mint);
+      const paired = yield* (yield* DeviceAuth).replaceLocal(replaces, (yield* Devices).mint(name));
       yield* Effect.logInfo("Paired a device through the admin channel").pipe(
         Effect.annotateLogs({ deviceId: paired.deviceId, replaces }),
       );

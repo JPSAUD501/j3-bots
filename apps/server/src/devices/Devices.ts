@@ -93,8 +93,10 @@ export class Devices extends Context.Service<
     }) => Effect.Effect<PairResult, Invalid | RateLimited>;
     /**
      * Pairs a device with no code, as `pair` does once a code matched: a new
-     * row and token, of which only the hash is stored. Only the admin channel
-     * calls it, which only the server's own user can reach.
+     * row and token, of which only the hash is stored, marked as signed in
+     * on this computer (`signed_in_locally`). Only the admin channel calls
+     * it, which only the server's own user can reach, inside
+     * `DeviceAuth.replaceLocal`.
      */
     readonly mint: (name: string) => Effect.Effect<PairResult>;
     /** Until when pairing is locked after failed attempts, or none while it is open. */
@@ -168,7 +170,8 @@ export const layer = Layer.effect(
       return { code: PairingCode.make(code), expiresAt: DateTime.makeUnsafe(expiresAt) };
     });
 
-    const mint = Effect.fn("Devices.mint")(function* (name: string) {
+    /** A new device and its token, of which only the hash is stored. */
+    const insert = Effect.fn("Devices.insert")(function* (name: string, locally: boolean) {
       const token = DeviceToken.make(Base64Url.encode(yield* random.randomBytes(32)));
       const tokenHash = yield* hashDeviceToken(token).pipe(
         Effect.provideService(Digest.Digest, digest),
@@ -176,11 +179,12 @@ export const layer = Layer.effect(
       const deviceId = DeviceId.make(yield* ids.make("device"));
       const at = timeText(yield* DateTime.now);
       yield* sql`
-        INSERT INTO devices (id, name, token_hash, paired_at)
-        VALUES (${deviceId}, ${name}, ${tokenHash}, ${at})
+        INSERT INTO devices (id, name, token_hash, paired_at, signed_in_locally)
+        VALUES (${deviceId}, ${name}, ${tokenHash}, ${at}, ${locally ? 1 : 0})
       `.pipe(Effect.orDie);
       return { deviceId, token } satisfies PairResult;
     });
+    const mint = (name: string) => insert(name, true);
 
     const pair = Effect.fn("Devices.pair")(function* (input: {
       readonly code: PairingCode;
@@ -206,7 +210,7 @@ export const layer = Layer.effect(
         return yield* new Invalid({ reason: "pairing-code" });
       }
       codes.delete(matched);
-      return yield* mint(input.name);
+      return yield* insert(input.name, false);
     });
 
     const lockedUntilNow = Clock.currentTimeMillis.pipe(
