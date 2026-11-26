@@ -122,18 +122,22 @@ const Started = Schema.Struct({ engine: Schema.Int, harness: Schema.Int });
 const decodeStarted = Schema.decodeUnknownEffect(Schema.fromJsonString(Started));
 
 /**
- * The pipes a stand-in engine holds on Windows, as it reports them before it
- * starts anything: how many of its standard handles it found among them; how
- * many handles did not answer, as a synchronous file object does not while
- * another process's I/O holds it; and, for each other pipe, the id of the
- * process that serves it.
+ * What a stand-in engine on Windows finds before it starts anything, by
+ * comparing kernel objects, never asking a file anything: the ids of the
+ * launcher that started it and of the process that started the launcher,
+ * and how many of its file objects each of those holds too. Or why it could
+ * not look.
  */
-const HeldPipes = Schema.Struct({
-  standard: Schema.Int,
-  waited: Schema.Int,
-  servers: Schema.Array(Schema.Int),
-});
-const decodeHeldPipes = Schema.decodeUnknownEffect(Schema.fromJsonString(HeldPipes));
+const SharedFiles = Schema.Union([
+  Schema.Struct({
+    launcher: Schema.Int,
+    server: Schema.Int,
+    withLauncher: Schema.Int,
+    withServer: Schema.Int,
+  }),
+  Schema.Struct({ error: Schema.String }),
+]);
+const decodeSharedFiles = Schema.decodeUnknownEffect(Schema.fromJsonString(SharedFiles));
 
 const isRunning = (pid: number) => {
   try {
@@ -151,9 +155,9 @@ const isRunning = (pid: number) => {
  * it; on Windows a program must, as Node starts no batch file without a
  * shell, so a small C# program, compiled by Windows' own compiler as the job
  * launcher is, starts it and waits for it. That program first writes to
- * `pipes` the pipes it holds (`HeldPipes`), found by trying every handle value
- * up to 64 Ki, past any a process this small has, and asking each on a
- * thread of its own for at most two seconds. It never answers, so the
+ * `shared` what it shares with the processes above it (`SharedFiles`),
+ * trying every handle value up to 64 Ki, past any a process this small or
+ * the server has. It never answers, so the
  * server never finds it ready, and starts it as it starts the engine: on
  * Windows, through the job launcher.
  */
@@ -161,7 +165,7 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const started = path.join(folder, "started.json");
-  const pipes = path.join(folder, "pipes.json");
+  const shared = path.join(folder, "shared.json");
   const script = path.join(folder, "engine.cjs");
   yield* fs.writeFileString(
     script,
@@ -182,64 +186,123 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
     const source = path.join(folder, "engine.cs");
     yield* fs.writeFileString(
       source,
-      [
-        "using System;",
-        "using System.Collections.Generic;",
-        "using System.Diagnostics;",
-        "using System.IO;",
-        "using System.Runtime.InteropServices;",
-        "using System.Threading;",
-        "",
-        "class Engine {",
-        '  [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int which);',
-        '  [DllImport("kernel32.dll")] static extern bool GetHandleInformation(IntPtr handle, out uint flags);',
-        '  [DllImport("kernel32.dll")] static extern uint GetFileType(IntPtr handle);',
-        '  [DllImport("kernel32.dll")] static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint process);',
-        "  const uint PipeType = 3;",
-        "",
-        "  // What one handle is, asked on a thread of its own: a query on a synchronous",
-        "  // file object waits for as long as another process's I/O on it holds it.",
-        "  sealed class Probe {",
-        "    readonly IntPtr handle;",
-        "    public uint Type;",
-        "    public bool Served;",
-        "    public uint Server;",
-        "    public Probe(IntPtr handle) { this.handle = handle; }",
-        "    public void Run() {",
-        "      Type = GetFileType(handle);",
-        "      if (Type == PipeType) Served = GetNamedPipeServerProcessId(handle, out Server);",
-        "    }",
-        "  }",
-        "",
-        "  static int Main() {",
-        "    var standard = new List<long>();",
-        "    foreach (int which in new int[] { -10, -11, -12 }) standard.Add(GetStdHandle(which).ToInt64());",
-        "    int standardFound = 0;",
-        "    int waited = 0;",
-        "    var servers = new List<string>();",
-        "    for (long value = 4; value < 0x10000; value += 4) {",
-        "      IntPtr handle = new IntPtr(value);",
-        "      uint flags;",
-        "      if (!GetHandleInformation(handle, out flags)) continue;",
-        "      var probe = new Probe(handle);",
-        "      var thread = new Thread(probe.Run);",
-        "      thread.IsBackground = true;",
-        "      thread.Start();",
-        "      if (!thread.Join(2000)) { waited++; continue; }",
-        "      if (probe.Type != PipeType) continue;",
-        "      if (standard.Contains(value)) { standardFound++; continue; }",
-        "      if (probe.Served) servers.Add(probe.Server.ToString());",
-        "    }",
-        `    File.WriteAllText(${verbatim(`${pipes}.partial`)}, "{\\"standard\\":" + standardFound + ",\\"waited\\":" + waited + ",\\"servers\\":[" + string.Join(",", servers) + "]}");`,
-        `    File.Move(${verbatim(`${pipes}.partial`)}, ${verbatim(pipes)});`,
-        `    var start = new ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});`,
-        "    start.UseShellExecute = false;",
-        "    var script = Process.Start(start);",
-        "    script.WaitForExit();",
-        "    return script.ExitCode;",
-        "  }",
-        "}",
-      ].join("\n"),
+      String.raw`using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+
+class Engine {
+  [StructLayout(LayoutKind.Sequential)]
+  struct BasicInformation {
+    public IntPtr ExitStatus;
+    public IntPtr Peb;
+    public IntPtr Affinity;
+    public IntPtr BasePriority;
+    public IntPtr Id;
+    public IntPtr ParentId;
+  }
+
+  [DllImport("ntdll.dll")] static extern int NtQueryInformationProcess(IntPtr process, int informationClass, ref BasicInformation information, int length, out int returned);
+  [DllImport("ntdll.dll")] static extern int NtQueryObject(IntPtr handle, int informationClass, IntPtr information, int length, out int returned);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int id);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  [DllImport("kernel32.dll")] static extern bool GetHandleInformation(IntPtr handle, out uint flags);
+  [DllImport("kernel32.dll")] static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
+  [DllImport("kernelbase.dll")] static extern bool CompareObjectHandles(IntPtr first, IntPtr second);
+
+  const uint DuplicateAccess = 0x40;
+  const uint QueryLimitedAccess = 0x1000;
+  const uint SameAccess = 2;
+  const int TypeInformation = 2;
+
+  // The process that started 'process', as Windows recorded it.
+  static int ParentOf(IntPtr process) {
+    BasicInformation information = new BasicInformation();
+    int returned;
+    int status = NtQueryInformationProcess(process, 0, ref information, Marshal.SizeOf(typeof(BasicInformation)), out returned);
+    if (status != 0) throw new Exception("NtQueryInformationProcess " + status);
+    return information.ParentId.ToInt32();
+  }
+
+  // Whether 'handle' names a file object, by its type, which the object manager
+  // answers itself: no file system or driver is asked anything.
+  static bool IsFile(IntPtr handle) {
+    IntPtr buffer = Marshal.AllocHGlobal(4096);
+    try {
+      int returned;
+      if (NtQueryObject(handle, TypeInformation, buffer, 4096, out returned) != 0) return false;
+      int length = Marshal.ReadInt16(buffer);
+      return Marshal.PtrToStringUni(Marshal.ReadIntPtr(buffer, IntPtr.Size), length / 2) == "File";
+    } finally {
+      Marshal.FreeHGlobal(buffer);
+    }
+  }
+
+  static List<IntPtr> OwnFiles() {
+    List<IntPtr> files = new List<IntPtr>();
+    for (long value = 4; value < 0x10000; value += 4) {
+      IntPtr handle = new IntPtr(value);
+      uint flags;
+      if (GetHandleInformation(handle, out flags) && IsFile(handle)) files.Add(handle);
+    }
+    return files;
+  }
+
+  // How many of 'own' process 'id' holds too: each of its handles, copied
+  // here, against each of them, as objects.
+  static int SharedWith(int id, List<IntPtr> own) {
+    IntPtr process = OpenProcess(DuplicateAccess, false, id);
+    if (process == IntPtr.Zero) throw new Exception("OpenProcess " + Marshal.GetLastWin32Error());
+    List<long> shared = new List<long>();
+    try {
+      for (long value = 4; value < 0x10000; value += 4) {
+        IntPtr copy;
+        if (!DuplicateHandle(process, new IntPtr(value), GetCurrentProcess(), out copy, 0, false, SameAccess)) continue;
+        try {
+          foreach (IntPtr handle in own) {
+            if (!shared.Contains(handle.ToInt64()) && CompareObjectHandles(handle, copy)) shared.Add(handle.ToInt64());
+          }
+        } finally {
+          CloseHandle(copy);
+        }
+      }
+    } finally {
+      CloseHandle(process);
+    }
+    return shared.Count;
+  }
+
+  static string Report() {
+    try {
+      List<IntPtr> own = OwnFiles();
+      int launcher = ParentOf(GetCurrentProcess());
+      IntPtr launcherProcess = OpenProcess(QueryLimitedAccess, false, launcher);
+      if (launcherProcess == IntPtr.Zero) throw new Exception("OpenProcess " + Marshal.GetLastWin32Error());
+      int server;
+      try {
+        server = ParentOf(launcherProcess);
+      } finally {
+        CloseHandle(launcherProcess);
+      }
+      return "{\"launcher\":" + launcher + ",\"server\":" + server + ",\"withLauncher\":" + SharedWith(launcher, own) + ",\"withServer\":" + SharedWith(server, own) + "}";
+    } catch (Exception error) {
+      return "{\"error\":\"" + error.Message.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
+    }
+  }
+
+  static int Main() {
+    File.WriteAllText(${verbatim(`${shared}.partial`)}, Report());
+    File.Move(${verbatim(`${shared}.partial`)}, ${verbatim(shared)});
+    ProcessStartInfo start = new ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});
+    start.UseShellExecute = false;
+    Process script = Process.Start(start);
+    script.WaitForExit();
+    return script.ExitCode;
+  }
+}
+`,
     );
     const command = path.join(folder, "engine.exe");
     const compiler = path.join(
@@ -260,12 +323,12 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string) {
           ),
         ),
     );
-    return { command, started, pipes };
+    return { command, started, shared };
   }
   const command = path.join(folder, "engine");
   yield* fs.writeFileString(command, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`);
   yield* fs.chmod(command, 0o755);
-  return { command, started, pipes };
+  return { command, started, shared };
 });
 
 /** The parent's end of `child`'s descriptor 3, as the admin channel. */
@@ -368,13 +431,13 @@ describe("serve, as the desktop app runs it", () => {
   // closing once the server is killed, while the engine and its harness still
   // run, shows that neither holds it. On Windows Node puts every child it does
   // not detach in a job that ends with it, and the engine's own job ends with
-  // the launcher: the engine ends with the server. There the engine says what
-  // it holds instead. Every inheritable handle of the launcher reaches it, the
-  // pipe the server reads the launcher's output on among them, so the pipe at
-  // fd 3 would too, and none of the pipes it holds is one this process serves.
-  // A handle that does not answer is a synchronous file object, which fd 3 is
-  // not: libuv opens the child's end of an overlapped pipe overlapped
-  // (`uv__create_pipe_pair`, src/win/pipe.c, read on v1.x at f08538c).
+  // the launcher: the engine ends with the server. There the engine compares
+  // its file objects with those of the processes above it instead. Every
+  // inheritable handle of the launcher reaches it, so some of its files are
+  // the launcher's, and the pipe at fd 3 would be too; none of them is one the
+  // server holds. It asks no file anything: a query on a synchronous file
+  // object can wait in the kernel for as long as another process's I/O holds
+  // it, and a process with a thread waiting there does not end when killed.
   it.live(
     "hands the pipe to none of the processes it starts",
     () =>
@@ -399,11 +462,11 @@ describe("serve, as the desktop app runs it", () => {
           Effect.timeoutOrElse({
             duration: WITHIN,
             orElse: () =>
-              fs.exists(engine.pipes).pipe(
+              fs.exists(engine.shared).pipe(
                 Effect.orElseSucceed(() => false),
-                Effect.flatMap((scanned) =>
+                Effect.flatMap((compared) =>
                   Effect.die(
-                    `the engine did not start${scanned ? ", though it wrote what it holds" : ""}; the server wrote:\n${server.output()}`,
+                    `the engine did not start${compared ? ", though it wrote what it shares" : ""}; the server wrote:\n${server.output()}`,
                   ),
                 ),
               ),
@@ -435,24 +498,22 @@ describe("serve, as the desktop app runs it", () => {
 
         if (process.platform === "win32") {
           // Written before the engine started its script, which wrote `started`.
-          const held = yield* fs.readFileString(engine.pipes).pipe(Effect.flatMap(decodeHeldPipes));
-          const report = JSON.stringify(held);
+          const found = yield* fs
+            .readFileString(engine.shared)
+            .pipe(Effect.flatMap(decodeSharedFiles));
+          if ("error" in found)
+            return yield* Effect.die(`the engine could not look: ${found.error}`);
+          const report = JSON.stringify(found);
+          assert.strictEqual(found.server, server.child.pid, `the launcher's parent: ${report}`);
+          assert.isAbove(
+            found.withLauncher,
+            0,
+            `no handle the launcher holds reached the engine: ${report}`,
+          );
           assert.strictEqual(
-            held.standard,
-            3,
-            `the engine did not find its own standard handles: ${report}`,
-          );
-          const serverPid = server.child.pid;
-          if (serverPid === undefined) return yield* Effect.die("the server has no id");
-          assert.include(
-            held.servers,
-            serverPid,
-            `no pipe the server gave the launcher reached the engine: ${report}`,
-          );
-          assert.notInclude(
-            held.servers,
-            process.pid,
-            `the engine holds a pipe this process gave the server: ${report}`,
+            found.withServer,
+            0,
+            `the engine holds a file the server holds: ${report}`,
           );
         }
 
