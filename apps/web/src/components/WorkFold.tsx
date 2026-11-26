@@ -224,8 +224,8 @@ export function WorkFold({
           <span className="text-muted-foreground">{plural("work.steps", fold.stepCount)}</span>
         </Collapsible.Trigger>
       ) : null}
-      {/* Mounted through the turn's end, so the block it took closes instead of jumping shut. */}
-      {author !== undefined && (work !== null || wasLive) && (
+      {/* For a turn seen running, and through its end, so the block it took closes instead of jumping shut. */}
+      {author !== undefined && wasLive && (
         <LittleOnes
           littleOnes={work?.littleOnes ?? null}
           live={live !== null}

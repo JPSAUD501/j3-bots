@@ -12,7 +12,7 @@ import {
   toSrgb8,
   type LinearRgb,
 } from "./color.ts";
-import { avatarEye, botBubble, botPalette } from "./botPalette.ts";
+import { avatarEye, botBubble, botLittle, botPalette, littleFailed } from "./botPalette.ts";
 import { renderFontManifest } from "./fontManifest.ts";
 import { botColors } from "./names.ts";
 import { colors, type ColorRole, typeScale, type TypeInput } from "./tokens.ts";
@@ -159,6 +159,35 @@ describe.each(modes)("%s status light", (mode) => {
       }
     },
   );
+});
+
+describe.each(modes)("%s little ones", (mode) => {
+  const canvases = ["background", "surface", "sidebar", "muted"] as const;
+
+  it.each(botColors)("a %s bot's is its own color made lighter, and displayable", (color) => {
+    const body = parseColor(botLittle(color)[mode]);
+    const bot = parseColor(botPalette[color][mode]);
+    expect(inSrgbGamut(body)).toBe(true);
+    // Lighter than the bot, by enough to read as its small copy and not as the bot itself.
+    expect(contrastRatio(body, bot)).toBeGreaterThanOrEqual(1.25);
+    expect(contrastRatio(body, parseColor("#000000"))).toBeGreaterThan(
+      contrastRatio(bot, parseColor("#000000")),
+    );
+  });
+
+  it("one that failed keeps its silhouette: its rim reaches 3:1 against the canvases", () => {
+    for (const role of canvases) {
+      expect(
+        contrastRatio(parseColor(littleFailed.rim[mode]), parseColor(colors[role][mode])),
+      ).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it("one that failed shows its shut eye: the eye's white reaches 3:1 on its body", () => {
+    expect(
+      contrastRatio(parseColor(avatarEye.lens), parseColor(littleFailed.body[mode])),
+    ).toBeGreaterThanOrEqual(3);
+  });
 });
 
 describe("the avatar's eye", () => {

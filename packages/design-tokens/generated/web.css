@@ -112,8 +112,8 @@
   --bot-little-orchid: oklch(0.837 0.097 320);
   --bot-little-rose: oklch(0.837 0.087 354);
   --bot-little-slate: oklch(0.77 0.014 262);
-  --little-failed: #c3c3ca;
-  --little-failed-rim: #84848e;
+  --little-failed: #8e8e96;
+  --little-failed-rim: #6a6a73;
   --elevation-raised: 0 1px 2px oklch(0 0 0 / 0.04);
   --elevation-overlay: 0 12px 32px -8px oklch(0 0 0 / 0.18), 0 2px 6px oklch(0 0 0 / 0.06);
   --elevation-lift: 0px 6px 16px -6px rgba(0, 0, 0, 0.22), 0px 1px 3px 0px rgba(0, 0, 0, 0.08);

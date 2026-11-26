@@ -21,12 +21,10 @@ const STEPS = ["Read the brief", "Compare the three vendors", "Write the compari
 
 /** A plan of `texts`, the first `done` steps done and the next one being done. */
 export function samplePlan(done: number, texts: ReadonlyArray<string> = STEPS): Plan {
-  const steps = texts.map(
-    (text, index): PlanStep => ({
-      text,
-      status: index < done ? "done" : index === done ? "running" : "pending",
-    }),
-  );
+  const steps = texts.map((text, index): PlanStep => ({
+    text,
+    status: index < done ? "done" : index === done ? "running" : "pending",
+  }));
   const [first, ...rest] = steps;
   return { steps: [first ?? { text: "Reply", status: "pending" }, ...rest] };
 }
@@ -83,7 +81,12 @@ export interface PlayedBeat {
  * into three little ones, one of which fails; then it finishes the plan.
  */
 export const playedTurn: ReadonlyArray<PlayedBeat> = [
-  { at: 0, work: { plan: samplePlan(0), littleOnes: none }, live: true, doing: "Reading the brief" },
+  {
+    at: 0,
+    work: { plan: samplePlan(0), littleOnes: none },
+    live: true,
+    doing: "Reading the brief",
+  },
   {
     at: 1400,
     work: { plan: samplePlan(1), littleOnes: none },

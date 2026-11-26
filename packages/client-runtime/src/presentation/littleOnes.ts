@@ -233,10 +233,7 @@ function onItsWork(one: LittleSim, at: number): boolean {
   "worklet";
   // It looks up at the bot as it lands, and after a brother that leaves.
   return (
-    one.stage === "working" &&
-    at >= one.perkUntil &&
-    at - one.since >= 0.5 &&
-    at >= one.watchUntil
+    one.stage === "working" && at >= one.perkUntil && at - one.since >= 0.5 && at >= one.watchUntil
   );
 }
 
@@ -644,9 +641,11 @@ function move(one: LittleSim, from: number, to: number, place: LitterPlace): Lit
         : restAt(slot.x, place);
   // On its way home it shrinks into the bot over the last moments.
   const growTo =
-    one.stage === "queued" ? litter.bud : one.stage === "rising" && to > one.due - litter.shrink
-      ? litter.home
-      : 1;
+    one.stage === "queued"
+      ? litter.bud
+      : one.stage === "rising" && to > one.due - litter.shrink
+        ? litter.home
+        : 1;
   // At work it bobs on its own beat; its squash breathes with the bob.
   const beat = one.stage === "working" ? Math.sin(to * 5.2 + one.phase + 1.2) * 0.028 : 0;
   const look = onItsWork(one, to) ? 0.28 * Math.sin(to * 2.3 + one.phase) : 0;

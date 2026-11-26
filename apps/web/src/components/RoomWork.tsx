@@ -2,7 +2,7 @@
 import type { Bot, Room, TurnWork } from "@j3-bots/contracts";
 import { roomMemberWork, shownPlan } from "@j3-bots/client-runtime/presentation";
 import { litter, resolveAvatar } from "@j3-bots/design-tokens";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useBots } from "../app/context";
 import type { AvatarHandle } from "./avatar/BotAvatar";
 import { LiveBotAvatar } from "./avatar/mood";
@@ -33,11 +33,14 @@ export function RoomWork({ room }: { readonly room: Room }) {
       ...kept.filter((member) => !working.some((now) => now.botId === member.botId)),
     ]);
   }
+  // Who is listed starts the wait, and it lets go only if they are still the ones listed: the
+  // room itself changes with every step.
+  const letGo = useEffectEvent((listed: string) => {
+    if (listed === key) setKept(roomMemberWork(room));
+  });
   useEffect(() => {
-    const timer = window.setTimeout(() => setKept(roomMemberWork(room)), LINGER);
+    const timer = window.setTimeout(() => letGo(key), LINGER);
     return () => window.clearTimeout(timer);
-    // Only who is listed starts the wait: the room itself changes with every step.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   const shown = [
     ...working,

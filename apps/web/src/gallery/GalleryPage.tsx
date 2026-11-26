@@ -1676,30 +1676,35 @@ const foldWith = (id: string, work: TurnWork, live = true): WorkFoldEntry | null
  */
 function PlayedTurn() {
   const [run, setRun] = useState(0);
-  const [beat, setBeat] = useState(0);
-  useEffect(() => {
-    setBeat(0);
-    const timers = playedTurn.map((played, index) =>
-      window.setTimeout(() => setBeat(index), played.at),
-    );
-    return () => timers.forEach((timer) => window.clearTimeout(timer));
-  }, [run]);
-  const played = playedTurn[beat];
-  if (played === undefined) return null;
-  const working = played.work.littleOnes.ones.filter((one) => one.status === "working").length;
   return (
     <div className="flex min-h-64 max-w-(--layout-text-column) flex-col items-start gap-2">
       <Button variant="outline" size="sm" onClick={() => setRun(run + 1)}>
         Replay
       </Button>
-      <WorkFold
-        key={run}
-        fold={foldWith("fold-played", played.work, played.live)}
-        live={played.live ? { bot: scoutWorking(played.doing, working), lastEntry: null } : null}
-        steps={null}
-        onOpenChange={nothing}
-      />
+      <PlayedOnce key={run} />
     </div>
+  );
+}
+
+/** The turn played once, from its first beat, on its own timers. */
+function PlayedOnce() {
+  const [beat, setBeat] = useState(0);
+  useEffect(() => {
+    const timers = playedTurn.map((played, index) =>
+      window.setTimeout(() => setBeat(index), played.at),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, []);
+  const played = playedTurn[beat];
+  if (played === undefined) return null;
+  const working = played.work.littleOnes.ones.filter((one) => one.status === "working").length;
+  return (
+    <WorkFold
+      fold={foldWith("fold-played", played.work, played.live)}
+      live={played.live ? { bot: scoutWorking(played.doing, working), lastEntry: null } : null}
+      steps={null}
+      onOpenChange={nothing}
+    />
   );
 }
 
@@ -1760,7 +1765,10 @@ function PlanAndLittleOnesSection() {
               memberWork: [
                 {
                   botId: ids.juniper,
-                  work: { plan: samplePlan(1), littleOnes: sampleLittleOnes(["working", "working"]) },
+                  work: {
+                    plan: samplePlan(1),
+                    littleOnes: sampleLittleOnes(["working", "working"]),
+                  },
                 },
                 { botId: ids.scout, work: { plan: samplePlan(2), littleOnes: none } },
               ],

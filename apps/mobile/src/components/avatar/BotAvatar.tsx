@@ -28,6 +28,7 @@ import {
   avatarSignals,
   type AvatarSignal,
   avatarViewBox,
+  littleFace,
   motion,
   reanimatedSpring,
   resolveAvatar,
@@ -638,6 +639,73 @@ function MovingAvatar({
         </AnimatedG>
       </Svg>
     </Animated.View>
+  );
+}
+
+/**
+ * Whether what is drawn here may move at all, as an avatar decides it for
+ * itself: not under reduced motion, not off screen in a list, not on a screen
+ * behind another. `held` says, on the UI thread, that a list scrolls and what
+ * moves holds where it is. For what moves beside the avatars on the same
+ * terms, as a bot's little ones.
+ */
+export function useMoves(): { readonly wants: boolean; readonly held: SharedValue<boolean> } {
+  const reduced = useReducedMotion();
+  const visible = useContext(Visible);
+  const focused = useScreenFocused();
+  return { wants: !reduced && visible && focused, held: useContext(Held) };
+}
+
+/**
+ * One of a bot's little ones, drawn from the frame its family's model lays
+ * out (`avatarFrame`, as a little one): the bot's silhouette in `body`, its
+ * lighter color, with a wider rim, a sprout and its tip in `rim`, the bot's
+ * own.
+ */
+export function LittleBody({
+  frame,
+  shape,
+  size,
+  body,
+  rim,
+}: {
+  readonly frame: SharedValue<AvatarFrame>;
+  readonly shape: AvatarShapeName;
+  readonly size: number;
+  readonly body: string;
+  readonly rim: string;
+}) {
+  const { path, outline } = avatarShapes[shape];
+  const bodyPart = useDerivedValue(() => joined(frame.get().body));
+  const stalkPart = useDerivedValue(() => frame.get().stalk);
+  const lightPart = useDerivedValue(() => {
+    const { x, y, r } = frame.get().light;
+    return joined([x, y, r]);
+  });
+  const bodyProps = useAnimatedProps(() => ({ matrix: matrixOf(bodyPart.get()) }));
+  const stalkProps = useAnimatedProps(() => ({ d: stalkPart.get() }));
+  const lightProps = useAnimatedProps(() => circleOf(lightPart.get()));
+  return (
+    <Svg width={size} height={size} viewBox={VIEW_BOX} style={{ overflow: "visible" }}>
+      <AnimatedG animatedProps={bodyProps}>
+        <AnimatedPath
+          animatedProps={stalkProps}
+          fill="none"
+          stroke={rim}
+          strokeWidth={5.5}
+          strokeLinecap="round"
+        />
+        <Path
+          d={path}
+          fill={body}
+          stroke={rim}
+          strokeWidth={outline + littleFace.outline}
+          strokeLinejoin="round"
+        />
+        <Eye frame={frame} body={body} arcWidth={5} />
+        <AnimatedCircle animatedProps={lightProps} fill={rim} />
+      </AnimatedG>
+    </Svg>
   );
 }
 

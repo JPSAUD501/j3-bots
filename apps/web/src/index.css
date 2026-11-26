@@ -469,8 +469,6 @@
   /* In the roster: one dot for each little one at work, along the avatar's lower start edge. */
   .little-dots span {
     position: absolute;
-    width: 9px;
-    height: 9px;
     border: 1.5px solid var(--avatar-cutout, var(--background));
     border-radius: var(--radius-pill);
     background: var(--avatar-body);

@@ -5,7 +5,7 @@ import type { Avatar, BotId, RosterItem } from "@j3-bots/contracts";
 import { needsOperator } from "@j3-bots/client-runtime";
 import { rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
-import { type BotColor, litter, resolveAvatar, stage } from "@j3-bots/design-tokens";
+import { type BotColor, littleDots, resolveAvatar, stage } from "@j3-bots/design-tokens";
 import type { ComponentProps, CSSProperties, Ref } from "react";
 import { cn } from "../lib/cn";
 import type { DataAttributes } from "../lib/dataAttributes";
@@ -49,11 +49,8 @@ const entranceStyle = (color: string): CSSProperties & Record<`--row-${string}`,
   "--row-words": `${stage.rowWords}ms`,
 });
 
-/** Where each of a 40 px avatar's dots stands: along its lower left edge, clear of the primary bot's star at the other corner. */
-const DOT_PLACES = Array.from({ length: litter.most }, (_, i) => {
-  const angle = ((118 + i * 21) * Math.PI) / 180;
-  return { left: 15.5 + Math.cos(angle) * 22, top: 17.5 + Math.sin(angle) * 22 };
-});
+/** Where each of the row's avatar's dots stands: along its lower left edge, clear of the primary bot's star at the other corner. */
+const DOTS = littleDots(40);
 
 /**
  * While a bot is split, one tiny dot for each of its little ones at work,
@@ -67,8 +64,13 @@ function LittleDots({ count, color }: { readonly count: number; readonly color: 
       className="little-dots"
       style={{ "--avatar-body": `var(--bot-little-${color})` } as CSSProperties}
     >
-      {DOT_PLACES.map((place, i) => (
-        <span key={place.top} aria-hidden data-on={i < count} style={place} />
+      {DOTS.places.map((place, i) => (
+        <span
+          key={place.y}
+          aria-hidden
+          data-on={i < count}
+          style={{ left: place.x, top: place.y, width: DOTS.size, height: DOTS.size }}
+        />
       ))}
       {count > 0 && <span className="sr-only">{plural("littleOnes.label", count)}</span>}
     </span>

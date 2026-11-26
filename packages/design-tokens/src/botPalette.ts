@@ -69,11 +69,12 @@ export const botLittle = (color: BotColor): Themed => ({
 
 /**
  * A little one that could not finish: its body and its rim without color,
- * whichever bot it came out of. The rim keeps 3:1 against every canvas.
+ * whichever bot it came out of. The rim keeps 3:1 against every canvas, and
+ * the body 3:1 under the eye's white, which draws its shut eye.
  */
 export const littleFailed = {
-  body: themed("#c3c3ca", "#4a4a52"),
-  rim: themed("#84848e", "#7a7a84"),
+  body: themed("#8e8e96", "#4a4a52"),
+  rim: themed("#6a6a73", "#7a7a84"),
 } as const;
 
 /**

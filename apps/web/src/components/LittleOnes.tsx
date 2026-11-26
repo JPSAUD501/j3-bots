@@ -16,14 +16,14 @@ import {
   perkLittle,
   settleLitter,
   shortDuration,
-  shownLittleOnes,
   stepLitter,
   stillLittle,
   syncLitter,
 } from "@j3-bots/client-runtime/presentation";
 import { type AvatarShapeName, litter, resolveAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
-import { type CSSProperties, type RefObject, useEffect, useRef, useState } from "react";
+import { useLittleRows } from "@j3-bots/client-runtime/react";
+import { type CSSProperties, type RefObject, useEffect, useRef } from "react";
 import { useSeconds } from "../app/clock";
 import { useI18n } from "../app/context";
 import { type AvatarHandle, AvatarParts, AVATAR_VIEW_BOX, painter } from "./avatar/BotAvatar";
@@ -249,17 +249,9 @@ interface LittleOnesProps {
 export function LittleOnes({ littleOnes, live, avatar, face, anchor }: LittleOnesProps) {
   const { plural } = useI18n();
   const { shape, color } = resolveAvatar(avatar);
-  const shown = shownLittleOnes(littleOnes, live);
-  const key = shown.ones.map((one) => one.id).join("\n");
   // The ones that no longer work stay drawn until the family says they are home.
-  const [seen, setSeen] = useState({ key, ones: shown.ones });
-  const [kept, setKept] = useState<ReadonlyArray<LittleOne>>([]);
-  if (seen.key !== key) {
-    const left = seen.ones.filter((one) => !shown.ones.some((now) => now.id === one.id));
-    setSeen({ key, ones: shown.ones });
-    if (left.length > 0) setKept([...kept, ...left]);
-  }
-  const rows = [...shown.ones, ...kept.filter((one) => !shown.ones.some((now) => now.id === one.id))];
+  const { shown, rows, held } = useLittleRows(littleOnes, live);
+  const key = shown.ones.map((one) => one.id).join("\n");
   const more = shown.more > 0;
 
   const root = useRef<HTMLDivElement>(null);
@@ -282,20 +274,21 @@ export function LittleOnes({ littleOnes, live, avatar, face, anchor }: LittleOne
       shape: () => latest.current.shape,
       anchor: () => anchor.current,
       poke: (poke) => face.current?.poke(poke),
-      left: (ids) => setKept((current) => current.filter((one) => ids.includes(one.id))),
+      left: held,
     });
     controller.current = mounted;
     return () => {
       mounted.stop();
       controller.current = null;
     };
-  }, [anchor, face]);
+  }, [anchor, face, held]);
 
   const failedKey = shown.failed.join("\n");
   useEffect(() => {
     const working = key === "" ? [] : key.split("\n");
     latest.current = { shape, working, more };
-    if (live) controller.current?.sync(working, failedKey === "" ? [] : failedKey.split("\n"), more);
+    if (live)
+      controller.current?.sync(working, failedKey === "" ? [] : failedKey.split("\n"), more);
     else controller.current?.dismiss();
   }, [key, failedKey, more, live, shape]);
 
@@ -309,7 +302,10 @@ export function LittleOnes({ littleOnes, live, avatar, face, anchor }: LittleOne
       className="little-ones"
       style={colors}
       {...(shown.ones.length > 0
-        ? { role: "group", "aria-label": plural("littleOnes.label", shown.ones.length + shown.more) }
+        ? {
+            role: "group",
+            "aria-label": plural("littleOnes.label", shown.ones.length + shown.more),
+          }
         : {})}
     >
       <svg aria-hidden className="little-strand" width={PARENT} height={1}>
@@ -365,7 +361,12 @@ function LittleRow({
           onPointerDown={onPerk}
         >
           <span aria-hidden data-little-body className="little-body">
-            <svg width={SIZE} height={SIZE} viewBox={AVATAR_VIEW_BOX} className="avatar overflow-visible">
+            <svg
+              width={SIZE}
+              height={SIZE}
+              viewBox={AVATAR_VIEW_BOX}
+              className="avatar overflow-visible"
+            >
               <AvatarParts shape={shape} little />
             </svg>
           </span>

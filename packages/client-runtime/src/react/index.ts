@@ -294,6 +294,7 @@ export {
   useRoomForm,
 } from "./roomForm.ts";
 export { useAsleep, useAvatarMood } from "./avatar.ts";
+export { type LittleRows, useLittleRows } from "./littleOnes.ts";
 export {
   type ConnectorSignIn,
   type SignInPhase,
