@@ -25,7 +25,8 @@ export interface SpeakingTurn {
  * engine started on its own goes on with the work of the turn it names
  * (`hopCounts`), so a Stop that covers that work covers it too, also one
  * recorded before it began; for work it does not name, only the first
- * counts.
+ * counts, and a Stop of the bot whose target in the session was unsettled
+ * when its start was applied, which marked it stopped then (`Observer`).
  */
 export const workStopped = (sql: SqlClient.SqlClient) => {
   const chains = hopCounts(sql);

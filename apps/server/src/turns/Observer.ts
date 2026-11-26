@@ -579,9 +579,26 @@ export const layer = Layer.effect(
         WHERE id = ${session.id}
       `;
       yield* stops.admitted(session.id, columns.roomId);
-      // A harness's wake takes its hop count now, from the flags that show
-      // what may have woken it, before its own work can clear them.
-      if (cause._tag !== "dispatch" && origin === null) yield* chains.borrow(session.id, turnId);
+      if (cause._tag !== "dispatch" && origin === null) {
+        // A harness's wake takes its hop count now, from the flags that show
+        // what may have woken it, before its own work can clear them.
+        yield* chains.borrow(session.id, turnId);
+        // It may have begun before a Stop of the bot was recorded, its start
+        // still on its way: one first seen while such a Stop's target in the
+        // session is unsettled is that Stop's to end, as a turn it marked.
+        // One first seen once it settled began after (`Stops`): every event
+        // the engine had then was applied.
+        yield* sql`
+          UPDATE turns SET stop_id = (
+            SELECT ts_target.stop_id FROM stop_targets ts_target
+            JOIN stops ts_stop ON ts_stop.id = ts_target.stop_id
+            WHERE ts_target.session_id = ${session.id} AND ts_target.stopped_at IS NULL
+              AND ts_stop.scope = 'bot' AND ts_stop.engine_turn_id IS NULL
+            ORDER BY ts_stop.rowid DESC LIMIT 1
+          )
+          WHERE session_id = ${session.id} AND engine_turn_id = ${turnId}
+        `;
+      }
       // A Stop round already sent missed this turn, or the engine applied a
       // key a Stop had fenced: it is stopped on sight.
       if (yield* stops.openRound(session.id, fencedBy)) yield* sql.afterCommit(signals.stops.fire);

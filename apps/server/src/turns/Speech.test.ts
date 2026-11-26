@@ -52,6 +52,7 @@ import {
   sendInRoom,
   sendToBot,
   sessionAfter,
+  stopSettled,
   teammateMessagesFor,
   timesSent,
   turnEnded,
@@ -1058,6 +1059,52 @@ it.effect("sends nothing from a turn the engine started once a Stop is recorded 
     yield* gate.release;
     assert.deepStrictEqual(yield* handoffs(bo.id), ["received: The build passed."]);
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect(
+  "sends nothing from a turn the engine began before a Stop that showed it only after, and sends once it settled",
+  () =>
+    Effect.gen(function* () {
+      const control = yield* TestEngineControl;
+      const { bot: ana, session, turnId: watching } = yield* working("Watch the build.");
+      const bo = yield* createBot("Bo");
+      yield* control.startBackgroundWork({ sessionId: session, turnId: watching });
+      yield* finished(ana.id, session, watching);
+      // The build finishes and wakes the session just before the operator's
+      // Stop, whose round has not reached the engine yet; the event that
+      // tells of the turn is still on its way.
+      const stalled = yield* control.stallEvents(session);
+      const turnId = yield* control.startEngineTurn(session);
+      const gate = yield* holdGate(ana.id);
+      yield* (yield* Stops).stopBot({ commandId: command(), botId: ana.id });
+      yield* stalled.release;
+      yield* nextTurn(ana.id, watching);
+
+      const reply = yield* messageTeammate(session, turnId, {
+        to: bo.id,
+        text: "Deploy it.",
+        urgent: true,
+      });
+      assert.include(refusal(reply), "Your user stopped this work");
+      yield* gate.release;
+      yield* stopSettled;
+      yield* turnEnded(ana.id);
+      assert.deepStrictEqual(yield* handoffs(bo.id), []);
+
+      // A turn the engine begins once the Stop settled is new work.
+      yield* sendToBot(ana.id, "Watch the build again.");
+      const again = yield* nextTurn(ana.id, turnId);
+      yield* control.startBackgroundWork({ sessionId: session, turnId: again });
+      yield* finished(ana.id, session, again);
+      const later = yield* control.startEngineTurn(session);
+      yield* nextTurn(ana.id, again);
+      const sent = yield* messageTeammate(session, later, {
+        to: bo.id,
+        text: "The build passed.",
+        urgent: false,
+      });
+      assert.strictEqual(sent._tag, "result");
+    }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect(
