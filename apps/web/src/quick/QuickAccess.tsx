@@ -145,7 +145,10 @@ export function QuickAccess({
     view,
     bot,
     timeline,
-    markRead: intents.markRead,
+    // Read is what the operator saw: nothing is, on a card that is going out or out of sight.
+    markRead: (asked, through) => {
+      if (shown) intents.markRead(asked, through);
+    },
   });
   const toCard = waitingPlace === "above" || waitingPlace === "below";
 

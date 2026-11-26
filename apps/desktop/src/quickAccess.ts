@@ -262,14 +262,16 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         });
       };
       main.webContents.on("did-finish-load", load);
-      // A page that went away, as when its process crashed, has nothing to show.
+      // A page that went away, as when its process crashed or it was loaded
+      // again from the menu, has nothing to show: a window left up over it
+      // would be an unseen thing that takes the clicks meant for what is behind.
       const pageGone = () => {
         available = false;
         hide();
       };
       window.webContents.on("render-process-gone", pageGone);
       window.webContents.on("did-start-navigation", (details) => {
-        if (details.isMainFrame && !details.isSameDocument) available = false;
+        if (details.isMainFrame && !details.isSameDocument) pageGone();
       });
 
       const repaint = () => {
