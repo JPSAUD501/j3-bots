@@ -209,19 +209,20 @@ export function Stage({ scene, look, name, arrived, ref }: StageProps) {
  * with no set to change.
  */
 export function Cast() {
+  const style: CSSProperties & Record<"--onboarding-bot", string> = {
+    "--onboarding-bot": `var(--bot-${at(0).color})`,
+    height: STAGE_HEIGHT * 0.76,
+  };
   return (
-    <span className="block w-full" style={{ height: STAGE_HEIGHT * 0.76 }}>
-      <span
-        className="block origin-top"
-        style={{ scale: "0.76", height: STAGE_HEIGHT, marginBottom: -STAGE_HEIGHT * 0.24 }}
-      >
+    <div className="w-full" style={style}>
+      <div className="origin-top" style={{ scale: "0.76", height: STAGE_HEIGHT }}>
         <Stage
           scene={{ camera: "wide", cast: "lit", spot: "open", named: false }}
           look={at(0)}
           name=""
           arrived={false}
         />
-      </span>
-    </span>
+      </div>
+    </div>
   );
 }

@@ -288,6 +288,8 @@ function mountAvatar(
   );
   const poke = (how: AvatarPoke) => {
     if (live.stalled || live.state === "offline" || reducedMotion()) return;
+    // A still avatar is in a quiet place: it comes in when it is new, and answers nothing else.
+    if (live.still && how !== "arrive" && how !== "drop") return;
     sim = pokeAvatar(sim, how);
     nudge();
   };
