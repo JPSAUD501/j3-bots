@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { BotId, DeviceId } from "@j3-bots/contracts";
+import type { DeviceId } from "@j3-bots/contracts";
 import {
+  type Destination,
   IPC_CHANNELS,
   QUICK_ACCESS_PATH,
   QuickAccessCue,
@@ -71,8 +72,8 @@ interface Options {
   readonly wayland: boolean;
   /** Shows the main window with the cursor in its composer: what the shortcut does while quick access has nothing to show. */
   readonly showMain: () => void;
-  /** Shows the main window at `botId`'s conversation, under the pairing that listed it. */
-  readonly openInMain: (botId: BotId, pairing: DeviceId) => void;
+  /** Shows the main window at `target`, under the pairing that listed it. */
+  readonly openInMain: (target: Destination, pairing: DeviceId) => void;
 }
 
 interface QuickAccess {
@@ -170,6 +171,8 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         if (window.isDestroyed() || !window.isVisible()) return;
         const focused = window.isFocused();
         window.hide();
+        // However it was put away, its page goes out with it, and comes in afresh next time.
+        cue("leave");
         // macOS leaves the app in front with no window: hiding the app gives
         // the keys back to the one the operator was in (**Assumed**).
         if (process.platform === "darwin" && focused && !main.isDestroyed() && !main.isVisible()) {
@@ -298,7 +301,7 @@ export const serve = Effect.fn("desktop.quickAccess")(function* ({
         const decoded = decodeOpen(request);
         if (!fromQuickAccess(event) || Option.isNone(decoded)) return;
         hide();
-        openInMain(decoded.value.botId, decoded.value.pairing);
+        openInMain(decoded.value.target, decoded.value.pairing);
       });
 
       const toggle = () => {

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
-  BotId,
   DeviceId,
   Language,
   PairingCode,
@@ -13,6 +12,7 @@ import {
   BRIDGE_KEY,
   ConnectResult,
   type DesktopMode,
+  type Destination,
   ForgetResult,
   HostedBridge,
   LocalDeviceResult,
@@ -258,8 +258,8 @@ interface DesktopQuickAccess {
   readonly onCue: (listener: (cue: QuickAccessCue) => void) => () => void;
   /** Hides the window, once the page has gone out. */
   readonly hide: () => void;
-  /** Shows the main window at `botId`'s conversation, under `pairing`, and hides quick access. */
-  readonly openConversation: (botId: BotId, pairing: DeviceId) => void;
+  /** Shows the main window at `target`, under `pairing`, and hides quick access. */
+  readonly openInMain: (target: Destination, pairing: DeviceId) => void;
 }
 
 const decodeBridge = Schema.decodeUnknownOption(HostedBridge);
@@ -478,8 +478,8 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
       hide: () => {
         bridge.hideQuickAccess();
       },
-      openConversation: (botId, pairing) => {
-        bridge.openFromQuickAccess({ botId, pairing });
+      openInMain: (target, pairing) => {
+        bridge.openFromQuickAccess({ target, pairing });
       },
     },
   }),

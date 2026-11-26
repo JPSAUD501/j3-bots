@@ -14,6 +14,8 @@ export interface Attachments {
   readonly open: (attachment: Attachment) => void;
   /** Shows large an image a step of a bot's work looked at. */
   readonly openWorkImage: (id: WorkImageId) => void;
+  /** Puts away the image that shows over the page, if one does. */
+  readonly close: () => void;
   /**
    * Draws `children` with the images of their files within reach, and the
    * image the operator opened over them.
@@ -58,6 +60,7 @@ export function useAttachments(j3: J3Client, say: (text: string) => void): Attac
       else deliver(attachment, reserveWindow(attachment));
     },
     openWorkImage: (id) => setViewing({ _tag: "work", id }),
+    close: () => setViewing(null),
     host: (children) => (
       <AttachmentImagesProvider fetch={imageOf}>
         {children}

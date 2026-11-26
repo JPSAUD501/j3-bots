@@ -4923,7 +4923,8 @@ function UpdatesGallerySection() {
 /**
  * Quick access as the desktop app's small window shows it, on one bot of the
  * sample team. Where the window is see-through, a wallpaper stands in for the
- * desktop behind it. "Shortcut" does what the global shortcut does.
+ * desktop behind its corners and its shadow. "Shortcut" does what the global
+ * shortcut does.
  */
 function QuickAccessFrame({
   label,
@@ -4943,7 +4944,7 @@ function QuickAccessFrame({
   if (only.frame !== null && only.frame !== label) return null;
   return (
     <div className="flex flex-col items-start gap-2">
-      <Frame label={label} width={solid ? 380 : 436} height={solid ? 580 : 642} replay>
+      <Frame label={label} width={solid ? 380 : 436} height={solid ? 580 : 612} replay>
         {!solid && (
           <div
             aria-hidden
@@ -4960,6 +4961,8 @@ function QuickAccessFrame({
             shown={shown}
             asked={asked}
             onOpenConversation={() => {}}
+            onOpenPair={() => {}}
+            onOpenRoom={() => {}}
             onClose={() => setShown(false)}
             onLeft={() => {}}
           />
@@ -4984,7 +4987,7 @@ function QuickAccessSection() {
     <Section title="Quick access (desktop app)">
       <div className="flex flex-wrap gap-6">
         <QuickAccessFrame
-          label="Open on the primary bot while it works: its face on the card's edge, its conversation, the composer with the cursor"
+          label="Open on the primary bot while it works: its face beside its name, its conversation, the composer with the cursor"
           botId={ids.scout}
         />
         <QuickAccessFrame
@@ -4993,7 +4996,7 @@ function QuickAccessSection() {
         />
         <QuickAccessFrame label="A bot at rest, with nothing said yet" botId={ids.moss} />
         <QuickAccessFrame
-          label="Where the window is not see-through (Linux without a compositor): the card fills it, square, with the face in its header"
+          label="Where the window is not see-through (Linux without a compositor): the card fills it, square"
           botId={ids.scout}
           solid
         />

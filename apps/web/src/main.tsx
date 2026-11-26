@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import "./index.css";
 
+import { QUICK_ACCESS_PATH } from "@j3-bots/desktop-bridge";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -26,11 +27,15 @@ if (import.meta.env.PROD && desktop === null && "serviceWorker" in navigator) {
   });
 }
 
-// Before the page finishes loading: a window the service worker opened for a
-// notification click is handed the click then.
-listenForNotificationClicks(desktop);
-// The desktop app hands over the links it was opened with as soon as the page listens.
-listenForAppLinks(desktop);
+// The desktop app's quick access window shows one conversation: links to the
+// app and clicks on notifications are the main window's to take.
+if (window.location.pathname !== QUICK_ACCESS_PATH) {
+  // Before the page finishes loading: a window the service worker opened for a
+  // notification click is handed the click then.
+  listenForNotificationClicks(desktop);
+  // The desktop app hands over the links it was opened with as soon as the page listens.
+  listenForAppLinks(desktop);
+}
 
 // A build replaced while this page was open has deleted the scripts it would load
 // next; loading the page again picks up the new build.

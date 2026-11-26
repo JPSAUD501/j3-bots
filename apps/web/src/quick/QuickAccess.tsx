@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Bot, EntryPreview } from "@j3-bots/contracts";
+import type { Bot, EntryId, EntryPreview, PairBotIds, RoomId } from "@j3-bots/contracts";
 import { ArrowUpRightIcon, XIcon } from "lucide-react";
 import {
   type ReactNode,
@@ -17,7 +17,6 @@ import {
   quietConversationText,
 } from "@j3-bots/client-runtime/wording";
 import { RosterProvider, useI18n, usePresentation } from "../app/context";
-import type { AvatarHandle } from "../components/avatar/BotAvatar";
 import { AvatarConnection, LiveBotAvatar } from "../components/avatar/mood";
 import { DraftComposer } from "../components/DraftComposer";
 import { toneClass } from "../components/RosterRow";
@@ -27,6 +26,7 @@ import { scrollToEnd, ToLatest } from "../components/ToLatest";
 import { Button } from "../components/ui/button";
 import { tintOf } from "../lib/botTint";
 import { cn } from "../lib/cn";
+import { useCovered } from "../lib/covered";
 import { reducedMotion } from "../lib/motion";
 import { sprung, type Sprung } from "../lib/sprung";
 import { useConversationView } from "../shell/conversationView";
@@ -66,6 +66,7 @@ export type QuickAccessIntents = TimelineIntents &
     | "renderPrompt"
     | "loadOlder"
     | "markRead"
+    | "setShown"
     | "stopBot"
     | "secrets"
   >;
@@ -77,16 +78,20 @@ interface QuickAccessProps {
   readonly data: QuickAccessData;
   readonly intents: QuickAccessIntents;
   /**
-   * The window is not see-through: the card fills it, square, with the face
-   * inside its header. Otherwise the face sits on the card's top edge, in the
-   * see-through part of the window.
+   * The window is not see-through: the card fills it, square. Otherwise the
+   * window leaves room around the card for its rounded corners and its shadow.
    */
   readonly solid: boolean;
   /** Whether it shows. It comes in as this turns true and goes out as it turns false. */
   readonly shown: boolean;
   /** Changes each time the operator asks for it again: the cursor goes to the composer. */
   readonly asked: number;
+  /** The main window, at this conversation. */
   readonly onOpenConversation: () => void;
+  /** The main window, at the teammate conversation a line of the timeline leads to. */
+  readonly onOpenPair: (botIds: PairBotIds, at: EntryId | null) => void;
+  /** The main window, at the room a line of the timeline names. */
+  readonly onOpenRoom: (roomId: RoomId) => void;
   /** The operator closed it, with its button or Escape. */
   readonly onClose: () => void;
   /** It has gone out: nothing of it is on screen. */
@@ -97,22 +102,24 @@ interface QuickAccessProps {
 
 /** How far below its place the card starts from, in px. */
 const RISE = 20;
-/** The face's size, in px, on the card's edge and inside its header. */
-const FACE = { perched: 68, inside: 40 } as const;
-/** How far through its way in the card is when what it holds starts to show. */
-const WORDS_FROM = 0.45;
+/** The face's size, in px, beside the name. */
+const FACE = 36;
+/** What the face grows from as it pops in. */
+const FACE_FROM = 0.6;
+/** How long after the card sets off the face pops in, and the card after the face on the way out, in ms. */
+const FACE_AFTER = 120;
 
 /**
- * Quick access to the primary bot: its face, its name and what it is doing,
- * its conversation and the composer, in a small card. The conversation is the
- * one the main window shows, drawn by the same components: what is read here
- * is read there, and the draft is the same draft.
+ * Quick access to the primary bot: the conversation in miniature. A low
+ * header with the bot's face beside its name and what it is doing, then its
+ * conversation and the composer, in a small card. The conversation is the one
+ * the main window shows, drawn by the same components: what is read here is
+ * read there, and the draft is the same draft.
  *
- * It comes in with the face first, which drops onto the card's top edge as
- * the card rises under it, and what the card holds shows last; it goes out
- * the way it came. Each part travels on its spring from wherever it is, so
- * asking for it again mid-way turns it around. Under reduced motion it fades.
- * The composer has the cursor from the first frame.
+ * The card rises into place and the face pops in after it; it goes out the
+ * way it came. Each travels on its spring from wherever it is, so asking for
+ * it again mid-way turns it around. Under reduced motion it fades. The
+ * composer has the cursor from the first frame.
  */
 export function QuickAccess({
   bot,
@@ -123,6 +130,8 @@ export function QuickAccess({
   shown,
   asked,
   onOpenConversation,
+  onOpenPair,
+  onOpenRoom,
   onClose,
   onLeft,
   overlay,
@@ -133,10 +142,10 @@ export function QuickAccess({
   const target = { _tag: "conversation", botId: bot.id } as const;
   const view = data.conversation(target);
   const composerRef = useRef<HTMLDivElement>(null);
-  const avatarRef = useRef<AvatarHandle>(null);
   const cardRef = useRef<HTMLElement>(null);
-  const wordsRef = useRef<HTMLDivElement>(null);
   const faceRef = useRef<HTMLSpanElement>(null);
+  // State as well as a ref: what tells whether something covers the card follows the element.
+  const [card, setCard] = useState<HTMLElement | null>(null);
   // State, not a ref: what watches the timeline follows the element.
   const [timeline, setTimeline] = useState<HTMLDivElement | null>(null);
   const { rows, arrived, end, waitingOn, waitingPlace } = useConversationView({
@@ -152,6 +161,17 @@ export function QuickAccess({
   });
   const toCard = waitingPlace === "above" || waitingPlace === "below";
 
+  // The conversation is on screen here while the card shows with nothing over it, as an
+  // image opened from it would be: only then is what arrives read, and kept quiet.
+  const covered = useCovered(card);
+  const { setShown } = intents;
+  const onScreen = shown && !covered;
+  const botId = bot.id;
+  useEffect(() => {
+    setShown(onScreen ? { _tag: "conversation", botId } : null);
+    return () => setShown(null);
+  }, [setShown, onScreen, botId]);
+
   // The way in and out. `card` and `face` each go from 0, out of sight, to 1, in place.
   const left = useEffectEvent(onLeft);
   const motion = useRef<Sprung<"card" | "face"> | null>(null);
@@ -159,15 +179,12 @@ export function QuickAccess({
   useLayoutEffect(() => {
     const draw = ({ card, face }: Readonly<Record<"card" | "face", number>>) => {
       const cardElement = cardRef.current;
-      const words = wordsRef.current;
       const faceElement = faceRef.current;
-      if (cardElement === null || words === null) return;
+      if (cardElement === null || faceElement === null) return;
       cardElement.style.opacity = String(Math.max(0, Math.min(1, card * 1.6)));
       cardElement.style.translate = `0 ${(1 - card) * RISE}px`;
-      words.style.opacity = String(
-        Math.max(0, Math.min(1, (card - WORDS_FROM) / (1 - WORDS_FROM))),
-      );
-      if (faceElement !== null) faceElement.style.opacity = String(Math.max(0, Math.min(1, face)));
+      faceElement.style.opacity = String(Math.max(0, Math.min(1, face * 1.6)));
+      faceElement.style.scale = String(FACE_FROM + (1 - FACE_FROM) * Math.max(0, face));
       // Out of sight before the springs come to rest: a card that has left does not linger.
       if (leaving.current && card < 0.02 && face < 0.02) {
         leaving.current = false;
@@ -194,13 +211,12 @@ export function QuickAccess({
     }
     if (shown) {
       leaving.current = false;
-      if (springs.now().face < 0.5) avatarRef.current?.poke("drop");
-      springs.to({ face: 1 }, { spring: "pop" });
-      springs.to({ card: 1 }, { spring: "slide", delay: 70 });
+      springs.to({ card: 1 }, { spring: "slide" });
+      springs.to({ face: 1 }, { spring: "pop", delay: FACE_AFTER });
     } else {
       leaving.current = true;
-      springs.to({ card: 0 }, { spring: "slide" });
-      springs.to({ face: 0 }, { spring: "slide", delay: 50 });
+      springs.to({ face: 0 }, { spring: "slide" });
+      springs.to({ card: 0 }, { spring: "slide", delay: FACE_AFTER / 2 });
     }
   }, [shown]);
 
@@ -250,15 +266,6 @@ export function QuickAccess({
   const presence = data.connected
     ? presenceLine(bot, ctx)
     : ({ text: t("connection.reconnecting"), tone: "secondary" } as const);
-  const face = (
-    <LiveBotAvatar
-      bot={bot}
-      lastEntry={lastEntry}
-      size={solid ? FACE.inside : FACE.perched}
-      cutout={!solid}
-      ref={avatarRef}
-    />
-  );
   return (
     <RosterProvider roster={data.roster ?? []}>
       <AvatarConnection connected={data.connected}>
@@ -286,151 +293,134 @@ export function QuickAccess({
           }}
           className={cn(
             "quick-access crossfade fixed inset-0 text-foreground",
-            // Room around the card for its shadow, and above it for the face on its edge.
-            !solid && "px-7 pt-[46px] pb-9",
+            // Room around the card for its rounded corners and its shadow.
+            !solid && "px-7 pt-4 pb-9",
             tintOf(bot.profile.avatar),
           )}
         >
-          <div className="relative h-full">
-            <section
-              ref={cardRef}
-              className={cn(
-                "flex h-full flex-col overflow-hidden bg-surface [contain:layout_paint]",
-                !solid && "rounded-[20px] border border-border shadow-overlay",
-              )}
-            >
-              {/* The header is the window's handle: the system drags the window by it. */}
-              <header
-                className={cn(
-                  "flex min-h-14 shrink-0 items-center gap-2.5 pe-1.5 [-webkit-app-region:drag]",
-                  solid ? "ps-3" : "ps-[92px]",
+          <section
+            ref={(element) => {
+              cardRef.current = element;
+              setCard(element);
+            }}
+            className={cn(
+              "flex h-full flex-col overflow-hidden bg-surface [contain:layout_paint]",
+              !solid && "rounded-[20px] border border-border shadow-overlay",
+            )}
+          >
+            {/* The header is the window's handle: the system drags the window by it. */}
+            <header className="flex min-h-14 shrink-0 items-center gap-2.5 border-b border-border ps-3 pe-1.5 [-webkit-app-region:drag]">
+              <span ref={faceRef} className="inline-flex [-webkit-app-region:no-drag]">
+                <LiveBotAvatar bot={bot} lastEntry={lastEntry} size={FACE} />
+              </span>
+              <div className="flex min-w-0 flex-1 flex-col">
+                <h1 className="truncate text-sm font-medium">{name}</h1>
+                {presence !== null && (
+                  <SwapText
+                    text={presence.text}
+                    className={cn("text-xs", toneClass[presence.tone])}
+                  />
                 )}
-              >
-                {solid && (
-                  <span ref={faceRef} className="inline-flex [--avatar-cutout:var(--surface)]">
-                    {face}
-                  </span>
-                )}
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <h1 className="truncate text-sm font-medium">{name}</h1>
-                  {presence !== null && (
-                    <SwapText
-                      text={presence.text}
-                      className={cn("text-xs", toneClass[presence.tone])}
-                    />
-                  )}
-                </div>
-                <span className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
-                  <Button
-                    variant="ghost-muted"
-                    size="icon-sm"
-                    onClick={onOpenConversation}
-                    aria-label={t("quickAccess.openConversation")}
-                    title={t("quickAccess.openConversation")}
+              </div>
+              <span className="flex shrink-0 items-center [-webkit-app-region:no-drag]">
+                <Button
+                  variant="ghost-muted"
+                  size="icon-sm"
+                  onClick={onOpenConversation}
+                  aria-label={t("quickAccess.openConversation")}
+                  title={t("quickAccess.openConversation")}
+                >
+                  <ArrowUpRightIcon />
+                </Button>
+                <Button
+                  variant="ghost-muted"
+                  size="icon-sm"
+                  onClick={onClose}
+                  aria-label={t("quickAccess.close")}
+                  title={t("quickAccess.close")}
+                  aria-keyshortcuts="Escape"
+                >
+                  <XIcon />
+                </Button>
+              </span>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col">
+              {view.phase === "ready" && view.items.length === 0 ? (
+                <p className="flex flex-1 items-center justify-center px-6 text-center text-sm text-pretty text-muted-foreground">
+                  {held === null ? quietConversationText(bot, ctx) : heldHelloText(name, held, ctx)}
+                </p>
+              ) : (
+                // Reversed, so the view stays pinned to the newest entry as entries arrive.
+                <div className="relative flex min-h-0 flex-1 flex-col">
+                  <div
+                    ref={setTimeline}
+                    className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
                   >
-                    <ArrowUpRightIcon />
-                  </Button>
-                  <Button
-                    variant="ghost-muted"
-                    size="icon-sm"
-                    onClick={onClose}
-                    aria-label={t("quickAccess.close")}
-                    title={t("quickAccess.close")}
-                    aria-keyshortcuts="Escape"
-                  >
-                    <XIcon />
-                  </Button>
-                </span>
-              </header>
-              <div ref={wordsRef} className="flex min-h-0 flex-1 flex-col">
-                {view.phase === "ready" && view.items.length === 0 ? (
-                  <p className="flex flex-1 items-center justify-center px-6 text-center text-sm text-pretty text-muted-foreground">
-                    {held === null
-                      ? quietConversationText(bot, ctx)
-                      : heldHelloText(name, held, ctx)}
-                  </p>
-                ) : (
-                  // Reversed, so the view stays pinned to the newest entry as entries arrive.
-                  <div className="relative flex min-h-0 flex-1 flex-col">
-                    <div
-                      ref={setTimeline}
-                      className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto [overflow-anchor:auto]"
-                    >
-                      <div className={cn("w-full px-3 pt-1 pb-3", toCard && "pb-14")}>
-                        {view.hasOlder && (
-                          <div className="flex justify-center pb-2">
-                            <Button
-                              variant="ghost-muted"
-                              size="sm"
-                              aria-disabled={view.loadingOlder}
-                              onClick={() => {
-                                if (!view.loadingOlder) intents.loadOlder(target);
-                              }}
-                            >
-                              {view.loadingOlder
-                                ? t("timeline.loadingOlder")
-                                : t("timeline.loadOlder")}
-                            </Button>
-                          </div>
-                        )}
-                        <Timeline
-                          rows={rows}
-                          room={null}
-                          workSteps={data.workSteps}
-                          submitting={data.submitting}
-                          openingHold={held}
-                          intents={intents}
-                          secrets={{ view: data.secrets, intents: intents.secrets }}
-                          arrived={arrived}
-                          flyFrom={composerRef}
-                          turnBot={{ bot, lastEntry }}
-                          onOpenPair={onOpenConversation}
-                          onOpenRoom={onOpenConversation}
-                        />
-                      </div>
+                    <div className={cn("w-full px-3 py-3", toCard && "pb-14")}>
+                      {view.hasOlder && (
+                        <div className="flex justify-center pb-2">
+                          <Button
+                            variant="ghost-muted"
+                            size="sm"
+                            aria-disabled={view.loadingOlder}
+                            onClick={() => {
+                              if (!view.loadingOlder) intents.loadOlder(target);
+                            }}
+                          >
+                            {view.loadingOlder
+                              ? t("timeline.loadingOlder")
+                              : t("timeline.loadOlder")}
+                          </Button>
+                        </div>
+                      )}
+                      <Timeline
+                        rows={rows}
+                        room={null}
+                        workSteps={data.workSteps}
+                        submitting={data.submitting}
+                        openingHold={held}
+                        intents={intents}
+                        secrets={{ view: data.secrets, intents: intents.secrets }}
+                        arrived={arrived}
+                        flyFrom={composerRef}
+                        turnBot={{ bot, lastEntry }}
+                        onOpenPair={onOpenPair}
+                        onOpenRoom={onOpenRoom}
+                      />
                     </div>
-                    <ToLatest
-                      end={end}
-                      onPress={() => scrollToEnd(timeline)}
-                      waiting={
-                        waitingOn === null
-                          ? null
-                          : {
-                              place: waitingPlace,
-                              onPress: () => {
-                                const card = timeline?.querySelector<HTMLElement>(
-                                  `[data-entry-id="${CSS.escape(waitingOn)}"]`,
-                                );
-                                card?.scrollIntoView({ block: "center" });
-                                card?.focus({ preventScroll: true });
-                              },
-                            }
-                      }
-                    />
                   </div>
-                )}
-                <div className="px-2.5 pt-1 pb-2.5">
-                  <DraftComposer
-                    target={target}
-                    recipient={name}
-                    data={data}
-                    intents={intents}
-                    inputRef={composerRef}
+                  <ToLatest
+                    end={end}
+                    onPress={() => scrollToEnd(timeline)}
+                    waiting={
+                      waitingOn === null
+                        ? null
+                        : {
+                            place: waitingPlace,
+                            onPress: () => {
+                              const card = timeline?.querySelector<HTMLElement>(
+                                `[data-entry-id="${CSS.escape(waitingOn)}"]`,
+                              );
+                              card?.scrollIntoView({ block: "center" });
+                              card?.focus({ preventScroll: true });
+                            },
+                          }
+                    }
                   />
                 </div>
+              )}
+              <div className="px-2.5 pt-1 pb-2.5">
+                <DraftComposer
+                  target={target}
+                  recipient={name}
+                  data={data}
+                  intents={intents}
+                  inputRef={composerRef}
+                />
               </div>
-              {overlay}
-            </section>
-            {!solid && (
-              // On the card's top edge, half above it, with a band of the card's color around it.
-              <span
-                ref={faceRef}
-                className="absolute start-3.5 -top-[30px] inline-flex [--avatar-cutout:var(--surface)] [filter:drop-shadow(0_4px_8px_rgb(0_0_0/0.18))] [-webkit-app-region:no-drag]"
-              >
-                {face}
-              </span>
-            )}
-          </div>
+            </div>
+            {overlay}
+          </section>
         </div>
       </AvatarConnection>
     </RosterProvider>

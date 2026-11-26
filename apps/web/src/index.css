@@ -1357,7 +1357,7 @@ html[data-quick="solid"] body {
 /* The card's box in the window: the room `QuickAccess` leaves around it. */
 html[data-quick="clear"] [data-base-ui-portal] {
   position: fixed;
-  inset: 46px 28px 36px;
+  inset: 16px 28px 36px;
   z-index: 40;
   contain: layout paint;
   border-radius: 20px;
@@ -1366,6 +1366,11 @@ html[data-quick="clear"] [data-base-ui-portal] {
 
 html[data-quick="clear"] [data-base-ui-portal] > * {
   pointer-events: auto;
+}
+
+/* While the card is out, so is whatever was open over it. */
+html[data-quick][data-quick-out] [data-base-ui-portal] {
+  visibility: hidden;
 }
 
 /* Under reduced motion it comes and goes as a whole, with no travel (`.crossfade` keeps its time). */

@@ -3,7 +3,6 @@ import {
   J3ClientProvider,
   type MemoryReading,
   type RoomSubmission,
-  useActions,
   useBotFiles,
   type SignInRoute,
   useConnection,
@@ -76,7 +75,7 @@ import {
   templateFileName,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
-import type { AppLink, MovedAway } from "@j3-bots/desktop-bridge";
+import type { AppLink, Destination, MovedAway } from "@j3-bots/desktop-bridge";
 import * as Redacted from "effect/Redacted";
 import { memoryFileName, updateResultLine } from "@j3-bots/client-runtime/wording";
 import { notificationText } from "@j3-bots/i18n";
@@ -162,7 +161,7 @@ import {
 import { askLocalDevice, localMode, useLocalServer } from "./localServer";
 import { LinkedPairingCode } from "./pairingLink";
 import { signInUnencrypted } from "./platform";
-import { savesUnderWay } from "./savesUnderWay";
+import { useSavesUnderWay } from "./savesUnderWay";
 
 /**
  * What the room form is open for. A room is named by id and read from the
@@ -880,9 +879,6 @@ function LiveShell({
   const notificationsSave = useReadable(j3.settingsSaves.notifications);
   const harnessesSave = useReadable(j3.settingsSaves.harnesses);
   const devices = useDevices();
-  const actions = useActions();
-  const drafts = useReadable(j3.drafts);
-  const draftsSaving = useReadable(j3.draftsSaving);
   const conversation = useConversation(target);
   // The teammate conversation the address names, and every pair the roster lists.
   const shownPair: PairBotIds | null =
@@ -953,20 +949,7 @@ function LiveShell({
   // The way back to the update prompt after "Later", in the roster's footer.
   const updatePrompt = useUpdatePrompt(false);
   const shortcut = useDesktopShortcut();
-  useReportSaving(
-    savesUnderWay({
-      settings: {
-        profile: profileSave,
-        notifications: notificationsSave,
-        harnesses: harnessesSave,
-      },
-      bots: botSaves,
-      memory: memorySaves,
-      actions,
-      drafts,
-      draftsSaving,
-    }),
-  );
+  useReportSaving(useSavesUnderWay(j3));
   const openMemoryKey =
     memoryView === null ? null : memorySaveKey(memoryScopeOf(memoryView), memoryView.path);
   // What is open now, for a save that ends after its form closed.
@@ -1022,17 +1005,45 @@ function LiveShell({
   // an edit, stay open, with the conversation opened under them: the click
   // never throws typing away, and closing the dialog lands on what the
   // notification was about. A save under way is not given up on.
-  const openTarget = useEffectEvent((opened: EntryTarget) => {
+  const openTarget = useEffectEvent((opened: Destination) => {
     setSettingsOpen(false);
     if (!newBotUnsaved) setNewBot(false);
     if (!botEditUnsaved) setEditingBot(null);
     if (!memoryEditing) setMemoryView(null);
     if (!roomFormUnsaved) setRoomForm(null);
-    // Opening it drops the details from the address, which closes them.
-    if (opened._tag === "conversation") {
-      void navigate({ to: "/bots/$botId", params: { botId: opened.botId } });
-    } else {
-      void navigate({ to: "/rooms/$roomId", params: { roomId: opened.roomId } });
+    switch (opened._tag) {
+      // Opening it drops the details from the address, which closes them.
+      case "conversation":
+        return void navigate({ to: "/bots/$botId", params: { botId: opened.botId } });
+      case "room":
+        return void navigate({ to: "/rooms/$roomId", params: { roomId: opened.roomId } });
+      // What quick access hands over: where a card or a line of its conversation leads.
+      case "browser":
+        return void navigate({
+          to: "/bots/$botId",
+          params: { botId: opened.botId },
+          search: { browser: opened.tab },
+        });
+      case "pair": {
+        const [a, b] = opened.botIds;
+        return void navigate({
+          to: "/pairs/$a/$b",
+          params: { a, b },
+          search: opened.at === null ? {} : { at: opened.at },
+        });
+      }
+      case "routine":
+        return void navigate({
+          to: "/bots/$botId",
+          params: { botId: opened.botId },
+          search: { details: true, routine: opened.routineId },
+        });
+      case "connector":
+        return openConnectors({
+          _tag: "connector",
+          connectorId: opened.connectorId,
+          signIn: true,
+        });
     }
   });
   // A link to a conversation or a room opens it as a notification click does,
@@ -1140,16 +1151,13 @@ function LiveShell({
     [j3, pairing],
   );
 
-  // Another tab sent or changed a draft under this one, and this tab shows it
-  // as stored. Text of this tab's that the device never kept is offered back
-  // beside the composer, for as long as the operator wants it: when this
-  // change put it there, that notice says the draft changed, so the toast
-  // does not, unless Send sent nothing.
-  const changedElsewhere = useEffectEvent(({ whileSending, displaced }: DraftChangedElsewhere) => {
+  // Another window sent or changed a draft under this one, and this one shows
+  // it as stored. Text of this window's that the device never kept is offered
+  // back beside the composer, for as long as the operator wants it.
+  const changedElsewhere = useEffectEvent(({ whileSending }: DraftChangedElsewhere) => {
+    // A draft another window keeps simply shows here: every window holds the
+    // same draft. Only a Send that sent nothing for it is worth a word.
     if (whileSending) say(t("composer.changedElsewhereWhileSending"));
-    // In the desktop app the other window is its own quick access, on the same
-    // draft: what is typed in one simply shows in the other.
-    else if (!displaced && desktop === null) say(t("composer.changedElsewhere"));
   });
   useEffect(() => j3.onDraftChangedElsewhere(changedElsewhere), [j3]);
 

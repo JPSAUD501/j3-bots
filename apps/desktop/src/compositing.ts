@@ -217,5 +217,10 @@ export const transparencyHere = Effect.fn("desktop.transparencyHere")(function* 
     }),
     timeoutMs: ASK_FOR,
   });
+  if (runs === null) {
+    yield* Effect.logWarning(
+      "The X server did not say whether a compositing manager runs; quick access takes it that one does",
+    );
+  }
   return runs ?? true;
 });

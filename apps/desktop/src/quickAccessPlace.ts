@@ -15,14 +15,14 @@ export interface CornerOffset {
 
 /**
  * The window's size. With transparency it is larger than the card it shows:
- * the card's shadow and the face that sits on its top edge are drawn in the
- * transparent part (`QuickAccess` in the web client lays them out). Without
- * it the window is the card, and nothing shows around it.
+ * the card's rounded corners and its shadow are drawn in the transparent
+ * part (`QuickAccess` in the web client lays them out). Without it the
+ * window is the card, and nothing shows around it.
  */
 export const quickAccessSize = (
   solid: boolean,
 ): { readonly width: number; readonly height: number } =>
-  solid ? { width: 380, height: 580 } : { width: 436, height: 642 };
+  solid ? { width: 380, height: 580 } : { width: 436, height: 612 };
 
 /**
  * Where a window never placed on a display opens: the card a comfortable gap

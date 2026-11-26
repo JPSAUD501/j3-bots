@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   BotId,
+  BrowserTabRef,
+  ConnectorId,
   DeviceId,
   DeviceToken,
   EntryId,
   EntryTarget,
   Label,
   Language,
+  PairBotIds,
   PairingCode,
   PairingLinkTarget,
+  RoutineId,
   ServerOrigin,
   SIGN_IN_RETURN_MAX,
   UpdateChannel,
@@ -663,11 +667,30 @@ export const TrayReport = Schema.Struct({
 export type TrayReport = typeof TrayReport.Type;
 
 /**
- * Something the app asks the page to do, from its menus or its tray.
- * `focus`: the composer of the open conversation, or the roster.
+ * A place in the main window: a bot's conversation or a room, as the tray
+ * opens one, or what a conversation leads to and quick access hands over: a
+ * bot's browser on a tab (`front`: the one it uses), a teammate conversation
+ * at one of its messages, a routine's runs, a connector's sign-in.
+ */
+export const Destination = Schema.Union([
+  EntryTarget,
+  Schema.TaggedStruct("browser", {
+    botId: BotId,
+    // "front" first: a ref is any non-empty string, which would take "front" too.
+    tab: Schema.Union([Schema.Literal("front"), BrowserTabRef]),
+  }),
+  Schema.TaggedStruct("pair", { botIds: PairBotIds, at: Schema.NullOr(EntryId) }),
+  Schema.TaggedStruct("routine", { botId: BotId, routineId: RoutineId }),
+  Schema.TaggedStruct("connector", { connectorId: ConnectorId }),
+]);
+export type Destination = typeof Destination.Type;
+
+/**
+ * Something the app asks the page to do, from its menus, its tray or quick
+ * access. `focus`: the composer of the open conversation, or the roster.
  * `composer`, `next`, `previous`, `stop` and `closeDetails`: the shell's
- * keyboard shortcuts, by name. `open`: a bot or room the operator chose in
- * the tray, under the pairing whose roster listed it.
+ * keyboard shortcuts, by name. `open`: a place the operator chose in the
+ * tray or in quick access, under the pairing whose roster listed it.
  */
 export const ShellCommand = Schema.Union([
   Schema.TaggedStruct("focus", {}),
@@ -676,7 +699,7 @@ export const ShellCommand = Schema.Union([
   Schema.TaggedStruct("previous", {}),
   Schema.TaggedStruct("stop", {}),
   Schema.TaggedStruct("closeDetails", {}),
-  Schema.TaggedStruct("open", { target: EntryTarget, pairing: DeviceId }),
+  Schema.TaggedStruct("open", { target: Destination, pairing: DeviceId }),
 ]);
 export type ShellCommand = typeof ShellCommand.Type;
 
@@ -700,10 +723,10 @@ export const QuickAccessCue = Schema.Literals(["open", "leave"]);
 export type QuickAccessCue = typeof QuickAccessCue.Type;
 
 /**
- * The bot whose conversation quick access asks the main window to open, under
- * the pairing whose roster listed it, as a bot chosen in the tray is.
+ * The place quick access asks the main window to open, under the pairing
+ * whose roster listed it, as a bot chosen in the tray is.
  */
-export const QuickAccessOpen = Schema.Struct({ botId: BotId, pairing: DeviceId });
+export const QuickAccessOpen = Schema.Struct({ target: Destination, pairing: DeviceId });
 export type QuickAccessOpen = typeof QuickAccessOpen.Type;
 
 /** The modifiers that set a global shortcut apart from the ones every app uses. */

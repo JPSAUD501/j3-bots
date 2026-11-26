@@ -46,13 +46,13 @@ The operator picks a bot in the roster and types.
 
 On a computer with the desktop app, the operator is working in something else and wants to ask their primary bot for something.
 
-- They press the shortcut (`Ctrl+Shift+J`, `⌘⇧J` on macOS, or the one they chose in Settings). A small card rises in the bottom-right corner of the screen the pointer is on: the bot's face arrives first, on the card's top edge, then the card under it with the bot's name, what it is doing, the end of its conversation and the message box, with the cursor already in it.
+- They press the shortcut (`Ctrl+Shift+J`, `⌘⇧J` on macOS, or the one they chose in Settings). A small card rises in the bottom-right corner of the screen the pointer is on: the conversation in miniature, with the bot's face beside its name and what it is doing, the end of its conversation and the message box, with the cursor already in it.
 - They type and press Enter. The card stays where it is, above their other windows, while the bot answers; they can go back to their work and look at it when they like.
 - It is the bot's own conversation, not a separate one: what they read here is read, what they typed and did not send is still in the message box in the main window, and a question or an approval the bot shows can be answered here.
 - A file dropped on the card, or an image pasted, is attached to the message.
 - `Escape`, the card's close button or the shortcut again put it away. Clicking elsewhere does not: they put it there. Pressing the shortcut while it is on screen but they are working elsewhere brings the cursor back to it.
 - They can drag it by its top to another place; it opens there next time on that screen.
-- "Open conversation" brings the main window to that conversation, for what needs the room: the bot's browser, its details, its routines.
+- "Open conversation" brings the main window to that conversation, for what needs the room: its details, its files, its routines. What a card in it leads to opens there too, where it would from the conversation: "Open browser" on the tab the bot asks help with, a connector's sign-in, a routine's runs, a room, what two bots wrote each other.
 - Before there is a primary bot, or while J3 Bots cannot be reached, the shortcut opens the main window instead, which says what is missing.
 
 Quick access shows only the primary bot, and only while it is open: nothing of J3 Bots sits on the screen otherwise. The Android app has no counterpart.

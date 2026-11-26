@@ -2,10 +2,12 @@
 import type {
   ActionState,
   Draft,
+  J3Client,
   Save,
   SettingsSave,
   SettingsSaves,
 } from "@j3-bots/client-runtime";
+import { useActions, useReadable } from "@j3-bots/client-runtime/react";
 
 /** What a restart would cut short, as the client runtime tracks it. */
 interface Writes {
@@ -33,3 +35,19 @@ export const savesUnderWay = (writes: Writes): boolean =>
   [...writes.drafts.values()].some(
     (draft) => draft.sending || draft.files.some((file) => file._tag === "uploading"),
   );
+
+/** Whether a save is under way on `j3`, this page's client, as `savesUnderWay` tells. */
+export function useSavesUnderWay(j3: J3Client): boolean {
+  return savesUnderWay({
+    settings: {
+      profile: useReadable(j3.settingsSaves.profile),
+      notifications: useReadable(j3.settingsSaves.notifications),
+      harnesses: useReadable(j3.settingsSaves.harnesses),
+    },
+    bots: useReadable(j3.botSaves),
+    memory: useReadable(j3.memorySaves),
+    actions: useActions(),
+    drafts: useReadable(j3.drafts),
+    draftsSaving: useReadable(j3.draftsSaving),
+  });
+}

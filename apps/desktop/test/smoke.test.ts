@@ -286,9 +286,14 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           await quick.waitForFunction((element) => element === document.activeElement, composer, {
             timeout: STEP,
           });
-          // A message sent from it is in the conversation, here and in the main window.
+          // A message sent from it leaves its composer and is in the conversation, here and
+          // in the main window, though the main window wrote and sent this draft before it.
           await quick.keyboard.insertText("Hello from quick access");
           await quick.keyboard.press("Enter");
+          await quick
+            .getByRole("combobox", messageBox)
+            .filter({ hasNotText: "Hello from quick access" })
+            .waitFor({ timeout: STEP });
           await quick.getByText("Hello from quick access").first().waitFor({ timeout: STEP });
           await page.getByText("Hello from quick access").first().waitFor({ timeout: STEP });
           // What is typed in it and not sent is the conversation's draft: the main window has it.
@@ -301,6 +306,18 @@ it.layer(Layer.mergeAll(Server.layer(Layer.empty), NodeServices.layer), {
           await quick.keyboard.press("Escape");
         });
         yield* quickAccessTo(false);
+        const sentFromQuickAccess = yield* entries
+          .latest({ _tag: "conversation", botId: bot.id }, 10)
+          .pipe(
+            Effect.map((latest) =>
+              latest.some(
+                (entry) => entry._tag === "message" && entry.text === "Hello from quick access",
+              ),
+            ),
+            Effect.repeat({ until: (found) => found, schedule: Schedule.spaced("100 millis") }),
+            Effect.timeoutOption(STEP),
+          );
+        assert.isTrue(Option.isSome(sentFromQuickAccess), "the server has no message from it");
 
         // Asked for again, it is there within a frame or two of the shortcut: the window is
         // kept, hidden, with its page loaded.

@@ -1127,8 +1127,6 @@ const sentences = {
   "composer.filesProblem": "Não dá para enviar estes arquivos. {reason}.",
   "composer.notKept":
     "Este dispositivo não conseguiu guardar a mensagem, então ela não foi enviada. Ela continua na caixa de mensagem.",
-  "composer.changedElsewhere":
-    "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá.",
   "composer.changedElsewhereWhileSending":
     "Este rascunho mudou em outra aba. Esta aba agora mostra o que está lá e não enviou nada.",
   "composer.replaced": "Seu texto anterior foi substituído em outra aba.",

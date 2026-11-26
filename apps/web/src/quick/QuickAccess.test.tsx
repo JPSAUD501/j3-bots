@@ -22,6 +22,8 @@ vi.mock("../lib/motion", () => ({ reducedMotion: () => true, play: () => null })
 interface Told {
   readonly closed: Array<true>;
   readonly left: Array<true>;
+  /** What it said is on screen, each time it said so. */
+  readonly onScreen: Array<EntryTarget | null>;
   readonly attached: Array<{ readonly target: EntryTarget; readonly names: ReadonlyArray<string> }>;
 }
 
@@ -41,11 +43,14 @@ function Harness({ shown, asked, told }: { shown: boolean; asked: number; told: 
         ...source.intents,
         attachFiles: (target, files) =>
           told.attached.push({ target, names: files.map((file) => file.name) }),
+        setShown: (target) => told.onScreen.push(target),
       }}
       solid={false}
       shown={shown}
       asked={asked}
       onOpenConversation={() => {}}
+      onOpenPair={() => {}}
+      onOpenRoom={() => {}}
       onClose={() => told.closed.push(true)}
       onLeft={() => told.left.push(true)}
     />
@@ -61,7 +66,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  told = { closed: [], left: [], attached: [] };
+  told = { closed: [], left: [], attached: [], onScreen: [] };
 });
 
 afterEach(() => {
@@ -122,6 +127,24 @@ describe("quick access", () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
     });
     expect(told.closed).toHaveLength(1);
+  });
+
+  it("has the conversation on screen only while it shows with nothing over it", async () => {
+    show(true, 1);
+    expect(told.onScreen.at(-1)).toEqual({ _tag: "conversation", botId: ids.wren });
+    // A dialog over the card, as an image opened from it, hides it from what reads it.
+    await act(async () => {
+      container.setAttribute("aria-hidden", "true");
+      await Promise.resolve();
+    });
+    expect(told.onScreen.at(-1)).toBeNull();
+    await act(async () => {
+      container.removeAttribute("aria-hidden");
+      await Promise.resolve();
+    });
+    expect(told.onScreen.at(-1)).toEqual({ _tag: "conversation", botId: ids.wren });
+    show(false, 1);
+    expect(told.onScreen.at(-1)).toBeNull();
   });
 
   it("says it has left only once it is out of sight", () => {

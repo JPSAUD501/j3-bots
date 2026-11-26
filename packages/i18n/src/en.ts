@@ -1111,8 +1111,6 @@ export const en = {
   "composer.filesProblem": "Can’t send these files. {reason}.",
   "composer.notKept":
     "This device couldn’t keep the message, so it wasn’t sent. It’s still in the message box.",
-  "composer.changedElsewhere":
-    "This draft changed in another tab. This tab now shows it as it is there.",
   "composer.changedElsewhereWhileSending":
     "This draft changed in another tab. This tab now shows it as it is there, and sent nothing.",
   "composer.replaced": "Your earlier text was replaced in another tab.",

@@ -26,7 +26,6 @@ export function LiveBotAvatar({
   size,
   label,
   entrance = false,
-  cutout = false,
   ref,
 }: {
   readonly bot: Bot;
@@ -36,8 +35,6 @@ export function LiveBotAvatar({
   readonly label?: string;
   /** Comes in from above as it first shows (`BotAvatar`). */
   readonly entrance?: boolean;
-  /** Stands clear of what it overlaps, in a band of what it sits on (`BotAvatar`). */
-  readonly cutout?: boolean;
   readonly ref?: Ref<AvatarHandle>;
 }) {
   const offline = use(AvatarsAsleep);
@@ -50,7 +47,6 @@ export function LiveBotAvatar({
       stalled={mood.stalled}
       size={size}
       entrance={entrance}
-      cutout={cutout}
       {...(label === undefined ? {} : { label })}
       {...(ref === undefined ? {} : { ref })}
     />

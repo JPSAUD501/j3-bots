@@ -705,9 +705,9 @@ const program = Effect.gen(function* () {
       forward();
       sendCommand({ _tag: "focus" });
     },
-    openInMain: (botId, pairing) => {
+    openInMain: (target, pairing) => {
       forward();
-      sendCommand({ _tag: "open", target: { _tag: "conversation", botId }, pairing });
+      sendCommand({ _tag: "open", target, pairing });
     },
   });
   unloadQuickAccess = quickAccess.unload;
