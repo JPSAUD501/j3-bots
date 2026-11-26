@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { targetKey } from "@j3-bots/client-runtime";
-import { canStop, openingHeld } from "@j3-bots/client-runtime/presentation";
+import { canStop, offeredReply, openingHeld } from "@j3-bots/client-runtime/presentation";
 import {
   heldHelloText,
   presenceLine,
@@ -415,6 +415,7 @@ export function QuickAccess({
                   recipient={name}
                   data={data}
                   intents={intents}
+                  suggestion={offeredReply(bot.suggestedReply, view.items)}
                   inputRef={composerRef}
                 />
               </div>
