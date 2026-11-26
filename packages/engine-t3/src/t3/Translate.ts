@@ -2,19 +2,17 @@
 import type {
   FailureClass,
   ModelChoice,
-  Question,
   QuestionAnswers,
+  WholeQuestion,
   WorkStep,
 } from "@j3-bots/contracts";
 import {
   type LittleOne,
   LittleOneId,
   type LittleOneStatus,
-  MAX_CARD_QUESTIONS,
   MAX_LITTLE_ONE_LABEL_LENGTH,
   MAX_PLAN_STEP_LENGTH,
   MAX_PLAN_STEPS,
-  MAX_QUESTION_OPTIONS,
   type Plan,
   type PlanStepStatus,
   WorkStepId,
@@ -77,6 +75,7 @@ import {
   type FileChangeItem,
   sameVersion,
 } from "./approvalDetail.ts";
+import { failureDetailsOf } from "./failureDetails.ts";
 import { dispatchOfMessage, localIdFor, messageIdFor } from "./Keys.ts";
 import { TOOL_SERVER } from "./Provision.ts";
 import { isStepTool, toolStep } from "./toolNames.ts";
@@ -637,7 +636,7 @@ const isCauseTold = (mirror: Mirror, run: Run) =>
 const FAILURES: Record<OrchestrationV2ProviderFailureClass, FailureClass> = {
   usage_limit: "usage-limit",
   provider_error: "provider-error",
-  transport_error: "provider-error",
+  transport_error: "unreachable",
   permission_error: "permission-error",
   validation_error: "provider-error",
   unknown: "unknown",
@@ -684,6 +683,7 @@ const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
             _tag: "failed",
             failure: FAILURES[error.failure.class],
             retryAt: parseInstant(error.failure.resetAt),
+            details: failureDetailsOf(error.failure),
           };
     }
     case "cancelled":
@@ -695,6 +695,45 @@ const outcomeOf = (mirror: Mirror, run: Run): TurnOutcome => {
 };
 
 const LIVE_ITEM: ReadonlySet<Item["status"]> = new Set(["idle", "pending", "running", "waiting"]);
+
+/**
+ * Whether the engine is trying the run's provider again after a failure: an
+ * error item of the run that carries a retry and is still running. It
+ * completes once an attempt succeeds and fails once the engine gives up
+ * (**Read** at `59651c1`, T3 Code's client, `session-logic.ts`,
+ * `providerErrorPresentation`).
+ */
+const isRetrying = (mirror: Mirror, run: Run) =>
+  errorsOf(mirror, run).some((item) => item.retry !== undefined && item.status === "running");
+
+const INTERRUPTIBLE_RUN: ReadonlySet<Run["status"]> = new Set(["preparing", "starting", "running"]);
+
+/**
+ * The run whose stop its provider ignores, if any: the engine's own rule for
+ * offering Force stop. The run a stop acts on is the latest run still
+ * interruptible, else the latest one that was not only queued. Its stop is
+ * ignored once the engine marks its interrupt request unresponsive, until a
+ * result of the interrupt is recorded; on a run that has ended, it is the stop
+ * of the background work the run left. **Read** at `59651c1`,
+ * `packages/client-runtime/src/state/threadExecution.ts`, `presentRunStop`, and
+ * `ThreadManagementService.ts`, `forceStopThread`, which picks the same run.
+ */
+const stopIgnoredRun = (mirror: Mirror): Run | undefined => {
+  let active: Run | undefined;
+  let latest: Run | undefined;
+  for (const run of mirror.runs.values()) {
+    if (run.status !== "queued" && run.ordinal > (latest?.ordinal ?? -1)) latest = run;
+    if (INTERRUPTIBLE_RUN.has(run.status) && run.ordinal > (active?.ordinal ?? -1)) active = run;
+  }
+  const run = active ?? latest;
+  if (run === undefined) return undefined;
+  let ignored = false;
+  for (const item of itemsOf(mirror, run)) {
+    if (item.type === "run_interrupt_result") return undefined;
+    if (item.type === "run_interrupt_request") ignored = item.unresponsiveAt !== undefined;
+  }
+  return ignored ? run : undefined;
+};
 
 /**
  * Whether the engine ran the turn in a fresh provider conversation seeded with
@@ -1505,42 +1544,26 @@ const positionOf = (id: string, pattern: RegExp): number | undefined => {
 const optionValueOf = (option: EngineQuestion["options"][number]) =>
   option.value ?? option.label.trim();
 
-const questionOf = (question: EngineQuestion, index: number): Question => ({
+const questionOf = (question: EngineQuestion, index: number): WholeQuestion => ({
   id: questionIdAt(index),
+  header: label(question.header, "Question"),
   prompt: question.question.length > 2000 ? question.question.slice(0, 2000) : question.question,
   options: question.options.map((option, optionIndex) => ({
     id: optionIdAt(optionIndex),
     label: label(option.label, "Option"),
     description: option.description.slice(0, 1000),
     style: "default" as const,
+    ...(option.preview === undefined || option.preview.trim().length === 0
+      ? {}
+      : { preview: option.preview.slice(0, 4000) }),
   })),
   // The engine's own client takes a typed answer unless the question refuses one.
   acceptsText: question.allowCustomAnswer !== false,
   multiple: question.multiSelect ?? false,
 });
 
-/**
- * The card for an engine question, or a notice when a card cannot hold it
- * whole: a question is never shown with parts left out.
- */
+/** The card for an engine question, whole, however many questions and options it has. */
 const questionRequestOf = (item: UserInputRequest): EngineRequest | undefined => {
-  if (item.questions.length > MAX_CARD_QUESTIONS) {
-    return {
-      _tag: "unsupported-question",
-      exceeds: "questions",
-      count: item.questions.length,
-      max: MAX_CARD_QUESTIONS,
-    };
-  }
-  const widest = Math.max(0, ...item.questions.map((question) => question.options.length));
-  if (widest > MAX_QUESTION_OPTIONS) {
-    return {
-      _tag: "unsupported-question",
-      exceeds: "options",
-      count: widest,
-      max: MAX_QUESTION_OPTIONS,
-    };
-  }
   const [first, ...rest] = item.questions.map(questionOf);
   return first === undefined ? undefined : { _tag: "question", questions: [first, ...rest] };
 };
@@ -1945,6 +1968,8 @@ interface TurnView {
   finished: boolean;
   /** Whether the subscriber was told of a continuation that has not run or been dropped. */
   continuation: boolean;
+  /** Whether the subscriber was told the engine is retrying the turn's provider. */
+  retrying: boolean;
 }
 
 /**
@@ -1998,6 +2023,8 @@ export interface View {
   /** Delegated results reported (`delegated-result`), by message id. */
   readonly delegatedResults: Set<string>;
   hold: HoldView;
+  /** The run whose ignored stop the subscriber was told of (`stop-ignored`), or null. */
+  stopIgnored: string | null;
 }
 
 const emptyView = (): View => ({
@@ -2011,6 +2038,7 @@ const emptyView = (): View => ({
   taken: new Set(),
   delegatedResults: new Set(),
   hold: { state: "none" },
+  stopIgnored: null,
 });
 
 export const copyView = (view: View): View => ({
@@ -2024,6 +2052,7 @@ export const copyView = (view: View): View => ({
   taken: new Set(view.taken),
   delegatedResults: new Set(view.delegatedResults),
   hold: view.hold,
+  stopIgnored: view.stopIgnored,
 });
 
 /** Turn items of background work still running: what a replaced provider session may be busy with. */
@@ -2205,6 +2234,7 @@ export const diff = (
       started: false,
       finished: false,
       continuation: false,
+      retrying: false,
     };
     view.turns.set(run.id, turn);
     if (isSteerCarrier(mirror, run)) continue;
@@ -2230,6 +2260,12 @@ export const diff = (
         });
       }
       const ended = isEnded(run);
+      // Told only while the turn runs: its end ends the retrying.
+      const retrying = !ended && isRetrying(mirror, run);
+      if (retrying !== turn.retrying) {
+        turn.retrying = retrying;
+        if (!ended) events.push({ _tag: "turn-retrying", turnId, retrying });
+      }
       // Told only while the turn runs: once it ends, the steer settles.
       if (!ended) {
         for (const steer of steers) {
@@ -2355,6 +2391,11 @@ export const diff = (
     view.delegatedResults.add(messageId);
     events.push({ _tag: "delegated-result", result: delegatedResultEvent(messageId, record) });
   }
+  const ignored = stopIgnoredRun(mirror)?.id ?? null;
+  if (ignored !== view.stopIgnored) {
+    view.stopIgnored = ignored;
+    events.push({ _tag: "stop-ignored", turnId: ignored === null ? null : TurnId.make(ignored) });
+  }
   events.push(
     ...holdEventsOf(mirror, view, {
       started: events.some((event) => event._tag === "turn-started"),
@@ -2419,6 +2460,7 @@ export const replacement = (
           const call = toolCallOf(mirror, item);
           return call !== undefined && !LIVE_ITEM.has(item.status) ? [call] : [];
         }),
+        retrying: isRetrying(mirror, run),
       });
     } else {
       endedTurns.push({
@@ -2486,6 +2528,7 @@ export const replacement = (
       model: mirror.thread === undefined ? null : providers.modelOf(mirror.thread.modelSelection),
       // Stands for a hold the fresh view reports.
       queueHeld: view.hold.state === "reported",
+      stopIgnored: view.stopIgnored === null ? null : TurnId.make(view.stopIgnored),
     },
     view,
   };

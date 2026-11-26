@@ -722,6 +722,28 @@ export class Engine extends Context.Service<
     }) => Effect.Effect<void, EngineDown | SessionNotFound | StopRejected>;
 
     /**
+     * Force stop, for a provider that ignores the engine's stop
+     * (`stop-ignored`): the engine kills the session's own agent processes,
+     * never one another session shares, then ends turn `turnId` as
+     * interrupted, or settles the background work it left once it ended, and
+     * releases its provider session (**Read** at `59651c1`,
+     * `ThreadManagementService.ts`, `forceStopThread`). A turn waiting behind
+     * it is not ended: that is the Stop's to cancel. What the agent already
+     * did stays done, and the next turn starts a new provider session.
+     *
+     * `turnId` pins the turn the stop was ignored on: the engine refuses once
+     * a newer turn has started, which counts as done, since nothing then
+     * ignores the stop the operator saw. Not keyed: the engine keeps no
+     * receipt of it, and sending it again kills nothing more. The events say
+     * when it took: the turn's `turn-finished`, and a `stop-ignored` with
+     * null.
+     */
+    readonly forceStop: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+    }) => Effect.Effect<void, EngineDown | SessionNotFound>;
+
+    /**
      * Releases the session's held queue, in answer to the `queue-held` event
      * whose cursor is `hold`, which is also its key: a retry sends the same
      * command. If the engine holds the queue again in answer, as it does while

@@ -2048,3 +2048,174 @@ describe("a turn's plan and little ones", () => {
     assert.deepStrictEqual(works(diff(mirror, view, at, noProviders)), []);
   });
 });
+
+describe("a provider the engine retries", () => {
+  // The engine records a failure it retries as an error item with the attempt
+  // it is on, running while it retries, completed once an attempt succeeds,
+  // failed once it gives up (**Read** at `59651c1`, T3 Code's `session-logic.ts`,
+  // `providerErrorPresentation`).
+  const retryItem = (status: string) =>
+    item({
+      id: "item-retry",
+      type: "error",
+      status,
+      failure: {
+        class: "transport_error",
+        message: "socket hang up",
+        code: null,
+        retryable: true,
+      },
+      retry: { attempt: 2, maxAttempts: 5, retryDelayMs: 4000 },
+    });
+  const retrying = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((told) => (told._tag === "turn-retrying" ? [told.retrying] : []));
+
+  it("tells the turn retrying while the engine retries, and not once an attempt succeeds", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, retryItem("running"));
+    assert.deepStrictEqual(retrying(diff(mirror, view, at, noProviders)), [true]);
+    assert.isTrue(replacement(mirror, false, at, new Map(), noProviders).event.openTurns[0]?.retrying);
+
+    applyEvent(mirror, retryItem("completed"));
+    assert.deepStrictEqual(retrying(diff(mirror, view, at, noProviders)), [false]);
+    // A recovered failure leaves no trace in how the turn ends.
+    applyEvent(mirror, run("completed", 1));
+    const ended = diff(mirror, view, at, noProviders).find(
+      (told) => told._tag === "turn-finished",
+    );
+    assert.deepStrictEqual(ended?._tag === "turn-finished" && ended.outcome, {
+      _tag: "completed",
+    });
+  });
+
+  it("ends the turn as unreachable, with the engine's words scrubbed, once it gives up", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, retryItem("running"));
+    diff(mirror, view, at, noProviders);
+    applyEvent(
+      mirror,
+      item({
+        id: "item-retry",
+        type: "error",
+        status: "failed",
+        failure: {
+          class: "transport_error",
+          message: "connect failed: Authorization: Bearer abcdefghijklmnop1234",
+          code: "ECONNRESET",
+          retryable: false,
+        },
+        retry: { attempt: 5, maxAttempts: 5, retryDelayMs: null },
+      }),
+    );
+    applyEvent(mirror, run("failed", 1));
+    const told = diff(mirror, view, at, noProviders);
+    // The turn's end ends its retrying: no `turn-retrying` is told after it.
+    assert.deepStrictEqual(retrying(told), []);
+    const ended = told.find((each) => each._tag === "turn-finished");
+    assert.deepStrictEqual(ended?._tag === "turn-finished" && ended.outcome, {
+      _tag: "failed",
+      failure: "unreachable",
+      retryAt: null,
+      details: "transport_error (ECONNRESET): connect failed: Authorization: Bearer [redacted]",
+    });
+  });
+});
+
+describe("a stop the provider ignores", () => {
+  const interrupt = (fields: Record<string, unknown>) =>
+    item({
+      id: "item-interrupt",
+      type: "run_interrupt_request",
+      status: "completed",
+      message: "Stop requested",
+      ...fields,
+    });
+  const ignored = (events: ReadonlyArray<EventBody>) =>
+    events.flatMap((told) => (told._tag === "stop-ignored" ? [told.turnId] : []));
+
+  it("is told once the engine marks the stop unresponsive, and cleared once it is answered", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(mirror, interrupt({}));
+    // Asked, and not yet late: nothing to force.
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), []);
+
+    applyEvent(mirror, interrupt({ unresponsiveAt: at }));
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), [TurnId.make("run-1")]);
+    assert.strictEqual(
+      replacement(mirror, false, at, new Map(), noProviders).event.stopIgnored,
+      TurnId.make("run-1"),
+    );
+
+    applyEvent(
+      mirror,
+      item({
+        id: "item-interrupt-result",
+        type: "run_interrupt_result",
+        status: "completed",
+        message: "Stopped",
+      }),
+    );
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), [null]);
+  });
+
+  it("stays told on a turn that ended while the work it left ignores the stop", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("completed", 1));
+    applyEvent(mirror, interrupt({ unresponsiveAt: at }));
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), [TurnId.make("run-1")]);
+    // A newer turn is the one a stop acts on: the old one's ignored stop no longer counts.
+    applyEvent(mirror, run("running", 2));
+    assert.deepStrictEqual(ignored(diff(mirror, view, at, noProviders)), [null]);
+  });
+});
+
+describe("a question past what a card used to hold", () => {
+  const many = Array.from({ length: 6 }, (_, index) => ({
+    id: `q${index}`,
+    header: `Part ${index + 1}`,
+    question: `Question ${index + 1}?`,
+    options: Array.from({ length: 8 }, (_, option) => ({
+      label: `Option ${option + 1}`,
+      description: "A choice",
+      ...(option === 0 ? { preview: "+-----+\n| box |\n+-----+" } : {}),
+    })),
+  }));
+
+  it("opens whole, with each question's header and each option's preview", () => {
+    const mirror = emptyMirror();
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
+    applyEvent(mirror, run("running", 1));
+    applyEvent(
+      mirror,
+      item({
+        id: "item-ask",
+        type: "user_input_request",
+        status: "waiting",
+        requestId: "request-1",
+        questions: many,
+      }),
+    );
+    const opened = diff(mirror, view, at, noProviders).find(
+      (told) => told._tag === "request-opened",
+    );
+    assert(opened?._tag === "request-opened" && opened.open.request._tag === "question");
+    const { questions } = opened.open.request;
+    assert.strictEqual(questions.length, 6);
+    assert.strictEqual(questions[5]?.options.length, 8);
+    assert.strictEqual(questions[0].header, "Part 1");
+    assert.strictEqual(questions[0].options[0]?.preview, "+-----+\n| box |\n+-----+");
+    assert.notProperty(questions[0].options[1], "preview");
+    // Answers map back to the engine's own keys, past the old limits too.
+    assert.deepStrictEqual(
+      engineAnswersOf(many, answers({ "question-6": { optionIds: ["option-8"], text: null } })),
+      { q5: "Option 8" },
+    );
+  });
+});

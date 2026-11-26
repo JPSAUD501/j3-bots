@@ -1543,6 +1543,32 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     );
   });
 
+  /** Force stop of the turn whose stop its provider ignores (`Engine.forceStop`). */
+  const forceStop = Effect.fn("Engine.forceStop")(function* (input: {
+    readonly sessionId: SessionId;
+    readonly turnId: TurnId;
+  }) {
+    yield* liveProjection(input.sessionId);
+    yield* ready;
+    yield* rpc["orchestration.forceStopThread"]({
+      threadId: ThreadId.make(input.sessionId),
+      runId: RunId.make(input.turnId),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: COMMAND_TIMEOUT,
+        orElse: () => Effect.fail(new EngineIndeterminate()),
+      }),
+      Effect.catchTags({
+        RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+        EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+        // A newer turn started: nothing ignores the stop the operator saw.
+        OrchestrationV2ForceStopThreadError: (error) =>
+          error.reason === "superseded" ? Effect.void : Effect.fail(new EngineUnavailable()),
+      }),
+      Effect.asVoid,
+    );
+  });
+
   /**
    * Releases a held queue, keyed by the hold it answers. The engine refuses a
    * resume while the session waits on a usage limit, whose continuation runs
@@ -2709,6 +2735,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     redispatch,
     stageAttachment,
     stop,
+    forceStop,
     resumeQueue,
     respond,
     respondSecret,

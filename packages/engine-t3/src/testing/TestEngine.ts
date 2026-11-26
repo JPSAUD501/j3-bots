@@ -114,6 +114,7 @@ export type HeldMethod =
   | "respondSecret"
   | "resumeQueue"
   | "stop"
+  | "forceStop"
   | "setHarnessExecutable"
   | "synchronize";
 
@@ -323,6 +324,26 @@ export class TestEngineControl extends Context.Service<
      * succeed as moot once nothing can.
      */
     readonly rejectNextStop: Effect.Effect<void>;
+    /**
+     * The session's provider ignores the engine's stop from now on: a stop
+     * still cancels the turns waiting and holds the queue, but its running
+     * turn, or the background work the latest turn left, goes on, and the
+     * engine marks the stop unresponsive (`stop-ignored`), until `forceStop`.
+     */
+    readonly ignoreStops: (sessionId: SessionId) => Effect.Effect<void>;
+    /** Every `forceStop` the engine received, in order. */
+    readonly forcedStops: Effect.Effect<
+      ReadonlyArray<{ readonly sessionId: SessionId; readonly turnId: TurnId }>
+    >;
+    /**
+     * The engine starts, or stops, trying the running turn's provider again
+     * after a failure (`turn-retrying`).
+     */
+    readonly retry: (input: {
+      readonly sessionId: SessionId;
+      readonly turnId: TurnId;
+      readonly retrying: boolean;
+    }) => Effect.Effect<void>;
     /**
      * Background work wakes the session while the next `start` dispatch is on
      * its way: the adapter's busy check passes, and the engine then queues the
@@ -634,6 +655,8 @@ interface TurnRecord {
   unstoppable: boolean;
   /** The engine ran it in a fresh provider conversation, from its summary of the old one. */
   contextRecovered: boolean;
+  /** The engine is trying its provider again after a failure (`retry`). */
+  retrying: boolean;
   ended: {
     readonly outcome: TurnOutcome;
     readonly at: DateTime.Utc;
@@ -688,6 +711,10 @@ interface SessionRecord {
   holdStartup: boolean;
   /** The turn `holdNextStartup` keeps starting, until released. */
   heldStartup: TurnId | null;
+  /** Set by `ignoreStops`: its provider ignores the engine's stop. */
+  ignoresStops: boolean;
+  /** The turn whose stop its provider ignored, as `stop-ignored` told it, until force-stopped. */
+  stopIgnored: TurnId | null;
 }
 
 type AppliedKey =
@@ -760,6 +787,7 @@ const make = Effect.gen(function* () {
   };
   let rejectingRetirements = 0;
   let rejectStop = false;
+  const forcedStops: Array<{ readonly sessionId: SessionId; readonly turnId: TurnId }> = [];
   const holds = new Map<
     HeldMethod,
     { readonly entered: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
@@ -966,6 +994,7 @@ const make = Effect.gen(function* () {
       unannounced: false,
       unstoppable: false,
       contextRecovered: false,
+      retrying: false,
       ended: null,
     };
     session.turns.set(turn.turnId, turn);
@@ -1242,7 +1271,6 @@ const make = Effect.gen(function* () {
     at: DateTime.Utc,
     cancels: ReadonlyArray<TurnId>,
   ) => {
-    for (const turn of session.turns.values()) turn.background = false;
     holdWaiting(session, at);
     for (const turn of session.turns.values()) dropContinuation(session, turn, at);
     const cancelled = session.waiting.filter((turnId) => cancels.includes(turnId));
@@ -1253,9 +1281,33 @@ const make = Effect.gen(function* () {
     }
     clearEmptyHold(session);
     const running = session.running === null ? undefined : session.turns.get(session.running);
+    if (session.ignoresStops) {
+      // The provider never confirms: the running turn, or the work the latest
+      // turn left, goes on, and the engine marks the stop unresponsive.
+      const latest = [...session.turns.values()].findLast((turn) => turn.startedAt !== null);
+      const target = running ?? latest;
+      if (target !== undefined && session.stopIgnored !== target.turnId) {
+        session.stopIgnored = target.turnId;
+        emit(session, at, (stamp) => ({ _tag: "stop-ignored", ...stamp, turnId: target.turnId }));
+      }
+      return;
+    }
+    for (const turn of session.turns.values()) turn.background = false;
     if (running !== undefined) {
       endTurn(session, running, { _tag: "interrupted" }, at, "stop");
     }
+  };
+
+  /** Force stop: the turn whose stop was ignored ends, and so does the work it left. */
+  const forceStopSession = (session: SessionRecord, turnId: TurnId, at: DateTime.Utc) => {
+    if (session.stopIgnored !== turnId) return;
+    session.stopIgnored = null;
+    const turn = session.turns.get(turnId);
+    if (turn !== undefined) {
+      turn.background = false;
+      if (session.running === turnId) endTurn(session, turn, { _tag: "interrupted" }, at, "stop");
+    }
+    emit(session, at, (stamp) => ({ _tag: "stop-ignored", ...stamp, turnId: null }));
   };
 
   /** Whether anything a Stop targets can still run in the session. */
@@ -1317,6 +1369,7 @@ const make = Effect.gen(function* () {
           closedToolCalls: [...turn.toolCalls.values()].flatMap((record) =>
             record.state === "closed" ? [record.call] : [],
           ),
+          retrying: turn.retrying,
         });
         listed.push(turn);
       } else if (after !== null) {
@@ -1362,6 +1415,7 @@ const make = Effect.gen(function* () {
       delegatedResults: [...session.delegatedResults],
       model: session.model,
       queueHeld,
+      stopIgnored: session.stopIgnored,
     };
   };
 
@@ -1586,6 +1640,8 @@ const make = Effect.gen(function* () {
             failNextStart: null,
             holdStartup: false,
             heldStartup: null,
+            ignoresStops: false,
+            stopIgnored: null,
           });
           if (losingOpenSessionReply) {
             losingOpenSessionReply = false;
@@ -1766,6 +1822,18 @@ const make = Effect.gen(function* () {
                 Effect.map((at) => stopSession(session, at, cancels)),
               ),
             );
+          }),
+        ),
+      ),
+
+    forceStop: ({ sessionId, turnId }) =>
+      door(
+        "forceStop",
+        command(
+          Effect.gen(function* () {
+            const session = yield* liveSession(sessionId);
+            forcedStops.push({ sessionId, turnId });
+            forceStopSession(session, turnId, yield* DateTime.now);
           }),
         ),
       ),
@@ -2143,6 +2211,27 @@ const make = Effect.gen(function* () {
     rejectNextStop: Effect.sync(() => {
       rejectStop = true;
     }),
+
+    ignoreStops: (sessionId) =>
+      Effect.map(existingSession(sessionId), (session) => {
+        session.ignoresStops = true;
+      }),
+
+    forcedStops: Effect.sync(() => [...forcedStops]),
+
+    retry: ({ sessionId, turnId, retrying }) =>
+      Effect.gen(function* () {
+        const session = yield* existingSession(sessionId);
+        const turn = yield* runningTurn(session, turnId);
+        if (turn.retrying === retrying) return;
+        turn.retrying = retrying;
+        emit(session, yield* DateTime.now, (stamp) => ({
+          _tag: "turn-retrying",
+          ...stamp,
+          turnId,
+          retrying,
+        }));
+      }),
 
     holdNextStartup: (sessionId) =>
       Effect.gen(function* () {
