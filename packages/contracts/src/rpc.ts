@@ -437,6 +437,14 @@ export const BotRpcs = RpcGroup.make(
    */
   Rpc.make("bot.stop", { payload: { ...command, botId: BotId }, error: CommandError }),
   /**
+   * Stop, for an AI that ignores it (`Bot.forceStop`): stops the bot as
+   * `bot.stop` does, then has the engine end the AI's program for each of its
+   * sessions whose AI did not confirm a Stop, which ends the turn there.
+   * What the program already did stays done. Once no AI ignores a Stop, as
+   * when the turn ended meanwhile, it is the Stop alone.
+   */
+  Rpc.make("bot.forceStop", { payload: { ...command, botId: BotId }, error: CommandError }),
+  /**
    * Resets the bot's working context: stops any work it has running, then
    * starts it on a new session that carries nothing over from the old one, not
    * even a digest of the conversation. Conversation, memory, routines and
@@ -577,6 +585,13 @@ export const RoomRpcs = RpcGroup.make(
    * already stopped.
    */
   Rpc.make("room.stop", { payload: { ...command, roomId: RoomId }, error: CommandError }),
+  /**
+   * Stop, for a member's AI that ignores the room's (`Room.forceStop`): stops
+   * the room's work as `room.stop` does, then has the engine end the AI's
+   * program wherever it ignores a Stop of the room's work. Fails as
+   * `room.stop` does. Once no AI ignores one, it is the Stop alone.
+   */
+  Rpc.make("room.forceStop", { payload: { ...command, roomId: RoomId }, error: CommandError }),
 );
 
 /**

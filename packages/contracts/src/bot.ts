@@ -59,8 +59,10 @@ export const FailureClass = Schema.Literals([
   "usage-limit",
   /** The provider refused or failed the request. */
   "provider-error",
-  /** The provider rejected the credentials or a permission check. */
+  /** The provider rejected the credentials or a permission check: its account is signed out. */
   "permission-error",
+  /** The provider's service could not be reached, after the engine's own retries. */
+  "unreachable",
   /** The engine could not be reached or restarted mid-turn. */
   "engine-unavailable",
   /** The bot's working context could not be resumed. */
@@ -80,6 +82,19 @@ export type FailureClass = typeof FailureClass.Type;
  * writes and stores only a `FailureClass`.
  */
 export const ReceivedFailureClass = OpenLiterals(FailureClass.literals);
+
+/** The most text `FailureDetails` holds. */
+export const MAX_FAILURE_DETAILS = 2_000;
+
+/**
+ * What the engine said of a failure, in its own technical words (an error's
+ * class, code and message), scrubbed of secrets. Never the words a client
+ * leads with: they show it only behind "Details".
+ */
+export const FailureDetails = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(MAX_FAILURE_DETAILS),
+);
 
 const since = { since: Schema.DateTimeUtc };
 /**
@@ -108,6 +123,16 @@ const typing = {
 };
 
 /**
+ * Set by the server while the turn's AI has failed and the engine is trying it
+ * again on its own. Clients say so in place of what the bot is doing: a retry
+ * that succeeds leaves no trace, and one that gives up ends the turn as
+ * failed. False from a server that predates it.
+ */
+const retrying = {
+  retrying: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+};
+
+/**
  * What the bot is doing. A bot is in exactly one state. Whether it has said
  * something the operator has not read is not a state: it is the roster item's
  * `unread`, and a client shows an idle bot with unread entries as done.
@@ -115,12 +140,13 @@ const typing = {
 export const BotState = Schema.Union([
   Schema.TaggedStruct("idle", {}),
   /** A turn started and no visible work has happened yet. */
-  Schema.TaggedStruct("thinking", { ...since, ...stalled, ...typing }),
+  Schema.TaggedStruct("thinking", { ...since, ...stalled, ...typing, ...retrying }),
   /** A turn is running tools. */
   Schema.TaggedStruct("working", {
     ...since,
     ...stalled,
     ...typing,
+    ...retrying,
     /** One line saying what it is doing right now. */
     activity: Schema.NullOr(Label),
     /**
@@ -208,6 +234,13 @@ export const Bot = Schema.Struct({
    * Clients offer the Stop while it is true, whatever the state.
    */
   settingsHeld: Schema.Boolean,
+  /**
+   * The engine asked the bot's AI to stop, and the AI has not confirmed it in
+   * time: it ignores the Stop. Clients offer Force stop in place of Stop while
+   * it is true, whatever the state, since the work it ignores may have
+   * outlived its turn (`bot.forceStop`). False from a server that predates it.
+   */
+  forceStop: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   /**
    * The bot's opening, the first turn in which it speaks first, is still to
    * come or under way. While it is and the conversation is empty, clients say
