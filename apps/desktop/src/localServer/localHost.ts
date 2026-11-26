@@ -94,6 +94,21 @@ const commandEnvironment = (
 };
 
 /**
+ * Whether `file` lies in `home`, as the system resolves its folder and the
+ * home: a folder reached through a link or a junction to the home counts as
+ * the home. `relative` compares without case on Windows, as its files do.
+ */
+export const holdsFile = Effect.fn("LocalHost.holdsFile")(function* (home: string, file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const resolved = (entry: string) => fs.realPath(entry).pipe(Effect.orElseSucceed(() => entry));
+  const data = yield* resolved(home);
+  const folder = yield* resolved(path.dirname(path.resolve(file)));
+  const relative = path.relative(data, folder);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+});
+
+/**
  * The server's environment: a command's (`commandEnvironment`), with the
  * address it listens on and the web client it serves.
  */
@@ -383,6 +398,7 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     prepare: prepareChosen(home, homeSystem).pipe(Effect.provideContext(context)),
     start: supervisor.start,
     stop: supervisor.stop,
+    holds: (file) => holdsFile(home, file).pipe(Effect.provideContext(context)),
     exportTo,
     deleteData,
   };

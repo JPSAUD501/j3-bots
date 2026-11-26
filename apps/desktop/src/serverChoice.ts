@@ -13,6 +13,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Redacted from "effect/Redacted";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -65,6 +66,8 @@ export interface LocalServer {
   readonly start: Effect.Effect<void>;
   /** Stops it, gracefully, its data kept. */
   readonly stop: Effect.Effect<void>;
+  /** Whether `file` lies in its data, which `deleteData` deletes, through any link to it. */
+  readonly holds: (file: string) => Effect.Effect<boolean>;
   /** Writes the export of its data to `file`, while it is stopped; says what it left out. */
   readonly exportTo: (
     file: string,
@@ -92,6 +95,8 @@ export const make = Effect.fn("ServerChoice.make")(function* (
 ) {
   const settings = yield* DesktopSettings;
   const oneAtATime = yield* Semaphore.make(1);
+  /** Whether a move is under way: from the server's stop to its export kept, or undone. */
+  const moving = yield* Ref.make(false);
   const refused = (reason: ConnectRefusal): ConnectResult => ({ _tag: "refused", reason });
 
   const connect = Effect.fn("ServerChoice.connect")(function* (address: string, page: Page) {
@@ -172,8 +177,6 @@ export const make = Effect.fn("ServerChoice.make")(function* (
               server,
               localDevice:
                 current.localDevice === null ? null : { ...current.localDevice, current: false },
-              // Bots that moved away and run here again are the operator's choice too.
-              moved: null,
             })),
           ),
           Effect.as(true),
@@ -182,7 +185,9 @@ export const make = Effect.fn("ServerChoice.make")(function* (
           ),
         );
         if (!kept) return "failed";
-        yield* local.start;
+        // Bots that moved away start here again only once the operator says
+        // so (`runHereAgain`): the page opens on the screen that asks.
+        if ((yield* settings.get).moved === null) yield* local.start;
         yield* page.openHome;
         return "changed";
       }),
@@ -247,6 +252,8 @@ export const make = Effect.fn("ServerChoice.make")(function* (
       Effect.gen(function* (): Effect.fn.Return<LocalExportResult> {
         const current = yield* settings.get;
         if (current.mode !== "local" || current.moved !== null) return { _tag: "failed" };
+        if (yield* local.holds(file)) return { _tag: "refused", reason: "inside-data" };
+        yield* Ref.set(moving, true);
         yield* local.stop;
         const exported = yield* Effect.result(local.exportTo(file, passphrase));
         if (Result.isFailure(exported)) {
@@ -285,7 +292,7 @@ export const make = Effect.fn("ServerChoice.make")(function* (
         }
         yield* page.openHome;
         return { _tag: "exported" };
-      }),
+      }).pipe(Effect.ensuring(Ref.set(moving, false))),
     );
   });
 
@@ -362,6 +369,13 @@ export const make = Effect.fn("ServerChoice.make")(function* (
   });
 
   /**
+   * Waits for any change of where the bots run under way to end, a move with
+   * its export among them. Quitting waits for it (`moving`), so an export
+   * never outlives the app that would keep that it was written.
+   */
+  const settled = oneAtATime.withPermits(1)(Effect.void);
+
+  /**
    * Runs `effect` while the bots run on this computer, one at a time with the
    * changes above: a change of where they run never comes between its steps.
    * Nothing, without running it, while they run elsewhere or moved away.
@@ -386,5 +400,7 @@ export const make = Effect.fn("ServerChoice.make")(function* (
     runHereAgain,
     deleteLocalData,
     whileLocal,
+    moving: Ref.get(moving),
+    settled,
   } as const;
 });

@@ -117,6 +117,25 @@ describe("moving the bots on this computer to another server", () => {
     await exportWith(PASSPHRASE, PASSPHRASE);
     expect(onMove).toHaveBeenCalledTimes(2);
   });
+
+  it("says why a file it was given cannot take the export, in the page's words", async () => {
+    const answers: Array<LocalExportResult> = [
+      { _tag: "refused", reason: "taken" },
+      { _tag: "refused", reason: "inside-data" },
+    ];
+    const onMove = vi.fn(() =>
+      Promise.resolve<LocalExportResult>(answers.shift() ?? { _tag: "cancelled" }),
+    );
+    act(() => root.render(<MoveToAnotherServer onMove={onMove} />));
+    await act(async () => {
+      button("Move to another server").click();
+    });
+    await exportWith(PASSPHRASE, PASSPHRASE);
+    expect(problem()).toBe("A file with that name is already there. Choose another name.");
+    await exportWith(PASSPHRASE, PASSPHRASE);
+    expect(problem()).toContain("That folder is inside the bots’ data on this computer");
+    expect(problem()).not.toContain("run here again");
+  });
 });
 
 describe("the screen once the bots moved", () => {

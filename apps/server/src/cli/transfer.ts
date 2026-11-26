@@ -150,7 +150,12 @@ const reportFlag = Flag.String("report").pipe(
 
 const encodeReport = Schema.encodeEffect(ExportReportJson);
 
-/** Writes the export's report where `--report` names, once the archive is in place. */
+/**
+ * Writes the export's report where `--report` names, once the archive is in
+ * place. A report that cannot be written fails the export, as any other
+ * step: the archive it wrote is removed, so a program never finds an export
+ * it was told failed.
+ */
 const writeReport = Effect.fn("transfer.writeReport")(function* (
   to: string,
   archive: string,
@@ -161,8 +166,17 @@ const writeReport = Effect.fn("transfer.writeReport")(function* (
   const file = path.resolve(to);
   yield* encodeReport(report).pipe(
     Effect.flatMap((json) => fs.writeFileString(file, json)),
-    Effect.mapError(() =>
-      refuse(`The export is at ${archive}, but its report could not be written to ${file}.`),
+    Effect.catch(() =>
+      fs
+        .remove(archive, { force: true })
+        .pipe(
+          Effect.ignore,
+          Effect.andThen(
+            Effect.fail(
+              refuse(`The report could not be written to ${file}, so nothing was exported.`),
+            ),
+          ),
+        ),
     ),
   );
 });

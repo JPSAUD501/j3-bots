@@ -83,8 +83,8 @@ const exported = (spec: ExportSpec): Effect.Effect<void, ExportFailed> =>
       resume(Effect.fail(new ExportFailed(reason === undefined ? {} : { reason })));
     });
     child.stdin.end(`${Redacted.value(spec.passphrase)}\n`);
-    // Interrupted, as when the app quits, the export is stopped: on Unix it
-    // removes what it wrote so far, as on any SIGTERM.
+    // Interrupted, the export is stopped: on Unix it removes what it wrote so
+    // far, as on any SIGTERM. Quitting the app waits for it instead.
     return Effect.sync(() => {
       if (child.exitCode === null && child.signalCode === null) child.kill();
     });

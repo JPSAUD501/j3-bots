@@ -1168,6 +1168,9 @@ export const en = {
   "local.move.pending": "Exporting…",
   "local.move.cancel": "Cancel",
   "local.move.failed": "The export failed, and your bots run here again.",
+  "local.move.taken": "A file with that name is already there. Choose another name.",
+  "local.move.insideData":
+    "That folder is inside the bots’ data on this computer, and deleting that data would delete the file too. Choose another folder.",
   "local.moved.title": "Your bots moved to another server",
   "local.moved.body":
     "J3 Bots exported them {when}. Their server on this computer is stopped, and their data is still here.",
@@ -1190,7 +1193,7 @@ export const en = {
   "local.moved.leftOut.attachments.one": "{count} attachment, already missing on this computer.",
   "local.moved.leftOut.attachments.other": "{count} attachments, already missing on this computer.",
   "local.moved.next": "On the new server:",
-  "local.moved.step.import": "Import the file: j3-bots import, with the file’s path.",
+  "local.moved.step.import": "Copy the file there, then import it: j3-bots import, with its path.",
   "local.moved.step.pair":
     "Pair this computer and your phones again: no device is paired there yet.",
   "local.moved.step.webhooks": "Give each webhook its new address there.",

@@ -21,6 +21,8 @@ const SERVER = origin("http://192.168.1.20:3737");
 const LOCAL = origin("http://127.0.0.1:3747");
 const DEVICE = "device-1";
 const EXPORT = "/exports/j3-bots-export.tar.gz";
+/** The bots' data on this computer, which deleting it deletes. */
+const DATA = "/data/server/home";
 const PASSPHRASE = Redacted.make("a long passphrase for the move");
 /** What an export left out: the secrets, which wait for an old vault's password. */
 const LEFT_OUT = {
@@ -36,7 +38,8 @@ const MOVED = { file: EXPORT, at: "2026-11-20T10:00:00.000Z", leftOut: LEFT_OUT 
 /**
  * A server choice over the settings in `file`, whose check answers `answer`,
  * and a page that records what is done to it, with the server kept as it
- * happens. An export fails with `exportRefusal` when it is given.
+ * happens. An export fails with `exportRefusal` when it is given, and ends
+ * only once `exportEnds` does.
  */
 const setUp = (
   file: string,
@@ -44,6 +47,7 @@ const setUp = (
   localAvailable = true,
   prepare: ServerChoice.LocalServer["prepare"] = Effect.succeed(LOCAL),
   exportRefusal?: string,
+  exportEnds: Effect.Effect<void> = Effect.void,
 ) =>
   Effect.gen(function* () {
     const settings = yield* Settings.DesktopSettings;
@@ -54,9 +58,11 @@ const setUp = (
       prepare,
       start: Effect.sync(() => done.push("start local server")),
       stop: Effect.sync(() => done.push("stop local server")),
+      holds: (to) => Effect.succeed(to.startsWith(`${DATA}/`)),
       exportTo: (to, passphrase) =>
         Effect.gen(function* () {
           done.push(`export to ${to} (passphrase ${Redacted.value(passphrase).length} long)`);
+          yield* exportEnds;
           if (exportRefusal !== undefined) {
             return yield* new ExportFailed({ reason: exportRefusal });
           }
@@ -511,6 +517,64 @@ describe("moving the bots away from this computer", () => {
       ]);
       assert.isNull((yield* settings.get).moved);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "refuses a file in their data, which deleting it would delete, before anything stops",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+        const { choice, page, done, settings } = yield* setUp(file);
+        assert.deepStrictEqual(yield* choice.moveAway(page, `${DATA}/export.tar.gz`, PASSPHRASE), {
+          _tag: "refused",
+          reason: "inside-data",
+        });
+        assert.deepStrictEqual(done, []);
+        assert.isNull((yield* settings.get).moved);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("is under way until the move is kept, and what waits for it waits that long", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(JSON.stringify({ mode: "local", server: LOCAL }));
+      const exportEnds = yield* Deferred.make<void>();
+      const { choice, page, done, settings } = yield* setUp(
+        file,
+        null,
+        true,
+        Effect.succeed(LOCAL),
+        undefined,
+        Deferred.await(exportEnds),
+      );
+      assert.isFalse(yield* choice.moving);
+      const move = yield* Effect.forkChild(choice.moveAway(page, EXPORT, PASSPHRASE));
+      yield* Effect.yieldNow.pipe(Effect.repeat({ until: () => done.length === 2 }));
+      assert.isTrue(yield* choice.moving);
+      const quit = yield* Effect.forkChild(choice.settled);
+      yield* Effect.yieldNow;
+      assert.isUndefined(quit.pollUnsafe());
+      yield* Deferred.succeed(exportEnds, undefined);
+      yield* Fiber.join(quit);
+      // What quitting waited for is kept by then.
+      assert.strictEqual((yield* settings.get).moved?.file, EXPORT);
+      assert.isFalse(yield* choice.moving);
+      assert.deepStrictEqual(yield* Fiber.join(move), { _tag: "exported" });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "keeps that they moved when this computer is chosen again, so nothing starts unasked",
+    () =>
+      Effect.gen(function* () {
+        const file = yield* settingsFile(
+          JSON.stringify({ mode: "remote", server: SERVER, moved: MOVED }),
+        );
+        const { choice, page, done, settings } = yield* setUp(file);
+        assert.strictEqual(yield* choice.useThisComputer(page), "changed");
+        assert.deepStrictEqual(done, [`clear (server ${SERVER})`, `open home (server ${LOCAL})`]);
+        assert.deepInclude(yield* settings.get, { mode: "local", server: LOCAL });
+        assert.strictEqual((yield* settings.get).moved?.file, EXPORT);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("runs them here again on their data, which starts their server", () =>

@@ -1183,11 +1183,14 @@ const sentences = {
   "local.move.pending": "Exportando…",
   "local.move.cancel": "Cancelar",
   "local.move.failed": "A exportação falhou, e seus bots voltaram a rodar aqui.",
+  "local.move.taken": "Já existe um arquivo com esse nome aí. Escolha outro nome.",
+  "local.move.insideData":
+    "Essa pasta fica dentro dos dados dos bots neste computador, e apagar esses dados apagaria o arquivo junto. Escolha outra pasta.",
   "local.moved.title": "Seus bots foram para outro servidor",
   "local.moved.body":
     "O J3 Bots os exportou {when}. O servidor deles neste computador está parado, e os dados continuam aqui.",
   "local.moved.file": "O arquivo: {file}",
-  "local.moved.leftOut": "Ficou fora do arquivo:",
+  "local.moved.leftOut": "Ficaram fora do arquivo:",
   "local.moved.leftOut.secrets.old-vault":
     "Os segredos: estão num cofre antigo que espera a senha dele. Para levá-los, rode os bots aqui de novo, digite a senha em Configurações → Segredos e mova os bots outra vez.",
   "local.moved.leftOut.secrets.unreadable":
@@ -1205,10 +1208,11 @@ const sentences = {
   "local.moved.leftOut.attachments.one": "{count} anexo, que já faltava neste computador.",
   "local.moved.leftOut.attachments.other": "{count} anexos, que já faltavam neste computador.",
   "local.moved.next": "No novo servidor:",
-  "local.moved.step.import": "Importe o arquivo: j3-bots import, com o caminho do arquivo.",
+  "local.moved.step.import":
+    "Copie o arquivo para lá e importe: j3-bots import, com o caminho dele.",
   "local.moved.step.pair":
     "Pareie este computador e seus celulares de novo: nenhum dispositivo está pareado lá ainda.",
-  "local.moved.step.webhooks": "Passe a cada webhook o endereço novo dele lá.",
+  "local.moved.step.webhooks": "Dê a cada webhook o endereço novo dele lá.",
   "local.moved.connect": "Conectar ao novo servidor",
   "local.moved.runHere": "Rodar os bots aqui de novo",
   "local.moved.runHere.title": "Rodar os bots aqui de novo?",
@@ -1220,7 +1224,7 @@ const sentences = {
   "local.moved.delete.body":
     "As conversas, a memória, as habilidades, os arquivos e os segredos deles são apagados deste computador. Guarde a exportação até o novo servidor rodar os bots: até lá, ela é a única cópia.",
   "local.moved.delete.secrets":
-    "Os segredos não foram no arquivo: apagar os dados daqui os perde de vez.",
+    "Os segredos não foram no arquivo: se você apagar os dados daqui, eles se perdem de vez.",
   "local.moved.delete.cancel": "Manter os dados",
   "local.moved.failed": "Não deu certo. Tente de novo.",
   "local.moved.leftHere":

@@ -258,12 +258,17 @@ export type LocalExportRequest = typeof LocalExportRequest.Type;
  * - `exported`: the export is written, the server on this computer stopped,
  *   and the page loads again on the screen that says they moved;
  * - `cancelled`: the operator closed the save dialog, and nothing changed;
+ * - `refused`: the file chosen cannot take the export, and nothing changed,
+ *   the bots still running: a file is already there (`taken`), or it lies in
+ *   the bots' data on this computer (`inside-data`), which deleting it would
+ *   delete too;
  * - `failed`: nothing was exported, for `reason` (English, the export's own
  *   words when it gave them), and the bots run here again.
  */
 export const LocalExportResult = Schema.Union([
   Schema.TaggedStruct("exported", {}),
   Schema.TaggedStruct("cancelled", {}),
+  Schema.TaggedStruct("refused", { reason: Schema.Literals(["taken", "inside-data"]) }),
   Schema.TaggedStruct("failed", { reason: Schema.optionalKey(Message) }),
 ]);
 export type LocalExportResult = typeof LocalExportResult.Type;

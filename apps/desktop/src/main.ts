@@ -387,6 +387,8 @@ const program = Effect.gen(function* () {
    * Moves the bots on this computer to another server: asks where to write
    * the export, then has the server choice write it. A name already taken is
    * refused before their server stops: the export never writes over a file.
+   * The name offered carries the minute, so a second move the same day is
+   * not offered the first one's file to replace.
    */
   const exportLocal = Effect.fn("desktop.exportLocal")(function* (
     event: IpcMainInvokeEvent,
@@ -395,11 +397,12 @@ const program = Effect.gen(function* () {
     const decoded = decodeExportRequest(request);
     if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "failed" };
     const owner = BrowserWindow.fromWebContents(event.sender);
-    const today = DateTime.formatIsoDateUtc(yield* DateTime.now);
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const stamp = `${now.slice(0, 10)}-${now.slice(11, 13)}${now.slice(14, 16)}`;
     const options = {
-      defaultPath: path.join(app.getPath("documents"), `j3-bots-export-${today}.tar.gz`),
+      defaultPath: path.join(app.getPath("documents"), `j3-bots-export-${stamp}.tar.gz`),
       filters: [{ name: "J3 Bots export", extensions: ["gz"] }],
-      properties: ["createDirectory" as const, "showOverwriteConfirmation" as const],
+      properties: ["createDirectory" as const],
     };
     const chosen = yield* Effect.promise(() =>
       owner === null ? dialog.showSaveDialog(options) : dialog.showSaveDialog(owner, options),
@@ -409,10 +412,7 @@ const program = Effect.gen(function* () {
     }
     const file = chosen.filePath;
     if (yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))) {
-      return {
-        _tag: "failed",
-        reason: `A file is already at ${file}, and an export never writes over one. Choose another name.`,
-      };
+      return { _tag: "refused", reason: "taken" };
     }
     return yield* choice.moveAway(pageOf(event), file, Redacted.make(decoded.value.passphrase));
   });
@@ -584,20 +584,20 @@ const program = Effect.gen(function* () {
   // keeps the encryption it set up for the process, so only a new one sees
   // the unlocked keyring), is the updater's: it may be into an update.
   const updates = yield* Updater.serve(window, fromApp, {
-    beforeInstall: supervisor.stop,
-    installFailed: Effect.gen(function* () {
-      const { mode, moved } = yield* settings.get;
-      if (mode === "local" && moved === null) yield* supervisor.start;
-    }),
+    // A move under way ends first: its export holds the data, and once it is
+    // kept the server does not start again.
+    beforeInstall: choice.settled.pipe(Effect.andThen(supervisor.stop)),
+    installFailed: choice.whileLocal(supervisor.start).pipe(Effect.asVoid),
   });
   yield* Autostart.serve(fromApp);
 
   // Quit, from the tray, the menu or the system, waits for the server this
-  // computer runs to stop; nothing is left running behind the app.
+  // computer runs to stop, and for a move under way to end, its export kept
+  // or undone; nothing is left running behind the app.
   let quitting = false;
   const holdQuit = quitGate({
-    serverRuns: () => runSync(supervisor.state).state !== "stopped",
-    stopServer: () => runPromise(supervisor.stop),
+    serverRuns: () => runSync(supervisor.state).state !== "stopped" || runSync(choice.moving),
+    stopServer: () => runPromise(choice.settled.pipe(Effect.andThen(supervisor.stop))),
     quit: () => app.quit(),
   });
   const beforeQuit = (event: { readonly preventDefault: () => void }) => {
@@ -630,7 +630,8 @@ const program = Effect.gen(function* () {
   window.on("close", (event) => {
     if (saved) return;
     event.preventDefault();
-    if (!quitting && runSync(settings.get).mode === "local") {
+    const { mode, moved } = runSync(settings.get);
+    if (!quitting && mode === "local" && moved === null) {
       void saveBounds();
       window.hide();
       return;

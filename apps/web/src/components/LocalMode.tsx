@@ -421,7 +421,8 @@ export function StartWithSystem({
 type MoveState =
   | { readonly _tag: "idle" }
   | { readonly _tag: "pending" }
-  | { readonly _tag: "failed"; readonly reason: string | null };
+  | { readonly _tag: "failed"; readonly reason: string | null }
+  | { readonly _tag: "refused"; readonly reason: "taken" | "inside-data" };
 
 /** What the two passphrases say is wrong, once the operator asked to export. */
 type PassphraseProblem = "too-short" | "differ";
@@ -475,7 +476,12 @@ export function MoveToAnotherServer({
       setState(
         answer?._tag === "cancelled"
           ? { _tag: "idle" }
-          : { _tag: "failed", reason: answer?._tag === "failed" ? (answer.reason ?? null) : null },
+          : answer?._tag === "refused"
+            ? { _tag: "refused", reason: answer.reason }
+            : {
+                _tag: "failed",
+                reason: answer?._tag === "failed" ? (answer.reason ?? null) : null,
+              },
       );
     });
   };
@@ -558,11 +564,13 @@ export function MoveToAnotherServer({
                 ? t("local.move.tooShort", { min: EXPORT_PASSPHRASE_MIN_LENGTH })
                 : problem === "differ"
                   ? t("local.move.differ")
-                  : state._tag === "failed"
-                    ? state.reason === null
-                      ? t("local.move.failed")
-                      : `${t("local.move.failed")} ${state.reason}`
-                    : null}
+                  : state._tag === "refused"
+                    ? t(state.reason === "taken" ? "local.move.taken" : "local.move.insideData")
+                    : state._tag === "failed"
+                      ? state.reason === null
+                        ? t("local.move.failed")
+                        : `${t("local.move.failed")} ${state.reason}`
+                      : null}
             </p>
             <div className="flex flex-wrap justify-end gap-2">
               <Button type="button" aria-disabled={pending} onClick={pending ? undefined : close}>
