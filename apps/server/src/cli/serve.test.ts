@@ -6,6 +6,7 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -131,11 +132,13 @@ const isRunning = (pid: number) => {
 
 /**
  * A stand-in for the engine in `folder`, for `J3_ENGINE_BINARY`: a Node
- * script, run by a `.cmd` on Windows and by `sh` elsewhere, that starts a
- * harness that runs until it is ended, writes both ids to `pids` (`Started`),
- * and runs until it is ended. It never answers, so the server never finds it
- * ready, and starts it as it starts the engine: on Windows, through the job
- * launcher.
+ * script that starts a harness that runs until it is ended, writes both ids
+ * to `pids` (`Started`), and runs until it is ended. Elsewhere `sh` runs it;
+ * on Windows a program must, as Node starts no batch file without a shell, so
+ * a small C# program, compiled by Windows' own compiler as the job launcher
+ * is, starts it and waits for it. It never answers, so the server never
+ * finds it ready, and starts it as it starts the engine: on Windows, through
+ * the job launcher.
  */
 const standInEngine = Effect.fn("standInEngine")(function* (folder: string, pids: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -147,14 +150,50 @@ const standInEngine = Effect.fn("standInEngine")(function* (folder: string, pids
       `const { spawn } = require("node:child_process");`,
       `const fs = require("node:fs");`,
       `const harness = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
-      `fs.writeFileSync(${JSON.stringify(`${pids}.partial`)}, JSON.stringify({ engine: process.pid, harness: harness.pid }));`,
+      // The program the server started: on Windows the C# program below, elsewhere this one, which sh became.
+      `const engine = process.platform === "win32" ? process.ppid : process.pid;`,
+      `fs.writeFileSync(${JSON.stringify(`${pids}.partial`)}, JSON.stringify({ engine, harness: harness.pid }));`,
       `fs.renameSync(${JSON.stringify(`${pids}.partial`)}, ${JSON.stringify(pids)});`,
       `setInterval(() => {}, 1000);`,
     ].join("\n"),
   );
   if (process.platform === "win32") {
-    const engine = path.join(folder, "engine.cmd");
-    yield* fs.writeFileString(engine, `@"${process.execPath}" "${script}" %*\r\n`);
+    /** `value` as a C# verbatim string. */
+    const verbatim = (value: string) => `@"${value.replaceAll('"', '""')}"`;
+    const source = path.join(folder, "engine.cs");
+    yield* fs.writeFileString(
+      source,
+      [
+        "class Engine {",
+        "  static int Main() {",
+        `    var start = new System.Diagnostics.ProcessStartInfo(${verbatim(process.execPath)}, ${verbatim(`"${script}"`)});`,
+        "    start.UseShellExecute = false;",
+        "    var script = System.Diagnostics.Process.Start(start);",
+        "    script.WaitForExit();",
+        "    return script.ExitCode;",
+        "  }",
+        "}",
+      ].join("\n"),
+    );
+    const engine = path.join(folder, "engine.exe");
+    const compiler = path.join(
+      yield* Config.String("SystemRoot").pipe(Config.withDefault("C:\\Windows")),
+      "Microsoft.NET",
+      "Framework64",
+      "v4.0.30319",
+      "csc.exe",
+    );
+    yield* Effect.promise(
+      () =>
+        new Promise<void>((resolve, reject) =>
+          NodeChildProcess.execFile(
+            compiler,
+            ["/nologo", "/target:exe", `/out:${engine}`, source],
+            { windowsHide: true },
+            (error) => (error === null ? resolve() : reject(error)),
+          ),
+        ),
+    );
     return engine;
   }
   const engine = path.join(folder, "engine");
@@ -288,6 +327,8 @@ describe("serve, as the desktop app runs it", () => {
               Effect.die(`the engine did not start; the server wrote:\n${server.output()}`),
           }),
         );
+        // Both are ended, and gone, before their folder is removed: Windows
+        // removes no program's file while it runs.
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             for (const pid of [started.engine, started.harness]) {
@@ -297,7 +338,17 @@ describe("serve, as the desktop app runs it", () => {
                 // Already gone.
               }
             }
-          }),
+          }).pipe(
+            Effect.andThen(
+              Effect.sync(() => isRunning(started.engine) || isRunning(started.harness)).pipe(
+                Effect.repeat({
+                  while: (running) => running,
+                  schedule: Schedule.spaced("100 millis"),
+                }),
+                Effect.timeoutOption(Duration.seconds(10)),
+              ),
+            ),
+          ),
         );
 
         // Only the server ends, as in a crash: what it started keeps running.

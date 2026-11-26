@@ -293,9 +293,15 @@ describe.runIf(process.platform === "win32")("on Windows", () => {
         const missing = path.join(root, "missing");
         for (const folder of [kept, opened, denied]) yield* createPrivateFolder(folder);
         yield* openToOthers(opened);
-        // Everyone, which every token holds.
-        yield* runInPowerShell(
-          `icacls ${powerShellLiteral(denied)} /deny ${powerShellLiteral("*S-1-1-0:(OI)(CI)W")}`,
+        // Everyone, which every token holds; taken off again, or the folder could not be removed.
+        yield* Effect.acquireRelease(
+          runInPowerShell(
+            `icacls ${powerShellLiteral(denied)} /deny ${powerShellLiteral("*S-1-1-0:(OI)(CI)W")}`,
+          ),
+          () =>
+            runInPowerShell(
+              `icacls ${powerShellLiteral(denied)} /remove:d ${powerShellLiteral("*S-1-1-0")}`,
+            ).pipe(Effect.orDie),
         );
 
         const reads = yield* readFolderAcls([kept, opened, denied, missing]);
