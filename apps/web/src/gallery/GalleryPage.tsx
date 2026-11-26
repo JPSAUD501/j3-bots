@@ -1911,13 +1911,13 @@ function DetailsSection() {
           />
         </Pane>
         <Pane>
-          {/* Hidden, with nothing to stop: the line under its profile. */}
+          {/* Hidden, with nothing to stop: the line under its profile. No connector yet: the line that says to ask it. */}
           <BotDetails
             bot={{ ...moss, hidden: true }}
             routines={[]}
             memory={[]}
             files={[]}
-            connectors={sampleConnectors}
+            connectors={[]}
             teammates={[]}
             modelName={null}
             browserHost={READY_BROWSER}

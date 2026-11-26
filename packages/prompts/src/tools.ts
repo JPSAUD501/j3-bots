@@ -1128,7 +1128,7 @@ export const MANAGEMENT_REFUSED = {
   secretInAddress: (name: string) =>
     `The secret ${name} is referenced in the address, where J3 Bots does not resolve it: a reference goes in a header, an argument or a variable. A service that takes its key only in the address can't be added for now. Nothing changed.`,
   secretDestination: (name: string) =>
-    `This server sends the secret ${name}, so only your user can change where it sends it: its address, headers, command, arguments and other variables, in Settings → MCP and skills. You may change which secrets it names. Or remove it and add a new one, asking your user for the secret again with \`ask_for_secret\`. Nothing changed.`,
+    `This server sends the secret ${name}, so you can't change where it sends it: its address, headers, command, arguments and other variables. You may change which secrets it names. Your user can change a command server's command line on its page in Settings → MCP and skills, on the web or the desktop app. For anything else, remove it and add a new one, asking your user for the secret again with \`ask_for_secret\`. Nothing changed.`,
   privateNetwork:
     "That address is in your user's own network, which J3 Bots can't add for now. Nothing changed.",
   ownApp:

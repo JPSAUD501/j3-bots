@@ -479,7 +479,7 @@ export function BotDetails({
 
 /**
  * The connectors the bot may use, each with its status, opening its page;
- * then the connectors screen, where the operator connects more for it.
+ * then the connectors screen, where the operator looks after them.
  */
 function BotConnectors({
   connectors,

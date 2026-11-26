@@ -115,8 +115,8 @@ A connector a bot added connects as its service asks:
   - On **Android**, with the server at an `https:` address it knows ([`publicOrigin`](exposing.md#publicorigin)), the sign-in opens in a browser tab and returns to the server, never through the phone.
   - A service that lets J3 Bots register itself is registered on the first sign-in that finishes, and that registration is used again on every later one.
 - **Takes a key.** The connector names your secret; save the key under that name in **Settings → Secrets** and share it with the bots that use the connector. Its page can also take a new value for a field, in a masked field.
-- **Runs a command.** A bot adds one only from your own words, and a package it fetches as it starts (`npx`, `uvx`) must be named at an exact version, so what runs is what the bot was given. It runs on the server as the user J3 Bots runs as, with everything that user can reach. Of the server's environment it gets only where programs are, its home, its language and its temporary folder.
-  - On the web and the desktop, its page has **Change command**, with the whole command line and the name of every setting it gets. A new value for a setting is saved as it is. Anything else, the program, an argument or a setting added, removed or renamed, needs the arguments and every value typed again, and your confirmation. The old program stops, and a tool the new one adds waits for you.
+- **Runs a command.** A bot is told to add one only from your own words, and nothing else enforces that: in Supervised you approve the add first; in Auto and Full access nothing asks, and the step in its conversation and this list show it afterwards. A package it fetches as it starts (`npx`, `uvx`) must be named at an exact version, so what runs is what the bot was given. It runs on the server as the user J3 Bots runs as, with everything that user can reach. Of the server's environment it gets only where programs are, its home, its language and its temporary folder.
+  - On the web and the desktop, its page has **Change command**, with the whole command line and the name of every setting it gets. A new value for a setting is saved as it is. Anything else, the program, an argument or a setting added, removed or renamed, needs the arguments and every value typed again, and your confirmation. The old program stops, and the bots get the new one's tools as it lists them.
   - When it isn't running, its page says why: the program isn't on that computer (install it, or name it by its full path), or it stopped or couldn't start (check the command and its settings; it starts again when a bot next uses it).
 
 Android has the same screens. It changes no command, and shows a command connector read-only, to manage from a computer.
@@ -135,7 +135,7 @@ A connector's page shows its status and what fixes it:
 
 When a bot finds its connector signed out, it shows a card in its conversation that reconnects it. You are notified then, not when nobody is using the connector.
 
-**When a service changes its tools**, the page shows "Changes to review": what was added or changed. Bots get none of those until you **Accept**; the tools that didn't change keep working. **Not now** keeps them held.
+**When a service changes its tools**, the bots get them as its server lists them; your bots' permission mode still decides whether each call asks you first.
 
 **Disconnect** asks first. It signs J3 Bots out at the service where it can, deletes what the server kept for it, and the bots lose its tools at once. Your account at the service is not changed.
 

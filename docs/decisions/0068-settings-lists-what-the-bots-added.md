@@ -12,7 +12,7 @@ The owner's complaint was that Settings showed what doesn't matter to them. A pe
 
 **Settings lists the connectors and skills the bots added, and lets the operator look after them. Adding is done by asking a bot.**
 
-- **Connectors.** Settings → Connectors, and Connectors in a bot's details, list the connectors that exist. Each one's page signs it in, takes a new value for a field, chooses its bots, accepts its changed tools and disconnects it. On the web and the desktop, a command connector's page keeps **Change command** and its confirmation: a command whose settings carry a value a bot can't fix, or a program at a path that moved, is the operator's to change.
+- **Connectors.** Settings → Connectors, and Connectors in a bot's details, list the connectors that exist. Each one's page signs it in, takes a new value for a field, chooses its bots and disconnects it. On the web and the desktop, a command connector's page keeps **Change command** and its confirmation: a command whose settings carry a value a bot can't fix, or a program at a path that moved, is the operator's to change.
 - **Skills.** The list shows the skills a bot saved or installed, by name. A skill's page still shows its `SKILL.md` and lets the operator edit or remove it. J3 Bots' own skills are not listed: the bots still have them, and nobody can remove them.
 - **No library, no add forms.** The featured list, the registry search, the add-your-own form and the new-skill form are gone from the web, desktop and Android clients, with the client code only they used.
 - **An empty list says, in one line, to ask a bot.**
