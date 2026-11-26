@@ -1423,7 +1423,11 @@ describe("a turn the engine ran on recovered context", () => {
 
 describe("how full a turn left the session's context", () => {
   /** A provider turn of the run's attempt, reporting this token usage. */
-  const providerTurn = (ordinal: number, usage: Record<string, unknown> | undefined) =>
+  const providerTurn = (
+    ordinal: number,
+    usage: Record<string, unknown> | undefined,
+    status = "completed",
+  ) =>
     event("provider-turn.updated", {
       id: `provider-turn-${ordinal}`,
       providerThreadId: "provider-thread-1",
@@ -1431,9 +1435,9 @@ describe("how full a turn left the session's context", () => {
       runAttemptId: "attempt-1",
       nativeTurnRef: null,
       ordinal,
-      status: "completed",
+      status,
       startedAt: at,
-      completedAt: at,
+      completedAt: status === "running" ? null : at,
       ...(usage === undefined
         ? {}
         : { tokenUsage: { updatedAt: "2026-11-20T12:00:00Z", ...usage } }),
@@ -1460,6 +1464,17 @@ describe("how full a turn left the session's context", () => {
     assert.deepStrictEqual(
       ended(
         providerTurn(1, { usedTokens: 90_000, maxTokens: 200_000, autoCompactThreshold: 117_000 }),
+      ),
+      { live: [fill], resumed: [fill] },
+    );
+  });
+
+  it("keeps the usage a provider turn reported while it ran through its final update, which has none", () => {
+    const fill = { usedTokens: 160_000, limitTokens: 200_000 };
+    assert.deepStrictEqual(
+      ended(
+        providerTurn(1, { usedTokens: 160_000, maxTokens: 200_000 }, "running"),
+        providerTurn(1, undefined),
       ),
       { live: [fill], resumed: [fill] },
     );

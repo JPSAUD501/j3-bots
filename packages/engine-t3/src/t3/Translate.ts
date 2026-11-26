@@ -368,11 +368,21 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
     case "provider-session.detached":
       mirror.providerSessions.delete(event.payload.providerSessionId);
       return false;
-    case "provider-turn.updated":
+    case "provider-turn.updated": {
       // No session event is made of it: its token usage is read at its run's
-      // end (`contextFillOf`).
-      mirror.providerTurns.set(event.payload.id, event.payload);
+      // end (`contextFillOf`). An update without usage keeps the usage the
+      // provider turn last reported, as the engine's projection keeps it: a
+      // provider turn's final update carries none (**Read** at `59651c1`,
+      // `upsertProviderTurn` in `ProjectionStore.ts`; the terminal
+      // `provider_turn.updated` in `ClaudeAdapterV2.ts` and `CodexAdapterV2.ts`).
+      const tokenUsage =
+        event.payload.tokenUsage ?? mirror.providerTurns.get(event.payload.id)?.tokenUsage;
+      mirror.providerTurns.set(
+        event.payload.id,
+        tokenUsage === undefined ? event.payload : { ...event.payload, tokenUsage },
+      );
       return false;
+    }
     case "message.updated": {
       // The engine records a run's opening message in the command that
       // creates the run, after `run.created` (**Read** at `db51b67`,

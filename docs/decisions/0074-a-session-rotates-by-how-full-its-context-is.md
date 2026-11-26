@@ -23,7 +23,7 @@ The engine reports how full a session's context is. Each provider turn carries i
 ## Costs
 
 - A quarter of the context is left unused before each rotation, so a session is replaced earlier than the harness would compact it. The margin is what lets the next turn run without reaching the compaction point; one turn that alone fills more than that still meets the harness's compaction.
-- The measure is as of the turn's end. A usage the provider reports only after the turn ended counts from the next turn's end, so a rotation can come one turn late.
+- The measure is as of the turn's end. A usage the provider reports only after the turn ended is missed, and the next turn's end measures the context again, so a rotation can come one turn late.
 - The share is a guess, like the run count it replaces ([open question 6](../open-questions.md#6-when-should-a-main-session-rotate-and-what-does-the-digest-contain)).
 - A new rotation reason needs a migration of `sessions.rotation_reason`'s check.
 

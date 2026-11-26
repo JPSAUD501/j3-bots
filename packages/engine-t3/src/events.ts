@@ -599,7 +599,7 @@ export const SessionEvent = Schema.Union([
      * the provider reported no usage for it, or no limit to measure it by: a
      * turn that never started, or a provider that does not report it. A
      * usage the provider reported only after the turn's end is not in it; the
-     * next turn's end reads it.
+     * next turn's end measures the context again.
      */
     context: Schema.NullOr(ContextFill),
   }),
