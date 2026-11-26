@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * `@j3-bots/processes`: starting and stopping programs the server runs, with
- * nothing of any one program's in it. On Windows, {@link inJob} runs a program
+ * nothing of any one program's in it, and the lock one process at a time
+ * holds on a file ({@link holdLock}). On Windows, {@link inJob} runs a program
  * in a job object, so that nothing it started outlives it.
  */
 export { inJob, type JobStdio, jobLauncher } from "./job.ts";
+export { holdLock, holdLockWaiting, LockUnusable } from "./lock.ts";
 export {
   POWERSHELL,
   powerShellArgs,

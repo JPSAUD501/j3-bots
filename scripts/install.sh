@@ -193,14 +193,69 @@ installed_version() {
 }
 
 # Refuses the folder $1 when another account could change what is in it: it
-# must be this user's, and not writable by everyone. Its group may write, as a
-# folder made under umask 002 lets the user's own group. What is in these
-# folders runs as this user.
+# must be this user's, and no account but this user may write to it. Its
+# group may, when that is this user's own group, as a folder made under
+# umask 002 lets it. What is in these folders runs as this user.
+#
+# Then every folder the way to it passes through, up from /, following each
+# link on the way where the link is and where it leads: another account that
+# may write to one could move what it holds away, $1 with it, and put a
+# folder or a link of its own there. Each must be this user's or root's, and
+# written by no other account, unless it is sticky, as /tmp is, where only
+# the owner of what it holds may move that.
 private_folder() {
   [ -n "$(find -H "$1" -prune -user "$(id -u)")" ] ||
     fail "$1 belongs to another account, which could change what runs from it. Choose a folder of your own, such as one under $HOME."
   [ -n "$(find -H "$1" -prune ! -perm -o+w)" ] ||
     fail "$1 can be written by every account, which could change what runs from it. Take that away with \`chmod o-w $1\`, then run this again."
+  [ -n "$(find -H "$1" -prune \( ! -perm -g+w -o -group "$(id -g)" \))" ] ||
+    fail "$1 can be written by its group, which is not this user's own, so other accounts could change what runs from it. Take that away with \`chmod g-w $1\`, then run this again."
+  private_way "$1"
+}
+
+# Checks every folder a lookup of the absolute path $1 looks in, as the
+# kernel makes it: name by name from /, and at a link, on from where it
+# leads, as many links as the kernel follows at most.
+private_way() {
+  way_rest="$1" way_at= way_links=0 way_newline='
+'
+  while :; do
+    while case "$way_rest" in /*) true ;; *) false ;; esac; do way_rest="${way_rest#/}"; done
+    [ -n "$way_rest" ] || return 0
+    case "$way_rest" in
+      */*) way_name="${way_rest%%/*}" way_rest="${way_rest#*/}" ;;
+      *) way_name="$way_rest" way_rest= ;;
+    esac
+    case "$way_name" in
+      .) continue ;;
+      ..) way_at="${way_at%/*}" && continue ;;
+    esac
+    private_on_way "${way_at:-/}" "$1"
+    if [ -L "$way_at/$way_name" ]; then
+      way_links=$((way_links + 1))
+      [ "$way_links" -le 40 ] || fail "The way to $1 goes through more links than a lookup follows. Choose a folder of your own, such as one under $HOME."
+      # The x keeps the newlines a target may end in, which $(…) would drop with readlink's own.
+      way_link="$(readlink -- "$way_at/$way_name" && printf x)" || fail "Could not read the link $way_at/$way_name on the way to $1. Check that this user may open it, then run this again."
+      way_link="${way_link%x}"
+      way_link="${way_link%"$way_newline"}"
+      case "$way_link" in /*) way_at= ;; esac
+      way_rest="$way_link/$way_rest"
+    else
+      way_at="$way_at/$way_name"
+    fi
+  done
+}
+
+# Checks $1, a folder the way to $2 passes through, as private_folder says.
+private_on_way() {
+  [ -n "$(find -H "$1" -prune \( -user "$(id -u)" -o -user 0 \))" ] ||
+    fail "$1, a folder on the way to $2, belongs to another account, which could move what is on the way away and put its own in its place. Choose a folder of your own, such as one under $HOME."
+  # Sticky: only the owner of what is in it may move that.
+  [ -z "$(find -H "$1" -prune -perm -1000)" ] || return 0
+  [ -n "$(find -H "$1" -prune ! -perm -o+w)" ] ||
+    fail "$1, a folder on the way to $2, can be written by every account, which could move what is on the way away and put its own in its place. Take that away with \`chmod o-w $1\`, or choose another folder, then run this again."
+  [ -n "$(find -H "$1" -prune \( ! -perm -g+w -o -group "$(id -g)" \))" ] ||
+    fail "$1, a folder on the way to $2, can be written by its group, which is not this user's own, so another account could move what is on the way away and put its own in its place. Take that away with \`chmod g-w $1\`, or choose another folder, then run this again."
 }
 
 recorded=

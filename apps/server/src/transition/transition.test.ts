@@ -14,7 +14,13 @@ import { devicesApart } from "../testing/filesystem.ts";
 import { type ServerProbe } from "./readiness.ts";
 import { decideStart, readRuntimeRecord, recordReady } from "./record.ts";
 import { type Side, StepFailed } from "./switch.ts";
-import { type HostSteps, rollBack, transition, TransitionLock } from "./transition.ts";
+import {
+  abandonRollback,
+  type HostSteps,
+  rollBack,
+  transition,
+  TransitionLock,
+} from "./transition.ts";
 
 const OLD = { version: "0.3.0" };
 const NEW = { version: "0.3.1" };
@@ -545,6 +551,80 @@ it.layer(NodeServices.layer)("a version transition", (it) => {
       const record = Option.getOrThrow(yield* recordOf(home));
       assert.deepStrictEqual([record.version, record.rollback], ["0.3.0", { from: "0.3.1" }]);
     }),
+  );
+
+  it.effect("gives up a rollback whose snapshot lost a file, and the release it left runs on", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { home, database, host, steps, lock } = yield* hostOn();
+      const { outcome } = yield* transition({ lock, from: OLD, to: NEW, steps });
+      assert.strictEqual(outcome._tag, "updated");
+      if (outcome._tag !== "updated") return;
+      yield* fs.remove(path.join(outcome.snapshot.folder, "j3.sqlite"));
+
+      // Every rollback stops while it copies, before it changes the data.
+      const first = yield* rollBack({ lock, snapshot: outcome.snapshot, steps });
+      assert.strictEqual(Option.getOrThrow(first).step, "restore");
+      const left = Option.getOrThrow(yield* unfinishedRollback(home));
+      const again = yield* rollBack({ lock, snapshot: left.snapshot, steps });
+      assert.strictEqual(Option.getOrThrow(again).step, "restore");
+      assert.strictEqual(left.mark.stage, "copying");
+      assert.strictEqual(yield* fs.readFileString(database), "data of 0.3.1");
+      host.log.length = 0;
+      host.startedOn.length = 0;
+
+      const failed = yield* abandonRollback({ lock, snapshot: left.snapshot, steps });
+
+      assert.isTrue(Option.isNone(failed));
+      assert.deepStrictEqual(host.log, ["start 0.3.1", "adopt 0.3.1"]);
+      assert.deepStrictEqual(host.startedOn, ["0.3.1 on data of 0.3.1"]);
+      assert.isTrue(Option.isNone(yield* unfinishedRollback(home)));
+      const record = Option.getOrThrow(yield* recordOf(home));
+      assert.deepStrictEqual([record.version, record.pending], ["0.3.1", undefined]);
+      assert.deepStrictEqual(
+        (yield* listSnapshots(home)).map(({ folder }) => folder),
+        [outcome.snapshot.folder],
+        "the snapshot stays",
+      );
+    }),
+  );
+
+  it.effect(
+    "refuses to give up a rollback that put any of its snapshot back, or whose mark cannot be read",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const marks = [
+          { text: JSON.stringify({ release: OLD.version, stage: "swapping" }), stage: "swapping" },
+          // A mark a failing disk damaged, after a swap made its folder, may have said `swapping`.
+          { text: '{"release":"0.3.0","sta', stage: "unread" },
+        ];
+        for (const mark of marks) {
+          const { home, host, steps, lock } = yield* hostOn();
+          const { outcome } = yield* transition({ lock, from: OLD, to: NEW, steps });
+          assert.strictEqual(outcome._tag, "updated");
+          if (outcome._tag !== "updated") return;
+          yield* fs.writeFileString(path.join(outcome.snapshot.folder, "restoring"), mark.text);
+          yield* fs.makeDirectory(
+            path.join(outcome.snapshot.folder, "replaced-20261122T000500Z-a1"),
+          );
+          const left = Option.getOrThrow(yield* unfinishedRollback(home));
+          host.log.length = 0;
+
+          const refused = yield* Effect.exit(
+            abandonRollback({ lock, snapshot: left.snapshot, steps }),
+          );
+
+          assert.isTrue(Exit.isFailure(refused));
+          assert.deepStrictEqual(host.log, []);
+          assert.strictEqual(
+            Option.getOrThrow(yield* unfinishedRollback(home)).mark.stage,
+            mark.stage,
+          );
+        }
+      }),
   );
 
   it.effect("runs one operation at a time under a lock, and none once it is released", () =>

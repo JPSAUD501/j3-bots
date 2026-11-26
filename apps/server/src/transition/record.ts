@@ -144,11 +144,13 @@ export const recordTransitioned = Effect.fn("transition.recordTransitioned")(fun
 });
 
 /**
- * Records that the server of `version` became ready on `home` outside a
- * transition: what a host does once a release `decideStart` let start as it
- * is answers ready, so the next release to start on the home is a change. A
- * rollback recorded for `version` stays recorded, so the release it rolled
- * back from is still not tried again by itself.
+ * Records that `home`'s data is handed to `version` outside a transition:
+ * what a host does once a release `decideStart` let start as it is answers
+ * ready, so the next release to start on the home is a change, and what
+ * giving up a rollback that put nothing back does, the data being that
+ * release's still. Nothing is pending after it. A rollback recorded for
+ * `version` stays recorded, so the release it rolled back from is still not
+ * tried again by itself.
  */
 export const recordReady = Effect.fn("transition.recordReady")(function* (
   home: string,

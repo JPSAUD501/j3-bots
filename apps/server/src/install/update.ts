@@ -37,6 +37,7 @@ import * as Transition from "../transition/transition.ts";
 import {
   backupsElsewhere,
   backupsElsewhereReason,
+  heldOff,
   HOME_ROOM,
   listSnapshots,
   restoreBytes,
@@ -89,6 +90,9 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
     "busy",
     "backups-elsewhere",
     "moved",
+    "command-apart",
+    "no-rollback",
+    "abandoned-release-gone",
   ]),
   detail: Schema.String,
 }) {
@@ -117,11 +121,17 @@ class UpdateRefused extends Schema.TaggedError<UpdateRefused>()("UpdateRefused",
       case "release-gone":
         return `J3 Bots ${this.detail}, the release the snapshot to roll back to was taken from, is no longer in this install. Install it with install.sh --version ${this.detail} after \`j3-bots uninstall\`, or put the snapshot back by hand.`;
       case "restore-unfinished":
-        return `A rollback to the snapshot in ${this.detail} has not finished, so the service stays disabled and no other release may run on the data directory. \`j3-bots update --rollback\` finishes it. Nothing was changed.`;
+        return this.detail;
       case "busy":
         return `Another \`j3-bots update\` or \`j3-bots update --rollback\` is running for ${this.detail}. Wait for it to end, then run this again. Nothing was changed.`;
       case "backups-elsewhere":
         return this.detail;
+      case "command-apart":
+        return this.detail;
+      case "no-rollback":
+        return `No rollback of ${this.detail} has been left unfinished, so there is none to give up. Nothing was changed.`;
+      case "abandoned-release-gone":
+        return `J3 Bots ${this.detail}, the release the data directory is left with once the rollback is given up, is no longer in this install. Install it with install.sh --version ${this.detail} after \`j3-bots uninstall\`, then run this again. Nothing was changed.`;
     }
   }
 }
@@ -433,9 +443,10 @@ const checkNoUnfinishedRollback = Effect.fn("update.checkNoUnfinishedRollback")(
 ) {
   const unfinished = yield* unfinishedRollback(home);
   if (Option.isSome(unfinished)) {
+    const { snapshot, mark } = unfinished.value;
     return yield* new UpdateRefused({
       reason: "restore-unfinished",
-      detail: unfinished.value.snapshot.folder,
+      detail: `A rollback to J3 Bots ${mark.release}, from ${snapshot.folder}, has not finished, so ${heldOff(mark.release, mark.stage === "restored")}. \`j3-bots update --rollback\` finishes it. Nothing was changed.`,
     });
   }
 });
@@ -460,6 +471,46 @@ const checkBackupsBeside = Effect.fn("update.checkBackupsBeside")(function* (hom
     reason: "backups-elsewhere",
     detail: `${backupsElsewhereReason(elsewhere.value)} ${fix}, then run this again. Nothing was changed.`,
   });
+});
+
+/**
+ * Fails when the j3-bots command runs another release than the service, as
+ * a rollback or an update cut off after the service changed and before the
+ * command was pointed leaves them. Rolling back from there would take the
+ * snapshot of an older update for the one just finished: the command is
+ * pointed at the release the service runs first.
+ */
+const checkCommandBeside = Effect.fn("update.checkCommandBeside")(function* (installed: Installed) {
+  const path = yield* Path.Path;
+  if (!installed.service || Option.isNone(installed.command)) return;
+  const command = path.basename(installed.command.value);
+  const service = installed.release.version;
+  if (command === service) return;
+  return yield* new UpdateRefused({
+    reason: "command-apart",
+    detail: `The service runs J3 Bots ${service}, but the j3-bots command runs ${command}, as a rollback or an update stopped after the service changed and before it pointed the command leaves them. \`j3-bots update --version ${service}\` points the command at the release the service runs; roll back after that, if that is still what you want. Nothing was changed.`,
+  });
+});
+
+/**
+ * Fails unless the folders a change to `root`'s release writes to are this
+ * user's alone, as install.sh checks them: the install folder, its
+ * `versions/`, that release's folder and the command's. Checked before
+ * anything changes, so a change never stops at pointing the command.
+ */
+const checkWrittenFolders = Effect.fn("update.checkWrittenFolders")(function* (
+  installed: Installed,
+  root: string,
+) {
+  const path = yield* Path.Path;
+  for (const folder of [
+    installed.install,
+    path.join(installed.install, VERSIONS),
+    root,
+    path.dirname(installed.launcher),
+  ]) {
+    yield* checkOwnFolder(folder);
+  }
 });
 
 /**
@@ -520,6 +571,8 @@ export const update = Effect.fn("update.update")(function* <R>(options: {
   }
 
   yield* checkBackupsBeside(installed.home);
+  // fetchRelease checks the release's own folders; the command's is written last.
+  yield* checkOwnFolder(path.dirname(installed.launcher));
   yield* roomFor(
     installed.home,
     yield* transitionRoom(installed.home),
@@ -597,9 +650,10 @@ type RollbackResult =
  * Puts back `rollbackSnapshot` and starts the release it was taken from, once
  * `confirm` agrees: what the operator asks for with `--rollback`, which also
  * finishes a rollback that was cut off, from where it got. Before anything
- * changes, the install folder, its `versions/` and that release's folder must
- * be this user's alone to change, as an update checks them, and there must be
- * room for the copies the restore has still to make.
+ * changes, the command must run the release the service runs, unless a
+ * rollback is being finished, the folders it writes to must be this user's
+ * alone (`checkWrittenFolders`), and there must be room for the copies the
+ * restore has still to make.
  */
 export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
   readonly confirm: (snapshot: Snapshot) => Effect.Effect<boolean, never, R>;
@@ -608,6 +662,10 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
   const path = yield* Path.Path;
   yield* checkBackupsBeside(installed.home);
   const chosen = yield* rollbackSnapshot(installed.home, installed.release.version);
+  // A rollback that has not finished is carried on, whatever the command runs.
+  if (!Option.exists(chosen, ({ restoring }) => Option.isSome(restoring))) {
+    yield* checkCommandBeside(installed);
+  }
   if (Option.isNone(chosen)) {
     const newest = (yield* listSnapshots(installed.home))[0];
     if (newest === undefined) {
@@ -620,12 +678,11 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
   }
   const snapshot = chosen.value;
   const { from } = snapshot.manifest;
-  const versions = path.join(installed.install, VERSIONS);
-  const oldRoot = path.join(versions, from.version);
+  const oldRoot = path.join(installed.install, VERSIONS, from.version);
   if (!(yield* isRelease(oldRoot))) {
     return yield* new UpdateRefused({ reason: "release-gone", detail: from.version });
   }
-  for (const folder of [installed.install, versions, oldRoot]) yield* checkOwnFolder(folder);
+  yield* checkWrittenFolders(installed, oldRoot);
   yield* roomFor(
     installed.home,
     (yield* restoreBytes(installed.home, snapshot)) + HOME_ROOM,
@@ -645,4 +702,55 @@ export const rollBack = Effect.fn("update.rollBack")(function* <R>(options: {
     service: installed.service,
     failed,
   } satisfies RollbackResult;
+}, Effect.scoped);
+
+type AbandonResult =
+  | { readonly _tag: "declined" }
+  | {
+      readonly _tag: "abandoned";
+      readonly snapshot: Snapshot;
+      readonly service: boolean;
+      /** The step that failed, if one did: giving up stopped there. */
+      readonly failed: Option.Option<StepFailed>;
+    };
+
+/**
+ * Gives up the rollback left unfinished, once `confirm` agrees: what the
+ * operator asks for with `--rollback --abandon` when its snapshot cannot be
+ * put back. Only a rollback that put nothing back yet may be given up; the
+ * release the snapshot was taken for then runs again on the data as it is,
+ * and the command is pointed at it. The folders it writes to are checked as a
+ * rollback checks them.
+ */
+export const abandonRollback = Effect.fn("update.abandonRollback")(function* <R>(options: {
+  readonly confirm: (snapshot: Snapshot) => Effect.Effect<boolean, never, R>;
+}) {
+  const { installed, lock } = yield* lockedInstall;
+  const path = yield* Path.Path;
+  const unfinished = yield* unfinishedRollback(installed.home);
+  if (Option.isNone(unfinished)) {
+    return yield* new UpdateRefused({ reason: "no-rollback", detail: installed.home });
+  }
+  const { snapshot } = unfinished.value;
+  yield* Transition.requireAbandonable(snapshot);
+  const { to } = snapshot.manifest;
+  const root = path.join(installed.install, VERSIONS, to.version);
+  if (!(yield* isRelease(root))) {
+    return yield* new UpdateRefused({ reason: "abandoned-release-gone", detail: to.version });
+  }
+  yield* checkWrittenFolders(installed, root);
+  yield* serviceRunning(installed);
+  if (!(yield* options.confirm(snapshot))) return { _tag: "declined" } satisfies AbandonResult;
+
+  const failed = yield* Transition.abandonRollback({
+    lock,
+    snapshot,
+    steps: releaseSteps(installed, path),
+  });
+  return {
+    _tag: "abandoned",
+    snapshot,
+    service: installed.service,
+    failed,
+  } satisfies AbandonResult;
 }, Effect.scoped);

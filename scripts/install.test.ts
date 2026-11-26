@@ -258,4 +258,63 @@ describe("install.sh", () => {
     expect(result.code, result.output).not.toBe(0);
     expect(result.output).toContain("taken only with J3_RELEASE_BASE_URL");
   });
+
+  describe("refuses a folder another account could move away", () => {
+    /** A folder in a new one of this user's, with `mode`, and the install folder made in it. */
+    const within = (mode: number) => {
+      const above = NodePath.join(folder("j3-install-above-"), "shared");
+      NodeFS.mkdirSync(above);
+      NodeFS.chmodSync(above, mode);
+      const inside = NodePath.join(above, "j3-bots");
+      NodeFS.mkdirSync(inside, { mode: 0o755 });
+      return { above, inside };
+    };
+
+    it("when every account may write to a folder it is in, before any download", async () => {
+      const { above, inside } = within(0o777);
+      const signer = keyPair();
+      const site = await mirror(release(signer));
+      const result = await install(site.url, {
+        J3_RELEASE_PUBLIC_KEY: signer.publicKey,
+        J3_INSTALL_DIR: inside,
+      });
+      expect(result.code, result.output).not.toBe(0);
+      expect(result.output).toContain(
+        `${above}, a folder on the way to ${inside}, can be written by every account`,
+      );
+      expect(site.served).toEqual([]);
+    });
+
+    it("when a link on its way is in such a folder, though it leads to a private one", async () => {
+      const { above } = within(0o777);
+      const own = NodePath.join(folder("j3-install-own-"), "j3-bots");
+      NodeFS.mkdirSync(own, { mode: 0o755 });
+      NodeFS.symlinkSync(own, NodePath.join(above, "hop"));
+      const link = NodePath.join(folder("j3-install-link-"), "j3-bots");
+      NodeFS.symlinkSync(NodePath.join(above, "hop"), link);
+      const signer = keyPair();
+      const site = await mirror(release(signer));
+      const result = await install(site.url, {
+        J3_RELEASE_PUBLIC_KEY: signer.publicKey,
+        J3_INSTALL_DIR: link,
+      });
+      expect(result.code, result.output).not.toBe(0);
+      expect(result.output).toContain(`${above}, a folder on the way to ${link}, can be written`);
+      expect(site.served).toEqual([]);
+    });
+
+    it("but not in a sticky folder, as /tmp is, or one only its own group may write", async () => {
+      for (const mode of [0o1777, 0o775]) {
+        const { inside } = within(mode);
+        const signer = keyPair();
+        const site = await mirror(release(signer));
+        const result = await install(site.url, {
+          J3_RELEASE_PUBLIC_KEY: signer.publicKey,
+          J3_INSTALL_DIR: inside,
+        });
+        expect(result.code, `${mode.toString(8)}: ${result.output}`).toBe(0);
+        expect(NodeFS.existsSync(NodePath.join(inside, "versions", VERSION))).toBe(true);
+      }
+    });
+  });
 });

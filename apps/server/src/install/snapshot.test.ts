@@ -298,6 +298,71 @@ it.layer(NodeServices.layer)("a snapshot", (it) => {
       }),
   );
 
+  it.effect("cut off before its manifest is removed by pruning, and nothing else is", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      yield* writeAll(home, { "config.json": "{}", "j3.sqlite": "data" });
+      const kept = yield* takeSnapshot({
+        home,
+        from: { version: "0.1.0" },
+        to: { version: "0.2.0" },
+      });
+      const backups = path.dirname(kept.folder);
+      // Takes cut off before the manifest, and while it was written.
+      yield* writeAll(backups, {
+        "20261122T000100Z-0.2.0-to-0.3.0/j3.sqlite": "data",
+        "20261122T000200Z-0.2.0-to-0.3.0/j3.sqlite": "data",
+        "20261122T000200Z-0.2.0-to-0.3.0/manifest.json": '{"takenAt":"2026-11',
+      });
+      // What is not one: another folder of the operator's, a newer release's
+      // manifest, a folder a rollback marked, and one whose manifest was
+      // damaged after a rollback moved data aside in it.
+      yield* writeAll(backups, {
+        "mine/notes.txt": "kept",
+        "20261122T000300Z-0.3.0-to-0.4.0/manifest.json": '{"format":"newer"}',
+        "20261122T000400Z-0.3.0-to-0.4.0/restoring": "",
+        "20261122T000500Z-0.3.0-to-0.4.0/manifest.json": '{"takenAt":"2026-11',
+        "20261122T000500Z-0.3.0-to-0.4.0/replaced-20261123T000000Z-a1/j3.sqlite": "data",
+      });
+
+      assert.deepStrictEqual(yield* pruneSnapshots(home, 2), []);
+
+      assert.deepStrictEqual(
+        (yield* fs.readDirectory(backups)).sort(),
+        [
+          "20261122T000300Z-0.3.0-to-0.4.0",
+          "20261122T000400Z-0.3.0-to-0.4.0",
+          "20261122T000500Z-0.3.0-to-0.4.0",
+          path.basename(kept.folder),
+          "mine",
+        ].sort(),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("with a mark that cannot be read has copied nothing back until a swap began", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      yield* writeAll(home, { "config.json": "12345", "j3.sqlite": "1234567890" });
+      const taken = yield* takeSnapshot({ home, from: { version: "A" }, to: { version: "B" } });
+      yield* fs.writeFileString(path.join(taken.folder, "restoring"), '{"release":"A","sta');
+      const stage = Effect.map(listSnapshots(home), ([found]) =>
+        found === undefined ? Option.none() : Option.map(found.restoring, ({ stage }) => stage),
+      );
+
+      assert.deepStrictEqual(yield* stage, Option.some("copying"));
+      yield* fs.makeDirectory(path.join(taken.folder, "replaced-20261122T000500Z-a1"));
+      assert.deepStrictEqual(yield* stage, Option.some("unread"));
+      // Carried on from the start, so every copy is made again.
+      const [unread] = yield* listSnapshots(home);
+      assert.strictEqual(unread && (yield* restoreBytes(home, unread)), 15);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("to copy back counts only what is left to copy against free space", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

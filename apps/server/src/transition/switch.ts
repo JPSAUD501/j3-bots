@@ -29,6 +29,14 @@ import * as Schema from "effect/Schema";
 // snapshot is back whole, and the next rollback carries on from where it got.
 // The supervisor is disabled from before the restore until the old release's
 // start enables it again.
+//
+// A rollback that has put nothing back yet may be given up instead, when the
+// person asks because the snapshot cannot be put back:
+//
+//   forget → start the new release → wait for it → adopt it
+//
+// `forget` records the new release, the one the data is still from, and
+// removes the mark; only then may that release start on the home.
 
 /** Which of the two releases a step is about. */
 export type Side = "old" | "new";
@@ -77,6 +85,8 @@ export interface SwitchSteps<Snapshot, R> {
   readonly restore: (snapshot: Snapshot) => Effect.Effect<void, StepFailed, R>;
   /** Marks the rollback to the snapshot as finished. */
   readonly unmark: (snapshot: Snapshot) => Effect.Effect<void, StepFailed, R>;
+  /** Gives up a rollback to the snapshot that put nothing back: the data is the new release's again. */
+  readonly forget: (snapshot: Snapshot) => Effect.Effect<void, StepFailed, R>;
   /**
    * Makes that release the one the host runs from now on, once its server
    * is ready: the CLI points its `j3-bots` command at it.
@@ -115,7 +125,13 @@ export type SwitchOutcome<Snapshot> =
 /** What a rollback does, given to it: everything but stopping and taking a snapshot. */
 export type RollbackSteps<Snapshot, R> = Omit<
   SwitchSteps<Snapshot, R>,
-  "stop" | "snapshot" | "resumed"
+  "stop" | "snapshot" | "resumed" | "forget"
+>;
+
+/** What giving up a rollback does, given to it. */
+export type AbandonSteps<Snapshot, R> = Pick<
+  SwitchSteps<Snapshot, R>,
+  "supervised" | "forget" | "start" | "ready" | "adopt"
 >;
 
 /**
@@ -195,6 +211,29 @@ export const rollBackOver = <Snapshot, R>(
   Effect.gen(function* () {
     yield* rollBackTo(steps, snapshot);
     yield* steps.adopt("old");
+  }).pipe(
+    Effect.as(Option.none<StepFailed>()),
+    Effect.catch((failed) => Effect.succeedSome(failed)),
+    Effect.uninterruptible,
+  );
+
+/**
+ * Gives up a rollback to `snapshot` that has put nothing back (above), once
+ * the person agreed: the new release, whose data the home still holds, is
+ * started and adopted. Not interruptible. Stops at the first step that
+ * fails, which it answers.
+ */
+export const abandonOver = <Snapshot, R>(
+  steps: AbandonSteps<Snapshot, R>,
+  snapshot: Snapshot,
+): Effect.Effect<Option.Option<StepFailed>, never, R> =>
+  Effect.gen(function* () {
+    yield* steps.forget(snapshot);
+    if (steps.supervised) {
+      yield* steps.start("new");
+      yield* steps.ready("new");
+    }
+    yield* steps.adopt("new");
   }).pipe(
     Effect.as(Option.none<StepFailed>()),
     Effect.catch((failed) => Effect.succeedSome(failed)),

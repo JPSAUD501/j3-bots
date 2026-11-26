@@ -442,6 +442,9 @@ importers:
       '@j3-bots/i18n':
         specifier: workspace:*
         version: link:../../packages/i18n
+      '@j3-bots/processes':
+        specifier: workspace:*
+        version: link:../../packages/processes
       '@j3-bots/prompts':
         specifier: workspace:*
         version: link:../../packages/prompts
@@ -715,6 +718,10 @@ importers:
         version: 1.4.0(@types/node@24.12.4)(@vitest/ui@5.0.5)(jiti@2.7.0)(terser@5.51.4)(yaml@2.9.1)
 
   packages/processes:
+    dependencies:
+      effect:
+        specifier: 4.1.3
+        version: 4.1.3
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2

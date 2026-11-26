@@ -128,23 +128,31 @@ The release it fetched and the snapshot stay on disk until a later update succee
 j3-bots update --rollback
 ```
 
-It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither are the secrets and their key, which stay as they are; a release older than the secrets' file reports it as written by a newer release and leaves it alone until you update again. An ask for a secret you answered since the snapshot shows as waiting again while the secret stays saved: decline it rather than save the secret twice. Nor are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back.
+It says when the snapshot was taken and what is lost, and asks first (`--yes` answers for a script). The databases go back to that moment: conversations, rooms, routines, settings, paired devices and the engine's threads since then are lost. Bots' files on disk, their memory included, are not in the snapshot and stay as they are. Neither are the secrets and their key, which stay as they are; a release older than the secrets' file reports it as written by a newer release and leaves it alone until you update again. An ask for a secret you answered since the snapshot shows as waiting again while the secret stays saved: decline it rather than save the secret twice. Nor are provider keys, which stay in the engine's secret store: the providers' endpoints go back to the snapshot's, with the keys you have now, so run `j3-bots provider connect` again if you changed a provider since the update. What the rollback replaced is kept in the snapshot's `replaced-*` folder until an update removes that snapshot. It starts the release the snapshot was taken from and points the command at it. `j3-bots doctor` names the snapshot it would put back, or says it waits for the command, as below. When the command runs another release than the service, as a rollback killed after it finished and before it pointed the command leaves them, it puts nothing back, since the snapshot it would find is an older update's: it says so, with the fix `j3-bots update --version <the service's release>`.
 
 The browser bots use keeps its profile, with the sites you signed in to, outside the snapshot, so a rollback leaves it as it is. The release you go back to may run an older version of that browser, which may not open a profile a newer version wrote; it then starts with an empty one, signed out of every site, and you sign in again. Rolling back to 0.3, from before each bot had a browser switch, gives every bot the browser again: the engine's settings go back to 0.3's, which leave it allowed everywhere.
 
 **Keep `~/.j3-bots/backups/` on the data directory's filesystem**, not as a link to another disk, such as a USB drive on a Raspberry Pi. A rollback moves the data directory's files into it by renaming them, which cannot cross filesystems. An update and `--rollback` check this before they stop anything, refuse when it is elsewhere, and give the commands that put it back.
 
-**A rollback cut off** by a power cut or `kill -9` stays marked until it finishes: no server starts on the data directory, since the server refuses to while the mark is there, and `j3-bots update` refuses to run. `j3-bots doctor` then reports it as a problem, with one fix, while Server, Service and Command wait for it. After a rollback killed on a test machine:
+**A rollback cut off** by a power cut or `kill -9` stays marked until it finishes: until the snapshot is back whole no server starts on the data directory, and then only the release it rolls back to, since the server refuses to while the mark is there, and `j3-bots update` refuses to run. A server that ran already, as when the rollback was killed before it stopped the service, runs on until a rollback stops it. `j3-bots doctor` reports the rollback as a problem, with its fix; Server, Service and Command say what they find, and one that finds something wrong waits for the rollback instead of giving a fix of its own. After a rollback killed while it copied the snapshot, the service disabled, it reads:
 
 ```text
-✗ Snapshot        A rollback to J3 Bots 0.1.0, from /home/j3bots/.j3-bots/backups/20261122T000400Z-0.1.0-to-0.2.0, has not finished. Until it does, the service stays disabled and no other release may run on the data directory.
-                  Fix: Run `j3-bots update --rollback`, which finishes it.
-- Server          Waits for the rollback to finish: see Snapshot.
-- Service         Waits for the rollback to finish: see Snapshot.
-- Command         Waits for the rollback to finish: see Snapshot.
+✗ Snapshot        A rollback to J3 Bots 0.1.0, from /home/j3bots/.j3-bots/backups/20261122T000400Z-0.1.0-to-0.2.0, has not finished, and has put none of it back. Until it does, no server starts on the data directory.
+                  Fix: Run `j3-bots update --rollback`, which finishes it. If it fails every time, as when a file of the snapshot is lost, `j3-bots update --rollback --abandon` gives it up and starts J3 Bots 0.2.0 again on the data as it is.
+- Server          The server is not running. Waits for the rollback to finish: see Snapshot.
+- Service         The service is installed but inactive. Waits for the rollback to finish: see Snapshot.
+✓ Command         j3-bots runs J3 Bots 0.2.0, as the service does.
 ```
 
 `j3-bots update --rollback` carries on from where it stopped. An update cut off the same way leaves the service on one release whole; when the `j3-bots` command runs another one, `doctor` says so under Command, with the fix `j3-bots update --version <the service's release>`, which points the command at the release the service runs.
+
+**A snapshot that cannot be put back**, as when a file of it was lost to a failing SD card, stops the rollback while it copies, every time, before it has changed the data directory. Give the rollback up instead:
+
+```sh
+j3-bots update --rollback --abandon
+```
+
+It says what it does and asks first (`--yes` answers for a script). The data directory is as the release the snapshot was taken for left it, so that release is recorded as the one that runs, the rollback's mark is removed, and that release starts as the service again, with the command pointed at it. Nothing in the data directory changes, and the snapshot stays in `backups/`. It refuses once the rollback has put any of the snapshot back, and when the mark that says how far it got cannot be read once the rollback had begun to swap the snapshot in, which a `replaced-*` folder in the snapshot's folder shows: then only finishing it makes the data whole. When that swap had begun and a file of the snapshot is lost too, neither command can go on; the snapshot's `replaced-*` folders hold what each swap moved out of the data directory, at its path there.
 
 A release refuses a database a newer release migrated, naming the migration it does not know, so starting an older release by hand on newer data fails: roll back instead.
 

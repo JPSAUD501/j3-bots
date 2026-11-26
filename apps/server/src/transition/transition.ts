@@ -7,8 +7,9 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { HOME_ENTRIES } from "../home/entries.ts";
-import { holdHome, holdLock } from "../home/Home.ts";
+import { holdHome, holdUpdateLock } from "../home/Home.ts";
 import {
+  abandonRestore,
   listSnapshots,
   markRestoring,
   pruneSnapshots,
@@ -19,12 +20,12 @@ import {
   takeSnapshot,
   transitionRoom,
   unmarkRestoring,
-  UPDATE_LOCK,
 } from "../install/snapshot.ts";
 import { isWithin, realLocation } from "../paths.ts";
 import { awaitReady, type ServerProbe } from "./readiness.ts";
-import { readRuntimeRecord, recordPending, recordTransitioned } from "./record.ts";
+import { readRuntimeRecord, recordPending, recordReady, recordTransitioned } from "./record.ts";
 import {
+  abandonOver,
   rollBackOver,
   type Side,
   StepFailed,
@@ -87,11 +88,7 @@ export class TransitionLock {
     home: string,
     busy: () => E,
   ) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const backups = path.join(home, HOME_ENTRIES.backups);
-    yield* fs.makeDirectory(backups, { recursive: true, mode: 0o700 });
-    yield* holdLock(path.join(backups, UPDATE_LOCK), busy);
+    yield* holdUpdateLock(home, busy);
     const lock = new TransitionLock(home);
     // Before the file lock is let go: finalizers run last added, first.
     yield* Effect.addFinalizer(() =>
@@ -265,6 +262,23 @@ const switchSteps = <R>(
         ),
       ),
     ),
+  // The record says the data is the new release's, nothing pending, before
+  // the mark that keeps that release off the home goes.
+  forget: (snapshot) =>
+    recordReady(home, releases.new.version).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StepFailed({
+            step: "record",
+            reason: `Writing the data directory's record of the release that runs, state/runtime.json, failed: ${cause.message}`,
+          }),
+      ),
+      Effect.andThen(
+        abandonRestore(home, snapshot).pipe(
+          Effect.mapError((cause) => new StepFailed({ step: "unmark", reason: cause.message })),
+        ),
+      ),
+    ),
 });
 
 /** Keeps the `KEEP` runtimes, snapshots and engine runtimes a transition leaves. */
@@ -424,6 +438,64 @@ export const rollBack = Effect.fn("transition.rollBack")(function* <R>(options: 
   const releases = { old: snapshot.manifest.from, new: snapshot.manifest.to };
   return yield* lock.use(
     rollBackOver(
+      switchSteps(lock.home, releases, options.steps(releases), Option.some(snapshot)),
+      snapshot,
+    ),
+  );
+});
+
+/**
+ * A rollback that may have put part of its snapshot back, which only
+ * finishing makes whole: its mark says it did, or, `unread`, cannot be read
+ * once a swap had begun.
+ */
+class RollbackNotAbandonable extends Schema.TaggedError<RollbackNotAbandonable>()(
+  "RollbackNotAbandonable",
+  { snapshot: Schema.String, from: Schema.String, to: Schema.String, unread: Schema.Boolean },
+) {
+  override get message(): string {
+    const why = this.unread
+      ? "has a mark that cannot be read, and its swap had begun, so it may have put part of the snapshot back"
+      : "has put part or all of the snapshot back";
+    return `The rollback to J3 Bots ${this.from}, from ${this.snapshot}, ${why}: the data directory may no longer hold what J3 Bots ${this.to} ran on, and only finishing the rollback makes it whole. \`j3-bots update --rollback\` does. Nothing was changed.`;
+  }
+}
+
+/**
+ * Fails unless the rollback to `snapshot` has put nothing back: its mark, as
+ * read, at `copying`.
+ */
+export const requireAbandonable = Effect.fn("transition.requireAbandonable")(function* (
+  snapshot: Snapshot,
+) {
+  if (Option.exists(snapshot.restoring, ({ stage }) => stage === "copying")) return;
+  return yield* new RollbackNotAbandonable({
+    snapshot: snapshot.folder,
+    from: snapshot.manifest.from.version,
+    to: snapshot.manifest.to.version,
+    unread: Option.exists(snapshot.restoring, ({ stage }) => stage === "unread"),
+  });
+});
+
+/**
+ * Gives up the rollback to `snapshot` on the home `lock` holds, which must
+ * have put nothing back (its mark at `copying`): what the person asks for
+ * when the snapshot cannot be put back, as when a file of it was lost. The
+ * home still holds the data of the release the snapshot was taken for, its
+ * `to`, so that release is recorded, the mark removed, and that release
+ * started and adopted. The snapshot stays. Answers the step that failed, if
+ * one did.
+ */
+export const abandonRollback = Effect.fn("transition.abandonRollback")(function* <R>(options: {
+  readonly lock: TransitionLock;
+  readonly snapshot: Snapshot;
+  readonly steps: HostStepsFor<R>;
+}) {
+  const { lock, snapshot } = options;
+  const releases = { old: snapshot.manifest.from, new: snapshot.manifest.to };
+  yield* requireAbandonable(snapshot);
+  return yield* lock.use(
+    abandonOver(
       switchSteps(lock.home, releases, options.steps(releases), Option.some(snapshot)),
       snapshot,
     ),

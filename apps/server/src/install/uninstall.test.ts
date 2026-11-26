@@ -11,7 +11,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { AdminClient } from "../admin/AdminClient.ts";
 import { AdminStatus } from "../admin/protocol.ts";
-import { holdLock } from "../home/Home.ts";
+import { holdLock } from "@j3-bots/processes";
 import type { Installation } from "../installation.ts";
 import { Host } from "../system/Host.ts";
 import { Systemd } from "../system/Systemd.ts";

@@ -7,7 +7,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import { HOME_ENTRIES, homeLayout } from "../home/entries.ts";
-import { holdLock } from "../home/Home.ts";
+import { holdUpdateLock } from "../home/Home.ts";
 import type { Installation } from "../installation.ts";
 import { socketOwner } from "../service/owner.ts";
 import * as Unit from "../service/unit.ts";
@@ -21,7 +21,6 @@ import {
   startsInstall,
   VERSIONS,
 } from "./layout.ts";
-import { UPDATE_LOCK } from "./snapshot.ts";
 
 // `j3-bots uninstall`: undoes `scripts/install.sh`. It stops and removes the
 // service when the service runs this install, then removes the j3-bots command
@@ -155,15 +154,8 @@ const serverTook = Effect.fnUntraced(function* (home: string) {
  * server took has nothing for an update to copy, and is left as it is.
  */
 const holdUpdates = Effect.fnUntraced(function* (home: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   if (!(yield* serverTook(home))) return;
-  const backups = path.join(home, HOME_ENTRIES.backups);
-  yield* fs.makeDirectory(backups, { recursive: true, mode: 0o700 });
-  yield* holdLock(
-    path.join(backups, UPDATE_LOCK),
-    () => new UninstallRefused({ reason: "busy", subject: home }),
-  );
+  yield* holdUpdateLock(home, () => new UninstallRefused({ reason: "busy", subject: home }));
 });
 
 /**

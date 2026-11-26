@@ -4,15 +4,19 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFs from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { holdLock } from "@j3-bots/processes";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as PlatformError from "effect/PlatformError";
@@ -355,6 +359,56 @@ describe("ensureInstalled", () => {
         pin.version,
         `${pin.version}.lock`,
       ]);
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+  );
+
+  it.live("says it waits while another install holds the lock, then installs once it ends", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const runtime = path.join(home, "j3", "runtime");
+      yield* fs.makeDirectory(runtime, { recursive: true });
+      const files = yield* makePrivateFiles(() => Effect.succeed(true));
+      const other = yield* Scope.make();
+      yield* Scope.provide(other)(
+        holdLock(path.join(runtime, `${pin.version}.lock`), () => "held"),
+      );
+      const events: Array<DownloadEvent> = [];
+      const waited = yield* Deferred.make<void>();
+      const installing = yield* ensureInstalled({
+        home,
+        platform: "linux",
+        arch: "x64",
+        sha256: { "linux-x64": DIGEST },
+        files,
+        onDownload: (event) =>
+          Effect.sync(() => events.push(event)).pipe(
+            Effect.andThen(
+              event._tag === "waiting" ? Deferred.succeed(waited, undefined) : Effect.void,
+            ),
+          ),
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          release([], () => {}),
+        ),
+        Effect.exit,
+        Effect.forkChild,
+      );
+
+      yield* Deferred.await(waited);
+      assert.deepStrictEqual(events, [{ _tag: "waiting" }]);
+      yield* Scope.close(other, Exit.void);
+      const exit = yield* Fiber.join(installing);
+
+      // The archive is not a real one: the install stops at unpacking what it went on to download.
+      const error = Exit.isFailure(exit) ? Exit.findErrorOption(exit) : Option.none();
+      assert.strictEqual(Option.getOrUndefined(error)?.reason, "extract");
+      assert.deepStrictEqual(
+        events.map(({ _tag }) => _tag),
+        ["waiting", "progress", "downloaded"],
+      );
     }).pipe(Effect.scoped, Effect.provide(machine)),
   );
 

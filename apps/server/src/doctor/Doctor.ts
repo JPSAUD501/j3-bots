@@ -24,7 +24,8 @@ import {
 } from "../install/layout.ts";
 import {
   listSnapshots,
-  type RestoreMark,
+  type RestoreState,
+  heldOff,
   rollbackSnapshot,
   type Snapshot,
   takenAt,
@@ -180,15 +181,18 @@ const installedReleases = Effect.fn("doctor.installedReleases")(function* (
   return Option.some({ service, command });
 });
 
+/** The release the service runs and the one the j3-bots command runs, as far as each is known. */
+interface Releases {
+  readonly service: Option.Option<string>;
+  readonly command: Option.Option<string>;
+}
+
 /**
  * Whether the j3-bots command runs the release the service runs. An update or
  * a rollback cut off after the unit was written, and before the command was
  * pointed, leaves them apart.
  */
-const commandCheck = (releases: {
-  readonly service: Option.Option<string>;
-  readonly command: Option.Option<string>;
-}) => {
+const commandCheck = (releases: Releases) => {
   if (Option.isNone(releases.service)) return Option.none<Check>();
   const service = releases.service.value;
   return Option.some(
@@ -209,11 +213,35 @@ const commandCheck = (releases: {
 };
 
 /** A rollback that has not finished, with its mark. */
-type Rollback = Option.Option<{ readonly snapshot: Snapshot; readonly mark: RestoreMark }>;
+type Rollback = Option.Option<{ readonly snapshot: Snapshot; readonly mark: RestoreState }>;
 
-/** What the Server and Service checks say while a rollback has not finished: the Snapshot check says what to do. */
-const deferred = (name: string) =>
-  check(name, "skipped", "Waits for the rollback to finish: see Snapshot.");
+/**
+ * A check while a rollback has not finished: as it is when all is well, as
+ * when the server the rollback started runs. Otherwise it still says what it
+ * found, but waits for the rollback instead of giving its own fix, which a
+ * refused server start would defeat: the Snapshot check says what to do.
+ */
+const whileRollingBack = (rollback: Rollback, found: Check) =>
+  Option.isSome(rollback) && found.status !== "ok"
+    ? check(
+        found.name,
+        "skipped",
+        `${found.summary} Waits for the rollback to finish: see Snapshot.`,
+      )
+    : found;
+
+/** What the mark of a rollback that has not finished says it put back, as a clause. */
+const progressOf = (mark: RestoreState) => {
+  switch (mark.stage) {
+    case "copying":
+      return ", and has put none of it back";
+    case "unread":
+      return ", and its mark, which says how far it got, cannot be read";
+    case "swapping":
+    case "restored":
+      return "";
+  }
+};
 
 /**
  * The snapshot `j3-bots update --rollback` puts back while `running` runs,
@@ -223,14 +251,30 @@ const snapshotCheck = Effect.fn("doctor.snapshot")(function* (
   home: string,
   running: Option.Option<string>,
   rollback: Rollback,
+  releases: Option.Option<Releases>,
 ) {
   if (Option.isSome(rollback)) {
     const { snapshot, mark } = rollback.value;
     return check(
       "Snapshot",
       "problem",
-      `A rollback to J3 Bots ${mark.release}, from ${snapshot.folder}, has not finished. Until it does, the service stays disabled and no other release may run on the data directory.`,
-      "Run `j3-bots update --rollback`, which finishes it.",
+      `A rollback to J3 Bots ${mark.release}, from ${snapshot.folder}, has not finished${progressOf(mark)}. Until it does, ${heldOff(mark.release, mark.stage === "restored")}.`,
+      mark.stage === "copying"
+        ? `Run \`j3-bots update --rollback\`, which finishes it. If it fails every time, as when a file of the snapshot is lost, \`j3-bots update --rollback --abandon\` gives it up and starts J3 Bots ${snapshot.manifest.to.version} again on the data as it is.`
+        : "Run `j3-bots update --rollback`, which finishes it.",
+    );
+  }
+  // As `--rollback` refuses then: the snapshot it would find is an older update's.
+  const apart = Option.exists(
+    releases,
+    ({ service, command }) =>
+      Option.isSome(service) && Option.isSome(command) && command.value !== service.value,
+  );
+  if (apart) {
+    return check(
+      "Snapshot",
+      "skipped",
+      "`j3-bots update --rollback` puts nothing back while the j3-bots command runs another release than the service. Waits for the command: see Command.",
     );
   }
   const snapshots = yield* listSnapshots(home);
@@ -741,52 +785,56 @@ const serviceChecks = Effect.fn("doctor.service")(function* (
     return [manager, check("Service", "skipped", "It needs this user's systemd manager.")];
   }
   const checks: Array<Check> = [manager];
-  if (Option.isSome(rollback)) {
-    checks.push(deferred("Service"));
-  } else if (Option.isNone(unitText)) {
+  if (Option.isNone(unitText)) {
     checks.push(
-      check(
-        "Service",
-        "warning",
-        "The service is not installed, so the server does not start on its own.",
-        "Run `j3-bots service install`.",
+      whileRollingBack(
+        rollback,
+        check(
+          "Service",
+          "warning",
+          "The service is not installed, so the server does not start on its own.",
+          "Run `j3-bots service install`.",
+        ),
       ),
     );
   } else {
     const unit = yield* systemd.unitState(Unit.UNIT_NAME);
     checks.push(
-      // The unit restarts on failure, so one that stays `failed` is one systemd
-      // stopped restarting: it hit the start limit, and systemd refuses a
-      // restart within the limit's interval unless that is reset.
-      unit.active === "failed"
-        ? check(
-            "Service",
-            "problem",
-            "The service has failed, and systemd has stopped restarting it.",
-            "Read why with `journalctl --user -u j3-bots -n 100`. Once the cause is fixed, clear systemd's start limit with `systemctl --user reset-failed j3-bots`, then run `systemctl --user restart j3-bots`.",
-          )
-        : unit.active === "activating"
+      whileRollingBack(
+        rollback,
+        // The unit restarts on failure, so one that stays `failed` is one systemd
+        // stopped restarting: it hit the start limit, and systemd refuses a
+        // restart within the limit's interval unless that is reset.
+        unit.active === "failed"
           ? check(
               "Service",
-              "warning",
-              "The service is starting or restarting.",
-              "Read the log: `journalctl --user -u j3-bots -n 100`.",
+              "problem",
+              "The service has failed, and systemd has stopped restarting it.",
+              "Read why with `journalctl --user -u j3-bots -n 100`. Once the cause is fixed, clear systemd's start limit with `systemctl --user reset-failed j3-bots`, then run `systemctl --user restart j3-bots`.",
             )
-          : unit.active !== "active"
+          : unit.active === "activating"
             ? check(
                 "Service",
                 "warning",
-                `The service is installed but ${unit.active}.`,
-                "Start it with `systemctl --user start j3-bots`.",
+                "The service is starting or restarting.",
+                "Read the log: `journalctl --user -u j3-bots -n 100`.",
               )
-            : !unit.enabled
+            : unit.active !== "active"
               ? check(
                   "Service",
                   "warning",
-                  "The service runs but is not enabled, so it will not start again after a reboot.",
-                  "Run `systemctl --user enable j3-bots`.",
+                  `The service is installed but ${unit.active}.`,
+                  "Start it with `systemctl --user start j3-bots`.",
                 )
-              : check("Service", "ok", "Installed, enabled and running."),
+              : !unit.enabled
+                ? check(
+                    "Service",
+                    "warning",
+                    "The service runs but is not enabled, so it will not start again after a reboot.",
+                    "Run `systemctl --user enable j3-bots`.",
+                  )
+                : check("Service", "ok", "Installed, enabled and running."),
+      ),
     );
   }
 
@@ -894,8 +942,7 @@ const liveServer = Effect.fn("doctor.liveServer")(function* (
   });
 });
 
-const serverCheck = (live: LiveServer, rollback: Rollback) => {
-  if (Option.isSome(rollback)) return deferred("Server");
+const serverCheck = (live: LiveServer) => {
   switch (live._tag) {
     case "blocked":
       return check("Server", "problem", `${live.summary} The server cannot start.`, live.fix);
@@ -976,8 +1023,8 @@ export const diagnose = Effect.gen(function* () {
     const home = yield* ServerConfig.resolveHome.pipe(Effect.provide(described));
     const rollback = yield* unfinishedRollback(home);
     checks.push(yield* homeCheck(home));
-    checks.push(yield* snapshotCheck(home, running, rollback));
-    checks.push(serverCheck(live, rollback));
+    checks.push(yield* snapshotCheck(home, running, rollback, releases));
+    checks.push(whileRollingBack(rollback, serverCheck(live)));
     checks.push(...(yield* serviceChecks(unitText, rollback)));
     if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
     return checks;
@@ -996,11 +1043,11 @@ export const diagnose = Effect.gen(function* () {
   checks.push(yield* homeCheck(config.home));
   checks.push(yield* diskCheck(config.home));
   const rollback = yield* unfinishedRollback(config.home);
-  checks.push(yield* snapshotCheck(config.home, running, rollback));
+  checks.push(yield* snapshotCheck(config.home, running, rollback, releases));
 
   // Only a server the report describes lends it live diagnostics.
   const status = live._tag === "described" ? Option.some(live.status) : Option.none();
-  checks.push(serverCheck(live, rollback));
+  checks.push(whileRollingBack(rollback, serverCheck(live)));
   switch (live._tag) {
     case "described": {
       checks.push(runningPortsCheck(live.status));
@@ -1047,7 +1094,7 @@ export const diagnose = Effect.gen(function* () {
   checks.push(...(yield* serviceChecks(unitText, rollback)));
   const command = Option.flatMap(releases, commandCheck);
   if (Option.isSome(command)) {
-    checks.push(Option.isSome(rollback) ? deferred("Command") : command.value);
+    checks.push(whileRollingBack(rollback, command.value));
   }
   if (Option.isSome(shellSettings)) checks.push(shellSettings.value);
   return checks;
