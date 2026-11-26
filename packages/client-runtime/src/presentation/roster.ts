@@ -85,6 +85,12 @@ const byActivity = (a: RosterItem, b: RosterItem): number => {
   return DateTime.Order(b.lastActivityAt, a.lastActivityAt);
 };
 
+/** Bots before rooms, each by id, in code-unit order as the server's database sorts them. */
+const byKey = (a: RosterItem, b: RosterItem): number => {
+  const [x, y] = [rosterKeyText(rosterKeyOf(a)), rosterKeyText(rosterKeyOf(b))];
+  return x < y ? -1 : x > y ? 1 : 0;
+};
+
 /**
  * The roster's order, the server's own, which every client lists: pinned rows
  * first, then rows that need the operator, then the most recently active,
@@ -98,7 +104,7 @@ export function orderRoster(items: ReadonlyArray<RosterItem>): RosterItem[] {
       Number(needsOperator(b)) - Number(needsOperator(a)) ||
       byActivity(a, b) ||
       DateTime.Order(createdAtOf(a), createdAtOf(b)) ||
-      rosterKeyText(rosterKeyOf(a)).localeCompare(rosterKeyText(rosterKeyOf(b))),
+      byKey(a, b),
   );
 }
 
