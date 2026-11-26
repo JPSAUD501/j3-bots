@@ -3,6 +3,7 @@
 import * as NodeOs from "node:os";
 import { assert, describe, it } from "@effect/vitest";
 import { type FakeMcpServer, fakeMcpServer } from "@j3-bots/connectors/testing";
+import { sdkHttpServer } from "@j3-bots/connectors/testing/sdk";
 import { eventually, serverEnvironment, STDIO_SERVER } from "@j3-bots/connectors/testing/stdio";
 import {
   type BotId,
@@ -138,7 +139,7 @@ const tracker = (grant: ConnectorGrant) =>
   });
 
 /** Points the connector's sealed address at the fake, which the next listing reaches. */
-const pointAt = (fake: FakeMcpServer) =>
+const pointAt = (fake: { readonly url: string }) =>
   Effect.gen(function* () {
     const secrets = yield* Secrets;
     const sealed = yield* secrets.connectorSecrets.get(connectorSecretIdOf(ID));
@@ -225,6 +226,49 @@ describe("references to secrets in a connector's settings", () => {
           used?.lastUse === null ? null : [used?.lastUse?.botId, used?.lastUse?.use],
           [bea, { _tag: "connector", name: "Tracker" }],
         );
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
+    "sends the value with a bot's resources and prompts too, and nothing once the secret is gone",
+    () =>
+      Effect.gen(function* () {
+        const { ana, secrets, connectors } = yield* withSecret((a) => onlyBots(a));
+        const fake = yield* sdkHttpServer({ revision: "2026-07-28" });
+        yield* tracker(grantTo(ana));
+        yield* pointAt(fake);
+        yield* connectors.toolsFor(ana);
+        yield* awaitConnector(listed);
+
+        const read = yield* connectors.readResource({
+          botId: ana,
+          slug: "tracker",
+          uri: "note://7",
+        });
+        assert.isFalse(read.isError);
+        const prompt = yield* connectors.getPrompt({
+          botId: ana,
+          slug: "tracker",
+          name: "summarize",
+          arguments: { topic: "travel" },
+        });
+        assert.isFalse(prompt.isError);
+        assert.isAbove(fake.requests.length, 0);
+        for (const request of fake.requests) {
+          assert.strictEqual(request.headers.authorization, `Bearer ${VALUE}`);
+        }
+
+        yield* secrets.remove(TOKEN_ID);
+        yield* awaitConnector(needsSecret("missing"));
+        const before = fake.requests.length;
+        const refused = yield* connectors.readResource({
+          botId: ana,
+          slug: "tracker",
+          uri: "note://7",
+        });
+        assert.isTrue(refused.isError);
+        assert.strictEqual(fake.requests.length, before);
       }).pipe(Effect.scoped, Effect.provide(domain)),
     SLOW,
   );
