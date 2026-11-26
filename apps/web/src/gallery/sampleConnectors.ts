@@ -195,6 +195,7 @@ const base = {
   signedInAt: null,
   review: null,
   createdAt: ago(60 * 24 * 12),
+  lastChange: null,
 } as const;
 
 /** The sample team's connectors: one of each status, and one with tool changes to review. */
@@ -213,6 +214,7 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     account: "sam@example.com",
     signedInAt: ago(60 * 24 * 12),
     tools: notesTools,
+    lastChange: { by: { _tag: "operator" }, at: ago(60 * 24 * 12) },
   },
   {
     ...base,
@@ -228,6 +230,7 @@ export const sampleConnectors: ReadonlyArray<Connector> = [
     account: "sam@example.com",
     signedInAt: ago(60 * 24 * 30),
     tools: trackerTools,
+    lastChange: { by: { _tag: "bot", botId: ids.scout }, at: ago(60 * 24 * 30) },
   },
   {
     ...base,
@@ -320,6 +323,7 @@ const fromSource = (source: ConnectorSource, grant: Connector["grant"]): Connect
     grant,
     tools: listing?.tools ?? [],
     createdAt: SAMPLE_NOW,
+    lastChange: { by: { _tag: "operator" }, at: SAMPLE_NOW },
   };
 };
 

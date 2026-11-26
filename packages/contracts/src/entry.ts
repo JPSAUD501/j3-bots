@@ -18,7 +18,7 @@ import {
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
 import { BrowserTabRef } from "./browser.ts";
-import { ConnectorGlyph, ConnectorId, ListingRef } from "./connector.ts";
+import { ConnectorGlyph, ConnectorId } from "./connector.ts";
 import { RoutineTrigger } from "./routine.ts";
 import { CredentialFill, CredentialId, SiteOrigin } from "./vault.ts";
 import { Visual } from "./visual.ts";
@@ -393,36 +393,6 @@ export const CredentialRequestEntry = Schema.TaggedStruct("credential-request", 
 export type CredentialRequestEntry = typeof CredentialRequestEntry.Type;
 
 /**
- * A bot suggests a connector it would use for the task at hand: a gallery
- * entry, or a connector the operator added that this bot may not use yet.
- * Bots cannot add a connector or grant themselves one, so the card is all a
- * bot can do. Its Connect adds the connector (`connector.add`, naming this
- * card) or lets this bot use it (`connector.setBots`); either way, the server
- * closes the card as `connected` once the bot is given it. Not now dismisses
- * it (`card.answer` with `dismiss`), which the server takes as final for that
- * connector in this conversation. Neither wakes the bot.
- */
-export const ConnectorSuggestionEntry = Schema.TaggedStruct("connector-suggestion", {
-  ...entry,
-  author: BotAuthor,
-  subject: Schema.Union([
-    Schema.TaggedStruct("listing", { ref: ListingRef }),
-    Schema.TaggedStruct("connector", { connectorId: ConnectorId }),
-  ]),
-  /** The connector's name and glyph when the card was written, which it keeps. */
-  name: Label,
-  glyph: Schema.NullOr(ConnectorGlyph),
-  /** Why the bot needs it, in its own words: one line. */
-  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-  status: Schema.Union([
-    Schema.TaggedStruct("pending", {}),
-    Schema.TaggedStruct("connected", { connectorId: ConnectorId }),
-    Schema.TaggedStruct("dismissed", {}),
-  ]),
-});
-export type ConnectorSuggestionEntry = typeof ConnectorSuggestionEntry.Type;
-
-/**
  * A connector a bot called needs the operator to sign in again, in that bot's
  * conversation: written once each time the connector's sign-in ends, by the
  * first call that finds it so, and authored by that bot. Its button opens the
@@ -727,7 +697,6 @@ export const Entry = Schema.Union([
   SecretRequestEntry,
   BrowserHelpEntry,
   CredentialRequestEntry,
-  ConnectorSuggestionEntry,
   ConnectorAuthEntry,
   WorkFoldEntry,
   NoticeEntry,
@@ -782,7 +751,6 @@ export const ReceivedEntry = Schema.Union([
   SecretRequestEntry,
   BrowserHelpEntry,
   CredentialRequestEntry,
-  ConnectorSuggestionEntry,
   ConnectorAuthEntry,
   WorkFoldEntry,
   ReceivedNoticeEntry,
@@ -817,7 +785,6 @@ export const entryText = (entry: Entry): string => {
       return entry.note;
     case "credential-request":
       return entry.origin;
-    case "connector-suggestion":
     case "connector-auth":
       return entry.name;
     case "routine-change":

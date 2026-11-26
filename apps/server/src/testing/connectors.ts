@@ -84,7 +84,7 @@ export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function*
       privateNetwork: false,
     },
     grant: { _tag: "bots", ids: [] },
-    suggestion: null,
+    by: { _tag: "operator" },
   });
   const secret = yield* vault.connectorSecrets.get(vaultIdOf(id));
   if (Option.isNone(secret)) return yield* Effect.die("The connector's secret was not sealed");
@@ -116,6 +116,7 @@ export const fakeConnector = Effect.fn("TestConnectors.fakeConnector")(function*
           commandId: CommandId.make(`grant-${id}-${bots.join(",")}`),
           connectorId: id,
           grant: { _tag: "bots", ids: bots },
+          by: { _tag: "operator" },
         });
         yield* Effect.forEach(bots, listedFor, { discard: true });
       }).pipe(Effect.orDie),

@@ -133,6 +133,8 @@ import {
   provision,
   storeConnection,
   TOOL_BRIDGE_VARIABLE,
+  linkHomeSkills,
+  linkProjectSkills,
   writeBasePrompt,
   type InstanceSpec,
 } from "./Provision.ts";
@@ -481,6 +483,30 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     ),
     Effect.forkScoped,
   );
+
+  const linkSharedSkillsNow = linkHomeSkills({
+    home: options.home,
+    files,
+    instances,
+    sharedSkills: options.sharedSkills,
+  }).pipe(
+    provisioning.withPermits(1),
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
+    Effect.withSpan("Engine.linkSharedSkills"),
+  );
+
+  const linkBotSkills = (workspacePath: string) =>
+    linkProjectSkills({
+      home: options.home,
+      files,
+      workspace: workspacePath,
+      skills: options.botSkills,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.withSpan("Engine.linkBotSkills"),
+    );
 
   const connectedNow = activeConnection(options.home).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
@@ -2420,6 +2446,8 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     updateProvider,
     setHarnessExecutable,
     consoleLink,
+    linkSharedSkills: linkSharedSkillsNow,
+    linkBotSkills,
     ensureProject,
     removeProject,
     setBrowserAccess,

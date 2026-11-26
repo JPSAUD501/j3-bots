@@ -4,6 +4,7 @@ import {
   type BotId,
   Conflict,
   type Entry,
+  Invalid,
   J3Rpcs,
   NotFound,
   type ProviderId,
@@ -49,6 +50,7 @@ import { Stops } from "../turns/Stops.ts";
 import { Usage } from "../turns/Usage.ts";
 import { WorkSteps } from "../turns/WorkSteps.ts";
 import { Connectors } from "../connectors/Connectors.ts";
+import { Skills } from "../skills/Skills.ts";
 import { Vault } from "../vault/Vault.ts";
 
 /** The RPCs this server answers: every one of `J3Rpcs`. */
@@ -75,6 +77,7 @@ export const handlers = ServedRpcs.toLayer(
     const memory = yield* Memory;
     const settings = yield* SettingsService;
     const devices = yield* Devices;
+    const skills = yield* Skills;
     const pipeline = yield* Pipeline;
     const cards = yield* Cards;
     const browserHelp = yield* BrowserHelp;
@@ -270,10 +273,11 @@ export const handlers = ServedRpcs.toLayer(
       "vault.totpPreview": ({ id }) => vault.totpPreview(id),
       // A connector's add and update carry its secrets, redacted: none is logged, and neither has a receipt.
       "connectors.subscribe": () => connectors.subscribe,
-      "connector.add": (input) => connectors.add(input),
-      "connector.update": (input) => connectors.update(input),
+      // Each change is recorded as the operator's (decision 0049).
+      "connector.add": (input) => connectors.add({ ...input, by: operator }),
+      "connector.update": (input) => connectors.update({ ...input, by: operator }),
       "connector.remove": (input) => connectors.remove(input),
-      "connector.setBots": (input) => connectors.setBots(input),
+      "connector.setBots": (input) => connectors.setBots({ ...input, by: operator }),
       "connector.acceptToolChanges": (input) => connectors.acceptToolChanges(input),
       // A sign-in's address and the one it returns to carry its code and
       // `state`: neither is logged, and neither request has a receipt.
@@ -291,6 +295,18 @@ export const handlers = ServedRpcs.toLayer(
           .pipe(Effect.asVoid, Effect.mapError(toCommandError)),
       "connectors.list": ({ language }) => Effect.succeed(connectorSources.list(language)),
       "connectors.search": (input) => connectorSources.search(input),
+      // A change is recorded as the operator's (decision 0049).
+      "skills.subscribe": () => skills.subscribe,
+      "skill.read": ({ scope, name }) => skills.read(scope, name),
+      "skill.save": (input) => skills.save({ ...input, by: operator }),
+      "skill.install": (input) =>
+        skills.install({ ...input, by: operator }).pipe(
+          Effect.catchTags({
+            NotASkill: () => Effect.fail(new Invalid({ reason: "skill-repository" })),
+            SkillFetchFailed: () => Effect.fail(new Conflict({ reason: "skill-fetch" })),
+          }),
+        ),
+      "skill.remove": (input) => skills.remove(input),
       // The page names where an own app's sign-ins return, as `begin` would send them.
       "connectors.get": Effect.fn("connectors.get")(function* ({ ref, language }) {
         const details = yield* connectorSources.get(ref, language);

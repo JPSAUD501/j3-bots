@@ -612,6 +612,8 @@ export const layer = Layer.effect(
       if (Option.isNone(found)) return "aligned" as const;
       const { bot, workspacePath, engineProjectId } = found.value;
       yield* workspaces.provision(botId);
+      // Each of the bot's own skills, in the folder each harness lists in its workspace.
+      yield* engine.linkBotSkills(workspacePath);
       // Asked every time: it answers with the project the workspace already has.
       const projectId = yield* engine.ensureProject({ workspacePath, title: bot.profile.name });
       if (Option.getOrNull(engineProjectId) !== projectId) {

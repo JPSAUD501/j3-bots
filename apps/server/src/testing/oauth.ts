@@ -495,6 +495,7 @@ export const addOAuthConnector = Effect.gen(function* () {
     fields: [],
     privateNetwork: false,
     grant: { _tag: "all-bots" },
+    lastChange: null,
     signedInAt: null,
     accepted: null,
     keptRevision: null,

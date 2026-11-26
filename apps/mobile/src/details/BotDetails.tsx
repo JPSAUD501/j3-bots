@@ -516,7 +516,6 @@ function BotConnectors({
               open({
                 at: { _tag: "connector", connectorId: connector.id, signIn: false, added: false },
                 forBot: bot.id,
-                suggestion: null,
               })
             }
             className="-mx-2 min-h-11 flex-row items-center gap-3 rounded-md px-2 py-1 active:bg-muted"
@@ -536,7 +535,7 @@ function BotConnectors({
         <Button
           variant="secondary"
           label={t("details.connectors.manage")}
-          onPress={() => open({ at: { _tag: "home" }, forBot: bot.id, suggestion: null })}
+          onPress={() => open({ at: { _tag: "home" }, forBot: bot.id })}
         />
       </View>
     </>

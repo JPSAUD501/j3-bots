@@ -18,7 +18,6 @@ const TurnToolName = Schema.Literals([
   "set_routine",
   "set_operator_name",
   "request_credential",
-  "suggest_connector",
   "start_room",
 ]);
 type TurnToolName = typeof TurnToolName.Type;
@@ -141,7 +140,7 @@ export type FillClaim =
  * `set_routine` changes a routine on the bot's behalf, and
  * `read_room` reads a room the bot is in, `set_operator_name` saves what the
  * operator asked to be called, only in a turn they spoke in, `request_credential` shows a save-login card in the
- * bot's conversation, `suggest_connector` a connector card there, and
+ * bot's conversation, and
  * `create_bot` and `start_room` build a team in a room, only in a turn the
  * operator spoke in. Each call is first
  * matched to the engine's record of it in the session's admitted turn

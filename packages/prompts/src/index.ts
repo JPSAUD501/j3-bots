@@ -10,8 +10,9 @@
  *   {@link MAX_TOOL_INPUT_BYTES}; {@link NO_TURN_REFUSAL}: what a call that
  *   matches no running turn, such as a subagent's, reads;
  *   {@link BROWSER_HELP_REQUESTED}: what a request for help in the browser
- *   answers; and {@link SUGGESTION_SHOWN} and {@link SUGGESTION_REFUSED}:
- *   what a connector suggestion answers.
+ *   answers; {@link MANAGEMENT_NOTES} and {@link MANAGEMENT_REFUSED}: what
+ *   the MCP server and skill tools answer; and {@link preApprovedTools}:
+ *   the tools that run without asking.
  * - {@link renderRoomRead}: what `read_room` answers; {@link renderRoomMovedOn}:
  *   why a post to a room that moved on since the bot last saw it went out
  *   nowhere, with what it missed. Both frame room entries as envelopes do.
@@ -67,14 +68,15 @@ export {
   MAX_TOOL_INPUT_BYTES,
   inputCapRefusal,
   isConnectorTool,
+  MANAGEMENT_NOTES,
+  MANAGEMENT_REFUSED,
   type McpTool,
   NO_TURN_REFUSAL,
   ROOM_READ_COUNT,
-  SUGGESTION_REFUSED,
-  SUGGESTION_SHOWN,
   type ToolDefinition,
   type ToolInput,
   type ToolName,
+  preApprovedTools,
   toolList,
   tools,
 } from "./tools.ts";

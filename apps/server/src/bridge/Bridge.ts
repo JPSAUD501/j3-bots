@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { SessionId } from "@j3-bots/engine-t3";
-import { isConnectorTool, toolList } from "@j3-bots/prompts";
+import { isConnectorTool, type ToolName, toolList } from "@j3-bots/prompts";
 import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -38,6 +38,20 @@ const DEFAULT_PROTOCOL_VERSION = "2025-06-18";
 
 /** How long a call to one of J3 Bots' own tools keeps trying to reach the server before it gives up. */
 const FORWARD_DEADLINE = Duration.seconds(30);
+
+/**
+ * J3 Bots' own tools that reach outside it: a search asks the registry,
+ * adding or changing an MCP server lists its tools, removing one revokes its
+ * sign-in, and installing a skill fetches a repository. They have a connector
+ * call's deadline, and an answer that never came is answered as one.
+ */
+const REACHES_OUT: ReadonlySet<string> = new Set<ToolName>([
+  "search_mcp_servers",
+  "add_mcp_server",
+  "update_mcp_server",
+  "remove_mcp_server",
+  "install_skill",
+]);
 
 /** How long the bridge waits before it forwards a request again, after the server could not be reached. */
 export const FORWARD_RETRY_PAUSE = Duration.millis(250);
@@ -194,20 +208,23 @@ export const serve = Effect.fn("Bridge.serve")(function* (options: {
       return textResult("This bridge was not started by a J3 Bots session.", true);
     }
     const connector = isConnectorTool(call.value.name);
+    const reachesOut = connector || REACHES_OUT.has(call.value.name);
     const requestId = Base64Url.encode(yield* random.randomBytes(16));
     const answer = yield* forward({
       requestId,
       sessionId: options.session.value,
       tool: call.value.name,
       arguments: call.value.arguments ?? {},
-    }).pipe(Effect.timeout(connector ? CONNECTOR_CALL_DEADLINE : FORWARD_DEADLINE), Effect.option);
+    }).pipe(Effect.timeout(reachesOut ? CONNECTOR_CALL_DEADLINE : FORWARD_DEADLINE), Effect.option);
     if (Option.isNone(answer)) {
-      // The server may have made a connector's call before its answer was
-      // lost, and a new call is a new request: the bot is told to look first.
+      // The server may have made the call before its answer was lost, and a
+      // new call is a new request: the bot is told to look first.
       return textResult(
         connector
           ? "J3 Bots did not answer this call, so it may or may not have taken effect at the connector. Check before you make it again."
-          : "J3 Bots could not be reached. Try the call again.",
+          : reachesOut
+            ? "J3 Bots did not answer this call, so it may or may not have taken effect. Check `list_mcp_servers` or `list_skills` before you make it again."
+            : "J3 Bots could not be reached. Try the call again.",
         true,
       );
     }

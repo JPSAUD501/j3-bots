@@ -7,6 +7,8 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { SkillFetchFailed, SkillRepositories } from "../skills/SkillRepositories.ts";
+import * as TestGitHost from "./gitHost.ts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -128,11 +130,26 @@ const engineWith = (starting: StartingStatuses) =>
   );
 
 /**
+ * No skill is installed from anywhere, so no test reaches the network: a
+ * test that installs one serves its own git host (`layerWithGitHost`).
+ */
+const noRepositories = Layer.succeed(
+  SkillRepositories,
+  SkillRepositories.of({
+    fetch: () => Effect.fail(new SkillFetchFailed({ reason: "unreachable" })),
+  }),
+);
+
+/**
  * The database `database` gives, the home, the engine, its providers as
  * `starting` says, a fake authorization server for connectors' sign-ins,
  * and harness sources with nothing to install.
  */
-const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatuses) =>
+const storesOver = (
+  database: typeof TestDatabase.layer,
+  starting: StartingStatuses,
+  repositories: Layer.Layer<SkillRepositories> = noRepositories,
+) =>
   Layer.mergeAll(
     engineWith(starting),
     BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
@@ -140,6 +157,7 @@ const storesOver = (database: typeof TestDatabase.layer, starting: StartingStatu
     Layer.succeed(VaultKdf, LEAST_KDF_PARAMS),
     TestOAuth.layer,
     TestHarnesses.layer,
+    repositories,
   ).pipe(Layer.provideMerge(database));
 
 const stores = storesOver(TestDatabase.layer, new Map());
@@ -210,6 +228,23 @@ export const layerWithRegistry = (entries: ReadonlyArray<RegistryEntry>) =>
       ),
     ),
   );
+
+/**
+ * The whole domain, installing skills from a fake git host on loopback
+ * (`testing/gitHost.ts`), which the test reads as `TestGitHost`.
+ */
+export const layerWithGitHost = Domain.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      // One host: a layer is built once however many times it is provided.
+      storesOver(TestDatabase.layer, new Map(), TestGitHost.layer),
+      TestGitHost.layer,
+      listener,
+      TestPush.layer,
+      registry,
+    ),
+  ),
+);
 
 /**
  * The whole domain over the database `database` gives, as one an earlier

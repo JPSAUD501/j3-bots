@@ -49,6 +49,7 @@ export {
   Withdrawn,
 } from "./errors.ts";
 export {
+  checkedAddresses,
   checkUrl,
   DEFAULT_GUARD,
   type GuardedFetch,

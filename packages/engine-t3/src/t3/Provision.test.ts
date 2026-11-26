@@ -13,7 +13,14 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as PlatformError from "effect/PlatformError";
 import { parse } from "smol-toml";
 import { engineFolders, makePrivateFiles, type PrivateFiles } from "./PrivateFiles.ts";
-import { type InstanceSpec, provision, storeConnection, writeBasePrompt } from "./Provision.ts";
+import {
+  type InstanceSpec,
+  linkHomeSkills,
+  linkProjectSkills,
+  provision,
+  storeConnection,
+  writeBasePrompt,
+} from "./Provision.ts";
 
 /** Every line logged while these tests run, as JSON. */
 const logged: Array<string> = [];
@@ -540,6 +547,66 @@ it.effect("lets the Claude Code and Codex homes list the shared skills", () =>
       );
     }
   }).pipe(Effect.scoped, Effect.provide(machine)),
+);
+
+it.effect(
+  "lets a running harness list a shared skill added or removed after the engine started",
+  () =>
+    Effect.gen(function* () {
+      const { fs, path, home, files, instances, input } = yield* setUp;
+      yield* fs.makeDirectory(input.sharedSkills, { recursive: true });
+      yield* provision(input);
+      const text = "---\nname: expenses\ndescription: Filing expenses\n---\n";
+      yield* fs.makeDirectory(path.join(input.sharedSkills, "expenses"), { recursive: true });
+      yield* fs.writeFileString(path.join(input.sharedSkills, "expenses", "SKILL.md"), text);
+
+      // What the server does once it has saved a shared skill, with no provisioning.
+      yield* linkHomeSkills({ home, files, instances, sharedSkills: input.sharedSkills });
+
+      for (const harness of ["claude-code", "codex"]) {
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(home, harness, "skills", "expenses", "SKILL.md")),
+          text,
+        );
+      }
+      yield* fs.remove(path.join(input.sharedSkills, "expenses"), { recursive: true });
+      yield* linkHomeSkills({ home, files, instances, sharedSkills: input.sharedSkills });
+      for (const harness of ["claude-code", "codex"]) {
+        assert.isFalse(yield* fs.exists(path.join(home, harness, "skills", "expenses")));
+      }
+    }).pipe(Effect.scoped, Effect.provide(machine)),
+);
+
+it.effect(
+  "lets each harness list a bot's own skills from the folder it reads in the workspace",
+  () =>
+    Effect.gen(function* () {
+      const { fs, path, home, files } = yield* setUp;
+      const workspace = path.join(home, "bots", "ada", "workspace");
+      const text = "---\nname: invoices\ndescription: Sending invoices\n---\n";
+      yield* fs.makeDirectory(path.join(workspace, "skills", "invoices"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspace, "skills", "invoices", "SKILL.md"), text);
+      // A skill the bot wrote straight into Claude Code's folder stays its own.
+      const own = path.join(workspace, ".claude", "skills", "drafts", "SKILL.md");
+      yield* fs.makeDirectory(path.dirname(own), { recursive: true });
+      yield* fs.writeFileString(own, "the bot's");
+
+      yield* linkProjectSkills({ home, files, workspace, skills: "skills" });
+
+      // Claude Code reads `.claude/skills`, Codex `.agents/skills`.
+      for (const folder of [".claude", ".agents"]) {
+        assert.strictEqual(
+          yield* fs.readFileString(path.join(workspace, folder, "skills", "invoices", "SKILL.md")),
+          text,
+        );
+      }
+      yield* fs.remove(path.join(workspace, "skills", "invoices"), { recursive: true });
+      yield* linkProjectSkills({ home, files, workspace, skills: "skills" });
+      for (const folder of [".claude", ".agents"]) {
+        assert.isFalse(yield* fs.exists(path.join(workspace, folder, "skills", "invoices")));
+      }
+      assert.strictEqual(yield* fs.readFileString(own), "the bot's");
+    }).pipe(Effect.scoped, Effect.provide(machine)),
 );
 
 // A mode cannot keep writes out of a folder on Windows.

@@ -89,7 +89,7 @@ export function AddOwnConnector({
   const send = (source: ConnectorSource) => {
     setSubmitting(true);
     setFailure(null);
-    void intents.add({ source, grant, suggestion: null }).then((result) => {
+    void intents.add({ source, grant }).then((result) => {
       setSubmitting(false);
       if (result._tag === "done") {
         // The server keeps them now: none stays in the form.

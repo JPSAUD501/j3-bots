@@ -63,7 +63,6 @@ export {
   listingPlace,
   sameGrant,
   type SignInProblem,
-  suggestionConnect,
   withBot,
 } from "./connectors.ts";
 export {
@@ -296,3 +295,14 @@ export {
   visualDocument,
   visualShell,
 } from "./visual.ts";
+export {
+  type InstallDraft,
+  type InstallProblem,
+  installedName,
+  newSkillText,
+  sameScope,
+  skillDraft,
+  type SkillGroup,
+  skillGroups,
+  skillInstall,
+} from "./skills.ts";

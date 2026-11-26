@@ -27,6 +27,7 @@ import {
 } from "@j3-bots/connectors";
 import {
   BotId,
+  type ChangeAuthor,
   type CommandError,
   type CommandLine,
   type CommandId,
@@ -41,10 +42,8 @@ import {
   type ConnectorSignIn,
   type ConnectorSource,
   type ConnectorsEvent,
-  type ConnectorSuggestionEntry,
   displayTransport,
   type ConnectorTransport,
-  type EntryId,
   FieldKey,
   Invalid,
   type ListingRef,
@@ -76,14 +75,11 @@ import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
 import { BotStore } from "../bots/BotStore.ts";
 import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
-import { Entries } from "../entries/Entries.ts";
-import { transactional } from "../persistence/transaction.ts";
 import { keyedLock } from "../turns/keyedLock.ts";
 import type { ConnectorSecret, NamedSecret } from "../vault/ConnectorSecret.ts";
 import { Vault } from "../vault/Vault.ts";
@@ -92,7 +88,6 @@ import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./Con
 import { addressOf, commandOf, credentialsOf, hiddenOf, vaultIdOf } from "./credentials.ts";
 import { headerFieldKeys, refill, resolve } from "./sources/form.ts";
 import { ConnectorSources } from "./sources/Sources.ts";
-import { offers, serviceOf } from "./suggestions.ts";
 import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
 
 /**
@@ -144,17 +139,21 @@ export class Connectors extends Context.Service<
       readonly arguments: Readonly<Record<string, unknown>>;
     }) => Effect.Effect<ToolCallAnswer, ToolNotOffered>;
     readonly subscribe: Stream.Stream<ConnectorsEvent>;
+    /** Every connector, as clients see it, with the prefix its tools are named under (`<prefix>__<tool>`). */
+    readonly listed: Effect.Effect<ReadonlyArray<ListedConnector>>;
+    /** Adds a connector for `grant`, every bot when it is left out, recorded as `by`'s change. */
     readonly add: (input: {
       readonly id: ConnectorId;
       readonly source: ConnectorSource;
       readonly grant?: ConnectorGrant;
-      readonly suggestion: EntryId | null;
+      readonly by: ChangeAuthor;
     }) => Effect.Effect<Connector, CommandError>;
     readonly update: (input: {
       readonly connectorId: ConnectorId;
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
       readonly command?: CommandLine;
+      readonly by: ChangeAuthor;
     }) => Effect.Effect<Connector, CommandError>;
     readonly remove: (input: {
       readonly commandId: CommandId;
@@ -164,6 +163,7 @@ export class Connectors extends Context.Service<
       readonly commandId: CommandId;
       readonly connectorId: ConnectorId;
       readonly grant: ConnectorGrant;
+      readonly by: ChangeAuthor;
     }) => Effect.Effect<Connector, CommandError>;
     readonly acceptToolChanges: (input: {
       readonly commandId: CommandId;
@@ -173,6 +173,12 @@ export class Connectors extends Context.Service<
     }) => Effect.Effect<Connector, CommandError>;
   }
 >()("@j3-bots/server/connectors/Connectors") {}
+
+/** A connector as a bot's `list_mcp_servers` names it: as clients see it, and its tools' prefix. */
+export interface ListedConnector {
+  readonly connector: Connector;
+  readonly prefix: string;
+}
 
 /** A connector's change, as subscribers are told it. */
 interface Change {
@@ -395,8 +401,6 @@ export const layer = Layer.effect(
     const signIns = yield* ConnectorSignIns;
     const bots = yield* BotStore;
     const workspaces = yield* Workspaces;
-    const sql = yield* SqlClient.SqlClient;
-    const entries = yield* Entries;
     const receipts = yield* CommandReceipts;
     const random = yield* SecureRandom.SecureRandom;
     const reach = yield* ConnectorReach;
@@ -457,46 +461,6 @@ export const layer = Layer.effect(
      */
     const grantsChanged = Effect.fn("Connectors.grantsChanged")(function* (ids: Iterable<BotId>) {
       for (const id of new Set(ids)) yield* workspaces.render(id);
-    });
-
-    /**
-     * Closes a suggestion card as `connected`, if it still waits: read and
-     * written in one transaction, so a Not now another device committed
-     * meanwhile stands.
-     */
-    const cardConnected = Effect.fn("Connectors.cardConnected")(function* (
-      id: EntryId,
-      connector: StoredConnector,
-    ) {
-      const card = yield* suggestionCard(id);
-      if (Option.isNone(card) || card.value.status._tag !== "pending") return;
-      yield* entries.update({
-        ...card.value,
-        status: { _tag: "connected", connectorId: connector.id },
-      });
-    }, transactional(sql));
-
-    /**
-     * Closes as `connected` the cards that bots now given `connector` still
-     * show for it, however the operator gave it: from the card, from the
-     * gallery or from the connector's page.
-     */
-    const suggestionsMet = Effect.fn("Connectors.suggestionsMet")(function* (
-      connector: StoredConnector,
-      gained: Iterable<BotId>,
-    ) {
-      const service = serviceOf(connector);
-      for (const botId of new Set(gained)) {
-        const cards = yield* entries.ofKind(
-          { _tag: "conversation", botId },
-          "connector-suggestion",
-        );
-        for (const card of cards) {
-          if (card.status._tag === "pending" && offers(card, service)) {
-            yield* cardConnected(card.id, connector);
-          }
-        }
-      }
     });
 
     const offeredNow = Effect.fn("Connectors.offeredNow")(function* (id: ConnectorId) {
@@ -1019,43 +983,8 @@ export const layer = Layer.effect(
       }),
     );
 
-    /**
-     * Who a connector goes to when the operator named no bots: the bot whose
-     * suggestion card they answered, else the primary bot, else none.
-     */
-    const defaultGrant = Effect.fn("Connectors.defaultGrant")(function* (
-      suggestion: EntryId | null,
-    ) {
-      const card = yield* suggestionCard(suggestion);
-      if (Option.isSome(card))
-        return { _tag: "bots", ids: [card.value.author.botId] } satisfies ConnectorGrant;
-      const primary = (yield* bots.list).find((stored) => stored.bot.primary);
-      return {
-        _tag: "bots",
-        ids: primary === undefined ? [] : [primary.bot.id],
-      } satisfies ConnectorGrant;
-    });
-
-    const suggestionCard = Effect.fn("Connectors.suggestionCard")(function* (
-      suggestion: EntryId | null,
-    ) {
-      if (suggestion === null) return Option.none<ConnectorSuggestionEntry>();
-      const found = yield* entries.find(suggestion);
-      return Option.flatMap(found, ({ entry }) =>
-        entry._tag === "connector-suggestion" ? Option.some(entry) : Option.none(),
-      );
-    });
-
-    /** Closes the bot's suggestion card once the bot can use the connector. */
-    const closeSuggestion = Effect.fn("Connectors.closeSuggestion")(function* (
-      suggestion: EntryId | null,
-      connector: StoredConnector,
-    ) {
-      const card = yield* suggestionCard(suggestion);
-      if (Option.isNone(card) || card.value.status._tag !== "pending") return;
-      if (!(yield* botsOf(connector)).includes(card.value.author.botId)) return;
-      yield* cardConnected(card.value.id, connector);
-    });
+    /** Who a connector goes to when nobody named bots: every bot (decision 0049). */
+    const EVERY_BOT: ConnectorGrant = { _tag: "all-bots" };
 
     /**
      * Lists the tools at a new connector's address, signed with the headers
@@ -1194,7 +1123,7 @@ export const layer = Layer.effect(
       readonly id: ConnectorId;
       readonly source: ConnectorSource;
       readonly grant?: ConnectorGrant;
-      readonly suggestion: EntryId | null;
+      readonly by: ChangeAuthor;
     }) {
       const existing = yield* store.get(input.id);
       if (Option.isSome(existing)) return yield* render(existing.value);
@@ -1232,7 +1161,7 @@ export const layer = Layer.effect(
       });
       const now = yield* DateTime.now;
       const catalog = Result.isSuccess(listing) ? Option.some(listing.success) : Option.none();
-      const grant = input.grant ?? (yield* defaultGrant(input.suggestion));
+      const grant = input.grant ?? EVERY_BOT;
       const inserted = yield* store
         .insert({
           id: input.id,
@@ -1249,6 +1178,7 @@ export const layer = Layer.effect(
           accepted: Option.getOrNull(catalog),
           keptRevision: null,
           createdAt: now,
+          lastChange: { by: input.by, at: now },
         })
         .pipe(
           // A connector not stored leaves no sealed record behind.
@@ -1273,8 +1203,6 @@ export const layer = Layer.effect(
             Effect.tapError(() => store.remove(input.id).pipe(Effect.andThen(forget(input.id)))),
           );
       }
-      yield* closeSuggestion(input.suggestion, connector);
-      yield* suggestionsMet(connector, yield* botsOf(connector));
       yield* grantsChanged(yield* botsOf(connector));
       yield* toolsTouched(yield* botsOf(connector));
       yield* touch(input.id);
@@ -1297,7 +1225,7 @@ export const layer = Layer.effect(
       readonly id: ConnectorId;
       readonly source: Extract<ConnectorSource, { readonly _tag: "command" }>;
       readonly grant?: ConnectorGrant;
-      readonly suggestion: EntryId | null;
+      readonly by: ChangeAuthor;
     }) {
       const { source } = input;
       yield* checkCommand(source);
@@ -1324,11 +1252,12 @@ export const layer = Layer.effect(
           signIn: fields.length > 0 ? "fields" : "none",
           fields,
           privateNetwork: false,
-          grant: input.grant ?? (yield* defaultGrant(input.suggestion)),
+          grant: input.grant ?? EVERY_BOT,
           signedInAt: fields.length > 0 ? now : null,
           accepted: null,
           keptRevision: null,
           createdAt: now,
+          lastChange: { by: input.by, at: now },
         })
         .pipe(
           Effect.onError(() =>
@@ -1336,7 +1265,7 @@ export const layer = Layer.effect(
           ),
         );
       if (Option.isNone(inserted)) return yield* render(yield* require(input.id));
-      yield* closeSuggestion(input.suggestion, inserted.value);
+      yield* grantsChanged(yield* botsOf(inserted.value));
       yield* touch(input.id);
       yield* ensureListed(input.id);
       return yield* render(inserted.value);
@@ -1361,6 +1290,7 @@ export const layer = Layer.effect(
       readonly name?: string;
       readonly values?: ReadonlyArray<ConnectorFieldValue>;
       readonly command?: CommandLine;
+      readonly by: ChangeAuthor;
     }) {
       const now = yield* DateTime.now;
       yield* perConnector.run(input.connectorId)(
@@ -1370,9 +1300,14 @@ export const layer = Layer.effect(
           }
           const connector = yield* require(input.connectorId);
           if (input.values !== undefined) yield* replaceValues(connector, input.values, now);
-          if (input.name !== undefined) {
-            yield* store.update(connector.id, { name: input.name }, now);
-          }
+          yield* store.update(
+            connector.id,
+            {
+              ...(input.name === undefined ? {} : { name: input.name }),
+              lastChange: { by: input.by, at: now },
+            },
+            now,
+          );
         }),
       );
       yield* touch(input.connectorId);
@@ -1543,6 +1478,7 @@ export const layer = Layer.effect(
       readonly commandId: CommandId;
       readonly connectorId: ConnectorId;
       readonly grant: ConnectorGrant;
+      readonly by: ChangeAuthor;
     }) {
       const before = yield* botsOf(yield* require(input.connectorId));
       yield* receipts.once({
@@ -1551,13 +1487,11 @@ export const layer = Layer.effect(
         payload: input,
         result: Schema.Void,
         apply: Effect.gen(function* () {
-          yield* store.update(input.connectorId, { grant: input.grant }, yield* DateTime.now);
-          // With the grant, so a server that stops after it leaves no card open.
-          const granted = yield* require(input.connectorId);
-          const now = yield* botsOf(granted);
-          yield* suggestionsMet(
-            granted,
-            now.filter((id) => !before.includes(id)),
+          const at = yield* DateTime.now;
+          yield* store.update(
+            input.connectorId,
+            { grant: input.grant, lastChange: { by: input.by, at } },
+            at,
           );
         }),
       });
@@ -1619,6 +1553,11 @@ export const layer = Layer.effect(
       toolsChanged: Stream.fromPubSub(toolChanges),
       call,
       subscribe,
+      listed: Effect.flatMap(store.all, (all) =>
+        Effect.forEach(all, (stored) =>
+          Effect.map(render(stored), (connector) => ({ connector, prefix: stored.slug })),
+        ),
+      ).pipe(Effect.withSpan("Connectors.listed")),
       add,
       update,
       remove,

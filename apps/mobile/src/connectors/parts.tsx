@@ -6,6 +6,7 @@ import {
   grantsBot,
   withBot,
 } from "@j3-bots/client-runtime/presentation";
+import type { Answer } from "@j3-bots/client-runtime/react";
 import { connectorStatusText } from "@j3-bots/client-runtime/wording";
 import type {
   Bot,
@@ -21,7 +22,7 @@ import { type ReactNode, useState } from "react";
 import { View } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { BotAvatar } from "../components/avatar/BotAvatar.tsx";
-import { ChoiceRow, Problem, SwitchRow, TextField } from "../components/form.tsx";
+import { ChoiceRow, Problem, Quiet, SwitchRow, TextField } from "../components/form.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { useI18n } from "../i18n.ts";
 import { usePresentation } from "../presentation.tsx";
@@ -534,6 +535,26 @@ export function HeaderRows({
           }
         />
       </View>
+    </View>
+  );
+}
+
+/** What a read that answered holds, or that it did not answer, with a way to read it again. */
+export function Loaded<A>({
+  answer,
+  onRetry,
+  children,
+}: {
+  readonly answer: Exclude<Answer<A>, { readonly _tag: "loading" }>;
+  readonly onRetry: () => void;
+  readonly children: (value: A) => ReactNode;
+}) {
+  const { t } = useI18n();
+  if (answer._tag === "ready") return children(answer.value);
+  return (
+    <View className="items-start gap-2">
+      <Quiet>{t("connectors.loadFailed")}</Quiet>
+      <Button variant="secondary" label={t("connectors.retry")} onPress={onRetry} />
     </View>
   );
 }

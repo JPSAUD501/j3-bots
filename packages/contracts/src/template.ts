@@ -48,6 +48,7 @@ export const TEMPLATE_LIMITS = { skills: 16, skillText: 20_000, routines: 16 } a
 export const SkillName = Schema.String.check(
   Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
 );
+export type SkillName = typeof SkillName.Type;
 
 /** A skill as a template carries it: its name and its `SKILL.md`, the one file of its folder that travels. */
 export const TemplateSkill = Schema.Struct({

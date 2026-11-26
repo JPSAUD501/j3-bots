@@ -3,7 +3,7 @@ import { APPROVAL_TEXT_LENGTH, type ApprovalChange, type SessionGrant } from "@j
 import type { OrchestrationV2RuntimeRequest, OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import type { EngineRequest } from "../events.ts";
-import { toolStep } from "./toolNames.ts";
+import { heldCallLabel } from "./toolNames.ts";
 
 // What an approval card shows, from the engine's records. The approval item
 // itself carries only the provider's prompt and reason, which are text the
@@ -164,7 +164,7 @@ const gatedItem = (
   return undefined;
 };
 
-/** A connector's `j3` tool call an approval holds back. */
+/** A `j3` tool call an approval holds back: a connector's, or one that manages MCP servers or skills. */
 interface ConnectorCall {
   /** The engine's item of the call. */
   readonly itemId: string;
@@ -173,11 +173,13 @@ interface ConnectorCall {
 }
 
 /**
- * The `j3` connector call `approval` holds back, by the same native id, with
- * its item, and its step label and its input as the engine recorded them. Claude Code's
- * prompt for an MCP tool is the tool's `command` argument when it has one,
- * so a connector tool's card could show that alone, as a shell command; the
- * card names the connector's tool instead. **Read** at `59651c1`: the
+ * The `j3` call `approval` holds back, by the same native id, with its item,
+ * the name its card gives it and its input as the engine recorded them: a
+ * connector's call, or one of J3 Bots' own that changes MCP servers or
+ * skills, which are not pre-approved (decision 0049). Claude Code's prompt
+ * for an MCP tool is the tool's `command` argument when it has one, so the
+ * card of `add_mcp_server` for a command server, or of a connector tool,
+ * could show that alone, as a shell command; the card names the tool instead. **Read** at `59651c1`: the
  * approval and the call share the tool use's id as a strong native id
  * (`ClaudeAdapterV2.ts`, `buildApprovalRequestArtifacts` and
  * `buildToolCallArtifacts`), and the prompt prefers `command` (`canUseTool`).
@@ -199,18 +201,16 @@ export const heldConnectorCall = (
       item.nativeItemRef.driver === ref.driver &&
       item.nativeItemRef.nativeId === ref.nativeId
     ) {
-      const step = toolStep({ name: item.toolName, title: null, input: null, viewsImage: false });
-      return step.tool === "connector" && step.label !== null
-        ? { itemId: item.id, label: step.label, input: item.input }
-        : undefined;
+      const label = item.toolName === null ? undefined : heldCallLabel(item.toolName);
+      return label === undefined ? undefined : { itemId: item.id, label, input: item.input };
     }
   }
   return undefined;
 };
 
 /**
- * A connector call's card: the tool, named as its step is, then its input as
- * the engine recorded it, which is what the connector will be sent.
+ * A held `j3` call's card: the tool, then its input as the engine recorded
+ * it, which is what the connector, or J3 Bots, will be sent.
  */
 const connectorApproval = (call: ConnectorCall): Approval => {
   const action = `${call.label} ${JSON.stringify(call.input ?? {})}`;

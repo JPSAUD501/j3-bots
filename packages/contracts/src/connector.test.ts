@@ -17,7 +17,6 @@ import { ConnectorsEvent } from "./rpc.ts";
 import {
   ApprovalEntry,
   ConnectorAuthEntry,
-  ConnectorSuggestionEntry,
   HandoffEntry,
   MessageEntry,
   QuestionEntry,
@@ -59,6 +58,7 @@ const connector = {
     ],
   },
   createdAt: "2026-11-22T08:59:00.000Z",
+  lastChange: { by: { _tag: "bot", botId: "b1" }, at: "2026-11-23T09:30:00.000Z" },
 };
 
 describe("a connector", () => {
@@ -229,16 +229,6 @@ describe("a connector card", () => {
     order: n,
     createdAt: `2026-11-23T10:0${n}:00.000Z`,
   });
-  const suggestion = {
-    _tag: "connector-suggestion",
-    ...placed(1),
-    author: { _tag: "bot", botId: "b1" },
-    subject: { _tag: "listing", ref: { _tag: "registry", name: "com.example/tracker" } },
-    name: "Tracker",
-    glyph: null,
-    reason: "To read the open issues you asked about.",
-    status: { _tag: "connected", connectorId: "conn_0123456789abcdef" },
-  };
   const auth = {
     _tag: "connector-auth",
     ...placed(2),
@@ -251,19 +241,17 @@ describe("a connector card", () => {
 
   it("reaches a client of this build as the server wrote it", () => {
     const Entries = json(Schema.Array(ReceivedEntry));
-    const decoded = Schema.decodeSync(Entries)([suggestion, auth]);
+    const decoded = Schema.decodeSync(Entries)([auth]);
     assert.deepStrictEqual(
       decoded.map((entry) => entry._tag),
-      ["connector-suggestion", "connector-auth"],
+      ["connector-auth"],
     );
-    assert.deepStrictEqual(Schema.encodeSync(Entries)(decoded), [suggestion, auth]);
+    assert.deepStrictEqual(Schema.encodeSync(Entries)(decoded), [auth]);
   });
 
   it("is never authored by anyone but a bot", () => {
     const authBy = Schema.decodeExit(json(ConnectorAuthEntry));
-    const suggestionBy = Schema.decodeExit(json(ConnectorSuggestionEntry));
     assert.isTrue(Exit.isFailure(authBy({ ...auth, author: { _tag: "system" } })));
-    assert.isTrue(Exit.isFailure(suggestionBy({ ...suggestion, author: { _tag: "operator" } })));
   });
 
   it("reads as an entry it cannot show, in its place, to a client from before connectors", () => {
@@ -287,15 +275,12 @@ describe("a connector card", () => {
     });
     const OlderEntries = json(Schema.Array(Schema.Union([...before, Unknown])));
     const written = Schema.encodeSync(json(Schema.Array(ReceivedEntry)))(
-      Schema.decodeSync(json(Schema.Array(ReceivedEntry)))([suggestion, auth]),
+      Schema.decodeSync(json(Schema.Array(ReceivedEntry)))([auth]),
     );
     const read = Schema.decodeSync(OlderEntries)(written);
     assert.deepStrictEqual(
       read.map((entry) => [entry._tag, entry.id, entry.order]),
-      [
-        ["connector-suggestion", "e1", 1],
-        ["connector-auth", "e2", 2],
-      ],
+      [["connector-auth", "e2", 2]],
     );
   });
 });

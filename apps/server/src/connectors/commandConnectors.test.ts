@@ -81,7 +81,7 @@ const setUp = Effect.gen(function* () {
     id: ID,
     source: { _tag: "command", name: "Notes", ...command([ARG_SECRET]) },
     grant: { _tag: "bots", ids: [ana.id] },
-    suggestion: null,
+    by: { _tag: "operator" },
   });
   return { connectors, added, ana: ana.id, bea: bea.id };
 });
@@ -161,7 +161,7 @@ describe("Connectors started by command", () => {
               id: ID,
               source: { _tag: "command", name: "Memory", ...source },
               grant: { _tag: "all-bots" },
-              suggestion: null,
+              by: { _tag: "operator" },
             }),
           ).pipe(Effect.map(invalidOf));
 
@@ -215,12 +215,14 @@ describe("Connectors started by command", () => {
         // Only a variable the command was given may be given a new value.
         const unknown = yield* Effect.flip(
           connectors.update({
+            by: { _tag: "operator" },
             connectorId: ID,
             values: [{ key: FieldKey.make("OTHER"), value: Redacted.make("x") }],
           }),
         );
         assert.strictEqual(invalidOf(unknown), "connector-fields");
         yield* connectors.update({
+          by: { _tag: "operator" },
           connectorId: ID,
           values: [
             { key: FieldKey.make("FIXTURE_SECRET"), value: Redacted.make("new-secret-8899") },
@@ -238,7 +240,11 @@ describe("Connectors started by command", () => {
         assert.notInclude(echoed.text, "new-secret-8899");
 
         // A command line the operator confirmed again: the tool it adds waits on them.
-        yield* connectors.update({ connectorId: ID, command: command(["--tool", "extra"]) });
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          command: command(["--tool", "extra"]),
+        });
         const reviewed = yield* awaitConnector((connector) => connector.review !== null);
         assert.deepStrictEqual(
           reviewed.review?.changes.map((change) => [change._tag, change.tool.name]),
@@ -254,6 +260,7 @@ describe("Connectors started by command", () => {
 
         const unpinned = yield* Effect.flip(
           connectors.update({
+            by: { _tag: "operator" },
             connectorId: ID,
             command: { command: "npx", args: [Redacted.make("server-memory")], env: [] },
           }),

@@ -15,7 +15,6 @@ import type {
   Connector,
   ConnectorGrant,
   ConnectorListingDetails,
-  EntryId,
   FieldKey,
 } from "@j3-bots/contracts";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
@@ -28,12 +27,12 @@ import type { Screens } from "../navigation.tsx";
 import { useBotList } from "../presentation.tsx";
 import { Text } from "../text.tsx";
 import { Button } from "../ui.tsx";
-import { Loaded } from "./ConnectorsScreen.tsx";
 import { type ConnectorsIntents, useConnectorsIntents } from "./intents.ts";
 import {
   BotsPicker,
   ConnectorHeading,
   ListingFields,
+  Loaded,
   PageSection,
   SecretLine,
   ToolList,
@@ -50,7 +49,7 @@ type Props = NativeStackScreenProps<Screens, "connectorListing">;
 export function ListingScreen({ navigation, route }: Props) {
   const i18n = useI18n();
   const { t } = i18n;
-  const { ref, name, glyph, forBot, suggestion } = route.params;
+  const { ref, name, glyph, forBot } = route.params;
   const intents = useConnectorsIntents();
   const details = useAnswer(`${listingKey(ref)}:${i18n.locale}`, () =>
     intents.listing(ref, i18n.locale),
@@ -75,7 +74,6 @@ export function ListingScreen({ navigation, route }: Props) {
         listing={listing}
         heading={heading}
         forBot={forBot}
-        suggestion={suggestion}
         intents={intents}
         onAdded={(connector) => {
           const at = addedPlace(connector);
@@ -182,14 +180,12 @@ function ConnectForm({
   listing,
   heading,
   forBot,
-  suggestion,
   intents,
   onAdded,
 }: {
   readonly listing: ConnectorListingDetails;
   readonly heading: ReactNode;
   readonly forBot: BotId | null;
-  readonly suggestion: EntryId | null;
   readonly intents: ConnectorsIntents;
   readonly onAdded: (connector: Connector) => void;
 }) {
@@ -235,7 +231,7 @@ function ConnectForm({
     setProblems(null);
     setFailure(null);
     setSubmitting(true);
-    void intents.add({ source: draft.source, grant, suggestion }).then((result) => {
+    void intents.add({ source: draft.source, grant }).then((result) => {
       setSubmitting(false);
       if (result._tag === "done") {
         // The server keeps them now: none stays in the form.

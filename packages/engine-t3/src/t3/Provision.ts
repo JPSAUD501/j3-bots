@@ -605,10 +605,8 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
     yield* input.files.write(file, `${text}\n`);
   });
 
-  const { j3, userdata, secrets } = engineFolders(path, input.home);
-  /** The links made in an instance's home, in the adapter's own folder rather than the home. */
-  const skillLinkRecord = (instanceId: string) =>
-    path.join(j3, "skill-links", `${instanceId}.json`);
+  const { userdata, secrets } = engineFolders(path, input.home);
+  const skillLinkRecord = (instanceId: string) => homeSkillLinkRecord(path, input.home, instanceId);
   yield* input.files.folder(secrets);
   yield* fs.chmod(secrets, 0o700);
   for (const folder of Object.values(harnessDefaultHomes(path, input.home))) {
@@ -748,6 +746,73 @@ export const writeBasePrompt = Effect.fn("engine.writeBasePrompt")(function* (in
     });
     if (edited._tag === "unreadable") return yield* unreadable(edited.reason);
     yield* input.files.write(configFile, edited.text);
+  }
+});
+
+/** The links made in an instance's home, in the adapter's own folder rather than the home. */
+const homeSkillLinkRecord = (path: Path.Path, home: string, instanceId: string) =>
+  path.join(engineFolders(path, home).j3, "skill-links", `${instanceId}.json`);
+
+/**
+ * Links the shared skills into each Claude Code and Codex home now, as a
+ * provisioning does, while the engine runs: a skill added to the shared
+ * folder or removed from it reaches the harnesses without a restart. Each
+ * harness watches its skill folder (`docs/architecture/engine.md`).
+ */
+export const linkHomeSkills = Effect.fn("engine.linkHomeSkills")(function* (input: {
+  readonly home: string;
+  readonly files: PrivateFiles;
+  readonly instances: ReadonlyArray<InstanceSpec>;
+  readonly sharedSkills: string;
+}) {
+  const path = yield* Path.Path;
+  for (const spec of input.instances) {
+    if (spec.kind === "acp-local") continue;
+    yield* linkSharedSkills({
+      files: input.files,
+      home: spec.home,
+      shared: input.sharedSkills,
+      record: homeSkillLinkRecord(path, input.home, spec.instanceId),
+    });
+  }
+});
+
+/**
+ * The folders of a session's working folder where each harness lists project
+ * skills, as `<folder>/skills`: Claude Code's `.claude/skills`, and Codex's
+ * `.agents/skills` (it also reads `.codex/skills`, which J3 Bots leaves to
+ * the bot). **Verified** with Claude Code 2.1.328 and Codex 0.170.0
+ * (`docs/research/t3-code.md`, Skills). No folder is read by both.
+ */
+const PROJECT_SKILL_FOLDERS = [".claude", ".agents"] as const;
+
+/**
+ * Links a bot's own skills, each folder of `<workspace>/<skills>` with a
+ * `SKILL.md`, into the folders each harness lists project skills from in that
+ * workspace, the bot's engine project: one link per skill, as the shared
+ * skills are linked into a harness home (`linkSharedSkills`), so a skill the
+ * bot or the operator put there is offered by its harness. The links made are
+ * recorded in the adapter's own folder, by the workspace's path. Never fails.
+ */
+export const linkProjectSkills = Effect.fn("engine.linkProjectSkills")(function* (input: {
+  readonly home: string;
+  readonly files: PrivateFiles;
+  readonly workspace: string;
+  readonly skills: string;
+}) {
+  const path = yield* Path.Path;
+  const key = NodeCrypto.createHash("sha256").update(input.workspace).digest("hex").slice(0, 32);
+  for (const folder of PROJECT_SKILL_FOLDERS) {
+    yield* linkSharedSkills({
+      files: input.files,
+      home: path.join(input.workspace, folder),
+      shared: path.join(input.workspace, input.skills),
+      record: path.join(
+        engineFolders(path, input.home).j3,
+        "project-skill-links",
+        `${key}-${folder.slice(1)}.json`,
+      ),
+    });
   }
 });
 

@@ -15,7 +15,6 @@ import type {
   ConnectorGlyph,
   ConnectorGrant,
   ConnectorListingDetails,
-  EntryId,
   FieldKey,
   ListingRef,
 } from "@j3-bots/contracts";
@@ -55,7 +54,6 @@ export function ListingPage({
   glyph: ConnectorGlyph | null;
   bots: ReadonlyArray<Bot>;
   forBot: BotId | null;
-  suggestion: EntryId | null;
   connected: boolean;
   intents: ConnectorsIntents;
   onAdded: (connector: Connector) => void;
@@ -145,7 +143,6 @@ function ConnectForm({
   listing,
   bots,
   forBot,
-  suggestion,
   connected,
   intents,
   onAdded,
@@ -153,7 +150,6 @@ function ConnectForm({
   listing: ConnectorListingDetails;
   bots: ReadonlyArray<Bot>;
   forBot: BotId | null;
-  suggestion: EntryId | null;
   connected: boolean;
   intents: ConnectorsIntents;
   onAdded: (connector: Connector) => void;
@@ -198,7 +194,7 @@ function ConnectForm({
     setProblems(null);
     setFailure(null);
     setSubmitting(true);
-    void intents.add({ source: draft.source, grant, suggestion }).then((result) => {
+    void intents.add({ source: draft.source, grant }).then((result) => {
       setSubmitting(false);
       if (result._tag === "done") {
         // The server keeps them now: none stays in the form.

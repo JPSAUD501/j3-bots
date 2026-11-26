@@ -1,6 +1,6 @@
 # 0026: A bot uses connected services through J3 Bots, which holds the sign-in
 
-**Status:** Accepted
+**Status:** Accepted. Its "the operator connects; a bot only suggests" is superseded by [0049](0049-the-bots-manage-mcp-servers-and-skills.md): the bots add and manage servers themselves, under their permission mode.
 
 ## Context
 

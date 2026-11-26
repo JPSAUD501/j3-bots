@@ -138,6 +138,10 @@ export class TestEngineControl extends Context.Service<
     readonly providerConnection: Effect.Effect<Option.Option<string>>;
     /** The providers `recheckProvider` was asked to check again, in order. */
     readonly recheckedProviders: Effect.Effect<ReadonlyArray<ProviderId>>;
+    /** How many times the shared skills were linked into the harness homes. */
+    readonly sharedSkillLinks: Effect.Effect<number>;
+    /** The workspaces whose bot skills were linked, in order. */
+    readonly botSkillLinks: Effect.Effect<ReadonlyArray<string>>;
     /** The providers `updateProvider` was asked to update, in order. */
     readonly updatedProviders: Effect.Effect<ReadonlyArray<ProviderId>>;
     /** Each executable `setHarnessExecutable` was given, in order. */
@@ -618,6 +622,8 @@ const make = Effect.gen(function* () {
     readonly executable: string | null;
     readonly version: string | null;
   }> = [];
+  let sharedSkillLinks = 0;
+  const botSkillLinks: Array<string> = [];
   let loseReply = false;
   let rejectDispatch = false;
   let rejectAnswer = false;
@@ -1270,6 +1276,10 @@ const make = Effect.gen(function* () {
 
     consoleLink: command(Effect.succeed("http://127.0.0.1/test-engine")),
 
+    linkSharedSkills: Effect.sync(() => void (sharedSkillLinks += 1)),
+
+    linkBotSkills: (workspacePath) => Effect.sync(() => void botSkillLinks.push(workspacePath)),
+
     ensureProject: ({ workspacePath }) =>
       command(
         Effect.sync(() => {
@@ -1723,6 +1733,8 @@ const make = Effect.gen(function* () {
   const control = TestEngineControl.of({
     providerConnection: Effect.sync(() => connection),
     recheckedProviders: Effect.sync(() => [...rechecked]),
+    sharedSkillLinks: Effect.sync(() => sharedSkillLinks),
+    botSkillLinks: Effect.sync(() => [...botSkillLinks]),
     updatedProviders: Effect.sync(() => [...updated]),
     harnessExecutables: Effect.sync(() => [...executables]),
 

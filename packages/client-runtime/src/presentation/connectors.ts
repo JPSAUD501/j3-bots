@@ -7,8 +7,6 @@ import type {
   ConnectorGrant,
   ConnectorId,
   ConnectorListing,
-  ConnectorSuggestionEntry,
-  EntryId,
   ListingRef,
 } from "@j3-bots/contracts";
 
@@ -44,14 +42,12 @@ export const connectorsOf = (
 ): ReadonlyArray<Connector> => connectors.filter((connector) => grantsBot(connector.grant, botId));
 
 /**
- * Who a new connector is for until the operator says otherwise: the bot that
- * asked for it, else the primary bot, else no bot, as the server would grant it.
+ * Who a new connector is for until the operator says otherwise: the bot whose
+ * details it is added from, else every bot, as the server would grant it.
  */
 export const initialGrant = (bots: ReadonlyArray<Bot>, asking: BotId | null): ConnectorGrant => {
-  const bot =
-    (asking === null ? undefined : bots.find((candidate) => candidate.id === asking)) ??
-    bots.find((candidate) => candidate.primary);
-  return { _tag: "bots", ids: bot === undefined ? [] : [bot.id] };
+  const bot = asking === null ? undefined : bots.find((candidate) => candidate.id === asking);
+  return bot === undefined ? { _tag: "all-bots" } : { _tag: "bots", ids: [bot.id] };
 };
 
 /**
@@ -168,15 +164,13 @@ export type ConnectorsPlace =
   | { readonly _tag: "add-own" };
 
 /**
- * What opens the connectors screen: where it opens, the bot a new connector
- * is for at first (the one whose details or card opened it; null for the
- * primary bot), and the card that suggested it, which the server closes once
- * it is added.
+ * What opens the connectors screen: where it opens, and the bot a new
+ * connector is for at first (the one whose details opened it; null for
+ * every bot).
  */
 export interface ConnectorsOpening {
   readonly at: ConnectorsPlace;
   readonly forBot: BotId | null;
-  readonly suggestion: EntryId | null;
 }
 
 /** The page a connector just added opens on: its sign-in started, when it has one to do. */
@@ -196,49 +190,4 @@ export const listingPlace = (
   return added === undefined
     ? { _tag: "listing", ref: listing.ref, name: listing.name, glyph: listing.glyph }
     : { _tag: "connector", connectorId: added.id, signIn: false, added: false };
-};
-
-/**
- * What a suggestion card's Connect does: the bots a connector the operator
- * added now lets in (`letIn`), and the connectors screen it opens (`open`).
- * A gallery entry opens its page, for the bot that asked. A connector the
- * operator added lets that bot in at once, and opens its page only when it
- * waits on the operator too, for a sign-in or the vault; one this client
- * does not hold opens the screen's first page.
- */
-export const suggestionConnect = (
-  entry: ConnectorSuggestionEntry,
-  connectors: ReadonlyArray<Connector>,
-  bots: ReadonlyArray<Bot>,
-): {
-  readonly letIn: { readonly connectorId: ConnectorId; readonly grant: ConnectorGrant } | null;
-  readonly open: ConnectorsOpening | null;
-} => {
-  const forBot = entry.author.botId;
-  const suggestion = entry.id;
-  if (entry.subject._tag === "listing") {
-    const at: ConnectorsPlace = {
-      _tag: "listing",
-      ref: entry.subject.ref,
-      name: entry.name,
-      glyph: entry.glyph,
-    };
-    return { letIn: null, open: { at, forBot, suggestion } };
-  }
-  const { connectorId } = entry.subject;
-  const connector = connectors.find((candidate) => candidate.id === connectorId);
-  if (connector === undefined) {
-    return { letIn: null, open: { at: { _tag: "home" }, forBot, suggestion } };
-  }
-  return {
-    letIn: { connectorId, grant: withBot(connector.grant, forBot, true, bots) },
-    open:
-      connector.status._tag === "connected"
-        ? null
-        : {
-            at: { _tag: "connector", connectorId, signIn: false, added: false },
-            forBot,
-            suggestion,
-          },
-  };
 };

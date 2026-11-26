@@ -12,6 +12,7 @@ import {
   HeaderName,
   ToolReviewRevision,
 } from "@j3-bots/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -81,7 +82,7 @@ const setUp = (
       id: ID,
       source: remote(headers),
       grant: { _tag: "bots", ids: [ana.id] },
-      suggestion: null,
+      by: { _tag: "operator" },
     });
     const secret = yield* vault.connectorSecrets.get(vaultIdOf(ID));
     assert.isTrue(Option.isSome(secret));
@@ -292,6 +293,7 @@ describe("Connectors", () => {
         assert.deepStrictEqual(needs.status, { _tag: "needs-sign-in", reason: "rejected" });
 
         const updated = yield* connectors.update({
+          by: { _tag: "operator" },
           connectorId: ID,
           values: [
             { key: FieldKey.make("Authorization"), value: Redacted.make(`Bearer ${NEW_KEY}`) },
@@ -422,6 +424,43 @@ describe("Connectors", () => {
     SLOW,
   );
 
+  it.effect(
+    "records who changed a connector last, the operator or a bot, and when",
+    () =>
+      Effect.gen(function* () {
+        const vault = yield* Vault;
+        yield* vault.setup(PASSWORD);
+        const bots = yield* Bots;
+        const ana = yield* bots.create({
+          commandId: CommandId.make("ana"),
+          draft: { name: "Ana" },
+        });
+        const connectors = yield* Connectors;
+        const lastChange = Effect.map(
+          connectors.listed,
+          (all) => all.find(({ connector }) => connector.id === ID)?.connector.lastChange ?? null,
+        );
+
+        const added = yield* DateTime.now;
+        yield* connectors.add({ id: ID, source: remote([]), by: { _tag: "operator" } });
+        assert.deepStrictEqual(yield* lastChange, { by: { _tag: "operator" }, at: added });
+
+        yield* TestClock.adjust("1 minute");
+        const changed = yield* DateTime.now;
+        yield* connectors.setBots({
+          commandId: CommandId.make("grant"),
+          connectorId: ID,
+          grant: { _tag: "bots", ids: [ana.id] },
+          by: { _tag: "bot", botId: ana.id },
+        });
+        assert.deepStrictEqual(yield* lastChange, {
+          by: { _tag: "bot", botId: ana.id },
+          at: changed,
+        });
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
   it.effect("refuses an address in the operator's own network unless they confirm it", () =>
     Effect.gen(function* () {
       const connectors = yield* Connectors;
@@ -429,7 +468,7 @@ describe("Connectors", () => {
         connectors.add({
           id: ID,
           source: { ...remote([]), url: Redacted.make("https://10.0.0.8/mcp") },
-          suggestion: null,
+          by: { _tag: "operator" },
         }),
       );
       assert.strictEqual(conflictOf(refused), "private-network");

@@ -8,6 +8,7 @@ import {
   type SignInRoute,
   useConnection,
   useConnectors,
+  useSkills,
   useConversation,
   useDevices,
   useEngineStatus,
@@ -83,7 +84,6 @@ import {
   type RoomFormMode,
   roomStopFailed,
   showsImage,
-  suggestionConnect,
   templateFileName,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
@@ -963,6 +963,8 @@ function LiveShell({
   };
   const connectorsState = useConnectors();
   const connectors = connectorsState._tag === "ready" ? connectorsState.value : null;
+  const skillsState = useSkills();
+  const skills = skillsState._tag === "ready" ? skillsState.value : null;
   // Without a roster, Settings has no button and closes without saying so.
   if (settingsOpen && (roster === null || roster.length === 0)) setSettingsOpen(false);
   // Read each time Settings opens, and on every socket while it stays open.
@@ -1218,6 +1220,7 @@ function LiveShell({
         ? { _tag: "server" }
         : { _tag: "paste" };
   const { state: _connectorsState, ...connectorsClient } = j3.connectors;
+  const { state: _skillsState, ...skillsIntents } = j3.skills;
   const connectorsIntents: ConnectorsIntents = {
     ...connectorsClient,
     signInRoute,
@@ -1486,21 +1489,10 @@ function LiveShell({
         search: (prev) => ({ ...prev, details: true, routine: routineId }),
       }),
     openConversation: (botId) => void goToBot(botId),
-    connectSuggested: (entry) => {
-      const { letIn, open } = suggestionConnect(entry, connectors ?? [], bots);
-      if (letIn !== null) {
-        void j3.connectors.setBots(letIn.connectorId, letIn.grant).then((result) => {
-          if (result._tag === "failed") say(t("connectorCard.failed"));
-        });
-      }
-      if (open !== null) openConnectors(open);
-    },
-    dismissSuggestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     signInConnector: (entry) =>
       openConnectors({
         at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
         forBot: entry.author.botId,
-        suggestion: null,
       }),
     openConnectors,
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),
@@ -1751,8 +1743,10 @@ function LiveShell({
         aside={settingsOpen}
         connectors={connectors}
         bots={bots}
+        skills={skills}
         connected={data.connected}
         intents={connectorsIntents}
+        skillsIntents={skillsIntents}
         onClose={() => setConnectorsOpening(null)}
       />
       <RoomDialog

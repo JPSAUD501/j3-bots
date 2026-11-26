@@ -45,7 +45,7 @@ export function ConnectorsSection() {
         <Button
           variant="secondary"
           label={t("settings.connectors.open")}
-          onPress={() => navigation.push("connectors", { forBot: null, suggestion: null })}
+          onPress={() => navigation.push("connectors", { forBot: null })}
         />
       </View>
     </Section>

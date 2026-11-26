@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { BotId, Label, Language, OpenLiterals } from "./base.ts";
+import { OptionalLastChange } from "./skill.ts";
 
 // ---------------------------------------------------------------------------
 // Connectors: services a bot uses through J3 Bots, which the operator signs
@@ -455,6 +456,8 @@ export const Connector = Schema.Struct({
   /** Changes to its tools that wait on the operator, and that no bot gets until then. */
   review: Schema.NullOr(ToolReview),
   createdAt: Schema.DateTimeUtc,
+  /** Who last added, changed or granted it, and when: null for one changed before 0.9.0 kept it. */
+  lastChange: OptionalLastChange,
 });
 export type Connector = typeof Connector.Type;
 

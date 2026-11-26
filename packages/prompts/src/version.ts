@@ -26,8 +26,9 @@ import { sharedSkills } from "./skills.ts";
 import {
   BROWSER_HELP_REQUESTED,
   FILL_NOTES,
-  SUGGESTION_REFUSED,
-  SUGGESTION_SHOWN,
+  MANAGEMENT_NOTES,
+  MANAGEMENT_REFUSED,
+  preApprovedTools,
   toolList,
 } from "./tools.ts";
 
@@ -235,8 +236,11 @@ const fingerprint = (): string => {
     JSON.stringify(toolList),
     BROWSER_HELP_REQUESTED,
     ...Object.values(FILL_NOTES),
-    SUGGESTION_SHOWN,
-    ...Object.values(SUGGESTION_REFUSED).map((refusal) => refusal("Connector")),
+    ...Object.values(MANAGEMENT_NOTES),
+    ...Object.values(MANAGEMENT_REFUSED).map((refusal) =>
+      typeof refusal === "string" ? refusal : refusal("name"),
+    ),
+    JSON.stringify(preApprovedTools),
     ...sharedSkills.flatMap((skill) => [skill.name, skill.text]),
     ...SAMPLE_WAKES.map((wake) => renderWakeWithNonce(wake, "000000000000")),
     connectorToolDescription("Connector", "text"),

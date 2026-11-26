@@ -23,7 +23,6 @@ import {
   providerGate,
   ROOM_MEMBERS,
   showsImage,
-  withBot,
   withoutMarks,
 } from "@j3-bots/client-runtime/presentation";
 import {
@@ -40,6 +39,7 @@ import {
   type Bot,
   type BotState,
   type Connector,
+  type Skill,
   type EngineStatus,
   type Entry,
   type EntryTarget,
@@ -65,6 +65,7 @@ import { ids, SAMPLE_NOW, sampleTeam, type SampleTeam } from "./sample";
 import { sampleBrowser } from "./sampleBrowser";
 import { sampleVault } from "./sampleVault";
 import { sampleConnectors, sampleConnectorsIntents } from "./sampleConnectors";
+import { sampleSkills, sampleSkillsIntents } from "./sampleSkills";
 
 interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   /** Cards whose answer is on its way, as it would be to a server. */
@@ -74,6 +75,7 @@ interface State extends Omit<SampleTeam, "bots" | "room" | "attachments"> {
   readonly settingsSaves: SettingsSaves;
   readonly settingsOpen: boolean;
   readonly connectors: ReadonlyArray<Connector>;
+  readonly skills: ReadonlyArray<Skill>;
   /** The connectors screen, and what opened it; null while it is closed. */
   readonly connectorsOpening: ConnectorsOpening | null;
 }
@@ -375,43 +377,10 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
 
   return {
     openConnectors,
-    connectSuggested: (entry) => {
-      const { botId } = entry.author;
-      if (entry.subject._tag === "listing") {
-        openConnectors({
-          at: { _tag: "listing", ref: entry.subject.ref, name: entry.name, glyph: entry.glyph },
-          forBot: botId,
-          suggestion: entry.id,
-        });
-        return;
-      }
-      const { connectorId } = entry.subject;
-      inFlight(
-        entry.id,
-        (e) =>
-          e._tag === "connector-suggestion"
-            ? { ...e, status: { _tag: "connected", connectorId } }
-            : e,
-        () =>
-          update((s) => ({
-            ...s,
-            connectors: s.connectors.map((connector) =>
-              connector.id === connectorId
-                ? { ...connector, grant: withBot(connector.grant, botId, true, botsOf(s)) }
-                : connector,
-            ),
-          })),
-      );
-    },
-    dismissSuggestion: (entryId) =>
-      inFlight(entryId, (e) =>
-        e._tag === "connector-suggestion" ? { ...e, status: { _tag: "dismissed" } } : e,
-      ),
     signInConnector: (entry) =>
       openConnectors({
         at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
         forBot: entry.author.botId,
-        suggestion: null,
       }),
     setDraftText: (target, text, mentions, order) =>
       changeDraft(target, (draft) => {
@@ -919,6 +888,7 @@ export function useSampleSource({
       },
       settingsOpen: false,
       connectors: sampleConnectors,
+      skills: sampleSkills,
       connectorsOpening: null,
     };
     const started = firstRun ? withoutBots(team) : team;
@@ -960,6 +930,14 @@ export function useSampleSource({
     }),
     [store],
   );
+  const skillsIntents = useMemo(
+    () =>
+      sampleSkillsIntents({
+        get: () => store.get().skills,
+        set: (skills) => store.update((s) => ({ ...s, skills })),
+      }),
+    [store],
+  );
   // Scout shops in its browser.
   const [browser] = useState(() => sampleBrowser([ids.scout]));
   return {
@@ -972,8 +950,10 @@ export function useSampleSource({
         aside={state.settingsOpen}
         connectors={state.connectors}
         bots={botsOf(state)}
+        skills={state.skills}
         connected
         intents={connectorsIntents}
+        skillsIntents={skillsIntents}
         onClose={() => store.update((s) => ({ ...s, connectorsOpening: null }))}
       />
     ),

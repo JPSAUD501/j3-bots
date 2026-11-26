@@ -358,7 +358,7 @@ interface FieldControl {
 }
 
 /** A field's label above its control, and its hint and problem below it. */
-function FieldFrame({
+export function FieldFrame({
   label,
   hint,
   problem,

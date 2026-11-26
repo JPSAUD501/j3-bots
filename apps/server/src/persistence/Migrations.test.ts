@@ -1041,3 +1041,73 @@ it.effect(
       );
     }).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect(
+  "takes the suggestion cards out, and brings a read mark past them back to the last entry left",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+      const entry = (id: string, bot: string, position: number, kind: string) =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`
+            INSERT INTO entries (
+              id, conversation_bot_id, position, kind, author_kind, body_json, created_at,
+              updated_at
+            ) VALUES (${id}, ${bot}, ${position}, ${kind}, 'operator', '{}', ${now}, ${now})
+          `;
+        });
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* migrate(migrationsThrough(39));
+        for (const bot of ["scout", "ranger", "keeper"]) {
+          yield* sql`
+            INSERT INTO bots (
+              id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+              permission_mode, workspace_path, created_at, updated_at
+            ) VALUES (
+              ${bot}, ${bot}, '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto',
+              ${`/bots/${bot}`}, ${now}, ${now}
+            )
+          `;
+        }
+        // Scout read through its card, the last entry; Ranger's card was the only one; Keeper
+        // has read up to a message after its card.
+        yield* sql`
+          INSERT INTO conversations (bot_id, read_through_order, digest_from_position, created_at)
+          VALUES ('scout', 1, 2, ${now}), ('ranger', 0, 1, ${now}), ('keeper', 2, 3, ${now})
+        `;
+        yield* entry("s-0", "scout", 0, "message");
+        yield* entry("s-1", "scout", 1, "connector-suggestion");
+        yield* entry("r-0", "ranger", 0, "connector-suggestion");
+        yield* entry("k-0", "keeper", 0, "message");
+        yield* entry("k-1", "keeper", 1, "connector-suggestion");
+        yield* entry("k-2", "keeper", 2, "message");
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(yield* sql`SELECT id FROM entries ORDER BY id`, [
+          { id: "k-0" },
+          { id: "k-2" },
+          { id: "s-0" },
+        ]);
+        assert.deepStrictEqual(
+          yield* sql`
+            SELECT bot_id, read_through_order, digest_from_position FROM conversations
+            ORDER BY bot_id
+          `,
+          [
+            { bot_id: "keeper", read_through_order: 2, digest_from_position: 3 },
+            { bot_id: "ranger", read_through_order: null, digest_from_position: 0 },
+            { bot_id: "scout", read_through_order: 0, digest_from_position: 1 },
+          ],
+        );
+      }).pipe(
+        Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);

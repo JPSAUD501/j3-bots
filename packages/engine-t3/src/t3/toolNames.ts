@@ -29,7 +29,44 @@ const split = (name: string): { readonly server: string | null; readonly tool: s
  * names holds `__`, so a call to one is a step of the bot's work, shown as
  * the connector's, as well as a call the server matches to its turn.
  */
-export const isConnectorTool = (tool: string): boolean => tool.indexOf("__") > 0;
+const isConnectorTool = (tool: string): boolean => tool.indexOf("__") > 0;
+
+/**
+ * J3 Bots' own tools that are steps of a bot's work, unlike the rest of them,
+ * which are events of their own: those that change or read its MCP servers
+ * and skills (decision 0049), by their bare names in the `j3` namespace.
+ */
+const OWN_STEP_TOOLS: ReadonlyMap<string, WorkTool> = new Map([
+  ["add_mcp_server", "mcp-server-added"],
+  ["update_mcp_server", "mcp-server-changed"],
+  ["set_mcp_server_bots", "mcp-server-changed"],
+  ["remove_mcp_server", "mcp-server-removed"],
+  ["search_mcp_servers", "mcp-servers-read"],
+  ["list_mcp_servers", "mcp-servers-read"],
+  ["save_skill", "skill-saved"],
+  ["install_skill", "skill-saved"],
+  ["remove_skill", "skill-removed"],
+  ["list_skills", "skills-read"],
+]);
+
+/**
+ * Whether a bare `j3` tool name is a step of the bot's work: a connector's
+ * tool, or one of J3 Bots' own that manages its MCP servers and skills.
+ */
+export const isStepTool = (tool: string): boolean =>
+  isConnectorTool(tool) || OWN_STEP_TOOLS.has(tool);
+
+/**
+ * What an approval card names a held `j3` call by: a connector's tool as its
+ * step is labelled, or one of J3 Bots' own that is a step by its bare name,
+ * as the bot called it; undefined for any other tool.
+ */
+export const heldCallLabel = (name: string): string | undefined => {
+  const { server, tool } = split(name);
+  if (server !== TOOL_SERVER) return undefined;
+  if (isConnectorTool(tool)) return connectorLabel(tool);
+  return OWN_STEP_TOOLS.has(tool) ? tool : undefined;
+};
 
 /** A connector tool's step label: the connector, then its tool, from the names the bridge gave them. */
 const connectorLabel = (tool: string): string => {
@@ -130,6 +167,13 @@ const englishLabel: Record<WorkTool, string> = {
   plan: "Updated its plan",
   image: "Looked at an image",
   "built-in": "Used one of its tools",
+  "mcp-server-added": "Added an MCP server",
+  "mcp-server-changed": "Changed an MCP server",
+  "mcp-server-removed": "Removed an MCP server",
+  "mcp-servers-read": "Looked up MCP servers",
+  "skill-saved": "Saved a skill",
+  "skill-removed": "Removed a skill",
+  "skills-read": "Looked up skills",
 };
 
 /** A tool's own name made readable: no server, words apart, the first one capitalised. */
@@ -177,6 +221,8 @@ export const toolStep = (
     // From its name only: a connector call's input is the operator's data.
     return { kind: "tool", tool: "connector", label: connectorLabel(tool) };
   }
+  const own = server === TOOL_SERVER ? OWN_STEP_TOOLS.get(tool) : undefined;
+  if (own !== undefined) return { kind: "tool", tool: own, label: englishLabel[own] };
   if (server === ENGINE_TOOL_SERVER) {
     const named = engineTool(tool);
     return { kind: "tool", tool: named, label: englishLabel[named] };

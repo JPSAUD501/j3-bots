@@ -435,3 +435,38 @@ it.layer(endpoint)("j3 bridge with a connector call that gets no answer", (it) =
       }),
   );
 });
+
+// Past J3 Bots' own tools' deadline: a test clock of its own, which no other test shares.
+it.layer(endpoint)("j3 bridge with an install that takes its time", (it) => {
+  it.effect("waits past 30 seconds for a skill's install, which fetches a repository", () =>
+    Effect.gen(function* () {
+      const forwarded = yield* Deferred.make<void>();
+      // A server whose answer comes 45 seconds after the call reaches it.
+      const slow = HttpClient.transform(yield* HttpClient.HttpClient, (response, request) =>
+        request.url.endsWith(TOOL_CALL_PATH)
+          ? Deferred.succeed(forwarded, undefined).pipe(
+              Effect.andThen(Effect.sleep("45 seconds")),
+              Effect.andThen(response),
+            )
+          : response,
+      );
+
+      const { replies } = yield* runBridgeWith(Option.some(SessionId.make("thread-1")), (output) =>
+        Stream.concat(
+          Stream.make(
+            call(1, "install_skill", { repository: "https://git.example/skills.git", ref: "main" }),
+          ),
+          Stream.fromEffect(
+            Deferred.await(forwarded).pipe(
+              Effect.andThen(TestClock.adjust("45 seconds")),
+              Effect.andThen(answered(output, 1)),
+            ),
+          ).pipe(Stream.drain),
+        ),
+      ).pipe(Effect.provideService(HttpClient.HttpClient, slow));
+
+      // The server's own answer, which this session gets, not the bridge's word that it gave up.
+      assert.strictEqual(replies.get(1)?.content?.[0]?.text, "This is not a J3 Bots session.");
+    }),
+  );
+});

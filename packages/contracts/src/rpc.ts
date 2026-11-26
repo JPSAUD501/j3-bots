@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import { AttachmentOffsets, BotFile, MessageAttachments } from "./attachment.ts";
+import { SkillRpcs } from "./skill.ts";
 import {
   AttachmentId,
   BotId,
@@ -262,8 +263,7 @@ export const EntryRpcs = RpcGroup.make(
     error: CommandError,
   }),
   /**
-   * Resolves a question, approval, browser help, save-login or connector
-   * suggestion card everywhere.
+   * Resolves a question, approval, browser help or save-login card everywhere.
    * Answering or dismissing an `ask` question wakes the bot with the answer;
    * answering an `engine` question or an approval lets the turn that raised it
    * continue. An `engine` question takes no dismissal: it fails with
@@ -280,9 +280,7 @@ export const EntryRpcs = RpcGroup.make(
    * answer or by expiring.
    *
    * A save-login card takes only a dismissal, which closes it without waking
-   * the bot; it is saved with `vault.save`. A connector suggestion takes only
-   * a dismissal too, its Not now, which closes it without waking the bot; its
-   * Connect is `connector.add` or `connector.setBots`.
+   * the bot; it is saved with `vault.save`.
    */
   Rpc.make("card.answer", {
     payload: {
@@ -780,17 +778,17 @@ export const NotificationKind = Schema.Literals([
   "approval",
   "secret-request",
   "browser-help",
-  /** A connector card: a bot suggests one, or one it called needs a sign-in again. */
+  /** A connector a bot called, or added, needs the operator to sign in. */
   "connector",
 ]);
 export type NotificationKind = typeof NotificationKind.Type;
 
 /**
- * Which connector card a `connector` notification is about: a bot's
- * suggestion, or a connector it called that needs a sign-in again. The two are
- * worded apart.
+ * Which connector card a `connector` notification is about: a connector a bot
+ * called or added that needs a sign-in. A server before 0.9.0 also sent
+ * `suggestion`, for a card that is gone.
  */
-export const ConnectorNotice = Schema.Literals(["suggestion", "sign-in"]);
+export const ConnectorNotice = Schema.Literals(["sign-in"]);
 export type ConnectorNotice = typeof ConnectorNotice.Type;
 
 /** An entry worth the operator's attention, added where no connected client has it in view. */
@@ -1115,9 +1113,8 @@ export const ConnectorRpcs = RpcGroup.make(
    * when it needs no sign-in; one that does is added as `needs-sign-in`, and
    * `connector.beginSignIn` follows. When `id` is added already, nothing
    * changes and the connector is returned as it is, so a retry adds nothing.
-   * `grant` left out gives it to the bot whose card `suggestion` is, else the
-   * primary bot, else no bot. With `suggestion`, that bot's card closes once
-   * the bot can use it. Fails with `Conflict("private-network")` for an
+   * `grant` left out gives it to every bot. The connector records the
+   * operator as who added it. Fails with `Conflict("private-network")` for an
    * address in the operator's own network without `privateNetwork`,
    * `Invalid("connector-fields")` for a form's values that do not fit it, or
    * a command's environment that names a variable twice,
@@ -1134,7 +1131,6 @@ export const ConnectorRpcs = RpcGroup.make(
       id: ConnectorId,
       source: ConnectorSource,
       grant: Schema.optionalKey(ConnectorGrant),
-      suggestion: Schema.NullOr(EntryId),
     },
     success: Connector,
     error: CommandError,
@@ -1244,4 +1240,5 @@ export const J3Rpcs = RosterRpcs.merge(
   BrowserRpcs,
   VaultRpcs,
   ConnectorRpcs,
+  SkillRpcs,
 );

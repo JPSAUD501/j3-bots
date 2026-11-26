@@ -18,7 +18,7 @@ export interface SharedSkill {
   readonly text: string;
 }
 
-const SKILL_NAMES = ["j3-routines", "j3-sending"] as const;
+const SKILL_NAMES = ["j3-mcp-and-skills", "j3-routines", "j3-sending"] as const;
 
 /** The skills J3 Bots ships, as their `SKILL.md` files. */
 export const sharedSkills: ReadonlyArray<SharedSkill> = SKILL_NAMES.map((name) => ({
