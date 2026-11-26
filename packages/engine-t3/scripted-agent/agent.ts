@@ -93,6 +93,9 @@ const toolBridge = Option.flatMap(
 const decodeCreated = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ id: Schema.String })),
 );
+const decodeToolList = Schema.decodeUnknownOption(
+  Schema.Struct({ tools: Schema.Array(Schema.Struct({ name: Schema.String })) }),
+);
 
 interface Session {
   readonly cwd: string;
@@ -152,7 +155,8 @@ const ask = (method: string, params: Record<string, unknown>, signal: AbortSigna
     send({ id, method, params });
   });
 
-const say = async (turn: Turn, text: string) => {
+/** Streams `text` as the agent's message, a word at a time: it reaches no J3 Bots conversation. */
+const stream = async (turn: Turn, text: string) => {
   for (const word of text.split(/(?<=\s)/)) {
     if (turn.signal.aborted) return;
     update(turn.sessionId, {
@@ -190,7 +194,7 @@ const callHostTool = async (
 ): Promise<HostToolResult> => {
   const server = turn.session.hostTools;
   if (Option.isNone(server)) {
-    await say(turn, `No host tools: cannot call ${tool}.`);
+    await stream(turn, `No host tools: cannot call ${tool}.`);
     return { failed: true, text: "" };
   }
   const { toolCallId, rawInput } = reportToolCall(turn, server.value.name, tool, input);
@@ -282,50 +286,97 @@ const reportToolResult = (
   return { failed, text };
 };
 
+/** The `j3` bridge, started for one exchange of MCP. */
+interface Bridge {
+  /** Sends a request and waits for its result: none once the bridge has ended. */
+  readonly request: (
+    method: string,
+    params: Record<string, unknown>,
+  ) => Promise<Option.Option<unknown>>;
+  /** Ends its input, which ends the bridge. */
+  readonly close: () => void;
+}
+
+/**
+ * Starts the `j3` bridge the engine named (`toolBridge`), which inherits this
+ * agent's environment and with it the session's thread id, and opens MCP
+ * with it over standard input and output. None when the engine named no
+ * bridge, or the bridge ended before it answered. Every request still
+ * waiting when the bridge ends, or written after, gets none; `signal`, when
+ * given, kills it.
+ */
+const openBridge = async (signal?: AbortSignal): Promise<Option.Option<Bridge>> => {
+  const [command, ...args] = Option.getOrElse(toolBridge, () => []);
+  if (command === undefined) return Option.none();
+  const child = NodeChildProcess.spawn(command, args, { stdio: ["pipe", "pipe", "inherit"] });
+  const answers = new Map<string, (result: Option.Option<unknown>) => void>();
+  let ended = false;
+  const end = () => {
+    ended = true;
+    for (const answer of answers.values()) answer(Option.none());
+    answers.clear();
+  };
+  // `close` comes once its output has been read to the end, so an answer
+  // written just before it exits still counts.
+  child.once("close", end);
+  child.once("error", end);
+  // Writing to a bridge that has already exited.
+  child.stdin.on("error", end);
+  const kill = () => child.kill();
+  signal?.addEventListener("abort", kill, { once: true });
+  NodeReadline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on("line", (line) => {
+    const message = decodeMessage(line);
+    if (Option.isNone(message)) return;
+    const id = String(message.value.id);
+    answers.get(id)?.(Option.some(message.value.result));
+    answers.delete(id);
+  });
+  const write = (message: Record<string, unknown>) => {
+    if (!ended) child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+  };
+  let nextId = 0;
+  const request = (method: string, params: Record<string, unknown>) =>
+    new Promise<Option.Option<unknown>>((resolve) => {
+      if (ended) return resolve(Option.none());
+      const id = String(nextId++);
+      answers.set(id, resolve);
+      write({ id, method, params });
+    });
+  const close = () => {
+    signal?.removeEventListener("abort", kill);
+    child.stdin.end();
+  };
+  const initialized = await request("initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "j3-scripted-agent", version: "1" },
+  });
+  if (Option.isNone(initialized)) {
+    close();
+    return Option.none();
+  }
+  write({ method: "notifications/initialized" });
+  return Option.some({ request, close });
+};
+
 /**
  * Calls one of J3 Bots' own tools, as a harness does: it starts the `j3`
- * bridge the engine named (`toolBridge`), which inherits this agent's
- * environment and with it the session's thread id, and speaks MCP to it over
- * standard input and output for one call.
+ * bridge for one call and reports the call as an MCP tool call.
  */
 const callBotTool = async (
   turn: Turn,
   tool: string,
   input: Record<string, unknown>,
 ): Promise<HostToolResult> => {
-  const [command, ...args] = Option.getOrElse(toolBridge, () => []);
-  if (command === undefined) {
-    await say(turn, `No bot tools: cannot call ${tool}.`);
+  if (Option.isNone(toolBridge)) {
+    await stream(turn, `No bot tools: cannot call ${tool}.`);
     return { failed: true, text: "" };
   }
   const { toolCallId, rawInput } = reportToolCall(turn, "j3", tool, input);
-  const bridge = NodeChildProcess.spawn(command, args, { stdio: ["pipe", "pipe", "inherit"] });
-  const answers = new Map<string, (result: unknown) => void>();
-  NodeReadline.createInterface({ input: bridge.stdout, crlfDelay: Infinity }).on("line", (line) => {
-    const message = decodeMessage(line);
-    if (Option.isNone(message)) return;
-    const id = String(message.value.id);
-    answers.get(id)?.(message.value.result);
-    answers.delete(id);
-  });
-  const request = (id: string, method: string, params: Record<string, unknown>) =>
-    new Promise<Option.Option<unknown>>((resolve) => {
-      answers.set(id, (result) => resolve(Option.some(result)));
-      bridge.once("exit", () => resolve(Option.none()));
-      bridge.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-    });
-  const stop = () => bridge.kill();
-  turn.signal.addEventListener("abort", stop, { once: true });
+  const bridge = await openBridge(turn.signal);
+  if (Option.isNone(bridge)) return reportToolResult(turn, toolCallId, rawInput, Option.none());
   try {
-    await request("init", "initialize", {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: "j3-scripted-agent", version: "1" },
-    });
-    bridge.stdin.write(
-      `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
-    );
-    const result = await request("call", "tools/call", { name: tool, arguments: input });
+    const result = await bridge.value.request("tools/call", { name: tool, arguments: input });
     return reportToolResult(
       turn,
       toolCallId,
@@ -333,9 +384,61 @@ const callBotTool = async (
       Option.flatMap(result, (value) => decodeToolResult({ result: value })),
     );
   } finally {
-    turn.signal.removeEventListener("abort", stop);
-    bridge.stdin.end();
+    bridge.value.close();
   }
+};
+
+/** The names of the tools the `j3` bridge lists: none when there is no bridge, or it answers nothing. */
+const listBotTools = async (): Promise<ReadonlyArray<string>> => {
+  const bridge = await openBridge();
+  if (Option.isNone(bridge)) return [];
+  try {
+    const listed = Option.flatMap(await bridge.value.request("tools/list", {}), decodeToolList);
+    return Option.match(listed, {
+      onNone: () => [],
+      onSome: ({ tools }) => tools.map((tool) => tool.name),
+    });
+  } finally {
+    bridge.value.close();
+  }
+};
+
+let botSpeech: Promise<boolean> | undefined;
+
+/**
+ * Whether this agent has J3 Bots' speech tool: the bridge the engine named
+ * lists `say`. Asked once, as a harness lists a server's tools once, since
+ * the engine runs one agent process per thread. The conformance bench names
+ * a bridge that answers nothing, so there every answer goes through the
+ * engine's own tools.
+ */
+const hasBotSpeech = (): Promise<boolean> =>
+  (botSpeech ??= listBotTools().then((names) => names.includes("say")));
+
+/**
+ * Answers the turn as a bot does, through J3 Bots' `say` with `done: true`,
+ * which is what has the server count the turn as delivered, when this agent
+ * has it; otherwise through the engine's own `send_to_user`.
+ */
+const answer = async (turn: Turn, text: string): Promise<void> => {
+  if (await hasBotSpeech()) await callBotTool(turn, "say", { text, done: true });
+  else await callHostTool(turn, "send_to_user", { message: text });
+};
+
+/** The kind of the J3 Bots wake a prompt opens with, and its event, as its envelope names them. */
+const WAKE = /<j3-wake kind="([a-z]+)"(?: event="([a-z-]+)")?/;
+
+/**
+ * Whether a bot owes its user a reply to this prompt: a wake from its user,
+ * or a system event such as its first hello, an answer that never arrived
+ * or the end of a step it asked them for, but not a change to its profile,
+ * which it only follows. A room, a teammate or a routine is answered by
+ * silence when there is nothing to add, as a room settles, and a turn the
+ * engine started on its own carries no wake.
+ */
+const owesReply = (text: string): boolean => {
+  const [, kind, event] = WAKE.exec(text) ?? [];
+  return kind === "user" || (kind === "system" && event !== "profile-changed");
 };
 
 /** The teammates the `team` script creates, in order. */
@@ -347,21 +450,25 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
 /**
  * Every script the conformance suite uses.
  *
- * - `plain`: a short reply, and usage.
+ * - `plain`: a short reply, "Scripted reply.", and usage. When the agent has
+ *   J3 Bots' `say` and the prompt is a wake a bot owes its user a reply to
+ *   (`owesReply`), the reply is a `say` with `done: true`; otherwise it is
+ *   the agent's own message, which reaches no conversation.
  * - `slow`: streams a word every `every` ms (default 200) until cancelled or
  *   `for` ms pass (default 60000). For stops and steers.
  * - `approval`: asks permission for a write, then says whether it was granted.
  * - `question`: asks one multiple-choice question and repeats the answer.
- * - `speak`: sends `text` to the user through the engine's `send_to_user` tool.
+ * - `speak`: answers `text` as a bot does (`answer`): J3 Bots' `say` with
+ *   `done: true` when the agent has it, the engine's `send_to_user` otherwise.
  * - `steps`: thinks for `think` ms (default 2000), runs `count` commands
- *   (default 3) of `each` ms (default 4000), then speaks `text` as `speak`
+ *   (default 3) of `each` ms (default 4000), then answers `text` as `speak`
  *   does. For a turn's work as a client shows it while it runs.
  * - `secret`: asks for a secret through the engine's `request_secret` tool.
  * - `browse`: opens `url` in the engine's browser (`preview_open`), then acts
  *   on the tab every `every` ms (default 1000) for up to `for` ms (default
- *   60000). It speaks, as `speak` does, the first time an action is refused,
- *   with the engine's reason, and the first time one works again after, and
- *   ends then.
+ *   60000). It speaks through the engine's `send_to_user` the first time an
+ *   action is refused, with the engine's reason, and the first time one
+ *   works again after, and ends then.
  * - `delegate`: hands a task to a child agent through the engine's
  *   `delegate_task` tool, then ends; the engine wakes the session when the
  *   child's task ends. The child runs `plain`, or with `child=slow`, `slow`
@@ -369,8 +476,8 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  * - `send`: sends the thread `to` a message through the engine's
  *   `t3_thread_send` tool, which has it run `browser`, then ends.
  * - `browser`: calls the engine's `t3_preview_list`, which only a session
- *   given the browser may call, then speaks, as `speak` does, `allowed` or
- *   `refused`.
+ *   given the browser may call, then says `allowed` or `refused` through the
+ *   engine's `send_to_user`.
  * - `team`: a primary bot building a team on J3 Bots' own tools: creates
  *   `count` teammates (default 4) with `create_bot`, starts a room with them
  *   with `start_room`, whose kickoff has each member run `room-answer`, then
@@ -387,9 +494,13 @@ const STEP_COMMANDS = ["git status", "pnpm test", "pnpm lint", "git diff --stat"
  */
 const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
   plain: async (turn) => {
-    await say(turn, "Scripted reply.");
+    if (owesReply(turn.text) && (await hasBotSpeech())) {
+      await callBotTool(turn, "say", { text: "Scripted reply.", done: true });
+    } else {
+      await stream(turn, "Scripted reply.");
+    }
     reportUsage(turn);
-    return "end_turn";
+    return turn.signal.aborted ? "cancelled" : "end_turn";
   },
   slow: async (turn) => {
     const every = Number(turn.args.get("every") ?? "200");
@@ -437,7 +548,7 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
       toolCallId,
       status: granted ? "completed" : "failed",
     });
-    await say(turn, granted ? "Permission granted." : "Permission refused.");
+    await stream(turn, granted ? "Permission granted." : "Permission refused.");
     reportUsage(turn);
     return "end_turn";
   },
@@ -469,7 +580,10 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
     const colour = Option.flatMap(decoded, (value) =>
       value.action === "accept" ? Option.fromNullishOr(value.content?.["colour"]) : Option.none(),
     );
-    await say(turn, Option.isSome(colour) ? `You picked ${String(colour.value)}.` : "No answer.");
+    await stream(
+      turn,
+      Option.isSome(colour) ? `You picked ${String(colour.value)}.` : "No answer.",
+    );
     reportUsage(turn);
     return "end_turn";
   },
@@ -496,16 +610,12 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
       });
     }
     if (turn.signal.aborted) return "cancelled";
-    await callHostTool(turn, "send_to_user", {
-      message: turn.args.get("text") ?? "Done: every step passed.",
-    });
+    await answer(turn, turn.args.get("text") ?? "Done: every step passed.");
     reportUsage(turn);
     return turn.signal.aborted ? "cancelled" : "end_turn";
   },
   speak: async (turn) => {
-    await callHostTool(turn, "send_to_user", {
-      message: turn.args.get("text") ?? "A message from the scripted agent.",
-    });
+    await answer(turn, turn.args.get("text") ?? "A message from the scripted agent.");
     reportUsage(turn);
     return turn.signal.aborted ? "cancelled" : "end_turn";
   },
@@ -547,7 +657,7 @@ const SCRIPTS: Record<string, (turn: Turn) => Promise<StopReason>> = {
       reason: "The conformance suite asks for a secret.",
     });
     if (turn.signal.aborted) return "cancelled";
-    await say(turn, result.failed ? "Secret request failed." : "Secret request finished.");
+    await stream(turn, result.failed ? "Secret request failed." : "Secret request finished.");
     reportUsage(turn);
     return "end_turn";
   },

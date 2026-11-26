@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
-  readVisualHeight,
+  readVisualReport,
   visualDocument,
   visualShell,
 } from "@j3-bots/client-runtime/presentation";
@@ -46,8 +46,10 @@ export const canShowVisuals = NativeVisualView !== null;
  * A bot's page, wrapped by `visualDocument` in the app's current theme and
  * drawn in the isolated view, inside `visualShell`'s sandboxed frame: rebuilt
  * when the theme changes. Of what the page sends, only its height comes out
- * (`readVisualHeight`), clamped. A page the document's guard could not watch
- * is never drawn: it fails, as its page's doing.
+ * (`readVisualReport`), clamped, and the shell's word that the frame shows
+ * something else, which the visual navigated it to: it fails then, as its
+ * page's doing. So does a page the document's guard could not watch, which
+ * is never drawn.
  */
 export function VisualFrame({
   html,
@@ -80,8 +82,9 @@ export function VisualFrame({
       document={page}
       interactive={interactive}
       onPageMessage={({ nativeEvent }) => {
-        const height = readVisualHeight(nativeEvent.data);
-        if (height !== null) onHeight?.(height);
+        const report = readVisualReport(nativeEvent.data);
+        if (report?._tag === "height") onHeight?.(report.height);
+        else if (report?._tag === "gone") onFailed("page");
       }}
       onPageLoaded={() => onLoaded?.()}
       onPageFailed={({ nativeEvent }) => onFailed(nativeEvent.cause === "page" ? "page" : "system")}

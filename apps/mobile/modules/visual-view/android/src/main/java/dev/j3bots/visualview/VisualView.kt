@@ -59,7 +59,8 @@ private const val BRIDGE_NAME = "J3Visual"
  *   and nothing the page logs reaches the device's log.
  * - The page reaches the app through one method, `postMessage(string)`,
  *   which takes a short string, and passes on at most one at a time: the app
- *   reads only a height from it (`readVisualHeight`).
+ *   reads only a height from it, or that the visual left its frame
+ *   (`readVisualReport`).
  *
  * The WebView is drawn on a clear background, so the placeholder behind it
  * shows until the page has painted its own.

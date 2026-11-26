@@ -31,6 +31,12 @@ export const VISUAL_FRAME_SANDBOX = "allow-scripts";
 export const VISUAL_HEIGHT_MESSAGE = "j3-visual-height";
 
 /**
+ * What `visualShell` tells the app when the visual's frame shows something
+ * else: the visual navigated it.
+ */
+const VISUAL_GONE_MESSAGE = "j3-visual-gone";
+
+/**
  * The object an Android WebView puts on `visualShell`'s window to take a
  * visual's height: a `postMessage(string)` that receives the message as JSON.
  * Android's side names it with the same literal.
@@ -104,10 +110,13 @@ export const PAGE_GUARD = `(function () {
 // which follows the content, rather than the viewport, which would follow the
 // frame; content that overflows the root counts too. The box is fractional
 // and rounded up, so the frame is never a fraction short and never shows a
-// scrollbar for it. The parent is taken before the page runs, so the page
-// cannot shadow it; the page can still lie about its height, which sizes only
-// its own frame.
-const HEIGHT_REPORTER = `(function(){var p=window.parent,l=-1;function s(){var r=document.documentElement,h=Math.ceil(Math.max(r.getBoundingClientRect().height,r.scrollHeight>r.clientHeight?r.scrollHeight:0));if(h===l)return;l=h;if(p!==window)p.postMessage({type:${JSON.stringify(VISUAL_HEIGHT_MESSAGE)},height:h},"*");}if(window.ResizeObserver){var o=new ResizeObserver(s);o.observe(document.documentElement);document.addEventListener("DOMContentLoaded",function(){if(document.body)o.observe(document.body);s();});}window.addEventListener("load",s);})();`;
+// scrollbar for it. It reports nothing before the document has loaded: a
+// page that navigates its frame while it loads never loads, so it never
+// reports, and the client shows it as failed when its time runs out, rather
+// than as shown with whatever the frame shows instead. The parent is taken
+// before the page runs, so the page cannot shadow it; the page can still lie
+// about its height, which sizes only its own frame.
+const HEIGHT_REPORTER = `(function(){var p=window.parent,l=-1,ready=false;function s(){if(!ready)return;var r=document.documentElement,h=Math.ceil(Math.max(r.getBoundingClientRect().height,r.scrollHeight>r.clientHeight?r.scrollHeight:0));if(h===l)return;l=h;if(p!==window)p.postMessage({type:${JSON.stringify(VISUAL_HEIGHT_MESSAGE)},height:h},"*");}if(window.ResizeObserver){var o=new ResizeObserver(s);o.observe(document.documentElement);document.addEventListener("DOMContentLoaded",function(){if(document.body)o.observe(document.body);});}window.addEventListener("load",function(){ready=true;s();});})();`;
 
 // The root keeps room for a scrollbar on both sides whether one shows or not.
 // Otherwise, where scrollbars take space, a page whose height follows its
@@ -150,8 +159,11 @@ export const visualDocument = (html: string, appearance: VisualAppearance): stri
       html;
 
 // Relays the height the framed document reports, from that frame's window
-// alone, to the WebView's bridge, as the two fields `readVisualHeight` reads.
-const HEIGHT_RELAY = `(function(){var f=document.getElementById("visual"),b=window[${JSON.stringify(VISUAL_BRIDGE)}];window.addEventListener("message",function(e){var d=e.data;if(e.source!==f.contentWindow||!b||d===null||typeof d!=="object")return;b.postMessage(JSON.stringify({type:d.type,height:d.height}));});})();`;
+// alone, to the WebView's bridge, as the two fields `readVisualReport` reads.
+// The frame loads once, with the visual; a later load is the frame showing
+// something else, which the visual navigated it to (the WebView's error page
+// most often, since the policy lets it reach nothing), and the relay says so.
+const HEIGHT_RELAY = `(function(){var f=document.getElementById("visual"),b=window[${JSON.stringify(VISUAL_BRIDGE)}],loads=0;f.addEventListener("load",function(){if(++loads>1&&b)b.postMessage(JSON.stringify({type:${JSON.stringify(VISUAL_GONE_MESSAGE)}}));});window.addEventListener("message",function(e){var d=e.data;if(e.source!==f.contentWindow||!b||d===null||typeof d!=="object")return;b.postMessage(JSON.stringify({type:d.type,height:d.height}));});})();`;
 
 /** `text` as a double-quoted attribute's value: the parser gives back `text`. */
 const attributeValue = (text: string): string =>
@@ -164,7 +176,7 @@ const attributeValue = (text: string): string =>
  * visual could take that frame's built-ins, which the guard never touched.
  * Here the document runs in a frame sandboxed with scripts only, as on the
  * web, and this page, under the visual's policy too, passes its height to
- * the app's bridge (`VISUAL_BRIDGE`). The frame fills the page; the app sizes
+ * the app's bridge (`VISUAL_BRIDGE`), and that the frame left the visual. The frame fills the page; the app sizes
  * the WebView to the height.
  */
 export const visualShell = (document: string): string =>
@@ -183,6 +195,10 @@ const decodeHeightMessage = Schema.decodeUnknownOption(
   Schema.Union([HeightMessage, Schema.fromJsonString(HeightMessage)]),
   { onExcessProperty: "error" },
 );
+const GoneMessage = Schema.Struct({ type: Schema.Literal(VISUAL_GONE_MESSAGE) });
+const decodeGoneMessage = Schema.decodeUnknownOption(Schema.fromJsonString(GoneMessage), {
+  onExcessProperty: "error",
+});
 
 /**
  * The height a visual reports, fitted to what a frame is drawn at inline, or
@@ -196,3 +212,21 @@ export const readVisualHeight = (data: unknown): number | null =>
     onNone: () => null,
     onSome: ({ height }) => clampVisualHeight(height),
   });
+
+/** What `visualShell` passes to the app: the visual's height, or that its frame left it. */
+export type VisualReport =
+  | { readonly _tag: "height"; readonly height: number }
+  | { readonly _tag: "gone" };
+
+/**
+ * What a WebView's page for a visual (`visualShell`) passes to the app, as
+ * the JSON its bridge takes, or null for anything else: the height as
+ * `readVisualHeight` reads it, or `{type: "j3-visual-gone"}` once the frame
+ * shows something other than the visual. The visual can reach the bridge
+ * too, so it can say either, which changes only its own view.
+ */
+export const readVisualReport = (data: unknown): VisualReport | null => {
+  const height = readVisualHeight(data);
+  if (height !== null) return { _tag: "height", height };
+  return Option.isSome(decodeGoneMessage(data)) ? { _tag: "gone" } : null;
+};
