@@ -454,18 +454,18 @@ export function BotDetails({
         <div className="flex items-start gap-3">
           <GlobeIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
-            <p id={`${bot.id}-browser`} className="text-sm">
+            <label htmlFor={`${bot.id}-browser`} className="block text-sm">
               {t("details.browser.use")}
-            </p>
+            </label>
             <p className="text-xs text-muted-foreground">{t("details.browser.hint", { name })}</p>
             {bot.browser && browserHost?._tag === "setup-required" && (
               <p className="mt-1 text-xs text-blocked">{t("details.browser.setup")}</p>
             )}
           </div>
           <Switch
+            id={`${bot.id}-browser`}
             checked={bot.browser}
             onCheckedChange={intents.setBrowser}
-            aria-labelledby={`${bot.id}-browser`}
           />
         </div>
       </DetailsSection>

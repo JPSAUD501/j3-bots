@@ -1465,6 +1465,8 @@ export const en = {
     "Your bots couldn’t open to the network, so they stay on this computer only.",
   "settings.phone.noNetwork":
     "This computer isn’t on a local network. Connect it to Wi-Fi or a cable.",
+  "settings.phone.notRunning":
+    "Your bots on this computer stopped, so your phone can’t reach them until they run again.",
   "settings.phone.retry": "Try again",
   "settings.phone.failed": "That couldn’t be changed. Try again.",
   "settings.phone.restart.title": "Restart your bots?",

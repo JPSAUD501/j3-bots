@@ -111,6 +111,39 @@ describe("putting the server runtime in place", () => {
   );
 });
 
+describe("the web client the server serves", () => {
+  it.effect("is a copy that outlives the package, made again only for another release", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-web-" });
+      const source = path.join(root, "mount", "web", "dist");
+      const folder = path.join(root, "userData", "server", "web");
+      const build = (text: string) =>
+        fs
+          .makeDirectory(source, { recursive: true })
+          .pipe(Effect.andThen(fs.writeFileString(path.join(source, "index.html"), text)));
+      yield* fs.makeDirectory(path.dirname(folder), { recursive: true });
+
+      yield* build("client 0.3.0");
+      assert.strictEqual(
+        yield* Runtime.keepWebClient({ source, folder, version: "0.3.0" }),
+        folder,
+      );
+      // The package's files go, as an AppImage's mount does once the app exits.
+      yield* fs.remove(path.join(root, "mount"), { recursive: true });
+      assert.strictEqual(yield* fs.readFileString(path.join(folder, "index.html")), "client 0.3.0");
+      // The same release copies nothing, so needs no package.
+      yield* Runtime.keepWebClient({ source, folder, version: "0.3.0" });
+
+      yield* build("client 0.4.0");
+      yield* Runtime.keepWebClient({ source, folder, version: "0.4.0" });
+      assert.strictEqual(yield* fs.readFileString(path.join(folder, "index.html")), "client 0.4.0");
+      assert.deepStrictEqual(yield* listed(path.dirname(folder)), ["web", "web.complete"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("the runtime on Windows", () => {
   it.effect("runs from a stable `current` folder, swapped by rename when the version changes", () =>
     Effect.gen(function* () {

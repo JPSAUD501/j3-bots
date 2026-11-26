@@ -114,10 +114,17 @@ export type LocalServerState = typeof LocalServerState.Type;
  * (`public-address`), which the server will not listen on without HTTPS, so
  * it stays on this computer alone; the server did not start on the network,
  * and runs on this computer alone until the operator tries again
- * (`unavailable`); or it listens on the network, but this computer is on
- * none with a private address (`no-network`).
+ * (`unavailable`); it listens on the network, but this computer is on none
+ * with a private address (`no-network`); or the server failed, and runs
+ * nowhere until the operator tries it again (`not-running`), as
+ * `LocalServerState` says.
  */
-export const PhoneAccessRefusal = Schema.Literals(["public-address", "unavailable", "no-network"]);
+export const PhoneAccessRefusal = Schema.Literals([
+  "public-address",
+  "unavailable",
+  "no-network",
+  "not-running",
+]);
 export type PhoneAccessRefusal = typeof PhoneAccessRefusal.Type;
 
 /**

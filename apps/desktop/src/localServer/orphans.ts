@@ -3,7 +3,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -22,8 +21,8 @@ import { STOP_DEADLINE, type RunningServer, type ServerExit } from "./supervisor
 // process started, and signals it only while the process with that pid is
 // the one that started then. On Windows the server's only admin channel is
 // the pipe its parent held, which went with that parent, so the app records
-// the pid of each server it starts and, finding that process still running
-// the same Node, ends it.
+// the pid of each server it starts with when that process started, and ends
+// it if the process with that pid is still the one that started then.
 
 /** How long a `ps` that reads a process's start may take (macOS). */
 const PS_DEADLINE = Duration.seconds(5);
@@ -172,91 +171,106 @@ export const takeOverOnSocket = Effect.fn("Orphans.takeOverOnSocket")(function* 
 // ---------------------------------------------------------------------------
 // Windows
 
-/** Whether process `pid` still runs (Windows, where its executable tells it apart). */
-const isRunning = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM: it runs, as another user.
-    return error instanceof Error && Reflect.get(error, "code") === "EPERM";
-  }
-};
-
-/** Succeeds once `pid` no longer runs, checking every half second. */
-const exitedPid = (pid: number) =>
-  Effect.sync(() => isRunning(pid)).pipe(
-    Effect.repeat({ while: (running) => running, schedule: Schedule.spaced("500 millis") }),
-    Effect.asVoid,
-  );
-
-/** The server the app last started, as it recorded it. */
-const Recorded = Schema.Struct({
-  pid: Schema.Int.check(Schema.isGreaterThan(0)),
-  node: Schema.String,
-});
-const decodeRecorded = Schema.decodeUnknownOption(Schema.fromJsonString(Recorded));
-const encodeRecorded = Schema.encodeSync(Schema.fromJsonString(Recorded));
-
-/** Records the server just started, for the next run to find if it is left behind. */
-export const record = Effect.fn("Orphans.record")(function* (
-  file: string,
-  pid: number,
-  node: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  yield* fs
-    .writeFileString(file, encodeRecorded({ pid, node }), { mode: 0o600 })
-    .pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Recording the local server's process failed", error),
-      ),
-    );
-});
-
 /**
- * The executable process `pid` runs, as PowerShell reads it, or none: a
- * recorded pid may since have been given to another program, which must not
- * be ended.
+ * Runs `script` in Windows PowerShell, for what it printed: none when it did
+ * not start, failed, or did not end within `deadline`.
  */
-const windowsExecutable = (pid: number) =>
+const powerShell = (script: string, deadline: Duration.Duration) =>
   Probe.outputOf(
     "powershell.exe",
-    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid}).Path`],
-    { deadline: Duration.seconds(10) },
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+    { deadline },
+  );
+
+/** A process's start time on Windows: its .NET ticks, in UTC. */
+const Ticks = Schema.String.check(Schema.isPattern(/^\d{1,20}$/));
+const isTicks = Schema.is(Ticks);
+
+/**
+ * When process `pid` started, as Windows records it, or none where it does
+ * not run or cannot be read: the same for as long as that process runs,
+ * another for a later one given its pid.
+ */
+const windowsStartOf = (pid: number) =>
+  powerShell(
+    `[Console]::Out.Write([string](Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks)`,
+    Duration.seconds(10),
   ).pipe(
     Effect.map((output) =>
       output.pipe(
-        Option.map((path) => path.trim()),
-        Option.filter((path) => path.length > 0),
+        Option.map((ticks) => ticks.trim()),
+        Option.filter(isTicks),
       ),
     ),
   );
 
+/** The server the app last started, as it recorded it: its pid, and when that process started. */
+const Recorded = Schema.Struct({
+  pid: Schema.Int.check(Schema.isGreaterThan(0)),
+  started: Ticks,
+});
+const decodeRecorded = Schema.decodeUnknownOption(Schema.fromJsonString(Recorded));
+const encodeRecorded = Schema.encodeSync(Schema.fromJsonString(Recorded));
+
 /**
- * Ends the server recorded in `file` (Windows) if it still runs the Node it
- * was started with: by its tree (`kill`), since no graceful stop reaches it.
+ * Records the server just started, for the next run to find if it is left
+ * behind. One whose start Windows does not say could not be told apart from
+ * a later process given its pid, so it is not recorded: a server left
+ * behind then holds its home until it stops, and the starts it refuses are
+ * tried again.
  */
-export const stopRecorded = Effect.fn("Orphans.stopRecorded")(function* (
-  file: string,
-  kill: (pid: number) => Effect.Effect<void>,
-) {
+export const record = Effect.fn("Orphans.record")(function* (file: string, pid: number) {
   const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
+  const started = yield* windowsStartOf(pid);
+  const written = Option.match(started, {
+    onNone: () =>
+      Effect.logWarning(
+        "Windows did not say when the local server started, so it is not recorded",
+        { pid },
+      ).pipe(Effect.andThen(fs.remove(file, { force: true }))),
+    onSome: (ticks) =>
+      fs.writeFileString(file, encodeRecorded({ pid, started: ticks }), { mode: 0o600 }),
+  });
+  yield* written.pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("Recording the local server's process failed", error),
+    ),
+  );
+});
+
+/**
+ * Ends the server recorded in `file` (Windows), and what it started, by its
+ * tree, since no graceful stop reaches it: only while the process with its
+ * pid is the one that started when recorded, checked while a handle to it is
+ * held, so a pid Windows gave to another program is never ended. Waits for it
+ * to end, for ten seconds at most.
+ */
+export const stopRecorded = Effect.fn("Orphans.stopRecorded")(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem;
   const text = yield* fs.readFileString(file).pipe(Effect.option);
   if (Option.isNone(text)) return;
   const recorded = decodeRecorded(text.value);
   yield* fs.remove(file, { force: true }).pipe(Effect.ignore);
-  if (Option.isNone(recorded) || !isRunning(recorded.value.pid)) return;
-  const executable = yield* windowsExecutable(recorded.value.pid);
-  const same =
-    Option.isSome(executable) &&
-    path.resolve(executable.value).toLowerCase() ===
-      path.resolve(recorded.value.node).toLowerCase();
-  if (!same) return;
-  yield* Effect.logInfo("Ending the server an earlier run of the app left running", {
-    pid: recorded.value.pid,
-  });
-  yield* kill(recorded.value.pid);
-  yield* exitedPid(recorded.value.pid).pipe(Effect.timeoutOption(Duration.seconds(10)));
+  if (Option.isNone(recorded)) return;
+  const { pid, started } = recorded.value;
+  const ended = yield* powerShell(
+    [
+      // A process this user may not open is not the server it started: the
+      // check fails closed, and nothing after it runs.
+      "$ErrorActionPreference = 'Stop'",
+      "try {",
+      `  $process = Get-Process -Id ${pid}`,
+      "  $null = $process.Handle",
+      "  $ticks = $process.StartTime.ToUniversalTime().Ticks",
+      "} catch { exit 0 }",
+      `if ($ticks -ne ${started}) { exit 0 }`,
+      `& taskkill.exe /PID ${pid} /T /F | Out-Null`,
+      "[Console]::Out.Write('ended')",
+      "$null = $process.WaitForExit(10000)",
+    ].join("\n"),
+    Duration.seconds(30),
+  );
+  if (Option.contains(ended, "ended")) {
+    yield* Effect.logInfo("Ended the server an earlier run of the app left running", { pid });
+  }
 });

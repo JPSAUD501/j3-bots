@@ -170,6 +170,30 @@ it.layer(NodeServices.layer)("home", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("refuses a home the system would not show, never taking it for missing", () =>
+    Effect.gen(function* () {
+      const refused = yield* Home.checkPrivate("/srv/j3").pipe(
+        Effect.flip,
+        Effect.provide(
+          FileSystem.layerNoop({
+            stat: (path) =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "stat",
+                  pathOrDescriptor: path,
+                  cause: Object.assign(new Error(`EACCES: stat '${path}'`), { code: "EACCES" }),
+                }),
+              ),
+          }),
+        ),
+      );
+      assert.strictEqual(refused.reason, "unreadable");
+      assert.include(refused.message, "EACCES: stat '/srv/j3'");
+    }),
+  );
+
   it.effect("gives a fix only for a refusal it can name the repair of", () =>
     Effect.gen(function* () {
       // How Node reports each refusal of `access(home, W_OK)`.

@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ServerChoice from "../serverChoice.ts";
 import * as Settings from "../settings.ts";
 import { AdminRefused, type AdminChannel, type PairingOffer } from "./adminChannel.ts";
@@ -38,6 +39,8 @@ interface World {
   publicOrigin: ServerOrigin | undefined;
   /** What each launch waits for before it reads where to listen. */
   beforeLaunch: Effect.Effect<void>;
+  /** Whether each launch fails, for a reason waiting does not change. */
+  launchRefused: boolean;
   /** What each reading of the interfaces waits for. */
   readingAddresses: Effect.Effect<void>;
   /** What `/pairing` answers. */
@@ -144,7 +147,7 @@ const page: ServerChoice.Page = { clearStorage: Effect.void, openHome: Effect.vo
  * live, and phone access to the server, as the app wires them, in a `world`
  * of fake servers.
  */
-const setUp = (world: World) =>
+const setUp = (world: World, leftRunning: Option.Option<PhoneAccess.ListenHost> = Option.none()) =>
   Effect.gen(function* () {
     const listening = yield* PhoneAccess.listening({
       publicAddress: Effect.suspend(() => world.readingAddresses).pipe(
@@ -155,12 +158,16 @@ const setUp = (world: World) =>
     const supervisor = yield* Supervisor.make({
       launch: Effect.gen(function* () {
         yield* world.beforeLaunch;
+        if (world.launchRefused) {
+          return yield* new Supervisor.LaunchFailed({ reason: "No runtime.", retry: false });
+        }
         const host = yield* listening.hostForLaunch;
         world.hosts.push(host);
         pid += 1;
         return fakeServer(pid, host, world);
       }),
-      adopt: Effect.succeedNone,
+      // A server an earlier run of the app left running, on that host.
+      adopt: Effect.sync(() => Option.map(leftRunning, (host) => fakeServer(99, host, world))),
     });
     const choice = yield* ServerChoice.make(() => Effect.succeed(null), {
       available: true,
@@ -182,6 +189,7 @@ const newWorld = (changes: Partial<World> = {}): World => ({
   work: Effect.succeed(0),
   publicOrigin: undefined,
   beforeLaunch: Effect.void,
+  launchRefused: false,
   readingAddresses: Effect.void,
   offer: { _tag: "granted", code: CODE, expiresAt: EXPIRES },
   hosts: [],
@@ -541,5 +549,50 @@ describe("phone access to the server on this computer", () => {
         yield* serverReady(supervisor, world, 2);
         assert.deepStrictEqual(world.hosts, ["lan", "127.0.0.1"]);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("moves a server an earlier run left on the network only once no bot works there", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile(LOCAL);
+      const asked = yield* Deferred.make<void>();
+      const world = newWorld({
+        work: Deferred.succeed(asked, undefined).pipe(Effect.as(1)),
+      });
+      const { supervisor, phone } = yield* setUp(world, Option.some("lan")).pipe(
+        Effect.provide(Settings.layer(file)),
+      );
+      yield* supervisor.start;
+      // Phone access is off, but a bot works there: it stays where it is.
+      yield* Deferred.await(asked);
+      assert.deepStrictEqual(world.hosts, []);
+      assert.strictEqual((yield* supervisor.state).state, "ready");
+
+      world.work = Effect.succeed(0);
+      yield* TestClock.adjust(PhoneAccess.WORK_POLL);
+      yield* serverReady(supervisor, world, 1);
+      assert.deepStrictEqual(world.hosts, ["127.0.0.1"]);
+      assert.deepStrictEqual(yield* phone.current, { on: false, origins: [] });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("says the bots stopped, not that it is turning on, while the server failed", () =>
+    Effect.gen(function* () {
+      const file = yield* settingsFile({ ...LOCAL, phoneAccess: true });
+      const world = newWorld({ launchRefused: true });
+      const { supervisor, phone } = yield* setUp(world).pipe(Effect.provide(Settings.layer(file)));
+      yield* supervisor.start;
+      assert.deepStrictEqual(
+        yield* reach(phone.changes, (access) => access.refusedReason !== undefined),
+        { on: true, origins: [], refusedReason: "not-running" },
+      );
+
+      // Tried again once repaired, it reaches the network.
+      world.launchRefused = false;
+      yield* supervisor.retry;
+      assert.deepStrictEqual(yield* reach(phone.changes, held), {
+        on: true,
+        origins: [LAN_ORIGIN],
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -361,7 +361,12 @@ export function SettingsPanel({
                       current={item === shown}
                       needsYou={needsYou(item)}
                       chevron={!wide}
-                      onPick={() => intents.showSettingsPage(item)}
+                      onPick={() => {
+                        // Read again each time it shows: a phone may have paired
+                        // elsewhere since, as with a code from "Use from your phone".
+                        if (item === "devices") intents.refreshDevices();
+                        intents.showSettingsPage(item);
+                      }}
                     />
                   </li>
                 ))}

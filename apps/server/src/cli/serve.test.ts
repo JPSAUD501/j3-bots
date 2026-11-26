@@ -336,6 +336,20 @@ describe("how a failed start ends", () => {
     assert.notStrictEqual(failure[Runtime.errorExitCode], 78);
   });
 
+  it.effect(
+    "ends a start on a home another server still holds as one the app may start again after",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const home = yield* fs.makeTempDirectoryScoped();
+        yield* Home.holdHome(home);
+        const held = yield* Home.holdHome(home).pipe(Effect.scoped, Effect.flip);
+        const failure = startFailure(held);
+        assert.notStrictEqual(failure[Runtime.errorExitCode], 78);
+        assert.strictEqual(failure[CliError.userMessage], held.message);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it("ends any other failure as one the app may start again after", () => {
     const failure = startFailure(
       new Migrator.MigrationError({ kind: "Failed", message: "disk I/O error" }),

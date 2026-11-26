@@ -271,22 +271,26 @@ const diagnoseIn = (changes: Partial<World> = {}) =>
         }),
       ),
     );
+    const ioError = (method: string, target: string) =>
+      PlatformError.systemError({
+        _tag: "Unknown",
+        module: "FileSystem",
+        method,
+        pathOrDescriptor: target,
+        cause: Object.assign(new Error(`EIO: i/o error, ${method} '${target}'`), {
+          code: "EIO",
+        }),
+      });
     const fileSystem = FileSystem.FileSystem.of({
       ...fs,
       exists: (target) =>
         world.homeUnreadable && target === home
-          ? Effect.fail(
-              PlatformError.systemError({
-                _tag: "Unknown",
-                module: "FileSystem",
-                method: "access",
-                pathOrDescriptor: target,
-                cause: Object.assign(new Error(`EIO: i/o error, access '${target}'`), {
-                  code: "EIO",
-                }),
-              }),
-            )
+          ? Effect.fail(ioError("access", target))
           : fs.exists(target),
+      stat: (target) =>
+        world.homeUnreadable && target === home
+          ? Effect.fail(ioError("stat", target))
+          : fs.stat(target),
     });
     const checks = yield* diagnose.pipe(
       Effect.provide(fakes),
@@ -374,6 +378,10 @@ it.layer(NodeServices.layer)("doctor", (it) => {
       assert.strictEqual(failing.status, "problem");
       assert.include(failing.summary, "EIO: i/o error");
       assert.notInclude(failing.summary, "creates it");
+      assert.include(
+        Option.getOrElse(failing.fix, () => ""),
+        "every folder it is in",
+      );
     }),
   );
 

@@ -82,7 +82,7 @@ const tailOf = (file: string, start: number): string => {
  * Windows, which has no signal a process can handle, where `taskkill /T`
  * walks the tree.
  */
-export const killTree = (pid: number, platform: NodeJS.Platform) =>
+const killTree = (pid: number, platform: NodeJS.Platform) =>
   Effect.callback<void>((resume) => {
     if (platform !== "win32") {
       try {
