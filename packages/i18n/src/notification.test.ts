@@ -66,10 +66,6 @@ const wording: Record<Exclude<NotificationKind, "connector">, Said> & {
     },
   },
   connector: {
-    suggestion: {
-      en: { bare: "Suggests connecting a service", preview: "Suggests connecting Ship it?" },
-      "pt-BR": { bare: "Sugere conectar um serviço", preview: "Sugere conectar Ship it?" },
-    },
     "sign-in": {
       en: {
         bare: "A service needs you to sign in again",

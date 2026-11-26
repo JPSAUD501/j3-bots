@@ -9,7 +9,6 @@ import {
   type ConnectorListing,
   type ConnectorListingDetails,
   type ConnectorSource,
-  type EntryId,
   type Language,
   type ListingRef,
   type SignInRedirect,
@@ -34,12 +33,11 @@ export interface ConnectorSearch {
   readonly registry: "answered" | "unavailable";
 }
 
-/** A connector to add: where from, which bots may use it, and the card that suggested it. */
+/** A connector to add: where from, and which bots may use it. */
 export interface ConnectorAddition {
   readonly source: ConnectorSource;
-  /** Left out: the bot whose card `suggestion` is, else the primary bot. */
+  /** Left out: every bot. */
   readonly grant?: ConnectorGrant;
-  readonly suggestion: EntryId | null;
 }
 
 /**
@@ -167,7 +165,6 @@ export const layer = Layer.effect(
             client["connector.add"]({
               id,
               source: addition.source,
-              suggestion: addition.suggestion,
               ...(addition.grant === undefined ? {} : { grant: addition.grant }),
             }),
           )

@@ -35,6 +35,7 @@ export {
   Connectors,
   type ConnectorSearch,
 } from "./stores/Connectors.ts";
+export { type SkillInstall, Skills } from "./stores/Skills.ts";
 export { type Download } from "./files/Files.ts";
 export {
   admitFiles,

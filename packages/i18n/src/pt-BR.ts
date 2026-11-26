@@ -123,9 +123,7 @@ const sentences = {
   "summary.needsBrowserHelp": "Precisa da sua ajuda no navegador: {note}",
   "summary.askedBrowserHelp": "Pediu ajuda no navegador: {note}",
   "summary.askedLogin": "Pediu para salvar um login de {origin}",
-  "summary.suggestedConnector": "Sugeriu conectar {name}",
   "summary.connectorSignIn": "{name} precisa que você entre de novo",
-  "summary.suggestsConnector": "Sugere conectar {name}",
   "summary.workFold": "Trabalhou um pouco",
   "summary.workStopped": "Parou",
   "summary.workFailed": "Falhou",
@@ -150,7 +148,6 @@ const sentences = {
   "notification.secret": "Precisa de uma credencial",
   "notification.handoff": "Mandou uma mensagem urgente a um colega",
   "notification.browserHelp": "Precisa da sua ajuda no navegador",
-  "notification.connectorSuggestion": "Sugere conectar um serviço",
   "notification.connectorSignIn": "Um serviço precisa que você entre de novo",
   "notification.channel.message": "Mensagens",
   "notification.channel.question": "Perguntas",
@@ -440,6 +437,20 @@ const sentences = {
   "tool.plan.doing": "Atualizando o plano",
   "tool.image.did": "Olhou uma imagem",
   "tool.image.doing": "Olhando uma imagem",
+  "tool.mcpServerAdded.did": "Adicionou um servidor MCP",
+  "tool.mcpServerAdded.doing": "Adicionando um servidor MCP",
+  "tool.mcpServerChanged.did": "Alterou um servidor MCP",
+  "tool.mcpServerChanged.doing": "Alterando um servidor MCP",
+  "tool.mcpServerRemoved.did": "Removeu um servidor MCP",
+  "tool.mcpServerRemoved.doing": "Removendo um servidor MCP",
+  "tool.mcpServersRead.did": "Consultou os servidores MCP",
+  "tool.mcpServersRead.doing": "Consultando os servidores MCP",
+  "tool.skillSaved.did": "Salvou uma skill",
+  "tool.skillSaved.doing": "Salvando uma skill",
+  "tool.skillRemoved.did": "Removeu uma skill",
+  "tool.skillRemoved.doing": "Removendo uma skill",
+  "tool.skillsRead.did": "Consultou as skills",
+  "tool.skillsRead.doing": "Consultando as skills",
   "tool.builtIn.did": "Usou uma de suas ferramentas",
   "tool.builtIn.doing": "Usando uma de suas ferramentas",
 
@@ -1186,7 +1197,7 @@ const sentences = {
 
   "template.share.title": "Compartilhar {name} como modelo",
   "template.share.body":
-    "Quem tiver este arquivo pode criar um bot que faz o que {name} faz. A função, as habilidades e as rotinas abaixo vão exatamente como estão escritas, e {name} pode ter escrito parte delas: leia procurando algo que você não compartilharia.",
+    "Quem tiver este arquivo pode criar um bot que faz o que {name} faz. A função, as skills e as rotinas abaixo vão exatamente como estão escritas, e {name} pode ter escrito parte delas: leia procurando algo que você não compartilharia.",
   "template.share.download": "Baixar arquivo",
   "template.share.copy": "Copiar",
   "template.share.copied": "Copiado para a área de transferência.",
@@ -1199,7 +1210,7 @@ const sentences = {
   "template.share.tooLarge":
     "{name} é grande demais para compartilhar como modelo: um arquivo de modelo comporta no máximo {limit}. A maior parte é {part}. Encurte e tente de novo.",
   "template.part.job": "a função",
-  "template.part.skill": "a habilidade “{name}”",
+  "template.part.skill": "a skill “{name}”",
   "template.part.routine": "a rotina “{name}”",
   "template.close": "Fechar",
   "template.create.title": "Novo bot a partir de um modelo",
@@ -1224,8 +1235,8 @@ const sentences = {
   "template.read.unreadable": "Não foi possível ler este arquivo.",
   "template.job": "Função",
   "template.job.empty": "Nenhuma função escrita.",
-  "template.skills": "Habilidades",
-  "template.skills.none": "Nenhuma habilidade.",
+  "template.skills": "Skills",
+  "template.skills.none": "Nenhuma skill.",
   "template.routines": "Rotinas",
   "template.routines.none": "Nenhuma rotina.",
   "template.routines.paused": "Cada uma começa pausada. Você liga nos detalhes de {name}.",
@@ -2057,11 +2068,6 @@ const sentences = {
   "addOwn.consent.cancel": "Cancelar",
   "addOwn.submit": "Adicionar",
 
-  "connectorCard.suggest.title": "Conectar um serviço",
-  "connectorCard.connect": "Conectar",
-  "connectorCard.notNow": "Agora não",
-  "connectorCard.connected": "Conectado. {name} está pronto para uso.",
-  "connectorCard.dismissed": "Agora não. Ele não será sugerido de novo nesta conversa.",
   "connectorCard.auth.title": "Entrar de novo",
   "connectorCard.auth.body": "{name} precisa que você entre de novo.",
   "connectorCard.signIn": "Entrar",
@@ -2072,6 +2078,23 @@ const sentences = {
   "details.connectors": "Conectores",
   "details.noConnectors": "{name} ainda não pode usar nenhum conector.",
   "details.connectors.manage": "Gerenciar",
+
+  "change.by": "{who} · {when}",
+  "change.byYou": "Você",
+  "change.byRemovedBot": "Um bot removido",
+  "skills.scope.all": "Todos os bots",
+  "skills.source": "De {where} no commit {commit}",
+  "skills.failed": "Não deu certo. Tente de novo.",
+  "skills.failed.shipped": "As skills do próprio J3 Bots não podem ser alteradas.",
+  "skills.failed.nameTaken": "Já existe uma skill com esse nome onde os mesmos bots a veriam.",
+  "skills.failed.limit": "Aqui já há o máximo de skills. Remova uma antes.",
+  "skills.failed.text":
+    "O SKILL.md precisa começar com o frontmatter: o nome desta skill e uma descrição de quando ela se aplica.",
+  "skills.failed.repository":
+    "Essa pasta não é uma skill que o J3 Bots instala: ela precisa de um SKILL.md, sem links, e caber nos limites.",
+  "skills.failed.fetch":
+    "Não foi possível baixar o repositório. Confira o endereço e o branch, a tag ou o commit.",
+  "skills.failed.privateLocation": "A pasta desta skill não fica num lugar onde o J3 Bots escreve.",
 } as const satisfies Catalog;
 
 export const ptBR: AddingNone<typeof sentences> = sentences;

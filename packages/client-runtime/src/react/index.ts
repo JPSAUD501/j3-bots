@@ -77,6 +77,7 @@ export const useDevices = () => useReadable(useJ3Client().devices);
 export const useServerUpdate = () => useReadable(useJ3Client().serverUpdate.view);
 export const useServerUpdateEnded = () => useReadable(useJ3Client().serverUpdate.ended);
 export const useConnectors = () => useReadable(useJ3Client().connectors.state);
+export const useSkills = () => useReadable(useJ3Client().skills.state);
 /** Every pair of bots that wrote each other, latest first. */
 export const usePairs = () => useReadable(useJ3Client().pairs);
 

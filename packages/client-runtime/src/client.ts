@@ -12,6 +12,10 @@ import type {
   SignInRedirect,
   SignInStarted,
   ToolReviewRevision,
+  Skill,
+  SkillName,
+  SkillScope,
+  SkillText,
   BotFile,
   BotId,
   BrowserInput,
@@ -86,6 +90,7 @@ import type {
 import type { Readable } from "./Store.ts";
 import * as Browser from "./stores/Browser.ts";
 import * as Connectors from "./stores/Connectors.ts";
+import * as Skills from "./stores/Skills.ts";
 import * as Conversations from "./stores/Conversations.ts";
 import * as Details from "./stores/Details.ts";
 import * as Devices from "./stores/Devices.ts";
@@ -136,6 +141,7 @@ export const layer = SignOut.layer.pipe(
       Browser.layer,
       Vault.layer,
       Connectors.layer,
+      Skills.layer,
     ),
   ),
   Layer.provideMerge(Conversations.layer),
@@ -251,6 +257,19 @@ export interface ConnectorsClient {
     redirect: SignInRedirect,
   ) => Promise<Actions.IntentResult<SignInStarted>>;
   readonly completeSignIn: (url: Redacted.Redacted<string>) => Promise<Actions.IntentResult>;
+}
+
+/** Every bot's skills and each bot's own; see `Skills`. */
+export interface SkillsClient {
+  readonly state: Readable<Synced<ReadonlyArray<Skill>>>;
+  readonly read: (scope: SkillScope, name: SkillName) => Promise<Actions.IntentResult<SkillText>>;
+  readonly save: (
+    scope: SkillScope,
+    name: SkillName,
+    text: SkillText,
+  ) => Promise<Actions.IntentResult<Skill>>;
+  readonly install: (install: Skills.SkillInstall) => Promise<Actions.IntentResult<Skill>>;
+  readonly remove: (scope: SkillScope, name: SkillName) => Promise<Actions.IntentResult>;
 }
 
 /** Server state held open until `release`. */
@@ -542,6 +561,7 @@ export interface J3Client {
   /** Where the server finds each harness; null when it cannot say. */
   readonly harnessLocations: () => Promise<ReadonlyArray<HarnessLocation> | null>;
   readonly connectors: ConnectorsClient;
+  readonly skills: SkillsClient;
   /** Connects the providers to an endpoint, restarting the engine. */
   readonly connectEndpoint: (
     request: ProviderConnectionRequest,
@@ -631,6 +651,7 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
         browser: yield* Browser.Browser,
         vault: yield* Vault.Vault,
         connectors: yield* Connectors.Connectors,
+        skills: yield* Skills.Skills,
         drafts: yield* Drafts.Drafts,
         files: yield* Files.Files,
         details: yield* Details.Details,
@@ -895,6 +916,13 @@ export const createJ3Client = async <E>(platform: Layer.Layer<Platform, E>): Pro
       beginSignIn: (connectorId, redirect) =>
         run.promise(services.connectors.beginSignIn(connectorId, redirect)),
       completeSignIn: (url) => run.promise(services.connectors.completeSignIn(url)),
+    },
+    skills: {
+      state: services.skills.state,
+      read: (scope, name) => run.promise(services.skills.read(scope, name)),
+      save: (scope, name, text) => run.promise(services.skills.save(scope, name, text)),
+      install: (install) => run.promise(services.skills.install(install)),
+      remove: (scope, name) => run.promise(services.skills.remove(scope, name)),
     },
     connectEndpoint: (request) => run.promise(services.providerSetup.connect(request)),
 

@@ -36,6 +36,19 @@ const toolWords: Record<WorkTool, { readonly did: Phrase; readonly doing: Phrase
   "web-page": { did: "tool.webPage.did", doing: "tool.webPage.doing" },
   plan: { did: "tool.plan.did", doing: "tool.plan.doing" },
   image: { did: "tool.image.did", doing: "tool.image.doing" },
+  "mcp-server-added": { did: "tool.mcpServerAdded.did", doing: "tool.mcpServerAdded.doing" },
+  "mcp-server-changed": {
+    did: "tool.mcpServerChanged.did",
+    doing: "tool.mcpServerChanged.doing",
+  },
+  "mcp-server-removed": {
+    did: "tool.mcpServerRemoved.did",
+    doing: "tool.mcpServerRemoved.doing",
+  },
+  "mcp-servers-read": { did: "tool.mcpServersRead.did", doing: "tool.mcpServersRead.doing" },
+  "skill-saved": { did: "tool.skillSaved.did", doing: "tool.skillSaved.doing" },
+  "skill-removed": { did: "tool.skillRemoved.did", doing: "tool.skillRemoved.doing" },
+  "skills-read": { did: "tool.skillsRead.did", doing: "tool.skillsRead.doing" },
   "built-in": { did: "tool.builtIn.did", doing: "tool.builtIn.doing" },
 };
 

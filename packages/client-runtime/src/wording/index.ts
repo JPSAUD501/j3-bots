@@ -107,3 +107,4 @@ export {
   serverFailureLine,
   updateResultLine,
 } from "./update.ts";
+export { lastChangeText, skillFailureText, skillScopeText, skillSourceText } from "./skills.ts";
