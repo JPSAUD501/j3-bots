@@ -303,6 +303,8 @@ export const layer = Layer.effect(
     // Anything that goes wrong in a round, the wait included, is logged and
     // the worker goes on after a pause: it never ends while the server runs.
     const loop = Effect.gen(function* () {
+      // A nudge before the pass is one the pass reads the cause of.
+      yield* Queue.poll(nudges);
       const began = yield* DateTime.now;
       const at = yield* pass.pipe(
         Effect.andThen(nextLook(began)),

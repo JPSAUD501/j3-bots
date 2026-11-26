@@ -106,3 +106,22 @@ it.effect("runs again at once when the engine came back while a refused pass ran
     yield* second;
   }).pipe(Effect.provide(machinery)),
 );
+
+it.effect("takes a signal fired while a pass ran past its deadline as read by the next pass", () =>
+  Effect.gen(function* () {
+    const signals = yield* Signals.Signals;
+    const { began, second } = yield* worker([
+      () =>
+        Effect.gen(function* () {
+          yield* signals.dispatch.fire;
+          yield* TestClock.adjust(RETRY_TICK);
+          return done(null, true);
+        }),
+      () => Effect.succeed(done()),
+    ]);
+    yield* second;
+    // The second pass read what the signal was for: the worker is idle.
+    yield* TestClock.adjust(Duration.millis(1));
+    assert.strictEqual(yield* began, 2);
+  }).pipe(Effect.provide(machinery)),
+);

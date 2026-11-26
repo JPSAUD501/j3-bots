@@ -106,8 +106,9 @@ const supervisedPass = <P extends Pass>(name: string, pass: Effect.Effect<P>) =>
  * stops the other workers.
  *
  * What changes while a pass runs counts from when the pass began: its
- * deadlines (`nextPassAt`), and, for a pass the engine refused, the engine
- * becoming ready again.
+ * deadlines (`nextPassAt`), a signal, and, for a pass the engine refused, the
+ * engine becoming ready again. A signal fired before the pass began is
+ * forgotten: the pass reads what it was for.
  */
 export const reconcile = (input: {
   readonly name: string;
@@ -118,6 +119,7 @@ export const reconcile = (input: {
   Effect.gen(function* () {
     yield* input.readiness.released;
     const generation = yield* input.readiness.generation;
+    yield* input.signal.clear;
     const began = yield* DateTime.now;
     const result = yield* supervisedPass(input.name, input.pass);
     if (result === null) return yield* Effect.sleep(DEFECT_RETRY);
@@ -135,6 +137,7 @@ export const reconcileWithoutEngine = (input: {
   readonly signal: Trigger;
 }): Effect.Effect<never> =>
   Effect.gen(function* () {
+    yield* input.signal.clear;
     const began = yield* DateTime.now;
     const result = yield* supervisedPass(input.name, input.pass);
     if (result === null) return yield* Effect.sleep(DEFECT_RETRY);

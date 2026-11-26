@@ -1828,10 +1828,10 @@ export const layer = Layer.effect(
           outcome.until(row.busy_until);
         }
         // One left for a free slot goes when a slot frees, which nudges the
-        // dispatcher; only a deadline still ahead is waited for.
-        const later = yield* DateTime.now;
+        // dispatcher; only a deadline that was ahead when the pass looked is
+        // waited for, also one that came due since.
         for (const row of yield* unsent) {
-          if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, later)) {
+          if (row.next_attempt_at !== null && DateTime.isGreaterThan(row.next_attempt_at, now)) {
             outcome.until(row.next_attempt_at);
           }
         }
