@@ -77,11 +77,11 @@ export const installDesktopUpdate = (): Promise<"current" | "failed"> => {
           return;
         case "downloaded":
           if (phase.restart === "waiting-for-save") {
-            waited = restarted;
+            waited = true;
             return;
           }
-          // Offered again once the restart this update asked for waited for
-          // a save: the operator called it off.
+          // Offered again once a restart, this update's or one asked for
+          // before it, waited for a save: the operator called it off.
           if (waited) return settle("failed");
           if (!restarted) {
             restarted = true;

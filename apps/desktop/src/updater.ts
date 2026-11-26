@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// @effect-diagnostics nodeBuiltinImport:off -- One synchronous existence check of the development feed, before the updater is configured.
+// @effect-diagnostics nodeBuiltinImport:off -- Synchronous checks before the updater is configured: that the development feed exists, and that the AppImage's folder is writable.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import type { UpdateChannel } from "@j3-bots/contracts";
