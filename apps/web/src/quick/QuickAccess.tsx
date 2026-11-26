@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { targetKey } from "@j3-bots/client-runtime";
-import { canStop, offeredReply, openingHeld } from "@j3-bots/client-runtime/presentation";
+import { botStop, offeredReply, openingHeld } from "@j3-bots/client-runtime/presentation";
 import {
   heldHelloText,
   presenceLine,
@@ -68,6 +68,7 @@ export type QuickAccessIntents = TimelineIntents &
     | "markRead"
     | "setShown"
     | "stopBot"
+    | "forceStopBot"
     | "secrets"
   >;
 
@@ -253,9 +254,13 @@ export function QuickAccess({
       if (document.querySelector("[role=dialog], [role=alertdialog]") !== null) return;
       event.preventDefault();
       onClose();
-    } else if (shortcuts.stop.matches(event) && canStop(bot)) {
+    } else if (shortcuts.stop.matches(event)) {
+      // As from the conversation: Stop, or Force stop while the bot's AI ignores one.
+      const stop = botStop(bot);
+      if (stop === "hidden") return;
       event.preventDefault();
-      intents.stopBot(bot.id);
+      if (stop === "force") intents.forceStopBot(bot.id);
+      else intents.stopBot(bot.id);
     }
   });
   // A file pasted anywhere on it is attached, as one pasted in the composer is.
@@ -284,7 +289,7 @@ export function QuickAccess({
     ? presenceLine(bot, ctx)
     : ({ text: t("connection.reconnecting"), tone: "secondary" } as const);
   return (
-    <RosterProvider roster={data.roster ?? []}>
+    <RosterProvider roster={data.roster ?? []} engine={data.engine}>
       <AvatarConnection connected={data.connected}>
         <div
           role="region"

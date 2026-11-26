@@ -213,6 +213,7 @@ function Connected({ app, origin, solid }: { app: Desktop; origin: URL; solid: b
       if (viewKey !== null && targetKey(asked) === viewKey) conversation.markRead(through);
     },
     stopBot: (bot) => void j3.stopBot(bot),
+    forceStopBot: (bot) => void j3.forceStopBot(bot),
     secrets: { ...j3.secrets, copy: app.copySecret },
   };
   return (
