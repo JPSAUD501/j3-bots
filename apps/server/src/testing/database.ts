@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { ServerConfig, type ServerConfigShape } from "../config.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
@@ -36,25 +37,40 @@ export const configFor = (path: Path.Path, home: string): ServerConfigShape => (
 
 /**
  * The production database layer on a file `write` wrote first, if anything,
- * in a temporary home (foreign keys on, migrated), with the server
+ * in the home `home` gives (foreign keys on, migrated), with the server
  * configuration that points at that home and the machine's own network
  * interfaces.
  */
-const inTemporaryHome = (
+const inHome = <E>(
+  home: Effect.Effect<string, E, FileSystem.FileSystem | Scope.Scope>,
   write: (config: ServerConfigShape) => Effect.Effect<void, never, Path.Path>,
 ) =>
   Layer.unwrap(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const config = configFor(path, yield* fs.makeTempDirectoryScoped());
+      const config = configFor(path, yield* home);
       yield* write(config);
       return Sqlite.layer.pipe(Layer.provideMerge(Layer.succeed(ServerConfig, config)));
     }),
   ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, Network.layer)));
 
+/** `inHome` in a temporary home, removed with the layer. */
+const inTemporaryHome = (
+  write: (config: ServerConfigShape) => Effect.Effect<void, never, Path.Path>,
+) =>
+  inHome(
+    Effect.flatMap(FileSystem.FileSystem, (fs) => fs.makeTempDirectoryScoped()),
+    write,
+  );
+
 /** The production database layer on a fresh file in a temporary home. */
 export const layer = inTemporaryHome(() => Effect.void);
+
+/**
+ * The production database layer in `home`, which outlives it: a test that
+ * starts a server there, stops it and works on what it left.
+ */
+export const layerAt = (home: string) => inHome(Effect.succeed(home), () => Effect.void);
 
 /**
  * The production database layer on a file `write` wrote first, as an earlier

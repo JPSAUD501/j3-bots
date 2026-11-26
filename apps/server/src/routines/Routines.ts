@@ -48,6 +48,15 @@ import { WEBHOOK_PATH } from "./webhook.ts";
 /** The bytes of a webhook's secret: 256 bits, drawn once per webhook trigger. */
 const SECRET_BYTES = 32;
 
+/**
+ * A new webhook secret, which goes in the address after the routine's id:
+ * drawn as a routine gets a webhook, and by an import, which brings none.
+ */
+export const newWebhookSecret = Effect.gen(function* () {
+  const random = yield* SecureRandom.SecureRandom;
+  return Base64Url.encode(yield* random.randomBytes(SECRET_BYTES));
+});
+
 const RoutineRow = Schema.Struct({
   id: RoutineId,
   bot_id: BotId,
@@ -203,8 +212,9 @@ export const layer = Layer.effect(
         ? transaction(input.apply)
         : receipts.once({ ...input, commandId: input.commandId });
 
-    /** A new webhook secret, which goes in the address after the routine's id. */
-    const newSecret = Effect.map(random.randomBytes(SECRET_BYTES), Base64Url.encode);
+    const newSecret = newWebhookSecret.pipe(
+      Effect.provideService(SecureRandom.SecureRandom, random),
+    );
 
     /**
      * Where another device calls a webhook: the first address `j3-bots pair`

@@ -13,6 +13,7 @@ import * as Socket from "../admin/socket.ts";
 import { DEFAULTS_TEXT, load, ServerConfig } from "../config.ts";
 import { publishFile } from "../files.ts";
 import { UPDATE_LOCK, unfinishedRollback } from "../install/snapshot.ts";
+import { unfinishedImport } from "../transfer/importMark.ts";
 import { HOME_ENTRIES } from "./entries.ts";
 import {
   type AclVerdict,
@@ -327,12 +328,26 @@ const checkNoUnfinishedRollback = Effect.fn("Home.checkNoUnfinishedRollback")(fu
   }
 });
 
+/** An import stopped while it put an export in place, so the home is part one, part the other. */
+class ImportUnfinished extends Schema.TaggedError<ImportUnfinished>()("ImportUnfinished", {
+  home: Schema.String,
+}) {
+  override get message(): string {
+    return `An import into ${this.home} stopped before it finished, so no server may start on it. Run \`j3-bots import\` again with the same export, which finishes it, or another one with --replace.`;
+  }
+}
+
+/** Refuses `home` while an import into it has not finished (`../transfer/Import.ts`). */
+const checkNoUnfinishedImport = Effect.fn("Home.checkNoUnfinishedImport")(function* (home: string) {
+  if (yield* unfinishedImport(home)) return yield* new ImportUnfinished({ home });
+});
+
 /**
  * The configuration for a server about to start, with its home ready. Nothing
  * is written until all pass their checks: the configuration, as `load`
  * checks it (where the home is included), the home's privacy and
- * writability, and that no rollback of it has been left unfinished, whose
- * `config.json` may be the one moved aside. Then the home is created,
+ * writability, and that no rollback of it, whose `config.json` may be the
+ * one moved aside, and no import into it has been left unfinished. Then the home is created,
  * readable by the operator only, and on first run, with no `config.json`
  * yet, one is published whole with every setting at its default. An existing
  * file is never rewritten, and a start that finds one writes nothing there.
@@ -343,6 +358,7 @@ export const initialize = Effect.gen(function* () {
   yield* checkPrivate(config.home);
   yield* checkWritable(config.home);
   yield* checkNoUnfinishedRollback(config.home);
+  yield* checkNoUnfinishedImport(config.home);
   yield* createHome(config.home);
   if (!(yield* fs.exists(config.configFile))) {
     // Two first starts may both get here: the publication keeps the first file.
@@ -452,7 +468,8 @@ export const holdUpdateLock = Effect.fn("Home.holdUpdateLock")(function* <E>(
 /**
  * Takes the home for this process, before anything else touches it: checks
  * that it is private, holds `<home>/server.lock` for as long as the scope
- * lives (`holdHome`), refuses it while a rollback has not finished, and then
+ * lives (`holdHome`), refuses it while a rollback or an import has not
+ * finished, and then
  * removes an admin socket a stopped server left behind, on a system that has
  * one (`hasAdminSocket`).
  *
@@ -464,8 +481,9 @@ export const reserve = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   yield* checkPrivate(home);
   yield* holdHome(home);
-  // Again under the lock: a rollback may have started since `initialize`.
+  // Again under the lock: a rollback or an import may have started since `initialize`.
   yield* checkNoUnfinishedRollback(home);
+  yield* checkNoUnfinishedImport(home);
   if (!Socket.hasAdminSocket(process.platform)) return;
 
   const socket = yield* Socket.probe(adminSocket);
@@ -480,6 +498,27 @@ export const reserve = Effect.gen(function* () {
     case "stale":
       yield* fs.remove(adminSocket);
   }
+});
+
+/**
+ * Takes `home` for `j3-bots export` or `j3-bots import`, for as long as the
+ * scope lives: no server runs on it meanwhile, and no update copies or puts
+ * back its databases. Refused while a rollback has not finished. An export
+ * is refused too while an import has not finished; an import may finish one.
+ * An import makes the home, private, when there is none yet.
+ */
+export const takeForTransfer = Effect.fn("Home.takeForTransfer")(function* (
+  home: string,
+  purpose: "export" | "import",
+) {
+  yield* checkPrivate(home);
+  if (purpose === "import") {
+    yield* checkWritable(home);
+    yield* createHome(home);
+  }
+  yield* holdHome(home);
+  yield* checkNoUnfinishedRollback(home);
+  if (purpose === "export") yield* checkNoUnfinishedImport(home);
 });
 
 /** `reserve` for the server's lifetime, built before the database and the engine. */
