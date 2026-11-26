@@ -41,6 +41,7 @@ import * as RpcSocket from "./RpcSocket.ts";
 import * as UpdateRoutes from "./update/routes.ts";
 import { isServedHost } from "./system/Network.ts";
 import * as Ports from "./system/Ports.ts";
+import { RefusedNames } from "./web/RefusedNames.ts";
 import * as WebClient from "./web/WebClient.ts";
 
 /** 200 once the server is serving, which is after the database is migrated. */
@@ -208,9 +209,6 @@ const hostRefused = HttpServerResponse.text(
   { status: 403, headers: { "x-content-type-options": "nosniff" } },
 );
 
-/** How many refused names a listener logs, so a flood of names fills neither the log nor memory. */
-const LOGGED_REFUSED_NAMES = 16;
-
 /** The longest DNS name. Anything longer in a `Host` names nothing. */
 const MAX_HOST_NAME = 253;
 
@@ -222,23 +220,24 @@ const requestedName = (host: string | undefined) => {
 };
 
 /**
- * Logs the first refusal of each name, up to `LOGGED_REFUSED_NAMES`, with
- * what would make the server answer it: a proxy or tunnel that serves it
- * under that name needs `publicOrigin`, and anyone else opens it at an
- * address.
+ * Keeps each refused name (`RefusedNames`) and logs the first refusal of
+ * each one kept, with what would make the server answer it: a proxy or
+ * tunnel that serves it under that name needs `publicOrigin`, and anyone else
+ * opens it at an address.
  */
-const refusedNameLogger = (publicOrigin: Option.Option<ServerOrigin>) => {
-  const logged = new Set<string>();
+const refusedNameLogger = (
+  publicOrigin: Option.Option<ServerOrigin>,
+  refused: RefusedNames["Service"],
+) => {
   const answered = Option.match(publicOrigin, {
     onNone: () => "localhost and IP addresses; publicOrigin is not set",
     onSome: (origin) => `localhost, IP addresses and ${URL.parse(origin)?.hostname ?? origin}`,
   });
   return (host: string | undefined) =>
-    Effect.suspend(() => {
+    Effect.gen(function* () {
       const name = requestedName(host);
-      if (logged.has(name) || logged.size >= LOGGED_REFUSED_NAMES) return Effect.void;
-      logged.add(name);
-      return Effect.logWarning(
+      if (!(yield* refused.record(name))) return;
+      yield* Effect.logWarning(
         `Refused a plain-HTTP request for ${name} (403). Over plain HTTP this server answers ${answered}. If a proxy or tunnel serves it at ${name}, set publicOrigin to that address; otherwise open it at localhost or at the address \`j3-bots pair\` prints. Further refusals of this name are not logged.`,
       );
     });
@@ -266,7 +265,7 @@ const clientGate = HttpRouter.middleware(
   Effect.gen(function* () {
     const { tls, publicOrigin } = yield* ServerConfig;
     const checksHost = Option.isNone(tls);
-    const logRefusedName = refusedNameLogger(publicOrigin);
+    const logRefusedName = refusedNameLogger(publicOrigin, yield* RefusedNames);
     return (httpApp) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;

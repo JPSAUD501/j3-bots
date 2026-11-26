@@ -38,6 +38,13 @@ export interface HarnessFacts {
    * new, empty folder and moves the credential file in only once it succeeded.
    */
   readonly revokesStoredSignIn: boolean;
+  /**
+   * The log its own sign-in keeps in its configuration folder, when it keeps
+   * one: what its maker asks for when a sign-in does not work. A sign-in in a
+   * new folder (`revokesStoredSignIn`) adds it to the one in the J3-owned
+   * home, however it ends.
+   */
+  readonly signInLog: string | undefined;
 }
 
 export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
@@ -59,6 +66,7 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
     // Claude Code 2.1.328 replaces its stored sign-in only once the new one's
     // tokens arrived, without revoking it first.
     revokesStoredSignIn: false,
+    signInLog: undefined,
   },
   codex: {
     ...signInHarnesses.codex,
@@ -71,6 +79,9 @@ export const HARNESSES: Readonly<Record<Harness, HarnessFacts>> = {
     signInPages: ["https://auth.openai.com/oauth/authorize"],
     // Codex 0.170.0: `clear_existing_auth_before_login` in `codex-rs/cli/src/login.rs`.
     revokesStoredSignIn: true,
+    // Codex 0.171.0: `init_login_file_logging` in `codex-rs/cli/src/login.rs`
+    // appends to `codex-login.log` in its log folder, `log` in `CODEX_HOME`.
+    signInLog: "log/codex-login.log",
   },
 };
 
