@@ -55,7 +55,7 @@ const releaseNotes = (release: Option.Option<Release>): string =>
     onNone: () =>
       "This build of J3 Bots carries no release notes: it was built from source, or it is a nightly. If your user asks what changed, say you do not know, and that About and updates in Settings shows the version they run.",
     onSome: ({ version, whatsNew }) =>
-      `These are the release notes of J3 Bots ${version}, the version that installed this skill, and what it brought. About and updates in Settings shows the version your user's server runs: if it is another one, or they ask about an earlier release, say you do not know what it changed. An app that has not updated yet may not show all of it.\n\n${whatsNew}`,
+      `These are the release notes of J3 Bots ${version}, the version that installed this skill. You cannot see which version your user's server runs now: a server moved back to an earlier release keeps this skill. So when you tell them what changed, say it is what J3 Bots ${version} brought, and that About and updates in Settings shows the version they run; if it shows another, or they ask about an earlier release, say you do not know what that one changed. An app that has not updated yet may not show all of it.\n\n${whatsNew}`,
   });
 
 const readSkill = (name: (typeof SKILL_NAMES)[number]): string => {
