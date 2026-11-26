@@ -122,9 +122,10 @@ const onPointer = (event: PointerEvent) => {
   pointer.at = performance.now();
   rectsStale = true;
 };
-/** The pointer is gone: it left the window, or a finger lifted. */
+/** The pointer is gone: a finger lifted, or the mouse left the window, which is leaving for nothing. */
 const onPointerGone = (event: PointerEvent) => {
-  if (event.type === "pointerleave" || event.pointerType !== "mouse") {
+  const left = event.type === "pointerout" ? event.relatedTarget === null : true;
+  if (left && (event.type === "pointerout" || event.pointerType !== "mouse")) {
     pointer.at = Number.NEGATIVE_INFINITY;
   }
 };
@@ -139,7 +140,7 @@ function listen() {
   window.addEventListener("pointerdown", onPointer, { passive: true });
   window.addEventListener("pointerup", onPointerGone, { passive: true });
   window.addEventListener("pointercancel", onPointerGone, { passive: true });
-  document.documentElement.addEventListener("pointerleave", onPointerGone, { passive: true });
+  window.addEventListener("pointerout", onPointerGone, { passive: true });
   window.addEventListener("scroll", onScroll, { passive: true, capture: true });
   window.addEventListener("resize", onScroll, { passive: true });
   reducedQuery?.addEventListener("change", onReducedChange);
@@ -152,7 +153,7 @@ function unlisten() {
   window.removeEventListener("pointerdown", onPointer);
   window.removeEventListener("pointerup", onPointerGone);
   window.removeEventListener("pointercancel", onPointerGone);
-  document.documentElement.removeEventListener("pointerleave", onPointerGone);
+  window.removeEventListener("pointerout", onPointerGone);
   window.removeEventListener("scroll", onScroll, { capture: true });
   window.removeEventListener("resize", onScroll);
   reducedQuery?.removeEventListener("change", onReducedChange);
@@ -187,7 +188,7 @@ function loop(now: number) {
 
   // Then writes: what travels on its springs, then the avatars.
   let driving = false;
-  for (const step of [...drivers]) {
+  for (const step of drivers) {
     if (step(dt)) driving = true;
     else drivers.delete(step);
   }
@@ -224,7 +225,7 @@ function onReducedChange() {
     raf = 0;
     for (const entry of entries) settle(entry);
     // Whatever was travelling takes its place at once: a step of any length ends at rest.
-    for (const step of [...drivers]) step(Number.POSITIVE_INFINITY);
+    for (const step of drivers) step(Number.POSITIVE_INFINITY);
     drivers.clear();
   } else wake();
 }

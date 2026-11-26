@@ -141,13 +141,13 @@ export class ReorderList extends Component<ReorderListProps> {
     }
     const moves = rosterMotion(previous.view, this.props.view);
     const rows = this.rows();
-    for (const key of [...this.flights.keys()]) {
+    for (const key of this.flights.keys()) {
       // A row that left has nothing more to travel.
       if (!rows.has(key)) this.land(key, undefined);
     }
     if (previous.view.query !== this.props.view.query) {
       // What a search lists just appears: nothing still moving goes on.
-      for (const key of [...this.flights.keys()]) this.land(key, rows.get(key));
+      for (const key of this.flights.keys()) this.land(key, rows.get(key));
       return;
     }
     this.keepPlace(previous.view.keys, moves, rows, snapshot);

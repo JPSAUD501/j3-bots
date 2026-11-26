@@ -253,7 +253,7 @@ export interface AvatarHandle {
 }
 
 /** When an avatar comes in from above as it first shows: at once, or after `delay` ms. */
-export type AvatarEntrance = boolean | { readonly delay: number };
+type AvatarEntrance = boolean | { readonly delay: number };
 
 export interface BotAvatarProps {
   readonly avatar: Avatar;

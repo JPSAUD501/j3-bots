@@ -32,7 +32,7 @@ const cast: ReadonlyArray<Actor> = [
 ];
 
 /** The stage's height, in px, and how far above its bottom the floor is, which leaves room for the lead's name. */
-export const STAGE_HEIGHT = 216;
+const STAGE_HEIGHT = 216;
 const FLOOR = 44;
 /** How much higher each step upstage stands, in px. */
 const UPSTAGE = 11;
