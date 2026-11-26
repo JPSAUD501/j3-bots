@@ -441,10 +441,7 @@ it.effect(
       assert.lengthOf(yield* pending, 2);
       assert.strictEqual(yield* failuresOf(phone), 0);
 
-      expo.send = () => ({
-        status: 400,
-        body: { errors: [{ code: "PUSH_TOO_MANY_EXPERIENCE_IDS" }] },
-      });
+      expo.send = () => ({ status: 401, body: { errors: [{ code: "UNAUTHORIZED" }] } });
       yield* TestClock.adjust(sendBackoff(1));
       yield* deliverPending;
       assert.deepStrictEqual(expo.requests, [2, 2]);
@@ -452,6 +449,27 @@ it.effect(
       assert.strictEqual(yield* failuresOf(phone), 1);
       assert.strictEqual(yield* failuresOf(tablet), 1);
     }).pipe(Effect.provide(domain)),
+);
+
+it.effect("sends each push alone when Expo refuses a request for apps of two projects", () =>
+  Effect.gen(function* () {
+    const expo = yield* ExpoWire;
+    const scout = yield* createBot("Scout");
+    const phone = yield* pushDevice("Phone");
+    yield* pushDevice("Tablet");
+    expo.send = (messages) =>
+      messages.length > 1
+        ? { status: 400, body: { errors: [{ code: "PUSH_TOO_MANY_EXPERIENCE_IDS" }] } }
+        : undefined;
+
+    yield* says(scout.id, "Done");
+    yield* deliverPending;
+
+    assert.deepStrictEqual(expo.requests, [2, 1, 1]);
+    // Both were taken, and wait for their receipts.
+    assert.lengthOf(yield* pending, 2);
+    assert.strictEqual(yield* failuresOf(phone), 0);
+  }).pipe(Effect.provide(domain)),
 );
 
 it.effect("keeps the receipts Expo answered when a later request for others fails", () =>

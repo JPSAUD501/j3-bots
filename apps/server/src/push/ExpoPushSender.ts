@@ -56,15 +56,15 @@ type MessageError = typeof MessageError.Type;
 const isMessageError = Schema.is(MessageError);
 
 /** The error codes Expo documents for a request it refused as a whole. */
-const isRequestError = Schema.is(
-  Schema.Literals([
-    "TOO_MANY_REQUESTS",
-    "PUSH_TOO_MANY_EXPERIENCE_IDS",
-    "PUSH_TOO_MANY_NOTIFICATIONS",
-    "PUSH_TOO_MANY_RECEIPTS",
-    "UNAUTHORIZED",
-  ]),
-);
+const RequestError = Schema.Literals([
+  "TOO_MANY_REQUESTS",
+  "PUSH_TOO_MANY_EXPERIENCE_IDS",
+  "PUSH_TOO_MANY_NOTIFICATIONS",
+  "PUSH_TOO_MANY_RECEIPTS",
+  "UNAUTHORIZED",
+]);
+type RequestError = typeof RequestError.Type;
+const isRequestError = Schema.is(RequestError);
 
 /** The reason logged for a code Expo does not document, or no code. */
 const UNDOCUMENTED = "undocumented error";
@@ -91,6 +91,18 @@ const ReceiptsResponse = Schema.Struct({ data: Schema.Record(Schema.String, Rece
 const RequestErrors = Schema.Struct({
   errors: Schema.Array(Schema.Struct({ code: Schema.String })),
 });
+
+/**
+ * A request Expo refused as a whole, with any HTTP error but 429 and 5xx: its
+ * status, and its documented code when it gave one.
+ */
+class RequestRefused extends Schema.TaggedError<RequestRefused>()("RequestRefused", {
+  status: Schema.Number,
+  code: Schema.NullOr(RequestError),
+}) {}
+
+const rejectedOf = ({ status, code }: RequestRefused) =>
+  new PushRejected({ reason: `HTTP ${status}: ${code ?? UNDOCUMENTED}` });
 
 /** Expo's documented code for a message's error, if it gave one. */
 const codeOf = (details: typeof ErrorDetails.Type): MessageError | null => {
@@ -128,7 +140,7 @@ const post = <A>(
   url: string,
   body: unknown,
   answer: Schema.Codec<A, unknown>,
-): Effect.Effect<A, PushUnavailable | PushRejected> =>
+): Effect.Effect<A, PushUnavailable | RequestRefused> =>
   Effect.gen(function* () {
     const request = yield* HttpClientRequest.post(url).pipe(
       HttpClientRequest.acceptJson,
@@ -142,11 +154,11 @@ const post = <A>(
       const code = yield* HttpClientResponse.schemaBodyJson(RequestErrors)(response).pipe(
         Effect.map(({ errors }) => {
           const first = errors[0]?.code;
-          return first !== undefined && isRequestError(first) ? first : UNDOCUMENTED;
+          return first !== undefined && isRequestError(first) ? first : null;
         }),
-        Effect.orElseSucceed(() => UNDOCUMENTED),
+        Effect.orElseSucceed(() => null),
       );
-      return yield* new PushRejected({ reason: `HTTP ${response.status}: ${code}` });
+      return yield* new RequestRefused({ status: response.status, code });
     }
     return yield* HttpClientResponse.schemaBodyJson(answer)(response);
   }).pipe(
@@ -196,14 +208,39 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
 
-    const send = Effect.fn("ExpoPushSender.send")(function* (messages: ReadonlyArray<PushMessage>) {
-      if (messages.length === 0) return [];
+    /** One request of `messages`, answered for each. */
+    const sendTogether = Effect.fnUntraced(function* (messages: ReadonlyArray<PushMessage>) {
       const { data } = yield* post(client, SEND_URL, messages.map(expoMessage), SendResponse);
       // Tickets that cannot be matched to their messages say nothing of any.
       if (data.length !== messages.length) {
         return yield* new PushUnavailable({ reason: "unreadable answer" });
       }
       return data.map(sentOf);
+    });
+
+    const send = Effect.fn("ExpoPushSender.send")(function* (messages: ReadonlyArray<PushMessage>) {
+      if (messages.length === 0) return [];
+      return yield* sendTogether(messages).pipe(
+        Effect.catchTag("RequestRefused", (refused) =>
+          // Expo takes one request only for one project's apps, and a device
+          // may run a build of another: each message then goes alone, and is
+          // answered as its own request is.
+          refused.code === "PUSH_TOO_MANY_EXPERIENCE_IDS" && messages.length > 1
+            ? Effect.forEach(messages, (message) =>
+                sendTogether([message]).pipe(
+                  Effect.flatMap(([sent]) =>
+                    sent === undefined
+                      ? Effect.die("A request of one message is answered for it")
+                      : Effect.succeed(sent),
+                  ),
+                  Effect.catchTag("RequestRefused", (alone) =>
+                    Effect.succeed<PushSent>(Result.fail(rejectedOf(alone))),
+                  ),
+                ),
+              )
+            : Effect.fail(rejectedOf(refused)),
+        ),
+      );
     });
 
     const receipts = Effect.fn("ExpoPushSender.receipts")(function* (
@@ -219,8 +256,13 @@ export const layer = Layer.effect(
           // No answer about any message in it, a refusal of the request
           // included: they are asked about again, and the other chunks'
           // answers stand.
+          const { failure } = answered;
           yield* Effect.logInfo("Push receipts could not be read; they are asked for again").pipe(
-            Effect.annotateLogs({ reason: answered.failure.reason, receipts: chunk.length }),
+            Effect.annotateLogs({
+              reason:
+                failure._tag === "RequestRefused" ? rejectedOf(failure).reason : failure.reason,
+              receipts: chunk.length,
+            }),
           );
           continue;
         }
