@@ -3,7 +3,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import * as SqliteMigrator from "@effect/sql-sqlite-node/SqliteMigrator";
 import { assert, it } from "@effect/vitest";
-import { Bot, Routine, TimeZone } from "@j3-bots/contracts";
+import {
+  Bot,
+  FillOutcome,
+  Routine,
+  SecretId,
+  SiteOrigin,
+  TimeZone,
+  WorkStep,
+} from "@j3-bots/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -582,6 +590,112 @@ it.effect(
           Effect.flip,
         );
         assert.strictEqual(moved.reason._tag, "ConstraintError");
+      }).pipe(
+        Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "reads the login fills an earlier release recorded, and says a locked one could not be used",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = TestDatabase.configFor(path, yield* fs.makeTempDirectoryScoped());
+      const fill = (id: string, outcome: Schema.Json) =>
+        JSON.stringify({
+          id,
+          kind: "tool",
+          tool: "login",
+          label: "Filled a saved login",
+          status: "completed",
+          startedAt: now,
+          finishedAt: now,
+          fill: {
+            name: "example",
+            credentialId: "cred_aaaaaaaaaaaaaaaa",
+            field: "password",
+            origin: "https://example.com",
+            outcome,
+          },
+        });
+
+      // The release with the vault filled a login once, and found it locked once.
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`PRAGMA foreign_keys = ON`;
+        yield* migrate(migrationsThrough(36));
+        yield* sql`
+        INSERT INTO bots (
+          id, name, title, avatar_shape, avatar_color, job, provider_id, model_id,
+          permission_mode, workspace_path, created_at, updated_at
+        ) VALUES (
+          'scout', 'scout', '', 'dome', 'cobalt', '', 'claude', 'haiku', 'auto', '/bots/scout',
+          ${now}, ${now}
+        )
+      `;
+        yield* sql`INSERT INTO conversations (bot_id, created_at) VALUES ('scout', ${now})`;
+        yield* sql`
+        INSERT INTO entries (
+          id, conversation_bot_id, position, kind, author_kind, author_bot_id, body_json,
+          created_at, updated_at
+        ) VALUES ('fold-1', 'scout', 0, 'work-fold', 'bot', 'scout', '{}', ${now}, ${now})
+      `;
+        yield* sql`
+        INSERT INTO work_steps (entry_id, step_id, position, step_json) VALUES
+          ('fold-1', 'step-1', 0, ${fill("step-1", { _tag: "filled", submitted: true })}),
+          ('fold-1', 'step-2', 1, ${fill("step-2", { _tag: "locked" })})
+      `;
+        yield* sql`
+        INSERT INTO sessions (id, bot_id, purpose, prompt_version, created_at)
+        VALUES ('session-1', 'scout', 'main', 'v1', ${now})
+      `;
+        yield* sql`
+        INSERT INTO tool_calls (
+          id, session_id, engine_turn_id, engine_call_id, audience, tool, result_json, created_at
+        ) VALUES (
+          'call-1', 'session-1', 'turn-1', 'engine-call-1', 'conversation', 'fill_credential',
+          '{"_tag":"locked"}', ${now}
+        )
+      `;
+      }).pipe(Effect.provide(SqliteClient.layer({ filename: config.databasePath })));
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const steps = yield* sql<{ readonly step_json: string }>`
+        SELECT step_json FROM work_steps ORDER BY position
+      `;
+        const decoded = yield* Effect.forEach(steps, (row) =>
+          Schema.decodeEffect(json(WorkStep))(row.step_json),
+        );
+        assert.deepStrictEqual(
+          decoded.map((step) => step.fill),
+          [
+            {
+              name: "example",
+              secretId: SecretId.make("cred_aaaaaaaaaaaaaaaa"),
+              field: "password",
+              origin: SiteOrigin.make("https://example.com"),
+              outcome: { _tag: "filled", submitted: true },
+            },
+            {
+              name: "example",
+              secretId: SecretId.make("cred_aaaaaaaaaaaaaaaa"),
+              field: "password",
+              origin: SiteOrigin.make("https://example.com"),
+              outcome: { _tag: "refused", reason: "unavailable" },
+            },
+          ],
+        );
+        // A retry of the locked call is answered as a fill refused now would be.
+        const [answer] = yield* sql<{ readonly result_json: string }>`
+        SELECT result_json FROM tool_calls WHERE id = 'call-1'
+      `;
+        assert.deepStrictEqual(
+          yield* Schema.decodeUnknownEffect(json(FillOutcome))(answer?.result_json),
+          { _tag: "refused", reason: "unavailable" },
+        );
       }).pipe(
         Effect.provide(Sqlite.layer.pipe(Layer.provide(Layer.succeed(ServerConfig, config)))),
       );

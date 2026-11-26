@@ -19,8 +19,16 @@ import * as SqlClient from "effect/sql/SqlClient";
 // the work drops the wake an expiry would send; when it expires, and how it
 // closed.
 //
+// A login's fill, in a work fold's step, names the secret it filled
+// (`secretId`, which a login moved from the vault keeps as its id), and a
+// fill can no longer find the vault locked: a step or a stored answer that
+// said so says the secrets were unavailable, as it would now.
+//
 // A bot no longer has a switch for filling logins: a secret's own grant is
 // the permission (`bots.vault` goes).
+/** A fill refused because the secrets could not be used, as `FillOutcome` encodes it. */
+const UNAVAILABLE = '{"_tag":"refused","reason":"unavailable"}';
+
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -127,6 +135,23 @@ export default Effect.gen(function* () {
   `;
   yield* sql`
     CREATE INDEX secret_asks_open ON secret_asks (expires_at) WHERE closed_at IS NULL
+  `;
+
+  yield* sql`
+    UPDATE work_steps SET step_json = json_remove(
+      json_set(step_json, '$.fill.secretId', json_extract(step_json, '$.fill.credentialId')),
+      '$.fill.credentialId'
+    )
+    WHERE json_type(step_json, '$.fill.credentialId') IS NOT NULL
+  `;
+  yield* sql`
+    UPDATE work_steps
+    SET step_json = json_set(step_json, '$.fill.outcome', json(${UNAVAILABLE}))
+    WHERE json_extract(step_json, '$.fill.outcome._tag') = 'locked'
+  `;
+  yield* sql`
+    UPDATE tool_calls SET result_json = ${UNAVAILABLE}
+    WHERE tool = 'fill_credential' AND json_extract(result_json, '$._tag') = 'locked'
   `;
 
   yield* sql`ALTER TABLE bots DROP COLUMN vault`;
