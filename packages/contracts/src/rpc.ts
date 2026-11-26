@@ -692,7 +692,7 @@ export const EngineRpcs = RpcGroup.make(
    * what it found follows on `engine.subscribe`.
    * `NotFound("provider")` for a provider the server does not have, and
    * `Conflict("engine-unavailable")` when the engine cannot take it now. New
-   * in 0.7.1, at protocol 10: a client asks it only of a server that reports
+   * in 0.8.0, at protocol 10: a client asks it only of a server that reports
    * an unavailable provider's `reason`, which an older one never does, and
    * that answers it with a defect.
    */
@@ -709,7 +709,7 @@ export const EngineRpcs = RpcGroup.make(
    * `NotFound("provider")` for a provider the server does not have,
    * `Conflict("provider-not-updatable")` when its `version` cannot be
    * updated, and `Conflict("engine-unavailable")` when the engine cannot
-   * take it now. New in 0.7.1, at protocol 10: a client asks it only of a
+   * take it now. New in 0.8.0, at protocol 10: a client asks it only of a
    * server that reports a provider's `version`, which an older one never
    * does.
    */
@@ -908,7 +908,7 @@ export const ProviderRpcs = RpcGroup.make(
    * the publisher lists as latest, in the background: what it does follows
    * on `engine.subscribe`, in the provider's `copy`. Answers once it started,
    * or at once when one is under way already. A client sends it only to a
-   * server whose providers carry `copy` (new in 0.7.1, at protocol 10).
+   * server whose providers carry `copy` (new in 0.8.0, at protocol 10).
    * `Conflict("harness-not-installable")` when J3 Bots installs no copy of
    * it here: the server runs the one the operator installed, or
    * J3 Bots has no build of it for the server's system. No command id: doing
