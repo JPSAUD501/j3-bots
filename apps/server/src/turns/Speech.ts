@@ -995,7 +995,11 @@ export const layer = Layer.effect(
      * next message, so it holds no more than the roster.
      */
     const lastSaid = new Map<BotId, { readonly turn: string; readonly at: number }>();
-    /** One bot's messages are posted one at a time, in the order they came. */
+    /**
+     * One bot's messages are posted one at a time, each from its files read
+     * to its post, so a first contact's next message counts its pause from
+     * the one before's post.
+     */
     const speaking = keyedLock();
     const turnOf = (found: Pin) => `${found.sessionId}/${found.turnId}`;
 
@@ -1003,8 +1007,8 @@ export const layer = Layer.effect(
      * Holds a message that follows another of the same turn, in the bot's
      * first contact, for as long as a person would take to type it, less
      * the time since the one before (`typingPause`), with the bot shown
-     * typing meanwhile. Says whether it held the message: a Stop that came
-     * during the pause then drops it.
+     * typing meanwhile. Says whether the message is such a follow-up: a Stop
+     * that came since the one before then drops it, whether it waited or not.
      */
     const paced = Effect.fn("Speech.paced")(function* (found: Pin, text: string) {
       const previous = lastSaid.get(found.botId);
@@ -1012,8 +1016,7 @@ export const layer = Layer.effect(
       if (!(yield* firstContact(found))) return false;
       const now = DateTime.toEpochMillis(yield* DateTime.now);
       const wait = Duration.toMillis(typingPause(text)) - (now - previous.at);
-      if (wait <= 0) return false;
-      yield* botStates.typing(found.botId, Effect.sleep(Duration.millis(wait)));
+      if (wait > 0) yield* botStates.typing(found.botId, Effect.sleep(Duration.millis(wait)));
       return true;
     });
 
@@ -1029,12 +1032,12 @@ export const layer = Layer.effect(
               : "Nothing was sent: `mention` works only in a room turn, and this turn speaks to your user.",
         });
       }
-      const shown =
-        input.visual === undefined ? null : yield* workspaceVisual(found.botId, input.visual);
-      const read = yield* workspaceFiles(found.botId, input.attachments ?? []);
       return yield* speaking.run(found.botId)(
         Effect.gen(function* () {
-          const held = yield* paced(found, input.text);
+          const shown =
+            input.visual === undefined ? null : yield* workspaceVisual(found.botId, input.visual);
+          const read = yield* workspaceFiles(found.botId, input.attachments ?? []);
+          const following = yield* paced(found, input.text);
           // The file lock, then the transaction: the order every writer of the
           // attachment store takes them in. Admission and publication stay one
           // transaction.
@@ -1044,7 +1047,7 @@ export const layer = Layer.effect(
               found,
             )(
               Effect.gen(function* () {
-                if (held && (yield* workStopped(found)).stopped) {
+                if (following && (yield* workStopped(found)).stopped) {
                   return yield* new TurnToolRefused({
                     reason: "Nothing was sent: your user stopped this work. End your turn.",
                   });

@@ -357,11 +357,18 @@ const firstMessageGrade = (name: string, calls: ReadonlyArray<Call>, check: Chec
 };
 
 /** Problems with a turn none of whose messages may ask a setup question, through `say` or `ask`. */
-const noSetupQuestion = (calls: ReadonlyArray<Call>, asked: string) =>
+/** The problems if any of the bot's messages says what `check` asks about. */
+const inNoMessage = (calls: ReadonlyArray<Call>, check: Check, asked: string) =>
   Effect.map(
-    Effect.forEach(says(calls), ({ say }) => judged(SETUP_QUESTION, asked, say.text, false)),
-    (found) => [...(named(calls, "ask").length > 0 ? ["called `ask`"] : []), ...found.flat()],
+    Effect.forEach(says(calls), ({ say }) => judged(check, asked, say.text, false)),
+    (found) => found.flat(),
   );
+
+const noSetupQuestion = (calls: ReadonlyArray<Call>, asked: string) =>
+  Effect.map(inNoMessage(calls, SETUP_QUESTION, asked), (found) => [
+    ...(named(calls, "ask").length > 0 ? ["called `ask`"] : []),
+    ...found,
+  ]);
 
 const BUILD_GREEN: Check = {
   question:
@@ -1863,7 +1870,10 @@ const cases: ReadonlyArray<Case> = [
     },
     grades: ({ calls }) => [
       gradeFromCalls("two or three short messages, one after another", helloShape(calls)),
-      closingGrade("does not ask what to call them", calls, ASKS_NAME, NOTHING_YET, false),
+      {
+        name: "does not ask what to call them",
+        problems: inNoMessage(calls, ASKS_NAME, NOTHING_YET),
+      },
     ],
   },
   {
@@ -1875,7 +1885,10 @@ const cases: ReadonlyArray<Case> = [
     },
     grades: ({ calls }) => [
       gradeFromCalls("two or three short messages, one after another", helloShape(calls)),
-      closingGrade("does not ask what to call them", calls, ASKS_NAME, NOTHING_YET, false),
+      {
+        name: "does not ask what to call them",
+        problems: inNoMessage(calls, ASKS_NAME, NOTHING_YET),
+      },
     ],
   },
   {

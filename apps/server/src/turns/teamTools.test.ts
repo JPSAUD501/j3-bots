@@ -62,6 +62,7 @@ import {
 import type { ToolCallResponse } from "../tools/protocol.ts";
 import { BotTools } from "../tools/BotTools.ts";
 import { Cards } from "./Cards.ts";
+import { newcomer } from "./firstContact.ts";
 import { Pipeline } from "./Pipeline.ts";
 import { Stops } from "./Stops.ts";
 
@@ -521,6 +522,16 @@ it.effect(
         "finished",
         "finished",
       ]);
+      // Pip has met the operator, which it does not forget once it leaves the
+      // room it spoke in; Mole still has not.
+      yield* (yield* Rooms).update({
+        commandId: command(),
+        roomId,
+        changes: { members: [scout.id, mole.bot.id, wren.bot.id] },
+      });
+      const isNewcomer = newcomer(yield* SqlClient.SqlClient);
+      assert.isFalse(yield* isNewcomer(pip.bot.id));
+      assert.isTrue(yield* isNewcomer(mole.bot.id));
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
