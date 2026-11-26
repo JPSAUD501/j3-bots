@@ -739,7 +739,8 @@ export const en = {
   "settings.providers.description":
     "The subscriptions your bots think with, and the engine that runs them.",
   "settings.usage.description": "How close each provider is to its limit, and which bots used it.",
-  "settings.connectors.description": "Services your bots can use, such as Notion or GitHub.",
+  "settings.connectors.description":
+    "Services your bots can use, such as Notion or GitHub, and the skills they know.",
   "settings.vault.description":
     "The logins your bots sign in with, and the sites their browser stays signed in to.",
   "settings.devices.description": "This device, and every other one paired with your bots.",

@@ -743,7 +743,7 @@ const sentences = {
   "settings.usage.description":
     "O quanto cada provedor está perto do limite, e quais bots o usaram.",
   "settings.connectors.description":
-    "Serviços que seus bots podem usar, como o Notion ou o GitHub.",
+    "Serviços que seus bots podem usar, como o Notion ou o GitHub, e as skills que eles conhecem.",
   "settings.vault.description":
     "Os logins com que seus bots entram, e os sites em que o navegador deles continua conectado.",
   "settings.devices.description": "Este dispositivo, e cada um dos outros pareados com seus bots.",
