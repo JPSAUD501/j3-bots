@@ -1824,6 +1824,57 @@ it.effect("keeps a harness's wake's hop count for its report brought back from a
   }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("counts what the dispatch that brings a report back delivers beside it", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    yield* chainLimits({ hops: 3, fanOut: 3 });
+    yield* concurrentTurns(5);
+    const { ana, anaSession, notice } = yield* delegatingNotice;
+    const [cy, dee, eve] = [
+      yield* createBot("Cy"),
+      yield* createBot("Dee"),
+      yield* createBot("Eve"),
+    ];
+    const room = yield* roomOf(ana.id);
+    yield* sendInRoom(ana.id, room.id, "Plan the launch.");
+    const roomTurn = yield* nextTurn(ana.id, notice);
+    yield* control.delegatedResult({
+      sessionId: anaSession,
+      turnId: roomTurn,
+      origin: notice,
+      text: "Delegated task node-1 [completed]:\nThe report is ready.",
+    });
+
+    // Meanwhile a chain at hop 3 leaves Ana a message, held for her own
+    // conversation: it rides the dispatch that brings the report back.
+    yield* wokenBy(cy.id, dee.id, "Ask Eve.", true);
+    const deeTurn = yield* nextTurn(dee.id);
+    yield* messageTeammate(yield* engineSession(dee.id), deeTurn, {
+      to: eve.id,
+      text: "Tell Ana.",
+      urgent: true,
+    });
+    const eveTurn = yield* nextTurn(eve.id);
+    yield* messageTeammate(yield* engineSession(eve.id), eveTurn, {
+      to: ana.id,
+      text: "The venue is booked.",
+      urgent: false,
+    });
+    assert.deepStrictEqual(yield* heldHops(ana.id), [3]);
+    yield* finished(dee.id, yield* engineSession(dee.id), deeTurn);
+    yield* finished(eve.id, yield* engineSession(eve.id), eveTurn);
+
+    yield* finished(ana.id, anaSession, roomTurn);
+    const reporting = yield* nextTurn(ana.id, roomTurn);
+    const reply = yield* messageTeammate(anaSession, reporting, {
+      to: eve.id,
+      text: "Thanks.",
+      urgent: false,
+    });
+    assert.include(refusal(reply), "reached your user's limit of 3");
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 it.effect(
   "counts the fan-out of the continuation of an operator's steer the engine ran as a turn of its own",
   () =>

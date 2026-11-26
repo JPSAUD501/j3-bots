@@ -68,7 +68,8 @@ export const hopCounts = (sql: SqlClient.SqlClient) => {
    * began it at all (`rooted`): a turn the engine started on its own for
    * work it does not name has none. A dispatch that brings back only reports
    * of the chain's own delegated tasks (`delegated-result`) does not begin
-   * it: the chain counts as it did before they landed elsewhere.
+   * it: the chain counts as it did before they landed elsewhere, raised by
+   * the held messages such a dispatch delivered (`unrootedCount`).
    */
   const carriedIn = (sessionId: SessionRowId, turnId: TurnId) =>
     SqlSchema.findAll({
@@ -124,6 +125,14 @@ export const hopCounts = (sql: SqlClient.SqlClient) => {
    */
   const hopsOf = (carried: Carried) => (carried.operator ? 1 : carried.furthest + 1);
 
+  /**
+   * The count of a chain no dispatch began: the count it borrowed, raised by
+   * the held messages the dispatches that brought its reports back delivered
+   * (their wakes carry 0), or `null` when it has neither.
+   */
+  const unrootedCount = (carried: Carried, borrowed: number | null) =>
+    carried.furthest === 0 ? borrowed : Math.max(borrowed ?? 0, hopsOf(carried));
+
   /** The count a turn of the chain borrowed (`borrow`), if any did. */
   const borrowedIn = (sessionId: SessionRowId, turnId: TurnId) =>
     SqlSchema.findAll({
@@ -150,7 +159,7 @@ export const hopCounts = (sql: SqlClient.SqlClient) => {
   ) {
     const carried = yield* carriedIn(sessionId, turnId);
     if (carried.rooted) return hopsOf(carried);
-    return yield* borrowedIn(sessionId, turnId);
+    return unrootedCount(carried, yield* borrowedIn(sessionId, turnId));
   });
 
   /**
@@ -201,8 +210,9 @@ export const hopCounts = (sql: SqlClient.SqlClient) => {
   ): Effect.fn.Return<HopCount | null> {
     const carried = yield* carriedIn(sessionId, turnId);
     if (carried.rooted) return { hops: hopsOf(carried), borrowed: false };
-    const hops = yield* borrow(sessionId, turnId);
-    return hops === null ? null : { hops, borrowed: true };
+    const borrowed = yield* borrow(sessionId, turnId);
+    const hops = unrootedCount(carried, borrowed);
+    return hops === null ? null : { hops, borrowed: hops === borrowed };
   });
 
   return { chainSql, deliveredInSql, carriedIn, borrow, hopCount };

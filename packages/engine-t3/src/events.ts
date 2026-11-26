@@ -463,10 +463,10 @@ export const SessionEvent = Schema.Union([
    * turn with that `origin` (**Read** at `59651c1`, `Orchestrator.ts`,
    * L7631-7673). Sent once per result, by `resultId`, once the turn it
    * landed in has ended with it, after that turn's `turn-finished`: the turn
-   * reads it all the same. A report the provider did not take there, which
-   * the engine runs as a turn of its own, is not sent: that turn is a
+   * reads it all the same. A report whose hand-over failed, which the
+   * engine runs as a turn of its own, is not sent: that turn is a
    * `background` turn whose `origin` is the delegating turn (**Read** at
-   * `59651c1`, `requeueUnreadSteers`, and `EffectWorker.ts` L362-420).
+   * `59651c1`, `EffectWorker.ts` L362-420).
    */
   Schema.TaggedStruct("delegated-result", { ...at, result: DelegatedResult }),
   /**

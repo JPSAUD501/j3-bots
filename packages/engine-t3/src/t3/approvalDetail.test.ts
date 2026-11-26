@@ -657,10 +657,10 @@ describe("an approval's card while it waits", () => {
 
   it("says the approval closed when the engine recorded its answer, however late it is seen", () => {
     const { mirror, view, asks } = setUp();
-    diff(mirror, view, at);
+    diff(mirror, view, at, noProviders);
     const answered = DateTime.makeUnsafe("2026-11-20T12:00:03Z");
     mirror.requests.set(asks.id, { ...asks, status: "resolved", resolvedAt: answered });
-    const [closed] = diff(mirror, view, DateTime.makeUnsafe("2026-11-20T14:00:00Z"));
+    const [closed] = diff(mirror, view, DateTime.makeUnsafe("2026-11-20T14:00:00Z"), noProviders);
     assert.deepStrictEqual(
       closed?._tag === "request-closed" && [closed.resolution, closed.closedAt],
       ["answered", answered],

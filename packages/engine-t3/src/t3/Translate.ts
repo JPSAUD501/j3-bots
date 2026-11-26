@@ -124,7 +124,8 @@ export interface Mirror {
    * The engine's records of J3 Bots' steers it has shown waiting on the
    * provider (`pending`), by item id: a provider that echoes a steer it read
    * keeps the record so until the echo (`isTaken`). A snapshot shows no
-   * history, so each steer record it has counts as shown so.
+   * history, so a record it has counts only once shown waiting after it: a
+   * steer the provider read before the snapshot counts from its turn's end.
    */
   readonly steersOffered: Set<string>;
   /**
@@ -222,9 +223,7 @@ export const mirrorOf = (
         return result === undefined ? [] : [[message.id, result]];
       }),
     ),
-    steersOffered: new Set(
-      projection.turnItems.flatMap((item) => (isSteerItem(item) ? [item.id] : [])),
-    ),
+    steersOffered: new Set(),
     toolDigests: new Map(),
     fetched: new Map(before.fetched),
     toolPersistence: new Map([...before.toolPersistence].filter(([id]) => items.has(id))),
@@ -370,7 +369,7 @@ export const applyEvent = (mirror: Mirror, event: OrchestrationV2DomainEvent): b
       if (mirror.openings.get(runId) === id) {
         mirror.origins.set(runId, delegatorOf(event.payload, mirror.items.values()));
         // A report the engine steered elsewhere and now runs as a run of its
-        // own, as it does a steer the provider did not take: that run is where
+        // own, as it does one whose hand-over failed: that run is where
         // it is answered.
         mirror.delegatedResults.delete(id);
         return true;
@@ -1974,17 +1973,18 @@ const isTaken = (mirror: Mirror, providers: Providers, steer: SteerRecord): bool
 
 /**
  * Whether a report the engine steered into another run stayed there: that run
- * has ended with the engine's record of the report in it past waiting on the
- * provider, and no run opens with it. The engine runs a report the provider
- * did not take as a run of its own, as any steer (`requeueUnreadSteers`, and
- * a steer whose hand-over fails, **Read** at `59651c1`, `EffectWorker.ts`,
- * L362-420), and that run is where it is answered.
+ * has ended, and no run opens with the report. The engine runs a report whose
+ * hand-over failed as a run of its own (**Read** at `59651c1`,
+ * `EffectWorker.ts`, L362-420), and that run is where it is answered. It
+ * records the report in the run as a `notification` item, which it never
+ * requeues as it does an unread steer (`requeueUnreadSteers` takes only
+ * `user_message` items; `notificationTurnItem` in
+ * `packages/provider-core/src/server/notification.ts`, L229-253), so one the
+ * provider never took stayed too, and is brought back.
  */
 const stayedIn = (mirror: Mirror, messageId: string, record: DelegatedResultRecord): boolean => {
   const run = mirror.runs.get(record.runId);
   if (run === undefined || !isEnded(run)) return false;
-  const item = userMessagesOf(mirror, run).find((candidate) => candidate.messageId === messageId);
-  if (item === undefined || LIVE_ITEM.has(item.status)) return false;
   return !runsInOrder(mirror).some(
     (other) => other.id !== run.id && openingMessageOf(mirror, other) === messageId,
   );

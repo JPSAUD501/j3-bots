@@ -1124,13 +1124,13 @@ describe("what a Stop leaves to run", () => {
     applyEvent(mirror, event("thread.created", appThread));
     applyEvent(mirror, run("starting", 1));
     applyEvent(mirror, run("queued", 2));
-    const { view } = replacement(mirror, false, at);
+    const { view } = replacement(mirror, false, at, new Map(), noProviders);
     applyEvent(mirror, event("thread.archived", { ...appThread, archivedAt: at }));
     assert.isFalse(isOver(mirror));
     applyEvent(mirror, run("cancelled", 2, { startedAt: null, queuePosition: null }));
     assert.isTrue(isOver(mirror));
     assert.deepStrictEqual(
-      diff(mirror, view, at).flatMap((body) =>
+      diff(mirror, view, at, noProviders).flatMap((body) =>
         body._tag === "turn-finished" ? [[body.turnId, body.outcome._tag]] : [],
       ),
       [[TurnId.make("run-2"), "cancelled"]],
@@ -1537,19 +1537,19 @@ describe("what a running turn takes from outside it", () => {
     text: "Delegated task node-1 [completed]:\nThe report is ready.",
   };
 
-  /** The engine's record of a report it steered into `run-2`, at `status`. */
+  /**
+   * The engine's record of a report it steered into `run-2`, at `status`: a
+   * notice, not a user message (**Read** at `59651c1`, `notificationTurnItem`).
+   */
   const steeredIn = (messageId: string, status: string) =>
     item({
       id: `item-${messageId}`,
       runId: "run-2",
       ordinal: 20,
-      type: "user_message",
-      messageId,
-      createdBy: "agent",
-      creationSource: "server",
-      inputIntent: "steer",
-      text: "A report.",
-      attachments: [],
+      type: "notification",
+      source: { kind: "delegated_task", taskIds: ["node-1"], childThreadId: "thread-child" },
+      outcome: "completed",
+      summary: "Delegated task completed",
       status,
     });
 
@@ -1575,24 +1575,23 @@ describe("what a running turn takes from outside it", () => {
     );
   });
 
-  // The engine runs a steer the provider did not take as a run of its own
-  // (**Read** at `59651c1`, `requeueUnreadSteers`, and `EffectWorker.ts`,
-  // L362-420), and that run is where the report is answered.
+  // The engine runs a report whose hand-over failed as a run of its own
+  // (**Read** at `59651c1`, `EffectWorker.ts`, L362-420), and that run is
+  // where the report is answered.
   it("tells no result the engine runs as a turn of its own after the turn it landed in", () => {
-    // Still waiting on the provider as the turn ends, then requeued.
-    const unread = emptyMirror();
-    applyEvent(unread, run("completed", 1));
-    applyEvent(unread, run("running", 2));
-    const { view: unreadView } = replacement(unread, false, at, new Map(), noProviders);
-    applyEvent(unread, completion("run-2"));
-    applyEvent(unread, steeredIn("message-result", "pending"));
-    applyEvent(unread, run("completed", 2));
-    assert.deepStrictEqual(results(diff(unread, unreadView, at, noProviders)), []);
-    applyEvent(unread, run("queued", 3, { userMessageId: "message-result" }));
-    applyEvent(unread, completion("run-3"));
-    assert.deepStrictEqual(results(diff(unread, unreadView, at, noProviders)), []);
+    // The engine sends it again as the turn ends, and its message moves there.
+    const moved = emptyMirror();
+    applyEvent(moved, run("completed", 1));
+    applyEvent(moved, run("running", 2));
+    const { view: movedView } = replacement(moved, false, at, new Map(), noProviders);
+    applyEvent(moved, completion("run-2"));
+    applyEvent(moved, steeredIn("message-result", "completed"));
+    applyEvent(moved, run("queued", 3, { userMessageId: "message-result" }));
+    applyEvent(moved, completion("run-3"));
+    applyEvent(moved, run("completed", 2));
+    assert.deepStrictEqual(results(diff(moved, movedView, at, noProviders)), []);
 
-    // Handed over as the provider's turn completed: the engine sends it again.
+    // The new run shows before the message moves.
     const late = emptyMirror();
     applyEvent(late, run("completed", 1));
     applyEvent(late, run("running", 2));
@@ -1752,6 +1751,43 @@ describe("what a running turn takes from outside it", () => {
     );
     applyEvent(mirror, steerItem("pending"));
     assert.deepStrictEqual(taken(diff(mirror, view, at, claude)), []);
+    applyEvent(mirror, steerItem("completed"));
+    assert.deepStrictEqual(taken(diff(mirror, view, at, claude)), [
+      [steerKey, TurnId.make("run-1")],
+    ]);
+  });
+
+  it("tells no steer taken on Claude Code from a snapshot that shows it handed over", () => {
+    const claude: Providers = { modelOf: () => null, echoesSteers: () => true };
+    // The snapshot falls between the engine's hand-over and Claude's hold.
+    const mirror = mirrorOf(
+      Schema.decodeUnknownSync(OrchestrationV2ThreadProjection)({
+        thread: appThread,
+        runs: [run("running", 1).payload],
+        attempts: [],
+        nodes: [],
+        subagents: [],
+        providerSessions: [],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+        messages: [],
+        plans: [],
+        turnItems: [steerItem("completed").payload],
+        checkpointScopes: [],
+        checkpoints: [],
+        contextHandoffs: [],
+        contextTransfers: [],
+        visibleTurnItems: [],
+        updatedAt: at,
+      }),
+    );
+    const { event, view } = replacement(mirror, false, at, new Map(), claude);
+    assert.deepStrictEqual(
+      event.openTurns.map((turn) => turn.takenSteers),
+      [[]],
+    );
+    applyEvent(mirror, steerItem("pending"));
     applyEvent(mirror, steerItem("completed"));
     assert.deepStrictEqual(taken(diff(mirror, view, at, claude)), [
       [steerKey, TurnId.make("run-1")],
