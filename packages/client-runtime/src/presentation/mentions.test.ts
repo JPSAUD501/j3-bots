@@ -13,6 +13,7 @@ import {
   mentionOptions,
   mentionQuery,
   movedOption,
+  standingMentions,
 } from "./mentions.ts";
 
 const member = (id: string, name: string): Mentionable => ({ id: BotId.make(id), name });
@@ -35,6 +36,25 @@ function picked(typed: string, option: MentionOption, mentions: ReadonlyArray<Dr
   if (query === null) throw new Error(`No mention is being typed in "${typed}"`);
   return insertMention(typed, typed.length, mentions, query, option);
 }
+
+describe("standingMentions", () => {
+  it("is the picks that address anyone, in order, placed in the draft as it is", () => {
+    const first = picked("  @an", bot(ana));
+    const second = picked(`${first.text}and @sc`, bot(scout), first.mentions);
+    expect(second.text).toBe("  @Ana and @Scout ");
+    expect(standingMentions(second.text, second.mentions.toReversed())).toEqual([
+      { _tag: "bot", botId: ana.id, label: "Ana", position: 2 },
+      { _tag: "bot", botId: scout.id, label: "Scout", position: 11 },
+    ]);
+    // Run into a word, a pick stays in the draft but addresses nobody, so it is no chip.
+    const edited = "  @Anas and @Scout ";
+    const kept = followEdit(second.text, edited, { replaced: null, caret: 7 }, second.mentions);
+    expect(kept).toHaveLength(2);
+    expect(standingMentions(edited, kept)).toEqual([
+      { _tag: "bot", botId: scout.id, label: "Scout", position: 12 },
+    ]);
+  });
+});
 
 describe("addressed", () => {
   it("is who the operator picked, in the order written, each once", () => {
@@ -303,17 +323,30 @@ describe("mentionedNames", () => {
   const nameOf = (botId: BotId) => members.find((one) => one.id === botId)?.name;
 
   it("highlights whom the message addressed, and no one else", () => {
-    expect(mentionedNames({ _tag: "bots", ids: [ana.id] }, [], nameOf)).toEqual(["Ana"]);
-    expect(mentionedNames({ _tag: "everyone" }, [], nameOf)).toEqual(["everyone"]);
+    expect(mentionedNames({ _tag: "bots", ids: [ana.id] }, [], nameOf)).toEqual([
+      { name: "Ana", botId: ana.id },
+    ]);
+    expect(mentionedNames({ _tag: "everyone" }, [], nameOf)).toEqual([
+      { name: "everyone", botId: null },
+    ]);
     expect(mentionedNames(null, [], nameOf)).toEqual([]);
   });
 
   it("goes by the names the members were picked by, when the message keeps them", () => {
     const labels = [{ botId: ana.id, label: "Ana Prime" }];
     expect(mentionedNames({ _tag: "bots", ids: [ana.id, scout.id] }, labels, nameOf)).toEqual([
-      "Ana Prime",
-      "Scout",
+      { name: "Ana Prime", botId: ana.id },
+      { name: "Scout", botId: scout.id },
     ]);
+  });
+
+  it("keeps the name a deleted member was picked by, and highlights it without one", () => {
+    const gone = BotId.make("gone");
+    const labels = [{ botId: gone, label: "Wren" }];
+    expect(mentionedNames({ _tag: "bots", ids: [gone] }, labels, nameOf)).toEqual([
+      { name: "Wren", botId: gone },
+    ]);
+    expect(mentionedNames({ _tag: "bots", ids: [gone] }, [], nameOf)).toEqual([]);
   });
 });
 

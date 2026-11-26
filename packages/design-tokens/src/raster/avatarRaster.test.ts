@@ -204,6 +204,20 @@ describe("renderStillAvatar", () => {
     expect(rows.length).toBe(size * (1 + size * 4));
   });
 
+  it("takes the proportions of the size it shows at, drawn at a screen's pixels", () => {
+    const lensPixels = (png: Uint8Array) => {
+      const { width, height, rgba } = readPng(png);
+      return Array.from({ length: width * height }, (_, i) =>
+        rgba(i % width, Math.floor(i / width)),
+      ).filter((pixel) => (pixel[3] ?? 0) > 250 && near(pixel, rgb(avatarEye.lens))).length;
+    };
+    const avatar = { shape: "dome", color: "teal" };
+    // 16 px on a screen of 3 pixels per px: its eye drawn larger, as at 16 px.
+    const small = lensPixels(renderStillAvatar(avatar, idle, "light", 48, 16));
+    const large = lensPixels(renderStillAvatar(avatar, idle, "light", 48));
+    expect(small).toBeGreaterThan(large * 1.3);
+  });
+
   it.each([30.5, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
     "refuses a size of %s px",
     (size) => {

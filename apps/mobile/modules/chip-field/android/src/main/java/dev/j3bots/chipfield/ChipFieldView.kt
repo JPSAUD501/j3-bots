@@ -18,6 +18,7 @@ import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.AbsoluteSizeSpan
 import android.text.style.ForegroundColorSpan
+import android.util.Base64
 import android.util.LruCache
 import android.util.TypedValue
 import android.view.Gravity
@@ -41,16 +42,17 @@ private val decoder = Executors.newSingleThreadExecutor()
 
 /**
  * The field. Its text is the draft's, each file's mark covered by the file's
- * chip; the operator edits it as any Android text, and a chip deletes as the
- * one character it stands on. It tells each edit with the whole text, the
- * chips' order and an event count; a value from React that answers an older
- * edit than the field has made is not shown over it. A status, as dictation's
+ * chip and each picked mention's text by the mention's chip; the operator
+ * edits it as any Android text, and a file's chip deletes as the one
+ * character it stands on. It tells each edit with the whole text, the chips'
+ * order and an event count; a value from React that answers an older edit
+ * than the field has made is not shown over it. A status, as dictation's
  * "Listening…", is drawn where the text goes, after what the field holds, and
  * never changes its height.
  */
 @SuppressLint("ViewConstructor")
 class ChipFieldView(context: Context, appContext: AppContext) :
-  ExpoView(context, appContext), ChipSource {
+  ExpoView(context, appContext), ChipSource, MentionSource {
 
   override val shouldUseAndroidLayout = true
 
@@ -82,6 +84,7 @@ class ChipFieldView(context: Context, appContext: AppContext) :
   override val density: Float = resources.displayMetrics.density
   private var chips: Map<String, ChipLook> = emptyMap()
   private val images = LruCache<String, Bitmap>(24)
+  private val faces = LruCache<String, Bitmap>(24)
   private val loading = mutableSetOf<String>()
   private val main = Handler(Looper.getMainLooper())
 
@@ -199,13 +202,28 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     return null
   }
 
+  override fun faceOf(face: String): Bitmap? {
+    faces.get(face)?.let { return it }
+    // A face is a small PNG, read once: decoding it here is quicker than a frame.
+    val bytes = runCatching { Base64.decode(face, Base64.DEFAULT) }.getOrNull() ?: return null
+    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+    faces.put(face, bitmap)
+    return bitmap
+  }
+
   /**
    * Takes out what the operator's edit left that no chip covers: a mark typed
-   * or pasted, which is no file's, and a chip whose mark was deleted.
+   * or pasted, which is no file's, and a chip whose mark was deleted; and a
+   * mention's chip whose text was edited, which no longer mentions anyone.
    */
   private fun tidy(text: Editable) {
     applying = true
     try {
+      for (span in text.getSpans(0, text.length, MentionSpan::class.java)) {
+        val start = text.getSpanStart(span)
+        val end = text.getSpanEnd(span)
+        if (text.subSequence(start, end).toString() != span.token) text.removeSpan(span)
+      }
       for (span in text.getSpans(0, text.length, ChipSpan::class.java)) {
         val start = text.getSpanStart(span)
         val end = text.getSpanEnd(span)
@@ -295,11 +313,15 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     }
   }
 
-  /** Shows `value`, unless the field already holds it. */
+  /** Shows `value`, unless the field already holds it, with its mentions as chips. */
   private fun show(value: FieldValue) {
     val current = field.text ?: return
     val (text, keys) = read(current)
-    if (text == value.text && keys == value.keys) return
+    if (text != value.text || keys != value.keys) setValue(value)
+    showMentions(value.mentions)
+  }
+
+  private fun setValue(value: FieldValue) {
     val waiting = waitingSelection?.takeIf { (from, to) -> maxOf(from, to) <= value.text.length }
     if (waiting != null) waitingSelection = null
     val start = waiting?.first ?: field.selectionStart
@@ -320,6 +342,42 @@ class ChipFieldView(context: Context, appContext: AppContext) :
     } finally {
       applying = false
     }
+  }
+
+  /**
+   * Covers each mention's text with its chip, where it still reads as the
+   * mention, and takes away the chips of mentions that are gone. The text is
+   * left as it is, so the keyboard's composition goes on.
+   */
+  private fun showMentions(mentions: List<MentionLook>) {
+    val text = field.text ?: return
+    val wanted = mentions.filter {
+      it.start in 0 until it.end && it.end <= text.length &&
+        text.subSequence(it.start, it.end).toString() == it.text
+    }
+    val shown = text.getSpans(0, text.length, MentionSpan::class.java)
+      .sortedBy { text.getSpanStart(it) }
+    val same = shown.size == wanted.size &&
+      shown.zip(wanted).all { (span, mention) ->
+        text.getSpanStart(span) == mention.start && text.getSpanEnd(span) == mention.end &&
+          span.token == mention.text && span.face == mention.face && span.fill == argb(mention.fill)
+      }
+    if (same) return
+    applying = true
+    try {
+      for (span in shown) text.removeSpan(span)
+      for (mention in wanted) {
+        text.setSpan(
+          MentionSpan(mention.text, mention.face, argb(mention.fill), this),
+          mention.start,
+          mention.end,
+          Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+        )
+      }
+    } finally {
+      applying = false
+    }
+    reportHeight()
   }
 
   fun focusField() {

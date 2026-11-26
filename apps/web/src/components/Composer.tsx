@@ -22,6 +22,7 @@ import {
   mentionOptions,
   mentionQuery,
   movedOption,
+  standingMentions,
   type DraggedText,
   type Mentionable,
   type MentionOption,
@@ -33,6 +34,7 @@ import {
   messageProblemText,
 } from "@j3-bots/client-runtime/wording";
 import { springs } from "@j3-bots/design-tokens";
+import { tintOf } from "../lib/botTint";
 import { cn } from "../lib/cn";
 import { play } from "../lib/motion";
 import { type FieldInput, followFieldInput } from "../lib/fieldEdit";
@@ -42,11 +44,13 @@ import {
   ChipField,
   dropOffset,
   type FieldChange,
+  type FieldRun,
   fieldSelection,
   fieldText,
   selectInField,
 } from "./ChipField";
 import { FileKindIcon } from "./FileCard";
+import { MentionChip } from "./MentionChip";
 import { Button } from "./ui/button";
 
 /**
@@ -425,6 +429,7 @@ export function Composer({
               />
             ),
           }))}
+          runs={mentionRuns(value, mentions, mentionable ?? [])}
           readOnly={frozen}
           onChange={follow}
           onSelect={(event) => {
@@ -746,6 +751,30 @@ function useMentionPicker({
   };
 }
 
+/**
+ * Each pick of a member that addresses it as the draft stands, drawn as its
+ * chip in the field, so what the field shows is whom the message wakes.
+ * `@everyone`, and a member no longer in the room, stay text.
+ */
+function mentionRuns(
+  value: string,
+  mentions: ReadonlyArray<DraftMention>,
+  members: ReadonlyArray<MentionCandidate>,
+): ReadonlyArray<FieldRun> {
+  return standingMentions(value, mentions).flatMap((mention) => {
+    if (mention._tag !== "bot") return [];
+    const member = members.find((candidate) => candidate.id === mention.botId);
+    if (member === undefined) return [];
+    return [
+      {
+        at: mention.position,
+        text: `@${mention.label}`,
+        content: <MentionChip avatar={member.avatar} seed={member.id} name={mention.label} />,
+      },
+    ];
+  });
+}
+
 /** The members and `@everyone` the operator can mention, above the composer. */
 export function MentionList({
   id,
@@ -793,7 +822,13 @@ export function MentionList({
             // The field keeps the focus, so the keyboard stays up on a touch screen.
             onPointerDown={(event) => event.preventDefault()}
             onClick={() => onPick(option)}
-            className="flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm aria-selected:bg-muted pointer-coarse:min-h-(--layout-touch-target)"
+            // A member's option, active, takes a tint of its color, as its mention does.
+            className={cn(
+              "flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 text-sm pointer-coarse:min-h-(--layout-touch-target)",
+              avatar === undefined
+                ? "aria-selected:bg-muted"
+                : [tintOf(avatar), "aria-selected:bg-(--tint-bubble)"],
+            )}
           >
             {option._tag === "bot" ? (
               <>

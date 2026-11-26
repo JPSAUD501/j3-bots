@@ -1,13 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { DraftFile } from "@j3-bots/client-runtime";
 import { draftFileName, FILE_MARK } from "@j3-bots/client-runtime/presentation";
-import type { AttachmentId } from "@j3-bots/contracts";
-import { fontFamilies, layout, typeScale } from "@j3-bots/design-tokens";
+import type { AttachmentId, Avatar, BotId } from "@j3-bots/contracts";
+import { botBubble, fontFamilies, layout, resolveAvatar, typeScale } from "@j3-bots/design-tokens";
+import { hexColor } from "@j3-bots/design-tokens/raster";
 import { requireNativeView } from "expo";
 import { type ComponentRef, type Ref, useImperativeHandle, useRef, useState } from "react";
-import { type NativeSyntheticEvent, Platform, processColor, type ViewProps } from "react-native";
+import {
+  type NativeSyntheticEvent,
+  PixelRatio,
+  Platform,
+  processColor,
+  type ViewProps,
+} from "react-native";
+import { useUniwind } from "uniwind";
 import { TextInput } from "../text.tsx";
 import { useColor } from "../theme.ts";
+import { MENTION_FACE } from "./MentionChip.tsx";
+import { mentionFace } from "./mentionFace.ts";
 
 /** What the composer does with its field besides typing in it. */
 export interface FieldHandle {
@@ -21,6 +31,14 @@ export interface FieldEdit {
   readonly text: string;
   readonly order: ReadonlyArray<string>;
   readonly selection: readonly [number, number];
+}
+
+/** A picked mention the field draws as a chip over its text: where it starts, its text, and its bot. */
+export interface FieldMention {
+  readonly at: number;
+  readonly text: string;
+  readonly botId: BotId;
+  readonly avatar: Avatar;
 }
 
 /** A status the field shows where the text goes, as dictation's, and a quieter note after it. */
@@ -37,6 +55,8 @@ interface FieldProps {
   readonly files: ReadonlyArray<DraftFile>;
   /** The local images of the draft's files that show as images, by file. */
   readonly images: ReadonlyMap<AttachmentId, string>;
+  /** The picked mentions that address their bots, drawn as chips where the field can. */
+  readonly mentions: ReadonlyArray<FieldMention>;
   readonly placeholder: string;
   readonly status: FieldStatus | null;
   readonly editable: boolean;
@@ -53,8 +73,9 @@ interface FieldProps {
 /**
  * The composer's field: on Android, editable text in which each file of the
  * draft is a chip where the operator placed it, showing its image or a page,
- * its name and a way out, deleted as one character. Elsewhere, where the app
- * has no such field, the text without its marks, its files following it.
+ * its name and a way out, deleted as one character, and each picked mention
+ * a chip with its bot's face over its text. Elsewhere, where the app has no
+ * such field, the text without its marks, its files following it.
  */
 export function ChipField(props: FieldProps) {
   return Platform.OS === "android" && NativeChipField !== null ? (
@@ -78,6 +99,13 @@ interface NativeFieldProps extends ViewProps {
   readonly value: {
     readonly text: string;
     readonly keys: ReadonlyArray<string>;
+    readonly mentions: ReadonlyArray<{
+      readonly start: number;
+      readonly end: number;
+      readonly text: string;
+      readonly face: string;
+      readonly fill: number;
+    }>;
     readonly eventCount: number;
   };
   readonly chips: ReadonlyArray<{
@@ -94,6 +122,7 @@ interface NativeFieldProps extends ViewProps {
     readonly chipBorder: number;
     readonly failedBackground: number;
     readonly failedText: number;
+    readonly mentionText: number;
     readonly fontFamily: string;
     readonly fontSize: number;
     readonly paddingHorizontal: number;
@@ -143,6 +172,7 @@ function AndroidField({
   value,
   files,
   images,
+  mentions,
   placeholder,
   status,
   editable,
@@ -154,6 +184,7 @@ function AndroidField({
   onRemoveFile,
 }: FieldProps) {
   const native = useRef<NativeFieldMethods>(null);
+  const theme = useUniwind().theme === "dark" ? "dark" : "light";
   // The newest of the field's edits the draft has taken. The field shows
   // `value` only when it has made no edit since, as React Native's own field
   // does: the draft takes each edit as it is told, so a value that answers an
@@ -172,6 +203,7 @@ function AndroidField({
     chipBorder: argb(useColor("accent-border")),
     failedBackground: argb(useColor("accent-blocked-surface")),
     failedText: argb(useColor("accent-blocked")),
+    mentionText: argb(useColor("accent-bubble-bot-foreground")),
     fontFamily: fontFamilies.text,
     fontSize: FONT_SIZE,
     paddingHorizontal: PADDING_X,
@@ -185,7 +217,18 @@ function AndroidField({
       ref={(view: unknown) => {
         native.current = isFieldMethods(view) ? view : null;
       }}
-      value={{ text: value, keys: files.map((file) => file.key), eventCount }}
+      value={{
+        text: value,
+        keys: files.map((file) => file.key),
+        mentions: mentions.map((mention) => ({
+          start: mention.at,
+          end: mention.at + mention.text.length,
+          text: mention.text,
+          face: mentionFace(mention.avatar, mention.botId, theme, MENTION_FACE, PixelRatio.get()),
+          fill: argb(hexColor(botBubble(resolveAvatar(mention.avatar).color)[theme])),
+        })),
+        eventCount,
+      }}
       chips={files.map((file) => ({
         key: file.key,
         label: draftFileName(file),

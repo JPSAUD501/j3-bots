@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { parseMessageText, type Inline } from "@j3-bots/client-runtime/presentation";
+import {
+  type Inline,
+  type MentionName,
+  parseMessageText,
+} from "@j3-bots/client-runtime/presentation";
 import type { Attachment } from "@j3-bots/contracts";
 import { FileChip } from "./FileChip";
+import { TextMention } from "./MentionChip";
 
 /** A message's files, each drawn where it was placed in its text. */
 interface PlacedFiles {
@@ -21,7 +26,7 @@ export function MessageText({
   placed,
 }: {
   text: string;
-  mentionable?: ReadonlyArray<string>;
+  mentionable?: ReadonlyArray<MentionName>;
   placed?: PlacedFiles;
 }) {
   const blocks = parseMessageText(text, mentionable, placed?.offsets);
@@ -73,7 +78,7 @@ function InlinePart({ inline, placed }: { inline: Inline; placed: PlacedFiles | 
         </a>
       );
     case "mention":
-      return <span className="font-semibold">@{inline.name}</span>;
+      return <TextMention name={inline.name} botId={inline.botId} />;
     case "file": {
       const attachment = placed?.files[inline.index];
       return attachment === undefined ? null : (

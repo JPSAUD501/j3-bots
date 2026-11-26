@@ -7,7 +7,7 @@
 import {
   AttachmentId,
   type AvatarChoice,
-  type BotId,
+  BotId,
   type BotTemplate,
   Conflict,
   type Connector,
@@ -87,6 +87,7 @@ import {
   avatarStates,
   buildTimeline,
   type ConnectorsPlace,
+  EVERYONE,
   latestOfLine,
   liveTurn,
   teammatesOf,
@@ -1067,6 +1068,9 @@ function BubblesSection() {
           />
         </div>
       </Labeled>
+      <Labeled label="Mentions in a room: each member's a chip with its face on a tint of its color, in the operator's bubble and in another bot's; @everyone and a deleted bot's name in the bubble's own text">
+        <MentionBubbles />
+      </Labeled>
       <Labeled label="A bot's visuals, each above its message: a chart, a table and a diagram">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
           {visualBubbles.map((visualMessage) => (
@@ -1393,6 +1397,45 @@ const draftFiles: ReadonlyArray<DraftFile> = [
   },
 ];
 
+/** Room messages that mention members, `@everyone` and a bot deleted since. */
+function MentionBubbles() {
+  const { bubbles } = variants;
+  const { scout, wren, juniper } = team.bots;
+  const gone = BotId.make("gallery-deleted-bot");
+  return (
+    <div className="flex max-w-(--layout-text-column) flex-col gap-2">
+      <MessageBubble
+        message={{ ...bubbles.operator, text: "@Scout and @Juniper, can you check the numbers?" }}
+        position="single"
+        mentionable={[
+          { name: scout.profile.name, botId: scout.id },
+          { name: juniper.profile.name, botId: juniper.id },
+        ]}
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+      />
+      <MessageBubble
+        message={{ ...bubbles.bot, text: "On it. @Wren, the photo from the workshop is yours." }}
+        position="single"
+        tint={scout.profile.avatar}
+        mentionable={[{ name: wren.profile.name, botId: wren.id }]}
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+      />
+      <MessageBubble
+        message={{ ...bubbles.operator, text: "@everyone, thanks. @Pip had it last week." }}
+        position="single"
+        mentionable={[
+          { name: EVERYONE, botId: null },
+          { name: "Pip", botId: gone },
+        ]}
+        onOpenAttachment={nothing}
+        onRetry={nothing}
+      />
+    </div>
+  );
+}
+
 function ComposerDemo({
   initial,
   recipient,
@@ -1401,6 +1444,7 @@ function ComposerDemo({
   notSaved = false,
   replaced: initialReplaced = null,
   mentionable,
+  mentions: initialMentions = [],
 }: {
   initial: string;
   recipient: string;
@@ -1412,10 +1456,12 @@ function ComposerDemo({
   replaced?: string | null;
   /** In a room, its members. */
   mentionable?: ReadonlyArray<MentionCandidate>;
+  /** The mentions picked in `initial`. */
+  mentions?: ReadonlyArray<DraftMention>;
 }) {
   const draftKey = useId();
   const [value, setValue] = useState(initial);
-  const [mentions, setMentions] = useState<ReadonlyArray<DraftMention>>([]);
+  const [mentions, setMentions] = useState<ReadonlyArray<DraftMention>>(initialMentions);
   const [files, setFiles] = useState(initialFiles);
   const [replaced, setReplaced] = useState(initialReplaced);
   return (
@@ -2201,6 +2247,21 @@ function RoomsSection() {
       <Labeled label="Composer in a room: type @ to open the list; arrows, Enter, Tab and Escape work, and so does a tap. Only a pick mentions">
         <div className="max-w-(--layout-text-column) pt-60">
           <ComposerDemo initial="" recipient={team.room.name} mentionable={roomMembers} />
+        </div>
+      </Labeled>
+      <Labeled label="Composer in a room with picks: each a chip with its member's face, deleted whole; @everyone stays text, and so does a pick run into a word">
+        <div className="max-w-(--layout-text-column)">
+          <ComposerDemo
+            initial="@Scout and @Wren, then @everyone and @Juniperish "
+            recipient={team.room.name}
+            mentionable={roomMembers}
+            mentions={[
+              { _tag: "bot", botId: scout.id, label: scout.profile.name, position: 0 },
+              { _tag: "bot", botId: wren.id, label: wren.profile.name, position: 11 },
+              { _tag: "everyone", position: 23 },
+              { _tag: "bot", botId: juniper.id, label: juniper.profile.name, position: 37 },
+            ]}
+          />
         </div>
       </Labeled>
     </Section>

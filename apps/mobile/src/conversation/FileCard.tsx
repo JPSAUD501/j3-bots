@@ -19,6 +19,7 @@ import { useI18n } from "../i18n.ts";
 import { useImageFile } from "../platform/images.ts";
 import { useColor } from "../theme.ts";
 import { useFileOpener } from "./FileOpener.tsx";
+import { inlineChip } from "./inlineChip.ts";
 import { EntryWidths } from "./widths.ts";
 
 const kindIcons = {
@@ -85,14 +86,6 @@ function FileKindIcon({
   return <Icon icon={kindIcons[fileIcon(mediaType)]} size={size} color={color} />;
 }
 
-/** The line height of a paragraph that holds a file, which makes room for its chip. */
-export const FILE_LINE_HEIGHT = 32;
-// The chip's height, and how far below the text's baseline its foot goes, so
-// that it stands centered on the line: React Native sets a view inside text
-// with its foot on the baseline.
-const CHIP_HEIGHT = 24;
-const BELOW_BASELINE = 6;
-
 /**
  * A file where it stands in a message's text: its image or its kind, and its
  * name, on a quiet tint of the bubble's text color (`color`). Pressing it opens it.
@@ -115,7 +108,7 @@ export function InlineFile({
       accessibilityRole="button"
       accessibilityLabel={t("file.open", { name: attachment.name })}
       onPress={() => opener.open(attachment)}
-      style={{ height: CHIP_HEIGHT, transform: [{ translateY: BELOW_BASELINE }] }}
+      style={inlineChip}
       className="mx-0.5 max-w-56 flex-row items-center gap-1 overflow-hidden rounded-md ps-0.5 pe-1.5"
     >
       <View

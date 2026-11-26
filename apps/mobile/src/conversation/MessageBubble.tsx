@@ -2,6 +2,7 @@
 import { messageStatus } from "@j3-bots/client-runtime";
 import {
   type GroupPosition,
+  type MentionName,
   type OpeningHold,
   type TimelineMessage,
 } from "@j3-bots/client-runtime/presentation";
@@ -146,8 +147,8 @@ export function MessageBubble({
    * bubble of its group and its face beside the last, a deleted bot's too.
    */
   readonly speaker?: BotId | null;
-  /** The names the message addressed, which `@Name` highlights. */
-  readonly mentionable?: ReadonlyArray<string>;
+  /** The names the message addressed, each with whose it is, which `@Name` highlights. */
+  readonly mentionable?: ReadonlyArray<MentionName>;
   readonly onRetry: () => void;
   readonly onDiscard?: () => void;
   /** A retry is on its way: Send again takes no second one. */
