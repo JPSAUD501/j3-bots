@@ -271,9 +271,11 @@ describe.each(transports)("over $name", ({ open, revision }) => {
       const session = yield* open;
       const watched = answering({ _tag: "cancel" });
       assert.strictEqual(yield* textOf(session, "count", watched.hooks), "counted");
-      // The first step, and the last, which is never held back.
-      yield* Effect.yieldNow;
-      assert.deepStrictEqual(watched.progress.at(-1), { message: "Counted 2", fraction: 1 });
+      // By the answer: the first step, and the last, which is never held back.
+      assert.deepStrictEqual(watched.progress, [
+        { message: "Counted 1", fraction: 0.5 },
+        { message: "Counted 2", fraction: 1 },
+      ]);
     }).pipe(Effect.scoped),
   );
 });

@@ -59,6 +59,16 @@ export const DetailedTask = Schema.Struct({
 });
 export type DetailedTask = typeof DetailedTask.Type;
 
+/** How far a tagged call has come, as a `notifications/progress` for the call's tag says. */
+const ProgressStep = Schema.Struct({
+  progressToken: Schema.String,
+  progress: Schema.Finite,
+  total: Schema.optionalKey(Schema.Finite),
+  message: Schema.optionalKey(Schema.String),
+});
+export type ProgressStep = typeof ProgressStep.Type;
+const decodeProgress = Schema.decodeUnknownOption(ProgressStep);
+
 /** A request of the tap's the server answered with a JSON-RPC error. */
 export class RawRequestError extends Schema.TaggedError<RawRequestError>()("RawRequestError", {
   code: Schema.Int,
@@ -146,6 +156,24 @@ export class TaskTap {
     return { own: false, tag };
   }
 
+  /**
+   * The progress of a tagged call still waiting for its answer, when the
+   * message is a `notifications/progress` whose token is the call's tag.
+   * Seen here, it reaches the call in the order it arrived, before the
+   * answer that follows it: the SDK runs a notification's handler a step
+   * later than it settles an answer, and drops progress for a call answered
+   * meanwhile.
+   */
+  progressOf(message: JSONRPCMessage): ProgressStep | undefined {
+    if (!("method" in message) || "id" in message || message.method !== "notifications/progress") {
+      return undefined;
+    }
+    const step = decodeProgress(message.params);
+    if (step._tag === "None") return undefined;
+    for (const tag of this.#calls.values()) if (tag === step.value.progressToken) return step.value;
+    return undefined;
+  }
+
   /** The task the call tagged `tag` was answered with, once: undefined when it was answered otherwise. */
   taken(tag: string): Task | undefined {
     const task = this.#tasks.get(tag);
@@ -204,14 +232,17 @@ export class TaskTap {
 
 /**
  * Taps a connected transport: every message it sends is shown to the tap
- * first, and every one it receives too, which takes those it owns. An answer
- * to a tagged call is handed on inside `enter(tag)`, so whatever the SDK does
- * with it (a request for input it fulfils) runs as part of that call. Done
- * once the client is connected, when the SDK has set the handlers it keeps.
+ * first, and every one it receives too, which takes those it owns. A tagged
+ * call's progress goes to `progress` as it arrives, never to the SDK. An
+ * answer to a tagged call is handed on inside `enter(tag)`, so whatever the
+ * SDK does with it (a request for input it fulfils) runs as part of that
+ * call. Done once the client is connected, when the SDK has set the
+ * handlers it keeps.
  */
 export const tapTransport = (
   transport: Transport,
   enter: (tag: string, deliver: () => void) => void,
+  progress: (step: ProgressStep) => void,
 ): TaskTap => {
   const send = transport.send.bind(transport);
   const tap = new TaskTap((message) => send(message));
@@ -221,6 +252,8 @@ export const tapTransport = (
   };
   const received = transport.onmessage;
   transport.onmessage = (message, extra) => {
+    const step = tap.progressOf(message);
+    if (step !== undefined) return progress(step);
     const seen = tap.incoming(message);
     if (seen.own) return;
     if (seen.tag === undefined) received?.(message, extra);
