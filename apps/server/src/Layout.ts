@@ -45,6 +45,11 @@ export class Layout extends Context.Service<
     readonly releaseFeed: string;
     readonly attachments: string;
     /**
+     * The folder a command connector's npm launcher runs in, which holds only
+     * an empty `package.json` (`CommandSessionOptions.launcherFolder`).
+     */
+    readonly launcherFolder: string;
+    /**
      * `location`, once where it really is, links resolved (through its nearest
      * parent that exists, for one not created yet), is inside the home and
      * neither inside the web client's folder nor holding it. Every write of
@@ -113,6 +118,7 @@ export const layer = Layer.effect(
       shippedSkills: layout.shippedSkills,
       releaseFeed: layout.releaseFeed,
       attachments: layout.attachments,
+      launcherFolder: layout.launcherFolder,
       writable,
       writeFile,
     });

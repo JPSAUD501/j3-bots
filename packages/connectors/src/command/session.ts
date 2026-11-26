@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { pinRefusal } from "@j3-bots/contracts";
+import { packageLauncher, pinRefusal } from "@j3-bots/contracts";
 import type { PriorDiscovery } from "@modelcontextprotocol/client";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -19,7 +19,7 @@ import {
   sdkTimeout,
   sessionOf,
 } from "../session.ts";
-import { type CommandVariable, commandEnvironment } from "./environment.ts";
+import { type CommandVariable, commandEnvironment, launcherSettings } from "./environment.ts";
 import { startProcess } from "./process.ts";
 import { interpreterReads, resolveProgram } from "./program.ts";
 import { ProcessTransport } from "./transport.ts";
@@ -70,8 +70,14 @@ export interface CommandSessionOptions extends ClientSetup {
   readonly carried: ReadonlyArray<Redacted.Redacted<string>>;
   /** The server's own environment, of which only a few variables reach the process. */
   readonly serverEnvironment: Readonly<Record<string, string | undefined>>;
-  /** The folder the process runs in. */
+  /** The folder the process runs in, and a relative program is found from. */
   readonly cwd: string;
+  /**
+   * The folder an npm launcher runs in instead: the server's own, which holds
+   * only an empty `package.json`, so npm takes it for the project and reads
+   * no project's `.npmrc`, nor runs a package a project installed.
+   */
+  readonly launcherFolder: string;
   readonly limits: SessionLimits;
 }
 
@@ -131,6 +137,14 @@ export const openCommandSession = (
       );
       return yield* new CommandFailed({ reason: "exited" });
     }
+    const launcher = packageLauncher(executable, args);
+    const started = Option.match(launcher, {
+      onNone: () => ({ environment, cwd: options.cwd }),
+      onSome: (name) => ({
+        environment: { ...environment, ...launcherSettings(options.platform, name) },
+        cwd: name === "npm" ? options.launcherFolder : options.cwd,
+      }),
+    });
     const scrub = scrubberOf(
       [...options.variables.map((variable) => variable.value), ...options.carried].map(
         Redacted.value,
@@ -148,8 +162,8 @@ export const openCommandSession = (
         platform: options.platform,
         executable,
         args,
-        environment,
-        cwd: options.cwd,
+        environment: started.environment,
+        cwd: started.cwd,
       });
       const broken = yield* Deferred.make<void>();
       const transport = new ProcessTransport(

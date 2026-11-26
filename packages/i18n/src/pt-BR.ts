@@ -1971,7 +1971,7 @@ const sentences = {
   "connector.command": "Comando",
   "connector.editCommand": "Alterar comando",
   "connector.editCommand.hint":
-    "Alterar só um valor mantém o comando como está. Alterar o programa, os argumentos ou o nome de uma variável pede que você o confirme de novo.",
+    "Alterar só um valor mantém o comando como está. Alterar o programa, os argumentos, o nome de uma variável ou o valor de uma variável que decide que código roda, como NODE_OPTIONS, pede que você o confirme de novo.",
   "connector.editCommand.args.kept": "Não aparecem, porque um deles pode conter uma chave.",
   "connector.editCommand.args.retype": "Digitar de novo",
   "connector.editCommand.args.keep": "Manter",
@@ -2130,6 +2130,8 @@ const sentences = {
   "addOwn.consent.new": "Nova",
   "addOwn.consent.removed": "Não definidas mais: {names}",
   "addOwn.consent.programChanged": "O programa mudou.",
+  "addOwn.consent.settings":
+    "As variáveis acima dele decidem que código roda, por isso fazem parte da linha de comando, com os valores.",
   "addOwn.consent.confirm": "Executar",
   "addOwn.consent.cancel": "Cancelar",
   "addOwn.submit": "Adicionar",

@@ -43,6 +43,7 @@ export const fixtureOptions = (
   carried: [],
   serverEnvironment,
   cwd: NodeOs.tmpdir(),
+  launcherFolder: NodeOs.tmpdir(),
   limits: DEFAULT_SESSION_LIMITS,
   client: { name: "j3-bots-test", version: "0.0.0" },
   cache: new InMemoryResponseCacheStore(),

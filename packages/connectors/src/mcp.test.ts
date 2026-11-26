@@ -75,6 +75,7 @@ const overStdio = (file: string, args: ReadonlyArray<string> = []) =>
     carried: [],
     serverEnvironment,
     cwd: NodeOs.tmpdir(),
+    launcherFolder: NodeOs.tmpdir(),
     limits: DEFAULT_SESSION_LIMITS,
     client: CLIENT,
     cache: new InMemoryResponseCacheStore(),

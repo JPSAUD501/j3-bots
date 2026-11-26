@@ -23,8 +23,10 @@ import * as Option from "effect/Option";
  * refused, as is an option before npm's command. uv's own options are read
  * wherever they come before its command. A launcher's settings from the
  * environment (`npm_config_*`, `UV_*`) can choose another package or
- * registry, so a variable of the operator's by such a name is refused too.
- * Other programs are run as they are given.
+ * registry, so a variable of the operator's by such a name is refused too,
+ * and the server starts the launcher with no configuration file of the
+ * user's or of a project's ({@link packageLauncher}). Other programs are run
+ * as they are given.
  */
 
 /** Why a command is refused. */
@@ -205,6 +207,23 @@ const launcherOf = (
   return Option.none();
 };
 
+/**
+ * The package launcher the check reads that `program` with `args` runs, by
+ * the program as found: `npm` for `npx` and `npm exec`, `uv` for `uvx` and
+ * `uv tool run`; none for any other program or command, and for a command
+ * line the check refuses as unclear. The server starts one with no
+ * configuration file of the user's or of a project's, which could name
+ * another registry or package than the confirmed line does.
+ */
+export const packageLauncher = (
+  program: string,
+  args: ReadonlyArray<string>,
+): Option.Option<"npm" | "uv"> => {
+  const found = launcherOf(program, args);
+  if (found === "unclear") return Option.none();
+  return Option.map(found, ({ launcher }) => (launcher === "npm-exec" ? "npm" : "uv"));
+};
+
 /** Whether a variable named `name` is one of the launcher's settings, which can choose what it fetches. */
 const launcherSetting = (launcher: Launcher, name: string): boolean =>
   launcher === "npm-exec" ? /^npm_config_/i.test(name) : /^uv_/i.test(name);
@@ -285,3 +304,54 @@ const RESERVED = new Set(["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", 
 
 /** Whether a command may not be given a variable named `name`, in any case. */
 export const reservedVariable = (name: string): boolean => RESERVED.has(name.toUpperCase());
+
+/**
+ * Variables whose value decides which code a program runs, or which it
+ * trusts to give it code: what Node, Python, Perl, Ruby and Java load before
+ * the program, the libraries the system loads into it, what a shell runs
+ * first, and the certificates a launcher checks its registry against.
+ */
+const CODE = new Set([
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+  "PYTHONPATH",
+  "PYTHONHOME",
+  "PYTHONSTARTUP",
+  "PYTHONUSERBASE",
+  "PYTHONEXECUTABLE",
+  "PYTHONBREAKPOINT",
+  "PYTHONPLATLIBDIR",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "LD_AUDIT",
+  "BASH_ENV",
+  "ENV",
+  "PERL5OPT",
+  "PERL5LIB",
+  "PERLLIB",
+  "RUBYOPT",
+  "RUBYLIB",
+  "JAVA_TOOL_OPTIONS",
+  "_JAVA_OPTIONS",
+  "JDK_JAVA_OPTIONS",
+  "CLASSPATH",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+]);
+
+/** Families of them: macOS' loader's settings, and the functions bash imports. */
+const CODE_PREFIXES = ["DYLD_", "BASH_FUNC_"];
+
+/**
+ * Whether a command's variable named `name`, in any case, decides which code
+ * runs (`docs/architecture/security.md`, "Connectors started by command"):
+ * such a variable is part of the command line, its value included. The
+ * operator confirms its value with the program and the arguments, and a new
+ * value is a new command line, never a value changed on its own.
+ */
+export const codeVariable = (name: string): boolean => {
+  const upper = name.toUpperCase();
+  return CODE.has(upper) || CODE_PREFIXES.some((prefix) => upper.startsWith(prefix));
+};

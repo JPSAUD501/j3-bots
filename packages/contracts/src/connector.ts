@@ -547,9 +547,11 @@ export type OAuthClientInput = typeof OAuthClientInput.Type;
 
 /**
  * A command connector's command line and environment, as the operator
- * confirmed them. The client shows the operator the program, every argument
- * and the name of every variable, never a value, and sends this only once
- * they confirmed it; the server runs nothing else under that consent. A
+ * confirmed them. The client shows the operator the program, every argument,
+ * each variable that decides which code runs with its value (`codeVariable`,
+ * such as `NODE_OPTIONS`), and the name of every other variable, never its
+ * value, and sends this only once they confirmed it; the server runs nothing
+ * else under that consent. A
  * program run through `npx` or `uvx` must name its package at an exact
  * version, as `@scope/server@1.2.3` or `server==1.2.3`: the server refuses a
  * tag, a range or no version (`Invalid("command-unpinned")`), so the code

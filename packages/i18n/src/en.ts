@@ -1941,7 +1941,7 @@ export const en = {
   "connector.command": "Command",
   "connector.editCommand": "Change command",
   "connector.editCommand.hint":
-    "Changing only a value keeps the command as it is. Changing the program, the arguments or a variable's name asks you to confirm it again.",
+    "Changing only a value keeps the command as it is. Changing the program, the arguments, a variable's name, or the value of a variable that decides what code runs, such as NODE_OPTIONS, asks you to confirm it again.",
   "connector.editCommand.args.kept": "Not shown, since one can carry a key.",
   "connector.editCommand.args.retype": "Type them again",
   "connector.editCommand.args.keep": "Keep them",
@@ -2097,6 +2097,8 @@ export const en = {
   "addOwn.consent.new": "New",
   "addOwn.consent.removed": "No longer set: {names}",
   "addOwn.consent.programChanged": "The program changed.",
+  "addOwn.consent.settings":
+    "The variables above it decide what code runs, so they're part of the command line, values included.",
   "addOwn.consent.confirm": "Run it",
   "addOwn.consent.cancel": "Cancel",
   "addOwn.submit": "Add",

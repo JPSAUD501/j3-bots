@@ -1149,7 +1149,10 @@ export const ConnectorRpcs = RpcGroup.make(
    * Renames the connector, or replaces the values its form took, such as a
    * token the service refused, or a command connector's environment values:
    * fields left out keep their value, and so does each value `values` does
-   * not name. `command` replaces a command connector's whole command line
+   * not name. A variable that decides which code runs (`codeVariable`) is
+   * part of the command line, so `values` naming one fails with
+   * `Invalid("connector-fields")`: its new value comes with `command`.
+   * `command` replaces a command connector's whole command line
    * and environment, which the client sends only once the operator confirmed
    * it as for an add: its process, if it runs, stops, and the next use runs
    * the new one, whose tools wait on the operator's review where they differ.

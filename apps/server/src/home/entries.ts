@@ -71,6 +71,7 @@ export const SYSTEM_PROMPT_FILE = `${WORKSPACE_ENTRIES.generated}/system.md`;
  * state/shipped-skills.json  which texts in shared/skills the server installed
  * state/runtime.json     the release whose data this home holds, and a transition under way
  * state/release-feed.json  the newer releases the server last found, and whether they verified
+ * state/npm-project/package.json  empty: the project a command connector's npm launcher runs in
  * attachments/           file bytes, by digest
  * backups/<snapshot>/    the databases and settings an update copied first
  * vault/vault.sqlite     the sealed secrets and connector secrets; in no snapshot
@@ -92,6 +93,7 @@ export const homeLayout = (path: Path.Path, home: string) => {
     attachments: path.join(home, HOME_ENTRIES.attachments),
     shippedSkills: path.join(home, HOME_ENTRIES.state, "shipped-skills.json"),
     releaseFeed: path.join(home, HOME_ENTRIES.state, "release-feed.json"),
+    launcherFolder: path.join(home, HOME_ENTRIES.state, "npm-project"),
     providerHome: (provider: (typeof PROVIDER_HOMES)[number]) =>
       path.join(home, HOME_ENTRIES.providers, provider),
     harnessCopy: (provider: (typeof PROVIDER_HOMES)[number]) =>

@@ -258,4 +258,39 @@ describe("Connectors started by command", () => {
       }).pipe(Effect.scoped, Effect.provide(domain)),
     SLOW,
   );
+
+  it.live(
+    "takes a new value for a variable that decides which code runs only with a confirmed command line",
+    () =>
+      Effect.gen(function* () {
+        const { connectors } = yield* setUp;
+        const withPath = (value: string): CommandLine => ({
+          ...command([]),
+          env: [
+            ...command([]).env,
+            { name: EnvName.make("PYTHONPATH"), value: Redacted.make(value) },
+          ],
+        });
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          command: withPath("/srv/confirmed"),
+        });
+
+        const alone = yield* Effect.flip(
+          connectors.update({
+            by: { _tag: "operator" },
+            connectorId: ID,
+            values: [{ key: FieldKey.make("PYTHONPATH"), value: Redacted.make("/srv/other") }],
+          }),
+        );
+        assert.strictEqual(invalidOf(alone), "connector-fields");
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          command: withPath("/srv/other"),
+        });
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
 });

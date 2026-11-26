@@ -335,6 +335,24 @@ describe("an edit of a connector started by command", () => {
     ]);
   });
 
+  it("sends the whole command line for a new value of a variable that decides which code runs", () => {
+    const withOptions = commandEdit(
+      { program: "npx", names: ["API_KEY", "NODE_OPTIONS"] },
+      {
+        command: "npx",
+        args: kept,
+        env: [
+          { name: "API_KEY", value: "" },
+          { name: "NODE_OPTIONS", value: "--require=./hook.js" },
+        ],
+      },
+    );
+    if (withOptions._tag !== "invalid") throw new Error(withOptions._tag);
+    // The value is part of the line, which the operator confirms whole.
+    expect(withOptions.problems.argsAgain).toBe(true);
+    expect(withOptions.problems.env).toEqual([{ index: 0, reason: "value-again" }]);
+  });
+
   it("refuses a changed command at no exact version", () => {
     const refused = edit("npx", typed("@scope/server"), [
       { name: "API_KEY", value: "a" },
@@ -365,6 +383,26 @@ describe("the confirmation of a command line", () => {
     expect(consent.names).toEqual(["API_KEY", "REGION"]);
     expect(JSON.stringify(consent)).not.toContain("very-secret-value");
     expect([consent.added, consent.removed, consent.programChanged]).toEqual([[], [], false]);
+  });
+
+  it("shows a variable that decides which code runs with its value, as part of the line", () => {
+    const withOptions = ready(
+      commandSource({
+        name: "Files",
+        command: "npx",
+        args: "-y\n@scope/server@1.2.3",
+        env: [
+          { name: "API_KEY", value: "very-secret-value" },
+          { name: "node_options", value: "--require=./hook.js" },
+        ],
+      }),
+    );
+    if (withOptions._tag !== "command") throw new Error(withOptions._tag);
+    const consent = commandConsent(withOptions, { program: "npx", names: ["API_KEY"] });
+    expect(consent.settings).toEqual([{ name: "node_options", value: "--require=./hook.js" }]);
+    expect(consent.names).toEqual(["API_KEY"]);
+    expect(consent.added).toEqual(["node_options"]);
+    expect(JSON.stringify(consent)).not.toContain("very-secret-value");
   });
 
   it("names what changed since the command line the operator confirmed before", () => {

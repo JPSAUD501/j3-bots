@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // @effect-diagnostics nodeBuiltinImport:off processEnvInEffect:off -- The test sets a variable Node itself reads when it starts a child, in the folder it would name.
+import * as NodeFs from "node:fs/promises";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
@@ -11,6 +12,7 @@ import {
   fixtureOptions,
   OPERATOR_SECRET,
   SERVER_ONLY,
+  STDIO_SERVER,
   serverEnvironment,
 } from "../testing/stdioFixture.ts";
 import { openCommandSession } from "./session.ts";
@@ -19,6 +21,12 @@ import { openCommandSession } from "./session.ts";
 const ARGUMENT_SECRET = "argument-secret-value";
 
 const decodeNames = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+
+/** A folder of its own, removed with the scope. */
+const temporaryFolder = Effect.acquireRelease(
+  Effect.promise(() => NodeFs.mkdtemp(NodePath.join(NodeOs.tmpdir(), "j3-command-"))),
+  (folder) => Effect.promise(() => NodeFs.rm(folder, { recursive: true, force: true })),
+);
 
 describe("openCommandSession", () => {
   it.live(
@@ -72,6 +80,40 @@ describe("openCommandSession", () => {
           "--key",
           "[redacted]",
         ]);
+      }).pipe(Effect.scoped),
+    30_000,
+  );
+
+  it.live.skipIf(process.platform === "win32")(
+    "starts npm's launcher in the server's folder, with no user configuration",
+    () =>
+      Effect.gen(function* () {
+        // A stand-in for npx, found on the search path, that starts the fixture as npx starts a package.
+        const bin = yield* temporaryFolder;
+        yield* Effect.promise(async () => {
+          const npx = NodePath.join(bin, "npx");
+          await NodeFs.writeFile(npx, `#!/bin/sh\nexec "${process.execPath}" "${STDIO_SERVER}"\n`);
+          await NodeFs.chmod(npx, 0o755);
+        });
+        const launcherFolder = yield* temporaryFolder;
+
+        const { session } = yield* openCommandSession({
+          ...fixtureOptions(),
+          program: "npx",
+          args: [Redacted.make("--yes"), Redacted.make("@example/server@1.2.3")],
+          serverEnvironment: { ...serverEnvironment, PATH: `${bin}:${process.env["PATH"] ?? ""}` },
+          launcherFolder,
+          onListChanged: () => Effect.void,
+        });
+
+        assert.strictEqual(
+          yield* answerOf(session, "folder"),
+          yield* Effect.promise(() => NodeFs.realpath(launcherFolder)),
+        );
+        assert.strictEqual(
+          yield* answerOf(session, "echo", { name: "npm_config_userconfig" }),
+          "/dev/null",
+        );
       }).pipe(Effect.scoped),
     30_000,
   );

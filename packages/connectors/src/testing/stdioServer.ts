@@ -10,6 +10,7 @@
 // - `environment`: the names of its environment variables;
 // - `echo`: the value of the variable `name`, as a server that leaks a secret would;
 // - `arguments`: its command line's arguments;
+// - `folder`: the folder it runs in;
 // - `spawn`: starts a process of its own that never ends, and gives its id;
 // - `exit`: answers, then ends with an error, as a server that crashes;
 // - `flood`: answers, then writes more than a message may hold, unasked.
@@ -70,6 +71,7 @@ const TOOLS = [
   tool("environment", "Gives the names of the server's environment variables"),
   tool("echo", "Gives the value of an environment variable"),
   tool("arguments", "Gives the server's arguments"),
+  tool("folder", "Gives the folder the server runs in"),
   tool("spawn", "Starts a process that never ends"),
   tool("exit", "Ends the server"),
   tool("flood", "Writes too long a message"),
@@ -89,6 +91,8 @@ const answer = (name: string, args: Readonly<Record<string, unknown>>): string =
       return String(process.env[String(args["name"])] ?? "");
     case "arguments":
       return JSON.stringify(process.argv.slice(2));
+    case "folder":
+      return process.cwd();
     case "spawn": {
       const child = NodeChildProcess.spawn(
         process.execPath,
