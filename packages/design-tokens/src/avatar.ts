@@ -26,7 +26,6 @@ import {
   botColors,
   type BotColor,
 } from "./names.ts";
-import { litter } from "./springs.ts";
 import type { ColorRole } from "./tokens.ts";
 
 /**
@@ -356,16 +355,19 @@ export function avatarFrame(
 
 /**
  * Where the roster's dots stand by an avatar `size` px wide while its bot is
- * split: one for each little one at work, `litter.most` at most, along the
- * avatar's lower edge on the side away from the primary bot's star. Each is
- * the top left of a dot `size` wide, `x` from the avatar's edge on that side.
+ * split: one for each little one at work, `most` at most, along the avatar's
+ * lower edge on the side away from the primary bot's star. Each is the top
+ * left of a dot `size` wide, `x` from the avatar's edge on that side.
  */
-export function littleDots(size: number): {
+export function littleDots(
+  size: number,
+  most: number,
+): {
   readonly size: number;
   readonly places: ReadonlyArray<{ readonly x: number; readonly y: number }>;
 } {
   const dot = Math.max(8, Math.round(size * 0.225));
-  const places = Array.from({ length: litter.most }, (_, index) => {
+  const places = Array.from({ length: most }, (_, index) => {
     const angle = ((118 + index * 21) * Math.PI) / 180;
     return {
       x: fixed(size / 2 + Math.cos(angle) * size * 0.55 - dot / 2),

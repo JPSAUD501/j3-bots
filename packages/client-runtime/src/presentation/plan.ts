@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
- * A turn's plan as its conversation shows it (decision 0071): a short card
- * while the turn runs, one line once it ends. Everything here comes from the
- * plan the server sent; nothing is made up on the client.
+ * The card of a turn's plan (decision 0071): its lines, which of them a
+ * running turn shows of a long plan, and which carries the live mark. Which
+ * plan is worth a card and how far it got are the turn's work's
+ * (`turnWork.ts`). Everything here comes from the plan the server sent.
  */
 import type { Plan } from "@j3-bots/contracts";
-
-/** Where a step stands, as a client draws it: a status it does not know is a step still to do. */
-export type PlanStepState = "pending" | "running" | "done";
+import { type PlanStepState, planStepState } from "./turnWork.ts";
 
 /** One line of a plan's card. */
 export interface PlanLine {
@@ -20,31 +19,13 @@ export interface PlanLine {
 /** The most lines a running turn's card takes, a line that counts hidden steps included. */
 export const PLAN_LINES = 6;
 
-/**
- * The plan a turn shows. A plan of one step is not shown as a plan: one line
- * that says what the bot is doing is what the turn's own line already is.
- */
-export const shownPlan = (plan: Plan | null): Plan | null =>
-  plan === null || plan.steps.length < 2 ? null : plan;
-
 /** Every step of `plan` as a line. */
 export const planLines = (plan: Plan): ReadonlyArray<PlanLine> =>
   plan.steps.map((step, index) => ({
     index,
     text: step.text,
-    state: step.status === "running" || step.status === "done" ? step.status : "pending",
+    state: planStepState(step),
   }));
-
-/** How far a plan is: how many of its steps are done, of how many. */
-export interface PlanProgress {
-  readonly done: number;
-  readonly total: number;
-}
-
-export const planProgress = (plan: Plan): PlanProgress => ({
-  done: plan.steps.filter((step) => step.status === "done").length,
-  total: plan.steps.length,
-});
 
 /** What a running turn's card shows of a plan too long to show whole. */
 export interface PlanWindow {

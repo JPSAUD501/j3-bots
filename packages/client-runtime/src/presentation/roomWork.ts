@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { BotId, Room, TurnWork } from "@j3-bots/contracts";
-import { shownPlan } from "./plan.ts";
+import { shownLittleOnes, shownPlan } from "./turnWork.ts";
 
 /**
  * Whether a turn's work has something to draw now: a plan that shows as one,
- * or a little one at work. One step and nobody working is what the turn's own
- * line already says.
+ * or a little one at work. One step and nobody working is what the line that
+ * says who is answering already covers.
  */
 export const showsTurnWork = (work: TurnWork): boolean =>
-  shownPlan(work.plan) !== null || work.littleOnes.ones.some((one) => one.status === "working");
+  shownPlan(work) !== null || shownLittleOnes(work.littleOnes).shown.length > 0;
 
 /** A member's plan and little ones as its room shows them. */
 export interface MemberWork {

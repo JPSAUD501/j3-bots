@@ -19,6 +19,7 @@ import {
   syncLitter,
 } from "@j3-bots/client-runtime/presentation";
 import { useLittleRows } from "@j3-bots/client-runtime/react";
+import { littleOneText } from "@j3-bots/client-runtime/wording";
 import type { Avatar, LittleOne, LittleOnes as TurnLittleOnes } from "@j3-bots/contracts";
 import {
   type AvatarShapeName,
@@ -333,6 +334,7 @@ function LittleRow({
   readonly failed: boolean;
   readonly onOpen: (anchor: Anchor) => void;
 }) {
+  const i18n = useI18n();
   const id: string = one.id;
   const line = useRef<ComponentRef<typeof View>>(null);
   const spot = useDerivedValue(() => {
@@ -382,7 +384,7 @@ function LittleRow({
       <Pressable
         ref={line}
         accessibilityRole="button"
-        accessibilityLabel={one.label}
+        accessibilityLabel={littleOneText(one, i18n)}
         hitSlop={{ top: 4, bottom: 4 }}
         onPress={() => line.current?.measureInWindow((x, y) => onOpen({ x, y }))}
         className="h-full flex-row items-center gap-2.5"
@@ -401,7 +403,7 @@ function LittleRow({
             numberOfLines={1}
             className={`text-xs ${failed ? "text-muted-foreground" : "text-foreground"}`}
           >
-            {one.label}
+            {littleOneText(one, i18n)}
           </Text>
         </AnimatedView>
       </Pressable>
@@ -447,7 +449,7 @@ function LittleDetails({
             style={{ elevation: OVERLAY_ELEVATION }}
             className="gap-0.5 rounded-lg border border-border bg-surface px-3 py-2"
           >
-            <Text className="text-xs text-foreground">{one.label}</Text>
+            <Text className="text-xs text-foreground">{littleOneText(one, i18n)}</Text>
             <Text className="text-xs text-muted-foreground">
               {failed
                 ? i18n.t("littleOnes.failed")

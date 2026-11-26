@@ -3,7 +3,12 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import type { Avatar, BotId, RosterItem } from "@j3-bots/contracts";
 import { needsOperator } from "@j3-bots/client-runtime";
-import { rosterKeyOf, rosterKeyText } from "@j3-bots/client-runtime/presentation";
+import {
+  littleOneDots,
+  MAX_SHOWN_LITTLE_ONES,
+  rosterKeyOf,
+  rosterKeyText,
+} from "@j3-bots/client-runtime/presentation";
 import { useI18n, usePresentation } from "../app/context";
 import { type BotColor, littleDots, resolveAvatar, stage } from "@j3-bots/design-tokens";
 import type { ComponentProps, CSSProperties, Ref } from "react";
@@ -50,7 +55,7 @@ const entranceStyle = (color: string): CSSProperties & Record<`--row-${string}`,
 });
 
 /** Where each of the row's avatar's dots stands: along its lower left edge, clear of the primary bot's star at the other corner. */
-const DOTS = littleDots(40);
+const DOTS = littleDots(40, MAX_SHOWN_LITTLE_ONES);
 
 /**
  * While a bot is split, one tiny dot for each of its little ones at work,
@@ -68,7 +73,7 @@ function LittleDots({ count, color }: { readonly count: number; readonly color: 
         <span
           key={place.y}
           aria-hidden
-          data-on={i < count}
+          data-on={i < littleOneDots(count).dots}
           style={{ left: place.x, top: place.y, width: DOTS.size, height: DOTS.size }}
         />
       ))}

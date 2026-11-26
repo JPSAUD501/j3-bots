@@ -112,7 +112,7 @@ export function WorkFold({
   const author =
     live?.bot ?? (fold?.author._tag === "bot" ? bots.get(fold.author.botId) : undefined);
   const work = fold?.work ?? null;
-  const plan = shownPlan(work?.plan ?? null);
+  const plan = shownPlan(work);
   return (
     <View className="mt-2 px-4">
       {live !== null ? (

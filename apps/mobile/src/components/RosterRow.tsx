@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { needsOperator } from "@j3-bots/client-runtime";
+import { littleOneDots, MAX_SHOWN_LITTLE_ONES } from "@j3-bots/client-runtime/presentation";
 import { activityTime, type LineTone, rosterLine } from "@j3-bots/client-runtime/wording";
 import type { Avatar, RosterItem } from "@j3-bots/contracts";
 import { littleColors, littleDots, resolveAvatar } from "@j3-bots/design-tokens";
@@ -40,7 +41,7 @@ const groundColor = {
 } as const satisfies Record<AvatarGround, string>;
 
 /** Where each of the row's avatar's dots stands: along its lower start edge, clear of the primary bot's star at the other corner. */
-const DOTS = littleDots(40);
+const DOTS = littleDots(40, MAX_SHOWN_LITTLE_ONES);
 
 /**
  * While a bot is split, one tiny dot for each of its little ones at work,
@@ -67,7 +68,7 @@ function LittleDots({
       importantForAccessibility="no-hide-descendants"
       className="absolute inset-0"
     >
-      {DOTS.places.slice(0, count).map((place) => (
+      {DOTS.places.slice(0, littleOneDots(count).dots).map((place) => (
         <Animated.View
           key={place.y}
           entering={popIn()}

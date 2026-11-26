@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { LittleOne, LittleOnes } from "@j3-bots/contracts";
 import { useCallback, useState } from "react";
-import { type ShownLittleOnes, shownLittleOnes } from "../presentation/littleOnes.ts";
+import { type DrawnLittleOnes, drawnLittleOnes } from "../presentation/littleOnes.ts";
 
 /** A turn's little ones as a surface draws them. */
 export interface LittleRows {
   /** Those that work now, and how many more do. */
-  readonly shown: ShownLittleOnes;
+  readonly shown: DrawnLittleOnes;
   /**
    * Every one drawn: those that work, in their order, then those that no
    * longer do and are on their way home, until the family says they are there.
@@ -17,12 +17,12 @@ export interface LittleRows {
 }
 
 /**
- * The little ones a surface draws for a turn: `shownLittleOnes`, and with
+ * The little ones a surface draws for a turn: `drawnLittleOnes`, and with
  * them the ones that just stopped working, kept as they were until the model
  * that moves them (`presentation/littleOnes.ts`) reports them home.
  */
 export function useLittleRows(littleOnes: LittleOnes | null, live: boolean): LittleRows {
-  const shown = shownLittleOnes(littleOnes, live);
+  const shown = drawnLittleOnes(littleOnes, live);
   const key = shown.ones.map((one) => one.id).join("\n");
   const [seen, setSeen] = useState({ key, ones: shown.ones });
   const [kept, setKept] = useState<ReadonlyArray<LittleOne>>([]);

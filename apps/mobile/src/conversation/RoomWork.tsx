@@ -65,7 +65,7 @@ export function RoomWork({ room }: { readonly room: Room }) {
 /** One member's face and name, with its little ones and its plan under them; `work` null once it has none left. */
 function MemberWork({ bot, work }: { readonly bot: Bot; readonly work: TurnWork | null }) {
   const face = useRef<AvatarHandle>(null);
-  const plan = shownPlan(work?.plan ?? null);
+  const plan = shownPlan(work);
   return (
     <AnimatedView entering={settleIn(springs.soft)} className="mt-2 px-4">
       {/* Drawn over its little ones, which come out from behind the bot's face. */}

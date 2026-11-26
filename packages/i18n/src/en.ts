@@ -449,6 +449,7 @@ export const en = {
   "littleOnes.more.other": "+{count} more",
   "littleOnes.workingFor": "Working for {duration}",
   "littleOnes.failed": "Couldn’t finish",
+  "littleOnes.unnamed": "Working on part of it",
 
   "tool.backgroundTask.did": "Started a background task",
   "tool.backgroundTask.doing": "Starting a background task",

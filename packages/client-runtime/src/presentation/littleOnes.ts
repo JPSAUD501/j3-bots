@@ -35,10 +35,11 @@ import {
   type SpringState,
 } from "@j3-bots/design-tokens";
 import { avatarSeed, draw, type AvatarPoke } from "./avatar.ts";
+import { littleOneState, shownLittleOnes } from "./turnWork.ts";
 
-/** What a turn shows of its little ones: those that work now, and how many more do. */
-export interface ShownLittleOnes {
-  /** The first `litter.most` that work, in the order they started. */
+/** A turn's little ones as their family is drawn. */
+export interface DrawnLittleOnes {
+  /** Those that work, the ones the turn's work shows (`shownLittleOnes`). */
   readonly ones: ReadonlyArray<LittleOne>;
   /** How many more work than are shown: "+2 more". */
   readonly more: number;
@@ -46,21 +47,21 @@ export interface ShownLittleOnes {
   readonly failed: ReadonlyArray<string>;
 }
 
-const NONE: ShownLittleOnes = { ones: [], more: 0, failed: [] };
-
 /**
- * The little ones a turn shows. Only one that works is drawn: one that ended
- * before this client saw it never appears, and one that ends while it is shown
- * goes home (`syncLitter`). `live` false, a turn that is over, shows none.
+ * What a turn's family draws. Only one that works is drawn: one that ended
+ * before this client saw it never appears, and one that ends while it is
+ * drawn goes home (`syncLitter`). `live` false, a turn that is over, draws
+ * none: the bot's face has left its row.
  */
-export function shownLittleOnes(littleOnes: LittleOnes | null, live: boolean): ShownLittleOnes {
-  if (littleOnes === null || !live) return NONE;
-  const working = littleOnes.ones.filter((one) => one.status === "working");
-  const ones = working.slice(0, litter.most);
+export function drawnLittleOnes(littleOnes: LittleOnes | null, live: boolean): DrawnLittleOnes {
+  const { shown, more } = shownLittleOnes(live ? littleOnes : null);
   return {
-    ones,
-    more: Math.max(0, littleOnes.working - ones.length),
-    failed: littleOnes.ones.filter((one) => one.status === "failed").map((one) => one.id),
+    ones: shown,
+    more,
+    failed:
+      littleOnes === null
+        ? []
+        : littleOnes.ones.filter((one) => littleOneState(one) === "failed").map((one) => one.id),
   };
 }
 

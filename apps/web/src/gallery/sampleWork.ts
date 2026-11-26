@@ -46,7 +46,7 @@ const LABELS = [
 
 const little = (index: number, status: LittleOne["status"] = "working"): LittleOne => ({
   id: LittleOneId.make(`little-${index}`),
-  label: LABELS[index % LABELS.length] ?? "Looking into it",
+  label: LABELS[index % LABELS.length] ?? null,
   status,
   startedAt: ago(95 - index * 4),
   finishedAt: status === "working" ? null : ago(3),
@@ -63,6 +63,13 @@ export const sampleLittleOnes = (
     working: ones.filter((one) => one.status === "working").length + unlisted,
     total: ones.length + unlisted,
   };
+};
+
+/** One little one the engine gave no words for: its line says so in the operator's language. */
+export const unnamedLittleOne: LittleOnes = {
+  ones: [{ ...little(0), label: null }],
+  working: 1,
+  total: 1,
 };
 
 const none = sampleLittleOnes([]);

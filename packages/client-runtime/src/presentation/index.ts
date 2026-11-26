@@ -52,6 +52,8 @@ export {
 export {
   createLitter,
   dismissLitter,
+  type DrawnLittleOnes,
+  drawnLittleOnes,
   type LitterPlace,
   litterLines,
   litterPokes,
@@ -64,8 +66,6 @@ export {
   type LittleSpot,
   perkLittle,
   settleLitter,
-  type ShownLittleOnes,
-  shownLittleOnes,
   stepLitter,
   stillLittle,
   syncLitter,
@@ -75,12 +75,8 @@ export {
   PLAN_LINES,
   type PlanLine,
   planLines,
-  planProgress,
-  type PlanProgress,
-  type PlanStepState,
   planWindow,
   type PlanWindow,
-  shownPlan,
 } from "./plan.ts";
 export { type MemberWork, roomMemberWork, showsTurnWork } from "./roomWork.ts";
 export {

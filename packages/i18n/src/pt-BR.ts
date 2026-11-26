@@ -447,6 +447,7 @@ const sentences = {
   "littleOnes.more.other": "e mais {count}",
   "littleOnes.workingFor": "Trabalhando há {duration}",
   "littleOnes.failed": "Não conseguiu terminar",
+  "littleOnes.unnamed": "Trabalhando em uma parte",
 
   "tool.backgroundTask.did": "Iniciou uma tarefa em segundo plano",
   "tool.backgroundTask.doing": "Iniciando uma tarefa em segundo plano",

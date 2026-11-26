@@ -195,8 +195,6 @@ export const lift = {
  * model takes them: every surface draws the same family from these.
  */
 export const litter = {
-  /** How many little ones a turn shows; the rest are counted, "+2 more". */
-  most: 4,
   /** A little one's size, as a share of the bot's beside the turn. */
   share: 0.75,
   /** What a little one in the air falls at, per second squared. */

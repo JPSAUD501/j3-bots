@@ -188,7 +188,7 @@ import { rosterIntents } from "../shell/rosterIntents";
 import { Shell } from "../shell/Shell";
 import { shellShortcuts } from "../shell/shortcuts";
 import { SAMPLE_NOW, ids, sampleTeam } from "./sample";
-import { longPlan, playedTurn, sampleLittleOnes, samplePlan } from "./sampleWork";
+import { longPlan, playedTurn, sampleLittleOnes, samplePlan, unnamedLittleOne } from "./sampleWork";
 import { sampleConnectorAppAccess } from "./sampleConnectorApps";
 import {
   connectorsHolder,
@@ -1704,6 +1704,7 @@ function PlayedOnce() {
       live={played.live ? { bot: scoutWorking(played.doing, working), lastEntry: null } : null}
       steps={null}
       onOpenChange={nothing}
+      onOpenImage={nothing}
     />
   );
 }
@@ -1716,6 +1717,7 @@ function PlanAndLittleOnesSection() {
       live={live ? { bot: scoutWorking("Comparing the three vendors"), lastEntry: null } : null}
       steps={null}
       onOpenChange={nothing}
+      onOpenImage={nothing}
     />
   );
   const split = (count: number): RosterItem => ({
@@ -1737,7 +1739,7 @@ function PlanAndLittleOnesSection() {
           {turn("fold-plan-long", { plan: longPlan, littleOnes: none })}
         </div>
       </Labeled>
-      <Labeled label="The little ones at work: three by the plan, four and more with no plan, one alone">
+      <Labeled label="The little ones at work: three by the plan, four and more with no plan, one alone, one the engine gave no words for">
         <div className="flex max-w-(--layout-text-column) flex-col gap-2">
           {turn("fold-little-three", {
             plan: samplePlan(1),
@@ -1748,6 +1750,7 @@ function PlanAndLittleOnesSection() {
             littleOnes: sampleLittleOnes(["working", "working", "done", "working", "working"], 2),
           })}
           {turn("fold-little-one", { plan: null, littleOnes: sampleLittleOnes(["working"]) })}
+          {turn("fold-little-unnamed", { plan: null, littleOnes: unnamedLittleOne })}
         </div>
       </Labeled>
       <Labeled label="Once the turn is over: the plan done, a plan a stopped turn left half way, and no line for a plan of one step">

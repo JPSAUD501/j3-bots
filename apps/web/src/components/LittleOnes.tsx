@@ -23,6 +23,7 @@ import {
 import { type AvatarShapeName, litter, resolveAvatar } from "@j3-bots/design-tokens";
 import * as DateTime from "effect/DateTime";
 import { useLittleRows } from "@j3-bots/client-runtime/react";
+import { littleOneText } from "@j3-bots/client-runtime/wording";
 import { type CSSProperties, type RefObject, useEffect, useRef } from "react";
 import { useSeconds } from "../app/clock";
 import { useI18n } from "../app/context";
@@ -347,6 +348,7 @@ function LittleRow({
   readonly failed: boolean;
   readonly onPerk: () => void;
 }) {
+  const i18n = useI18n();
   return (
     <div data-little={one.id} className="little-row">
       <Popover.Root>
@@ -370,7 +372,7 @@ function LittleRow({
               <AvatarParts shape={shape} little />
             </svg>
           </span>
-          <span className="little-words">{one.label}</span>
+          <span className="little-words">{littleOneText(one, i18n)}</span>
         </Popover.Trigger>
         <Popover.Portal>
           <Popover.Positioner side="top" align="start" sideOffset={4} className="z-50">
@@ -391,7 +393,7 @@ function LittleDetails({ one, failed }: { readonly one: LittleOne; readonly fail
   const worked = Math.max(0, now - DateTime.toEpochMillis(one.startedAt));
   return (
     <>
-      <span className="wrap-break-word">{one.label}</span>
+      <span className="wrap-break-word">{littleOneText(one, i18n)}</span>
       <span className="text-muted-foreground">
         {failed
           ? i18n.t("littleOnes.failed")

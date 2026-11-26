@@ -62,7 +62,7 @@ export function RoomWork({ room }: { readonly room: Room }) {
 function MemberWork({ bot, work }: { readonly bot: Bot; readonly work: TurnWork | null }) {
   const face = useRef<AvatarHandle>(null);
   const anchor = useRef<HTMLSpanElement>(null);
-  const plan = shownPlan(work?.plan ?? null);
+  const plan = shownPlan(work);
   return (
     <div className="arrive mt-3 max-w-(--layout-card-width) origin-bottom-left">
       <div className="flex min-h-8 items-center gap-2.5 text-xs">

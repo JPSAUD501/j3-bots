@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { at } from "../../test/fixtures.ts";
 import {
   createLitter,
+  drawnLittleOnes,
   type LitterPlace,
   litterPokes,
   type LitterSim,
@@ -13,7 +14,6 @@ import {
   littleFace,
   littleSpot,
   settleLitter,
-  shownLittleOnes,
   stepLitter,
   syncLitter,
 } from "./littleOnes.ts";
@@ -56,23 +56,16 @@ const spotOf = (sim: LitterSim, id: string) => {
   return found === undefined ? null : littleSpot(found);
 };
 
-describe("shownLittleOnes", () => {
-  it("shows the ones that work, four at most, and counts the rest", () => {
-    const shown = shownLittleOnes(
-      family([one("a"), one("b", "done"), one("c"), one("d"), one("e"), one("f")], 7),
-      true,
-    );
-    expect(shown.ones.map((each) => each.id)).toEqual(["a", "c", "d", "e"]);
-    expect(shown.more).toBe(3);
+describe("drawnLittleOnes", () => {
+  it("draws the ones the turn's work shows, and names the ones that failed, so one leaves grey", () => {
+    const drawn = drawnLittleOnes(family([one("a"), one("b", "failed"), one("c", "done")]), true);
+    expect(drawn.ones.map((each) => each.id)).toEqual(["a"]);
+    expect(drawn.failed).toEqual(["b"]);
   });
 
-  it("names the ones that failed, so one of them leaves grey", () => {
-    expect(shownLittleOnes(family([one("a"), one("b", "failed")]), true).failed).toEqual(["b"]);
-  });
-
-  it("shows none once the turn is over, whatever it left", () => {
-    expect(shownLittleOnes(family([one("a")]), false)).toEqual({ ones: [], more: 0, failed: [] });
-    expect(shownLittleOnes(null, true).ones).toEqual([]);
+  it("draws none once the turn is over, whatever it left", () => {
+    expect(drawnLittleOnes(family([one("a")]), false).ones).toEqual([]);
+    expect(drawnLittleOnes(null, true)).toEqual({ ones: [], more: 0, failed: [] });
   });
 });
 

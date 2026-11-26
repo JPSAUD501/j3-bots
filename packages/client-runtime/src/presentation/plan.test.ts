@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Plan, PlanStep } from "@j3-bots/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { liveLine, planLines, planProgress, planWindow, shownPlan } from "./plan.ts";
+import { liveLine, planLines, planWindow } from "./plan.ts";
 
 const step = (text: string, status: PlanStep["status"] = "pending"): PlanStep => ({ text, status });
 const plan = (first: PlanStep, ...rest: ReadonlyArray<PlanStep>): Plan => ({
@@ -16,23 +16,11 @@ const long = (total: number, done: number): Plan => {
   return plan(first ?? step("Step 1"), ...rest);
 };
 
-describe("shownPlan", () => {
-  it("does not show a plan of one step as a plan", () => {
-    expect(shownPlan(plan(step("Reply")))).toBeNull();
-    expect(shownPlan(null)).toBeNull();
-    expect(shownPlan(plan(step("Read"), step("Reply")))?.steps).toHaveLength(2);
-  });
-});
-
 describe("a plan's lines", () => {
   it("draw a step whose status this build does not know as one still to do", () => {
     expect(planLines(plan(step("Read", "done"), step("Reply", "unknown")))[1]?.state).toBe(
       "pending",
     );
-  });
-
-  it("count the steps done", () => {
-    expect(planProgress(long(5, 2))).toEqual({ done: 2, total: 5 });
   });
 
   it("carry the live mark on the first step being done now", () => {
