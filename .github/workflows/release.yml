@@ -117,6 +117,25 @@ jobs:
             echo "tag=v$version" >> "$GITHUB_OUTPUT"
           fi
 
+      # A release and its release candidates carry the notes committed on the
+      # tagged commit as docs/releases/v<x.y.z>.md: the server's build writes
+      # their "What's new" into the j3-app skill, and builds none without
+      # them. Read through the API, since this job runs nothing of the
+      # repository's. A nightly carries none.
+      - name: Check the release notes
+        if: inputs.nightly-version == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          notes="docs/releases/v${VERSION%%-*}.md"
+          if ! gh api "repos/$GH_REPO/contents/$notes?ref=$GITHUB_SHA" --silent; then
+            echo "::error::$notes is not on the tagged commit. Commit the release's notes there before tagging: docs/operations/releasing.md, Cutting a release."
+            exit 1
+          fi
+
       # The draft's notes give the certificate's digest, and a re-run keeps a
       # draft that exists, so the digest must be right before it is written.
       - name: Check the certificate's digest

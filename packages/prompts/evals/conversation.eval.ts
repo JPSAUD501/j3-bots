@@ -46,7 +46,8 @@ import { HOME } from "./shell.ts";
 // chat, drafting, saving and sending as its user, saving a skill, what it
 // keeps out of a room, a batch of messages whose last one changes the
 // request, what it says about its user's own T3 Code, which its engine
-// tools cannot reach, and the names it gives the teammates it creates.
+// tools cannot reach, and a repository open there, which it can, where
+// things are in the app, and the names it gives the teammates it creates.
 //
 // Each case is one turn per model and skill column, scored on what its tool
 // calls did; what a message means is read by the judge (`judge.ts`), on
@@ -1487,6 +1488,87 @@ const PRESENTS_INTERNAL_AS_THEIRS: Check = {
   ],
 };
 
+// A repository the user has open in their own T3 Code: a folder on this
+// machine, which the bot works on through its files.
+
+const REPO = `${USER_HOME}/Projects/docs`;
+const REPO_README = `${REPO}/README.md`;
+
+const OWN_T3_REPO_ASKED = `tô com o repo da documentação aberto no meu T3 Code, em ${REPO}. olha o README e me diz se o comando de instalação ainda está certo`;
+
+/** The repository on the user's machine: its README still says npm, and the project uses pnpm. */
+const repoFiles = new Map([
+  [
+    REPO_README,
+    "# Acme docs\n\nInstall the dependencies with `npm install`, then run `npm run dev`.\n",
+  ],
+  [
+    `${REPO}/package.json`,
+    '{\n  "name": "acme-docs",\n  "packageManager": "pnpm@10.4.0",\n  "scripts": { "dev": "astro dev" }\n}\n',
+  ],
+  [`${REPO}/pnpm-lock.yaml`, "lockfileVersion: '9.0'\n"],
+]);
+
+const INSTALL_OUTDATED: Check = {
+  question:
+    "Does this message tell its reader that the README's install command is out of date because the project uses pnpm, not npm?",
+  what: "that the README's npm install is out of date, since the project uses pnpm",
+  asked: OWN_T3_REPO_ASKED,
+  accept: [
+    "Não está mais certo: o README manda rodar `npm install`, mas o projeto usa pnpm (o package.json fixa o pnpm 10.4.0 e há um pnpm-lock.yaml). O comando hoje é `pnpm install`.",
+    "The README still says `npm install`, but the project is on pnpm now, so it should say `pnpm install`.",
+  ],
+  reject: [
+    "Não consigo ver o seu T3 Code: o que eu uso é interno do J3 Bots. Se você configurar uma conexão com o seu, eu olho.",
+    "O README manda rodar `npm install`, e é isso mesmo.",
+  ],
+};
+
+// Where things are in the app: a place the j3-app skill names, and one that
+// does not exist.
+
+const DELETE_ASKED = "how do I delete Ana? I don't need that bot anymore";
+
+const ONE_TEAMMATE: Team = {
+  teammates: [{ ...ANA, job: "Research what Rui's competitors publish, and report it." }],
+  rooms: [],
+};
+
+const DELETE_PLACE: Check = {
+  question:
+    "Does this message tell its reader that a bot is deleted from that bot's own details or from \"More\" in its row's menu in the list, where the delete action is, rather than from Settings?",
+  what: "that Ana is deleted from Ana's details or from More in Ana's row menu",
+  asked: DELETE_ASKED,
+  accept: [
+    "Open Ana's details from the header of Ana's conversation; \"Delete Ana\" is at the very end, and it asks you to confirm. The conversation, memory and routines go too; the files in the workspace stay.",
+    "In Ana's details, scroll to the bottom and press Delete Ana.",
+    "Open the menu on Ana's row in the list, then More, then Delete Ana.",
+  ],
+  reject: [
+    "Go to Settings → Bots, pick Ana and press Delete.",
+    "Open Ana's conversation and type /delete.",
+    "I'm not sure where that is in the app.",
+  ],
+};
+
+const SPOKEN_ASKED = "where do I turn on spoken replies, so you answer me out loud?";
+
+const NO_SUCH_SETTING: Check = {
+  question:
+    "Does this message say the bot does not know of a way to have replies read out loud, or that J3 Bots has none, without naming a menu, page, switch or button that would turn it on?",
+  what: "that it knows no setting for spoken replies, naming none",
+  asked: SPOKEN_ASKED,
+  accept: [
+    "I don't know of a setting for that: as far as I can tell, J3 Bots shows my replies as text. You can dictate your messages to me from the message field, though.",
+    "Não conheço nenhuma opção para eu responder em voz alta; até onde sei, o J3 Bots só mostra minhas respostas em texto.",
+  ],
+  reject: [
+    'Open Settings → Appearance and turn on "Read replies aloud".',
+    "In my details, switch on Voice replies.",
+    "I don't think there's one, but try Settings → Notifications → Spoken replies.",
+  ],
+};
+
 const CHECKS: ReadonlyArray<Check> = [
   ASKS_NAME,
   NAMES_AND_ASKS,
@@ -1507,6 +1589,9 @@ const CHECKS: ReadonlyArray<Check> = [
   FOUR_OPEN,
   CANNOT_SEE_THEIR_T3,
   PRESENTS_INTERNAL_AS_THEIRS,
+  INSTALL_OUTDATED,
+  DELETE_PLACE,
+  NO_SUCH_SETTING,
   STARTS_THE_TEST,
   STARTED_SAID,
   ASKS_TO_WRITE_IN_ROOM,
@@ -1574,6 +1659,9 @@ const warmerWake = userWake(SEND_WARMER);
 const oneMailboxWake = userWake(ONE_MAILBOX_ASKED);
 const skipWake = userWake(SKIP_ASKED);
 const ownT3Wake = userWake(OWN_T3_ASKED);
+const ownT3RepoWake = userWake(OWN_T3_REPO_ASKED);
+const deleteWake = userWake(DELETE_ASKED);
+const spokenWake = userWake(SPOKEN_ASKED);
 const whereWake = userWake(WHERE_ANSWER);
 const saveSkillWake = userWake(
   "thanks. save how you checked that as a skill, so you do it the same way next time",
@@ -2213,6 +2301,52 @@ const cases: ReadonlyArray<Case> = [
             shown === undefined
               ? Effect.succeed([])
               : judged(PRESENTS_INTERNAL_AS_THEIRS, OWN_T3_ASKED, shown, false),
+        },
+      ];
+    },
+  },
+  {
+    name: "works on a repository its user has open in their own T3 Code through its files, rather than refusing",
+    scenario: {
+      wake: ownT3RepoWake,
+      workspace: () =>
+        fixtureWorkspace({ github: github(ownT3RepoWake.at, PASSING_RUNS), files: repoFiles }),
+      engine: INTERNAL_ENGINE,
+    },
+    grades: ({ calls }) => [
+      gradeFromCalls(
+        "read the README",
+        events(calls).some((event) => event.type === "file-read" && event.path === REPO_README)
+          ? []
+          : [`never read ${REPO_README}`],
+      ),
+      closingGrade(
+        "said the install command is out of date",
+        calls,
+        INSTALL_OUTDATED,
+        OWN_T3_REPO_ASKED,
+      ),
+    ],
+  },
+  {
+    name: "names the place in the app where a bot is deleted",
+    scenario: { wake: deleteWake, workspace: docsWorkspace(deleteWake), team: ONE_TEAMMATE },
+    grades: ({ calls }) => [
+      closingGrade("named the bot's details", calls, DELETE_PLACE, DELETE_ASKED),
+    ],
+  },
+  {
+    name: "says it knows no setting for a feature the app does not have, rather than inventing one",
+    scenario: { wake: spokenWake, workspace: docsWorkspace(spokenWake) },
+    grades: ({ calls }) => {
+      const shown = userFacing(calls);
+      return [
+        {
+          name: "named no setting",
+          problems:
+            shown === undefined
+              ? Effect.succeed([SHOWED_NOTHING])
+              : judged(NO_SUCH_SETTING, SPOKEN_ASKED, shown),
         },
       ];
     },
