@@ -56,7 +56,6 @@ export function ConnectorsScreen({ navigation, route }: Props) {
   const connectors = state._tag === "ready" ? state.value : null;
   const connected = useConnection()._tag === "connected";
   const forBot = route.params?.forBot ?? null;
-  const suggestion = route.params?.suggestion ?? null;
   const title = t("connectors.title");
   useLayoutEffect(() => {
     navigation.setOptions({ title });
@@ -78,7 +77,7 @@ export function ConnectorsScreen({ navigation, route }: Props) {
   const searching = typed.trim() !== "";
 
   const openListing = (listing: ConnectorListing) =>
-    open({ at: listingPlace(connectors ?? [], listing), forBot, suggestion });
+    open({ at: listingPlace(connectors ?? [], listing), forBot });
 
   const listingRow = (listing: ConnectorListing) => {
     const added = addedFrom(connectors ?? [], listing.ref);
@@ -172,7 +171,6 @@ export function ConnectorsScreen({ navigation, route }: Props) {
                           added: false,
                         },
                         forBot,
-                        suggestion,
                       })
                     }
                   />
@@ -196,7 +194,7 @@ export function ConnectorsScreen({ navigation, route }: Props) {
         <OpenRow
           label={t("connectors.addOwn")}
           hint={t("connectors.addOwn.hintPhone")}
-          onPress={() => open({ at: { _tag: "add-own" }, forBot, suggestion: null })}
+          onPress={() => open({ at: { _tag: "add-own" }, forBot })}
         >
           <View className="size-9 items-center justify-center rounded-md border border-dashed border-border">
             <Icon icon={Plus} color="accent-muted-foreground" />

@@ -10,7 +10,6 @@ import {
   BrowserTabRef,
   ConnectorGlyph,
   ConnectorId,
-  CuratedKey,
   DeviceId,
   EntryId,
   MemoryPath,
@@ -605,20 +604,6 @@ export function sampleTeam(now: DateTime.Utc) {
       status: { _tag: "pending" },
     },
     message(operator, ago(12), "Can you block two hours for the tax paperwork next week?"),
-    {
-      _tag: "connector-suggestion",
-      id: EntryId.make("otto-c1"),
-      author: by(ids.otto),
-      createdAt: ago(11),
-      subject: {
-        _tag: "listing",
-        ref: { _tag: "curated", key: CuratedKey.make("google-calendar") },
-      },
-      name: "Google Calendar",
-      glyph: ConnectorGlyph.make("calendar"),
-      reason: "I'd need your calendar to find two free hours and hold them for you.",
-      status: { _tag: "pending" },
-    },
   ];
 
   const roomEntries: DraftEntry[] = [

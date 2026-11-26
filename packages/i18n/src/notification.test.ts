@@ -68,12 +68,12 @@ const wording: Record<Exclude<NotificationKind, "connector">, Said> & {
   connector: {
     "sign-in": {
       en: {
-        bare: "A service needs you to sign in again",
-        preview: "Ship it? needs you to sign in again",
+        bare: "A service needs you to sign in",
+        preview: "Ship it? needs you to sign in",
       },
       "pt-BR": {
-        bare: "Um serviço precisa que você entre de novo",
-        preview: "Ship it? precisa que você entre de novo",
+        bare: "Um serviço precisa que você entre",
+        preview: "Ship it? precisa que você entre",
       },
     },
   },

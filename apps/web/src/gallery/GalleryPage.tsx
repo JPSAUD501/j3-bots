@@ -98,10 +98,7 @@ import type { SignInRoute } from "@j3-bots/client-runtime/react";
 import { ClockProvider, OperatorTimeZone } from "../app/clock";
 import { I18nProvider, RosterProvider, useI18n } from "../app/context";
 import { ApprovalCard } from "../components/ApprovalCard";
-import {
-  ConnectorAuthCard,
-  ConnectorSuggestionCard,
-} from "../components/connectors/ConnectorCards";
+import { ConnectorAuthCard } from "../components/connectors/ConnectorCards";
 import { ConnectorsScreen } from "../components/connectors/ConnectorsDialog";
 import { AvatarPicker } from "../components/avatar/AvatarPicker";
 import { BotAvatar, RoomAvatar } from "../components/avatar/BotAvatar";
@@ -964,8 +961,6 @@ const timelineIntents: TimelineIntents = {
   openAttachment: nothing,
   openRoutine: nothing,
   openConversation: nothing,
-  connectSuggested: nothing,
-  dismissSuggestion: nothing,
   signInConnector: nothing,
   resendMessage: nothing,
   discardMessage: nothing,
@@ -1157,16 +1152,8 @@ function CardsSection() {
       >
         <LoginCards />
       </Labeled>
-      <Labeled label="Connector suggestion: a gallery entry, one the operator added, connected, not now; sign in again: pending, signed in, removed">
+      <Labeled label="Connector sign-in: pending, signed in, removed">
         <div className="flex flex-col gap-3">
-          {variants.connectorSuggestions.map((entry) => (
-            <ConnectorSuggestionCard
-              key={entry.id}
-              entry={entry}
-              onConnect={nothing}
-              onDismiss={nothing}
-            />
-          ))}
           {variants.connectorAuths.map((entry) => (
             <ConnectorAuthCard key={entry.id} entry={entry} onSignIn={nothing} />
           ))}
@@ -1984,7 +1971,7 @@ function ConnectorsVariant({
       <div className="flex h-full flex-col bg-background">
         <ConnectorsScreen
           titleId={titleId}
-          opening={{ at, forBot: ids.scout, suggestion: null }}
+          opening={{ at, forBot: ids.scout }}
           connectors={connectors}
           bots={Object.values(team.bots)}
           connected={connected}

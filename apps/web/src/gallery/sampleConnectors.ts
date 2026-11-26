@@ -195,6 +195,7 @@ const base = {
   signedInAt: null,
   review: null,
   createdAt: ago(60 * 24 * 12),
+  lastChange: null,
 } as const;
 
 /** The sample team's connectors: one of each status, and one with tool changes to review. */
@@ -320,6 +321,7 @@ const fromSource = (source: ConnectorSource, grant: Connector["grant"]): Connect
     grant,
     tools: listing?.tools ?? [],
     createdAt: SAMPLE_NOW,
+    lastChange: { by: { _tag: "operator" }, at: SAMPLE_NOW },
   };
 };
 

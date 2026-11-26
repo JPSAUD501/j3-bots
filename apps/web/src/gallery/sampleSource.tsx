@@ -23,7 +23,6 @@ import {
   providerGate,
   ROOM_MEMBERS,
   showsImage,
-  withBot,
   withoutMarks,
 } from "@j3-bots/client-runtime/presentation";
 import {
@@ -375,43 +374,10 @@ function sampleIntents({ get, update }: Store, vault: VaultHandle): ShellIntents
 
   return {
     openConnectors,
-    connectSuggested: (entry) => {
-      const { botId } = entry.author;
-      if (entry.subject._tag === "listing") {
-        openConnectors({
-          at: { _tag: "listing", ref: entry.subject.ref, name: entry.name, glyph: entry.glyph },
-          forBot: botId,
-          suggestion: entry.id,
-        });
-        return;
-      }
-      const { connectorId } = entry.subject;
-      inFlight(
-        entry.id,
-        (e) =>
-          e._tag === "connector-suggestion"
-            ? { ...e, status: { _tag: "connected", connectorId } }
-            : e,
-        () =>
-          update((s) => ({
-            ...s,
-            connectors: s.connectors.map((connector) =>
-              connector.id === connectorId
-                ? { ...connector, grant: withBot(connector.grant, botId, true, botsOf(s)) }
-                : connector,
-            ),
-          })),
-      );
-    },
-    dismissSuggestion: (entryId) =>
-      inFlight(entryId, (e) =>
-        e._tag === "connector-suggestion" ? { ...e, status: { _tag: "dismissed" } } : e,
-      ),
     signInConnector: (entry) =>
       openConnectors({
         at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
         forBot: entry.author.botId,
-        suggestion: null,
       }),
     setDraftText: (target, text, mentions, order) =>
       changeDraft(target, (draft) => {

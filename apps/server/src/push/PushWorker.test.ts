@@ -508,31 +508,29 @@ it.effect(
     }).pipe(Effect.provide(Layer.provideMerge(TestDomain.layer, recordLogs))),
 );
 
-it.effect(
-  "pushes a connector's sign-in card on the connectors channel, asking to sign in again",
-  () =>
-    Effect.gen(function* () {
-      const entries = yield* Entries;
-      const scout = yield* createBot("Scout");
-      yield* pushDevice("Phone");
-      const card = yield* entries.append({
-        target: { _tag: "conversation", botId: scout.id },
-        entry: {
-          _tag: "connector-auth",
-          author: { _tag: "bot", botId: scout.id },
-          connectorId: ConnectorId.make("conn_0123456789abcdef"),
-          name: "Notion",
-          glyph: null,
-          status: "pending",
-        },
-      });
-      yield* deliverPending;
-      const sent = yield* sends;
-      assert.deepStrictEqual(
-        sent.map((message) => [message.kind, message.data.entryId, message.title, message.body]),
-        [["connector", card.id, "Scout", "A service needs you to sign in again"]],
-      );
-    }).pipe(Effect.provide(TestDomain.layer)),
+it.effect("pushes a connector's sign-in card on the connectors channel, asking to sign in", () =>
+  Effect.gen(function* () {
+    const entries = yield* Entries;
+    const scout = yield* createBot("Scout");
+    yield* pushDevice("Phone");
+    const card = yield* entries.append({
+      target: { _tag: "conversation", botId: scout.id },
+      entry: {
+        _tag: "connector-auth",
+        author: { _tag: "bot", botId: scout.id },
+        connectorId: ConnectorId.make("conn_0123456789abcdef"),
+        name: "Notion",
+        glyph: null,
+        status: "pending",
+      },
+    });
+    yield* deliverPending;
+    const sent = yield* sends;
+    assert.deepStrictEqual(
+      sent.map((message) => [message.kind, message.data.entryId, message.title, message.body]),
+      [["connector", card.id, "Scout", "A service needs you to sign in"]],
+    );
+  }).pipe(Effect.provide(TestDomain.layer)),
 );
 
 it.effect("gives a delivery up once its sends run out", () =>

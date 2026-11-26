@@ -44,10 +44,10 @@ export function useConnectorsIntents(): ConnectorsIntents {
 /** Opens the connectors screens where `opening` says, over the screen shown now. */
 export function useOpenConnectors(): (opening: ConnectorsOpening) => void {
   const navigation = useNavigation<Navigation>();
-  return ({ at, forBot, suggestion }) => {
+  return ({ at, forBot }) => {
     switch (at._tag) {
       case "home":
-        navigation.push("connectors", { forBot, suggestion });
+        navigation.push("connectors", { forBot });
         return;
       case "listing":
         navigation.push("connectorListing", {
@@ -55,7 +55,6 @@ export function useOpenConnectors(): (opening: ConnectorsOpening) => void {
           name: at.name,
           glyph: at.glyph,
           forBot,
-          suggestion,
         });
         return;
       case "connector":

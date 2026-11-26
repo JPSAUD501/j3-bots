@@ -32,8 +32,6 @@ const intents: TimelineIntents = {
   openAttachment: nothing,
   openRoutine: nothing,
   openConversation: nothing,
-  connectSuggested: nothing,
-  dismissSuggestion: nothing,
   signInConnector: nothing,
 };
 

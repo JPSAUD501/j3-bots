@@ -730,7 +730,6 @@ export function Shell({ data, intents, browser, navigation, keyboard = true }: S
                       ? { _tag: "home" }
                       : { _tag: "connector", connectorId, signIn: false, added: false },
                   forBot: bot.id,
-                  suggestion: null,
                 }),
               openPair: (botIds) => navigation.openPair(botIds, null),
               ...(editProfile ? { editProfile: () => editProfile(bot.id) } : {}),

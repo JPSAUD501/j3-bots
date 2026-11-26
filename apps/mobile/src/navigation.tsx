@@ -75,8 +75,7 @@ import { FlightHost } from "./onboarding/handoff.tsx";
  * The vault's saved logins open from Settings, then one login, then its form.
  * The connectors' screens open from Settings, a bot's details and a card:
  * their list and the gallery, a gallery entry, one connector, and adding one
- * of the operator's own. `forBot` is the bot a new connector is for at first,
- * and `suggestion` the card that suggested it.
+ * of the operator's own. `forBot` is the bot a new connector is for at first.
  */
 export type Screens = {
   roster: { readonly item?: RosterItemKey | undefined } | undefined;
@@ -108,13 +107,12 @@ export type Screens = {
   credential: { readonly id: CredentialId };
   /** A new login with `id` null; otherwise the one to change. */
   credentialForm: { readonly id: CredentialId | null };
-  connectors: { readonly forBot: BotId | null; readonly suggestion: EntryId | null } | undefined;
+  connectors: { readonly forBot: BotId | null } | undefined;
   connectorListing: {
     readonly ref: ListingRef;
     readonly name: string;
     readonly glyph: ConnectorGlyph | null;
     readonly forBot: BotId | null;
-    readonly suggestion: EntryId | null;
   };
   connector: {
     readonly connectorId: ConnectorId;

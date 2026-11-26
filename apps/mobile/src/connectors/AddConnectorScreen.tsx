@@ -58,7 +58,7 @@ export function AddConnectorScreen({ navigation, route }: Props) {
   const send = (source: Extract<ConnectorSource, { readonly _tag: "remote" }>) => {
     setSubmitting(true);
     setFailure(null);
-    void intents.add({ source, grant, suggestion: null }).then((result) => {
+    void intents.add({ source, grant }).then((result) => {
       setSubmitting(false);
       if (result._tag === "done") {
         // The server keeps them now: none stays in the form.

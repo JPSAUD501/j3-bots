@@ -83,7 +83,6 @@ import {
   type RoomFormMode,
   roomStopFailed,
   showsImage,
-  suggestionConnect,
   templateFileName,
   type TemplateRead,
 } from "@j3-bots/client-runtime/presentation";
@@ -1486,21 +1485,10 @@ function LiveShell({
         search: (prev) => ({ ...prev, details: true, routine: routineId }),
       }),
     openConversation: (botId) => void goToBot(botId),
-    connectSuggested: (entry) => {
-      const { letIn, open } = suggestionConnect(entry, connectors ?? [], bots);
-      if (letIn !== null) {
-        void j3.connectors.setBots(letIn.connectorId, letIn.grant).then((result) => {
-          if (result._tag === "failed") say(t("connectorCard.failed"));
-        });
-      }
-      if (open !== null) openConnectors(open);
-    },
-    dismissSuggestion: (entryId) => void j3.answerCard(entryId, { _tag: "dismiss" }),
     signInConnector: (entry) =>
       openConnectors({
         at: { _tag: "connector", connectorId: entry.connectorId, signIn: true, added: false },
         forBot: entry.author.botId,
-        suggestion: null,
       }),
     openConnectors,
     setRoutineEnabled: (routineId, enabled) => void j3.setRoutineEnabled(routineId, enabled),

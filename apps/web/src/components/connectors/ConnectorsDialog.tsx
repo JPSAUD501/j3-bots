@@ -158,7 +158,6 @@ export function ConnectorsScreen({ titleId, opening, onClose, ...props }: Connec
             glyph={place.glyph}
             bots={props.bots}
             forBot={opening.forBot}
-            suggestion={opening.suggestion}
             connected={props.connected}
             intents={props.intents}
             onAdded={(connector) => replace(addedPlace(connector))}

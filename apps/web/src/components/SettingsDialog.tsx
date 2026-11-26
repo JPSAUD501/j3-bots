@@ -220,9 +220,7 @@ export function SettingsButton({ data, intents }: SettingsButtonProps) {
               />
               <ConnectorsSection
                 connectors={data.connectors}
-                onOpen={() =>
-                  intents.openConnectors({ at: { _tag: "home" }, forBot: null, suggestion: null })
-                }
+                onOpen={() => intents.openConnectors({ at: { _tag: "home" }, forBot: null })}
               />
               <UsageSection
                 engine={data.engine}
