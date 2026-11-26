@@ -23,7 +23,7 @@ import { ToolLists } from "./ToolLists.ts";
 
 const domain = TestDomain.layer.pipe(Layer.provide(reachFakes));
 
-/** Each test sets up a vault, whose key takes a while to derive, and talks to a server over a socket. */
+/** Each test talks to a fake connector's server over a socket. */
 const SLOW = 20_000;
 
 /** A connector whose server lists `search`, as `notion__search` to bots. */

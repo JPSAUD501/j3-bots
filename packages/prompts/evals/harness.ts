@@ -447,7 +447,7 @@ export interface Scenario {
   /**
    * The bot's browser, which its instructions then mention, and the saved
    * logins it may fill (`browser.ts`); none offers no browser tool, and
-   * `list_credentials` and `fill_credential` are then not available.
+   * `list_secrets` and `fill_credential` are then not available.
    */
   readonly browser?: BrowserSetup;
   /** The operator's connectors; none by default. */

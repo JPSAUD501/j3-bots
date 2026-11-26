@@ -4,8 +4,8 @@ import type { BrowserHelpEntry, NoticeEntry } from "@j3-bots/contracts";
 import { ApprovalCard } from "./ApprovalCard.tsx";
 import { BrowserHelpCard } from "./BrowserHelpCard.tsx";
 import { ConnectorAuthCard } from "./ConnectorCards.tsx";
-import { CredentialRequestCard } from "./CredentialRequestCard.tsx";
 import { QuestionCard } from "./QuestionCard.tsx";
+import { SecretAskCard } from "./SecretAskCard.tsx";
 import { SecretRequestCard } from "./SecretRequestCard.tsx";
 
 /** The entries that are cards: what the bot asks of the operator. Notices have a line of their own. */
@@ -29,8 +29,8 @@ export function Card({
       return <SecretRequestCard entry={entry} />;
     case "browser-help":
       return <BrowserHelpCard entry={entry} onOpen={() => onOpenBrowser(entry)} />;
-    case "credential-request":
-      return <CredentialRequestCard entry={entry} />;
+    case "secret-ask":
+      return <SecretAskCard entry={entry} />;
     case "connector-auth":
       return <ConnectorAuthCard entry={entry} />;
   }

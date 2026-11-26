@@ -15,9 +15,9 @@ import type {
   SettingsChange,
   SettingsSaves,
   SignInView,
+  SecretsView,
   UpdatePromptEntry,
   UpdateResult,
-  VaultView,
 } from "@j3-bots/client-runtime";
 import type { ConnectorsOpening, SettingsPage } from "@j3-bots/client-runtime/presentation";
 import type {
@@ -63,7 +63,7 @@ import type { BotDetailsIntents } from "../components/DetailsPanel";
 import type { PairView } from "../components/PairConversation";
 import type { ProviderSetupIntents } from "../components/ProviderSetup";
 import type { TimelineIntents } from "../components/Timeline";
-import type { VaultIntents } from "../components/vault/VaultForms";
+import type { SecretsIntents } from "../components/secrets/parts";
 
 /** One conversation or room as the shell shows it. */
 export interface ConversationView {
@@ -139,8 +139,8 @@ export interface ShellData {
    * and its first page on a wide one.
    */
   readonly settingsPage: SettingsPage | null;
-  /** The server's vault: its state, and its saved logins while it is unlocked. */
-  readonly vault: VaultView;
+  /** The operator's secrets: their state, and the saved ones while they can be used. */
+  readonly secrets: SecretsView;
   /** Every paired device; null until they load. */
   readonly devices: ReadonlyArray<Device> | null;
   /** The turns bots spent recently, read while Settings is open. */
@@ -251,8 +251,6 @@ export interface ShellIntents extends TimelineIntents {
   readonly openMemoryFile: (botId: BotId, path: MemoryPath) => void;
   /** Gives the bot the browser, or takes it away; the shell says so if it was not saved. */
   readonly setBrowser: (bot: Bot, enabled: boolean) => void;
-  /** Lets the bot have its allowed logins filled, or stops it; the shell says so if it was not saved. */
-  readonly setVault: (bot: Bot, enabled: boolean) => void;
   /** `name` is the bot's as the operator asked, for what the shell says once it is done. */
   readonly freshStart: (botId: BotId, name: string) => void;
   readonly deleteBot: (botId: BotId) => void;
@@ -275,8 +273,8 @@ export interface ShellIntents extends TimelineIntents {
   readonly signOutBrowser: () => Promise<boolean>;
   /** Checks a provider again, updates its harness, installs J3 Bots' own copy, or cancels that (`ProviderActions`). */
   readonly providerActions: ProviderActions;
-  /** Sets up, unlocks, locks and changes the vault and its logins. */
-  readonly vault: VaultIntents;
+  /** Adds, changes, shows and deletes secrets, and opens a vault from before them. */
+  readonly secrets: SecretsIntents;
   /** Reads the list of devices again, as when Settings opens. */
   readonly refreshDevices: () => void;
   /** Reads more of the recent turns, when `recentTurns` can take more. */

@@ -81,11 +81,17 @@ import { BotStore } from "../bots/BotStore.ts";
 import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
 import { keyedLock } from "../turns/keyedLock.ts";
-import type { ConnectorSecret, NamedSecret } from "../vault/ConnectorSecret.ts";
-import { Vault } from "../vault/Vault.ts";
+import type { ConnectorSecret, NamedSecret } from "../secrets/ConnectorSecret.ts";
+import { Secrets } from "../secrets/Secrets.ts";
 import { ConnectorSignIns, type SignInState } from "./auth.ts";
 import { ConnectorStore, type PendingRemoval, type StoredConnector } from "./ConnectorStore.ts";
-import { addressOf, commandOf, credentialsOf, hiddenOf, vaultIdOf } from "./credentials.ts";
+import {
+  addressOf,
+  commandOf,
+  credentialsOf,
+  hiddenOf,
+  connectorSecretIdOf,
+} from "./credentials.ts";
 import { headerFieldKeys, refill, resolve } from "./sources/form.ts";
 import { ConnectorSources } from "./sources/Sources.ts";
 import { connectorOf, NOTHING_SEEN, offeredOf, type Seen, statusOfConnector } from "./view.ts";
@@ -307,8 +313,8 @@ const unavailableOf = (failure: Exclude<ConnectorFailure, Withdrawn>): Connector
       return "needs-sign-in";
     case "AuthFailing":
       return failure.reason === "secret-unusable" ? "needs-sign-in" : "unreachable";
-    case "VaultLocked":
-      return "vault-locked";
+    case "SecretsUnavailable":
+      return "secrets-unavailable";
     case "TimedOut":
       return "timed-out";
     case "ResponseTooLarge":
@@ -363,8 +369,8 @@ const sameSignIn = (a: SignInState, b: SignInState): boolean => {
       return b._tag === "needs-sign-in" && a.reason === b.reason;
     case "failing":
       return b._tag === "failing" && a.reason === b.reason;
-    case "vault-locked":
-      return b._tag === "vault-locked";
+    case "secrets-unavailable":
+      return b._tag === "secrets-unavailable";
   }
 };
 
@@ -378,13 +384,13 @@ interface Prepared {
   readonly glyph: ConnectorGlyph | null;
   readonly publisher: ConnectorPublisher;
   readonly listing: ListingRef | null;
-  /** Sealed in the vault: a key can be part of it. */
+  /** Sealed in the secrets: a key can be part of it. */
   readonly url: Redacted.Redacted<string>;
   readonly transport: ConnectorTransport;
   readonly headers: ReadonlyArray<SecretHeader>;
   /** The fields asked for again when the service refuses what was sent, for a connector that signs in with `fields`. */
   readonly fields: ReadonlyArray<ConnectorField>;
-  /** A gallery entry's secret values, by field key, as the vault keeps them. */
+  /** A gallery entry's secret values, by field key, as the secrets keep them. */
   readonly formSecrets: ReadonlyArray<NamedSecret>;
   readonly oauthClient: OAuthClientInput | null;
   readonly privateNetwork: boolean;
@@ -397,7 +403,7 @@ export const layer = Layer.effect(
   Connectors,
   Effect.gen(function* () {
     const store = yield* ConnectorStore;
-    const vault = yield* Vault;
+    const secrets = yield* Secrets;
     const signIns = yield* ConnectorSignIns;
     const bots = yield* BotStore;
     const workspaces = yield* Workspaces;
@@ -413,7 +419,7 @@ export const layer = Layer.effect(
     });
 
     const seenRef = yield* Ref.make<ReadonlyMap<ConnectorId, Seen>>(new Map());
-    const vaultLocked = yield* Ref.make(true);
+    const secretsUnavailable = yield* Ref.make(true);
     const signInStates = yield* Ref.make<ReadonlyMap<ConnectorId, SignInState>>(new Map());
     const changes = yield* PubSub.unbounded<Change>();
     const toolChanges = yield* PubSub.unbounded<BotId>();
@@ -433,7 +439,7 @@ export const layer = Layer.effect(
       return connectorOf(
         connector,
         yield* seenOf(connector.id),
-        yield* Ref.get(vaultLocked),
+        yield* Ref.get(secretsUnavailable),
         Option.fromNullishOr(states.get(connector.id)),
       );
     });
@@ -470,7 +476,7 @@ export const layer = Layer.effect(
     });
 
     /**
-     * One operator's change of a connector at a time: each reads its vault
+     * One operator's change of a connector at a time: each reads its connector
      * record and writes it back whole, so two at once would lose one.
      */
     const perConnector = keyedLock();
@@ -561,13 +567,13 @@ export const layer = Layer.effect(
         if (Option.isNone(id) || Option.isNone(holder)) return yield* new ConnectorGone();
         const connector = yield* store.get(id.value);
         if (Option.isNone(connector)) return yield* new ConnectorGone();
-        const url = yield* addressOf(vault, connector.value);
+        const url = yield* addressOf(secrets, connector.value);
         const ready = yield* Deferred.make<McpSession, ConnectorGone>();
         const session = yield* openSession({
           url,
           policy: policyOf(connector.value.privateNetwork),
           credentials: credentialsOf(
-            vault,
+            secrets,
             signIns,
             connector.value,
             allowed(id.value, holder.value),
@@ -601,7 +607,7 @@ export const layer = Layer.effect(
       if (Option.isNone(connector) || connector.value.transport._tag !== "command") {
         return yield* new Withdrawn();
       }
-      const command = yield* commandOf(vault, connector.value);
+      const command = yield* commandOf(secrets, connector.value);
       const ready = yield* Deferred.make<McpSession, ConnectorGone>();
       const started = yield* openCommandSession({
         platform: commandReach.platform,
@@ -759,20 +765,15 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Finishes a removal: revokes the sign-in, deletes the vault record, and
-     * forgets the removal. While the vault is locked it waits for the next
-     * unlock; a vault never set up holds no record.
+     * Finishes a removal: revokes the sign-in, deletes the connector's
+     * secret, and forgets the removal. While the secrets cannot be read it
+     * waits until they can.
      */
     const finishRemoval = Effect.fn("Connectors.finishRemoval")(function* (
       removal: PendingRemoval,
     ) {
       if (removal.revoke) yield* signIns.disconnect(removal.id);
-      yield* vault.connectorSecrets.remove(vaultIdOf(removal.id)).pipe(
-        Effect.catchIf(
-          (conflict) => conflict.reason === "vault-not-set-up",
-          () => Effect.void,
-        ),
-      );
+      yield* secrets.connectorSecrets.remove(connectorSecretIdOf(removal.id));
       yield* store.removalDone(removal.id);
     });
 
@@ -782,17 +783,18 @@ export const layer = Layer.effect(
       }
     });
 
-    // The vault's state: every connector keeps its address there, so is "vault locked" while it is, and is listed once it opens.
-    yield* Stream.runForEach(vault.status, (status) =>
+    // The secrets' state: every connector keeps its address there, so is
+    // "secrets unavailable" while they cannot be read, and is listed once they can.
+    yield* Stream.runForEach(secrets.status, (status) =>
       Effect.gen(function* () {
-        const locked = status.state !== "unlocked";
-        if ((yield* Ref.getAndSet(vaultLocked, locked)) === locked) return;
-        if (!locked) yield* finishRemovals();
+        const unavailable = status.state !== "ready";
+        if ((yield* Ref.getAndSet(secretsUnavailable, unavailable)) === unavailable) return;
+        if (!unavailable) yield* finishRemovals();
         for (const connector of yield* store.all) {
           // A session opened, or failing to open, under the other state is not used again.
           yield* closeSessions(connector.id);
           yield* touch(connector.id);
-          if (!locked) yield* ensureListed(connector.id);
+          if (!unavailable) yield* ensureListed(connector.id);
         }
       }),
     ).pipe(Effect.forkScoped);
@@ -837,14 +839,14 @@ export const layer = Layer.effect(
       const granted = yield* grantedTo(botId);
       for (const connector of granted) yield* ensureListed(connector.id);
       const seen = yield* Ref.get(seenRef);
-      const locked = yield* Ref.get(vaultLocked);
+      const unavailable = yield* Ref.get(secretsUnavailable);
       const states = yield* Ref.get(signInStates);
       const connected = granted.filter(
         (connector) =>
           statusOfConnector(
             connector,
             seen.get(connector.id) ?? NOTHING_SEEN,
-            locked,
+            unavailable,
             Option.fromNullishOr(states.get(connector.id)),
           )._tag === "connected",
       );
@@ -1150,8 +1152,8 @@ export const layer = Layer.effect(
       const refused = Result.isFailure(listing) && listing.failure._tag === "NeedsSignIn";
       const signIn = prepared.signIn(listing);
       // A retry of the same add seals the same values under the same id.
-      yield* vault.connectorSecrets.put({
-        connectorId: vaultIdOf(input.id),
+      yield* secrets.connectorSecrets.put({
+        connectorId: connectorSecretIdOf(input.id),
         address: prepared.url,
         oauth: null,
         headers: headers.map((header) => ({ name: header.name, value: header.value })),
@@ -1183,7 +1185,7 @@ export const layer = Layer.effect(
         .pipe(
           // A connector not stored leaves no sealed record behind.
           Effect.onError(() =>
-            vault.connectorSecrets.remove(vaultIdOf(input.id)).pipe(Effect.ignore),
+            secrets.connectorSecrets.remove(connectorSecretIdOf(input.id)).pipe(Effect.ignore),
           ),
         );
       // The same add, made at once from elsewhere: that one is the connector.
@@ -1211,7 +1213,7 @@ export const layer = Layer.effect(
 
     /**
      * Adds a connector: one add or change of an id at a time, so two adds
-     * with one id leave the row and the vault record of the same one.
+     * with one id leave the row and the connector secret of the same one.
      */
     const add = (input: Parameters<typeof addOnce>[0]) =>
       perConnector.run(input.id)(addOnce(input));
@@ -1230,8 +1232,8 @@ export const layer = Layer.effect(
       const { source } = input;
       yield* checkCommand(source);
       // A retry of the same add seals the same values under the same id.
-      yield* vault.connectorSecrets.put({
-        connectorId: vaultIdOf(input.id),
+      yield* secrets.connectorSecrets.put({
+        connectorId: connectorSecretIdOf(input.id),
         address: null,
         oauth: null,
         headers: [],
@@ -1261,7 +1263,7 @@ export const layer = Layer.effect(
         })
         .pipe(
           Effect.onError(() =>
-            vault.connectorSecrets.remove(vaultIdOf(input.id)).pipe(Effect.ignore),
+            secrets.connectorSecrets.remove(connectorSecretIdOf(input.id)).pipe(Effect.ignore),
           ),
         );
       if (Option.isNone(inserted)) return yield* render(yield* require(input.id));
@@ -1273,7 +1275,7 @@ export const layer = Layer.effect(
 
     /**
      * What follows a connector's row out of the server: its sessions, what was
-     * seen of it, then its sign-in and secrets, now or once the vault opens.
+     * seen of it, then its sign-in and secrets, now or once the secrets can be read.
      */
     const forget = Effect.fn("Connectors.forget")(function* (id: ConnectorId) {
       yield* closeSessions(id);
@@ -1315,7 +1317,7 @@ export const layer = Layer.effect(
     });
 
     /**
-     * A remote connector's vault record with `values` given again: the
+     * A remote connector's secret with `values` given again: the
      * headers they render and the form's secrets they replace.
      */
     const withRemoteValues = Effect.fn("Connectors.withRemoteValues")(function* (
@@ -1378,7 +1380,7 @@ export const layer = Layer.effect(
       if (connector.signIn !== "fields" || !fits) {
         return yield* new Invalid({ reason: "connector-fields" });
       }
-      const secret = yield* vault.connectorSecrets.get(vaultIdOf(connector.id));
+      const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));
       if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
       // A remote connector's fields are its headers, a command's its environment.
       const given = valuesOf(values);
@@ -1394,7 +1396,7 @@ export const layer = Layer.effect(
       // From the write on, nothing interrupts it: the process the old values started stops with it.
       yield* Effect.uninterruptible(
         Effect.gen(function* () {
-          yield* vault.connectorSecrets.put(next);
+          yield* secrets.connectorSecrets.put(next);
           yield* store.update(connector.id, { signedInAt: now }, now);
           yield* updateSeen(connector.id, (seen) => ({ ...seen, refused: false }));
           // Sessions signed with the old values close; the next call opens one with the new.
@@ -1419,14 +1421,14 @@ export const layer = Layer.effect(
     ) {
       if (!isCommand(connector)) return yield* new Invalid({ reason: "connector-unsupported" });
       yield* checkCommand(command);
-      const secret = yield* vault.connectorSecrets.get(vaultIdOf(connector.id));
+      const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));
       if (Option.isNone(secret)) return yield* new NotFound({ resource: "connector" });
       const fields = envFieldsOf(command);
       // The whole command line is replaced in one write, so no start mixes the old one with the
       // new; from the write on, nothing interrupts it, so the old process stops with it.
       yield* Effect.uninterruptible(
         Effect.andThen(
-          vault.connectorSecrets.put({
+          secrets.connectorSecrets.put({
             ...secret.value,
             command: { program: command.command, args: command.args },
             env: command.env.map((variable) => ({ name: variable.name, value: variable.value })),

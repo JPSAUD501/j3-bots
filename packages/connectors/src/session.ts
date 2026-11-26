@@ -30,7 +30,7 @@ import {
   TimedOut,
   Unreachable,
   UrlRefused,
-  VaultLocked,
+  SecretsUnavailable,
   Withdrawn,
 } from "./errors.ts";
 import {
@@ -266,7 +266,7 @@ const signingFetch =
 const isConnectorFailure = Schema.is(
   Schema.Union([
     NeedsSignIn,
-    VaultLocked,
+    SecretsUnavailable,
     AuthFailing,
     UrlRefused,
     Unreachable,

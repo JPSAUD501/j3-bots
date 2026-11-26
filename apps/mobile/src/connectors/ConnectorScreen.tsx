@@ -143,11 +143,15 @@ export function ConnectorScreen({ navigation, route }: Props) {
           {t("signIn.done")}
         </Text>
       )}
-      <StatusBlock connector={connector} onReconnect={reconnect} onUnlock={intents.openVault} />
+      <StatusBlock
+        connector={connector}
+        onReconnect={reconnect}
+        onOpenSecrets={intents.openSecrets}
+      />
       <SignInPanel
         signIn={signIn}
         onRetry={() => signIn.start(connector.id)}
-        onUnlock={intents.openVault}
+        onOpenSecrets={intents.openSecrets}
       />
       {replacing && (
         <ReplaceFields connector={connector} intents={intents} onDone={() => setReplacing(false)} />
@@ -223,17 +227,17 @@ function Panel({ children }: { readonly children: ReactNode }) {
  * A connector's sign-in as it goes: the page it opened over the app, and a
  * way to open it again, since the operator may close it; while what came
  * back is on its way to the server, that it is. A sign-in that ended badly
- * says why, and starts again from `onRetry`; one the vault stops, from
- * `onUnlock`.
+ * says why, and starts again from `onRetry`; one the secrets stop, opens
+ * them from `onOpenSecrets`.
  */
 function SignInPanel({
   signIn,
   onRetry,
-  onUnlock,
+  onOpenSecrets,
 }: {
   readonly signIn: ConnectorSignIn;
   readonly onRetry: () => void;
-  readonly onUnlock: () => void;
+  readonly onOpenSecrets: () => void;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
@@ -252,13 +256,12 @@ function SignInPanel({
         </Panel>
       );
     case "failed": {
-      const vault = phase.problem === "vault-locked" || phase.problem === "vault-not-set-up";
       return (
         <Panel>
           <Problem>{signInProblemText(phase.problem, ctx.i18n)}</Problem>
           <View className="flex-row flex-wrap gap-2">
-            {vault ? (
-              <Button variant="primary" label={t("connect.openVault")} onPress={onUnlock} />
+            {phase.problem === "secrets-unavailable" ? (
+              <Button variant="primary" label={t("connect.openSecrets")} onPress={onOpenSecrets} />
             ) : (
               phase.problem !== "not-paired" && (
                 <Button variant="primary" label={t("signIn.retry")} onPress={onRetry} />

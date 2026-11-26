@@ -17,7 +17,7 @@ const TurnToolName = Schema.Literals([
   "read_room",
   "set_routine",
   "set_operator_name",
-  "request_credential",
+  "ask_for_secret",
   "start_room",
 ]);
 type TurnToolName = typeof TurnToolName.Type;
@@ -110,7 +110,7 @@ export interface ClaimedCall {
 
 /**
  * A `fill_credential` call, claimed for its turn before the fill runs
- * (`vault/Fill.ts`).
+ * (`secrets/Fill.ts`).
  */
 export interface FillCall {
   readonly tool: "fill_credential";
@@ -139,8 +139,8 @@ export type FillClaim =
  * the bot's browser, `message_bot` wakes or holds for a teammate,
  * `set_routine` changes a routine on the bot's behalf, and
  * `read_room` reads a room the bot is in, `set_operator_name` saves what the
- * operator asked to be called, only in a turn they spoke in, `request_credential` shows a save-login card in the
- * bot's conversation, and
+ * operator asked to be called, only in a turn they spoke in, `ask_for_secret`
+ * shows a card asking for a secret in the bot's conversation, and
  * `create_bot` and `start_room` build a team in a room, only in a turn the
  * operator spoke in. Each call is first
  * matched to the engine's record of it in the session's admitted turn

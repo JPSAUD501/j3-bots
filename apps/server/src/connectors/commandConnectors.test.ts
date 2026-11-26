@@ -29,12 +29,11 @@ import * as References from "effect/References";
 import * as Stream from "effect/Stream";
 import { Bots } from "../bots/Bots.ts";
 import * as TestDomain from "../testing/domain.ts";
-import { Vault } from "../vault/Vault.ts";
+import { Secrets } from "../secrets/Secrets.ts";
 import { CommandReach, Connectors } from "./Connectors.ts";
-import { vaultIdOf } from "./credentials.ts";
+import { connectorSecretIdOf } from "./credentials.ts";
 
 const ID = ConnectorId.make("conn_c0mmand0123456789");
-const PASSWORD = Redacted.make("correct horse battery");
 /** An argument that carries a key, as some servers take one. */
 const ARG_SECRET = "--token=arg-secret-77665544";
 
@@ -71,8 +70,6 @@ const command = (args: ReadonlyArray<string>, secret = OPERATOR_SECRET): Command
 
 /** Two bots, and the fixture server added as a command connector only the first may use. */
 const setUp = Effect.gen(function* () {
-  const vault = yield* Vault;
-  yield* vault.setup(PASSWORD);
   const bots = yield* Bots;
   const ana = yield* bots.create({ commandId: CommandId.make("ana"), draft: { name: "Ana" } });
   const bea = yield* bots.create({ commandId: CommandId.make("bea"), draft: { name: "Bea" } });
@@ -152,8 +149,7 @@ describe("Connectors started by command", () => {
     "refuses a package launcher with no exact version, and a variable named twice",
     () =>
       Effect.gen(function* () {
-        const vault = yield* Vault;
-        yield* vault.setup(PASSWORD);
+        const secrets = yield* Secrets;
         const connectors = yield* Connectors;
         const add = (source: CommandLine) =>
           Effect.flip(
@@ -196,7 +192,7 @@ describe("Connectors started by command", () => {
           "connector-fields",
         );
         // Nothing of a refused command was kept.
-        assert.isTrue(Option.isNone(yield* vault.connectorSecrets.get(vaultIdOf(ID))));
+        assert.isTrue(Option.isNone(yield* secrets.connectorSecrets.get(connectorSecretIdOf(ID))));
       }).pipe(Effect.scoped, Effect.provide(domain)),
     SLOW,
   );

@@ -23,7 +23,6 @@ import {
   CpuIcon,
   FileTextIcon,
   GlobeIcon,
-  KeyRoundIcon,
   NotebookTextIcon,
   PencilIcon,
   RotateCcwIcon,
@@ -238,8 +237,6 @@ export interface BotDetailsIntents {
   readonly openMemoryFile: (path: MemoryPath) => void;
   /** Gives the bot the browser, or takes it away, from its next turn. */
   readonly setBrowser: (enabled: boolean) => void;
-  /** Lets the bot have its allowed logins filled, or stops it, from its next fill. */
-  readonly setVault: (enabled: boolean) => void;
   /** Absent where the bot cannot be edited. */
   readonly editProfile?: () => void;
   /** Stops the bot's work under way at once, as its keyboard shortcut does. */
@@ -449,43 +446,22 @@ export function BotDetails({
       </DetailsSection>
 
       <DetailsSection title={t("details.browser")}>
-        <div className="flex flex-col gap-3">
-          <div className="flex items-start gap-3">
-            <GlobeIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <p id={`${bot.id}-browser`} className="text-sm">
-                {t("details.browser.use")}
-              </p>
-              <p className="text-xs text-muted-foreground">{t("details.browser.hint", { name })}</p>
-              {bot.browser && browserHost?._tag === "setup-required" && (
-                <p className="mt-1 text-xs text-blocked">{t("details.browser.setup")}</p>
-              )}
-            </div>
-            <Switch
-              checked={bot.browser}
-              onCheckedChange={intents.setBrowser}
-              aria-labelledby={`${bot.id}-browser`}
-            />
+        <div className="flex items-start gap-3">
+          <GlobeIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <p id={`${bot.id}-browser`} className="text-sm">
+              {t("details.browser.use")}
+            </p>
+            <p className="text-xs text-muted-foreground">{t("details.browser.hint", { name })}</p>
+            {bot.browser && browserHost?._tag === "setup-required" && (
+              <p className="mt-1 text-xs text-blocked">{t("details.browser.setup")}</p>
+            )}
           </div>
-          <div className="flex items-start gap-3">
-            <KeyRoundIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <p id={`${bot.id}-vault`} className="text-sm">
-                {t("details.vault.use")}
-              </p>
-              <p className="text-xs text-muted-foreground">{t("details.vault.hint", { name })}</p>
-              {bot.vault && !bot.browser && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("details.vault.needsBrowser")}
-                </p>
-              )}
-            </div>
-            <Switch
-              checked={bot.vault}
-              onCheckedChange={intents.setVault}
-              aria-labelledby={`${bot.id}-vault`}
-            />
-          </div>
+          <Switch
+            checked={bot.browser}
+            onCheckedChange={intents.setBrowser}
+            aria-labelledby={`${bot.id}-browser`}
+          />
         </div>
       </DetailsSection>
 

@@ -67,9 +67,9 @@ export const notificationKindOf = (kind: Entry["_tag"]): NotificationKind | null
     case "browser-help":
     case "handoff":
       return kind;
-    // A save-login card asks for a credential too: it shows where the
-    // engine's secret requests do, Android's channel for them included.
-    case "credential-request":
+    // A bot's ask for a secret shows where the engine's secret requests do,
+    // Android's channel for them included.
+    case "secret-ask":
       return "secret-request";
     case "connector-auth":
       return "connector";

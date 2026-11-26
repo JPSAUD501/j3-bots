@@ -32,9 +32,9 @@ export const MAX_SECRET_NAME_LENGTH = 64;
  * starting with a letter or a digit, so it reads the same in a header, an
  * argument or an environment variable's value.
  */
-export const SecretName = Schema.String.check(
-  Schema.isPattern(/^[a-z0-9][a-z0-9_-]{0,63}$/),
-).pipe(Schema.brand("SecretName"));
+export const SecretName = Schema.String.check(Schema.isPattern(/^[a-z0-9][a-z0-9_-]{0,63}$/)).pipe(
+  Schema.brand("SecretName"),
+);
 export type SecretName = typeof SecretName.Type;
 
 /** What a bot is handed for a secret: its reference, never its value. */

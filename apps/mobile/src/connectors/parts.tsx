@@ -30,7 +30,7 @@ import { PressScale } from "../press.tsx";
 import { Text, TextInput } from "../text.tsx";
 import { useColor } from "../theme.ts";
 import { Button } from "../ui.tsx";
-import { SecretField } from "../vault/VaultForms.tsx";
+import { SecretField } from "../secrets/SecretsForms.tsx";
 
 /** The lines of a glyph this client has, or null for one it does not. */
 const glyphPaths = (glyph: ConnectorGlyph): ReadonlyArray<string> | null => {
@@ -119,24 +119,24 @@ export function StatusWord({ connector }: { readonly connector: Connector }) {
 /**
  * A connector's status on its page: the word and its light, why bots cannot
  * use it and since when, and the one thing that fixes it, when the operator
- * can: sign in again (`onReconnect`), or unlock the vault (`onUnlock`).
+ * can: sign in again (`onReconnect`), or open the secrets (`onOpenSecrets`).
  */
 export function StatusBlock({
   connector,
   onReconnect,
-  onUnlock,
+  onOpenSecrets,
 }: {
   readonly connector: Connector;
   readonly onReconnect: (() => void) | null;
-  readonly onUnlock: () => void;
+  readonly onOpenSecrets: () => void;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const tone = connectorTone(connector);
   const text = connectorStatusText(connector.status, ctx);
   const action =
-    connector.status._tag === "vault-locked"
-      ? { label: t("connector.unlock"), run: onUnlock }
+    connector.status._tag === "secrets-unavailable"
+      ? { label: t("connector.openSecrets"), run: onOpenSecrets }
       : connector.status._tag === "needs-sign-in" && onReconnect !== null
         ? { label: t("connector.reconnect"), run: onReconnect }
         : null;

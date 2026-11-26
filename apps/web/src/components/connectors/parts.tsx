@@ -105,24 +105,24 @@ export function StatusWord({ connector }: { connector: Connector }) {
 /**
  * A connector's status on its page: the word and its light, why bots cannot
  * use it and since when, and the one thing that fixes it, when the operator
- * can: sign in again (`onReconnect`), or unlock the vault (`onUnlock`).
+ * can: sign in again (`onReconnect`), or open Settings → Secrets (`onOpenSecrets`).
  */
 export function StatusBlock({
   connector,
   onReconnect,
-  onUnlock,
+  onOpenSecrets,
 }: {
   connector: Connector;
   onReconnect: (() => void) | null;
-  onUnlock: () => void;
+  onOpenSecrets: () => void;
 }) {
   const ctx = usePresentation();
   const { t } = ctx.i18n;
   const tone = connectorTone(connector);
   const text = connectorStatusText(connector.status, ctx);
   const action =
-    connector.status._tag === "vault-locked"
-      ? { label: t("connector.unlock"), run: onUnlock }
+    connector.status._tag === "secrets-unavailable"
+      ? { label: t("connector.openSecrets"), run: onOpenSecrets }
       : connector.status._tag === "needs-sign-in" && onReconnect !== null
         ? { label: t("connector.reconnect"), run: onReconnect }
         : null;

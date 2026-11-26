@@ -29,7 +29,6 @@ import { useBots, useI18n } from "../app/context";
 import { resendLabel } from "@j3-bots/client-runtime/wording";
 import { cn } from "../lib/cn";
 import { ApprovalCard } from "./ApprovalCard";
-import { CredentialRequestCard } from "./CredentialRequestCard";
 import { ConnectorAuthCard } from "./connectors/ConnectorCards";
 import { AnsweringLine } from "./AnsweringLine";
 import { EventLine, type OpenPair } from "./EventLine";
@@ -37,9 +36,10 @@ import { MessageBubble } from "./MessageBubble";
 import { NeedsUpdateLine, NoticeLine } from "./NoticeLine";
 import { QuestionCard } from "./QuestionCard";
 import { BrowserHelpCard } from "./BrowserHelpCard";
+import { SecretAskCard } from "./SecretAskCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import type { SecretsAccess } from "./secrets/parts";
 import { TimeDivider } from "./TimeDivider";
-import type { VaultAccess } from "./vault/VaultForms";
 import { type TurnBot, WorkFold } from "./WorkFold";
 
 /** What the operator can do from a timeline. Each is an intent; the client runtime carries it out. */
@@ -53,8 +53,8 @@ export interface TimelineIntents {
   readonly answerBrowserHelp: (entryId: EntryId, outcome: "done" | "declined") => void;
   /** Opens the bot's browser on `tab`, or on its front tab once that one closed. */
   readonly openBrowser: (botId: BotId, tab: BrowserTabRef | "front") => void;
-  /** Closes a save-login card without saving; saving goes to the vault itself. */
-  readonly dismissLogin: (entryId: EntryId) => void;
+  /** Declines a bot's ask for a secret; saving one goes to the secrets themselves. */
+  readonly declineSecretAsk: (entryId: EntryId) => void;
   readonly retryNotice: (entryId: EntryId) => void;
   readonly retryMessage: (entryId: EntryId) => void;
   /**
@@ -93,8 +93,8 @@ interface TimelineProps {
   /** What holds the bot's hello back, which the operator's messages behind it wait for (`openingHeld`). */
   readonly openingHold?: OpeningHold | null;
   readonly intents: TimelineIntents;
-  /** The vault, which a save-login card saves to, and unlocks or sets up in place. */
-  readonly vault: VaultAccess;
+  /** The operator's secrets, which a bot's ask for one saves to. */
+  readonly secrets: SecretsAccess;
   /** The rows that just arrived at the end, by key: they settle into place as they mount. */
   readonly arrived?: ReadonlySet<string>;
   /** Where the operator's messages fly from as they arrive: the composer's field. */
@@ -123,7 +123,7 @@ export function Timeline({
   submitting,
   openingHold = null,
   intents,
-  vault,
+  secrets,
   arrived,
   flyFrom,
   turnBot = null,
@@ -256,7 +256,7 @@ export function Timeline({
         const { entry } = item;
         return (
           <div key={item.key} data-seen-id={entry.id} className={settles}>
-            <Card entry={entry} submitting={submitting} intents={intents} vault={vault} />
+            <Card entry={entry} submitting={submitting} intents={intents} secrets={secrets} />
           </div>
         );
       })}
@@ -270,12 +270,12 @@ function Card({
   entry,
   submitting,
   intents,
-  vault,
+  secrets,
 }: {
   entry: CardEntry;
   submitting: TimelineProps["submitting"];
   intents: TimelineIntents;
-  vault: VaultAccess;
+  secrets: SecretsAccess;
 }) {
   switch (entry._tag) {
     case "question":
@@ -314,12 +314,12 @@ function Card({
           submitting={submitting(entry.id)}
         />
       );
-    case "credential-request":
+    case "secret-ask":
       return (
-        <CredentialRequestCard
+        <SecretAskCard
           entry={entry}
-          vault={vault}
-          onDismiss={() => intents.dismissLogin(entry.id)}
+          secrets={secrets}
+          onDecline={() => intents.declineSecretAsk(entry.id)}
           submitting={submitting(entry.id)}
         />
       );

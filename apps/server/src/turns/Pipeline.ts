@@ -16,6 +16,7 @@ import {
   type QuestionEntry,
   RoomId,
   ROOM_CLOSING_ROUND,
+  secretReference,
 } from "@j3-bots/contracts";
 import { attachmentLimitViolation, type TurnId } from "@j3-bots/engine-t3";
 import type {
@@ -204,6 +205,12 @@ const systemEventOf = (payload: WakePayload, askName: boolean): Effect.Effect<Sy
       return Effect.succeed({ name: "undelivered" });
     case "browser-help":
       return Effect.succeed({ name: "browser-help", outcome: payload.outcome, site: payload.site });
+    case "secret-ask":
+      return Effect.succeed({
+        name: "secret-ask",
+        outcome: payload.outcome,
+        reference: secretReference(payload.name),
+      });
     case "message":
     case "answer":
     case "routine":

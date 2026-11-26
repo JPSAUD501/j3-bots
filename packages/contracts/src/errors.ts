@@ -78,21 +78,10 @@ export class Conflict extends Schema.TaggedError<Conflict>()("Conflict", {
      */
     "private-location",
     /**
-     * The operator's secrets are in a vault sealed under a master password,
-     * from before secrets, which waits for that password to be typed one last
-     * time (`secrets.openOldVault`).
+     * The operator's secrets cannot be read now: their state
+     * (`secrets.status`) is not `ready`, and says why.
      */
-    "secrets-old-vault",
-    /**
-     * The key that opens the operator's secrets is missing or is another one:
-     * its file was deleted or replaced.
-     */
-    "secrets-unreadable",
-    /**
-     * A newer release of J3 Bots changed the secrets' file, which this one
-     * cannot read. Nothing in it can be used until that release runs again.
-     */
-    "secrets-newer",
+    "secrets-unavailable",
     /**
      * A value of a secret does not open under its key, or does not read as
      * what it should be, or an old vault's key settings are out of range: the
@@ -221,4 +210,3 @@ export class Invalid extends Schema.TaggedError<Invalid>()("Invalid", {
 /** What a command can fail with. */
 export const CommandError = Schema.Union([NotFound, Conflict, Invalid]);
 export type CommandError = typeof CommandError.Type;
-

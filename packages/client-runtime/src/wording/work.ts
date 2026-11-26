@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type {
-  CredentialField,
   CredentialFill,
+  FillField,
   StepSummary,
   StepTool,
   TurnEnding,
@@ -55,13 +55,13 @@ const toolWords: Record<WorkTool, { readonly did: Phrase; readonly doing: Phrase
 /** The tool's words, or none for a tool this build cannot name. */
 const wordsOf = (tool: StepTool) => (tool === null || tool === "unknown" ? null : toolWords[tool]);
 
-const filled: Record<CredentialField, KeyWith<"name">> = {
+const filled: Record<FillField, KeyWith<"name">> = {
   username: "fill.filled.username",
   password: "fill.filled.password",
   totp: "fill.filled.totp",
 };
 
-const notFilled: Record<CredentialField, KeyWith<"name">> = {
+const notFilled: Record<FillField, KeyWith<"name">> = {
   username: "fill.notFilled.username",
   password: "fill.notFilled.password",
   totp: "fill.notFilled.totp",
@@ -100,16 +100,12 @@ export function fillDetail(fill: CredentialFill, i18n: I18n): string {
           ? t("fill.submitted")
           : ""
         : t(outcome.submitted ? "fill.onSubmitted" : "fill.on", { origin });
-    case "locked":
-      return t("fill.locked");
     case "refused":
       switch (outcome.reason) {
         case "no-access":
           return t("fill.refused.noAccess");
         case "unknown-login":
           return t("fill.refused.unknownLogin");
-        case "ambiguous":
-          return t("fill.refused.ambiguous");
         case "no-value":
           return t("fill.refused.noValue");
         case "no-tab":

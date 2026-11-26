@@ -15,8 +15,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { ConnectorsSection } from "../connectors/ConnectorsSection.tsx";
 import { useI18n } from "../i18n.ts";
 import type { Screens } from "../navigation.tsx";
+import { SecretsSection } from "../secrets/SecretsSection.tsx";
 import { Text } from "../text.tsx";
-import { VaultSection } from "../vault/VaultSection.tsx";
 import { AboutSection } from "./About.tsx";
 import { BotBrowserSection } from "./BotBrowser.tsx";
 import { DevicesSection } from "./Devices.tsx";
@@ -78,10 +78,10 @@ function PageBody({ page }: { readonly page: SettingsPage }) {
       return <UsagePage />;
     case "connectors":
       return <ConnectorsSection />;
-    case "vault":
+    case "secrets":
       return (
         <>
-          <VaultSection />
+          <SecretsSection />
           <BotBrowserSection connected={connected} />
         </>
       );

@@ -264,7 +264,7 @@ export class Observer extends Context.Service<
     ) => Effect.Effect<Synchronized, EngineDown | SessionNotFound | NotObserved>;
     /**
      * Adds a step the server took itself, which no engine event reports (a
-     * fill, `vault/Fill.ts`), to the fold of the session's running turn. A
+     * fill, `secrets/Fill.ts`), to the fold of the session's running turn. A
      * session with no running turn, or a routine run's, which has no fold,
      * gets nothing.
      */

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { AuthFailure, CredentialsUnavailable, VaultLocked } from "@j3-bots/connectors";
+import type { AuthFailure, CredentialsUnavailable, SecretsUnavailable } from "@j3-bots/connectors";
 import type { BotId, CommandError, ConnectorId, OAuthClientInput } from "@j3-bots/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -21,7 +21,7 @@ export type SignInState =
       readonly signedInAt: DateTime.Utc;
     }
   | { readonly _tag: "needs-sign-in"; readonly reason: "not-signed-in" | "expired" }
-  | { readonly _tag: "vault-locked" }
+  | { readonly _tag: "secrets-unavailable" }
   | { readonly _tag: "failing"; readonly reason: AuthFailure };
 
 /**
@@ -53,10 +53,10 @@ export class ConnectorSignIns extends Context.Service<
     /**
      * Revokes the sign-in at the service when it offers that, before the
      * connector's secrets go; a service that can't be reached is not waited
-     * for. Fails while the vault is locked, since the token is there: the
-     * removal finishes once it opens.
+     * for. Fails while the secrets cannot be read, since the token is there:
+     * the removal finishes once they can.
      */
-    readonly disconnect: (id: ConnectorId) => Effect.Effect<void, VaultLocked>;
+    readonly disconnect: (id: ConnectorId) => Effect.Effect<void, SecretsUnavailable>;
     /** Signs in to the connector with the OAuth client the operator registered at the service. */
     readonly useOperatorClient: (
       id: ConnectorId,

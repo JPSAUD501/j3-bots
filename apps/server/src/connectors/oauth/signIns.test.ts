@@ -9,17 +9,20 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as Domain from "../../domain.ts";
 import { Entries } from "../../entries/Entries.ts";
 import * as TestDomain from "../../testing/domain.ts";
 import { addOAuthConnector, NOTION, TestOAuth, unresolvable } from "../../testing/oauth.ts";
+import { moveKeyFile } from "../../testing/secrets.ts";
 import { createNewBot } from "../../testing/turns.ts";
-import { Vault } from "../../vault/Vault.ts";
 import { ConnectorSignIns } from "../auth.ts";
 import { ConnectorAuth } from "./ConnectorAuth.ts";
 
 const LAPTOP = DeviceId.make("device-laptop");
 const domain = TestDomain.layer.pipe(Layer.provide(unresolvable));
-const PASSWORD = Redacted.make("correct horse battery");
+
+/** The server alone, for a test that starts it more than once over the same machine. */
+const started = Domain.layer.pipe(Layer.provide(unresolvable));
 
 /** The statuses of the `connector-auth` cards in the bot's conversation, oldest first. */
 const cardsOf = (botId: BotId) =>
@@ -69,7 +72,6 @@ it.effect(
   "puts one card in each conversation whose call needs a sign-in, until the sign-in is done",
   () =>
     Effect.gen(function* () {
-      yield* (yield* Vault).setup(PASSWORD);
       yield* addOAuthConnector;
       const ada = yield* createNewBot("Ada");
       const bea = yield* createNewBot("Bea");
@@ -102,72 +104,68 @@ it.effect(
     }).pipe(Effect.provide(domain)),
 );
 
-it.effect("closes a card when the operator signs in, not when a sign-in comes back by itself", () =>
-  Effect.gen(function* () {
-    const vault = yield* Vault;
-    yield* vault.setup(PASSWORD);
-    yield* addOAuthConnector;
-    const ada = yield* createNewBot("Ada");
-    const signIns = yield* ConnectorSignIns;
-    yield* signIn;
+it.effect(
+  "closes a card when the operator signs in again, not while the connector stays signed in",
+  () =>
+    Effect.gen(function* () {
+      yield* addOAuthConnector;
+      const ada = yield* createNewBot("Ada");
+      const signIns = yield* ConnectorSignIns;
+      yield* signIn;
 
-    // The server needs a scope the token lacks: the connector stays signed
-    // in, and the bot's call needs a new sign-in.
-    const refused = yield* Effect.exit(
-      signIns.rejected(
-        NOTION,
-        Option.some('Bearer error="insufficient_scope", scope="write"'),
-        (yield* TestOAuth).bearer,
-      ),
-    );
-    assert.isTrue(Exit.isFailure(refused));
-    yield* signIns.needed({ botId: ada.id, connectorId: NOTION });
+      // The server needs a scope the token lacks: the connector stays signed
+      // in, and the bot's call needs a new sign-in.
+      const refused = yield* Effect.exit(
+        signIns.rejected(
+          NOTION,
+          Option.some('Bearer error="insufficient_scope", scope="write"'),
+          (yield* TestOAuth).bearer,
+        ),
+      );
+      assert.isTrue(Exit.isFailure(refused));
+      yield* signIns.needed({ botId: ada.id, connectorId: NOTION });
 
-    // The card closes once, and that must be after the operator signs in.
-    const signingIn = yield* Ref.make(false);
-    const closed = yield* cardsClosed(ada.id).pipe(
-      Effect.andThen(Ref.get(signingIn)),
-      Effect.forkChild({ startImmediately: true }),
-    );
+      // The card closes once, and that must be after the operator signs in.
+      const signingIn = yield* Ref.make(false);
+      const closed = yield* cardsClosed(ada.id).pipe(
+        Effect.andThen(Ref.get(signingIn)),
+        Effect.forkChild({ startImmediately: true }),
+      );
 
-    // Unlocking the vault brings the sign-in back, which is not the one the card asks for.
-    const back = yield* signIns.states.pipe(
-      Stream.map((all) => all.get(NOTION)?._tag),
-      Stream.dropWhile((tag) => tag !== "vault-locked"),
-      Stream.filter((tag) => tag === "signed-in"),
-      Stream.runHead,
-      Effect.forkChild({ startImmediately: true }),
-    );
-    yield* vault.lock;
-    yield* vault.unlock(PASSWORD);
-    yield* Fiber.join(back);
-    assert.deepStrictEqual(yield* cardsOf(ada.id), ["pending"]);
+      // Another call while the connector is still signed in raises no second card.
+      yield* signIns.needed({ botId: ada.id, connectorId: NOTION });
+      assert.deepStrictEqual(yield* cardsOf(ada.id), ["pending"]);
 
-    // Signing in again, with the scope the server named, closes it.
-    yield* Ref.set(signingIn, true);
-    yield* signIn;
-    assert.isTrue(yield* Fiber.join(closed));
-    assert.deepStrictEqual(yield* cardsOf(ada.id), ["signed-in"]);
-  }).pipe(Effect.provide(domain)),
+      // Signing in again, with the scope the server named, closes it.
+      yield* Ref.set(signingIn, true);
+      yield* signIn;
+      assert.isTrue(yield* Fiber.join(closed));
+      assert.deepStrictEqual(yield* cardsOf(ada.id), ["signed-in"]);
+    }).pipe(Effect.provide(domain)),
 );
 
 it.effect(
-  "leaves a sign-in to end once the vault opens, when its connector goes while it is locked",
+  "leaves a sign-in to end at a start that reads the secrets, when its connector goes while they cannot be read",
   () =>
     Effect.gen(function* () {
-      const vault = yield* Vault;
-      yield* vault.setup(PASSWORD);
-      yield* addOAuthConnector;
-      const signIns = yield* ConnectorSignIns;
+      yield* Effect.gen(function* () {
+        yield* addOAuthConnector;
+        yield* signIn;
+      }).pipe(Effect.provide(started));
       const fake = yield* TestOAuth;
-      yield* signIn;
-      yield* vault.lock;
-      const refused = yield* Effect.flip(signIns.disconnect(NOTION));
-      assert.strictEqual(refused._tag, "VaultLocked");
-      assert.deepStrictEqual(fake.revoked, []);
-      // The removal runs again with the vault open, and ends the sign-in then.
-      yield* vault.unlock(PASSWORD);
-      yield* signIns.disconnect(NOTION);
-      assert.lengthOf(fake.revoked, 2);
-    }).pipe(Effect.provide(domain)),
+
+      yield* moveKeyFile("away");
+      yield* Effect.gen(function* () {
+        const refused = yield* Effect.flip((yield* ConnectorSignIns).disconnect(NOTION));
+        assert.strictEqual(refused._tag, "SecretsUnavailable");
+        assert.deepStrictEqual(fake.revoked, []);
+      }).pipe(Effect.provide(started));
+
+      // The removal runs again once the secrets can be read, and ends the sign-in then.
+      yield* moveKeyFile("back");
+      yield* Effect.gen(function* () {
+        yield* (yield* ConnectorSignIns).disconnect(NOTION);
+        assert.lengthOf(fake.revoked, 2);
+      }).pipe(Effect.provide(started));
+    }).pipe(Effect.provide(Layer.fresh(TestDomain.machine))),
 );

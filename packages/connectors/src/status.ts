@@ -6,8 +6,8 @@ import type { ConnectorFailure } from "./errors.ts";
 
 /**
  * A connector's status (`docs/architecture/server.md`, "Connectors"), from
- * what J3 Bots knows of it: whether the vault is open, whether it is signed
- * in, and how its server answered last. Only the vault and the sign-in are
+ * what J3 Bots knows of it: whether its secrets can be read, whether it is
+ * signed in, and how its server answered last. Only the secrets and the sign-in are
  * kept anywhere else; the rest is what this server saw since it started.
  */
 
@@ -31,15 +31,15 @@ export interface Failing {
 }
 
 export interface StatusInputs {
-  readonly vaultLocked: boolean;
+  readonly secretsUnavailable: boolean;
   /** None while it is signed in, or signs in no way at all. */
   readonly signIn: Option.Option<SignInNeed>;
   readonly failing: Option.Option<Failing>;
 }
 
-/** The status the operator sees: a locked vault first, then a sign-in, then a failing server. */
+/** The status the operator sees: secrets that cannot be read first, then a sign-in, then a failing server. */
 export const statusOf = (inputs: StatusInputs): ConnectorStatus => {
-  if (inputs.vaultLocked) return { _tag: "vault-locked" };
+  if (inputs.secretsUnavailable) return { _tag: "secrets-unavailable" };
   if (Option.isSome(inputs.signIn)) return { _tag: "needs-sign-in", reason: inputs.signIn.value };
   if (Option.isSome(inputs.failing)) {
     return {
@@ -62,15 +62,15 @@ export type Observation =
   | { readonly _tag: "unchanged" };
 
 /**
- * What a failure says about the connector. A locked vault is the vault's
- * status, which reaches the connector from the vault, and a withdrawn
+ * What a failure says about the connector. Secrets that cannot be read are
+ * their own status, which reaches the connector from them, and a withdrawn
  * request says nothing of the connector. A call that timed out,
  * answered too much, or got an MCP error is that call's trouble; the same
  * while connecting or listing means the server is not working.
  */
 export const observe = (failure: ConnectorFailure, activity: Activity): Observation => {
   switch (failure._tag) {
-    case "VaultLocked":
+    case "SecretsUnavailable":
     case "Withdrawn":
       return { _tag: "unchanged" };
     case "NeedsSignIn":

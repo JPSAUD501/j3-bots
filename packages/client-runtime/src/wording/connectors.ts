@@ -60,10 +60,10 @@ export function connectorStatusText(
   switch (status._tag) {
     case "connected":
       return { label: t("connector.status.connected"), detail: null, next: null, since: null };
-    case "vault-locked":
+    case "secrets-unavailable":
       return {
-        label: t("connector.status.vaultLocked"),
-        detail: t("connector.status.vaultLockedDetail"),
+        label: t("connector.status.secretsUnavailable"),
+        detail: t("connector.status.secretsUnavailableDetail"),
         next: null,
         since: null,
       };
@@ -123,8 +123,7 @@ export function connectFailureText(failure: IntentFailure, { t }: I18n): string 
   if (refusedWith(failure, "connector-fields")) return t("connect.failed.fields");
   if (refusedWith(failure, "command-unpinned")) return t("connect.failed.unpinned");
   if (refusedWith(failure, "connector-unsupported")) return t("connector.unsupported");
-  if (refusedWith(failure, "vault-locked")) return t("connect.failed.vaultLocked");
-  if (refusedWith(failure, "vault-not-set-up")) return t("connect.failed.vaultNotSetUp");
+  if (refusedWith(failure, "secrets-unavailable")) return t("connect.failed.secretsUnavailable");
   return t("connect.failed");
 }
 
@@ -145,10 +144,8 @@ export function signInProblemText(problem: SignInProblem, { t }: I18n): string {
       return t("signIn.failed.refused");
     case "expired":
       return t("signIn.failed.expired");
-    case "vault-locked":
-      return t("signIn.failed.vaultLocked");
-    case "vault-not-set-up":
-      return t("signIn.failed.vaultNotSetUp");
+    case "secrets-unavailable":
+      return t("signIn.failed.secretsUnavailable");
     case "not-paired":
       return t("signIn.failed.notPaired");
   }

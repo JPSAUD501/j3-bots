@@ -87,6 +87,7 @@ export {
 } from "./pairs.ts";
 export { endpointInstead, type SignInLine, signInLine } from "./providerSetup.ts";
 export { deviceZoneOffer, scheduleInWords, timeZoneHint } from "./schedule.ts";
+export { secretsFailureText, secretsStateText } from "./secrets.ts";
 export { settingsPageWords } from "./settings.ts";
 export {
   activityTime,
@@ -97,7 +98,6 @@ export {
 } from "./time.ts";
 export { windowText, type WindowText } from "./usage.ts";
 export { type Announcement, turnAnnouncement, turnLabel, turnLine } from "./turn.ts";
-export { unlockWaitsUntil, vaultFailureText } from "./vault.ts";
 export { fillDetail, stepText, workFoldTitle } from "./work.ts";
 export {
   type ServerUpdateLine,

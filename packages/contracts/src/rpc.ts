@@ -940,9 +940,8 @@ export const BrowserRpcs = RpcGroup.make(
  * would keep what it carries; each is safe to send again instead:
  * `secrets.add` names the secret it makes. No value they carry or answer is
  * stored outside the secrets' file, logged or kept in an error. Every request
- * but `secrets.status` and `secrets.openOldVault` fails with the state's
- * conflict while the state is not `ready`: `Conflict("secrets-old-vault")`,
- * `Conflict("secrets-unreadable")` or `Conflict("secrets-newer")`. A value
+ * but `secrets.status` and `secrets.openOldVault` fails with
+ * `Conflict("secrets-unavailable")` while the state is not `ready`. A value
  * that cannot be opened or read back fails with `Conflict("secrets-damaged")`.
  * New at protocol 11, in place of the vault's requests.
  */

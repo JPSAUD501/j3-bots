@@ -88,8 +88,6 @@ export interface BotChanges {
   readonly permissionMode?: PermissionMode;
   /** Whether the bot may use the engine's browser, from its next turn. */
   readonly browser?: boolean;
-  /** Whether the bot may have its allowed logins filled, from its next fill. */
-  readonly vault?: boolean;
 }
 
 /** What creating a room takes. */

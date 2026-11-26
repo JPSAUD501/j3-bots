@@ -41,12 +41,13 @@ import * as Routines from "./routines/Routines.ts";
 import * as Scheduler from "./routines/Scheduler.ts";
 import * as SettingsService from "./settings/SettingsService.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
+import * as CredentialFills from "./secrets/Fill.ts";
+import * as SecretAsks from "./secrets/SecretAsks.ts";
+import * as Secrets from "./secrets/Secrets.ts";
 import * as Host from "./system/Host.ts";
 import * as BotTools from "./tools/BotTools.ts";
 import * as Management from "./tools/Management.ts";
 import * as ToolLists from "./tools/ToolLists.ts";
-import * as CredentialFills from "./vault/Fill.ts";
-import * as Vault from "./vault/Vault.ts";
 import * as BotStates from "./turns/BotStates.ts";
 import * as Cards from "./turns/Cards.ts";
 import * as Ledger from "./turns/Ledger.ts";
@@ -117,6 +118,7 @@ export const layer = Layer.mergeAll(
       Routines.layer,
       Connectors.layer,
       Skills.layer,
+      SecretAsks.layer,
     ),
   ),
   Layer.provideMerge(Layer.mergeAll(Workspaces.layer, Stops.roomWorkLayer, Scheduler.layer)),
@@ -133,7 +135,7 @@ export const layer = Layer.mergeAll(
       Wakes.layer,
       WorkSteps.layer,
       BrowserViewers.layer.pipe(Layer.provideMerge(BrowserTabs.layer)),
-      Vault.layer,
+      Secrets.layer,
     ),
   ),
   Layer.provideMerge(

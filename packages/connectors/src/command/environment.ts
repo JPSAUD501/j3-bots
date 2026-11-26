@@ -4,7 +4,7 @@ import * as Redacted from "effect/Redacted";
 /**
  * The environment a command connector's process starts with: the few of the
  * server's own variables a program needs to start and find its files, and
- * the variables the operator gave it, from the vault. Nothing else of the
+ * the variables the operator gave it, from the secrets. Nothing else of the
  * server's reaches it: not a provider key, not J3 Bots' own settings, not
  * whatever the shell that started the server exported.
  */
@@ -40,7 +40,7 @@ const WINDOWS_ALLOWED = [
   "NUMBER_OF_PROCESSORS",
 ] as const;
 
-/** A variable the operator gave the command, with its value from the vault. */
+/** A variable the operator gave the command, with its value from the secrets. */
 export interface CommandVariable {
   readonly name: string;
   readonly value: Redacted.Redacted<string>;

@@ -130,8 +130,8 @@ describe("a login's fill", () => {
     fill,
   });
   const fill = (outcome: CredentialFill["outcome"], origin: string | null): CredentialFill => ({
-    name: "GitHub (work)",
-    credentialId: null,
+    name: "github-work",
+    secretId: null,
     field: "password",
     origin: origin === null ? null : SiteOrigin.make(origin),
     outcome,
@@ -139,10 +139,10 @@ describe("a login's fill", () => {
 
   it("names the login and the field, and whether it was filled", () => {
     const done = fill({ _tag: "filled", submitted: true }, "https://github.com");
-    expect(stepText(step(done), ctx.i18n)).toBe("Filled the password of GitHub (work)");
+    expect(stepText(step(done), ctx.i18n)).toBe("Filled the password of github-work");
     expect(fillDetail(done, ctx.i18n)).toBe("On https://github.com, then sent the form.");
-    const locked = fill({ _tag: "locked" }, "https://github.com");
-    expect(stepText(step(locked), ctx.i18n)).toBe("Didn’t fill the password of GitHub (work)");
+    const refused = fill({ _tag: "refused", reason: "no-tab" }, "https://github.com");
+    expect(stepText(step(refused), ctx.i18n)).toBe("Didn’t fill the password of github-work");
   });
 
   it("shows the page a refused fill was asked on, as the server checked it", () => {

@@ -71,9 +71,10 @@ export function AddOwnConnector({
   const [problems, setProblems] = useState<FormProblems | null>(null);
   const [asking, setAsking] = useState<Asking>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [failure, setFailure] = useState<{ readonly text: string; readonly vault: boolean } | null>(
-    null,
-  );
+  const [failure, setFailure] = useState<{
+    readonly text: string;
+    readonly secrets: boolean;
+  } | null>(null);
 
   const draft = (privateNetwork: boolean): SourceDraft =>
     way === "address"
@@ -103,7 +104,7 @@ export function AddOwnConnector({
       } else {
         setFailure({
           text: connectFailureText(result.failure, i18n),
-          vault: refusedWith(result, "vault-locked") || refusedWith(result, "vault-not-set-up"),
+          secrets: refusedWith(result, "secrets-unavailable"),
         });
       }
     });
@@ -260,9 +261,9 @@ export function AddOwnConnector({
       {failure !== null && (
         <div role="alert" className="flex flex-col items-start gap-2">
           <p className="text-sm text-blocked">{failure.text}</p>
-          {failure.vault && (
-            <Button size="sm" onClick={intents.openVault}>
-              {t("connect.openVault")}
+          {failure.secrets && (
+            <Button size="sm" onClick={intents.openSecrets}>
+              {t("connect.openSecrets")}
             </Button>
           )}
         </div>

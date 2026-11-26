@@ -19,11 +19,10 @@ import { ServerConfig } from "../../config.ts";
 import { Listener } from "../../listener.ts";
 import * as TestDomain from "../../testing/domain.ts";
 import { AS_ORIGIN, FakeAuthorizationServer, MCP_URL, requestGate } from "../../testing/oauth.ts";
-import { ConnectorId } from "../../vault/ConnectorSecret.ts";
-import { Vault } from "../../vault/Vault.ts";
+import { ConnectorId } from "../../secrets/ConnectorSecret.ts";
+import { Secrets } from "../../secrets/Secrets.ts";
 import * as ConnectorAuth from "./ConnectorAuth.ts";
 
-const PASSWORD = Redacted.make("correct horse battery");
 const LAPTOP = DeviceId.make("device-laptop");
 const PHONE = DeviceId.make("device-phone");
 const NOTION = ConnectorId.make("conn_aaaaaaaaaaaaaaaa");
@@ -39,7 +38,7 @@ const recordLogs = Layer.merge(
   Layer.succeed(References.MinimumLogLevel, "All"),
 );
 
-/** The connectors' store as sign-ins see it: one OAuth connector, whose address is in the vault. */
+/** The connectors' store as sign-ins see it: one OAuth connector, whose address is in the secrets. */
 const connectors = Layer.succeed(ConnectorAuth.OAuthConnectors, {
   signInOf: (id) => Effect.succeed(id === NOTION ? Option.some("oauth") : Option.none()),
   all: Effect.succeed([NOTION]),
@@ -63,18 +62,16 @@ const withPublicOrigin = Layer.effect(
 );
 
 /**
- * Runs `use` with sign-ins against `fake`, over the test domain with its vault
- * set up and unlocked. The server listens on every interface unless `local`.
+ * Runs `use` with sign-ins against `fake`, over the test domain. The server
+ * listens on every interface unless `local`.
  */
 const run = <A, E>(
   fake: FakeAuthorizationServer,
-  use: Effect.Effect<A, E, ConnectorAuth.ConnectorAuth | Vault>,
+  use: Effect.Effect<A, E, ConnectorAuth.ConnectorAuth | Secrets>,
   { local = false, publicOrigin = false } = {},
 ) =>
   Effect.gen(function* () {
-    const vault = yield* Vault;
-    yield* vault.setup(PASSWORD);
-    yield* vault.connectorSecrets.put({
+    yield* (yield* Secrets).connectorSecrets.put({
       connectorId: NOTION,
       address: Redacted.make(MCP_URL),
       oauth: null,
@@ -261,9 +258,9 @@ it.effect("never names a resource that holds a key of the connector's form", () 
   return run(
     fake,
     Effect.gen(function* () {
-      const vault = yield* Vault;
-      const secret = Option.getOrThrow(yield* vault.connectorSecrets.get(NOTION));
-      yield* vault.connectorSecrets.put({
+      const secrets = yield* Secrets;
+      const secret = Option.getOrThrow(yield* secrets.connectorSecrets.get(NOTION));
+      yield* secrets.connectorSecrets.put({
         ...secret,
         address: Redacted.make(server),
         formSecrets: [{ name: "url:key", value: Redacted.make(key) }],
@@ -555,8 +552,8 @@ it.effect(
         assert.deepStrictEqual(yield* stateOf, { _tag: "needs-sign-in", reason: "expired" });
         const service = yield* auth;
         assert.strictEqual(refusal(yield* Effect.exit(service.accessToken(NOTION))), "NeedsSignIn");
-        const vault = yield* Vault;
-        const secret = Option.getOrThrow(yield* vault.connectorSecrets.get(NOTION));
+        const secrets = yield* Secrets;
+        const secret = Option.getOrThrow(yield* secrets.connectorSecrets.get(NOTION));
         assert.isNull(secret.oauth?.tokens);
         // The client stays: signing in again needs no new registration.
         yield* signIn(fake);
@@ -568,7 +565,7 @@ it.effect(
           "NeedsSignIn",
         );
         // A refused client goes with its tokens; the connector's address stays.
-        const left = Option.getOrThrow(yield* vault.connectorSecrets.get(NOTION));
+        const left = Option.getOrThrow(yield* secrets.connectorSecrets.get(NOTION));
         assert.isNull(left.oauth);
         assert.strictEqual(left.address === null ? null : Redacted.value(left.address), MCP_URL);
       }),
@@ -626,7 +623,7 @@ it.effect(
           yield* service.disconnect(NOTION);
           assert.deepStrictEqual(fake.revoked, ["refresh-4", "access-3"]);
           assert.isNull(
-            Option.getOrThrow(yield* (yield* Vault).connectorSecrets.get(NOTION)).oauth,
+            Option.getOrThrow(yield* (yield* Secrets).connectorSecrets.get(NOTION)).oauth,
           );
           assert.isUndefined(yield* stateOf);
         }),
@@ -639,7 +636,7 @@ it.effect(
           yield* signIn(silent);
           yield* (yield* auth).disconnect(NOTION);
           assert.isNull(
-            Option.getOrThrow(yield* (yield* Vault).connectorSecrets.get(NOTION)).oauth,
+            Option.getOrThrow(yield* (yield* Secrets).connectorSecrets.get(NOTION)).oauth,
           );
         }),
       );
@@ -673,7 +670,7 @@ it.effect("signs in with the operator's own client, which nothing registers or r
       assert.isFalse(new URLSearchParams(exchange?.body).has("client_secret"));
       fake.clients.clear();
       yield* Effect.exit(service.rejected(NOTION, Option.none(), fake.bearer));
-      const client = Option.getOrThrow(yield* (yield* Vault).connectorSecrets.get(NOTION)).oauth
+      const client = Option.getOrThrow(yield* (yield* Secrets).connectorSecrets.get(NOTION)).oauth
         ?.client;
       assert.strictEqual(client?.clientId, "own-app");
     }),
@@ -748,7 +745,7 @@ it.effect("drops a sign-in whose answer came back after the connector signed out
       yield* service.disconnect(NOTION);
       yield* Deferred.succeed(gate.open, undefined);
       assert.strictEqual(refusal(yield* Fiber.join(completing)), "unknown-sign-in");
-      const secret = Option.getOrThrow(yield* (yield* Vault).connectorSecrets.get(NOTION));
+      const secret = Option.getOrThrow(yield* (yield* Secrets).connectorSecrets.get(NOTION));
       assert.isNull(secret.oauth);
       assert.isUndefined(yield* stateOf);
     }),
@@ -795,74 +792,6 @@ it.effect("uses a token without a refresh token until it expires, then needs a s
   );
 });
 
-it.effect(
-  "saves a rotated refresh token that came back after the vault locked, once it unlocks",
-  () => {
-    const fake = new FakeAuthorizationServer({ lifetime: 100 });
-    return run(
-      fake,
-      Effect.gen(function* () {
-        yield* signIn(fake);
-        const vault = yield* Vault;
-        const service = yield* auth;
-        const gate = yield* requestGate();
-        fake.gate = gate;
-        // The worker's refresh is waiting for its answer when the vault locks.
-        yield* TestClock.adjust(Duration.seconds(50));
-        yield* Deferred.await(gate.arrived);
-        assert.strictEqual(tokenRequests(fake).length, 2);
-        yield* vault.lock;
-        fake.gate = null;
-        // The server rotates the refresh token, which the locked vault cannot
-        // take. The lock waits for the refresh to end before it shows.
-        const locked = yield* service.states.pipe(
-          Stream.filter((states) => states.get(NOTION)?._tag === "vault-locked"),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkChild,
-        );
-        yield* Deferred.succeed(gate.open, undefined);
-        yield* Fiber.join(locked);
-        yield* vault.unlock(PASSWORD);
-        // The next refresh sends the rotated token, which the server still knows.
-        yield* service.rejected(NOTION, Option.none(), fake.bearer);
-        assert.strictEqual(tokenRequests(fake).length, 3);
-        assert.strictEqual((yield* stateOf)?._tag, "signed-in");
-      }),
-    );
-  },
-);
-
-it.effect("follows the vault: locked, then each connector's state again once unlocked", () => {
-  const fake = new FakeAuthorizationServer({ lifetime: 600 });
-  return run(
-    fake,
-    Effect.gen(function* () {
-      yield* signIn(fake);
-      const vault = yield* Vault;
-      const service = yield* auth;
-      const changes = yield* service.states.pipe(
-        Stream.map((states) => states.get(NOTION)?._tag),
-        Stream.changes,
-        Stream.take(3),
-        Stream.runCollect,
-        Effect.forkChild,
-      );
-      yield* Effect.yieldNow;
-      yield* vault.lock;
-      assert.strictEqual(refusal(yield* Effect.exit(service.accessToken(NOTION))), "VaultLocked");
-      yield* vault.unlock(PASSWORD);
-      assert.deepStrictEqual(
-        [...(yield* Fiber.join(changes))],
-        ["signed-in", "vault-locked", "signed-in"],
-      );
-      // The refresh it had scheduled came back with the unlock.
-      yield* TestClock.adjust(Duration.minutes(5));
-      assert.strictEqual(tokenRequests(fake).length, 2);
-    }),
-  );
-});
-
 it.effect("gives an issuer written with a trailing slash a callback of its own", () => {
   const fake = new FakeAuthorizationServer({ issuerPath: "/tenant/" });
   return run(
@@ -895,7 +824,7 @@ it.effect("drops a sign-in still being prepared when the connector is removed", 
     fake,
     Effect.gen(function* () {
       const service = yield* auth;
-      const vault = yield* Vault;
+      const secrets = yield* Secrets;
       const gate = yield* requestGate("/register");
       fake.gate = gate;
       const beginning = yield* service
@@ -904,43 +833,10 @@ it.effect("drops a sign-in still being prepared when the connector is removed", 
       // The client is being registered when the operator removes the connector.
       yield* Deferred.await(gate.arrived);
       yield* service.disconnect(NOTION);
-      yield* vault.connectorSecrets.remove(NOTION);
+      yield* secrets.connectorSecrets.remove(NOTION);
       yield* Deferred.succeed(gate.open, undefined);
       assert.strictEqual(refusal(yield* Fiber.join(beginning)), "unknown-sign-in");
-      assert.isTrue(Option.isNone(yield* vault.connectorSecrets.get(NOTION)));
-    }),
-  );
-});
-
-it.effect("revokes the rotated tokens a locked vault could not take, when it disconnects", () => {
-  const fake = new FakeAuthorizationServer({ lifetime: 100 });
-  return run(
-    fake,
-    Effect.gen(function* () {
-      yield* signIn(fake);
-      const vault = yield* Vault;
-      const service = yield* auth;
-      const gate = yield* requestGate();
-      fake.gate = gate;
-      yield* TestClock.adjust(Duration.seconds(50));
-      yield* Deferred.await(gate.arrived);
-      yield* vault.lock;
-      fake.gate = null;
-      const locked = yield* service.states.pipe(
-        Stream.filter((states) => states.get(NOTION)?._tag === "vault-locked"),
-        Stream.take(1),
-        Stream.runDrain,
-        Effect.forkChild,
-      );
-      yield* Deferred.succeed(gate.open, undefined);
-      yield* Fiber.join(locked);
-      // The rotated refresh token is the grant; the vault only has the one it replaced.
-      const rotated = fake.issued.filter((token) => token.startsWith("refresh")).at(-1);
-      const exit = yield* Effect.exit(service.disconnect(NOTION));
-      assert.include(fake.revoked, rotated);
-      assert.strictEqual(fake.refreshTokens.size, 0);
-      // Forgetting them needs the vault: the disconnect fails, to be tried again.
-      assert.strictEqual(refusal(exit), "vault-locked");
+      assert.isTrue(Option.isNone(yield* secrets.connectorSecrets.get(NOTION)));
     }),
   );
 });

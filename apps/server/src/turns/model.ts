@@ -8,6 +8,7 @@ import {
   RoomId,
   RoutineId,
   RoutineRunId,
+  SecretName,
 } from "@j3-bots/contracts";
 import { TurnId } from "@j3-bots/engine-t3";
 import * as Duration from "effect/Duration";
@@ -137,6 +138,15 @@ export const WakePayload = Schema.Union([
     outcome: Schema.Literals(["done", "declined", "tab-closed", "timed-out", "handed-back"]),
     /** The host name of the page the card was about; null with no card, or a page with none. */
     site: Schema.NullOr(Schema.String),
+  }),
+  /**
+   * How the bot's ask for a secret ended: saved from its card, declined, or
+   * expired. `name` is the secret's, which the bot names it by.
+   */
+  Schema.TaggedStruct("secret-ask", {
+    cardId: EntryId,
+    outcome: Schema.Literals(["saved", "declined", "expired"]),
+    name: SecretName,
   }),
   /** The `user` dispatch this one follows up, whose turn delivered nothing. */
   Schema.TaggedStruct("undelivered", { dispatchId: DispatchRowId }),

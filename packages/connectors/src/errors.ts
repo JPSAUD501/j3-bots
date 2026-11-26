@@ -74,10 +74,13 @@ export class NeedsSignIn extends Schema.TaggedError<NeedsSignIn>()("NeedsSignIn"
   }
 }
 
-/** The vault is locked, so no connector secret can be read until a client unlocks it. */
-export class VaultLocked extends Schema.TaggedError<VaultLocked>()("VaultLocked", {}) {
+/** The operator's secrets cannot be read now (`SecretsState`), so no connector secret can be. */
+export class SecretsUnavailable extends Schema.TaggedError<SecretsUnavailable>()(
+  "SecretsUnavailable",
+  {},
+) {
   override get message(): string {
-    return "The vault is locked.";
+    return "The secrets cannot be read.";
   }
 }
 
@@ -110,7 +113,7 @@ export class Withdrawn extends Schema.TaggedError<Withdrawn>()("Withdrawn", {}) 
 }
 
 /** Why a connector's credentials can't sign a request. */
-export type CredentialsUnavailable = NeedsSignIn | VaultLocked | AuthFailing | Withdrawn;
+export type CredentialsUnavailable = NeedsSignIn | SecretsUnavailable | AuthFailing | Withdrawn;
 
 /** A connector's server took longer than the deadline J3 Bots gives it. */
 export class TimedOut extends Schema.TaggedError<TimedOut>()("TimedOut", {}) {

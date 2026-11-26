@@ -266,6 +266,16 @@ export type SystemEvent =
       readonly outcome: "done" | "declined" | "tab-closed" | "timed-out" | "handed-back";
       /** The host name of the page the request was about; null when none was known. */
       readonly site: string | null;
+    }
+  | {
+      readonly name: "secret-ask";
+      /**
+       * How the bot's ask for a secret ended: the operator saved it, declined,
+       * or it waited too long.
+       */
+      readonly outcome: "saved" | "declined" | "expired";
+      /** The reference the bot names the secret by (`secret:<name>`), saved or not. */
+      readonly reference: string;
     };
 
 export interface SystemWake extends WakeBase {
@@ -349,6 +359,22 @@ const BROWSER_HELP_LINES: {
     "Your user took over your browser while you worked and has given it back. Take a fresh snapshot before you act, since the page may have changed, then carry on with what you were doing, and deliver it with `say`, your last call with `done: true`. If it was already done, end your turn without a word.",
 };
 
+/**
+ * What a `secret-ask` event says happened, and what to do now. The bot never
+ * reads the value: it is told the reference to use, and a secret the operator
+ * did not give is not asked for again on the bot's own.
+ */
+const SECRET_ASK_LINES: {
+  readonly [O in Extract<SystemEvent, { readonly name: "secret-ask" }>["outcome"]]: string;
+} = {
+  saved:
+    "Your user saved the secret you asked for. You never see its value: use it by its reference below, where your tools take one. Carry on with the task, and end with a `say` with `done: true`; nothing else reaches them.",
+  declined:
+    "Your user declined to give the secret you asked for. Do not ask again on your own, and do not look for it elsewhere. Finish what does not need it, then end with a `say` with `done: true` that tells your user what it still blocks.",
+  expired:
+    "Your ask for a secret waited too long and closed without an answer. Do not ask again on your own: end with one short `say` with `done: true` that tells your user the task waits on it, and that you will continue when they tell you to.",
+};
+
 /** What happened, in one line. */
 const eventLine = (event: SystemEvent): string => {
   switch (event.name) {
@@ -362,6 +388,8 @@ const eventLine = (event: SystemEvent): string => {
       return "Your last turn for your user ended without delivering an answer.";
     case "browser-help":
       return BROWSER_HELP_LINES[event.outcome];
+    case "secret-ask":
+      return SECRET_ASK_LINES[event.outcome];
   }
 };
 
@@ -706,6 +734,7 @@ const writeBody = (w: EnvelopeWriter, wake: Wake): void => {
       if (event.name === "browser-help" && event.site !== null) {
         w.empty("browser-tab", [["site", event.site]]);
       }
+      if (event.name === "secret-ask") w.empty("secret", [["reference", event.reference]]);
       return;
     }
   }

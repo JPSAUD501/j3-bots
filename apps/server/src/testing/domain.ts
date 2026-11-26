@@ -19,8 +19,6 @@ import * as Listener from "../listener.ts";
 import type { PushSender } from "../push/PushSender.ts";
 import * as BasePrompt from "../settings/BasePrompt.ts";
 import * as SettingsStore from "../settings/SettingsStore.ts";
-import { LEAST_KDF_PARAMS } from "../vault/crypto.ts";
-import { VaultKdf } from "../vault/Vault.ts";
 import * as TestDatabase from "./database.ts";
 import * as TestOAuth from "./oauth.ts";
 import * as TestHarnesses from "./harnesses.ts";
@@ -153,8 +151,6 @@ const storesOver = (
   Layer.mergeAll(
     engineWith(starting),
     BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer)),
-    // A vault's keys at the cheapest cost it accepts: its tests derive many.
-    Layer.succeed(VaultKdf, LEAST_KDF_PARAMS),
     TestOAuth.layer,
     TestHarnesses.layer,
     repositories,
