@@ -13,6 +13,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Runtime from "effect/Runtime";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import { CliError } from "effect/cli";
 import * as Migrator from "effect/sql/Migrator";
 import * as AdminClient from "../admin/AdminClient.ts";
@@ -114,6 +116,53 @@ const spawnChild = Effect.fn("spawnChild")(function* (
   };
 });
 
+/** The ids a stand-in engine writes once it runs: its own, and its harness's. */
+const Started = Schema.Struct({ engine: Schema.Int, harness: Schema.Int });
+const decodeStarted = Schema.decodeUnknownEffect(Schema.fromJsonString(Started));
+
+const isRunning = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
+};
+
+/**
+ * A stand-in for the engine in `folder`, for `J3_ENGINE_BINARY`: a Node
+ * script, run by a `.cmd` on Windows and by `sh` elsewhere, that starts a
+ * harness that runs until it is ended, writes both ids to `pids` (`Started`),
+ * and runs until it is ended. It never answers, so the server never finds it
+ * ready, and starts it as it starts the engine: on Windows, through the job
+ * launcher.
+ */
+const standInEngine = Effect.fn("standInEngine")(function* (folder: string, pids: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const script = path.join(folder, "engine.cjs");
+  yield* fs.writeFileString(
+    script,
+    [
+      `const { spawn } = require("node:child_process");`,
+      `const fs = require("node:fs");`,
+      `const harness = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });`,
+      `fs.writeFileSync(${JSON.stringify(`${pids}.partial`)}, JSON.stringify({ engine: process.pid, harness: harness.pid }));`,
+      `fs.renameSync(${JSON.stringify(`${pids}.partial`)}, ${JSON.stringify(pids)});`,
+      `setInterval(() => {}, 1000);`,
+    ].join("\n"),
+  );
+  if (process.platform === "win32") {
+    const engine = path.join(folder, "engine.cmd");
+    yield* fs.writeFileString(engine, `@"${process.execPath}" "${script}" %*\r\n`);
+    return engine;
+  }
+  const engine = path.join(folder, "engine");
+  yield* fs.writeFileString(engine, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`);
+  yield* fs.chmod(engine, 0o755);
+  return engine;
+});
+
 /** The parent's end of `child`'s descriptor 3, as the admin channel. */
 const pipeOf = (child: NodeChildProcess.ChildProcess) => {
   const end = child.stdio[3];
@@ -207,6 +256,64 @@ describe("serve, as the desktop app runs it", () => {
         assert.strictEqual(yield* server.exited, 0, server.output());
         yield* assertReleased(server.home);
       }).pipe(Effect.scoped, Effect.provide(services)),
+    { timeout: Duration.toMillis(WITHIN) * 2 },
+  );
+
+  it.live(
+    "hands the pipe to none of the processes it starts: it closes when the server ends, while its engine and the engine's harness still run",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { scratch, env } = yield* newHome;
+        const pids = path.join(scratch, "engine.json");
+        const engine = yield* standInEngine(scratch, pids);
+        const server = yield* spawnChild(
+          process.execPath,
+          [SERVER, "serve", "--admin-fd", "3", "--exit-with-stdin"],
+          { ...env, J3_ENGINE_BINARY: engine },
+          "overlapped",
+        );
+        const pipe = server.child.stdio[3];
+        if (!(pipe instanceof NodeNet.Socket)) return yield* Effect.die("no pipe at fd 3");
+        const closed = new Promise<void>((resolve) => pipe.once("close", () => resolve()));
+        pipe.resume();
+
+        const started = yield* fs.readFileString(pids).pipe(
+          Effect.flatMap(decodeStarted),
+          Effect.retry(Schedule.spaced("100 millis")),
+          Effect.timeoutOrElse({
+            duration: WITHIN,
+            orElse: () =>
+              Effect.die(`the engine did not start; the server wrote:\n${server.output()}`),
+          }),
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            for (const pid of [started.engine, started.harness]) {
+              try {
+                process.kill(pid, "SIGKILL");
+              } catch {
+                // Already gone.
+              }
+            }
+          }),
+        );
+
+        // Only the server ends, as in a crash: what it started keeps running.
+        server.child.kill("SIGKILL");
+        yield* Effect.promise(() => closed).pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(10),
+            orElse: () =>
+              Effect.die(
+                "the pipe stayed open once the server ended: a process it started holds it",
+              ),
+          }),
+        );
+        assert.isTrue(isRunning(started.engine), "the stand-in engine ended with the server");
+        assert.isTrue(isRunning(started.harness), "the stand-in harness ended with the server");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     { timeout: Duration.toMillis(WITHIN) * 2 },
   );
 
