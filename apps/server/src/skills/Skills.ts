@@ -428,13 +428,21 @@ export const layer = Layer.effect(
             apply: Effect.gen(function* () {
               for (const file of files)
                 yield* writeFile(path.join(staging, ...file.path.split("/")), file.data);
-              yield* Effect.orDie(
-                Effect.gen(function* () {
-                  if (exists) yield* fs.rename(folder, old);
-                  yield* fs.rename(staging, folder);
-                }),
+              if (exists) yield* Effect.orDie(fs.rename(folder, old));
+              // Until the new folder and its record are both in place, the old one can go back.
+              yield* Effect.gen(function* () {
+                yield* Effect.orDie(fs.rename(staging, folder));
+                yield* writeRecord(scope, name, source, by);
+              }).pipe(
+                Effect.onError(() =>
+                  exists
+                    ? Effect.gen(function* () {
+                        yield* fs.remove(folder, { recursive: true }).pipe(Effect.ignore);
+                        yield* fs.rename(old, folder);
+                      }).pipe(Effect.ignore)
+                    : Effect.void,
+                ),
               );
-              yield* writeRecord(scope, name, source, by);
             }).pipe(
               Effect.ensuring(
                 Effect.all(
