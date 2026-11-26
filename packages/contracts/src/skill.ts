@@ -82,7 +82,9 @@ export const RepositoryPath = Schema.String.check(
       text === "" ||
       text
         .split("/")
-        .every((segment) => /^[A-Za-z0-9._-]+$/.test(segment) && segment !== "." && segment !== "..") ||
+        .every(
+          (segment) => /^[A-Za-z0-9._-]+$/.test(segment) && segment !== "." && segment !== "..",
+        ) ||
       "folder names joined by /, with no . or .. among them",
   ),
 );
@@ -148,7 +150,9 @@ export interface SkillFrontmatter {
 const scalar = (raw: string): string | undefined => {
   const value = raw.trim();
   if (value.startsWith("'")) {
-    return value.length > 1 && value.endsWith("'") ? value.slice(1, -1).replaceAll("''", "'") : undefined;
+    return value.length > 1 && value.endsWith("'")
+      ? value.slice(1, -1).replaceAll("''", "'")
+      : undefined;
   }
   if (value.startsWith('"')) {
     if (value.length < 2 || !value.endsWith('"')) return undefined;
@@ -189,7 +193,8 @@ export const skillFrontmatter = (text: string): SkillFrontmatter | string => {
       found.set(field, block.filter((each) => each !== "").join(" "));
     } else {
       const value = scalar(rest);
-      if (value === undefined) return `The ${field} in SKILL.md's frontmatter is a quoted value that cannot be read`;
+      if (value === undefined)
+        return `The ${field} in SKILL.md's frontmatter is a quoted value that cannot be read`;
       found.set(field, value);
     }
   }

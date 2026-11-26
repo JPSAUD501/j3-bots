@@ -346,7 +346,6 @@ export const layer = Layer.effect(
       yield* entries.update({ ...card, status: { _tag: "dismissed" } });
     });
 
-
     const saveCredential = Effect.fn("Cards.saveCredential")(function* (input: {
       readonly id: CredentialId;
       readonly draft: CredentialDraft;

@@ -240,7 +240,11 @@ describe("Connectors started by command", () => {
         assert.notInclude(echoed.text, "new-secret-8899");
 
         // A command line the operator confirmed again: the tool it adds waits on them.
-        yield* connectors.update({ by: { _tag: "operator" }, connectorId: ID, command: command(["--tool", "extra"]) });
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          command: command(["--tool", "extra"]),
+        });
         const reviewed = yield* awaitConnector((connector) => connector.review !== null);
         assert.deepStrictEqual(
           reviewed.review?.changes.map((change) => [change._tag, change.tool.name]),

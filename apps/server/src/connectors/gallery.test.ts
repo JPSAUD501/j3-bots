@@ -365,7 +365,11 @@ describe("connecting from the gallery", () => {
             connector.status._tag === "needs-sign-in" && connector.status.reason === "rejected",
         );
         const outside = yield* Effect.flip(
-          connectors.update({ by: { _tag: "operator" }, connectorId: id, values: [value(FieldKey.make("url:host"), "x")] }),
+          connectors.update({
+            by: { _tag: "operator" },
+            connectorId: id,
+            values: [value(FieldKey.make("url:host"), "x")],
+          }),
         );
         assert.strictEqual(invalidReason(outside), "connector-fields");
         const updated = yield* connectors.update({

@@ -20,10 +20,12 @@ import { DeviceToken, PairingCode, SocketTicket } from "./device.ts";
  * and the hop limit out of a room: `Room`, `room.create` and `room.update`
  * have neither `hostId` nor `hopLimit`, and a room's bots go quiet past a
  * fixed limit since the operator last wrote there (`chain-stopped` with
- * `limit: "room"`).
+ * `limit: "room"`). 11 is 0.9.0's, once for all its changes: the skills
+ * (`SkillRpcs`), who changed a connector last (`Connector.lastChange`), and
+ * no connector suggestion card.
  * docs/architecture/clients.md, "Protocol compatibility", says what does.
  */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 
 export const HTTP_PATHS = {
   /** `GET`, no credential. Answers `ServerInfo`. */

@@ -1306,36 +1306,44 @@ describe("a connector's `j3` call", () => {
 });
 
 describe("a `j3` call that manages MCP servers or skills", () => {
-  it.effect("is a step of the bot's work, named without its input, and a call the server matches", () =>
-    Effect.gen(function* () {
-      const input = { url: "https://mcp.example.com/mcp", headers: { Authorization: "${secret:example}" } };
-      const mirror = emptyMirror();
-      applyEvent(mirror, run("running", 1));
-      const { view } = replacement(mirror, false, at);
-      for (const [id, toolName] of [
-        ["item-add", "mcp__j3__add_mcp_server"],
-        ["item-skill", "j3.save_skill"],
-        ["item-say", "j3.say"],
-      ] as const) {
-        applyEvent(mirror, item({ id, type: "dynamic_tool", toolName, input, status: "running" }));
-      }
-      yield* digestToolCalls(mirror);
-      const events = diff(mirror, view, at);
+  it.effect(
+    "is a step of the bot's work, named without its input, and a call the server matches",
+    () =>
+      Effect.gen(function* () {
+        const input = {
+          url: "https://mcp.example.com/mcp",
+          headers: { Authorization: "${secret:example}" },
+        };
+        const mirror = emptyMirror();
+        applyEvent(mirror, run("running", 1));
+        const { view } = replacement(mirror, false, at);
+        for (const [id, toolName] of [
+          ["item-add", "mcp__j3__add_mcp_server"],
+          ["item-skill", "j3.save_skill"],
+          ["item-say", "j3.say"],
+        ] as const) {
+          applyEvent(
+            mirror,
+            item({ id, type: "dynamic_tool", toolName, input, status: "running" }),
+          );
+        }
+        yield* digestToolCalls(mirror);
+        const events = diff(mirror, view, at);
 
-      assert.deepStrictEqual(
-        events.flatMap((event) => (event._tag === "tool-call" ? [event.call.tool] : [])),
-        ["add_mcp_server", "save_skill", "say"],
-      );
-      const steps = events.flatMap((event) => (event._tag === "step" ? [event.step] : []));
-      assert.deepStrictEqual(
-        steps.map(({ tool, label }) => ({ tool, label })),
-        [
-          { tool: "mcp-server-added", label: "Added an MCP server" },
-          { tool: "skill-saved", label: "Saved a skill" },
-        ],
-      );
-      assert.notInclude(JSON.stringify(steps), "secret:example");
-    }),
+        assert.deepStrictEqual(
+          events.flatMap((event) => (event._tag === "tool-call" ? [event.call.tool] : [])),
+          ["add_mcp_server", "save_skill", "say"],
+        );
+        const steps = events.flatMap((event) => (event._tag === "step" ? [event.step] : []));
+        assert.deepStrictEqual(
+          steps.map(({ tool, label }) => ({ tool, label })),
+          [
+            { tool: "mcp-server-added", label: "Added an MCP server" },
+            { tool: "skill-saved", label: "Saved a skill" },
+          ],
+        );
+        assert.notInclude(JSON.stringify(steps), "secret:example");
+      }),
   );
 });
 
