@@ -105,6 +105,9 @@ const bridge: DesktopBridge = {
     };
   },
   copySecret: (request) => ipcRenderer.invoke(IPC_CHANNELS.copySecret, request),
+  exportLocal: (request) => ipcRenderer.invoke(IPC_CHANNELS.exportLocal, request),
+  runHereAgain: () => ipcRenderer.invoke(IPC_CHANNELS.runHereAgain),
+  deleteLocalData: () => ipcRenderer.invoke(IPC_CHANNELS.deleteLocalData),
 };
 
 contextBridge.exposeInMainWorld(BRIDGE_KEY, bridge);

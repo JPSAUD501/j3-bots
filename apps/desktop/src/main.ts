@@ -9,6 +9,8 @@ import {
   IPC_CHANNELS,
   LocalDeviceRequest,
   LocalDeviceResult,
+  LocalExportRequest,
+  LocalExportResult,
   LocalPairingLink,
   LocalPairingRequest,
   LocalServerState,
@@ -24,11 +26,13 @@ import {
   type SealResult,
   SecretCopy,
 } from "@j3-bots/desktop-bridge";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -37,6 +41,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  dialog,
   ipcMain,
   type IpcMainEvent,
   type IpcMainInvokeEvent,
@@ -117,6 +122,8 @@ const decodeOpenRequest = Schema.decodeUnknownOption(OpenRequest);
 const decodeLocalDeviceRequest = Schema.decodeUnknownOption(LocalDeviceRequest);
 const decodePhoneAccessRequest = Schema.decodeUnknownOption(PhoneAccessRequest);
 const decodePairingRequest = Schema.decodeUnknownOption(LocalPairingRequest);
+const decodeExportRequest = Schema.decodeUnknownOption(LocalExportRequest);
+const encodeExportResult = Schema.encodeSync(LocalExportResult);
 const encodeLocalDevice = Schema.encodeSync(LocalDeviceResult);
 const encodeLocalServer = Schema.encodeSync(Schema.NullOr(LocalServerState));
 const encodePhoneAccess = Schema.encodeSync(PhoneAccess);
@@ -376,6 +383,56 @@ const program = Effect.gen(function* () {
     return yield* choice.connectToServerInstead(pageOf(event));
   });
 
+  /**
+   * Moves the bots on this computer to another server: asks where to write
+   * the export, then has the server choice write it. A name already taken is
+   * refused before their server stops: the export never writes over a file.
+   * The name offered carries the minute, so a second move the same day is
+   * not offered the first one's file to replace.
+   */
+  const exportLocal = Effect.fn("desktop.exportLocal")(function* (
+    event: IpcMainInvokeEvent,
+    request: unknown,
+  ): Effect.fn.Return<LocalExportResult> {
+    const decoded = decodeExportRequest(request);
+    if (!fromApp(event) || Option.isNone(decoded)) return { _tag: "failed" };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    // The operator's own clock, to the minute.
+    const now = DateTime.toParts(DateTime.setZone(yield* DateTime.now, DateTime.zoneMakeLocal()));
+    const two = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${now.year}-${two(now.month)}-${two(now.day)}-${two(now.hour)}${two(now.minute)}`;
+    const options = {
+      defaultPath: path.join(app.getPath("documents"), `j3-bots-export-${stamp}.tar.gz`),
+      filters: [{ name: "J3 Bots export", extensions: ["gz"] }],
+      properties: ["createDirectory" as const],
+    };
+    const chosen = yield* Effect.promise(() =>
+      owner === null ? dialog.showSaveDialog(options) : dialog.showSaveDialog(owner, options),
+    );
+    if (chosen.canceled || chosen.filePath === undefined || chosen.filePath === "") {
+      return { _tag: "cancelled" };
+    }
+    const file = chosen.filePath;
+    if (yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))) {
+      return { _tag: "refused", reason: "taken" };
+    }
+    return yield* choice.moveAway(pageOf(event), file, Redacted.make(decoded.value.passphrase));
+  });
+
+  const runHereAgain = Effect.fn("desktop.runHereAgain")(function* (
+    event: IpcMainInvokeEvent,
+  ): Effect.fn.Return<ModeChange> {
+    if (!fromApp(event)) return "failed";
+    return yield* choice.runHereAgain(pageOf(event));
+  });
+
+  const deleteLocalData = Effect.fn("desktop.deleteLocalData")(function* (
+    event: IpcMainInvokeEvent,
+  ): Effect.fn.Return<ModeChange> {
+    if (!fromApp(event)) return "failed";
+    return yield* choice.deleteLocalData(pageOf(event));
+  });
+
   // Only the app's own top frame is given a device token.
   const localDevice = Effect.fn("desktop.localDevice")(function* (
     event: IpcMainInvokeEvent,
@@ -393,7 +450,7 @@ const program = Effect.gen(function* () {
           event.returnValue = null;
           return;
         }
-        const { server, mode, startWithSystem } = runSync(settings.get);
+        const { server, mode, startWithSystem, moved } = runSync(settings.get);
         event.returnValue = encodeState({
           server,
           pairingCode: links.takeCarriedCode(server),
@@ -402,6 +459,7 @@ const program = Effect.gen(function* () {
           localServer: runSync(localServerNow),
           phoneAccess: runSync(phone.current),
           startWithSystem,
+          ...(moved === null ? {} : { moved }),
         });
       });
       ipcMain.handle(IPC_CHANNELS.connect, (event, request: unknown) =>
@@ -449,6 +507,11 @@ const program = Effect.gen(function* () {
         if (!fromApp(event) || Option.isNone(decoded)) return false;
         return secretCopies.copy(decoded.value.text);
       });
+      ipcMain.handle(IPC_CHANNELS.exportLocal, (event, request: unknown) =>
+        runPromise(exportLocal(event, request).pipe(Effect.map(encodeExportResult))),
+      );
+      ipcMain.handle(IPC_CHANNELS.runHereAgain, (event) => runPromise(runHereAgain(event)));
+      ipcMain.handle(IPC_CHANNELS.deleteLocalData, (event) => runPromise(deleteLocalData(event)));
     }),
     () =>
       Effect.sync(() => {
@@ -468,6 +531,9 @@ const program = Effect.gen(function* () {
         ipcMain.removeHandler(IPC_CHANNELS.phoneAccess);
         ipcMain.removeHandler(IPC_CHANNELS.localPairingLink);
         ipcMain.removeHandler(IPC_CHANNELS.copySecret);
+        ipcMain.removeHandler(IPC_CHANNELS.exportLocal);
+        ipcMain.removeHandler(IPC_CHANNELS.runHereAgain);
+        ipcMain.removeHandler(IPC_CHANNELS.deleteLocalData);
       }),
   );
 
@@ -520,19 +586,20 @@ const program = Effect.gen(function* () {
   // keeps the encryption it set up for the process, so only a new one sees
   // the unlocked keyring), is the updater's: it may be into an update.
   const updates = yield* Updater.serve(window, fromApp, {
-    beforeInstall: supervisor.stop,
-    installFailed: Effect.gen(function* () {
-      if ((yield* settings.get).mode === "local") yield* supervisor.start;
-    }),
+    // A move under way ends first: its export holds the data, and once it is
+    // kept the server does not start again.
+    beforeInstall: choice.settled.pipe(Effect.andThen(supervisor.stop)),
+    installFailed: choice.whileLocal(supervisor.start).pipe(Effect.asVoid),
   });
   yield* Autostart.serve(fromApp);
 
   // Quit, from the tray, the menu or the system, waits for the server this
-  // computer runs to stop; nothing is left running behind the app.
+  // computer runs to stop, and for a move under way to end, its export kept
+  // or undone; nothing is left running behind the app.
   let quitting = false;
   const holdQuit = quitGate({
-    serverRuns: () => runSync(supervisor.state).state !== "stopped",
-    stopServer: () => runPromise(supervisor.stop),
+    serverRuns: () => runSync(supervisor.state).state !== "stopped" || runSync(choice.moving),
+    stopServer: () => runPromise(choice.settled.pipe(Effect.andThen(supervisor.stop))),
     quit: () => app.quit(),
   });
   const beforeQuit = (event: { readonly preventDefault: () => void }) => {
@@ -565,7 +632,8 @@ const program = Effect.gen(function* () {
   window.on("close", (event) => {
     if (saved) return;
     event.preventDefault();
-    if (!quitting && runSync(settings.get).mode === "local") {
+    const { mode, moved } = runSync(settings.get);
+    if (!quitting && mode === "local" && moved === null) {
       void saveBounds();
       window.hide();
       return;
@@ -650,9 +718,11 @@ const program = Effect.gen(function* () {
 
   // The server this computer runs starts once the launch's update is over:
   // at once, before the page loads, where the launch installs nothing first;
-  // not at all when the app restarts into a newer version.
+  // not at all when the app restarts into a newer version, nor while the
+  // bots moved away from this computer.
   const startLocal = Effect.gen(function* () {
-    if ((yield* settings.get).mode === "local" && localHost.available) yield* supervisor.start;
+    const { mode, moved } = yield* settings.get;
+    if (mode === "local" && moved === null && localHost.available) yield* supervisor.start;
   });
   if (updates.updatesFirst) yield* Effect.forkScoped(Effect.andThen(updates.launched, startLocal));
   else yield* startLocal;

@@ -234,6 +234,9 @@ describe("the desktop bridge", () => {
       stopCatchingSignIn: call,
       onSignInReturn: call,
       copySecret: call,
+      exportLocal: call,
+      runHereAgain: call,
+      deleteLocalData: call,
     };
     const state = { ...LOCAL_OFF, server: null, pairingCode: null };
     assert.isTrue(decodes(HostedBridge, { state, ...calls }));

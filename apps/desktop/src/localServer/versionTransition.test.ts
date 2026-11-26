@@ -450,3 +450,37 @@ describe("the version of the server on this computer", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("the release that exports the bots' data", () => {
+  const versionUsed = (runtime: Runtime.Runtime) => Effect.succeed(runtime.version);
+
+  it.live("is the app's on data an older release left, which it leaves as it was", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const here = yield* computer(OLD);
+      assert.strictEqual(yield* (yield* here.app(NEW)).forExport(versionUsed), NEW);
+      assert.deepStrictEqual(here.host.startedOn, []);
+      assert.strictEqual(yield* fs.readFileString(here.database), `data of ${OLD}`);
+      assert.strictEqual(Option.getOrThrow(yield* here.record).version, OLD);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("is the newer release the data was handed to while the app is older", () =>
+    Effect.gen(function* () {
+      const here = yield* computer(NEW);
+      assert.strictEqual(yield* (yield* here.app(OLD)).forExport(versionUsed), NEW);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("is none while a rollback the app was killed in is unfinished", () =>
+    Effect.gen(function* () {
+      const here = yield* computer();
+      here.host.failing.add(NEW);
+      here.host.killedAt.add(OLD);
+      yield* Effect.exit((yield* here.app(NEW)).launch);
+      const refused = yield* Effect.flip((yield* here.app(NEW)).forExport(versionUsed));
+      assert.isFalse(refused.retry);
+      assert.include(refused.reason, "cut off");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});

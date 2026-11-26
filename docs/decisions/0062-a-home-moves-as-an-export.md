@@ -17,6 +17,7 @@ Whatever the move writes, a later release has to read. And what it does with the
 - **The secrets travel sealed under a passphrase of the export's own.** The export opens each value under the home's key and seals it again, in a copy, under a key that scrypt derives from that passphrase. It uses a fresh salt and seals with AES-256-GCM, binding each value to its record and field, as the secrets are sealed at home. The passphrase is typed twice, and it cannot be recovered. The import seals each value again under the key of the home it lands in. No value is ever in the archive unsealed.
 - **Sessions do not move.** The import records the sessions as belonging to an engine the new home does not have. The new server's first start loses every one of them, and each bot goes on in a new session with its conversation and memory ([Another engine](../architecture/server.md#another-engine)). The import never talks to an engine.
 - **A home that holds anything the import would delete is replaced only when asked** (`--replace`): bots, secrets, or files a person kept, as a deleted bot's. An import that stops while it puts the archive in place leaves a mark naming the archive. The server refuses to start until the import of that archive is run again, or another one with `--replace`.
+- **The desktop app moves the bots it runs with the same command.** Settings runs the server's own `export` on their home, from the release that would start next, with the passphrase on its stdin, and reads its report (`--report`) to say what it left out. Once the file is written the server there stays stopped, and the app says so, until the operator runs the bots there again or deletes their data: the bots never run in two places unasked. The app has no import: the bots move to a server.
 - **The archive is checked as data from outside.** Its reader takes regular files only, each named, sized and hashed by the manifest; the database's bot ids and attachment paths are checked before they become paths in the home.
 
 ## Costs
@@ -24,7 +25,7 @@ Whatever the move writes, a later release has to read. And what it does with the
 - The archive's format is now a promise. A later release keeps reading `j3-bots-export-1`, or says plainly that it does not.
 - A forgotten passphrase loses the secrets in that export, and nothing recovers them. The export still holds everything else.
 - The bots lose whatever their sessions held that is not in their memory or conversation, as on any lost session. Every device pairs again, providers sign in again on a server that has none, and every service that calls a webhook is given its new address.
-- The source keeps its data. Until the operator deletes it, the bots could run in two places with copies that drift apart.
+- The source keeps its data. Until the operator deletes it, the bots could run in two places with copies that drift apart. The desktop app keeps its server stopped after an export for that reason, and starting it again is the operator's choice.
 
 ## Rejected
 

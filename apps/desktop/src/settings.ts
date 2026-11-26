@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { DeviceId, UpdateChannel } from "@j3-bots/contracts";
-import { Accelerator, Appearance, DesktopMode, ServerOrigin } from "@j3-bots/desktop-bridge";
+import {
+  Accelerator,
+  Appearance,
+  DesktopMode,
+  MovedAway,
+  ServerOrigin,
+} from "@j3-bots/desktop-bridge";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -45,7 +51,9 @@ const LocalDevice = Schema.Struct({ id: DeviceId, current: Schema.Boolean });
  * it on, the releases the app updates to (`updateChannel`), stable ones
  * until the operator chooses nightly builds too, and whether a verified
  * version installs by itself (`automaticUpdates`), at launch or as the app
- * quits, on until the operator turns it off. None is a secret.
+ * quits, on until the operator turns it off, and the export the bots on this
+ * computer moved away with (`moved`), while their data is still here and
+ * their server stays stopped. None is a secret.
  */
 export const Settings = Schema.Struct({
   mode: Schema.NullOr(DesktopMode),
@@ -58,6 +66,7 @@ export const Settings = Schema.Struct({
   phoneAccess: Schema.Boolean,
   updateChannel: UpdateChannel,
   automaticUpdates: Schema.Boolean,
+  moved: Schema.NullOr(MovedAway),
 });
 export type Settings = typeof Settings.Type;
 
@@ -72,6 +81,7 @@ const EMPTY: Settings = {
   phoneAccess: false,
   updateChannel: "stable",
   automaticUpdates: true,
+  moved: null,
 };
 
 const decodeStored = Schema.decodeUnknownOption(
@@ -85,6 +95,7 @@ const decodeShortcut = Schema.decodeUnknownOption(Accelerator);
 const decodeAppearance = Schema.decodeUnknownOption(Appearance);
 const decodeFlag = Schema.decodeUnknownOption(Schema.Boolean);
 const decodeChannel = Schema.decodeUnknownOption(UpdateChannel);
+const decodeMoved = Schema.decodeUnknownOption(MovedAway);
 const encodeFile = Schema.encodeEffect(Schema.fromJsonString(Settings));
 
 /**
@@ -111,6 +122,7 @@ export const decodeSettings = (
     phoneAccess,
     updateChannel,
     automaticUpdates,
+    moved,
   } = stored.value;
   const keptServer = Option.flatMap(decodeServer(server), (origin) => {
     const checked = parseServerAddress(origin);
@@ -127,6 +139,7 @@ export const decodeSettings = (
   const keptPhoneAccess = decodeFlag(phoneAccess);
   const keptChannel = decodeChannel(updateChannel);
   const keptAutomaticUpdates = decodeFlag(automaticUpdates);
+  const keptMoved = decodeMoved(moved);
   const dropped: Array<keyof Settings> = [];
   if (mode !== undefined && mode !== null && Option.isNone(keptMode)) dropped.push("mode");
   if (server !== undefined && server !== null && Option.isNone(keptServer)) dropped.push("server");
@@ -146,6 +159,7 @@ export const decodeSettings = (
   if (automaticUpdates !== undefined && Option.isNone(keptAutomaticUpdates)) {
     dropped.push("automaticUpdates");
   }
+  if (moved !== undefined && moved !== null && Option.isNone(keptMoved)) dropped.push("moved");
   return {
     settings: {
       mode: Option.getOrElse(keptMode, () =>
@@ -160,6 +174,7 @@ export const decodeSettings = (
       phoneAccess: Option.getOrElse(keptPhoneAccess, () => EMPTY.phoneAccess),
       updateChannel: Option.getOrElse(keptChannel, () => EMPTY.updateChannel),
       automaticUpdates: Option.getOrElse(keptAutomaticUpdates, () => EMPTY.automaticUpdates),
+      moved: Option.getOrNull(keptMoved),
     },
     dropped,
   };

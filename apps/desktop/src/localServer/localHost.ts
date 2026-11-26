@@ -5,13 +5,15 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
-import type * as ServerChoice from "../serverChoice.ts";
+import * as ServerChoice from "../serverChoice.ts";
 import { DesktopSettings } from "../settings.ts";
 import * as AdminChannel from "./adminChannel.ts";
 import * as Credential from "./credential.ts";
+import * as ExportProcess from "./exportProcess.ts";
 import * as Home from "./home.ts";
 import * as Orphans from "./orphans.ts";
 import * as PhoneAccess from "./phoneAccess.ts";
@@ -74,11 +76,43 @@ const isAppOnly = (name: string) =>
   name.toUpperCase() === "PATH";
 
 /**
- * The server's environment: the app's, without what belongs to Electron, an
- * AppImage, Node (but the certificates it trusts) or a J3 Bots setting in
- * the operator's shell (the server's
- * settings come from its home's `config.json`), with the operator's PATH,
- * its home, the address it listens on and the web client it serves.
+ * The environment of a command of the server the app carries: the app's,
+ * without what belongs to Electron, an AppImage, Node (but the certificates
+ * it trusts) or a J3 Bots setting in the operator's shell (the server's
+ * settings come from its home's `config.json`), with the operator's PATH and
+ * the server's home.
+ */
+const commandEnvironment = (
+  env: Readonly<Record<string, string | undefined>>,
+  options: { readonly path: string; readonly home: string },
+): Record<string, string> => {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && !isAppOnly(name)) kept[name] = value;
+  }
+  return { ...kept, PATH: options.path, J3_HOME: options.home };
+};
+
+/**
+ * Whether `file` lies in `home`, as the system resolves its folder and the
+ * home: a folder reached through a link or a junction to the home counts as
+ * the home. `relative` compares without case on Windows, as its files do.
+ */
+export const holdsFile = Effect.fn("LocalHost.holdsFile")(function* (home: string, file: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const resolved = (entry: string) => fs.realPath(entry).pipe(Effect.orElseSucceed(() => entry));
+  const data = yield* resolved(home);
+  const folder = yield* resolved(path.dirname(path.resolve(file)));
+  const relative = path.relative(data, folder);
+  // Outside, the path climbs out of the home by its first part: a folder in
+  // it named `..exports` is still in it.
+  return !path.isAbsolute(relative) && relative.split(path.sep)[0] !== "..";
+});
+
+/**
+ * The server's environment: a command's (`commandEnvironment`), with the
+ * address it listens on and the web client it serves.
  */
 export const serverEnvironment = (
   env: Readonly<Record<string, string | undefined>>,
@@ -88,19 +122,11 @@ export const serverEnvironment = (
     readonly host: string;
     readonly webClient: string;
   },
-): Record<string, string> => {
-  const kept: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value !== undefined && !isAppOnly(name)) kept[name] = value;
-  }
-  return {
-    ...kept,
-    PATH: options.path,
-    J3_HOME: options.home,
-    J3_HOST: options.host,
-    J3_WEB_CLIENT: options.webClient,
-  };
-};
+): Record<string, string> => ({
+  ...commandEnvironment(env, options),
+  J3_HOST: options.host,
+  J3_WEB_CLIENT: options.webClient,
+});
 
 const decodeOrigin = Schema.decodeUnknownEffect(ServerOrigin);
 
@@ -318,11 +344,65 @@ export const make = Effect.fn("LocalHost.make")(function* (options: LocalHostOpt
     yield* supervisor.start;
   });
 
+  /**
+   * Writes the export of the bots' data to `file`, with the release that may
+   * read it, while their server is stopped (`VersionTransition.forExport`).
+   */
+  const exportTo = Effect.fn("LocalHost.exportTo")(
+    function* (file: string, passphrase: Redacted.Redacted<string>) {
+      if (Option.isNone(versions)) {
+        return yield* new ExportProcess.ExportFailed({
+          reason: `This copy of J3 Bots carries no server to run on this computer (${source}).`,
+        });
+      }
+      const env = commandEnvironment(options.env, { path: yield* shellPath, home });
+      // The report goes to a folder of the export's own, only this user's, and
+      // goes with it once read.
+      const folder = yield* fs.makeTempDirectoryScoped({ prefix: "j3-bots-export-" }).pipe(
+        Effect.mapError(
+          (error) =>
+            new ExportProcess.ExportFailed({
+              reason: `No folder could be made for the export's report: ${error.message}`,
+            }),
+        ),
+      );
+      const report = path.join(folder, "report.json");
+      return yield* versions.value
+        .forExport((runtime) =>
+          ExportProcess.run({
+            node: runtime.node,
+            entry: runtime.entry,
+            env,
+            file,
+            report,
+            passphrase,
+          }).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+        )
+        .pipe(
+          Effect.catchTag("LaunchFailed", (error) =>
+            Effect.fail(new ExportProcess.ExportFailed({ reason: error.reason })),
+          ),
+        );
+    },
+    Effect.scoped,
+    Effect.provideContext(context),
+  );
+
+  /** Deletes the bots' data, and the server's log of them, from this computer. */
+  const deleteData = Effect.forEach(
+    [home, logFile, `${logFile}.1`, pidFile],
+    (entry) => fs.remove(entry, { recursive: true, force: true }),
+    { discard: true },
+  ).pipe(Effect.mapError((cause) => new ServerChoice.DataNotDeleted({ cause })));
+
   const local: ServerChoice.LocalServer = {
     available,
     prepare: prepareChosen(home, homeSystem).pipe(Effect.provideContext(context)),
     start: supervisor.start,
     stop: supervisor.stop,
+    holds: (file) => holdsFile(home, file).pipe(Effect.provideContext(context)),
+    exportTo,
+    deleteData,
   };
 
   const signIn = yield* Credential.make({

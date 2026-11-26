@@ -523,6 +523,53 @@ export const make = Effect.fn("VersionTransition.make")(function* (
   );
 
   /**
+   * Runs `use` with the runtime that may export the bots' data, under the
+   * home's update lock, so no start or update comes between: the package's
+   * release, which reads the data of any release before it, or the newer
+   * one the data was handed to while the app is older. An update or a
+   * rollback that is cut off, or data no release here reads, is refused,
+   * with why.
+   */
+  const forExport = Effect.fn("VersionTransition.forExport")(function* <A, E>(
+    use: (runtime: Runtime.Runtime) => Effect.Effect<A, E>,
+  ) {
+    yield* Runtime.install({ source: options.source, folder: runtimes }).pipe(
+      Effect.mapError(notReady),
+    );
+    yield* Transition.TransitionLock.hold(
+      home,
+      () =>
+        new LaunchFailed({
+          reason: "Another change to the bots' data on this computer is under way.",
+          retry: true,
+        }),
+    ).pipe(Effect.mapError((error) => (isLaunchFailed(error) ? error : unreadable(error))));
+    const plan = yield* decide(false).pipe(Effect.mapError(unreadable));
+    if (plan._tag === "refused") {
+      return yield* new LaunchFailed({
+        reason: plan.reason,
+        ...(plan.fix === undefined ? {} : { fix: plan.fix }),
+        retry: false,
+      });
+    }
+    if (plan._tag === "finish-rollback") {
+      return yield* new LaunchFailed({
+        reason:
+          "An update of the bots' data on this computer was cut off. Open the bots here once, which finishes it, then move them.",
+        retry: false,
+      });
+    }
+    const newer =
+      plan._tag === "run" && Option.exists(plan.update, (notice) => notice._tag === "older-app");
+    const runtime = yield* Runtime.ready({
+      folder: runtimes,
+      version: newer ? plan.version : bundled.version,
+      platform: options.platform,
+    }).pipe(Effect.mapError(notReady));
+    return yield* use(runtime);
+  }, Effect.scoped);
+
+  /**
    * Takes over a server an earlier run of the app left on the home with
    * `takeOver`, when it is the release a start would run as it is; any other
    * one `takeOver` stops, as it does with no release given.
@@ -545,6 +592,7 @@ export const make = Effect.fn("VersionTransition.make")(function* (
   return {
     launch,
     adopt,
+    forExport,
     /** Once the server a start gave answers: records it, when it was started as it is. */
     onReady: Effect.flatten(Ref.getAndSet(afterReady, Effect.void)),
     /** What the server's version is going through, if anything. */

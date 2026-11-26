@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { serverEnvironment } from "./localHost.ts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { holdsFile, serverEnvironment } from "./localHost.ts";
 
 describe("the environment the server runs with", () => {
   const options = {
@@ -58,4 +62,26 @@ describe("the environment the server runs with", () => {
     assert.strictEqual(env["J3_HOME"], "/data/server/home");
     assert.strictEqual(env["J3_WEB_CLIENT"], "/opt/J3 Bots/resources/web/dist");
   });
+});
+
+describe("where an export may not be written", () => {
+  it.effect.skipIf(process.platform === "win32")(
+    "inside the bots' home, by its own path or through a link to it, but beside it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "j3-desktop-holds-" });
+        const home = path.join(root, "server", "home");
+        yield* fs.makeDirectory(path.join(home, "bots"), { recursive: true });
+        yield* fs.symlink(home, path.join(root, "shortcut"));
+        assert.isTrue(yield* holdsFile(home, path.join(home, "export.tar.gz")));
+        assert.isTrue(yield* holdsFile(home, path.join(home, "bots", "export.tar.gz")));
+        assert.isTrue(yield* holdsFile(home, path.join(root, "shortcut", "export.tar.gz")));
+        yield* fs.makeDirectory(path.join(home, "..exports"));
+        assert.isTrue(yield* holdsFile(home, path.join(home, "..exports", "export.tar.gz")));
+        assert.isFalse(yield* holdsFile(home, path.join(root, "server", "export.tar.gz")));
+        assert.isFalse(yield* holdsFile(home, path.join(root, "home-2", "export.tar.gz")));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });

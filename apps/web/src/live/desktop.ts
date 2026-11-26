@@ -15,9 +15,11 @@ import {
   ForgetResult,
   HostedBridge,
   LocalDeviceResult,
+  LocalExportResult,
   LocalPairingLink,
   LocalServerState,
   ModeChange,
+  type MovedAway,
   UseThisComputerResult,
   NetworkState,
   NotificationClick,
@@ -159,6 +161,25 @@ export interface Desktop {
    * once it has, the app loads the page again on the server address screen.
    */
   readonly connectToServerInstead: () => Promise<ModeChange | null>;
+  /**
+   * The export the bots on this computer moved away with, while their data
+   * is still here and their server stays stopped; `null` while they did not.
+   */
+  readonly moved: MovedAway | null;
+  /**
+   * Moves the bots on this computer to another server: asks where to write
+   * the export, its secrets sealed under `passphrase`, stops their server and
+   * writes it; once it has, the app loads the page again. `null` when the
+   * app gave no answer the page understands.
+   */
+  readonly moveAway: (passphrase: Redacted.Redacted<string>) => Promise<LocalExportResult | null>;
+  /** Runs the bots that moved away here again; once it has, the app loads the page again. */
+  readonly runHereAgain: () => Promise<ModeChange | null>;
+  /**
+   * Deletes the data the bots that moved away left on this computer. In local
+   * mode the app then loads its first page, which asks where the bots live.
+   */
+  readonly deleteLocalData: () => Promise<ModeChange | null>;
   /** Starts the server on this computer again now, after it failed or while it waits to. */
   readonly retryLocalServer: () => void;
   /** Tries the update the server on this computer was rolled back from again. */
@@ -234,6 +255,7 @@ const decodeShortcutChange = Schema.decodeUnknownOption(ShortcutChange);
 const decodeTheme = Schema.decodeUnknownOption(Theme);
 const decodeModeChange = Schema.decodeUnknownOption(ModeChange);
 const decodeUseThisComputer = Schema.decodeUnknownOption(UseThisComputerResult);
+const decodeExportResult = Schema.decodeUnknownOption(LocalExportResult);
 const decodeLocalServer = Schema.decodeUnknownOption(Schema.NullOr(LocalServerState));
 const decodeLocalDevice = Schema.decodeUnknownOption(LocalDeviceResult);
 const decodeStartWithSystem = Schema.decodeUnknownOption(StartWithSystemChange);
@@ -362,6 +384,11 @@ export const desktop: Desktop | null = Option.match(decodeBridge(hosted), {
     startWithSystem: bridge.state.startWithSystem,
     chooseThisComputer: () => ask(() => bridge.useThisComputer(), decodeUseThisComputer),
     connectToServerInstead: () => ask(() => bridge.connectToServerInstead(), decodeModeChange),
+    moved: bridge.state.moved ?? null,
+    moveAway: (passphrase) =>
+      ask(() => bridge.exportLocal({ passphrase: Redacted.value(passphrase) }), decodeExportResult),
+    runHereAgain: () => ask(() => bridge.runHereAgain(), decodeModeChange),
+    deleteLocalData: () => ask(() => bridge.deleteLocalData(), decodeModeChange),
     retryLocalServer: () => {
       bridge.retryLocalServer();
     },
