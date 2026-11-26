@@ -56,13 +56,10 @@ import { Secrets } from "../secrets/Secrets.ts";
 import { Skills } from "../skills/Skills.ts";
 import { ConnectorInputs } from "../connectors/ConnectorInputs.ts";
 
-/** The RPCs this server answers: every one of `J3Rpcs`. */
-export const ServedRpcs = J3Rpcs;
-
 const operator = { _tag: "operator" } as const;
 
 /** One socket's handlers, acting as the device the socket belongs to. */
-export const handlers = ServedRpcs.toLayer(
+export const handlers = J3Rpcs.toLayer(
   Effect.gen(function* () {
     const device = yield* CurrentDevice;
     const auth = yield* DeviceAuth;
