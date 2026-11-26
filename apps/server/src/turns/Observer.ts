@@ -78,7 +78,7 @@ import { Wakes } from "./Wakes.ts";
 import { WorkSteps } from "./WorkSteps.ts";
 import { WorkImages } from "../attachments/WorkImages.ts";
 import { annotate } from "./ConnectorSteps.ts";
-import { sameWork, shownWork, WorkColumn } from "./turnWork.ts";
+import { endedTurnWork, sameWork, shownWork, WorkColumn } from "./turnWork.ts";
 
 const Watched = Schema.Struct({
   id: SessionRowId,
@@ -1131,11 +1131,11 @@ export const layer = Layer.effect(
       if (Option.isNone(turn)) return;
       if (session.purpose === "side") return yield* touchActivity(session.id, turnId, at);
       const kept = (yield* keptWork({ sessionId: session.id, turnId })).work_json;
-      // An ended turn's work is final once nothing of it works on: a later
-      // turn can take a little one up again, and the engine then lists it
-      // under that turn alone (decision 0070).
-      if (turn.value.finished_at !== null && kept !== null && kept.littleOnes.working === 0) return;
-      const work = shownWork(engineWork);
+      const work = shownWork(
+        turn.value.finished_at === null || kept === null
+          ? engineWork
+          : endedTurnWork(kept, engineWork),
+      );
       if (sameWork(kept, work)) return;
       yield* sql`
         UPDATE turns SET work_json = ${yield* encodeWork(work)}

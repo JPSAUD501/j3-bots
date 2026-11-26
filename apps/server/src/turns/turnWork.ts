@@ -19,6 +19,9 @@ export const sameWork = (a: TurnWork | null, b: TurnWork | null) =>
 
 const isWorking = (one: LittleOne) => one.status === "working";
 
+const startedFirst = (a: LittleOne, b: LittleOne) =>
+  DateTime.toEpochMillis(a.startedAt) - DateTime.toEpochMillis(b.startedAt);
+
 const endedLast = (a: LittleOne, b: LittleOne) =>
   a.finishedAt === null || b.finishedAt === null
     ? 0
@@ -59,19 +62,44 @@ export const shownWork = (work: EngineTurnWork): TurnWork | null => {
 };
 
 /**
+ * What the engine tells of a turn that ended, with what was kept of it
+ * before: a little one the engine no longer lists under the turn stays as it
+ * was kept. A later turn can take a little one up again, and the engine then
+ * lists it under that turn alone (decision 0070); the earlier turn still
+ * started it, and saw it end.
+ */
+export const endedTurnWork = (kept: TurnWork, told: EngineTurnWork): EngineTurnWork => {
+  const listed = new Set(told.littleOnes.map((one) => one.id));
+  return {
+    plan: told.plan ?? kept.plan,
+    littleOnes: [
+      ...kept.littleOnes.ones.filter((one) => !listed.has(one.id)),
+      ...told.littleOnes,
+    ].toSorted(startedFirst),
+  };
+};
+
+/**
  * The work of a member's turns for a room that still run there, `earlier`
  * started first: the latest plan, and every little one of them, as one
  * turn's work would show them, since a little one an earlier turn handed off
- * still works beside the later turn.
+ * still works beside the later turn. A little one both list, one the later
+ * turn took up again, is the later turn's.
  */
-export const joinedWork = (earlier: TurnWork, later: TurnWork): TurnWork => ({
-  plan: later.plan ?? earlier.plan,
-  littleOnes: {
-    ones: named([...earlier.littleOnes.ones, ...later.littleOnes.ones]),
-    working: earlier.littleOnes.working + later.littleOnes.working,
-    total: earlier.littleOnes.total + later.littleOnes.total,
-  },
-});
+export const joinedWork = (earlier: TurnWork, later: TurnWork): TurnWork => {
+  const taken = new Set(later.littleOnes.ones.map((one) => one.id));
+  const left = earlier.littleOnes.ones.filter((one) => !taken.has(one.id));
+  const dropped = earlier.littleOnes.ones.filter((one) => taken.has(one.id));
+  return {
+    plan: later.plan ?? earlier.plan,
+    littleOnes: {
+      ones: named([...left, ...later.littleOnes.ones].toSorted(startedFirst)),
+      working:
+        earlier.littleOnes.working + later.littleOnes.working - dropped.filter(isWorking).length,
+      total: earlier.littleOnes.total + later.littleOnes.total - dropped.length,
+    },
+  };
+};
 
 /**
  * The work as it stands once nothing runs in the turn's session any more: a

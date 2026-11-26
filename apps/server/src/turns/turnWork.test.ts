@@ -28,7 +28,7 @@ import {
   until,
 } from "../testing/turns.ts";
 import { BotStates } from "./BotStates.ts";
-import { shownWork } from "./turnWork.ts";
+import { joinedWork, shownWork } from "./turnWork.ts";
 
 type Line = readonly [text: string, status: "pending" | "running" | "done"];
 
@@ -154,35 +154,48 @@ it.effect("keeps an ended turn's little ones when a later turn takes one up agai
     const control = yield* TestEngineControl;
     const bot = yield* createBot("Ana");
     const sessionId = yield* engineSession(bot.id);
-    yield* sendToBot(bot.id, "Review the PR.");
+    yield* sendToBot(bot.id, "Review the PR and run the tests.");
     const first = yield* nextTurn(bot.id);
     const at = yield* DateTime.now;
-    const done = littleOne("reviewer", at, { status: "done", at });
-    yield* control.turnWork({ sessionId, turnId: first, work: { plan: null, littleOnes: [done] } });
+    const reviewer = littleOne("reviewer", at, { status: "done", at });
+    const tests = littleOne("tests", at, null);
+    const tell = (turnId: typeof first, littleOnes: ReadonlyArray<LittleOne>) =>
+      control.turnWork({ sessionId, turnId, work: { plan: null, littleOnes } });
+    yield* tell(first, [reviewer, tests]);
+    // The tests go on after the turn.
+    yield* control.startBackgroundWork({ sessionId, turnId: first });
     yield* control.finishTurn({ sessionId, turnId: first, outcome: { _tag: "completed" } });
     yield* turnEnded(bot.id);
     const firstFold = yield* awaitEntry(bot.id, "work-fold");
 
     yield* sendToBot(bot.id, "Ask the reviewer about the parser.");
     const second = yield* nextTurn(bot.id, first);
-    // The engine lists the little one under the later turn alone, the
-    // earlier with none, as it does once a subagent is taken up again.
-    const again = littleOne("reviewer", at, null);
-    yield* control.turnWork({ sessionId, turnId: first, work: { plan: null, littleOnes: [] } });
-    yield* control.turnWork({
-      sessionId,
-      turnId: second,
-      work: { plan: null, littleOnes: [again] },
-    });
+    // The engine lists the reviewer under the later turn alone, as it does
+    // once a subagent is taken up again, and the tests end meanwhile.
+    yield* TestClock.adjust("1 minute");
+    const later = yield* DateTime.now;
+    const again = littleOne("reviewer", later, null);
+    const testsDone = littleOne("tests", at, { status: "done", at: later });
+    yield* tell(first, [tests]);
+    yield* tell(second, [again]);
+    yield* tell(first, [testsDone]);
     yield* until(
       awaitEntry(bot.id, "work-fold").pipe(Effect.map((fold) => fold.id !== firstFold.id)),
+    );
+    yield* until(
+      Effect.map(conversation(bot.id), (entries) =>
+        entries.some(
+          (entry) =>
+            entry._tag === "work-fold" && entry.work?.littleOnes.ones[1]?.status === "done",
+        ),
+      ),
     );
 
     const folds = (yield* conversation(bot.id)).flatMap((entry) =>
       entry._tag === "work-fold" ? [entry.work] : [],
     );
     assert.deepStrictEqual(folds, [
-      { plan: null, littleOnes: { ones: [done], working: 0, total: 1 } },
+      { plan: null, littleOnes: { ones: [reviewer, testsDone], working: 0, total: 2 } },
       { plan: null, littleOnes: { ones: [again], working: 1, total: 1 } },
     ]);
   }).pipe(Effect.provide(TestDomain.layer)),
@@ -264,6 +277,29 @@ it.effect("ends a little one still working as failed when its session is lost", 
       total: 1,
     });
   }).pipe(Effect.provide(TestDomain.layer)),
+);
+
+it.effect("counts once a little one a member's later room turn took up again", () =>
+  Effect.gen(function* () {
+    const start = yield* DateTime.now;
+    const after = (minutes: number) => DateTime.add(start, { minutes });
+    // An earlier turn's full list of ended little ones, and the later turn
+    // that took the first of them up again.
+    const ended = Array.from({ length: MAX_LITTLE_ONES }, (_, i) =>
+      littleOne(`one-${i}`, after(i), { status: "done", at: after(i + 1) }),
+    );
+    const again = littleOne("one-0", after(30), null);
+    const shown = (littleOnes: ReadonlyArray<LittleOne>) =>
+      shownWork({ plan: null, littleOnes }) ?? assert.fail("a turn with little ones has work");
+
+    const joined = joinedWork(shown(ended), shown([again]));
+
+    assert.deepStrictEqual(joined.littleOnes, {
+      ones: [...ended.slice(1), again],
+      working: 1,
+      total: MAX_LITTLE_ONES,
+    });
+  }),
 );
 
 it.effect("names every little one still working when a turn has more than it lists", () =>
