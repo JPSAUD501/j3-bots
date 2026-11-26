@@ -10,6 +10,7 @@ import {
   powerShellLiteral,
   system32,
   windowsCommandWords,
+  windowsNameKey,
   withoutModulePath,
 } from "@j3-bots/processes";
 import { boundedCommand } from "./Command.ts";
@@ -49,7 +50,7 @@ export type Found =
  * Whether a command line is the engine serving the data directory `home`:
  * its `serve` command with `--base-dir` set to `home`. On Windows the line is
  * split as the engine itself splits it, and paths compare without case, as
- * Windows compares them. `ps` joins the words with spaces and does not quote,
+ * NTFS compares them (`windowsNameKey`). `ps` joins the words with spaces and does not quote,
  * so on other systems `home` must stand as words of its own after
  * `--base-dir`.
  */
@@ -61,7 +62,7 @@ export const servesHome = (platform: string, commandLine: string, home: string):
     return (
       words.includes("serve") &&
       baseDir !== undefined &&
-      baseDir.replace(/[\\/]+$/, "").toLowerCase() === home.replace(/[\\/]+$/, "").toLowerCase()
+      windowsNameKey(baseDir.replace(/[\\/]+$/, "")) === windowsNameKey(home.replace(/[\\/]+$/, ""))
     );
   }
   const words = commandLine.trim().split(/\s+/);

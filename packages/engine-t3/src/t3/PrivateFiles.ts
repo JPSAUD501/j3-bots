@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Hex from "effect/encoding/Hex";
+import { windowsNameKey } from "@j3-bots/processes";
 
 // What the adapter itself writes under the engine's data directory, and the
 // one way it writes there. The engine writes the rest of that directory on
@@ -285,7 +286,7 @@ export const makePrivateFiles = Effect.fnUntraced(function* (
       // A junction holds the absolute path it was made with, which Windows
       // compares without case.
       const destination = path.resolve(yield* fs.realPath(path.dirname(location)), target);
-      const comparable = (folder: string) => path.resolve(folder).toLowerCase();
+      const comparable = (folder: string) => windowsNameKey(path.resolve(folder));
       return comparable(held) === comparable(destination);
     },
     Effect.orElseSucceed(() => false),

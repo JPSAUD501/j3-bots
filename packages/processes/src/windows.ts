@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // What J3 Bots needs to start programs on Windows without a shell: command
-// lines split and quoted as the programs it starts read them, and Windows
-// PowerShell 5.1, by its full path, for what Node cannot ask Windows itself.
+// lines split and quoted as the programs it starts read them, names compared
+// as Windows' file systems compare them, and Windows PowerShell 5.1, by its
+// full path, for what Node cannot ask Windows itself.
 
 /**
  * The words of a Windows command line, split as programs built with the
@@ -77,6 +78,29 @@ export const windowsCommandWord = (word: string): string => {
     backslashes = 0;
   }
   return `${quoted}${"\\".repeat(backslashes * 2)}"`;
+};
+
+/**
+ * `name`, a path or a part of one, as Windows' file systems compare it: two
+ * names that give the same key name the same file. NTFS compares names by
+ * its upcase table, which maps each UTF-16 unit to one unit, its upper case,
+ * and leaves every other unit as it is: `ß` stays `ß`, and `K`, the Kelvin
+ * sign, is not `k`. So each unit is upper-cased on its own, and kept as it is
+ * where its upper case would take more than one unit. Lower-casing the whole
+ * name, as `toLowerCase` does, would take `K` for `k` and `İ` for `i̇`. A
+ * volume's table is the one of the Windows that formatted it, which can
+ * differ from Unicode's, which Node follows, on a few letters: the Greek
+ * letters with a subscript iota, whose one-unit upper case this does not
+ * find, among them.
+ */
+export const windowsNameKey = (name: string): string => {
+  let key = "";
+  for (let at = 0; at < name.length; at++) {
+    const unit = name[at] ?? "";
+    const upper = unit.toUpperCase();
+    key += upper.length === 1 ? upper : unit;
+  }
+  return key;
 };
 
 /**

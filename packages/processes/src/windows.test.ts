@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { assert, describe, it } from "@effect/vitest";
-import { powerShellLiteral, windowsCommandWord, windowsCommandWords } from "./windows.ts";
+import {
+  powerShellLiteral,
+  windowsCommandWord,
+  windowsCommandWords,
+  windowsNameKey,
+} from "./windows.ts";
 
 describe("windowsCommandWords", () => {
   it("splits as the C runtime does: quotes group, and backslashes count only before a quote", () => {
@@ -42,6 +47,20 @@ describe("windowsCommandWord", () => {
     assert.deepStrictEqual(windowsCommandWords(words.map(windowsCommandWord).join(" ")), words);
     // A word with nothing to quote is left as it is.
     assert.strictEqual(windowsCommandWord(String.raw`C:\J3\t3.exe`), String.raw`C:\J3\t3.exe`);
+  });
+});
+
+describe("windowsNameKey", () => {
+  it("gives names that differ only in case one key, unit by unit, as NTFS compares them", () => {
+    assert.strictEqual(
+      windowsNameKey(String.raw`C:\Users\Ada\Área`),
+      windowsNameKey(String.raw`c:\users\ADA\área`),
+    );
+    // The Kelvin sign is not a K, and a sharp s has no one-unit upper case.
+    assert.notStrictEqual(windowsNameKey("\u212a"), windowsNameKey("k"));
+    assert.notStrictEqual(windowsNameKey("straße"), windowsNameKey("STRASSE"));
+    // A dotted capital I is not an i followed by a combining dot.
+    assert.notStrictEqual(windowsNameKey("\u0130"), windowsNameKey("i\u0307"));
   });
 });
 
