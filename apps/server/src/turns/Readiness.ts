@@ -26,11 +26,12 @@ export class Readiness extends Context.Service<
     /** Waits until the machinery is released. */
     readonly released: Effect.Effect<void>;
     /**
-     * For a loop the engine just refused: waits until the machinery is
-     * released again after the engine was unready, or the retry deadline
-     * passes, since the engine's status can trail it.
+     * For a loop the engine refused in a pass that began under `generation`:
+     * waits until the machinery is released under a later one, also one that
+     * came while the pass ran, or the retry deadline passes, since the
+     * engine's status can trail it.
      */
-    readonly changeOrRetry: Effect.Effect<void>;
+    readonly changeOrRetry: (generation: number) => Effect.Effect<void>;
     /**
      * The engine's start generation, as the turn machinery sees it: how many
      * times the machinery was released after the engine became ready. An
@@ -53,8 +54,7 @@ export const layer = Layer.effect(
 
     const released = waitFor((current) => current.released);
 
-    const changeOrRetry = Effect.gen(function* () {
-      const { generation } = yield* SubscriptionRef.get(state);
+    const changeOrRetry = Effect.fn("Readiness.changeOrRetry")(function* (generation: number) {
       yield* waitFor((current) => current.released && current.generation > generation).pipe(
         Effect.timeoutOption(UNAVAILABLE_RETRY),
       );

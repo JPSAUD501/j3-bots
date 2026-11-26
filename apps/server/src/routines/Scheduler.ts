@@ -26,7 +26,7 @@ import { json, Time, timeText } from "../persistence/columns.ts";
 import { transactional } from "../persistence/transaction.ts";
 import { conversation } from "../turns/model.ts";
 import { notices } from "../turns/notices.ts";
-import { DEFECT_RETRY, RETRY_TICK } from "../turns/reconciler.ts";
+import { DEFECT_RETRY, RETRY_TICK, waitUntil } from "../turns/reconciler.ts";
 import { RoutineRuns } from "./RoutineRuns.ts";
 import { type CatchUp, catchUp } from "./schedule.ts";
 
@@ -282,34 +282,42 @@ export const layer = Layer.effect(
       }).pipe(Effect.withSpan("Scheduler.pass")),
     );
 
-    /** How long to wait before the next pass, from the earliest next run. */
-    const wait = Effect.gen(function* () {
+    /**
+     * When to look again after a pass that began at `began`: at the earliest
+     * next run, counted from when the pass looked, so a routine that came due
+     * while it ran is looked at once it ends.
+     */
+    const nextLook = Effect.fn("Scheduler.nextLook")(function* (began: DateTime.Utc) {
+      const heartbeat = DateTime.addDuration(began, HEARTBEAT);
       const row = yield* earliest(undefined).pipe(Effect.orDie);
-      if (Option.isNone(row)) return HEARTBEAT;
-      const now = yield* DateTime.now;
-      return DateTime.isGreaterThan(row.value.next_run_at, now)
-        ? Duration.min(HEARTBEAT, DateTime.distance(now, row.value.next_run_at))
-        : // Due already: it came due while the pass ran, or its run could be
-          // neither recorded nor postponed. Shortly, not at once, so a routine
-          // that keeps failing does not keep the worker busy.
-          RETRY_TICK;
+      if (Option.isNone(row)) return heartbeat;
+      const due = DateTime.isGreaterThan(row.value.next_run_at, began)
+        ? row.value.next_run_at
+        : // Due when the pass looked, and its run could be neither recorded
+          // nor postponed. Shortly, not at once, so a routine that keeps
+          // failing does not keep the worker busy.
+          DateTime.addDuration(began, RETRY_TICK);
+      return DateTime.min(heartbeat, due);
     });
 
     // Anything that goes wrong in a round, the wait included, is logged and
     // the worker goes on after a pause: it never ends while the server runs.
     const loop = Effect.gen(function* () {
-      const pause = yield* pass.pipe(
-        Effect.andThen(wait),
+      // A nudge before the pass is one the pass reads the cause of.
+      yield* Queue.poll(nudges);
+      const began = yield* DateTime.now;
+      const at = yield* pass.pipe(
+        Effect.andThen(nextLook(began)),
         Effect.catchCauseIf(
           (cause) => !Cause.hasInterruptsOnly(cause),
           (cause) =>
-            Effect.as(
-              Effect.logError("The scheduler failed; it runs again later", cause),
-              DEFECT_RETRY,
+            Effect.logError("The scheduler failed; it runs again later", cause).pipe(
+              Effect.andThen(DateTime.now),
+              Effect.map((failed) => DateTime.addDuration(failed, DEFECT_RETRY)),
             ),
         ),
       );
-      yield* Queue.take(nudges).pipe(Effect.timeoutOption(pause));
+      yield* waitUntil(at, Queue.take(nudges));
     }).pipe(Effect.forever, Effect.withSpan("The routine scheduler"));
 
     yield* Effect.forkScoped(loop);

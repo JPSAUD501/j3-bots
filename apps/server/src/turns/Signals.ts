@@ -16,6 +16,8 @@ export interface Trigger {
   readonly fire: Effect.Effect<void>;
   /** Waits for the next nudge. */
   readonly next: Effect.Effect<void>;
+  /** Forgets a nudge not yet taken: for a pass about to begin, which reads what it was for. */
+  readonly clear: Effect.Effect<void>;
 }
 
 const makeTrigger = Effect.gen(function* () {
@@ -23,6 +25,7 @@ const makeTrigger = Effect.gen(function* () {
   return {
     fire: Queue.offer(queue, undefined).pipe(Effect.asVoid),
     next: Queue.take(queue),
+    clear: Queue.poll(queue).pipe(Effect.asVoid),
   } satisfies Trigger;
 });
 

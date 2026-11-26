@@ -59,23 +59,31 @@ export const onePassAtATime = <P extends Pass>(
 ): Effect.Effect<Effect.Effect<P>> =>
   Effect.map(Semaphore.make(1), (permit) => permit.withPermits(1)(pass));
 
-/** Waits after a pass that ran to its end, as long as what it found asks. */
-const waitAfter = (
+/**
+ * When the pass after one that began at `began` and ran to its end is due,
+ * counted from when that pass looked, not from when it ended: what comes due
+ * while a pass runs is done once the pass ends, and a pass that ran long has
+ * spent part of its wait already.
+ */
+const nextPassAt = (
   result: Extract<Pass, { readonly _tag: "done" }>,
-  signal: Trigger,
-): Effect.Effect<void> =>
+  began: DateTime.Utc,
+): DateTime.Utc => {
+  const retry = DateTime.addDuration(began, RETRY_TICK);
+  const base = result.deferred ? retry : DateTime.addDuration(began, HEARTBEAT);
+  if (result.next === null) return base;
+  // Due already when the pass looked, and not done by it: left for a later one.
+  const due = DateTime.isGreaterThan(result.next, began) ? result.next : retry;
+  return DateTime.min(base, due);
+};
+
+/** Waits until `at`, or until a signal comes first. */
+export const waitUntil = (at: DateTime.Utc, next: Effect.Effect<void>): Effect.Effect<void> =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
-    const due =
-      result.next === null
-        ? null
-        : DateTime.isGreaterThan(result.next, now)
-          ? DateTime.distance(now, result.next)
-          : // Due already and not done by this pass: left for a later one.
-            RETRY_TICK;
-    const base = result.deferred ? RETRY_TICK : HEARTBEAT;
-    const wait = due === null ? base : Duration.min(base, due);
-    yield* signal.next.pipe(Effect.timeoutOption(wait));
+    if (DateTime.isGreaterThan(at, now)) {
+      yield* next.pipe(Effect.timeoutOption(DateTime.distance(now, at)));
+    }
   });
 
 /** Runs a pass, logging a failure, which yields `null`. */
@@ -96,6 +104,11 @@ const supervisedPass = <P extends Pass>(name: string, pass: Effect.Effect<P>) =>
  * signal never leaves work waiting. A pass that fails unexpectedly is logged
  * and the worker waits before the next one, so a defect never spins and never
  * stops the other workers.
+ *
+ * What changes while a pass runs counts from when the pass began: its
+ * deadlines (`nextPassAt`), a signal, and, for a pass the engine refused, the
+ * engine becoming ready again. A signal fired before the pass began is
+ * forgotten: the pass reads what it was for.
  */
 export const reconcile = (input: {
   readonly name: string;
@@ -105,10 +118,13 @@ export const reconcile = (input: {
 }): Effect.Effect<never> =>
   Effect.gen(function* () {
     yield* input.readiness.released;
+    const generation = yield* input.readiness.generation;
+    yield* input.signal.clear;
+    const began = yield* DateTime.now;
     const result = yield* supervisedPass(input.name, input.pass);
     if (result === null) return yield* Effect.sleep(DEFECT_RETRY);
-    if (result._tag === "unavailable") return yield* input.readiness.changeOrRetry;
-    yield* waitAfter(result, input.signal);
+    if (result._tag === "unavailable") return yield* input.readiness.changeOrRetry(generation);
+    yield* waitUntil(nextPassAt(result, began), input.signal.next);
   }).pipe(Effect.forever, Effect.withSpan(input.name));
 
 /**
@@ -121,7 +137,9 @@ export const reconcileWithoutEngine = (input: {
   readonly signal: Trigger;
 }): Effect.Effect<never> =>
   Effect.gen(function* () {
+    yield* input.signal.clear;
+    const began = yield* DateTime.now;
     const result = yield* supervisedPass(input.name, input.pass);
     if (result === null) return yield* Effect.sleep(DEFECT_RETRY);
-    yield* waitAfter(result, input.signal);
+    yield* waitUntil(nextPassAt(result, began), input.signal.next);
   }).pipe(Effect.forever, Effect.withSpan(input.name));
