@@ -27,15 +27,32 @@ const SERVER = `${import.meta.dirname}/../bin.ts`;
 /** Long enough for a server to start, migrate a new database and stop again. */
 const WITHIN = Duration.seconds(60);
 
-/** A port no one listens on now: the tool and engine ports cannot be 0. */
-const freePort = Effect.callback<number>((resume) => {
-  const server = NodeNet.createServer();
-  server.listen(0, "127.0.0.1", () => {
+/** A listener on a port the system picked, closed when the scope ends. */
+const listenAnywhere = Effect.acquireRelease(
+  Effect.callback<NodeNet.Server>((resume) => {
+    const server = NodeNet.createServer();
+    server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+  }),
+  (server) =>
+    Effect.callback<void>((resume) => {
+      server.close(() => resume(Effect.void));
+    }),
+).pipe(
+  Effect.map((server) => {
     const address = server.address();
-    const port = typeof address === "object" && address !== null ? address.port : 0;
-    server.close(() => resume(Effect.succeed(port)));
-  });
-});
+    return typeof address === "object" && address !== null ? address.port : 0;
+  }),
+);
+
+/**
+ * A server's three ports, which no one listens on now and which all differ:
+ * the tool and engine ports cannot be 0. Every listener stays open until all
+ * three are known, so the system cannot hand out a port it already gave.
+ */
+const serverPorts = Effect.all(
+  { port: listenAnywhere, tool: listenAnywhere, engine: listenAnywhere },
+  { concurrency: "unbounded" },
+).pipe(Effect.scoped);
 
 /**
  * A new home in a scratch folder, and the environment that points a server
@@ -47,13 +64,14 @@ const newHome = Effect.gen(function* () {
   const path = yield* Path.Path;
   const scratch = yield* fs.makeTempDirectoryScoped({ prefix: "j3-serve-" });
   const home = path.join(scratch, "home");
+  const ports = yield* serverPorts;
   const env = {
     ...process.env,
     J3_HOME: home,
     J3_HOST: "127.0.0.1",
-    J3_PORT: String(yield* freePort),
-    J3_TOOL_PORT: String(yield* freePort),
-    J3_ENGINE_PORT: String(yield* freePort),
+    J3_PORT: String(ports.port),
+    J3_TOOL_PORT: String(ports.tool),
+    J3_ENGINE_PORT: String(ports.engine),
     J3_ENGINE_BINARY: path.join(scratch, "no-engine"),
   };
   return { scratch, home, env };

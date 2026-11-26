@@ -20,16 +20,20 @@ import {
   MCP_APP_MIME_TYPE,
   MCP_APPS_EXTENSION,
 } from "@j3-bots/contracts";
+import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import type * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { blobText } from "./app.ts";
 import { type CatalogTool, catalogOf, cleanTitle, ListedTool, toolBytes } from "./catalog.ts";
 import { answerText, CallResult, contentText, ResourceContents } from "./content.ts";
@@ -65,6 +69,7 @@ import {
   RawRequestError,
   TASKS_EXTENSION,
   type Task,
+  type ProgressStep,
   type TaskTap,
   tapTransport,
 } from "./tasks.ts";
@@ -785,11 +790,17 @@ export const sessionOf = (
   const fork = (effect: Effect.Effect<void>) => void Effect.runForkWith(context)(effect);
   const calls: Calls = new Set();
   const callsByTag = new Map<string, InFlight>();
-  const tap: TaskTap = tapTransport(transport, (tag, deliver) => {
-    const flight = callsByTag.get(tag);
-    if (flight === undefined) deliver();
-    else inFlight.run(flight, deliver);
-  });
+  /** Where each tagged call that asked for its progress takes it. */
+  const progressByTag = new Map<string, (step: ProgressStep) => void>();
+  const tap: TaskTap = tapTransport(
+    transport,
+    (tag, deliver) => {
+      const flight = callsByTag.get(tag);
+      if (flight === undefined) deliver();
+      else inFlight.run(flight, deliver);
+    },
+    (step) => progressByTag.get(step.progressToken)?.(step),
+  );
 
   /**
    * The flight a server's request for input belongs to: the one it arrived
@@ -903,21 +914,40 @@ export const sessionOf = (
     return yield* withinBudget(promptsOf(answer.value.prompts, scrub(answer.sent)), entryBytes);
   });
 
-  /** Where a call's progress goes: to its hooks, at most every {@link PROGRESS_EVERY}. */
-  const throttled = (hooks: CallHooks | undefined) => {
+  /**
+   * Passes a call's progress to its hooks, one step after another, at most
+   * every {@link PROGRESS_EVERY}: its last step always goes.
+   */
+  const progressTo = (hooks: CallHooks | undefined) => {
     let last = Number.NEGATIVE_INFINITY;
-    return (progress: CallProgress) => {
+    return Effect.fn("McpSession.progress")(function* (progress: CallProgress) {
       if (hooks === undefined) return;
-      fork(
-        Effect.gen(function* () {
-          const now = yield* Clock.currentTimeMillis;
-          if (now - last < Duration.toMillis(PROGRESS_EVERY) && progress.fraction !== 1) return;
-          last = now;
-          yield* hooks.progress(progress);
-        }),
-      );
-    };
+      const now = yield* Clock.currentTimeMillis;
+      if (now - last < Duration.toMillis(PROGRESS_EVERY) && progress.fraction !== 1) return;
+      last = now;
+      yield* hooks.progress(progress);
+    });
   };
+
+  /**
+   * Where a call's progress goes as the tap sees it arrive, outside any
+   * fiber: a queue its hooks are given from, in order. `delivered` waits
+   * until every step offered so far reached them, so the call answers after
+   * its progress.
+   */
+  const progressQueue = Effect.fn("McpSession.progressQueue")(function* (
+    hooks: CallHooks | undefined,
+  ) {
+    const queue = yield* Queue.unbounded<CallProgress, Cause.Done>();
+    const delivering = yield* Stream.fromQueue(queue).pipe(
+      Stream.runForEach(progressTo(hooks)),
+      Effect.forkChild,
+    );
+    return {
+      offer: (progress: CallProgress) => void Queue.offerUnsafe(queue, progress),
+      delivered: Queue.end(queue).pipe(Effect.andThen(Fiber.join(delivering))),
+    };
+  });
 
   /**
    * Runs `send` as a tagged call: the flight is known by its tag, so an
@@ -928,6 +958,7 @@ export const sessionOf = (
     deadline: Duration.Duration,
     hooks: CallHooks | undefined,
     send: (tag: string, signal: AbortSignal) => Promise<A>,
+    progress?: (step: ProgressStep) => void,
   ) => {
     const tag = NodeCrypto.randomUUID();
     return request(
@@ -938,9 +969,11 @@ export const sessionOf = (
           calls.add(flight);
           callsByTag.set(tag, flight);
         }
+        if (progress !== undefined) progressByTag.set(tag, progress);
         return send(tag, signal).finally(() => {
           if (flight !== undefined) calls.delete(flight);
           callsByTag.delete(tag);
+          progressByTag.delete(tag);
           tap.forget(tag);
         });
       },
@@ -965,7 +998,7 @@ export const sessionOf = (
     hooks: CallHooks | undefined,
     left: Duration.Duration,
   ) {
-    const report = throttled(hooks);
+    const report = progressTo(hooks);
     const answered = new Set<string>();
     const pollMs = (t: Task) =>
       Math.min(TASK_POLL.max, Math.max(TASK_POLL.min, t.pollIntervalMs ?? TASK_POLL.default));
@@ -973,7 +1006,10 @@ export const sessionOf = (
       let current: DetailedTask = task;
       for (;;) {
         if (current.statusMessage !== undefined) {
-          report({ message: oneLine(scrub([])(current.statusMessage), 200), fraction: null });
+          yield* report({
+            message: oneLine(scrub([])(current.statusMessage), 200),
+            fraction: null,
+          });
         }
         switch (current.status) {
           case "completed": {
@@ -1044,41 +1080,49 @@ export const sessionOf = (
   });
 
   const callTool: McpSession["callTool"] = Effect.fn("McpSession.callTool")(function* (input) {
-    const report = throttled(input.hooks);
+    const progress = yield* progressQueue(input.hooks);
     const began = yield* Clock.currentTimeMillis;
-    const answer = yield* tagged(limits.callDeadline, input.hooks, (tag, signal) =>
-      client
-        .callTool(
-          { name: input.name, arguments: { ...input.arguments }, _meta: { [CALL_TAG]: tag } },
-          {
-            signal,
-            timeout: sdkTimeout(limits.callDeadline),
-            onprogress: (progress) =>
-              report({
-                message:
-                  progress.message === undefined ? null : oneLine(scrub([])(progress.message), 200),
-                fraction:
-                  progress.total === undefined || progress.total <= 0
-                    ? null
-                    : Math.min(1, Math.max(0, progress.progress / progress.total)),
-              }),
-          },
-        )
-        .then(
-          (result) => ({ _tag: "answer", result }) as const,
-          (error: unknown) => {
-            const task = tap.taken(tag);
-            if (
-              task !== undefined &&
-              SdkError.isInstance(error) &&
-              error.code === SdkErrorCode.UnsupportedResultType
-            ) {
-              return { _tag: "task", task } as const;
-            }
-            throw error;
-          },
-        ),
+    const answer = yield* tagged(
+      limits.callDeadline,
+      input.hooks,
+      (tag, signal) =>
+        client
+          .callTool(
+            {
+              name: input.name,
+              arguments: { ...input.arguments },
+              // The call's progress is asked for under its tag, which the tap passes on.
+              _meta: {
+                [CALL_TAG]: tag,
+                ...(input.hooks === undefined ? {} : { progressToken: tag }),
+              },
+            },
+            { signal, timeout: sdkTimeout(limits.callDeadline) },
+          )
+          .then(
+            (result) => ({ _tag: "answer", result }) as const,
+            (error: unknown) => {
+              const task = tap.taken(tag);
+              if (
+                task !== undefined &&
+                SdkError.isInstance(error) &&
+                error.code === SdkErrorCode.UnsupportedResultType
+              ) {
+                return { _tag: "task", task } as const;
+              }
+              throw error;
+            },
+          ),
+      (step) =>
+        progress.offer({
+          message: step.message === undefined ? null : oneLine(scrub([])(step.message), 200),
+          fraction:
+            step.total === undefined || step.total <= 0
+              ? null
+              : Math.min(1, Math.max(0, step.progress / step.total)),
+        }),
     );
+    yield* progress.delivered;
     const result =
       answer.value._tag === "task"
         ? yield* followTask(
