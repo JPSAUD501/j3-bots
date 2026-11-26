@@ -10,8 +10,9 @@ import type { ConversationItem } from "../stores/Conversations.ts";
  * client shows may already be ahead of the bot's state, with a message the
  * operator just sent or one that just arrived, and then nothing is offered.
  * The finished work fold of the turn that answered can sit after its message
- * and is passed over; the fold of a turn still running is something newer. A guess holding the mark that places a draft's file is never
- * offered: taken into the draft, it would stand for a file that is not there.
+ * and is passed over; the fold of a turn still running is something newer.
+ * A guess holding the mark that places a draft's file is never offered:
+ * taken into the draft, it would stand for a file that is not there.
  */
 export function offeredReply(
   suggestion: SuggestedReply | null,

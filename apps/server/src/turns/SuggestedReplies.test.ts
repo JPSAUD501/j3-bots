@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { type BotId, MAX_SUGGESTED_REPLY_LENGTH } from "@j3-bots/contracts";
 import type { TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { BotStore } from "../bots/BotStore.ts";
@@ -28,7 +29,6 @@ import {
   until,
 } from "../testing/turns.ts";
 import { offerableText } from "./SuggestedReplies.ts";
-import * as Clock from "effect/Clock";
 
 // A reply the AI suggests is offered in the bot's conversation only after a
 // turn the operator woke there, while what the bot answered is the newest

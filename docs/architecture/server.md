@@ -996,7 +996,7 @@ After a turn, a harness can guess the message the operator will send next, as T3
 
 **Which guess is offered.** A harness guesses from its whole session: the envelopes the bot was woken with, the working text `say` never showed, and every audience the main session serves. So the server follows only each bot's main session, and offers a guess in its conversation only while all of these hold:
 
-- the turn it follows was woken only by the operator in that conversation: every wake it took, its first and those steered into it, is a `user` wake, so a teammate's turn the operator steered does not count; and it spoke for the conversation and completed;
+- the turn it follows was woken only by the operator in that conversation: every wake it took, its first and those steered into it, is a `user` wake, so neither a teammate's turn the operator steered nor the operator's turn a teammate's urgent message was steered into counts; and it spoke for the conversation and completed;
 - the last message the turn said there (`turns.said_entry_id`, written by `say` and by the host speech that stands for one) is still the conversation's newest entry, the turn's own work fold aside;
 - the text, trimmed, is at most 300 characters and holds nothing that reads as an envelope's markup;
 - the switch is on.

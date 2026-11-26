@@ -28,8 +28,9 @@ import { SessionRowId } from "./model.ts";
  * session: the wake envelopes, the bot's working text and every audience the
  * session serves. So the server offers a guess only where it follows what the
  * operator saw: after a turn of the bot's main session that only the operator
- * woke, in its conversation (every wake it took, its steers' too, is theirs), that completed, and whose last message there is still
- * the conversation's newest entry, the turn's own work fold aside. A guess
+ * woke, in its conversation (every wake it took, its steers' too, is theirs),
+ * that completed, and whose last message there is still the conversation's
+ * newest entry, the turn's own work fold aside. A guess
  * after a room turn, a teammate's message, a routine or anything the server
  * or the engine started is never offered, nor one that reads as an envelope's
  * markup or is longer than a reply the composer offers.
