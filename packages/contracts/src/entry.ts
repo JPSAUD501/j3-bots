@@ -14,6 +14,7 @@ import {
   RoomId,
   RoutineId,
   UnknownLiteral,
+  WorkImageId,
   WorkStepId,
 } from "./base.ts";
 import { FailureClass, PermissionMode, ReceivedFailureClass } from "./bot.ts";
@@ -589,6 +590,13 @@ export const WorkStep = Schema.Struct({
    * progress or its task's status, cleaned, on one line.
    */
   progress: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  /**
+   * An image the step looked at in the bot's workspace, such as a screenshot
+   * it read: a client shows it small in the step and large when opened, from
+   * `GET /work-images/<id>`. The file may have changed or gone since; then
+   * the image cannot be had.
+   */
+  image: Schema.optionalKey(Schema.Struct({ id: WorkImageId })),
 });
 export type WorkStep = typeof WorkStep.Type;
 

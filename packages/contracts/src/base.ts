@@ -54,6 +54,13 @@ export const WorkStepId = Schema.String.check(Schema.isMinLength(1), Schema.isMa
 );
 export type WorkStepId = typeof WorkStepId.Type;
 
+/**
+ * An image a step of a bot's work looked at, as the server names it: never
+ * its path. Its bytes are served at `GET /work-images/<id>` (see `http.ts`).
+ */
+export const WorkImageId = id.pipe(Schema.brand("WorkImageId"));
+export type WorkImageId = typeof WorkImageId.Type;
+
 /** A model slug within one provider. */
 export const ModelId = id.pipe(Schema.brand("ModelId"));
 export type ModelId = typeof ModelId.Type;
