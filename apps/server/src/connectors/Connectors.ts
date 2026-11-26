@@ -496,10 +496,11 @@ const checkCommand = (command: CommandLine): Effect.Effect<void, Invalid> => {
  * Whether `by` may make `next` of a connector's settings, `before` as they
  * are: the operator always; a bot, while they name a secret, only where it
  * changes no more than which secrets they name. A bot uses a secret without
- * reading it, so where one is sent (the address, the program, its arguments
- * and every other part of its variables) is the operator's to change, or a
- * bot could point the connector at a server of its own and read the secret
- * there (`docs/architecture/security.md`, "Secrets").
+ * reading it, so where one is sent (the address, every other part of its
+ * headers, which can choose where a gateway forwards it, the program, its
+ * arguments and every other part of its variables) is the operator's to
+ * change, or a bot could point the connector at a server of its own and read
+ * the secret there (`docs/architecture/security.md`, "Secrets").
  */
 const checkDestination = (
   before: ConnectorSecret,
@@ -510,10 +511,12 @@ const checkDestination = (
   if (by._tag !== "bot" || named === undefined) return Effect.void;
   const outside = (value: Redacted.Redacted<string> | null) =>
     value === null ? null : outsideReferences(Redacted.value(value));
-  const variables = (secret: ConnectorSecret) =>
+  const entriesOf = (
+    entries: ReadonlyArray<{ readonly name: string; readonly value: Redacted.Redacted<string> }>,
+  ) =>
     JSON.stringify(
-      secret.env
-        .map((variable) => [variable.name, outside(variable.value)] as const)
+      entries
+        .map((entry) => [entry.name, outside(entry.value)] as const)
         .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
     );
   const same =
@@ -521,7 +524,8 @@ const checkDestination = (
     before.command?.program === next.command?.program &&
     JSON.stringify((before.command?.args ?? []).map(outside)) ===
       JSON.stringify((next.command?.args ?? []).map(outside)) &&
-    variables(before) === variables(next);
+    entriesOf(before.headers) === entriesOf(next.headers) &&
+    entriesOf(before.env) === entriesOf(next.env);
   return same
     ? Effect.void
     : Effect.fail(new SecretRefused({ secret: named.name, problem: "destination" }));
@@ -909,36 +913,56 @@ export const layer = Layer.effect(
     });
 
     /**
-     * Each remote session's uses now, and when its last use ended, by its
-     * key, on a count of uses: which of the open ones are idle, and which of
-     * those was used the longest ago. Every use of a session goes through
-     * `openRemote`.
+     * Which session each key names now: a key closed while a request still
+     * uses its session names a new one, while the old one lives on until that
+     * request ends. Every close of a remote session goes through `invalidate`.
      */
-    const uses = new Map<string, { readonly inUse: number; readonly lastUsed: number }>();
+    const incarnations = new Map<string, number>();
+    const slotOf = (key: string) => `${key}#${incarnations.get(key) ?? 0}`;
+    const invalidate = (key: string) =>
+      Effect.suspend(() => {
+        incarnations.set(key, (incarnations.get(key) ?? 0) + 1);
+        return RcMap.invalidate(sessions, key);
+      });
+
+    /**
+     * Each remote session's uses now, and when its last use ended, by the
+     * session (`slotOf`), on a count of uses: which of the open ones are idle,
+     * and which of those was used the longest ago. Every use of a session goes
+     * through `openRemote`.
+     */
+    const uses = new Map<
+      string,
+      { readonly key: string; readonly inUse: number; readonly lastUsed: number }
+    >();
     let usesEnded = 0;
     /** One session made room for at a time, so two never take the last place. */
     const admitting = yield* Semaphore.make(1);
 
     /**
-     * Counts a use of the session `key` names, once there is room for it: a
-     * session already open has its place; at the cap, the one unused the
-     * longest closes for it. With every session in use, there is none
-     * (`ExceededCapacityError`), and the call is answered as busy.
+     * Counts a use of the session `key` names, once there is room for it, and
+     * gives the session it counts against: one already open has its place,
+     * and so does one closed while a request still uses it; at the cap, the
+     * one unused the longest closes for it. With every session in use, there
+     * is none (`ExceededCapacityError`), and the call is answered as busy.
      */
     const admit = (key: string) =>
       admitting.withPermit(
         Effect.gen(function* () {
-          const open = new Set(yield* RcMap.keys(sessions));
+          const slot = slotOf(key);
+          const open = new Map(
+            [...(yield* RcMap.keys(sessions))].map((each) => [slotOf(each), each] as const),
+          );
           for (const [each, use] of uses) {
-            if (use.inUse > 0) open.add(each);
+            if (use.inUse > 0) open.set(each, use.key);
             else if (!open.has(each)) uses.delete(each);
           }
-          if (!open.has(key) && open.size >= reach.sessions) {
+          if (!open.has(slot) && open.size >= reach.sessions) {
             const [oldest] = [...open]
-              .flatMap((each) => {
+              .flatMap(([each, eachKey]) => {
                 const use = uses.get(each);
                 return use === undefined || use.inUse === 0
-                  ? [[each, use?.lastUsed ?? 0] as const]
+                  ? [[eachKey, use?.lastUsed ?? 0] as const]
                   : [];
               })
               .toSorted(([, a], [, b]) => a - b);
@@ -946,26 +970,24 @@ export const layer = Layer.effect(
               return yield* new Cause.ExceededCapacityError("Every connector session is in use.");
             }
             // Out of the map at once; its server is told it ended in the background.
-            yield* Effect.forkIn(RcMap.invalidate(sessions, oldest[0]), scope, {
-              startImmediately: true,
-            });
+            yield* Effect.forkIn(invalidate(oldest[0]), scope, { startImmediately: true });
           }
-          uses.set(key, { inUse: (uses.get(key)?.inUse ?? 0) + 1, lastUsed: usesEnded });
+          uses.set(slot, { key, inUse: (uses.get(slot)?.inUse ?? 0) + 1, lastUsed: usesEnded });
+          return slot;
         }),
       );
 
-    const leave = (key: string) =>
+    const leave = (slot: string) =>
       Effect.sync(() => {
+        const use = uses.get(slot);
+        if (use === undefined) return;
         usesEnded += 1;
-        uses.set(key, { inUse: Math.max(0, (uses.get(key)?.inUse ?? 1) - 1), lastUsed: usesEnded });
+        uses.set(slot, { ...use, inUse: Math.max(0, use.inUse - 1), lastUsed: usesEnded });
       });
 
     /** A use of a remote session, for as long as the scope it is used in. */
     const openRemote = (key: string) =>
-      Effect.andThen(
-        Effect.acquireRelease(admit(key), () => leave(key)),
-        RcMap.get(sessions, key),
-      );
+      Effect.andThen(Effect.acquireRelease(admit(key), leave), RcMap.get(sessions, key));
 
     /**
      * Starts a command connector's process and lists its tools. One the
@@ -1025,7 +1047,7 @@ export const layer = Layer.effect(
           holder === undefined
             ? key.startsWith(`${id}${SEPARATOR}`)
             : key === sessionKey(id, holder);
-        if (own) yield* RcMap.invalidate(sessions, key);
+        if (own) yield* invalidate(key);
       }
     });
 
@@ -1039,7 +1061,7 @@ export const layer = Layer.effect(
       isCommand(connector)
         ? processes.use(connector.id)
         : openRemote(sessionKey(connector.id, holder)).pipe(
-            Effect.tapError(() => RcMap.invalidate(sessions, sessionKey(connector.id, holder))),
+            Effect.tapError(() => invalidate(sessionKey(connector.id, holder))),
           );
 
     /** Lists the connector's tools again, through the server's own session. */
@@ -1399,7 +1421,7 @@ export const layer = Layer.effect(
       if (isCommand(connector)) {
         if (breaksProcess(stumble.failure)) yield* processes.stop(connector.id);
       } else if (breaksSession(stumble.failure)) {
-        yield* RcMap.invalidate(sessions, sessionKey(connector.id, botId));
+        yield* invalidate(sessionKey(connector.id, botId));
       }
       // A refusal of what no longer signs its requests asks the operator for nothing.
       if (

@@ -2000,7 +2000,7 @@ export const en = {
     "Not every bot you chose may use the secret {secret}. Share it with them in Secrets, or choose fewer bots.",
   "connect.failed.secretNotYours": "The bot making this change may not use the secret {secret}.",
   "connect.failed.secretDestination":
-    "This server sends the secret {secret}, so only you can change where it sends it: its command, arguments and other variables.",
+    "This server sends the secret {secret}, so only you can change where it sends it: its address, headers, command, arguments and other variables.",
   "connect.failed.secretInAddress":
     "A secret goes in a header or a variable, not in the address, where J3 Bots doesn’t fill it in.",
   "connect.openSecrets": "Open Secrets",

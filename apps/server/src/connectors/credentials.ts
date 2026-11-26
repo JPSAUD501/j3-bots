@@ -5,6 +5,7 @@ import {
   type ConnectorCredentials,
   type CredentialsUnavailable,
   NeedsSignIn,
+  type SecretHeader,
   SecretsUnavailable,
   Withdrawn,
 } from "@j3-bots/connectors";
@@ -132,6 +133,14 @@ export const commandOf = (
     return { program: command.program, args: command.args, env: secret.env, hidden: values };
   });
 
+/** Whether two requests carry the same headers, in order. */
+const sameHeaders = (a: ReadonlyArray<SecretHeader>, b: ReadonlyArray<SecretHeader>): boolean =>
+  a.length === b.length &&
+  a.every(
+    (header, i) =>
+      header.name === b[i]?.name && Redacted.value(header.value) === Redacted.value(b[i].value),
+  );
+
 /**
  * Signs the connector's requests from its secret and, for an OAuth connector,
  * its sign-in. `current` is asked right before each request goes out, and
@@ -160,7 +169,14 @@ export const credentialsOf = (
   rejected: Effect.fn("ConnectorCredentials.rejected")(function* (wwwAuthenticate, sent) {
     const now = yield* current;
     if (Option.isNone(now)) return yield* new Withdrawn();
-    if (now.value.signIn !== "oauth") return yield* new NeedsSignIn();
-    return yield* signIns.rejected(now.value.id, wwwAuthenticate, sent);
+    if (now.value.signIn === "oauth") {
+      return yield* signIns.rejected(now.value.id, wwwAuthenticate, sent.bearer);
+    }
+    // Headers given again since the request was signed (new values, a secret
+    // they name changed): the refusal was of the old ones, so the request goes
+    // again with the new; only a refusal of what signs it now needs the operator.
+    const resolved = yield* resolvedOf(secrets, now.value);
+    const headers = Option.match(resolved, { onNone: () => [], onSome: (r) => r.secret.headers });
+    if (sameHeaders(headers, sent.headers)) return yield* new NeedsSignIn();
   }),
 });

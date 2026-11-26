@@ -146,7 +146,10 @@ describe("openSession", () => {
           rejected: (wwwAuthenticate, sent) =>
             Ref.update(seen, (all): ReadonlyArray<Refusal> => [
               ...all,
-              [wwwAuthenticate, Option.match(sent, { onNone: () => "", onSome: Redacted.value })],
+              [
+                wwwAuthenticate,
+                Option.match(sent.bearer, { onNone: () => "", onSome: Redacted.value }),
+              ],
             ]).pipe(Effect.andThen(Ref.set(current, RENEWED))),
         };
         const session = yield* open(fake.url, credentials);
@@ -203,6 +206,25 @@ describe("openSession", () => {
         assert.deepStrictEqual(leaks(JSON.stringify(answer.result), [TOKEN, API_KEY]), []);
         assert.include(JSON.stringify(answer.result), "Bearer [redacted] and [redacted]");
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives an app a structured answer without a short secret, and still as JSON", () =>
+    Effect.gen(function* () {
+      const fake = yield* fakeMcpServer({
+        tools: [{ name: "lock" }],
+        call: () => ({
+          _tag: "result",
+          text: "set",
+          structuredContent: { pin: 4096, note: "PIN:\n4096", page: 2 },
+        }),
+      });
+      const credentials = fixed({ ...bearer(TOKEN), hidden: [Redacted.make("4096")] });
+      const session = yield* open(fake.url, credentials);
+      const answer = yield* session.callTool({ name: "lock", arguments: {} });
+      assert.deepInclude(answer.result, {
+        structuredContent: { pin: "[redacted]", note: "PIN:\n[redacted]", page: 2 },
+      });
+    }).pipe(Effect.scoped),
   );
 
   it.effect("tells the server it shows apps, and reads a tool's app without its secrets", () =>
@@ -410,6 +432,11 @@ describe("scrubberOf", () => {
     const scrub = scrubberOf([], ["4096"]);
     assert.strictEqual(scrub("PIN 4096, set."), "PIN [redacted], set.");
     assert.strictEqual(scrub('{"pin":"4096"}'), '{"pin":"[redacted]"}');
+    // After a JSON escape, as a structured answer's text holds it.
+    assert.strictEqual(
+      scrub(JSON.stringify({ note: "PIN:\n4096" })),
+      '{"note":"PIN:\\n[redacted]"}',
+    );
     // Inside a longer number or word it is ordinary text.
     assert.strictEqual(scrub("order 140960 and v4096b"), "order 140960 and v4096b");
   });

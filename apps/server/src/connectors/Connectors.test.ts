@@ -394,7 +394,7 @@ describe("Connectors", () => {
             call: (name) =>
               name === "wait" ? { _tag: "hang" } : { _tag: "result", text: "found it" },
           },
-          [],
+          [{ name: "X-Api-Key", value: KEY }],
         );
         const bots = yield* Bots;
         const cid = (yield* bots.create({
@@ -428,6 +428,16 @@ describe("Connectors", () => {
         assert.isTrue(busy.isError);
         assert.include(busy.text, "as many connections to connectors open as it allows");
         assert.strictEqual(fake.requests.length, before);
+        // A new key closes every session, but the calls still under way keep theirs, and their
+        // places: Ana's next call, which would open another, finds no room either.
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          values: [{ key: FieldKey.make("X-Api-Key"), value: Redacted.make(NEW_KEY) }],
+        });
+        const crowded = yield* search(ana);
+        assert.isTrue(crowded.isError);
+        assert.include(crowded.text, "as many connections to connectors open as it allows");
 
         // A call that ends leaves its session idle, and room for the next.
         yield* Fiber.interrupt(cid_);

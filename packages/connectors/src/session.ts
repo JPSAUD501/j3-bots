@@ -115,15 +115,15 @@ export interface CallCredentials {
 export interface ConnectorCredentials {
   readonly current: Effect.Effect<CallCredentials, CredentialsUnavailable>;
   /**
-   * The server refused the credentials just sent, with this
-   * `WWW-Authenticate`: renew them (a refresh) or fail. `sent` is the bearer
-   * token that request carried, so a token renewed meanwhile by another
-   * request is not renewed again. The request is sent once more with what
-   * `current` gives next.
+   * The server refused the credentials just sent (`sent`), with this
+   * `WWW-Authenticate`: renew them (a refresh), let the request go again
+   * when they were replaced meanwhile (a token another request renewed, a
+   * header's value given again), or fail. The request is sent once more with
+   * what `current` gives next.
    */
   readonly rejected: (
     wwwAuthenticate: Option.Option<string>,
-    sent: Option.Option<Redacted.Redacted<string>>,
+    sent: CallCredentials,
   ) => Effect.Effect<void, CredentialsUnavailable>;
 }
 
@@ -432,7 +432,7 @@ const signingFetch =
         signal,
         headers: signed(init?.headers, current),
       });
-      return { response, bearer: current.bearer };
+      return { response, sent: current };
     };
     const first = await attempt();
     const answered = async (response: Response) =>
@@ -442,7 +442,7 @@ const signingFetch =
     await run(
       credentials.rejected(
         Option.fromNullishOr(first.response.headers.get("www-authenticate")),
-        first.bearer,
+        first.sent,
       ),
     );
     const second = await attempt();
@@ -564,10 +564,15 @@ const sentSecrets = (sent: ReadonlyArray<CallCredentials>): ReadonlyArray<string
 
 const REGEXP_SYNTAX = /[.*+?^${}()|[\]\\]/g;
 
-/** Where `value` stands as a word of its own: no letter, digit or `_` right before or after it. */
+/**
+ * Where `value` stands as a word of its own: no letter, digit or `_` right
+ * before or after it. A JSON escape right before it (`\n`, `\u00a0`) ends
+ * the word before, as the character it stands for does, since a structured
+ * answer is read as JSON text.
+ */
 const asWord = (value: string) =>
   new RegExp(
-    `(?<![\\p{L}\\p{N}_])${value.replace(REGEXP_SYNTAX, "\\$&")}(?![\\p{L}\\p{N}_])`,
+    `(?:(?<![\\p{L}\\p{N}_])|(?<=\\\\[bfnrt])|(?<=\\\\u[0-9A-Fa-f]{4}))${value.replace(REGEXP_SYNTAX, "\\$&")}(?![\\p{L}\\p{N}_])`,
     "gu",
   );
 
@@ -629,25 +634,33 @@ const scrubbedBlob = (blob: string, scrub: (text: string) => string): string =>
     },
   });
 
-/** `value` with every `blob` in it scrubbed as its text: what base64 would hide from `scrub`. */
-const scrubbedBlobs = (value: Schema.Json, scrub: (text: string) => string): Schema.Json => {
-  if (value === null || typeof value !== "object") return value;
-  if (isJsonArray(value)) return value.map((item) => scrubbedBlobs(item, scrub));
+/**
+ * `value` with `scrub` applied to each string and key in it, and to every
+ * `blob` of text as its text, which base64 would hide from `scrub`. A number
+ * `scrub` would change becomes the string it makes, so the value stays JSON.
+ */
+const scrubbedJson = (value: Schema.Json, scrub: (text: string) => string): Schema.Json => {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") return scrub(value);
+  if (typeof value === "number") {
+    const text = String(value);
+    const clean = scrub(text);
+    return clean === text ? value : clean;
+  }
+  if (isJsonArray(value)) return value.map((item) => scrubbedJson(item, scrub));
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
-      key,
+      scrub(key),
       key === "blob" && typeof item === "string"
-        ? scrubbedBlob(item, scrub)
-        : scrubbedBlobs(item, scrub),
+        ? scrubbedBlob(scrub(item), scrub)
+        : scrubbedJson(item, scrub),
     ]),
   );
 };
 
 /**
- * A server's answer as JSON, with `scrub` applied to its text and to every
- * `blob` of text in it (an app's document may come as one), for an app: null
- * when it is larger than `maxBytes`, or no longer JSON once scrubbed (a
- * secret that spanned its structure).
+ * A server's answer as JSON, with `scrub` applied to what it holds (see
+ * {@link scrubbedJson}), for an app: null when it is larger than `maxBytes`.
  */
 const appData = (
   value: unknown,
@@ -656,9 +669,7 @@ const appData = (
 ): Schema.Json | null => {
   const text = JSON.stringify(value);
   if (typeof text !== "string" || !fitsUtf8(text, maxBytes)) return null;
-  return Option.getOrNull(
-    Option.map(decodeJson(scrub(text)), (json) => scrubbedBlobs(json, scrub)),
-  );
+  return Option.getOrNull(Option.map(decodeJson(text), (json) => scrubbedJson(json, scrub)));
 };
 
 const cut = (text: string, max: number): { readonly text: string; readonly cut: boolean } => {

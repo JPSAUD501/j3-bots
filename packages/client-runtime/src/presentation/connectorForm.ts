@@ -183,7 +183,7 @@ const requiredClient = (input: ClientInput): ClientDraft => {
  * and the key of each required one left empty under `missing`. A secret is
  * kept as typed, since spaces may be part of it; any other value is trimmed.
  */
-export function fieldValues(
+function fieldValues(
   fields: ReadonlyArray<ConnectorField>,
   typed: ReadonlyMap<FieldKey, string>,
 ):
@@ -198,6 +198,27 @@ export function fieldValues(
     else if (field.required) missing.push(field.key);
   }
   return missing.length > 0 ? { _tag: "invalid", missing } : { _tag: "ready", values };
+}
+
+/**
+ * The values given again for a connector's fields, as `fieldValues` takes
+ * them: one left empty keeps what the server holds, so a header made of
+ * several fields takes a new key alone. With none given, every field is
+ * missing.
+ */
+export function refillValues(
+  fields: ReadonlyArray<ConnectorField>,
+  typed: ReadonlyMap<FieldKey, string>,
+):
+  | { readonly _tag: "ready"; readonly values: ReadonlyArray<ConnectorFieldValue> }
+  | { readonly _tag: "invalid"; readonly missing: ReadonlyArray<FieldKey> } {
+  const given = fieldValues(
+    fields.map((field) => ({ ...field, required: false })),
+    typed,
+  );
+  return given._tag === "ready" && given.values.length > 0
+    ? given
+    : { _tag: "invalid", missing: fields.map((field) => field.key) };
 }
 
 /**
