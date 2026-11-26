@@ -583,6 +583,27 @@ describe("references to secrets in a connector's settings", () => {
     }).pipe(Effect.provide(withSplit)),
   );
 
+  it.effect("refuses a bot a reference it may not use even when the settings already hold it", () =>
+    Effect.gen(function* () {
+      const { ana, bea, connectors } = yield* withSecret((_a, b) => onlyBots(b));
+      yield* tracker(grantTo(bea));
+      // Ana writes the reference Bea's header already holds into the header again.
+      const refused = yield* Effect.flip(
+        connectors.update({
+          connectorId: ID,
+          values: [
+            {
+              key: FieldKey.make("Authorization"),
+              value: Redacted.make(`Token \${secret:${TOKEN}}`),
+            },
+          ],
+          by: { _tag: "bot", botId: ana },
+        }),
+      );
+      assert.deepStrictEqual(refusalOf(refused), [TOKEN, "not-yours"]);
+    }).pipe(Effect.provide(domain)),
+  );
+
   it.live(
     "keeps the command as it was when the values given with a new one are refused",
     () =>

@@ -123,6 +123,7 @@ import {
   digestOf,
   needOf,
   referenceInAddress,
+  referencesInValues,
   referencesOf,
   usersOf,
   withValues,
@@ -2134,13 +2135,15 @@ export const layer = Layer.effect(
       yield* perConnector.run(input.connectorId)(
         Effect.gen(function* () {
           if (input.command !== undefined) {
+            const current = yield* require(input.connectorId);
+            if (!isCommand(current)) return yield* new Invalid({ reason: "connector-unsupported" });
             // Values given with a new command line are its variables': one write, checked whole,
             // so a refusal leaves the old command as it was.
             const command =
               input.values === undefined
                 ? input.command
                 : yield* withVariables(input.command, input.values);
-            yield* replaceCommand(yield* require(input.connectorId), command, input.by, now);
+            yield* replaceCommand(current, command, input.by, now);
           }
           const connector = yield* require(input.connectorId);
           if (input.values !== undefined && input.command === undefined) {
@@ -2258,14 +2261,18 @@ export const layer = Layer.effect(
             })),
           }
         : yield* withRemoteValues(connector, secret.value, values);
-      // The writer's are every reference the settings make now that they did not before: a gallery
-      // entry's header is rendered from its fields, and two fields side by side can make one.
+      // The writer's are every reference its values hold, and every one the settings make now that
+      // they did not before: a gallery entry's header is rendered from its fields, and two fields
+      // side by side can make one.
       const before = new Set(referencesOf(secret.value).map(referenceText));
       yield* checkSecrets({
         secret: next,
         grant: connector.grant,
         by,
-        written: referencesOf(next).filter((reference) => !before.has(referenceText(reference))),
+        written: [
+          ...referencesInValues(values.map((value) => value.value)),
+          ...referencesOf(next).filter((reference) => !before.has(referenceText(reference))),
+        ],
       });
       // From the write on, nothing interrupts it: the process the old values started stops with it.
       yield* Effect.uninterruptible(
