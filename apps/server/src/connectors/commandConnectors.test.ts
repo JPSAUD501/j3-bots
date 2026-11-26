@@ -147,7 +147,7 @@ describe("Connectors started by command", () => {
   );
 
   it.live(
-    "refuses a package launcher with no exact version, and a variable named twice",
+    "refuses a package launcher with no exact version, a variable named twice, and code from a secret",
     () =>
       Effect.gen(function* () {
         const secrets = yield* Secrets;
@@ -189,6 +189,14 @@ describe("Connectors started by command", () => {
           yield* add({
             ...command([]),
             env: [{ name: EnvName.make("Path"), value: Redacted.make("/tmp/elsewhere") }],
+          }),
+          "connector-fields",
+        );
+        // A secret's value can change with no new confirmation, so it never decides which code runs.
+        assert.strictEqual(
+          yield* add({
+            ...command([]),
+            env: [{ name: EnvName.make("NODE_OPTIONS"), value: Redacted.make("${secret:opts}") }],
           }),
           "connector-fields",
         );
@@ -255,6 +263,41 @@ describe("Connectors started by command", () => {
           }),
         );
         assert.strictEqual(invalidOf(unpinned), "command-unpinned");
+      }).pipe(Effect.scoped, Effect.provide(domain)),
+    SLOW,
+  );
+
+  it.live(
+    "takes a new value for a variable that decides which code runs only with a confirmed command line",
+    () =>
+      Effect.gen(function* () {
+        const { connectors } = yield* setUp;
+        const withPath = (value: string): CommandLine => ({
+          ...command([]),
+          env: [
+            ...command([]).env,
+            { name: EnvName.make("PYTHONPATH"), value: Redacted.make(value) },
+          ],
+        });
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          command: withPath("/srv/confirmed"),
+        });
+
+        const alone = yield* Effect.flip(
+          connectors.update({
+            by: { _tag: "operator" },
+            connectorId: ID,
+            values: [{ key: FieldKey.make("PYTHONPATH"), value: Redacted.make("/srv/other") }],
+          }),
+        );
+        assert.strictEqual(invalidOf(alone), "connector-fields");
+        yield* connectors.update({
+          by: { _tag: "operator" },
+          connectorId: ID,
+          command: withPath("/srv/other"),
+        });
       }).pipe(Effect.scoped, Effect.provide(domain)),
     SLOW,
   );

@@ -10,6 +10,7 @@ import {
   toolUiOf,
   type CatalogTool,
   checkUrl,
+  CommandFailed,
   type ConnectorFailure,
   DEFAULT_SESSION_LIMITS,
   makeSupervisor,
@@ -38,6 +39,8 @@ import {
 import {
   BotId,
   type ChangeAuthor,
+  codeFromSecret,
+  codeVariable,
   type CommandError,
   type CommandLine,
   type CommandId,
@@ -94,6 +97,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as RcMap from "effect/RcMap";
 import * as Redacted from "effect/Redacted";
@@ -106,6 +110,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { BotStore } from "../bots/BotStore.ts";
 import { Workspaces } from "../bots/Workspaces.ts";
 import { CommandReceipts } from "../commands/CommandReceipts.ts";
+import { Layout } from "../Layout.ts";
 import { keyedLock } from "../turns/keyedLock.ts";
 import type { ConnectorSecret, NamedSecret } from "../secrets/ConnectorSecret.ts";
 import { outsideReferences, referenceText, type SecretReference } from "../secrets/references.ts";
@@ -477,9 +482,10 @@ const envFieldsOf = (command: CommandLine): ReadonlyArray<ConnectorField> =>
 
 /**
  * Whether the server takes a command line: every package it runs through
- * `npx` or `uvx` at an exact version, and no variable named twice, in any
- * case, since Windows reads names without it, or by a name the server reads
- * to find and start the program.
+ * `npx` or `uvx` at an exact version, no variable named twice, in any case,
+ * since Windows reads names without it, or by a name the server reads to find
+ * and start the program, and no variable that decides which code runs taking
+ * its value from a secret.
  */
 const checkCommand = (command: CommandLine): Effect.Effect<void, Invalid> => {
   const given = command.env.map((variable) => variable.name);
@@ -487,7 +493,10 @@ const checkCommand = (command: CommandLine): Effect.Effect<void, Invalid> => {
     return Effect.fail(new Invalid({ reason: "command-unpinned" }));
   }
   const names = given.map((name) => name.toUpperCase());
-  return new Set(names).size === names.length && !given.some(reservedVariable)
+  const fromSecret = command.env.some((variable) =>
+    codeFromSecret(variable.name, Redacted.value(variable.value)),
+  );
+  return new Set(names).size === names.length && !given.some(reservedVariable) && !fromSecret
     ? Effect.void
     : Effect.fail(new Invalid({ reason: "connector-fields" }));
 };
@@ -648,6 +657,8 @@ export const layer = Layer.effect(
     const reach = yield* ConnectorReach;
     const sources = yield* ConnectorSources;
     const commandReach = yield* CommandReach;
+    const layout = yield* Layout;
+    const path = yield* Path.Path;
     const policyOf = (privateNetwork: boolean): UrlPolicy => ({
       loopback: reach.loopback,
       privateNetwork: privateNetwork ? "allow" : "refuse",
@@ -1017,6 +1028,16 @@ export const layer = Layer.effect(
         return yield* new Withdrawn();
       }
       const command = yield* commandOf(secrets, connector.value);
+      // Written again each time, so the project an npm launcher reads is the server's, empty.
+      yield* layout
+        .writeFile(path.join(layout.launcherFolder, "package.json"), "{}\n")
+        .pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("The folder npm launchers run in could not be written", error).pipe(
+              Effect.andThen(Effect.fail(new CommandFailed({ reason: "exited" }))),
+            ),
+          ),
+        );
       const ready = yield* Deferred.make<McpSession, ConnectorGone>();
       const cache = yield* cacheOf(id);
       const started = yield* openCommandSession({
@@ -1028,6 +1049,7 @@ export const layer = Layer.effect(
         carried: command.carried,
         serverEnvironment: commandReach.environment,
         cwd: commandReach.cwd,
+        launcherFolder: layout.launcherFolder,
         limits: reach.limits,
         client: CLIENT,
         cache,
@@ -2431,7 +2453,10 @@ export const layer = Layer.effect(
         const field = fields.get(value.key);
         return field !== undefined && (!field.required || Redacted.value(value.value) !== "");
       });
-      if (connector.signIn !== "fields" || !fits) {
+      // A command's variable that decides which code runs is part of its command line, value and
+      // all: a new value comes only with a command line the operator confirmed (`command`).
+      const lineChanged = isCommand(connector) && values.some((value) => codeVariable(value.key));
+      if (connector.signIn !== "fields" || !fits || lineChanged) {
         return yield* new Invalid({ reason: "connector-fields" });
       }
       const secret = yield* secrets.connectorSecrets.get(connectorSecretIdOf(connector.id));

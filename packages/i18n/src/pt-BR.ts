@@ -1934,6 +1934,10 @@ const sentences = {
     "O programa dele parou sozinho, ou não conseguiu iniciar. O J3 Bots o inicia de novo na próxima vez que um bot o usar, esperando mais a cada vez que ele para.",
   "connector.status.commandExited.next":
     "Confira o comando e as variáveis dele. Executá-lo você mesmo naquele computador mostra por que ele para.",
+  "connector.status.commandRefused":
+    "O J3 Bots não inicia o comando dele como está salvo: uma verificação que ele faz antes de cada início o recusa.",
+  "connector.status.commandRefused.next":
+    "Altere o comando e confirme de novo. Uma variável que decide qual código roda precisa do valor digitado, não de um segredo.",
   "connector.status.since": "Começou {when}.",
   "connector.status.secretsUnavailableDetail":
     "O acesso dele está nos seus segredos, que não podem ser lidos agora. Abra Configurações → Segredos para ver por quê.",
@@ -1971,7 +1975,7 @@ const sentences = {
   "connector.command": "Comando",
   "connector.editCommand": "Alterar comando",
   "connector.editCommand.hint":
-    "Alterar só um valor mantém o comando como está. Alterar o programa, os argumentos ou o nome de uma variável pede que você o confirme de novo.",
+    "Alterar só um valor mantém o comando como está. Alterar o programa, os argumentos, o nome de uma variável ou o valor de uma variável que decide que código roda, como NODE_OPTIONS, pede que você o confirme de novo.",
   "connector.editCommand.args.kept": "Não aparecem, porque um deles pode conter uma chave.",
   "connector.editCommand.args.retype": "Digitar de novo",
   "connector.editCommand.args.keep": "Manter",
@@ -2118,6 +2122,8 @@ const sentences = {
     "O nome de uma variável aceita letras, números e _, e não começa com número.",
   "addOwn.env.reserved": "Esta escolhe qual programa roda, então o próprio J3 Bots a define.",
   "addOwn.env.twice": "Outra variável tem este nome. Maiúsculas e minúsculas contam como iguais.",
+  "addOwn.env.codeSecret":
+    "Esta decide qual código roda, então o valor é confirmado com o comando. Digite o próprio valor, não um segredo.",
   "addOwn.env.valueAgain": "Informe o valor de novo: um comando alterado é salvo inteiro.",
   "addOwn.consent.title": "Executar isto no computador que roda o J3 Bots?",
   "addOwn.consent.titleChanged": "Executar o comando alterado no computador que roda o J3 Bots?",
@@ -2130,6 +2136,8 @@ const sentences = {
   "addOwn.consent.new": "Nova",
   "addOwn.consent.removed": "Não definidas mais: {names}",
   "addOwn.consent.programChanged": "O programa mudou.",
+  "addOwn.consent.settings":
+    "As variáveis acima dele decidem que código roda, por isso fazem parte da linha de comando, com os valores.",
   "addOwn.consent.confirm": "Executar",
   "addOwn.consent.cancel": "Cancelar",
   "addOwn.submit": "Adicionar",

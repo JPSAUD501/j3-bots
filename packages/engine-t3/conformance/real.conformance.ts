@@ -107,7 +107,13 @@ const options = Effect.map(paths, ({ home, agent, sharedSkills }): EngineOptions
   ],
   // A bridge that answers nothing: the scripted agent lists no bot tools, so
   // it speaks through the engine's own `send_to_user`, which the suite checks.
-  toolBridge: { command: "true", args: [], preApproved: ["say"], callTimeoutSeconds: 720 },
+  toolBridge: {
+    command: "true",
+    args: [],
+    environment: [],
+    preApproved: ["say"],
+    callTimeoutSeconds: 720,
+  },
   systemPromptFile: ".j3/system.md",
   // Only Codex reads it, and the bench runs no Codex instance.
   basePrompt: Stream.make(""),

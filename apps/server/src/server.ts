@@ -34,6 +34,7 @@ import * as Host from "./system/Host.ts";
 import * as Network from "./system/Network.ts";
 import * as Systemd from "./system/Systemd.ts";
 import { CONNECTOR_CALL_DEADLINE } from "./tools/protocol.ts";
+import * as BridgeKey from "./tools/BridgeKey.ts";
 import * as ToolEndpoint from "./tools/ToolEndpoint.ts";
 import * as UpdateLauncher from "./update/UpdateLauncher.ts";
 import * as UpdateRuns from "./update/UpdateRuns.ts";
@@ -46,7 +47,8 @@ const logShutdown = Layer.effectDiscard(Effect.addFinalizer(() => Effect.logInfo
  * The engine, run under `<J3_HOME>/engine`, writing only where the home's
  * containment check allows, with the Claude Code and Codex instances of
  * `engineProviders`. Each harness starts this package's `j3` bridge as the bot
- * tools' MCP server, pointed at the tool endpoint on loopback, Codex takes
+ * tools' MCP server, pointed at the tool endpoint on loopback with the key it
+ * signs its requests with, Codex takes
  * the base prompt as it changes, and both list the shared skills, among them
  * the ones J3 Bots ships, installed here first.
  */
@@ -61,6 +63,7 @@ const engine = Layer.unwrap(
     yield* SharedSkills.install();
     // The copies J3 Bots installed of the harnesses, which the engine runs from its start.
     const executables = yield* ownExecutables(config.home);
+    const bridgeKey = yield* BridgeKey.BridgeKey;
     return EngineLive.layer({
       home: config.engineHome,
       port: config.enginePort,
@@ -69,6 +72,8 @@ const engine = Layer.unwrap(
       toolBridge: {
         command: process.execPath,
         args: [bridge, "--server", `http://127.0.0.1:${config.toolPort}`],
+        // The key it signs its requests with, which only it and the endpoint hold.
+        environment: [bridgeKey.variable],
         // J3 Bots' own tools run without asking, but those that change its MCP
         // servers and skills; those and a connector's follow the bot's permission mode.
         preApproved: preApprovedTools,
@@ -128,6 +133,8 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
       ),
     ),
     Layer.provide(Layer.merge(McpRegistry.layer, SkillRepositories.layer)),
+    // One key, made for this start, for the bridges the engine starts and the endpoint they reach.
+    Layer.provideMerge(BridgeKey.layer),
     // One base prompt for the engine and the settings that change it.
     Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),
     Layer.provide(Sqlite.layer),

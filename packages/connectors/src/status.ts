@@ -22,7 +22,8 @@ export type FailingReason =
   | "not-mcp"
   | "refused-address"
   | "command-not-found"
-  | "command-exited";
+  | "command-exited"
+  | "command-refused";
 
 export interface Failing {
   readonly reason: FailingReason;
@@ -116,7 +117,12 @@ export const observe = (failure: ConnectorFailure, activity: Activity): Observat
     case "CommandFailed":
       return {
         _tag: "failing",
-        reason: failure.reason === "not-found" ? "command-not-found" : "command-exited",
+        reason:
+          failure.reason === "not-found"
+            ? "command-not-found"
+            : failure.reason === "refused"
+              ? "command-refused"
+              : "command-exited",
       };
   }
 };

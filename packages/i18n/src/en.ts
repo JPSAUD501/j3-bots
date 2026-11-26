@@ -1905,6 +1905,10 @@ export const en = {
     "Its program stopped on its own, or couldn't start. J3 Bots starts it again the next time a bot uses it, waiting longer each time it stops.",
   "connector.status.commandExited.next":
     "Check the command and its variables. Running it yourself on that computer shows why it stops.",
+  "connector.status.commandRefused":
+    "J3 Bots won't start its command as it's saved: a check it makes before each start refuses it.",
+  "connector.status.commandRefused.next":
+    "Change the command and confirm it again. A variable that decides which code runs needs its value typed in, not a secret.",
   "connector.status.since": "It started {when}.",
   "connector.status.secretsUnavailableDetail":
     "Its sign-in is in your secrets, which can’t be read right now. Open Settings → Secrets to see why.",
@@ -1941,7 +1945,7 @@ export const en = {
   "connector.command": "Command",
   "connector.editCommand": "Change command",
   "connector.editCommand.hint":
-    "Changing only a value keeps the command as it is. Changing the program, the arguments or a variable's name asks you to confirm it again.",
+    "Changing only a value keeps the command as it is. Changing the program, the arguments, a variable's name, or the value of a variable that decides what code runs, such as NODE_OPTIONS, asks you to confirm it again.",
   "connector.editCommand.args.kept": "Not shown, since one can carry a key.",
   "connector.editCommand.args.retype": "Type them again",
   "connector.editCommand.args.keep": "Keep them",
@@ -2085,6 +2089,8 @@ export const en = {
     "A variable name takes letters, digits and _, and doesn't start with a digit.",
   "addOwn.env.reserved": "This one chooses which program runs, so J3 Bots sets it itself.",
   "addOwn.env.twice": "Another variable has this name. Names count as the same in any case.",
+  "addOwn.env.codeSecret":
+    "This one decides which code runs, so its value is confirmed with the command. Type the value itself, not a secret.",
   "addOwn.env.valueAgain": "Give its value again: a changed command is saved whole.",
   "addOwn.consent.title": "Run this on the computer that runs J3 Bots?",
   "addOwn.consent.titleChanged": "Run the changed command on the computer that runs J3 Bots?",
@@ -2097,6 +2103,8 @@ export const en = {
   "addOwn.consent.new": "New",
   "addOwn.consent.removed": "No longer set: {names}",
   "addOwn.consent.programChanged": "The program changed.",
+  "addOwn.consent.settings":
+    "The variables above it decide what code runs, so they're part of the command line, values included.",
   "addOwn.consent.confirm": "Run it",
   "addOwn.consent.cancel": "Cancel",
   "addOwn.submit": "Add",

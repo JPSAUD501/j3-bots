@@ -2,7 +2,7 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { assert, it } from "@effect/vitest";
-import { CommandId } from "@j3-bots/contracts";
+import { type BotId, CommandId } from "@j3-bots/contracts";
 import { SessionId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { toolList } from "@j3-bots/prompts";
@@ -18,28 +18,43 @@ import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Redacted from "effect/Redacted";
+import * as Mac from "effect/crypto/Mac";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { BotStore } from "../bots/BotStore.ts";
 import { Bots } from "../bots/Bots.ts";
+import { Memory } from "../memory/Memory.ts";
 import * as Ports from "../system/Ports.ts";
 import { fakeConnector, reachFakes } from "../testing/connectors.ts";
 import * as TestDomain from "../testing/domain.ts";
 import { createBot, engineSession, nextTurn, sendToBot, until } from "../testing/turns.ts";
+import * as BridgeKey from "../tools/BridgeKey.ts";
 import * as ToolEndpoint from "../tools/ToolEndpoint.ts";
-import { CONNECTOR_CALL_DEADLINE, TOOL_CALL_PATH, TOOL_CHANGES_PATH } from "../tools/protocol.ts";
+import {
+  CONNECTOR_CALL_DEADLINE,
+  SIGNATURE_HEADER,
+  TOOL_CALL_PATH,
+  TOOL_CHANGES_PATH,
+} from "../tools/protocol.ts";
 import { FORWARD_RETRY_PAUSE, serve } from "./Bridge.ts";
 
 /** The endpoint over the whole domain, and Node's own HTTP client, which the bridge runs with. */
-const endpoint = Layer.merge(
+const endpoint = Layer.mergeAll(
   Ports.serve(ToolEndpoint.routes, NodeHttpServer.layerTest, {
     logAddress: false,
-  }).pipe(Layer.provideMerge(TestDomain.layer.pipe(Layer.provide(reachFakes)))),
+  }).pipe(
+    Layer.provideMerge(TestDomain.layer.pipe(Layer.provide(reachFakes))),
+    Layer.provideMerge(BridgeKey.layer),
+  ),
   NodeHttpClient.layerNodeHttp,
+  Mac.layerWebCrypto.pipe(Layer.provideMerge(SecureRandom.layerWebCrypto)),
 );
 
 const Line = Schema.Struct({
@@ -69,8 +84,11 @@ interface Output {
 const runBridgeWith = (
   session: Option.Option<SessionId>,
   input: (output: Output) => Stream.Stream<object>,
+  /** The key it is started with: the server's unless given. */
+  given?: Option.Option<string>,
 ) =>
   Effect.gen(function* () {
+    const key = given ?? Option.some(Redacted.value((yield* BridgeKey.BridgeKey).variable.value));
     const written = yield* SubscriptionRef.make("");
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();
@@ -98,10 +116,12 @@ const runBridgeWith = (
     if (!NetAddress.isInetAddress(address)) {
       return yield* Effect.die("The endpoint listens on TCP");
     }
-    yield* serve({ server: `http://127.0.0.1:${address.port}`, session, version: "test" }).pipe(
-      Effect.provideService(Stdio.Stdio, stdio),
-      Effect.provide(SecureRandom.layerWebCrypto),
-    );
+    yield* serve({
+      server: `http://127.0.0.1:${address.port}`,
+      session,
+      key,
+      version: "test",
+    }).pipe(Effect.provideService(Stdio.Stdio, stdio));
     const lines = (yield* SubscriptionRef.get(written))
       .split("\n")
       .filter((line) => line.length > 0)
@@ -127,21 +147,28 @@ const answered = (output: Output, id: number) => output.shows(`"id":${id},`);
  * Runs the bridge over `requests` as its standard input, which it closes once
  * every request is answered, and answers what it wrote, by id.
  */
-const runBridge = (session: Option.Option<SessionId>, requests: ReadonlyArray<object>) =>
-  runBridgeWith(session, (output) =>
-    Stream.concat(
-      Stream.fromIterable(requests),
-      Stream.fromEffect(
-        Effect.forEach(
-          requests.flatMap((request) => {
-            const id = idOf(request);
-            return id === undefined ? [] : [id];
-          }),
-          (id) => answered(output, id),
-          { discard: true },
-        ),
-      ).pipe(Stream.drain),
-    ),
+const runBridge = (
+  session: Option.Option<SessionId>,
+  requests: ReadonlyArray<object>,
+  key?: Option.Option<string>,
+) =>
+  runBridgeWith(
+    session,
+    (output) =>
+      Stream.concat(
+        Stream.fromIterable(requests),
+        Stream.fromEffect(
+          Effect.forEach(
+            requests.flatMap((request) => {
+              const id = idOf(request);
+              return id === undefined ? [] : [id];
+            }),
+            (id) => answered(output, id),
+            { discard: true },
+          ),
+        ).pipe(Stream.drain),
+      ),
+    key,
   ).pipe(Effect.map(({ replies }) => replies));
 
 const call = (id: number, name: string, args: object) => ({
@@ -163,6 +190,18 @@ const searchable = (name: string, answer?: Parameters<typeof fakeConnector>[0]["
       },
     ],
     ...(answer === undefined ? {} : { answer }),
+  });
+
+/** The facts the bot remembered, as `recall` finds them. */
+const memoryOf = (botId: BotId) =>
+  Effect.gen(function* () {
+    const recalled = yield* (yield* Memory).recall({
+      botId,
+      query: "demo",
+      scope: "bot",
+      limit: 10,
+    });
+    return recalled.map((fact) => fact.text);
   });
 
 const sessionOf = (botId: string) =>
@@ -255,6 +294,61 @@ it.layer(endpoint)("j3 bridge", (it) => {
     Effect.gen(function* () {
       const replies = yield* runBridge(Option.none(), [call(1, "recall", { query: "anything" })]);
       assert.isTrue(replies.get(1)?.isError);
+    }),
+  );
+
+  it.effect("acts for its session only with the server's key", () =>
+    Effect.gen(function* () {
+      const bot = yield* (yield* Bots).create({
+        commandId: CommandId.make("fia"),
+        draft: { name: "Fia" },
+      });
+      const session = yield* sessionOf(bot.id);
+      const remember = call(1, "remember", { fact: "The demo is on Friday" });
+      const another = Base64Url.encode(new Uint8Array(64).fill(7));
+
+      // Started with no key, or with a key that is not the server's: nothing is remembered.
+      for (const key of [Option.none(), Option.some(another)]) {
+        const refused = yield* runBridge(session, [remember], key);
+        assert.isTrue(refused.get(1)?.isError);
+      }
+      assert.deepStrictEqual(yield* memoryOf(bot.id), []);
+
+      const taken = yield* runBridge(session, [remember]);
+      assert.isFalse(taken.get(1)?.isError);
+      assert.deepStrictEqual(yield* memoryOf(bot.id), ["The demo is on Friday"]);
+    }),
+  );
+
+  it.effect("takes no answer the server did not sign for its request", () =>
+    Effect.gen(function* () {
+      const { signer } = yield* BridgeKey.BridgeKey;
+      const body = JSON.stringify({ _tag: "result", value: { recorded: true } });
+      // Whoever holds the port answers, unsigned, then with a real answer's tag for another request.
+      for (const tag of [undefined, yield* signer.signAnswer("another-request", body)]) {
+        const impostor = HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(body, {
+                status: 200,
+                headers: {
+                  "content-type": "application/json",
+                  ...(tag === undefined ? {} : { [SIGNATURE_HEADER]: tag }),
+                },
+              }),
+            ),
+          ),
+        );
+        const replies = yield* runBridge(Option.some(SessionId.make("thread-1")), [
+          call(1, "remember", { fact: "Anything" }),
+        ]).pipe(Effect.provideService(HttpClient.HttpClient, impostor));
+        assert.isTrue(replies.get(1)?.isError);
+        assert.strictEqual(
+          replies.get(1)?.content?.[0]?.text,
+          "J3 Bots could not be reached. Try the call again.",
+        );
+      }
     }),
   );
 });

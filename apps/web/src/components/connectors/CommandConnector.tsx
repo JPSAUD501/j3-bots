@@ -214,8 +214,15 @@ export function CommandConsentDialog({
                 </h3>
                 {/* One argument a line, as typed: an argument holds spaces of its own. */}
                 <pre className="rounded-md bg-muted px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap">
-                  {[shown.program, ...shown.args].join("\n")}
+                  {[
+                    ...shown.settings.map((setting) => `${setting.name}=${setting.value}`),
+                    shown.program,
+                    ...shown.args,
+                  ].join("\n")}
                 </pre>
+                {shown.settings.length > 0 && (
+                  <p className="text-xs text-muted-foreground">{t("addOwn.consent.settings")}</p>
+                )}
                 {shown.programChanged && (
                   <p className="text-xs text-waiting">{t("addOwn.consent.programChanged")}</p>
                 )}

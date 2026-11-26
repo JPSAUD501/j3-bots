@@ -40,6 +40,22 @@ export type SecretName = typeof SecretName.Type;
 /** What a bot is handed for a secret: its reference, never its value. */
 export const secretReference = (name: SecretName): string => `secret:${name}`;
 
+/**
+ * Where a connector's setting takes a secret's value: `${secret:<name>}`, or
+ * `${secret:<name>.username}` / `.password` for a login's, anywhere in its
+ * text. The name is captured first and the login's value second. Anything
+ * else between `${secret:` and `}` is not a reference. A new expression each
+ * call, since a global one keeps where it last matched.
+ */
+export const secretReferencePattern = (): RegExp =>
+  new RegExp(
+    `\\$\\{secret:([a-z0-9][a-z0-9_-]{0,${MAX_SECRET_NAME_LENGTH - 1}})(?:\\.(username|password))?\\}`,
+    "g",
+  );
+
+/** Whether `text` holds a reference to a secret, whose value the server puts there. */
+export const holdsSecretReference = (text: string): boolean => secretReferencePattern().test(text);
+
 // Not `link.ts`'s parser: that module reaches the entries, which reach this one.
 const parseUrl: (text: string) => Option.Option<URL> = Option.liftThrowable(
   (text: string) => new URL(text),

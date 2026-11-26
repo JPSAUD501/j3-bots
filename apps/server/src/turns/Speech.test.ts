@@ -471,6 +471,41 @@ it.effect(
     }).pipe(Effect.provide(TestDomain.layer)),
 );
 
+it.effect("records each of two identical says with a file that the bot's turn made together", () =>
+  Effect.gen(function* () {
+    const control = yield* TestEngineControl;
+    const tools = yield* BotTools;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const { bot, session, turnId } = yield* working("Send me the notes twice.");
+    const workspace = Option.getOrThrow(yield* (yield* BotStore).find(bot.id)).workspacePath;
+    yield* fs.makeDirectory(path.join(workspace, "files"), { recursive: true });
+    yield* fs.writeFileString(path.join(workspace, "files", "notes.md"), "The notes.");
+    const args = { text: "Here are the notes.", attachments: ["files/notes.md"] };
+    for (let call = 0; call < 2; call++) {
+      yield* control.toolCall({
+        sessionId: session,
+        turnId,
+        tool: "say",
+        input: args,
+        recorded: "now",
+      });
+    }
+
+    // The harness runs both at once; each reads its file between finding
+    // its call and recording it.
+    const replies = yield* Effect.forEach(
+      ["call-1", "call-2"],
+      (requestId) => tools.call({ requestId, sessionId: session, tool: "say", arguments: args }),
+      { concurrency: "unbounded" },
+    );
+
+    const recorded = { _tag: "result", value: { status: "recorded" } } as const;
+    assert.deepStrictEqual(replies, [recorded, recorded]);
+    assert.deepStrictEqual(yield* botSaid(bot.id), ["Here are the notes.", "Here are the notes."]);
+  }).pipe(Effect.provide(TestDomain.layer)),
+);
+
 /** The bot's turn calls `say` with these files, written in its workspace first. */
 const sayWithFiles = (
   files: ReadonlyArray<{ readonly name: string; readonly bytes: Uint8Array }>,

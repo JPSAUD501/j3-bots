@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
+  codeFromSecret,
+  codeVariable,
   type CommandLine,
   type Connector,
   ConnectorCommand,
@@ -44,12 +46,14 @@ export interface ClientInput {
  * - `reserved`: its name is one the server reads to find and start the
  *   program, such as `PATH` ({@link reservedVariable});
  * - `twice`: another row has its name, in any case, as Windows reads them;
+ * - `code-secret`: a variable that decides which code runs, whose value is a
+ *   reference to a secret rather than the value itself ({@link codeFromSecret});
  * - `value-again`: a variable left empty in a changed command line, which is
  *   sent whole, so no value is kept ({@link commandEdit}).
  */
 export interface EnvProblem {
   readonly index: number;
-  readonly reason: "invalid" | "reserved" | "twice" | "value-again";
+  readonly reason: "invalid" | "reserved" | "twice" | "code-secret" | "value-again";
 }
 
 /**
@@ -346,6 +350,9 @@ const variables = (
     const folded = name.value.toUpperCase();
     if (reservedVariable(name.value)) problems.push({ index, reason: "reserved" });
     else if (seen.has(folded)) problems.push({ index, reason: "twice" });
+    else if (codeFromSecret(name.value, row.value)) {
+      problems.push({ index, reason: "code-secret" });
+    }
     seen.add(folded);
     decoded.push({ name: name.value, value: Redacted.make(row.value) });
   });
@@ -445,8 +452,10 @@ export type CommandEdit =
 
 /**
  * Whether an edit keeps the command line the server has: the same program,
- * the arguments kept, and the same variable names. Only then does an empty
- * value keep its own; any other change sends the whole line, every value with it.
+ * the arguments kept, the same variable names, and no new value for a
+ * variable that decides which code runs ({@link codeVariable}), whose value
+ * is part of the line. Only then does an empty value keep its own; any other
+ * change sends the whole line, every value with it.
  */
 export function keepsLine(
   known: KnownCommand,
@@ -456,12 +465,14 @@ export function keepsLine(
     readonly env: ReadonlyArray<PairInput>;
   },
 ): boolean {
-  const names = draft.env.filter((row) => !blank(row)).map((row) => row.name.trim());
+  const rows = draft.env.filter((row) => !blank(row));
+  const names = rows.map((row) => row.name.trim());
   return (
     draft.command.trim() === known.program &&
     draft.args._tag === "kept" &&
     names.length === known.names.length &&
-    known.names.every((name) => names.includes(name))
+    known.names.every((name) => names.includes(name)) &&
+    !rows.some((row) => row.value !== "" && codeVariable(row.name.trim()))
   );
 }
 
@@ -516,13 +527,16 @@ export function commandEdit(
 
 /**
  * What the operator confirms before a command line runs: the program and
- * every argument, as they will run, and the name of every variable, never
- * its value. `added` names the variables the command did not have before,
- * none for a new connector.
+ * every argument, as they will run, each variable that decides which code
+ * runs with its value (`settings`, {@link codeVariable}), as part of the
+ * line, and the name of every other variable, never its value. `added` and
+ * `removed` name the variables the command did not have before, or no
+ * longer has, none for a new connector.
  */
 export interface CommandConsent {
   readonly program: string;
   readonly args: ReadonlyArray<string>;
+  readonly settings: ReadonlyArray<PairInput>;
   readonly names: ReadonlyArray<string>;
   readonly added: ReadonlyArray<string>;
   readonly removed: ReadonlyArray<string>;
@@ -531,13 +545,18 @@ export interface CommandConsent {
 
 /** The confirmation for `command`, against what the connector ran before, if it has run. */
 export function commandConsent(command: CommandLine, before: KnownCommand | null): CommandConsent {
-  const names: ReadonlyArray<string> = command.env.map((variable) => variable.name);
+  const all: ReadonlyArray<string> = command.env.map((variable) => variable.name);
   return {
     program: command.command,
     args: command.args.map(Redacted.value),
-    names,
-    added: before === null ? [] : names.filter((name) => !before.names.includes(name)),
-    removed: before === null ? [] : before.names.filter((name) => !names.includes(name)),
+    settings: command.env.flatMap((variable) =>
+      codeVariable(variable.name)
+        ? [{ name: variable.name, value: Redacted.value(variable.value) }]
+        : [],
+    ),
+    names: all.filter((name) => !codeVariable(name)),
+    added: before === null ? [] : all.filter((name) => !before.names.includes(name)),
+    removed: before === null ? [] : before.names.filter((name) => !all.includes(name)),
     programChanged: before !== null && before.program !== command.command,
   };
 }

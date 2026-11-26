@@ -113,10 +113,17 @@ export function connectorStatusText(
           detail: "connector.status.commandExited",
           next: "connector.status.commandExited.next",
         },
+        "command-refused": {
+          detail: "connector.status.commandRefused",
+          next: "connector.status.commandRefused.next",
+        },
         unknown: { detail: "connector.status.failingOther", next: null },
       } as const;
       const { detail, next } = failing[status.reason];
-      const command = status.reason === "command-not-found" || status.reason === "command-exited";
+      const command =
+        status.reason === "command-not-found" ||
+        status.reason === "command-exited" ||
+        status.reason === "command-refused";
       return {
         label: t(command ? "connector.status.notRunning" : "connector.status.failing"),
         detail: t(detail),
@@ -239,6 +246,8 @@ export function envProblemText(problem: EnvProblem, { t }: I18n): string {
       return t("addOwn.env.reserved");
     case "twice":
       return t("addOwn.env.twice");
+    case "code-secret":
+      return t("addOwn.env.codeSecret");
     case "value-again":
       return t("addOwn.env.valueAgain");
   }

@@ -13,7 +13,9 @@ import { readText } from "../body.ts";
 import { ServerConfig } from "../config.ts";
 import * as Ports from "../system/Ports.ts";
 import { BotTools } from "./BotTools.ts";
+import { BridgeKey } from "./BridgeKey.ts";
 import {
+  SIGNATURE_HEADER,
   TOOL_CALL_PATH,
   TOOL_CHANGES_PATH,
   TOOL_LIST_PATH,
@@ -56,19 +58,21 @@ const fromBridge = (request: HttpServerRequest.HttpServerRequest) => {
 };
 
 /**
- * A route that takes a request only as the bridge makes it, with a JSON body
- * of at most `limit` bytes that decodes as `request`, and answers what
- * `handle` gives, as `response`.
+ * A route that takes a request only as the bridge makes it, signed with the
+ * bridges' key (`BridgeKey`), with a JSON body of at most `limit` bytes that
+ * decodes as `request`, and answers what `handle` gives, as `response`,
+ * signed for that request. A request with no tag, or a wrong one, is refused
+ * before its body is decoded: its session's id alone is not enough.
  */
 const bridgeRoute = <I, IE, O, OE, E, R>(
-  path: HttpRouter.PathInput,
+  path: `/${string}`,
   limit: number,
   request: Schema.Codec<I, IE>,
   response: Schema.Codec<O, OE>,
   handle: (input: I) => Effect.Effect<O | HttpServerResponse.HttpServerResponse, E, R>,
 ) => {
   const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(request));
-  const encode = HttpServerResponse.schemaJson(response);
+  const encode = Schema.encodeEffect(Schema.fromJsonString(response));
   return HttpRouter.add(
     "POST",
     path,
@@ -81,12 +85,20 @@ const bridgeRoute = <I, IE, O, OE, E, R>(
           status: body.failure._tag === "BodyTooLarge" ? 413 : 400,
         });
       }
+      const { signer } = yield* BridgeKey;
+      const tag = incoming.headers[SIGNATURE_HEADER];
+      if (tag === undefined || !(yield* signer.verifyRequest(path, body.success, tag))) {
+        return HttpServerResponse.empty({ status: 403 });
+      }
       const input = yield* decode(body.success).pipe(Effect.option);
       if (input._tag === "None") return HttpServerResponse.empty({ status: 400 });
       const output = yield* handle(input.value);
-      return HttpServerResponse.isHttpServerResponse(output)
-        ? output
-        : yield* encode(output).pipe(Effect.orDie);
+      if (HttpServerResponse.isHttpServerResponse(output)) return output;
+      const text = yield* encode(output).pipe(Effect.orDie);
+      return HttpServerResponse.text(text, {
+        contentType: "application/json",
+        headers: { [SIGNATURE_HEADER]: yield* signer.signAnswer(tag, text) },
+      });
     }),
   );
 };
@@ -95,8 +107,8 @@ const bridgeRoute = <I, IE, O, OE, E, R>(
  * Where the `j3` bridges list their session's tools, wait for that list to
  * change, and forward bot tool calls. It listens on loopback only, whatever
  * `J3_HOST` is: the bridges run on this machine, started by the engine's
- * harnesses, and a request made any other way is refused before its body is
- * read.
+ * harnesses. A request made any other way is refused before its body is
+ * read, and one not signed with the bridges' key before its body is decoded.
  */
 export const routes = Layer.mergeAll(
   bridgeRoute(TOOL_CALL_PATH, TOOL_CALL_BODY_LIMIT, ToolCallRequest, ToolCallResponse, (call) =>

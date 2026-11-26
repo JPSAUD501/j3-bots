@@ -35,7 +35,7 @@ describe("connectorStatusText", () => {
   it.each(languages)("says what to do about a command that cannot run (%s)", (lang) => {
     const ctx = context("2026-11-20T15:00:00Z", lang);
     const remote = connectorStatusText({ _tag: "failing", reason: "unreachable", since }, ctx);
-    for (const reason of ["command-not-found", "command-exited"] as const) {
+    for (const reason of ["command-not-found", "command-exited", "command-refused"] as const) {
       const text = connectorStatusText({ _tag: "failing", reason, since }, ctx);
       expect(text.next).not.toBeNull();
       // It is not running, rather than out of reach.

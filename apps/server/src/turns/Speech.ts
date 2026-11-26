@@ -75,6 +75,7 @@ import {
   TurnTools,
 } from "../tools/TurnTools.ts";
 import { hopCounts } from "./hopCounts.ts";
+import { keyedLock } from "./keyedLock.ts";
 import { Ledger } from "./Ledger.ts";
 import { liveTarget } from "./liveTarget.ts";
 import { mediaTypeOf } from "./mediaTypes.ts";
@@ -282,6 +283,14 @@ interface Request {
   readonly arguments: Schema.Json;
 }
 
+/**
+ * The engine's calls a request in flight matched and has not pinned yet,
+ * each as `<session>\n<call>`: no other request matches one meanwhile.
+ */
+interface Reservation {
+  readonly calls: Array<string>;
+}
+
 const keyOf = (call: Request) => ({
   requestId: call.requestId,
   sessionId: call.caller.id,
@@ -364,11 +373,12 @@ export const layer = Layer.effect(
     });
 
     /**
-     * The oldest call in the running admitted turn that matches, is `calls`,
-     * no request claimed, and is not held by an approval the operator declined:
-     * a declined call is over, whatever the engine's record of it says.
+     * The calls in the running admitted turn that match, are `calls`, no
+     * request claimed, and are not held by an approval the operator declined
+     * (a declined call is over, whatever the engine's record of it says),
+     * oldest first.
      */
-    const candidate = SqlSchema.findOneOption({
+    const candidates = SqlSchema.findAll({
       Request: CallKey,
       Result: Candidate,
       execute: ({ sessionId, tool, digest, calls }) => sql`
@@ -388,9 +398,52 @@ export const layer = Layer.effect(
               AND json_extract(r.response_json, '$.decision') = 'deny'
           )
         ORDER BY c.seen_at, c.rowid
-        LIMIT 1
       `,
     });
+
+    const reserved = new Set<string>();
+    const picking = keyedLock();
+
+    /**
+     * Runs `use` with a reservation of its own, whose calls are free again
+     * once it ends: by then the request pinned the call it matched, which
+     * excludes it from every match, or it pinned nothing.
+     */
+    const reserving = <A, E, R>(use: (held: Reservation) => Effect.Effect<A, E, R>) =>
+      Effect.acquireUseRelease(
+        Effect.sync((): Reservation => ({ calls: [] })),
+        use,
+        (held) =>
+          Effect.sync(() => {
+            for (const key of held.calls) reserved.delete(key);
+          }),
+      );
+
+    /**
+     * The oldest of the calls that match which no other request in flight
+     * reserved, reserved for `held`. Requests made in parallel for the same
+     * tool with the same input, as a harness makes two identical calls, would
+     * otherwise all match the oldest, and every pin but the first would fail
+     * though its own call is still open. One read and reservation at a time
+     * for the session, so no two see the same call free.
+     */
+    const reserve = (key: typeof CallKey.Type, held: Reservation) =>
+      picking.run(key.sessionId)(
+        candidates(key).pipe(
+          Effect.orDie,
+          Effect.map((rows) => {
+            const free = rows.find(
+              (row) => !reserved.has(`${key.sessionId}\n${row.engine_call_id}`),
+            );
+            if (free !== undefined) {
+              const reservation = `${key.sessionId}\n${free.engine_call_id}`;
+              reserved.add(reservation);
+              held.calls.push(reservation);
+            }
+            return Option.fromNullishOr(free);
+          }),
+        ),
+      );
 
     /**
      * Brings the session's events up to the request, then looks for its call;
@@ -403,6 +456,7 @@ export const layer = Layer.effect(
       call: Request,
       caller: BotSession,
       calls: Calls,
+      held: Reservation,
     ): Effect.fn.Return<Matched, TurnEnded | TurnToolRetry> {
       const sessionId = caller.id;
       const session = yield* engineSessionOf(sessionId).pipe(Effect.orDie);
@@ -430,9 +484,7 @@ export const layer = Layer.effect(
           if (Option.isSome(stored)) return { _tag: "stored", result: stored.value.result_json };
           return yield* new TurnEnded();
         }
-        const found = yield* candidate({ sessionId, tool: call.tool, digest, calls }).pipe(
-          Effect.orDie,
-        );
+        const found = yield* reserve({ sessionId, tool: call.tool, digest, calls }, held);
         if (Option.isSome(found)) {
           return {
             _tag: "pin",
@@ -1933,11 +1985,11 @@ export const layer = Layer.effect(
       `;
     }, Effect.orDie);
 
-    const apply = Effect.fn("TurnTools.apply")(function* (call: TurnToolCall) {
+    const apply = Effect.fn("TurnTools.apply")(function* (call: TurnToolCall, held: Reservation) {
       // A forward retried under the same id returns what the first one did.
       const stored = yield* storedResult(keyOf(call)).pipe(Effect.orDie);
       if (Option.isSome(stored)) return stored.value.result_json;
-      const matched = yield* match(call, call.caller, "open");
+      const matched = yield* match(call, call.caller, "open", held);
       if (matched._tag === "stored") return matched.result;
       const found = matched.pin;
       switch (call.tool) {
@@ -1962,7 +2014,8 @@ export const layer = Layer.effect(
       }
     });
 
-    const call = (request: TurnToolCall) => Effect.flatMap(apply(request), answer);
+    const call = (request: TurnToolCall) =>
+      reserving((held) => Effect.flatMap(apply(request, held), answer));
 
     /**
      * Admission has an end-to-end deadline: past it nothing was admitted (an
@@ -1987,14 +2040,18 @@ export const layer = Layer.effect(
       const request = { ...call, tool: "create_bot" };
       const stored = yield* storedResult(keyOf(request)).pipe(Effect.orDie);
       if (Option.isSome(stored)) return stored.value.result_json;
-      const matched = yield* match(request, call.caller, "open").pipe(
-        Effect.timeoutOrElse({
-          duration: ADMISSION_DEADLINE,
-          orElse: () => Effect.fail(new TurnToolRetry()),
+      return yield* reserving((held) =>
+        Effect.gen(function* () {
+          const matched = yield* match(request, call.caller, "open", held).pipe(
+            Effect.timeoutOrElse({
+              duration: ADMISSION_DEADLINE,
+              orElse: () => Effect.fail(new TurnToolRetry()),
+            }),
+          );
+          if (matched._tag === "stored") return matched.result;
+          return yield* createBot(matched.pin, call);
         }),
       );
-      if (matched._tag === "stored") return matched.result;
-      return yield* createBot(matched.pin, call);
     });
 
     /**
@@ -2008,15 +2065,19 @@ export const layer = Layer.effect(
         if (Option.isSome(stored)) {
           return { _tag: "stored", result: stored.value.result_json } as const;
         }
-        const matched = yield* match(fill, fill.caller, "open");
-        if (matched._tag === "stored") return matched;
-        const pinned = yield* transaction(pin("fill_credential", matched.pin));
-        if (pinned._tag === "stored") return pinned;
-        return {
-          _tag: "claimed",
-          turnId: matched.pin.turnId,
-          stillOpen: stillAdmitted(matched.pin),
-        } as const;
+        return yield* reserving((held) =>
+          Effect.gen(function* () {
+            const matched = yield* match(fill, fill.caller, "open", held);
+            if (matched._tag === "stored") return matched;
+            const pinned = yield* transaction(pin("fill_credential", matched.pin));
+            if (pinned._tag === "stored") return pinned;
+            return {
+              _tag: "claimed",
+              turnId: matched.pin.turnId,
+              stillOpen: stillAdmitted(matched.pin),
+            } as const;
+          }),
+        );
       },
       Effect.timeoutOrElse({
         duration: ADMISSION_DEADLINE,
@@ -2059,23 +2120,27 @@ export const layer = Layer.effect(
       call: ClaimedCall,
     ) {
       if (yield* claimedBefore(call)) return yield* new CallCutOff();
-      const matched = yield* match(call, call.caller, "open-or-closed").pipe(
-        Effect.timeoutOrElse({
-          duration: ADMISSION_DEADLINE,
-          orElse: () => Effect.fail(new TurnToolRetry()),
-        }),
-      );
-      // Nothing is stored for a connector's call: only a claim made meanwhile.
-      if (matched._tag === "stored") return yield* new CallCutOff();
-      yield* transaction(
+      return yield* reserving((held) =>
         Effect.gen(function* () {
-          if (yield* claimedBefore(call)) return yield* new CallCutOff();
-          yield* requireUnclaimed(matched.pin);
-          yield* insertPin(call.tool, matched.pin);
+          const matched = yield* match(call, call.caller, "open-or-closed", held).pipe(
+            Effect.timeoutOrElse({
+              duration: ADMISSION_DEADLINE,
+              orElse: () => Effect.fail(new TurnToolRetry()),
+            }),
+          );
+          // Nothing is stored for a connector's call: only a claim made meanwhile.
+          if (matched._tag === "stored") return yield* new CallCutOff();
+          yield* transaction(
+            Effect.gen(function* () {
+              if (yield* claimedBefore(call)) return yield* new CallCutOff();
+              yield* requireUnclaimed(matched.pin);
+              yield* insertPin(call.tool, matched.pin);
+            }),
+          );
+          const { sessionId, turnId, callId } = matched.pin;
+          return { sessionId, turnId, callId };
         }),
       );
-      const { sessionId, turnId, callId } = matched.pin;
-      return { sessionId, turnId, callId };
     });
 
     return TurnTools.of({

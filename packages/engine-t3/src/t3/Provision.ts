@@ -385,6 +385,15 @@ export const instanceEntry = (
 });
 
 /**
+ * The bridge's own variables as its entry in a harness's configuration
+ * writes them, by name. The values are in the file: the harness hands them
+ * to the bridge's process alone. The file is private to the server's user,
+ * like the rest of the harness's home.
+ */
+const bridgeVariables = (toolBridge: ToolBridge): ReadonlyArray<readonly [string, string]> =>
+  toolBridge.environment.map((variable) => [variable.name, Redacted.value(variable.value)]);
+
+/**
  * J3 Bots' part of a Codex instance's `config.toml`: the base prompt, the
  * connection's model provider, the bot tools, the server user's home folder
  * for the commands a bot runs, and Codex's features. Codex itself runs with a
@@ -436,6 +445,9 @@ const codexConfig = (input: ProvisionInput, connection: StoredConnection | null)
     values: [
       ["command", input.toolBridge.command],
       ["args", input.toolBridge.args],
+      // The bridge's own variables, which Codex adds to the bridge's
+      // environment only, not to the commands a bot runs.
+      ["env", { inline: bridgeVariables(input.toolBridge) }],
       ["tool_timeout_sec", input.toolBridge.callTimeoutSeconds],
       [
         "tools",
@@ -654,7 +666,8 @@ export const provision = Effect.fn("engine.provision")(function* (input: Provisi
               type: "stdio",
               command: input.toolBridge.command,
               args: input.toolBridge.args,
-              env: {},
+              // Added to the bridge's environment only, not to the commands a bot runs.
+              env: Object.fromEntries(bridgeVariables(input.toolBridge)),
               // Milliseconds. **Verified** with Claude Code 2.1.330: a call past
               // it is cut off, also one that reports progress, and the bridge
               // is sent `notifications/cancelled`. **Read** there: it

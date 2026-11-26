@@ -70,6 +70,23 @@ export const commandEnvironment = (
   return environment;
 };
 
+/**
+ * The settings the server starts a package launcher with
+ * (`packageLauncher`), so it reads no configuration file of the user's or of
+ * a project's: npm's user file is the system's empty device, and the project
+ * it reads its own from is the folder it is started in, the server's
+ * (`CommandSessionOptions.launcherFolder`); uv is told to look for none.
+ * They follow the operator's variables, which cannot name a launcher's
+ * setting: the version check refuses one.
+ */
+export const launcherSettings = (
+  platform: NodeJS.Platform,
+  launcher: "npm" | "uv",
+): Readonly<Record<string, string>> =>
+  launcher === "npm"
+    ? { npm_config_userconfig: platform === "win32" ? "\\\\.\\nul" : "/dev/null" }
+    : { UV_NO_CONFIG: "1" };
+
 /** The search path in `environment`: `Path` as Windows often spells it, or `PATH`. */
 export const searchPath = (
   platform: NodeJS.Platform,

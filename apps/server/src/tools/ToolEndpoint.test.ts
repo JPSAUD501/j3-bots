@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import type { BotId } from "@j3-bots/contracts";
-import type { SessionId, TurnId } from "@j3-bots/engine-t3";
+import { SessionId, type TurnId } from "@j3-bots/engine-t3";
 import { TestEngineControl } from "@j3-bots/engine-t3/testing";
 import { NO_TURN_REFUSAL } from "@j3-bots/prompts";
 import * as Effect from "effect/Effect";
+import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Mac from "effect/crypto/Mac";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as HttpServer from "effect/http/HttpServer";
 import * as Ports from "../system/Ports.ts";
 import * as TestDomain from "../testing/domain.ts";
@@ -22,12 +25,19 @@ import {
   sendToBot,
   teammateMessagesFor,
 } from "../testing/turns.ts";
-import { TOOL_CALL_PATH, ToolCallResponse } from "./protocol.ts";
+import * as BridgeKey from "./BridgeKey.ts";
+import { bridgeSigner, SIGNATURE_HEADER, TOOL_CALL_PATH, ToolCallResponse } from "./protocol.ts";
 import * as ToolEndpoint from "./ToolEndpoint.ts";
 
 const endpoint = Ports.serve(ToolEndpoint.routes, NodeHttpServer.layerTest, {
   logAddress: false,
-}).pipe(Layer.provideMerge(TestDomain.layer));
+}).pipe(Layer.provideMerge(TestDomain.layer), Layer.provideMerge(BridgeKey.layer));
+
+/** How a forward is signed: as the bridge signs it, not at all, or with a tag that is not its own. */
+type Signed =
+  | "bridge"
+  | "unsigned"
+  | { readonly tag: (body: string) => Effect.Effect<string, never, Mac.Mac> };
 
 /** The bot is working on a message from the operator. */
 const working = (name: string, text: string) =>
@@ -61,37 +71,74 @@ const anaMessagesBo = Effect.gen(function* () {
   return { ana, bo };
 });
 
+/** A `message_bot` call's forward, as the bridge writes it. */
+const bodyOf = (call: {
+  readonly requestId: string;
+  readonly sessionId: SessionId;
+  readonly arguments: object;
+}) => JSON.stringify({ ...call, tool: "message_bot" });
+
+interface Made {
+  readonly host?: string;
+  readonly origin?: string;
+  readonly contentType?: string;
+  readonly signed?: Signed;
+}
+
 /**
  * Posts a forward of a `message_bot` call to the endpoint, made the way the
- * bridge makes it unless `made` says otherwise.
+ * bridge makes it unless `made` says otherwise. Answers the endpoint's
+ * response, and whether it was signed for this request.
  */
 const forward = (
   call: { readonly requestId: string; readonly sessionId: SessionId; readonly arguments: object },
-  made: { readonly host?: string; readonly origin?: string; readonly contentType?: string } = {},
+  made: Made = {},
 ) =>
   Effect.gen(function* () {
     const { address } = yield* HttpServer.HttpServer;
     if (address._tag === "UnixPathAddress") return yield* Effect.die("The endpoint listens on TCP");
+    const { signer } = yield* BridgeKey.BridgeKey;
+    const body = bodyOf(call);
+    const signed = made.signed ?? "bridge";
+    const tag =
+      signed === "bridge"
+        ? yield* signer.signRequest(TOOL_CALL_PATH, body)
+        : signed === "unsigned"
+          ? undefined
+          : yield* signed.tag(body).pipe(Effect.provide(mac));
     const request = HttpClientRequest.post(
       `http://127.0.0.1:${address.port}${TOOL_CALL_PATH}`,
     ).pipe(
       HttpClientRequest.setHeader("host", made.host ?? `127.0.0.1:${address.port}`),
-      HttpClientRequest.bodyText(
-        JSON.stringify({ ...call, tool: "message_bot" }),
-        made.contentType ?? "application/json",
-      ),
+      tag === undefined ? identity : HttpClientRequest.setHeader(SIGNATURE_HEADER, tag),
+      HttpClientRequest.bodyText(body, made.contentType ?? "application/json"),
     );
     // Node's own client, which sends the `Host` it is given.
-    return yield* HttpClient.execute(
+    const response = yield* HttpClient.execute(
       made.origin === undefined
         ? request
         : HttpClientRequest.setHeader(request, "origin", made.origin),
     ).pipe(Effect.provide(NodeHttpClient.layerNodeHttp));
+    const text = yield* response.text;
+    return {
+      status: response.status,
+      text,
+      signedForIt:
+        tag !== undefined &&
+        (yield* signer.verifyAnswer(tag, text, response.headers[SIGNATURE_HEADER])),
+    };
   });
 
-/** The endpoint's answer to a forward it took. */
-const answer = (response: HttpClientResponse.HttpClientResponse) =>
-  HttpClientResponse.schemaBodyJson(ToolCallResponse)(response);
+const decodeAnswer = Schema.decodeUnknownEffect(Schema.fromJsonString(ToolCallResponse));
+
+/** The endpoint's answer to a forward it took, which it signed for that forward. */
+const answer = (response: { readonly text: string; readonly signedForIt: boolean }) =>
+  Effect.gen(function* () {
+    assert.isTrue(response.signedForIt);
+    return yield* decodeAnswer(response.text);
+  });
+
+const mac = Mac.layerWebCrypto.pipe(Layer.provide(SecureRandom.layerWebCrypto));
 
 const SENT = { _tag: "result", value: { status: "sent", note: "It wakes them now." } } as const;
 
@@ -115,11 +162,7 @@ const boGotItOnce = (anaId: BotId, boId: BotId) =>
  * A request the bridge would not make is refused before it acts, and the call
  * it named is still there for the bridge's own request.
  */
-const refusedThenTaken = (made: {
-  readonly host?: string;
-  readonly origin?: string;
-  readonly contentType?: string;
-}) =>
+const refusedThenTaken = (made: Made) =>
   Effect.gen(function* () {
     const { ana, bo } = yield* anaMessagesBo;
     const call = { sessionId: ana.session, arguments: urgent(bo.id) };
@@ -150,6 +193,34 @@ it.effect("refuses a forward whose body is not declared JSON", () =>
   // What a page may send another origin without asking first.
   refusedThenTaken({ contentType: "text/plain" }).pipe(Effect.provide(endpoint)),
 );
+
+describe("a forward that knows the session's id", () => {
+  it.effect("is refused with no signature", () =>
+    refusedThenTaken({ signed: "unsigned" }).pipe(Effect.provide(endpoint)),
+  );
+
+  it.effect("is refused with the signature of another forward", () =>
+    Effect.gen(function* () {
+      const { signer } = yield* BridgeKey.BridgeKey;
+      // A forward the bridge signed, whose tag is taken for other arguments.
+      const other = bodyOf({ requestId: "call-0", sessionId: SessionId.make("x"), arguments: {} });
+      yield* refusedThenTaken({ signed: { tag: () => signer.signRequest(TOOL_CALL_PATH, other) } });
+    }).pipe(Effect.provide(endpoint)),
+  );
+
+  it.effect("is refused when signed with another key", () =>
+    refusedThenTaken({
+      signed: {
+        // The forward as sent, signed with a key that is not the bridges'.
+        tag: (body) =>
+          Effect.gen(function* () {
+            const key = yield* (yield* Mac.Mac).generateKey(Mac.hmacSha256).pipe(Effect.orDie);
+            return yield* (yield* bridgeSigner(key)).signRequest(TOOL_CALL_PATH, body);
+          }),
+      },
+    }).pipe(Effect.provide(endpoint)),
+  );
+});
 
 it.effect("refuses a call named for a session whose turn has no such call open", () =>
   Effect.gen(function* () {

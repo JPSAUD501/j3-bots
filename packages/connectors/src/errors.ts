@@ -173,6 +173,13 @@ const CommandFailure = Schema.Literals([
   "not-found",
   /** Its process could not start, or ended before it answered. */
   "exited",
+  /**
+   * The server does not start the command line as it is saved, one its
+   * checks refuse as it starts: a package at no exact version on the program
+   * found, an argument Windows' command interpreter would read, or a variable
+   * that decides which code runs taking its value from a secret.
+   */
+  "refused",
 ]);
 
 /** A command connector's process is not running to answer. Nothing it printed is kept. */

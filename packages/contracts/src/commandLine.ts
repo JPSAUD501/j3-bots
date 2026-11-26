@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import * as Option from "effect/Option";
+import { holdsSecretReference } from "./secrets.ts";
 
 // The rules a command connector's command line keeps (`CommandLine`), which
 // the server enforces and a client's form checks before it sends one.
@@ -23,8 +24,10 @@ import * as Option from "effect/Option";
  * refused, as is an option before npm's command. uv's own options are read
  * wherever they come before its command. A launcher's settings from the
  * environment (`npm_config_*`, `UV_*`) can choose another package or
- * registry, so a variable of the operator's by such a name is refused too.
- * Other programs are run as they are given.
+ * registry, so a variable of the operator's by such a name is refused too,
+ * and the server starts the launcher with no configuration file of the
+ * user's or of a project's ({@link packageLauncher}). Other programs are run
+ * as they are given.
  */
 
 /** Why a command is refused. */
@@ -41,7 +44,8 @@ type Launcher = "npm-exec" | "uv-run";
 
 const npm = {
   /** Options that take the next word as their value, unless given as `--name=value`. */
-  valued: new Set(["-p", "--package", "--registry", "--cache", "--userconfig", "--loglevel"]),
+  // Not `--userconfig`: a file of the operator's choosing would beat the empty one the server gives npm.
+  valued: new Set(["-p", "--package", "--registry", "--cache", "--loglevel"]),
   /** Options that take no value. */
   flags: new Set([
     "-y",
@@ -61,7 +65,8 @@ const npm = {
 
 /** uv's own options, which it reads before and after its command. */
 const UV_GLOBAL = {
-  valued: ["--cache-dir", "--color", "--directory", "--project", "--config-file"],
+  // Not `--config-file`: a file of the operator's choosing is read whatever `UV_NO_CONFIG` says.
+  valued: ["--cache-dir", "--color", "--directory", "--project"],
   flags: [
     "-q",
     "--quiet",
@@ -205,6 +210,23 @@ const launcherOf = (
   return Option.none();
 };
 
+/**
+ * The package launcher the check reads that `program` with `args` runs, by
+ * the program as found: `npm` for `npx` and `npm exec`, `uv` for `uvx` and
+ * `uv tool run`; none for any other program or command, and for a command
+ * line the check refuses as unclear. The server starts one with no
+ * configuration file of the user's or of a project's, which could name
+ * another registry or package than the confirmed line does.
+ */
+export const packageLauncher = (
+  program: string,
+  args: ReadonlyArray<string>,
+): Option.Option<"npm" | "uv"> => {
+  const found = launcherOf(program, args);
+  if (found === "unclear") return Option.none();
+  return Option.map(found, ({ launcher }) => (launcher === "npm-exec" ? "npm" : "uv"));
+};
+
 /** Whether a variable named `name` is one of the launcher's settings, which can choose what it fetches. */
 const launcherSetting = (launcher: Launcher, name: string): boolean =>
   launcher === "npm-exec" ? /^npm_config_/i.test(name) : /^uv_/i.test(name);
@@ -285,3 +307,70 @@ const RESERVED = new Set(["PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", 
 
 /** Whether a command may not be given a variable named `name`, in any case. */
 export const reservedVariable = (name: string): boolean => RESERVED.has(name.toUpperCase());
+
+/**
+ * Variables whose value decides which code a program runs, or which it
+ * trusts to give it code: what Node, Python, Perl, Ruby, Java and .NET load
+ * before the program, the libraries the system loads into it, what a shell runs
+ * first, and the certificates a launcher checks its registry against.
+ */
+const CODE = new Set([
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
+  "PYTHONPATH",
+  "PYTHONHOME",
+  "PYTHONSTARTUP",
+  "PYTHONUSERBASE",
+  "PYTHONEXECUTABLE",
+  "PYTHONBREAKPOINT",
+  "PYTHONPLATLIBDIR",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "LD_AUDIT",
+  "BASH_ENV",
+  "ENV",
+  "PERL5OPT",
+  "PERL5LIB",
+  "PERLLIB",
+  "RUBYOPT",
+  "RUBYLIB",
+  "JAVA_TOOL_OPTIONS",
+  "_JAVA_OPTIONS",
+  "JDK_JAVA_OPTIONS",
+  "CLASSPATH",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "DOTNET_ROOT",
+  "DOTNET_STARTUP_HOOKS",
+  "DOTNET_ADDITIONAL_DEPS",
+  "DOTNET_SHARED_STORE",
+]);
+
+/**
+ * Families of them: macOS' loader's settings, the functions bash imports, and
+ * the profilers .NET loads into a program (`CORECLR_PROFILER_PATH` and the
+ * like, and `COR_PROFILER*` on .NET Framework).
+ */
+const CODE_PREFIXES = ["DYLD_", "BASH_FUNC_", "CORECLR_PROFILER", "COR_PROFILER"];
+
+/**
+ * Whether a command's variable named `name`, in any case, decides which code
+ * runs (`docs/architecture/security.md`, "Connectors started by command"):
+ * such a variable is part of the command line, its value included. The
+ * operator confirms its value with the program and the arguments, and a new
+ * value is a new command line, never a value changed on its own.
+ */
+export const codeVariable = (name: string): boolean => {
+  const upper = name.toUpperCase();
+  return CODE.has(upper) || CODE_PREFIXES.some((prefix) => upper.startsWith(prefix));
+};
+
+/**
+ * Whether a command's variable named `name` would take `value` from a secret,
+ * where it may not: a variable that decides which code runs is confirmed by
+ * its value, and a secret's value can change with no new confirmation.
+ */
+export const codeFromSecret = (name: string, value: string): boolean =>
+  codeVariable(name) && holdsSecretReference(value);
