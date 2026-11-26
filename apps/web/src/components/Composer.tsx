@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Attachment, Avatar } from "@j3-bots/contracts";
+import type { Attachment, Avatar, SuggestedReply } from "@j3-bots/contracts";
 import { ArrowUpIcon, MicIcon, PlusIcon, UsersIcon, XIcon } from "lucide-react";
 import {
   type KeyboardEvent,
@@ -53,6 +53,7 @@ import { FileKindIcon } from "./FileCard";
 import { MentionChip } from "./MentionChip";
 import { type PromptMenu, PromptForm, PromptList, usePromptPicker } from "./PromptPicker";
 import { Button } from "./ui/button";
+import { Kbd } from "./ui/kbd";
 
 /**
  * The send button's three looks: nothing to send yet, a message ready to go,
@@ -140,6 +141,12 @@ interface ComposerProps {
    * writes replaces the draft.
    */
   readonly prompts?: PromptMenu;
+  /**
+   * In a bot's conversation, the reply the AI guessed the operator may send
+   * next, with the message it follows, or null. It is never sent by itself:
+   * see the composer.
+   */
+  readonly suggestion?: SuggestedReply | null;
 }
 
 /**
@@ -171,6 +178,11 @@ interface ComposerProps {
  * conversation, `/` opens the prompts its connectors offer the same way; a
  * prompt with arguments asks for them above the composer, and what its server
  * writes becomes the draft, which the operator reads and sends as their own.
+ * A reply the AI suggests shows in place of the placeholder while the draft
+ * is empty and no list is open, with Use beside it: Use, or Tab, puts it in
+ * the draft with the caret after it, to send or change; Escape sets it aside
+ * until a later answer brings another.
+ * It leaves as soon as the operator types.
  */
 export function Composer({
   draftKey,
@@ -192,6 +204,7 @@ export function Composer({
   inputRef,
   mentionable,
   prompts,
+  suggestion = null,
 }: ComposerProps) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -199,6 +212,7 @@ export function Composer({
   const ownFieldRef = useRef<HTMLDivElement>(null);
   const fieldRef = inputRef ?? ownFieldRef;
   const waitingId = useId();
+  const suggestionId = useId();
   const label = t("composer.label", { name: recipient });
   const { empty, uploading, sendable, problem } = draftReadiness(value, files);
   // The draft takes no change while it is handed over, loads, or could not be read.
@@ -255,6 +269,19 @@ export function Composer({
     field: fieldRef,
     menu: frozen ? undefined : prompts,
   });
+  // The message whose suggestion the operator set aside: a later answer's is offered again.
+  const [setAside, setSetAside] = useState<SuggestedReply["after"] | null>(null);
+  const offered =
+    suggestion !== null &&
+    value === "" &&
+    files.length === 0 &&
+    !frozen &&
+    !mention.open &&
+    !prompt.open &&
+    prompt.chosen === null &&
+    setAside !== suggestion.after
+      ? suggestion.text
+      : null;
   // Follows an edit of the field, with the mentions and files that still stand after it.
   const follow = (change: FieldChange) => {
     setNotTaken(false);
@@ -303,6 +330,12 @@ export function Composer({
     if (!frozen) onDetachFile?.(key);
   };
   const focusField = () => fieldRef.current?.focus();
+  // The suggestion becomes the draft, with the caret after it, to send or change.
+  const takeSuggestion = (text: string) => {
+    focusField();
+    caretAfter.current = { marks: 0, at: text.length };
+    onValueChange(text, []);
+  };
   // The notice leaves with the button that was pressed: the focus goes back to the text.
   const answerReplaced = (answer: () => void) => {
     answer();
@@ -509,6 +542,20 @@ export function Composer({
           onKeyDown={(event) => {
             remember(event.currentTarget);
             if (mention.onKeyDown(event) || prompt.onKeyDown(event)) return;
+            const plainKey = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+            if (offered !== null && plainKey && !event.nativeEvent.isComposing) {
+              if (event.key === "Tab") {
+                event.preventDefault();
+                takeSuggestion(offered);
+                return;
+              }
+              if (event.key === "Escape") {
+                // Taken here, so the shell does not close the details as well.
+                event.preventDefault();
+                setSetAside(suggestion?.after ?? null);
+                return;
+              }
+            }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               send();
@@ -520,13 +567,30 @@ export function Composer({
             event.preventDefault();
             attach(event.clipboardData.files);
           }}
-          placeholder={label}
+          placeholder={offered ?? label}
           aria-label={label}
+          aria-describedby={offered === null ? undefined : suggestionId}
           {...mention.fieldProps}
           {...prompt.fieldProps}
           data-composer=""
           className="max-h-(--layout-composer-max-height) min-h-8 flex-1 overflow-y-auto overscroll-contain px-1 py-1.5 text-base pointer-coarse:min-h-(--layout-touch-target) pointer-coarse:py-2.5 pointer-coarse:text-lg"
         />
+        {offered !== null && (
+          <Button
+            variant="ghost-muted"
+            size="sm"
+            // The field keeps the focus, so the keyboard stays up on a touch screen.
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => takeSuggestion(offered)}
+            aria-label={t("composer.suggestion.useLabel")}
+            className="appear shrink-0 gap-1.5 rounded-full pointer-coarse:h-(--layout-touch-target)"
+          >
+            {t("composer.suggestion.use")}
+            <Kbd aria-hidden className="hidden pointer-fine:inline-flex">
+              Tab
+            </Kbd>
+          </Button>
+        )}
         {empty && onDictate && !sending ? (
           <Button
             variant="ghost-muted"
@@ -560,6 +624,9 @@ export function Composer({
       </div>
       <span id={waitingId} hidden>
         {t("composer.stillUploading")}
+      </span>
+      <span id={suggestionId} hidden>
+        {offered !== null && t("composer.suggestion", { text: offered })}
       </span>
       {prompt.cut && (
         <p role="status" className="px-3 text-xs text-muted-foreground">

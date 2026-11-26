@@ -10,7 +10,7 @@ J3 Bots keeps two kinds of state, in two places, for two different readers.
 
 | Entity | What it holds |
 | --- | --- |
-| Settings | One row: the operator's name, their time zone and whether it was set, the budgets, notification preferences, the update channel, and whether J3 Bots updates its own copies of the harnesses by itself |
+| Settings | One row: the operator's name, their time zone and whether it was set, the budgets, notification preferences, the update channel, whether J3 Bots updates its own copies of the harnesses by itself, and whether the harnesses suggest the operator's next message ([Suggested replies](#suggested-replies)) |
 | Bot | Profile, model, permission mode, whether it is hidden, the bot that made it while that bot exists, and whether the operator chose its visibility ([Visibility](#visibility)), whether it may use the browser, whether it may fill saved logins ([Filling a login](#filling-a-login)) and how many times it lost it that are not yet withdrawn from its project, how many times its model, permission mode or browser switch changed, workspace path and the real path it had when first provisioned, engine project id, whether its conversation was told that its main session is not ready, the count of model or permission mode changes at which the engine refused its permission mode, and the refusal of it its conversation was told of |
 | Conversation | One per bot. A sequence of entries, and how far the operator has read |
 | Section | A named group of bots in the roster: its name and its place among the others. A bot names the one it is in, or none |
@@ -987,6 +987,25 @@ The server keeps three things about the bot's browser in memory only, from its s
 Each close records a `system` wake, `browser-help`, with the outcome and the host name, for the audience of the turn that asked, so the bot carries on where it was asked. On `done` the envelope tells it to take a fresh snapshot before it acts. An answer is the operator's word, which a Stop never cancels ahead of time. An expiry continues the work that asked, so a Stop that covers that work drops it, as it drops the work's other wakes.
 
 **A takeover without a card.** The operator can take a tab the bot did not ask about. The bot's actions on it then fail with `humanControl`, while its reads still work ([Engine](engine.md#the-bots-browser)), and its browser rules tell it to stop and end its turn. When the operator gives the browser back (no device holds any of the bot's tabs any more), the server wakes the bot once (`handed-back`) if a turn of its main session ran while they held it and nothing else will wake it about the browser: no card was open or closed meanwhile, no browser help wake waits, and the operator did not stop that turn's work. The wake goes to that turn's audience. A takeover while the bot was idle wakes nothing.
+
+## Suggested replies
+
+After a turn, a harness can guess the message the operator will send next, as T3 Code's own composer offers it. J3 Bots offers that guess in a bot's conversation only where it follows what the operator saw ([decision 0073](../decisions/0073-a-suggested-reply-follows-what-the-operator-saw.md)).
+
+**Where a guess comes from.** The engine keeps the latest guess of each session, with the turn it followed, and streams it (`Engine.suggestedReplies`; **Read** at `59651c1`: `orchestration.subscribePromptSuggestion`, kept in memory for at most 256 sessions and lost when the engine restarts). It makes them only while its `promptSuggestionsEnabled` setting is on, which the server writes from the operator's switch (`suggest_replies` in Settings, on by default) when it provisions the engine and whenever the switch changes, trying again a few times while the engine does not answer. Claude Code makes a guess as part of the turn, with its SDK's prompt suggestions; Codex makes one with a low-effort request of its own after the turn, which asks for a message under 20 words (**Read**). Claude Code makes none for a delegated thread or for a turn it started itself, and Codex drops one that reads as a delegated task (**Read**).
+
+**Which guess is offered.** A harness guesses from its whole session: the envelopes the bot was woken with, the working text `say` never showed, and every audience the main session serves. So the server follows only each bot's main session, and offers a guess in its conversation only while all of these hold:
+
+- the turn it follows was woken only by the operator in that conversation: every wake it took, its first and those steered into it, is a `user` wake, so neither a teammate's turn the operator steered nor the operator's turn a teammate's urgent message was steered into counts; and it spoke for the conversation and completed;
+- the last message the turn said there (`turns.said_entry_id`, written by `say` and by the host speech that stands for one) is still the conversation's newest entry, the turn's own work fold aside;
+- the text, trimmed, is at most 300 characters and holds nothing that reads as an envelope's markup;
+- the switch is on.
+
+A guess after a room's turn, a teammate's message, a routine's run or anything the server or the engine started is never offered, in a room or anywhere. A room never gets one: the session that answers there also holds the bot's conversation and its other rooms, so its guess could carry one audience's words into another's.
+
+**How it reaches clients.** An offered guess is on its bot as `Bot.suggestedReply`, its text and the entry it follows, which the roster carries. The server weighs it again whenever the bot's state or its conversation changes, and whenever the switch does: anything newer in the conversation takes it away. It lives in memory, as the engine's guesses do, and is weighed again from the engine and the database after either restarts. A client shows it only while the entry it follows is still the newest it shows ([Clients](clients.md#suggested-replies)), and never sends it by itself.
+
+**Cost.** One guess per completed turn of every session the engine runs while the switch is on, rooms, teammate messages and routines included, though only some are offered: a cached request for Claude Code, one more low-effort request for Codex, each on the operator's own plan. Turning the switch off stops the offers at once; Codex stops guessing from its next turn, and Claude Code once its session's process starts again (**Read**).
 
 ## Client API
 

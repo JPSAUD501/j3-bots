@@ -647,6 +647,7 @@ function sampleIntents({ get, update }: Store, secrets: SecretsHandle): ShellInt
             : { _tag: "idle" },
           settingsHeld: false,
           opening: true,
+          suggestedReply: null,
           createdAt: now(),
         };
         return {

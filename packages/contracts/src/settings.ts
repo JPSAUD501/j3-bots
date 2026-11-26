@@ -126,6 +126,15 @@ export const Settings = Schema.Struct({
    * `true` from a server that predates it, which has no copy to update.
    */
   autoUpdateHarnesses: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(true))),
+  /**
+   * Whether the AI guesses the operator's next message after a bot answers
+   * them, which clients offer in the empty composer (`Bot.suggestedReply`).
+   * On by default; each guess is one more short request on the operator's
+   * AI plan. Null from a server that predates it, which offers none.
+   */
+  suggestReplies: Schema.NullOr(Schema.Boolean).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
 });
 export type Settings = typeof Settings.Type;
 
@@ -148,5 +157,10 @@ export const SettingsChange = Schema.Struct({
    * take the rest of the change and drop it.
    */
   autoUpdateHarnesses: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Sent only to a server whose settings carry `suggestReplies`: an older one
+   * would take the rest of the change and drop it.
+   */
+  suggestReplies: Schema.optionalKey(Schema.Boolean),
 });
 export type SettingsChange = typeof SettingsChange.Type;

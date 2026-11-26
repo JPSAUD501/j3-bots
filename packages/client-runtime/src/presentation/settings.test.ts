@@ -13,6 +13,7 @@ const saved: Settings = {
   notifications: { enabled: true, previews: true },
   updateChannel: "stable",
   autoUpdateHarnesses: true,
+  suggestReplies: true,
 };
 
 describe("settingsPatch", () => {

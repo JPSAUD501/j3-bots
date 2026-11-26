@@ -28,8 +28,16 @@ export type SettingsChange =
   | { readonly section: "notifications"; readonly changes: NotificationSettingsChange }
   | { readonly section: "harnesses"; readonly changes: HarnessSettingsChanges };
 
-/** Whether the server updates the copies of the harnesses it installed by itself. */
-export type HarnessSettingsChanges = Pick<SettingsValue, "autoUpdateHarnesses">;
+/**
+ * What the harnesses do on their own: whether the server updates the copies it
+ * installed, and whether they guess the operator's next message after a turn.
+ * Fields left out keep their value; `suggestReplies` goes only to a server
+ * whose settings carry it.
+ */
+export interface HarnessSettingsChanges {
+  readonly autoUpdateHarnesses?: boolean;
+  readonly suggestReplies?: boolean;
+}
 
 /**
  * A section's save: under way, or how its last one ended, each with what it
@@ -165,7 +173,7 @@ export const layer = Layer.effect(
       cell: Cell<SettingsSave<Changes>>,
       changes: Changes,
       sent: ProfileChanges &
-        Partial<HarnessSettingsChanges> & { readonly notifications?: NotificationSettingsChange },
+        HarnessSettingsChanges & { readonly notifications?: NotificationSettingsChange },
     ) {
       const commandId = yield* actions.commandId;
       const saving: SettingsSave<Changes> = { _tag: "saving", changes };

@@ -643,6 +643,9 @@ const sentences = {
   "composer.attach.files": "Arquivos",
   "composer.dictate": "Ditar uma mensagem",
   "composer.send": "Enviar mensagem",
+  "composer.suggestion": "Resposta sugerida: {text}",
+  "composer.suggestion.use": "Usar",
+  "composer.suggestion.useLabel": "Usar a resposta sugerida",
 
   "details.back": "Voltar para a conversa",
   "details.close": "Fechar detalhes",
@@ -865,6 +868,9 @@ const sentences = {
   "settings.engine.autoUpdate": "Atualizar Claude Code e Codex automaticamente",
   "settings.engine.autoUpdate.body":
     "O J3 Bots mantém atualizadas as cópias que instalou. Uma atualização espera os bots que a usam terminarem o que estão fazendo.",
+  "settings.engine.suggestReplies": "Sugerir o que responder",
+  "settings.engine.suggestReplies.body":
+    "Depois que um bot te responde, uma resposta que você talvez mande aparece clarinha na caixa de mensagem, pronta para usar. Cada sugestão é mais um pedido pequeno à sua conta de IA, então gasta um pouco do seu plano.",
   "firstRun.create.name": "Nome do bot",
   "firstRun.create.placeholder": "Um nome, como Bia",
   "firstRun.create.primary":

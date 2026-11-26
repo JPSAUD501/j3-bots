@@ -15,7 +15,7 @@ import {
 } from "@j3-bots/client-runtime/presentation";
 import { useDraft, useJ3Client, useReadable } from "@j3-bots/client-runtime/react";
 import { fileProblemText, messageProblemText } from "@j3-bots/client-runtime/wording";
-import type { Attachment, Avatar, EntryTarget } from "@j3-bots/contracts";
+import type { Attachment, Avatar, EntryTarget, SuggestedReply } from "@j3-bots/contracts";
 import { reanimatedSpring, springs } from "@j3-bots/design-tokens";
 import { ArrowUp, File, Images, Plus, Users } from "lucide-react-native";
 import { type ComponentRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -46,6 +46,7 @@ import { DictationButton, DictationLine, useDictation } from "./Dictation.tsx";
 import { useFileOpener } from "./FileOpener.tsx";
 import { AnimatedView } from "./animated.ts";
 import { composerButtonFrame, composerButtonSlop } from "./composerButton.ts";
+import { appear } from "../motion.ts";
 import { PressScale } from "../press.tsx";
 import { PromptForm, PromptList, usePromptPicker } from "./PromptPicker.tsx";
 import { useTint } from "./tint.ts";
@@ -75,8 +76,11 @@ export interface MentionCandidate extends Mentionable {
  * heard becomes the draft's words as it is heard, where the caret was, and
  * waits there for Send; while it listens, the field says so where the text
  * goes, and sizes nothing. Typing
- * stops it, and so does the conversation leaving the operator's view. Mount
- * one per conversation.
+ * stops it, and so does the conversation leaving the operator's view. A
+ * reply the AI suggests shows in place of the placeholder while the draft is
+ * empty and nothing is offered above it, with Use beside it, which puts it in
+ * the draft, with the caret after it, to send or change; typing hides it.
+ * Mount one per conversation.
  */
 export function Composer({
   target,
@@ -85,6 +89,7 @@ export function Composer({
   onSend,
   inView,
   tint: tintOf = null,
+  suggestion = null,
 }: {
   readonly target: EntryTarget;
   /** Who the message goes to: a bot's or a room's name. */
@@ -96,6 +101,8 @@ export function Composer({
   readonly inView: boolean;
   /** The bot whose color tints the composer; none in a room. */
   readonly tint?: Avatar | null;
+  /** In a bot's conversation, the reply the AI guessed the operator may send next, or null. */
+  readonly suggestion?: SuggestedReply | null;
 }) {
   const i18n = useI18n();
   const { t } = i18n;
@@ -235,6 +242,22 @@ export function Composer({
       client.setDraftText(target, written, []);
     },
   });
+  const offered =
+    suggestion !== null &&
+    text === "" &&
+    files.length === 0 &&
+    !frozen &&
+    !listening &&
+    options.length === 0 &&
+    prompt.options.length === 0 &&
+    prompt.chosen === null
+      ? suggestion.text
+      : null;
+  // The suggestion becomes the draft, with the caret after it, to send or change.
+  const takeSuggestion = (taken: string) => {
+    placeCaret.current = { reached: (shown) => shown === taken, at: taken.length, focus: true };
+    client.setDraftText(target, taken, []);
+  };
   const moveCaret = (at: number) => {
     field.current?.select(at, at);
     selection.current = [at, at];
@@ -377,7 +400,7 @@ export function Composer({
           files={files}
           images={images}
           mentions={fieldMentions(text, mentions, mentionable ?? [])}
-          placeholder={label}
+          placeholder={offered ?? label}
           status={status}
           editable={!frozen}
           label={label}
@@ -396,6 +419,21 @@ export function Composer({
             if (!frozen) client.detachFile(target, key);
           }}
         />
+        {offered !== null && (
+          <Animated.View entering={appear} className="self-center">
+            <PressScale
+              accessibilityRole="button"
+              accessibilityLabel={t("composer.suggestion.useLabel")}
+              accessibilityHint={t("composer.suggestion", { text: offered })}
+              onPress={() => takeSuggestion(offered)}
+              className="min-h-11 justify-center rounded-full px-3 active:bg-muted"
+            >
+              <Text className="text-sm font-medium text-muted-foreground">
+                {t("composer.suggestion.use")}
+              </Text>
+            </PressScale>
+          </Animated.View>
+        )}
         {/* With files and no words, both: dictating about the files, or sending them. */}
         {dictation !== null && (wordless || listening) && !draft.sending && (
           <DictationButton dictation={dictation} unavailable={frozen} />

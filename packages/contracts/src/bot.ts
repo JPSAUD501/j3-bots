@@ -151,6 +151,22 @@ export const BotState = Schema.Union([
 ]);
 export type BotState = typeof BotState.Type;
 
+/** The longest suggested reply the server offers, in UTF-16 units. */
+export const MAX_SUGGESTED_REPLY_LENGTH = 300;
+
+/**
+ * A message the operator might send next in a bot's conversation: the AI's
+ * guess after the bot answered them, offered in the empty composer. It
+ * follows the bot's message `after`, and is offered only while that message
+ * is the newest entry of the conversation. Never sent by itself: taking it
+ * puts its text in the composer.
+ */
+export const SuggestedReply = Schema.Struct({
+  text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SUGGESTED_REPLY_LENGTH)),
+  after: EntryId,
+});
+export type SuggestedReply = typeof SuggestedReply.Type;
+
 export const Bot = Schema.Struct({
   id: BotId,
   profile: Profile,
@@ -191,6 +207,14 @@ export const Bot = Schema.Struct({
    * server that predates it.
    */
   opening: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+  /**
+   * What the operator might reply to the bot's last message in its
+   * conversation, while the operator's switch for suggested replies is on.
+   * Null when there is none, and from a server that predates it.
+   */
+  suggestedReply: Schema.NullOr(SuggestedReply).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
   createdAt: Schema.DateTimeUtc,
 });
 export type Bot = typeof Bot.Type;

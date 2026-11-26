@@ -28,6 +28,7 @@ import * as ReleaseFeed from "./releases/ReleaseFeed.ts";
 import * as ExpoPushSender from "./push/ExpoPushSender.ts";
 import * as BasePrompt from "./settings/BasePrompt.ts";
 import * as SettingsStore from "./settings/SettingsStore.ts";
+import * as SuggestReplies from "./settings/SuggestReplies.ts";
 import * as SharedSkills from "./skills/SharedSkills.ts";
 import * as SkillRepositories from "./skills/SkillRepositories.ts";
 import * as Host from "./system/Host.ts";
@@ -59,6 +60,7 @@ const engine = Layer.unwrap(
     const layout = yield* Layout.Layout;
     const path = yield* Path.Path;
     const basePrompt = yield* BasePrompt.BasePrompt;
+    const suggestReplies = yield* SuggestReplies.SuggestReplies;
     // Before the engine's first start, which links the shared skills into each harness home.
     yield* SharedSkills.install();
     // The copies J3 Bots installed of the harnesses, which the engine runs from its start.
@@ -81,6 +83,7 @@ const engine = Layer.unwrap(
       },
       systemPromptFile: SYSTEM_PROMPT_FILE,
       basePrompt: basePrompt.text,
+      suggestReplies: suggestReplies.enabled,
       sharedSkills: layout.sharedSkills,
       botSkills: WORKSPACE_ENTRIES.skills,
       // The adapter's writes go through the same containment check as the server's.
@@ -135,8 +138,11 @@ export const layer = (options: { readonly adminFd: Option.Option<number> }) =>
     Layer.provide(Layer.merge(McpRegistry.layer, SkillRepositories.layer)),
     // One key, made for this start, for the bridges the engine starts and the endpoint they reach.
     Layer.provideMerge(BridgeKey.layer),
-    // One base prompt for the engine and the settings that change it.
-    Layer.provide(BasePrompt.layer.pipe(Layer.provide(SettingsStore.layer))),
+    // One base prompt, and one switch for suggested replies, for the engine
+    // and the settings that change them.
+    Layer.provide(
+      Layer.merge(BasePrompt.layer, SuggestReplies.layer).pipe(Layer.provide(SettingsStore.layer)),
+    ),
     Layer.provide(Sqlite.layer),
     Layer.provide(Home.layer),
     Layer.provide(Home.configLayer),

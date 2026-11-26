@@ -10,6 +10,7 @@ import {
   ProviderId,
   type Profile,
   SectionId,
+  type SuggestedReply,
 } from "@j3-bots/contracts";
 import { EngineProjectId } from "@j3-bots/engine-t3";
 import * as Context from "effect/Context";
@@ -22,6 +23,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import { Flag, Time, timeText } from "../persistence/columns.ts";
 import { BotStates } from "../turns/BotStates.ts";
+import { SuggestedReplies } from "../turns/SuggestedReplies.ts";
 
 const BotRow = Schema.Struct({
   id: BotId,
@@ -68,6 +70,7 @@ const toStored = (
   state: BotState,
   settingsHeld: boolean,
   opening: boolean,
+  suggestedReply: SuggestedReply | null,
 ): StoredBot => ({
   bot: {
     id: row.id,
@@ -87,6 +90,7 @@ const toStored = (
     state,
     settingsHeld,
     opening,
+    suggestedReply,
     createdAt: row.created_at,
   },
   workspacePath: row.workspace_path,
@@ -189,6 +193,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const states = yield* BotStates;
+    const suggestedReplies = yield* SuggestedReplies;
 
     const findRow = SqlSchema.findOneOption({
       Request: BotId,
@@ -291,8 +296,15 @@ export const layer = Layer.effect(
     }, Effect.orDie);
 
     const withState = (row: typeof BotRow.Type) =>
-      Effect.all([states.of(row.id), states.settingsHeld(row.id), states.opening(row.id)]).pipe(
-        Effect.map(([state, held, opening]) => toStored(row, state, held, opening)),
+      Effect.all([
+        states.of(row.id),
+        states.settingsHeld(row.id),
+        states.opening(row.id),
+        suggestedReplies.of(row.id),
+      ]).pipe(
+        Effect.map(([state, held, opening, suggestedReply]) =>
+          toStored(row, state, held, opening, suggestedReply),
+        ),
       );
 
     const find = Effect.fn("BotStore.find")(function* (id: BotId) {

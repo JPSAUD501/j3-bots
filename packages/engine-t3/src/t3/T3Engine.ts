@@ -64,6 +64,7 @@ import {
   type ProviderInstance,
   type RequestResponse,
   type SecretAnswer,
+  type SessionSuggestedReply,
   type ToolBridge,
 } from "../Engine.ts";
 import { BrowserBridge } from "../Browser.ts";
@@ -93,6 +94,7 @@ import {
   type RequestId,
   SessionId,
   type SyncToken,
+  TurnId,
 } from "../ids.ts";
 import { type ProjectOverrides, withBrowserAccess } from "./BrowserAccess.ts";
 import { type BrowserHostNeeds, inspectBrowserHost } from "./BrowserHost.ts";
@@ -461,6 +463,10 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
   const basePrompt = yield* Ref.make(
     Option.getOrElse(yield* Stream.runHead(options.basePrompt), () => ""),
   );
+  /** Whether the harnesses guess the operator's next message, as last given, which each provisioning writes. */
+  const suggestReplies = yield* Ref.make(
+    Option.getOrElse(yield* Stream.runHead(options.suggestReplies), () => false),
+  );
   /** One writer of the engine's settings, the connection and the harness homes at a time. */
   const provisioning = yield* Semaphore.make(1);
   /** The home folder the engine is given (`engineEnvironment`), which a Codex bot's commands get. */
@@ -480,6 +486,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       systemPromptFile: options.systemPromptFile,
       basePrompt: yield* Ref.get(basePrompt),
       sharedSkills: options.sharedSkills,
+      suggestReplies: yield* Ref.get(suggestReplies),
       userHome,
     };
   });
@@ -1115,6 +1122,53 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     Stream.fromQueue(browserHostChecks),
   ).pipe(
     Stream.runForEach(() => checkBrowserHost),
+    Effect.forkScoped,
+  );
+
+  /**
+   * Writes the operator's switch for suggested replies into the running
+   * engine's settings, which it reads live (**Read** at `59651c1`,
+   * `ProviderSessionManager.ts`, `promptSuggestionsEnabled`). Provisioning
+   * writes it before each start; it is written again each time the engine
+   * becomes ready, since a change made while the engine was starting reaches
+   * neither. A lost reply is tried again; an engine that is not ready waits
+   * for its next start, and a newer value replaces one still being written.
+   */
+  const writeSuggestReplies = (enabled: boolean) =>
+    ready.pipe(
+      Effect.andThen(
+        rpc["server.updateSettings"]({ patch: { promptSuggestionsEnabled: enabled } }).pipe(
+          Effect.timeoutOrElse({
+            duration: COMMAND_TIMEOUT,
+            orElse: () => Effect.fail(new EngineIndeterminate()),
+          }),
+          Effect.catchTags({
+            RpcClientError: () => Effect.fail(new EngineIndeterminate()),
+            EnvironmentAuthorizationError: () => Effect.fail(new EngineUnavailable()),
+            ServerSettingsError: () => Effect.fail(new EngineIndeterminate()),
+          }),
+        ),
+      ),
+      Effect.retry({
+        while: (error) => error._tag === "EngineIndeterminate",
+        schedule: Schedule.exponential(Duration.seconds(1)),
+        times: 4,
+      }),
+      Effect.catch((error) =>
+        error._tag === "EngineIndeterminate"
+          ? Effect.logWarning("The switch for suggested replies did not reach the engine", error)
+          : Effect.void,
+      ),
+    );
+  yield* Stream.merge(
+    options.suggestReplies.pipe(Stream.tap((enabled) => Ref.set(suggestReplies, enabled))),
+    stateChanges(state).pipe(
+      Stream.filter((current) => current._tag === "ready"),
+      Stream.mapEffect(() => Ref.get(suggestReplies)),
+    ),
+  ).pipe(
+    Stream.switchMap((enabled) => Stream.fromEffect(writeSuggestReplies(enabled))),
+    Stream.runDrain,
     Effect.forkScoped,
   );
 
@@ -2590,6 +2644,44 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
       .pairUrl;
   }).pipe(Effect.withSpan("Engine.consoleLink"));
 
+  /**
+   * The session's suggested reply, as the engine keeps it. The subscription
+   * ends when the connection drops or the engine restarts; it is made again
+   * once the engine is ready, and the engine then answers with what it has.
+   */
+  const suggestedReplies = (sessionId: SessionId): Stream.Stream<SessionSuggestedReply | null> => {
+    const once = rpc["orchestration.subscribePromptSuggestion"]({
+      threadId: ThreadId.make(sessionId),
+    }).pipe(
+      Stream.map((suggestion): SessionSuggestedReply | null =>
+        suggestion === null
+          ? null
+          : { turnId: TurnId.make(suggestion.runId), text: suggestion.text },
+      ),
+      Stream.catch(() => Stream.empty),
+    );
+    const untilReady = stateChanges(state).pipe(
+      Stream.filter((current) => current._tag === "ready"),
+      Stream.take(1),
+      Stream.runDrain,
+    );
+    return Stream.forever(
+      Stream.fromEffectDrain(untilReady).pipe(
+        Stream.concat(once),
+        Stream.concat(Stream.fromEffectDrain(Effect.sleep(Duration.millis(500)))),
+      ),
+    ).pipe(
+      Stream.changesWith(
+        (before, after) =>
+          before === after ||
+          (before !== null &&
+            after !== null &&
+            before.turnId === after.turnId &&
+            before.text === after.text),
+      ),
+    );
+  };
+
   const engine = Engine.of({
     status,
     starts: stateChanges(state).pipe(
@@ -2622,6 +2714,7 @@ const make = Effect.fn("engine.make")(function* (options: EngineOptions) {
     respondSecret,
     events,
     synchronize,
+    suggestedReplies,
   });
   return Context.make(Engine, engine).pipe(Context.add(BrowserBridge, browser));
 });

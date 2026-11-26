@@ -117,6 +117,7 @@ export {
   providerGate,
 } from "./engine.ts";
 export { draftFileName, draftReadiness, type DraftReadiness } from "./draft.ts";
+export { offeredReply } from "./suggestedReply.ts";
 export {
   FILE_MARK,
   fittedMarks,

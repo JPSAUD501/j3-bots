@@ -19,6 +19,7 @@ const SettingsRow = Schema.Struct({
   notification_previews: Flag,
   update_channel: UpdateChannel,
   auto_update_harnesses: Flag,
+  suggest_replies: Flag,
 });
 
 /** The `settings` table's one row. */
@@ -49,7 +50,8 @@ export const layer = Layer.effect(
       Result: SettingsRow,
       execute: () => sql`
         SELECT operator_name, time_zone, hop_limit, fan_out_limit, concurrent_turns,
-          notifications_enabled, notification_previews, update_channel, auto_update_harnesses
+          notifications_enabled, notification_previews, update_channel, auto_update_harnesses,
+          suggest_replies
         FROM settings WHERE id = 1
       `,
     });
@@ -70,6 +72,7 @@ export const layer = Layer.effect(
           },
           updateChannel: row.update_channel,
           autoUpdateHarnesses: row.auto_update_harnesses,
+          suggestReplies: row.suggest_replies,
         })),
       ),
       save: Effect.fn("SettingsStore.save")(function* (
@@ -89,6 +92,7 @@ export const layer = Layer.effect(
             notification_previews = ${settings.notifications.previews ? 1 : 0},
             update_channel = ${settings.updateChannel},
             auto_update_harnesses = ${settings.autoUpdateHarnesses ? 1 : 0},
+            suggest_replies = ${settings.suggestReplies === false ? 0 : 1},
             updated_at = ${timeText(at)}
           WHERE id = 1
         `;

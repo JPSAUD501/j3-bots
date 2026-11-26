@@ -66,10 +66,12 @@ import {
 } from "./model.ts";
 import { type NoticeRetry, notices } from "./notices.ts";
 import { routineSpeech } from "./routineSpeech.ts";
+import { saidInConversation } from "./saidInConversation.ts";
 import { endingOf, sessionLoss, sessionRecords } from "./sessionRecords.ts";
 import { rotationRequests } from "./rotationRequests.ts";
 import { Signals } from "./Signals.ts";
 import { stopTargets } from "./stopTargets.ts";
+import { SuggestedReplies } from "./SuggestedReplies.ts";
 import { workStopped } from "./workStopped.ts";
 import { Wakes } from "./Wakes.ts";
 import { WorkSteps } from "./WorkSteps.ts";
@@ -293,6 +295,7 @@ export const layer = Layer.effect(
     const ids = yield* Ids;
     const workSteps = yield* WorkSteps;
     const workImages = yield* WorkImages;
+    const suggestedReplies = yield* SuggestedReplies;
     const routing = yield* RoomRouting;
     const roomOf = liveRoom(sql);
     const scope = yield* Effect.scope;
@@ -1141,6 +1144,9 @@ export const layer = Layer.effect(
         UPDATE host_speech SET entry_id = ${entry.id}
         WHERE session_id = ${session.id} AND speech_id = ${speech.speechId}
       `;
+      if (target._tag === "conversation") {
+        yield* saidInConversation(sql, session.id, speech.turnId, entry.id);
+      }
       if (target._tag === "room" && entry._tag === "message") {
         const room = yield* roomOf(target.roomId);
         if (Option.isSome(room)) {
@@ -1776,6 +1782,17 @@ export const layer = Layer.effect(
         Scope.provide(streamScope),
         Effect.onError(() => Scope.close(streamScope, Exit.void)),
       );
+      // The harness's guess at the operator's next message, offered only from
+      // the bot's main session, for as long as its events are followed.
+      if (session.purpose === "main") {
+        yield* suggestedReplies
+          .follow({
+            id: session.id,
+            botId: session.bot_id,
+            engineSessionId: session.engine_session_id,
+          })
+          .pipe(Scope.provide(streamScope));
+      }
       // A committed cursor already says where the session stands; without
       // one, the first `replaced` does once it is applied.
       if (session.events_cursor !== null) yield* Deferred.succeed(follow.caughtUp, undefined);
