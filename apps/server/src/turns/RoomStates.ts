@@ -19,7 +19,7 @@ const MemberWorkRow = Schema.Struct({
 });
 
 /** A member's plan and little ones in a room, as the roster sends them with it. */
-export interface MemberWork {
+interface MemberWork {
   readonly botId: BotId;
   readonly work: TurnWork;
 }

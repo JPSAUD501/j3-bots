@@ -10,8 +10,10 @@ import { OpenLiterals } from "./base.ts";
  * client ever shows one of those names. A tool it cannot name has none
  * (`null`), and its step's label carries the tool's own name, made readable.
  *
- * - `background-task`, `task-status`, `task-stop`: starts work that goes on
- *   after the turn, looks in on it, stops it.
+ * - `task-status`, `task-stop`: looks in on work that goes on after the
+ *   turn, stops it. `background-task`, the start of such work, is no longer
+ *   written: a task the engine delegates is a little one of the turn
+ *   (`TurnWork`, decision 0070). Steps stored before keep it.
  * - `secret`: asks the operator for a credential.
  * - `login`: fills a saved login into the bot's browser tab; the step's
  *   `fill` says how it went.
@@ -22,7 +24,9 @@ import { OpenLiterals } from "./base.ts";
  * - `schedule`: the engine's own scheduled tasks.
  * - `device`: a phone or tablet simulator.
  * - `web-page`: reads a web page.
- * - `plan`: keeps the harness's list of what is left to do.
+ * - `plan`: kept the harness's list of what is left to do. No longer
+ *   written: the list is the turn's plan (`TurnWork`). Steps stored before
+ *   keep it.
  * - `image`: looks at an image.
  * - `built-in`: any other tool the engine itself offers.
  * - `mcp-server-added`, `mcp-server-changed`, `mcp-server-removed`: the bot

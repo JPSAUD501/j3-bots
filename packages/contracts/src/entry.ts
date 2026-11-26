@@ -559,6 +559,10 @@ export type WorkFoldEntry = typeof WorkFoldEntry.Type;
 /** A step replaces an earlier one with the same id: a running command, then its result. */
 export const WorkStep = Schema.Struct({
   id: WorkStepId,
+  /**
+   * `delegation` is no longer written: the work a turn hands off is its
+   * little ones (`TurnWork`, decision 0070). Steps stored before keep it.
+   */
   kind: Schema.Literals([
     "command",
     "edit",

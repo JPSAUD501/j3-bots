@@ -310,7 +310,7 @@ export function sampleTeam(now: DateTime.Utc) {
       author: by(ids.scout),
       createdAt: ago(60 * 26 - 1),
       turnStartedAt: ago(60 * 26),
-      stepCount: 6,
+      stepCount: 5,
       apps: [],
       work: null,
       status: {
@@ -451,14 +451,6 @@ export function sampleTeam(now: DateTime.Utc) {
         tool: null,
         label: "memory/log/2026-11.md",
         status: "completed",
-        startedAt: ago(60 * 26 - 3),
-        finishedAt: ago(60 * 26 - 3),
-      }),
-      step(5, {
-        kind: "delegation",
-        tool: null,
-        label: "Asked Juniper whether the shop had replied",
-        status: "failed",
         startedAt: ago(60 * 26 - 3),
         finishedAt: ago(60 * 26 - 3),
       }),

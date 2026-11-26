@@ -121,16 +121,14 @@ it.effect("shows a room turn's plan by its member in the room, never in its conv
       turnId,
       work: { plan: steps, littleOnes: [] },
     });
-    const memberWork = rooms
-      .find(room.id)
-      .pipe(
-        Effect.map((found) =>
-          Option.match(found, {
-            onNone: () => [],
-            onSome: (one: Room) => (one.status === "active" ? one.memberWork : []),
-          }),
-        ),
-      );
+    const memberWork = rooms.find(room.id).pipe(
+      Effect.map((found) =>
+        Option.match(found, {
+          onNone: () => [],
+          onSome: (one: Room) => (one.status === "active" ? one.memberWork : []),
+        }),
+      ),
+    );
     yield* until(memberWork.pipe(Effect.map((all) => all.length > 0)));
     assert.deepStrictEqual(yield* memberWork, [
       {
@@ -194,7 +192,10 @@ it.effect("names every little one still working when a turn has more than it lis
     const ended = Array.from({ length: 20 }, (_, i) =>
       littleOne(`ended-${i}`, after(i), { status: "done", at: after(i + 1) }),
     );
-    const working = [littleOne("working-a", after(30), null), littleOne("working-b", after(31), null)];
+    const working = [
+      littleOne("working-a", after(30), null),
+      littleOne("working-b", after(31), null),
+    ];
 
     const work = shownWork({ plan: null, littleOnes: [...ended, ...working] });
 
