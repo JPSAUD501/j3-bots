@@ -33,7 +33,7 @@ import {
 } from "lucide-react-native";
 import { type ComponentRef, useCallback, useEffect, useRef, useState } from "react";
 import { FlatList, type FlatListProps, useWindowDimensions, View } from "react-native";
-import { useAnimatedRef, useSharedValue } from "react-native-reanimated";
+import { useSharedValue } from "react-native-reanimated";
 import { displaySpacing, Text, TextInput } from "../text.tsx";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AvatarHold, AvatarRow, rowsOnScreen } from "../components/avatar/BotAvatar.tsx";
@@ -45,11 +45,12 @@ import { type PressedRoom, RoomMenu } from "../components/RoomMenu.tsx";
 import { Menu, type MenuAnchor, type MenuEntry } from "../components/Menu.tsx";
 import { PinnedBots } from "../components/PinnedBots.tsx";
 import {
+  keptScroll,
+  listScroll,
   ReorderCell,
   RowLift,
   RowMoves,
   rowLayout,
-  useKeptPlace,
   useRowMotion,
 } from "../components/Reorder.tsx";
 import { PairRow } from "../components/PairRow.tsx";
@@ -231,9 +232,8 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
   );
   // The avatars hold while the list scrolls, from the drag through its glide.
   const scrolling = useSharedValue(false);
-  const list = useAnimatedRef<FlatList<RosterEntry>>();
-  // How far the list is scrolled, which keeps the rows in view where they are as rows move.
-  const scrolled = useSharedValue(0);
+  // How far the list is scrolled, which tells the row first in view, kept where it is as rows move.
+  const [scroll] = useState(listScroll);
   const searched = query.trim();
   const searching = searched !== "";
   // Beside a conversation the roster is its column's width.
@@ -260,8 +260,10 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
             folded,
             sizes,
           );
-  const motion = useRowMotion(entries === null ? null : { rows: entries, query: searched });
-  const keeping = useKeptPlace(list, motion, scrolled);
+  const { motion, onTaken } = useRowMotion(
+    entries === null ? null : { rows: entries, query: searched },
+    scroll,
+  );
   // The bot whose menu is open, and the rows the operator just moved out of the list, which fade
   // away as they go; a row the list no longer has needs nothing more.
   const [pressed, setPressed] = useState<PressedBot | null>(null);
@@ -426,9 +428,8 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
       />
       <PairMenu pressed={pressedPair} onClose={() => setPressedPair(null)} />
       <AvatarHold held={scrolling}>
-        <RowMoves motion={motion} keeper={keeping.keeper} leaving={leaving}>
+        <RowMoves motion={motion} leaving={leaving}>
           <FlatList
-            ref={list}
             className="flex-1"
             contentContainerStyle={{ paddingBottom: insets.bottom }}
             keyboardShouldPersistTaps="handled"
@@ -444,6 +445,7 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
               </View>
             }
             CellRendererComponent={ReorderCell}
+            renderScrollComponent={keptScroll}
             // Android detaches rows laid out off screen by where they end up,
             // so a row travelling across the view from above it to below it
             // would never be drawn on the way.
@@ -536,13 +538,12 @@ function RosterList({ selected }: { readonly selected: RosterItemKey | null }) {
               }
             }}
             scrollEventThrottle={16}
-            onScroll={(event) => scrolled.set(event.nativeEvent.contentOffset.y)}
+            onScroll={(event) => scroll.to(event.nativeEvent.contentOffset.y)}
             onViewableItemsChanged={onViewable}
             viewabilityConfig={ON_SCREEN}
             extraData={selectedText}
             onScrollBeginDrag={() => {
-              // The operator takes the list: it stops gliding to keep its place.
-              keeping.stop();
+              onTaken();
               scrolling.set(true);
             }}
             onScrollEndDrag={() => scrolling.set(false)}
