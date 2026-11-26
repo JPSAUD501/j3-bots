@@ -19,7 +19,6 @@ import {
   createElement,
   type ReactNode,
   useContext,
-  useEffect,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -42,6 +41,7 @@ import type { PairConversationState } from "../stores/TeammatePairs.ts";
 import { pairKeyText } from "../presentation/pairs.ts";
 import { type RecentTurnsState, turnsNotRead } from "../stores/Usage.ts";
 import type { WorkStepsState } from "../stores/WorkSteps.ts";
+import { holding, type Releasable } from "./held.ts";
 
 // Thin bindings: every decision lives in the runtime. A hook reads a
 // `Readable` and returns what it holds; intents are called on the client.
@@ -99,27 +99,42 @@ export const useDraft = (target: EntryTarget): Draft => {
 const nothing = () => () => {};
 const none = () => null;
 
+/** What `useHeld` holds for one key: the handle while it is watched. */
+interface Hold<H> {
+  readonly client: J3Client;
+  readonly key: string | null;
+  readonly handle: Readable<H | null>;
+}
+
+const holdFor = <I, H extends Releasable>(
+  client: J3Client,
+  input: I | null,
+  keyOf: (input: I) => string,
+  open: (client: J3Client, input: I) => H,
+): Hold<H> =>
+  input === null
+    ? { client, key: null, handle: { get: none, subscribe: nothing } }
+    : { client, key: keyOf(input), handle: holding(() => open(client, input)) };
+
 /**
  * Holds `open(client, input)` while the component is mounted and the key of
- * `input` stays the same. A null `input` holds nothing.
+ * `input` stays the same. A null `input` holds nothing. A handle is opened once
+ * the render that asks for it is committed, so a render returns null until
+ * then, also the first one after the key changes.
  */
-const useHeld = <I, H extends { readonly release: () => void }>(
+const useHeld = <I, H extends Releasable>(
   input: I | null,
   keyOf: (input: I) => string,
   open: (client: J3Client, input: I) => H,
 ): H | null => {
   const client = useJ3Client();
   const key = input === null ? null : keyOf(input);
-  const [held, setHeld] = useState<{ readonly key: string; readonly handle: H } | null>(null);
-  useEffect(() => {
-    if (input === null || key === null) return;
-    const handle = open(client, input);
-    setHeld({ key, handle });
-    return handle.release;
-    // `input` and `open` are new every render; `key` says when they mean something else.
-  }, [client, key]);
-  // For one render after `key` changes, the previous handle is still held.
-  return held !== null && held.key === key ? held.handle : null;
+  // One hold for each key: `input` and `open` are new every render, and the key
+  // says when they mean something else. Stored during render, as React allows
+  // for state that follows a prop.
+  const [hold, setHold] = useState(() => holdFor(client, input, keyOf, open));
+  if (hold.client !== client || hold.key !== key) setHold(holdFor(client, input, keyOf, open));
+  return useSyncExternalStore(hold.handle.subscribe, hold.handle.get, hold.handle.get);
 };
 
 /** What a held handle's state holds, or `null` when nothing is held yet. */
